@@ -31,6 +31,7 @@ export interface DatasetPortalGroup {
     table_columns?: Record<string, DatasetPortalColumn[]>;
   }>;
   followups?: DatasetPortalQuestion[];
+  updated_at?: string;
 }
 
 export interface DatasetPortalPayload {

@@ -866,3 +866,34 @@ async def test_build_navigation_for_user_skips_llm_when_no_authorized_datasets()
     load_cache.assert_not_awaited()
     generate_markdown.assert_not_awaited()
     save_cache.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_enrich_groups_with_dataset_updated_at_matches_name_and_display():
+    from datetime import datetime
+
+    groups = [
+        {
+            "title": "智能体数据集",
+            "related_data": [{"dataset": "ai_agent_meta", "display_name": "智能体数据集"}],
+        },
+        {
+            "title": "无匹配",
+            "related_data": [{"dataset": "missing_ds", "display_name": "不存在"}],
+        },
+    ]
+
+    class _Result:
+        def all(self):
+            return [
+                ("ai_agent_meta", "智能体数据集", datetime(2026, 7, 25, 9, 41, 3)),
+            ]
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result())
+
+    await DatasetNavigationService._enrich_groups_with_dataset_updated_at(db, groups)
+
+    assert groups[0]["updated_at"].startswith("2026-07-25T09:41:03")
+    assert "updated_at" not in groups[1]

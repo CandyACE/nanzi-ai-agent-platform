@@ -592,6 +592,78 @@ class DatasetNavigationService:
         return groups
 
     @staticmethod
+    async def _enrich_groups_with_dataset_updated_at(
+        db: AsyncSession,
+        groups: list[dict[str, Any]],
+    ) -> None:
+        """按 related_data.dataset / display_name 回填 MetaDataset.updated_at。"""
+        names: set[str] = set()
+        for group in groups:
+            for related in group.get("related_data") or []:
+                for key in ("dataset", "display_name"):
+                    value = str(related.get(key) or "").strip()
+                    if value:
+                        names.add(value)
+            title = str(group.get("title") or "").strip()
+            if title:
+                names.add(title)
+
+        if not names:
+            return
+
+        try:
+            from sqlalchemy import or_, select
+            from app.models.metadata import MetaDataset
+
+            stmt = select(
+                MetaDataset.name,
+                MetaDataset.display_name,
+                MetaDataset.updated_at,
+            ).where(
+                or_(
+                    MetaDataset.name.in_(list(names)),
+                    MetaDataset.display_name.in_(list(names)),
+                )
+            )
+            result = await db.execute(stmt)
+            rows = result.all() if hasattr(result, "all") else []
+            by_name: dict[str, str] = {}
+            by_display: dict[str, str] = {}
+            for row in rows or []:
+                try:
+                    name, display_name, updated_at = row[0], row[1], row[2]
+                except Exception:
+                    continue
+                if not updated_at:
+                    continue
+                iso = updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at)
+                if name:
+                    by_name[str(name).strip()] = iso
+                if display_name:
+                    by_display[str(display_name).strip()] = iso
+        except Exception as exc:
+            logger.warning("Failed to enrich dataset updated_at for navigation: %s", exc)
+            return
+
+        for group in groups:
+            if group.get("updated_at"):
+                continue
+            candidates: list[str] = []
+            for related in group.get("related_data") or []:
+                for key in ("dataset", "display_name"):
+                    value = str(related.get(key) or "").strip()
+                    if value:
+                        candidates.append(value)
+            title = str(group.get("title") or "").strip()
+            if title:
+                candidates.append(title)
+            for candidate in candidates:
+                iso = by_name.get(candidate) or by_display.get(candidate)
+                if iso:
+                    group["updated_at"] = iso
+                    break
+
+    @staticmethod
     async def _fetch_columns_for_groups(
         db: AsyncSession,
         groups: list[dict[str, Any]],
@@ -768,6 +840,8 @@ class DatasetNavigationService:
 
         for g in groups:
             g.pop("_original_index", None)
+
+        await DatasetNavigationService._enrich_groups_with_dataset_updated_at(db, groups)
 
         return {
             "dataset_count": dataset_count,

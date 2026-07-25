@@ -748,12 +748,21 @@
                 :data-theme="visuals.key"
                 v-html="visuals.icon"
               />
-              <h4
-                class="flex-1 min-w-0 text-sm font-semibold leading-snug break-words pt-0.5 text-gray-900 dark:text-gray-100"
-                :title="group.title"
-              >
-                {{ group.title }}
-              </h4>
+              <div class="flex-1 min-w-0 pt-0.5">
+                <h4
+                  class="text-sm font-semibold leading-snug break-words text-gray-900 dark:text-gray-100"
+                  :title="group.title"
+                >
+                  {{ group.title }}
+                </h4>
+                <p
+                  v-if="formatGroupUpdatedAt(group)"
+                  class="mt-0.5 text-[10px] leading-tight text-gray-500 dark:text-gray-400"
+                  :title="`数据集更新时间 ${formatGroupUpdatedAt(group)}`"
+                >
+                  更新 {{ formatGroupUpdatedAt(group) }}
+                </p>
+              </div>
               <div class="relative flex-shrink-0 flex items-center gap-0.5 mt-0.5">
                 <!-- 挂载：本轮 / 固定到会话 -->
                 <div
@@ -1373,6 +1382,7 @@ interface DatasetCapabilityGroup {
   questions?: DatasetCapabilityQuestion[];
   related_data?: DatasetCapabilityRelatedData[];
   followups?: DatasetCapabilityQuestion[];
+  updated_at?: string;
 }
 
 interface DatasetNavigationPayload {
@@ -2514,6 +2524,14 @@ const formattedGeneratedAt = computed(() => {
   if (Number.isNaN(date.getTime())) return props.payload.generated_at;
   return date.toLocaleString();
 });
+
+const formatGroupUpdatedAt = (group: DatasetCapabilityGroup): string => {
+  const raw = String(group?.updated_at || "").trim();
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleString();
+};
 
 const cacheAgeLabel = computed(() => {
   if (!props.payload.generated_at) return "";

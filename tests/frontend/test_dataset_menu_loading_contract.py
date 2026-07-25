@@ -80,6 +80,9 @@ def test_dataset_capability_menu_component_contract():
     assert "refreshDisabled" in source
     assert "props.initialLoading" in source
     assert "showRefreshBusy.value" in source
+    assert "formatGroupUpdatedAt" in source
+    assert "更新 {{ formatGroupUpdatedAt(group) }}" in source
+    assert "updated_at?: string" in source
     assert "|| props.payload?.has_datasets === false" not in source
     assert "cacheAgeLabel" in source
     assert "数据门户" in source
