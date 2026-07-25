@@ -1054,26 +1054,34 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   }
 };
 
-const copyContent = async (content: string, event: Event) => {
+const copyContent = async (content: string, event?: Event) => {
+  if (!content) {
+    showToast("内容为空", "warning");
+    return;
+  }
+  const btn = event?.currentTarget as HTMLElement | undefined;
   const ok = await copyToClipboard(content);
   if (!ok) {
     console.error("Failed to copy");
+    showToast("复制失败，请手动复制", "error");
     return;
   }
 
-  // Visual feedback
-  const btn = event.currentTarget as HTMLElement;
-  const originalHtml = btn.innerHTML;
+  showToast("已复制到剪贴板", "success");
 
-  btn.innerHTML = `<svg class="w-3 h-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg><span>已复制</span>`;
-  btn.classList.add("text-green-600", "bg-green-50");
-  btn.classList.remove("text-gray-400", "hover:text-gray-600");
+  // 底部带文字的按钮：短暂切换为「已复制」
+  if (btn && btn.querySelector("span")) {
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = `<svg class="w-3 h-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg><span>已复制</span>`;
+    btn.classList.add("text-green-600", "bg-green-50");
+    btn.classList.remove("text-gray-400", "hover:text-gray-600");
 
-  setTimeout(() => {
-    btn.innerHTML = originalHtml;
-    btn.classList.remove("text-green-600", "bg-green-50");
-    btn.classList.add("text-gray-400", "hover:text-gray-600");
-  }, 2000);
+    setTimeout(() => {
+      btn.innerHTML = originalHtml;
+      btn.classList.remove("text-green-600", "bg-green-50");
+      btn.classList.add("text-gray-400", "hover:text-gray-600");
+    }, 2000);
+  }
 };
 
 const exportData = async (traceId: string, format = 'xlsx') => {
@@ -4620,12 +4628,13 @@ onUnmounted(() => {
                 <!-- Floating Copy Button -->
                 <button
                   v-if="!msg.datasetNavigation?.groups?.length"
-                  @click="copyContent(msg.content, $event)"
+                  type="button"
+                  @click.stop="copyContent(msg.content, $event)"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md transition-all opacity-0 group-hover/content:opacity-100 focus:opacity-100 z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
                 >
                   <svg
-                    class="w-4 h-4"
+                    class="w-3.5 h-3.5"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -4676,12 +4685,26 @@ onUnmounted(() => {
 	                  @execute-saved-report="handleExecuteSavedReport"
 	                  @edit-saved-report="openEditReportModal"
 	                />
-                <!-- 导出 / 点赞踩（托管 RAGFlow、OpenClaw 不展示点赞踩） -->
+                <!-- 复制 / 导出 / 点赞踩（托管 RAGFlow、OpenClaw 不展示点赞踩） -->
                 <div
-                  v-if="msg.role === 'agent' && !msg.isThinking && (msg.trace_id || canSaveGoldenReportFromMessage(msg) || !hideDebugLikeDislikeForHostedAgent)"
+                  v-if="msg.role === 'agent' && !msg.isThinking && (msg.content || msg.trace_id || canSaveGoldenReportFromMessage(msg) || !hideDebugLikeDislikeForHostedAgent)"
                   class="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-50 opacity-20 hover:opacity-100 group-hover/content:opacity-100 transition-opacity"
                   :class="{'!opacity-100': msg.feedback && !hideDebugLikeDislikeForHostedAgent}"
                 >
+                  <!-- Copy Content -->
+                  <button
+                    v-if="msg.content"
+                    type="button"
+                    @click.stop="copyContent(msg.content, $event)"
+                    class="flex items-center space-x-1 p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-primary transition-colors"
+                    title="复制"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span class="text-[10px] font-bold">复制</span>
+                  </button>
+                  <div v-if="msg.content && (canSaveGoldenReportFromMessage(msg) || msg.trace_id || !hideDebugLikeDislikeForHostedAgent)" class="w-px h-3 bg-gray-200 mx-1"></div>
                   <!-- Save Golden Report -->
                   <button
                     v-if="canSaveGoldenReportFromMessage(msg)"

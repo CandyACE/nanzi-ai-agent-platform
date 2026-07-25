@@ -412,7 +412,16 @@
                             <p class="text-[10px] sm:text-xs text-blue-700 leading-tight">此处仅配置<b>系统级</b>公共智能体权限。</p>
                         </div>
 
-                        <div v-if="loadingResources" class="text-center py-10 text-gray-500 text-xs">加载资源中...</div>
+                        <div v-if="loadingResources" class="flex flex-col items-center justify-center py-12 gap-3">
+                            <div class="relative">
+                                <div class="w-9 h-9 rounded-full border-[3px] border-blue-100"></div>
+                                <div class="absolute inset-0 w-9 h-9 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
+                            </div>
+                            <div class="text-center space-y-0.5">
+                                <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
+                                <p class="text-xs text-gray-400">请稍候…</p>
+                            </div>
+                        </div>
                         <div v-if="activeResTab === 'forbidden_configs'" class="space-y-4 text-left">
                             <div class="bg-red-50 border border-red-100 rounded-lg p-2.5 flex items-start gap-2 mb-2 select-none">
                                 <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

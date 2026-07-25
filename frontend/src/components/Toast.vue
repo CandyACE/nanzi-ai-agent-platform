@@ -1,17 +1,17 @@
 <template>
   <div
     v-if="visible"
-    class="px-6 py-3 rounded-xl shadow-2xl flex items-center space-x-3 transition-all duration-300 ease-out toast-bounce-in"
+    class="px-6 py-3 rounded-xl border shadow-lg flex items-center space-x-3 transition-all duration-300 ease-out toast-bounce-in"
     :class="[
       inline ? '' : 'fixed top-8 left-1/2 -translate-x-1/2 z-[9999]',
       visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2',
       type === 'success'
-        ? 'bg-green-600 text-white'
+        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
         : type === 'warning'
-          ? 'bg-yellow-500 text-white'
+          ? 'bg-amber-50 text-amber-700 border-amber-200'
           : type === 'error'
-            ? 'bg-red-600 text-white'
-            : 'bg-slate-800 text-white',
+            ? 'bg-red-50 text-red-700 border-red-200'
+            : 'bg-blue-50 text-blue-700 border-blue-200',
     ]"
   >
     <!-- Success -->

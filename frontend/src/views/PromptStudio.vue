@@ -1309,13 +1309,13 @@ watch(
     <Teleport to="body">
       <div
         v-if="toast.show"
-        class="fixed top-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-xl shadow-2xl flex items-center space-x-3 transition-all animate-bounce-in"
+        class="fixed top-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-xl border shadow-lg flex items-center space-x-3 transition-all animate-bounce-in"
         :class="
           toast.type === 'success'
-            ? 'bg-green-600 text-white'
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
             : toast.type === 'warning'
-            ? 'bg-yellow-500 text-white'
-            : 'bg-red-600 text-white'
+            ? 'bg-amber-50 text-amber-700 border-amber-200'
+            : 'bg-red-50 text-red-700 border-red-200'
         "
       >
         <CheckBadgeIcon v-if="toast.type === 'success'" class="w-5 h-5" />
