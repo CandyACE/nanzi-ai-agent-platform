@@ -1126,29 +1126,41 @@ watch(
               </div>
 
               <div class="flex-1 flex flex-col min-h-0 bg-white overflow-hidden">
-                <div v-if="viewMode === 'edit'" class="flex-1 flex overflow-hidden min-h-0">
-                  <div
-                    ref="lineNumbersRef"
-                    class="w-10 bg-gray-50 text-gray-400 text-right pr-2 py-4 select-none font-mono text-[11px] leading-6 border-r border-gray-100 overflow-hidden shrink-0"
+                <div class="group/editor relative flex-1 flex flex-col min-h-0 overflow-hidden">
+                  <button
+                    type="button"
+                    @click="copyToClipboard(currentDetail.content || '')"
+                    class="absolute top-1.5 right-2 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md opacity-0 group-hover/editor:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
+                    title="复制内容"
+                    aria-label="复制内容"
                   >
-                    <div v-for="n in lineCount" :key="n" class="h-6">{{ n }}</div>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                  </button>
+
+                  <div v-if="viewMode === 'edit'" class="flex-1 flex overflow-hidden min-h-0">
+                    <div
+                      ref="lineNumbersRef"
+                      class="w-10 bg-gray-50 text-gray-400 text-right pr-2 py-4 select-none font-mono text-[11px] leading-6 border-r border-gray-100 overflow-hidden shrink-0"
+                    >
+                      <div v-for="n in lineCount" :key="n" class="h-6">{{ n }}</div>
+                    </div>
+                    <textarea
+                      ref="editorTextareaRef"
+                      v-model="currentDetail.content"
+                      :readonly="!canEdit"
+                      @scroll="syncLineNumberScroll"
+                      class="flex-1 pl-4 pr-12 py-4 font-mono text-[13px] leading-6 text-gray-800 focus:outline-none resize-none bg-white overflow-y-auto custom-scrollbar"
+                      :class="{ 'cursor-not-allowed opacity-80': !canEdit }"
+                      placeholder="在此输入提示词内容，支持 {variable} 占位符..."
+                      spellcheck="false"
+                    ></textarea>
                   </div>
-                  <textarea
-                    ref="editorTextareaRef"
-                    v-model="currentDetail.content"
-                    :readonly="!canEdit"
-                    @scroll="syncLineNumberScroll"
-                    class="flex-1 px-4 py-4 font-mono text-[13px] leading-6 text-gray-800 focus:outline-none resize-none bg-white overflow-y-auto custom-scrollbar"
-                    :class="{ 'cursor-not-allowed opacity-80': !canEdit }"
-                    placeholder="在此输入提示词内容，支持 {variable} 占位符..."
-                    spellcheck="false"
-                  ></textarea>
-                </div>
-                <div v-else class="flex-1 p-6 overflow-y-auto custom-scrollbar bg-white">
-                  <div
-                    class="markdown-body prose prose-sm max-w-none"
-                    v-html="renderMarkdown(currentDetail.content)"
-                  ></div>
+                  <div v-else class="flex-1 p-6 pr-14 overflow-y-auto custom-scrollbar bg-white">
+                    <div
+                      class="markdown-body prose prose-sm max-w-none"
+                      v-html="renderMarkdown(currentDetail.content)"
+                    ></div>
+                  </div>
                 </div>
               </div>
 
@@ -1297,7 +1309,7 @@ watch(
     <Teleport to="body">
       <div
         v-if="toast.show"
-        class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-xl shadow-2xl flex items-center space-x-3 transition-all animate-bounce-in"
+        class="fixed top-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-xl shadow-2xl flex items-center space-x-3 transition-all animate-bounce-in"
         :class="
           toast.type === 'success'
             ? 'bg-green-600 text-white'
@@ -1556,11 +1568,11 @@ watch(
 
 @keyframes bounce-in {
   0% {
-    transform: translate(-50%, 100%);
+    transform: translate(-50%, -100%);
     opacity: 0;
   }
   60% {
-    transform: translate(-50%, -10px);
+    transform: translate(-50%, 10px);
     opacity: 1;
   }
   100% {
