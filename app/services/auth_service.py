@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 import httpx
 from typing import Optional, Dict
@@ -11,6 +12,7 @@ from app.models.user import User
 from app.utils.encryption import get_api_key_manager
 from passlib.context import CryptContext
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -245,6 +247,41 @@ class AuthService:
         redis = await get_redis()
         if redis:
             await redis.delete(cache_key)
+
+    @staticmethod
+    async def invalidate_user_auth_cache(
+        user_id: int,
+        db: Optional[AsyncSession] = None,
+        api_key_hash: Optional[str] = None,
+    ) -> None:
+        """
+        按用户清除 auth:api_key 缓存。
+
+        系统角色 / 启用状态变更后必须调用，否则 require_permission 会在最长 1 小时内
+        继续读到旧的 role/status。
+        """
+        hashed = (api_key_hash or "").strip()
+        if not hashed:
+            session, is_local = await AuthService._get_session(db)
+            try:
+                user = await session.get(User, user_id)
+                hashed = (user.api_key_hash or "").strip() if user else ""
+            finally:
+                if is_local:
+                    await session.close()
+        if not hashed:
+            return
+        redis = await get_redis()
+        if not redis:
+            return
+        try:
+            await redis.delete(f"auth:api_key:{hashed}")
+        except Exception as e:
+            logger.warning(
+                "Failed to invalidate auth api_key cache for user %s: %s",
+                user_id,
+                e,
+            )
 
     @staticmethod
     def verify_password_hash(plain_password: str, hashed_password: str) -> bool:

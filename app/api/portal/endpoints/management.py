@@ -517,14 +517,12 @@ async def update_user(
         logger.error(f"Failed to commit user update: {e}")
         raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
 
-    # Cache Invalidation
+    # Cache Invalidation：系统角色 / 业务角色 / 权限变更后同时清权限缓存与 auth:api_key 缓存
     try:
-        from app.core.redis import get_redis
-        redis = await get_redis()
-        if redis:
-            await redis.delete(f"sys:auth:permissions:v2:user:{user_id}")
+        service = PermissionService(db)
+        await service.invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
-        logger.error(f"Failed to clear permission cache for user {user_id}: {e}")
+        logger.error(f"Failed to clear permission/auth cache for user {user_id}: {e}")
     
     role_ids = [r.id for r in user.roles]
     role_names = [r.name for r in user.roles]
@@ -574,14 +572,15 @@ async def update_user_status(
     await db.commit()
     
     # Security: Clear Redis cache to force re-authentication
-    if user.api_key_hash:
-        try:
-            from app.core.redis import get_redis
-            redis = await get_redis()
-            if redis:
-                await redis.delete(f"auth:api_key:{user.api_key_hash}")
-        except Exception as e:
-            logger.error(f"Failed to clear user cache: {e}")
+    try:
+        from app.services.auth_service import AuthService
+        from app.services.permission_service import PermissionService
+        await AuthService.invalidate_user_auth_cache(
+            user_id, db=db, api_key_hash=user.api_key_hash
+        )
+        await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
+    except Exception as e:
+        logger.error(f"Failed to clear user cache: {e}")
     
     return {"message": "User status updated successfully"}
 
@@ -667,15 +666,15 @@ async def delete_user(
     await db.commit()
     
     # Security: Clear Redis cache
-    if api_key_hash:
-        try:
-            from app.core.redis import get_redis
-            redis = await get_redis()
-            if redis:
-                await redis.delete(f"auth:api_key:{api_key_hash}")
-                await redis.delete(f"sys:auth:permissions:v2:user:{user_id}")
-        except Exception as e:
-            logger.error(f"Failed to clear user cache: {e}")
+    try:
+        from app.services.auth_service import AuthService
+        from app.services.permission_service import PermissionService
+        await AuthService.invalidate_user_auth_cache(
+            user_id, db=db, api_key_hash=api_key_hash
+        )
+        await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
+    except Exception as e:
+        logger.error(f"Failed to clear user cache: {e}")
     
     return {"message": "User deleted successfully"}
 
