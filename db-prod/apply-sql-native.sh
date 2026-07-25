@@ -1,7 +1,7 @@
 #!/bin/bash
 # 免 Python 依赖的 MySQL SQL 导入工具。
 # 依靠系统已安装的 mysql 命令行客户端。
-# 实现了与 Python 脚本相同的幂等性过滤机制（忽略 1007, 1050, 1060, 1061, 1062, 1091 等错误码）。
+# 实现了与 Python 脚本相同的幂等性过滤机制（忽略 1007, 1050, 1054, 1060, 1061, 1062, 1091 等错误码）。
 
 cd "$(dirname "$0")/.."
 
@@ -48,24 +48,38 @@ if [ "$CONFIRM_UPPER" != "YES" ]; then
     exit 1
 fi
 
+echo "ℹ️  提示：重复执行时若看到「幂等跳过（可忽略…）」并带 MySQL ERROR 1050/1060/1061 等字样，表示对象已存在，属于正常跳过，不是失败。"
+echo "   只有出现「❌ 执行失败（非幂等可忽略错误，需处理）」才需要处理。"
+echo
 # 定义需要忽略的 MySQL 错误码
 # 1007: 数据库已存在
 # 1050: 表已存在
+# 1054: 未知列（如 CHANGE/DROP 时列已改名或不存在，重复执行）
 # 1060: 重复的列名
 # 1061: 重复的键/索引名
 # 1062: 唯一性约束重复键值
 # 1091: 试图删除不存在的列或键
-IGNORED_ERRORS="1007|1050|1060|1061|1062|1091"
+IGNORED_ERRORS="1007|1050|1054|1060|1061|1062|1091"
 
 # 检查连接并尝试创建数据库（若不存在）
-MYSQL_BASE_CMD="mysql -h $MYSQL_HOST_INPUT -P $MYSQL_PORT_INPUT -u $MYSQL_USER_INPUT -p$MYSQL_PASSWORD_INPUT"
+# 强制 TCP：Host 为 localhost 时，mysql 客户端默认走 Unix socket（/tmp/mysql.sock），
+# 在 Lima/Docker 端口转发场景下会失败；--protocol=TCP 可统一走 -P 端口。
+# --default-character-set=utf8mb4：每条语句单独开连接时避免中文乱码（仅文件头 SET NAMES 不会跨连接生效）。
+MYSQL_BASE_CMD="mysql -h $MYSQL_HOST_INPUT -P $MYSQL_PORT_INPUT -u $MYSQL_USER_INPUT -p$MYSQL_PASSWORD_INPUT --protocol=TCP --default-character-set=utf8mb4"
 CREATE_DB_SQL="CREATE DATABASE IF NOT EXISTS \`$MYSQL_DATABASE_INPUT\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
 
 echo "🔌 正在连接 MySQL 并确保目标数据库已存在..."
-if ! echo "$CREATE_DB_SQL" | $MYSQL_BASE_CMD >/dev/null 2>&1; then
+CONNECT_ERR=$(mktemp)
+if ! echo "$CREATE_DB_SQL" | $MYSQL_BASE_CMD >/dev/null 2>"$CONNECT_ERR"; then
     echo "❌ 数据库连接或创建失败，请检查连接参数（如 Host、User、Password）或数据库服务状态。"
+    if [ -s "$CONNECT_ERR" ]; then
+        echo "—— MySQL 原始错误 ——"
+        cat "$CONNECT_ERR"
+    fi
+    rm -f "$CONNECT_ERR"
     exit 1
 fi
+rm -f "$CONNECT_ERR"
 
 # 数据库连接参数
 MYSQL_CMD="$MYSQL_BASE_CMD $MYSQL_DATABASE_INPUT"
@@ -82,6 +96,52 @@ execute_sql_file() {
     # 拆分逻辑：通过维护字符串开启/闭合状态，避开多行字符串（提示词）内部的分号，安全完成语句切分
     local stmt=""
     local in_string=0
+    # SET @var 属于会话级状态；每条语句单独开连接会丢失。
+    # 缓冲后，对本文件后续每一条业务语句都前置执行（如 V69 多条 UPDATE 共用变量）。
+    local session_prefix=""
+
+    run_mysql_stmt() {
+        local payload="$1"
+        local preview="$2"
+        set +e
+        # 每条语句单独 session：必须每次先 SET NAMES，否则中文提示词等会乱码。
+        printf 'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;\n%s\n' "$payload" | $MYSQL_CMD 2>"$err_log"
+        local status=$?
+        set -e
+        if [ $status -ne 0 ]; then
+            local err_msg
+            err_msg=$(cat "$err_log")
+            local is_ignored=0
+            local code
+            for code in ${IGNORED_ERRORS//|/ }; do
+                if [[ "$err_msg" =~ "ERROR $code" ]] || [[ "$err_msg" =~ "Error $code" ]]; then
+                    # 去掉 mysql 密码警告，只保留核心错误说明，避免用户误以为失败
+                    local brief
+                    brief=$(echo "$err_msg" | grep -E 'ERROR [0-9]+' | head -1 | sed 's/^[[:space:]]*//')
+                    [ -z "$brief" ] && brief="MySQL $code"
+                    echo "   -> 幂等跳过（可忽略，对象已存在/已变更）: $brief"
+                    is_ignored=1
+                    break
+                fi
+            done
+            if [ $is_ignored -eq 0 ]; then
+                echo "❌ 执行失败（非幂等可忽略错误，需处理）："
+                echo "Statement: ${preview:0:150}..."
+                echo "Error message: $err_msg"
+                return 1
+            fi
+        fi
+        return 0
+    }
+
+    is_session_setup_stmt() {
+        # SET NAMES / SET CHARACTER SET 已由 run_mysql_stmt 统一注入，这里只缓冲 SET @var
+        [[ "$1" =~ ^[[:space:]]*SET[[:space:]]+@ ]]
+    }
+
+    is_charset_setup_stmt() {
+        [[ "$1" =~ ^[[:space:]]*SET[[:space:]]+(NAMES|CHARACTER[[:space:]]+SET)([[:space:]]|$) ]]
+    }
     
     # 用来读取 SQL 文件
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -127,31 +187,31 @@ execute_sql_file() {
             exec_stmt="${exec_stmt%;}"
             exec_stmt="${exec_stmt%"${exec_stmt##*[![:space:]]}"}"
 
-            # 执行单条语句并捕获报错（保留换行，避免行内 -- 注释吞掉后续 SQL）
-            set +e
-            printf '%s\n' "$exec_stmt" | $MYSQL_CMD 2>"$err_log"
-            status=$?
-            set -e
-            
-            if [ $status -ne 0 ]; then
-                err_msg=$(cat "$err_log")
-                # 检查错误码是否属于被忽略的错误
-                is_ignored=0
-                for code in ${IGNORED_ERRORS//|/ }; do
-                    if [[ "$err_msg" =~ "ERROR $code" ]] || [[ "$err_msg" =~ "Error $code" ]]; then
-                        echo "   -> Skipping (already applied): $(echo "$err_msg" | tr '\n' ' ')"
-                        is_ignored=1
-                        break
-                    fi
-                done
-                
-                if [ $is_ignored -eq 0 ]; then
-                    echo "❌ Error executing statement:"
-                    echo "Statement: ${stmt:0:150}..."
-                    echo "Error message: $err_msg"
-                    rm -f "$err_log"
-                    return 1
+            if is_charset_setup_stmt "$exec_stmt"; then
+                # 已由 run_mysql_stmt 统一 SET NAMES，跳过文件内重复声明
+                stmt=""
+                continue
+            fi
+
+            if is_session_setup_stmt "$exec_stmt"; then
+                if [ -n "$session_prefix" ]; then
+                    session_prefix="${session_prefix};"$'\n'"${exec_stmt}"
+                else
+                    session_prefix="$exec_stmt"
                 fi
+                stmt=""
+                continue
+            fi
+
+            local payload="$exec_stmt"
+            if [ -n "$session_prefix" ]; then
+                # 注意：不清空 session_prefix，本文件后续语句仍需同一批 @变量
+                payload="${session_prefix};"$'\n'"${exec_stmt}"
+            fi
+
+            if ! run_mysql_stmt "$payload" "$stmt"; then
+                rm -f "$err_log"
+                return 1
             fi
             stmt=""
         fi
@@ -166,30 +226,33 @@ execute_sql_file() {
                 local exec_stmt="$clean_stmt"
                 exec_stmt="${exec_stmt%;}"
                 exec_stmt="${exec_stmt%"${exec_stmt##*[![:space:]]}"}"
-                set +e
-                printf '%s\n' "$exec_stmt" | $MYSQL_CMD 2>"$err_log"
-                status=$?
-                set -e
-                if [ $status -ne 0 ]; then
-                    err_msg=$(cat "$err_log")
-                    is_ignored=0
-                    for code in ${IGNORED_ERRORS//|/ }; do
-                        if [[ "$err_msg" =~ "ERROR $code" ]] || [[ "$err_msg" =~ "Error $code" ]]; then
-                            echo "   -> Skipping (already applied): $err_msg"
-                            is_ignored=1
-                            break
-                        fi
-                    done
-                    if [ $is_ignored -eq 0 ]; then
-                        echo "❌ Error executing statement:"
-                        echo "Statement: ${clean_stmt:0:150}..."
-                        echo "Error message: $err_msg"
+                if is_charset_setup_stmt "$exec_stmt"; then
+                    :
+                elif is_session_setup_stmt "$exec_stmt"; then
+                    if [ -n "$session_prefix" ]; then
+                        session_prefix="${session_prefix};"$'\n'"${exec_stmt}"
+                    else
+                        session_prefix="$exec_stmt"
+                    fi
+                else
+                    local payload="$exec_stmt"
+                    if [ -n "$session_prefix" ]; then
+                        payload="${session_prefix};"$'\n'"${exec_stmt}"
+                    fi
+                    if ! run_mysql_stmt "$payload" "$clean_stmt"; then
                         rm -f "$err_log"
                         return 1
                     fi
                 fi
             fi
         fi
+    fi
+
+    # 仅有 SET @、没有后续业务语句时，仍执行一次（极少见）
+    if [ -n "$session_prefix" ] && [ -z "$stmt" ]; then
+        # 若上面循环里已有业务语句执行过，这里不必再跑纯 SET；仅当文件全是 SET @ 时才需要
+        # 用简单启发：若刚读完文件且从未执行业务语句——无法廉价判断，跳过即可（SET @ 单独无副作用）
+        :
     fi
     
     rm -f "$err_log"

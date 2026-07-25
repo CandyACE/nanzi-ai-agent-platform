@@ -2,6 +2,7 @@ import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List, Optional
+from sqlalchemy.engine.url import URL
 
 class Settings(BaseSettings):
     API_SERVICE_ENV: str = "dev"
@@ -65,6 +66,26 @@ class Settings(BaseSettings):
         host_path = os.path.expanduser("~/.agents/skills")
         os.makedirs(host_path, exist_ok=True)
         return host_path
+
+    def build_mysql_url(self, driver: str = "mysql+aiomysql") -> URL:
+        """构建 SQLAlchemy MySQL URL（自动对 user/password 中的 @:#/ 等特殊字符做编码）。"""
+        return URL.create(
+            drivername=driver,
+            username=self.MYSQL_USER,
+            password=self.MYSQL_PASSWORD,
+            host=self.MYSQL_HOST,
+            port=self.MYSQL_PORT,
+            database=self.MYSQL_DB,
+        )
+
+    @property
+    def MYSQL_ASYNC_URL(self) -> URL:
+        return self.build_mysql_url("mysql+aiomysql")
+
+    @property
+    def MYSQL_SYNC_URL(self) -> str:
+        # APScheduler 等同步组件需要字符串 URL；render 时保留已编码的密码
+        return self.build_mysql_url("mysql+pymysql").render_as_string(hide_password=False)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
