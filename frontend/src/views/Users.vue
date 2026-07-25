@@ -764,9 +764,28 @@
           >
             <div
               v-if="loadingResources"
-              class="text-center py-10 text-gray-500"
+              class="flex flex-col items-center justify-center flex-1 min-h-[320px] gap-4"
             >
-              加载资源中...
+              <div class="relative">
+                <div class="w-10 h-10 rounded-full border-[3px] border-blue-100"></div>
+                <div class="absolute inset-0 w-10 h-10 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
+              </div>
+              <div class="text-center space-y-1">
+                <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
+                <p class="text-xs text-gray-400">数据资产与界面访问配置即将就绪</p>
+              </div>
+              <div class="w-full max-w-md mt-2 space-y-3 px-6 opacity-60">
+                <div class="flex gap-2">
+                  <div class="h-7 w-20 rounded-md bg-gray-100 animate-pulse"></div>
+                  <div class="h-7 w-20 rounded-md bg-gray-100 animate-pulse"></div>
+                </div>
+                <div class="space-y-2 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                  <div class="h-3 w-2/3 rounded bg-gray-200/80 animate-pulse"></div>
+                  <div class="h-3 w-full rounded bg-gray-200/70 animate-pulse"></div>
+                  <div class="h-3 w-5/6 rounded bg-gray-200/60 animate-pulse"></div>
+                  <div class="h-3 w-1/2 rounded bg-gray-200/50 animate-pulse"></div>
+                </div>
+              </div>
             </div>
             <div v-else class="flex flex-col flex-1 overflow-hidden">
               <!-- Sub Tabs -->

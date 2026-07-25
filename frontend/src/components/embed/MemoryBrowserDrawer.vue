@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const modelValue = defineModel<boolean>({ default: false })
 const keepOpenOnSelect = defineModel<boolean>('keepOpenOnSelect', { default: false })
@@ -106,9 +107,8 @@ const mountMemoryFromDetail = () => {
 const copyMemoryDetailText = async () => {
   const text = selectedMemoryDetail.value?.summary
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
+  const ok = await copyToClipboard(text)
+  if (!ok) {
     /* ignore */
   }
 }

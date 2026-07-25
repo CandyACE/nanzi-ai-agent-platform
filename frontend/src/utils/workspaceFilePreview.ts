@@ -1,4 +1,5 @@
 import axios from '@/utils/axios'
+import { copyToClipboard } from './clipboard'
 
 export type WorkspaceCanvasType = 'html' | 'code' | 'pdf' | 'csv' | 'image'
 
@@ -311,16 +312,6 @@ export async function uploadToWorkspaceDir(parentPath: string, file: File) {
 }
 
 export async function copyTextToClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  const el = document.createElement('textarea')
-  el.value = text
-  el.style.position = 'fixed'
-  el.style.opacity = '0'
-  document.body.appendChild(el)
-  el.select()
-  document.execCommand('copy')
-  document.body.removeChild(el)
+  const ok = await copyToClipboard(text)
+  if (!ok) throw new Error('copy failed')
 }

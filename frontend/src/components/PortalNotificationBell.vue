@@ -7,6 +7,7 @@ import {
   createSavedReportOpenRequest,
   publishSavedReportOpenRequest,
 } from "../utils/savedReportOpenProtocol";
+import { copyToClipboard } from "../utils/clipboard";
 
 const router = useRouter();
 const open = ref(false);
@@ -50,15 +51,15 @@ const closeDetail = () => {
 
 const copyDetailContent = async () => {
   if (!detailItem.value?.content) return;
-  try {
-    await navigator.clipboard.writeText(detailItem.value.content);
-    detailCopied.value = true;
-    setTimeout(() => {
-      detailCopied.value = false;
-    }, 2000);
-  } catch (err) {
-    console.warn("Failed to copy notification content", err);
+  const ok = await copyToClipboard(detailItem.value.content);
+  if (!ok) {
+    console.warn("Failed to copy notification content");
+    return;
   }
+  detailCopied.value = true;
+  setTimeout(() => {
+    detailCopied.value = false;
+  }, 2000);
 };
 
 const fetchUnreadCount = async () => {

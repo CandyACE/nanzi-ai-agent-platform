@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import SkillFileTree from '../components/SkillFileTree.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MarkdownIt from 'markdown-it'
+import { copyToClipboard } from '../utils/clipboard'
 
 interface Skill {
   id: string
@@ -391,14 +392,29 @@ const clearSearch = () => {
 // 复制 CLI 命令
 const copyCommand = async () => {
   const cmd = 'npx skills add https://github.com/vercel-labs/skills --skill find-skills'
-  try {
-    await navigator.clipboard.writeText(cmd)
+  const ok = await copyToClipboard(cmd)
+  if (ok) {
     commandCopied.value = true
     showToast('命令已成功复制到剪贴板！', 'success')
     setTimeout(() => {
       commandCopied.value = false
     }, 2000)
-  } catch (err) {
+  } else {
+    showToast('复制失败，请手动选择复制', 'error')
+  }
+}
+
+// 复制当前编辑器内容
+const copyEditorContent = async () => {
+  const text = editingContent.value
+  if (!text) {
+    showToast('当前文件内容为空', 'warning')
+    return
+  }
+  const ok = await copyToClipboard(text)
+  if (ok) {
+    showToast('已复制到剪贴板', 'success')
+  } else {
     showToast('复制失败，请手动选择复制', 'error')
   }
 }
@@ -1998,7 +2014,17 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 编辑区 -->
-                <div class="skill-editor-body flex-1 overflow-hidden min-h-0 flex flex-col">
+                <div class="skill-editor-body group/editor flex-1 overflow-hidden min-h-0 flex flex-col relative">
+                  <button
+                    type="button"
+                    @click="copyEditorContent"
+                    class="absolute top-1.5 right-2 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md opacity-0 group-hover/editor:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
+                    title="复制内容"
+                    aria-label="复制内容"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                  </button>
+
                   <div v-if="editorMode === 'edit'" class="skill-editor-code-pane flex-1 flex overflow-hidden min-h-0">
                     <div ref="lineNumbersRef" class="skill-editor-gutter overflow-hidden select-none">
                       <div v-for="n in lineCount" :key="n" class="skill-editor-line-num">{{ n }}</div>
@@ -2784,6 +2810,7 @@ textarea:focus {
   flex-direction: column;
   overflow: hidden;
   background: #ffffff;
+  position: relative;
 }
 
 .skill-editor-code-pane {
@@ -2814,7 +2841,7 @@ textarea:focus {
 
 .skill-editor-textarea {
   flex: 1;
-  padding: 12px 16px;
+  padding: 12px 44px 12px 16px;
   background: #ffffff;
   color: #1e293b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -2847,7 +2874,7 @@ textarea:focus {
 .skill-editor-preview {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 24px 52px 24px 32px;
   color: #1e293b;
   background: #ffffff;
 }
@@ -3058,7 +3085,7 @@ textarea:focus {
   
   .skill-editor-textarea {
     font-size: 11px !important;
-    padding: 10px !important;
+    padding: 10px 40px 10px 10px !important;
   }
   
   .skill-editor-gutter {

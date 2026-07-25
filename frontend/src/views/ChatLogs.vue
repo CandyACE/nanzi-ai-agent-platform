@@ -26,6 +26,7 @@ import {
   downloadMarkdownFile,
   type ChatTraceDetail,
 } from '@/utils/chatSessionExport'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const { showToast } = useToast()
 const { hasPermission } = useUser()
@@ -201,13 +202,17 @@ const getStatusClass = (status: string) => {
   return 'bg-gray-100 text-gray-700 border-gray-200'
 }
 
-const copyText = (text: string, label = '内容') => {
+const copyText = async (text: string, label = '内容') => {
   if (!text) {
     showToast('内容为空', 'warning')
     return
   }
-  navigator.clipboard.writeText(text)
-  showToast(`${label}已复制`, 'success')
+  const ok = await copyToClipboard(text)
+  if (ok) {
+    showToast(`${label}已复制`, 'success')
+  } else {
+    showToast('复制失败，请手动复制', 'error')
+  }
 }
 
 const formatStepPayload = (value: unknown) => {

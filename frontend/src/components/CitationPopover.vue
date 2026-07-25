@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, watch, ref } from "vue";
+import { copyToClipboard } from "../utils/clipboard";
 
 export interface CitationItem {
   id?: string | number;
@@ -39,24 +40,31 @@ const resetCopyState = () => {
   }
 };
 
+/** 弹层以 v-html 渲染，复制时转为纯文本，避免把标签写入剪贴板 */
+const toPlainText = (htmlOrText: string): string => {
+  if (!htmlOrText.includes("<")) return htmlOrText;
+  const div = document.createElement("div");
+  div.innerHTML = htmlOrText;
+  return div.textContent || htmlOrText;
+};
+
 const handleCopy = async () => {
-  const text = props.citation?.content || "";
+  const text = toPlainText(props.citation?.content || "");
   if (!text.trim()) {
     copyState.value = "error";
     copyResetTimer = setTimeout(resetCopyState, 2000);
     return;
   }
-  try {
-    await navigator.clipboard.writeText(text);
+  const ok = await copyToClipboard(text);
+  if (copyResetTimer) clearTimeout(copyResetTimer);
+  if (ok) {
     copyState.value = "success";
     emit("copy", text);
-    if (copyResetTimer) clearTimeout(copyResetTimer);
-    copyResetTimer = setTimeout(resetCopyState, 2000);
-  } catch (err) {
-    console.error("Failed to copy citation:", err);
+  } else {
+    console.error("Failed to copy citation");
     copyState.value = "error";
-    copyResetTimer = setTimeout(resetCopyState, 2000);
   }
+  copyResetTimer = setTimeout(resetCopyState, 2000);
 };
 
 const POPOVER_WIDTH = 380;

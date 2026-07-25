@@ -321,6 +321,7 @@
 	import { computed, ref, reactive, onMounted, onUnmounted } from 'vue';
     import axios from '../utils/axios';
     import { useToast } from '../composables/useToast';
+    import { copyToClipboard } from '../utils/clipboard';
 
     interface IntegrationTab {
         id: string;
@@ -668,11 +669,11 @@ const isExpanded = ref(true);
     };
 
     const copyGuideCode = async () => {
-        try {
-            await navigator.clipboard.writeText(activeIntegrationTabData.value.code);
+        const ok = await copyToClipboard(activeIntegrationTabData.value.code);
+        if (ok) {
             log(`Copied guide: ${activeIntegrationTabData.value.label}`);
             showToast('集成代码已复制到剪贴板', 'success');
-        } catch {
+        } else {
             log('Error: Copy guide failed');
             showToast('复制失败，请手动复制代码', 'error');
         }
