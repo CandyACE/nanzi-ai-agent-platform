@@ -46,6 +46,38 @@ def _trace_has_tool_call(trace_buffer: Optional[List[AgentExecutionStep]]) -> bo
     return any(getattr(step, "event_type", None) == "tool_call" for step in (trace_buffer or []))
 
 
+def _turn_status_signal(chunk: Dict[str, Any]) -> Optional[str]:
+    """把单个 SSE chunk 映射成轮次终态信号；``None`` 表示该 chunk 不影响终态。
+
+    带 ``type`` 的事件（``log`` / ``meta`` / ``retraction`` 等）只描述单步或辅助信息，
+    单步工具失败不代表整轮失败，因此除显式 error 与暂停事件外一律不参与终态判定。
+    """
+    chunk_type = str(chunk.get("type") or "")
+    if chunk_type == "permission_required":
+        return "awaiting_permission"
+    if chunk_type == "external_execution_required":
+        return "awaiting_external_execution"
+    if chunk_type == "error":
+        return "error"
+    if chunk_type:
+        return None
+    if chunk.get("status") == "error":
+        return "error"
+    if chunk.get("content"):
+        return "success"
+    return None
+
+
+def _apply_turn_status_signal(current: str, chunk: Dict[str, Any]) -> str:
+    """仅最终状态定成败：中途失败可被后续正文覆盖，等待恢复的暂停态不被正文覆盖。"""
+    signal = _turn_status_signal(chunk)
+    if signal is None:
+        return current
+    if signal == "success" and current in AWAITING_RESUME_STATUSES:
+        return current
+    return signal
+
+
 class AgentService:
     USING_SUPERPOWERS_SKILL_ID = "using-superpowers"
 
@@ -1651,12 +1683,7 @@ class AgentService:
                     route_hints,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
-                    if chunk.get("type") == "permission_required":
-                        execution_status = "awaiting_permission"
-                    elif chunk.get("type") == "external_execution_required":
-                        execution_status = "awaiting_external_execution"
-                    elif chunk.get("type") == "error" or chunk.get("status") == "error":
-                        execution_status = "error"
+                    execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
             else:
                 executor = await self._dispatch_executor(
@@ -1685,12 +1712,7 @@ class AgentService:
 
                 async for chunk in executor.execute(messages):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
-                    if chunk.get("type") == "permission_required":
-                        execution_status = "awaiting_permission"
-                    elif chunk.get("type") == "external_execution_required":
-                        execution_status = "awaiting_external_execution"
-                    elif chunk.get("type") == "error" or chunk.get("status") == "error":
-                        execution_status = "error"
+                    execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
 
                 resolve_has_data_output = getattr(executor, "resolve_has_data_output", None)
@@ -1846,13 +1868,7 @@ class AgentService:
         ):
             if "trace_id" in chunk and chunk.get("status") == "init":
                 trace_id = chunk["trace_id"]
-            chunk_type = chunk.get("type")
-            if chunk_type == "permission_required":
-                final_status = "awaiting_permission"
-            elif chunk_type == "external_execution_required":
-                final_status = "awaiting_external_execution"
-            elif chunk_type == "error" or chunk.get("status") == "error":
-                final_status = "error"
+            final_status = _apply_turn_status_signal(final_status, chunk)
             full_content = _accumulate_stream_content(full_content, chunk)
             if "agent_name" in chunk:
                 agent_name_resp = chunk["agent_name"]
@@ -1955,6 +1971,8 @@ class AgentService:
                     confirmed=confirmed,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    if confirmed:
+                        execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
         except ConversationRunBusyError:
             yield {
@@ -2195,8 +2213,7 @@ class AgentService:
                     execution_results=execution_results,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
-                    if chunk.get("status") == "error":
-                        execution_status = "error"
+                    execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
         except ConversationRunBusyError:
             yield {

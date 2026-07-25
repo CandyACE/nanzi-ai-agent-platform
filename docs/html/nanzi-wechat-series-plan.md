@@ -462,6 +462,15 @@ docs/html/
 | B02 | Grounding | `B02-grounding.html` | 深度修订 | |
 | B03 | 提示词工厂与 Trace | `B03-prompt-trace.html` | 深度修订 | |
 | B04 | 工作台与场景包 | `B04-workbench-scenarios.html` | 深度修订 | |
+| C01 | NanZi vs Dify / n8n / 扣子（盘外） | `C01-vs-dify-n8n-coze.html` | 盘外加餐定稿 | |
+
+---
+
+## 7.1 盘外加餐（不占首季 15 篇序号）
+
+| 代号 | 标题 | HTML | 说明 |
+|:---:|------|------|------|
+| C01 | NanZi vs Dify / n8n / 扣子：不是比谁更火，是比谁更贴场景 | `C01-vs-dify-n8n-coze.html` | 选型对比文；公平写清各产品主场与 NanZi 差异化（ChatBI、治理、混编引擎、运维闭环、Embed） |
 
 ---
 

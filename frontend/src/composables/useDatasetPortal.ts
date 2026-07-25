@@ -31,6 +31,7 @@ export interface DatasetPortalGroup {
     table_columns?: Record<string, DatasetPortalColumn[]>;
   }>;
   followups?: DatasetPortalQuestion[];
+  updated_at?: string;
 }
 
 export interface DatasetPortalPayload {
@@ -53,9 +54,6 @@ type ToastFn = (message: string, type?: "success" | "error" | "info") => void;
 export interface UseDatasetPortalOptions {
   getAuthHeaders: () => Record<string, string>;
   showToast: ToastFn;
-  lockToDataQueryAgentForDatasetMenu: () => Promise<boolean>;
-  /** 关闭数据门户且非「从门户发起提问」时，恢复自动路由 */
-  switchToAutoRouting?: () => void;
   onQuickQuestion: (query: string, action?: "send" | "fill") => void | Promise<void>;
   /** 是否存在可查数智能体（用于静默预加载，不要求唯一） */
   hasDataQueryAgent?: () => boolean;
@@ -84,9 +82,6 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
   const portalSilentRefreshing = ref(false);
   const portalPrefetchInFlight = ref(false);
   const hasSilentlyRefreshed = ref(false);
-  /** 打开门户时锁定了 ChatBI；关闭门户时恢复自动路由（从门户提问关闭除外） */
-  const portalLockedDataQueryAgent = ref(false);
-  let suppressPortalAutoRoutingRelease = false;
   let silentRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const storageKey = options.keepOpenStorageKey || "dataset_portal_keep_open";
@@ -296,7 +291,6 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
       clearTimeout(silentRefreshTimer);
       silentRefreshTimer = null;
     }
-    portalLockedDataQueryAgent.value = await options.lockToDataQueryAgentForDatasetMenu();
     if (!portalNavigationPayload.value) {
       await fetchPortalNavigationData();
     } else if (
@@ -311,16 +305,13 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
     await fetchPortalNavigationData(true);
   };
 
-  const closePortalDrawer = (opts?: { keepDataQueryAgent?: boolean }) => {
-    if (opts?.keepDataQueryAgent) {
-      suppressPortalAutoRoutingRelease = true;
-    }
+  const closePortalDrawer = () => {
     showPortalDrawer.value = false;
   };
 
   const handlePortalQuickQuestion = async (query: string, action?: "send" | "fill") => {
     if (action === "send" && shouldClosePortalAfterQuestion()) {
-      closePortalDrawer({ keepDataQueryAgent: true });
+      closePortalDrawer();
     }
     await options.onQuickQuestion(query, action);
   };
@@ -341,23 +332,12 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
     }
   };
 
-  const releasePortalDataQueryAgentIfNeeded = () => {
-    if (suppressPortalAutoRoutingRelease) {
-      suppressPortalAutoRoutingRelease = false;
-      return;
-    }
-    if (!portalLockedDataQueryAgent.value) return;
-    portalLockedDataQueryAgent.value = false;
-    options.switchToAutoRouting?.();
-  };
-
   watch(showPortalDrawer, (val) => {
     if (!val) {
       if (silentRefreshTimer) {
         clearTimeout(silentRefreshTimer);
         silentRefreshTimer = null;
       }
-      releasePortalDataQueryAgentIfNeeded();
     }
   });
 

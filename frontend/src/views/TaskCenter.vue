@@ -596,6 +596,26 @@ const taskHealthMeta = (task: AgentTask) => {
   return { label: '未运行', class: 'bg-gray-50 text-gray-500 border-gray-100', dot: 'bg-gray-300' }
 }
 
+const logStatusMeta = (status: string | undefined) => {
+  const value = String(status || '').toLowerCase()
+  if (value === 'success') {
+    return { label: '成功', class: 'bg-green-100 text-green-700' }
+  }
+  if (value === 'awaiting_permission') {
+    return { label: '待确认', class: 'bg-amber-100 text-amber-700' }
+  }
+  if (value === 'awaiting_external_execution') {
+    return { label: '待外部执行', class: 'bg-amber-100 text-amber-700' }
+  }
+  if (value === 'no_tool_execution') {
+    return { label: '未调用工具', class: 'bg-red-100 text-red-700' }
+  }
+  if (value === 'rejected' || value === 'denied') {
+    return { label: '已拒绝', class: 'bg-slate-100 text-slate-600' }
+  }
+  return { label: '失败', class: 'bg-red-100 text-red-700' }
+}
+
 const metricValue = (value: number | undefined) => Number(value || 0)
 
 onMounted(async () => {
@@ -1400,7 +1420,7 @@ onMounted(async () => {
             <div v-for="log in logs" :key="log.id" class="p-4 border rounded-2xl hover:border-primary/30 transition-all hover:shadow-sm bg-white overflow-hidden">
               <div class="flex justify-between items-start mb-3">
                 <div class="flex items-center space-x-2">
-                  <span class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter" :class="log.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">{{ log.status }}</span>
+                  <span class="px-2 py-0.5 rounded-full text-[9px] font-black tracking-tighter" :class="logStatusMeta(log.status).class">{{ logStatusMeta(log.status).label }}</span>
                   <span class="text-[10px] text-gray-300 font-mono">{{ log.trace_id.split('-')[0] }}...</span>
                 </div>
                 <span class="text-[10px] text-gray-400 font-medium">{{ formatDate(log.created_at) }}</span>

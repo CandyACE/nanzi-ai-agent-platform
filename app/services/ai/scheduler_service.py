@@ -30,6 +30,7 @@ NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
 TASK_RUN_CONVERSATION_SUFFIX_LEN = len("_run_") + 12
 MAX_CONVERSATION_ID_LEN = 50
 INCOMPLETE_TASK_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
+FAILED_TASK_STATUSES = frozenset({"error"})
 TASK_METRICS_KEY = "task_metrics"
 TASK_METRIC_DEFAULTS = {
     "trigger_count": 0,
@@ -212,9 +213,15 @@ def _is_no_tool_execution_result(result: Dict[str, Any]) -> bool:
 
 
 def _is_incomplete_task_result(result: Dict[str, Any]) -> bool:
+    """本次运行是否未成功交付。
+
+    只看整轮最终状态：中途某一步工具失败但最终产出了结果的运行仍算成功，
+    与执行历史里记录的整轮状态保持同一口径。
+    """
     status = str((result or {}).get("status") or "").lower()
     return (
         status in INCOMPLETE_TASK_STATUSES
+        or status in FAILED_TASK_STATUSES
         or _is_busy_task_result(result)
         or _is_no_tool_execution_result(result)
     )
