@@ -51,7 +51,7 @@ CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 CO
 
 无论采用何种选项，脚本均会以交互式方式提示您依次输入数据库的 Host、Port、User、Password 及数据库名，核对配置信息并输入 **`YES`** 二次确认后即可安全导入。
 
-> 💡 **幂等性说明**：脚本具备幂等性（Idempotency），如果某些表或字段已经存在，脚本会自动跳过，因此可以在后续版本升级时安全地重复运行。
+> 💡 **幂等性说明**：脚本具备幂等性（Idempotency），如果某些表、字段或索引已经存在，脚本会自动跳过。重复执行时日志里可能出现 `幂等跳过（可忽略…）` 并附带 MySQL 的 `ERROR 1050/1060/1061…` 字样——这只是被吞掉的“已存在”提示，**不是失败**。只有出现 `❌ 执行失败（非幂等可忽略错误，需处理）` 才需要排查。
 
 ---
 
@@ -83,15 +83,18 @@ CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 CO
 **原因**：在使用 `./db-prod/apply-sql.sh` 时，未在 Python 虚拟环境中安装所需的依赖。
 **解决**：您可以按提示执行 `pip install -r requirements.txt` 安装相关依赖；或者，如果您不想配置 Python，可直接运行免 Python 依赖的 `./db-prod/apply-sql-native.sh` 原生脚本进行导入。
 
-### Q2: 提示 `Skipping (already applied): ...` 报错
-**原因**：这是因为迁移脚本具有幂等性设计。由于数据库中已经存在对应的表或字段，系统为了避免覆盖已有数据，主动跳过了该执行步骤。这是**正常现象**，无需处理。
+### Q2: 提示 `幂等跳过（可忽略…）` / 旧版 `Skipping (already applied)`，里面还有 `ERROR 1061` 等字样
+**原因**：迁移脚本具有幂等性设计。表/字段/索引已存在时，MySQL 会返回对应错误码，脚本识别后主动跳过，避免覆盖已有结构。日志里的 `ERROR …` 是 MySQL 原始提示被引用展示，**不代表本次导入失败**。
+**处理**：无需处理。只有日志出现 `❌ 执行失败（非幂等可忽略错误，需处理）` 时才需要排查。
 
 ### Q3: 如何自定义创建新的管理员？
-如果不希望使用默认 the `INIT-USER-ADMIN.sql` 配置，可在系统部署完成后通过命令行直接生成：
+如果不希望使用默认的 `INIT-USER-ADMIN.sql`（或已修改 `ENCRYPTION_KEY`），可在配置好 `.env` 后通过命令行按**当前密钥**生成：
 ```bash
-export PYTHONPATH=$PYTHONPATH:.
-./venv/bin/python scripts/create_admin_key.py <username>
+export PYTHONPATH=.
+./venv/bin/python scripts/create_admin_user.py
+# 或指定用户名：./venv/bin/python scripts/create_admin_key.py <username>
 ```
+若提示 admin 已存在，先执行 `DELETE FROM ai_agent_users WHERE user_name = 'admin';` 再重跑。终端会打印仅此一次的 API Key，请立即保存。
 
 ---
 ⚠️ **安全提示**：在任何生产环境执行数据库结构变更前，请务必提前备份您的数据！

@@ -13,8 +13,7 @@ from app.core.config import settings
 
 async def main():
     print("Connecting to DB...")
-    database_uri = f"mysql+aiomysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DB}"
-    engine = create_async_engine(database_uri, echo=False)
+    engine = create_async_engine(settings.MYSQL_ASYNC_URL, echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:

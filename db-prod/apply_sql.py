@@ -209,10 +209,10 @@ async def apply_sql(file_path, config):
                         print(f"   -> Affected rows: {cur.rowcount}")
                     except Exception as sqle:
                         err_code = getattr(sqle, "args", [0])[0]
-                        if err_code in (1007, 1050, 1060, 1061, 1062, 1091):
-                            print(f"   -> Skipping (already applied): {sqle}")
+                        if err_code in (1007, 1050, 1054, 1060, 1061, 1062, 1091):
+                            print(f"   -> 幂等跳过（可忽略，对象已存在/已变更）: {sqle}")
                         else:
-                            print(f"❌ Error executing statement #{i + 1}:\n{stmt[:100]}...\nError: {sqle}")
+                            print(f"❌ 执行失败（非幂等可忽略错误，需处理） #{i + 1}:\n{stmt[:100]}...\nError: {sqle}")
                             sys.exit(1)
 
             await conn.commit()

@@ -121,6 +121,29 @@
         vim .env
         ```
         *注：因容器是网络隔离的沙箱，`MYSQL_HOST` 与 `REDIS_HOST` 严禁配置为 `localhost` 或 `127.0.0.1`，必须设置为宿主机的局域网 IP（在 Mac 系统上可通过 `ipconfig getifaddr en0` 查询，或使用 `host.docker.internal`）。*
+        *   **`ENCRYPTION_KEY`（必填）**：用户 API Key 的 Fernet 对称加密密钥（用于加密入库 / 后台解密查看）。`env.example` 已提供默认值，与 `db-prod/INIT-USER-ADMIN.sql` 预置的 admin 密文配套——**保持该默认值时**，导入初始化脚本后可用文档中的默认 API Key 登录。**若您修改了 `ENCRYPTION_KEY`，则不能再依赖该预置 admin，必须按当前密钥重新创建管理员**（见下方「如何创建 / 重建 admin」）。生成新密钥示例：
+            ```bash
+            python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+            ```
+
+        ##### 如何创建 / 重建 admin 
+        *   **方式 A（默认密钥）**：`.env` 中 `ENCRYPTION_KEY` 仍为 `env.example` 默认值时，导入预置脚本即可：
+            ```bash
+            ./db-prod/apply-sql-native.sh db-prod/INIT-USER-ADMIN.sql
+            # 或：./db-prod/apply-sql.sh db-prod/INIT-USER-ADMIN.sql
+            ```
+            登录使用文档「首次登录指引」中的默认 API Key。
+        *   **方式 B（已修改 ENCRYPTION_KEY，推荐）**：用当前 `.env` 里的密钥现场生成管理员（密文与密钥一致）：
+            ```bash
+            # 若库中已有旧 admin，先删除再创建
+            # mysql ... -e "DELETE FROM ai_agent_users WHERE user_name = 'admin';"
+
+            source venv/bin/activate   # 或 .venv
+            export PYTHONPATH=.
+            python scripts/create_admin_user.py
+            # 也可指定用户名：python scripts/create_admin_key.py <username>
+            ```
+            终端会打印**仅此一次**的 API Key，请立即保存并用该 Key 登录。
 
     *   **检查与修改 Docker Compose 编排文件（[docker-compose.ai-agent.yml](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/docker/docker-compose.ai-agent.yml)）**：
         在启动前，您可以根据实际运行环境修改该配置文件：
@@ -155,6 +178,7 @@
     
     # 在项目根目录下，拷贝并配置本地 .env 文件
     cp env.example .env
+    # 编辑 .env：至少配置 MySQL、Redis；ENCRYPTION_KEY 若改动默认值，需重新创建 admin（见上文说明）
     
     # 启动后端 Uvicorn 调试服务
     uvicorn app.main:app --reload --port 8001
@@ -177,9 +201,10 @@
 
 ### 🔑 首次登录指引
 1.  南孜系统后台默认采用 **仅 API Key 认证** 的安全规则。
-2.  若您在初始化阶段执行过 `db-prod/INIT-USER-ADMIN.sql` 脚本，平台会预置以下默认管理员凭证：
+2.  若您在初始化阶段执行过 `db-prod/INIT-USER-ADMIN.sql` 脚本，且 `.env` 中的 `ENCRYPTION_KEY` **仍为 `env.example` 默认值**，平台会预置以下默认管理员凭证：
     *   **默认用户名**：`admin`
     *   **默认管理员 API Key**：`5BYfsKWhU_Cfx83cuo8E0kd4AtEhlUHDVlKwwR2kN-c`
+    *   若您已修改 `ENCRYPTION_KEY`，请**不要**使用上述默认 Key，应重新创建管理员并使用新生成的 API Key。
 3.  在登录框中粘贴上述 API Key 即可登录后台。
 4.  **安全提示**：由于默认管理员 API Key 是固定的，首次登录成功后，请务必立即前往**【用户管理】**或【个人中心】，为 `admin` 用户**自主设置登录密码**。系统此后将全面启用安全级别的身份校验。
 
@@ -216,3 +241,16 @@
 ### Q3: 运行表初始化脚本时报错 `ModuleNotFoundError: No module named 'aiomysql'`
 *   **原因**：未激活 Python 虚拟环境，或未在此虚拟环境下正确运行依赖安装。
 *   **解决**：必须先在根目录下激活虚拟环境（`source venv/bin/activate`），运行 `pip install -r requirements.txt`，确保依赖库齐备后再执行部署脚本。
+
+### Q4: 改了 `ENCRYPTION_KEY` 后，默认 admin API Key 登录失败 / 后台解不开 Key
+*   **原因**：`env.example` 的默认 `ENCRYPTION_KEY` 与 `INIT-USER-ADMIN.sql` 里预置的 admin 密文是一对的。改了密钥后，预置密文无法再用新密钥解密，默认 API Key 也就不可用。
+*   **解决**：不要再跑 `INIT-USER-ADMIN.sql` 指望默认 Key；按当前 `.env` 重新创建管理员：
+    ```bash
+    # 可选：清掉旧 admin
+    # DELETE FROM ai_agent_users WHERE user_name = 'admin';
+
+    source venv/bin/activate
+    export PYTHONPATH=.
+    python scripts/create_admin_user.py
+    ```
+    保存终端输出的新 API Key 后登录。若希望继续用初始化脚本里的默认 admin，请将 `ENCRYPTION_KEY` 保持为 `env.example` 中的默认值。
