@@ -1,0 +1,322 @@
+<!--
+  微信公众号排版 HTML — NanZi 盘外加餐 · C01（克制配色版）
+  系列：《NanZi 开源智能体平台实战连载》盘外篇
+  说明：版式与 C01-vs-dify-n8n-coze.html 同源（标题卡、内容卡、左边条）；
+        配色去掉紫/翠绿/青/橙分色「AI 味」，统一石板灰 + 墨色点缀。
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式（或 135/秀米）
+  2. 【配图】占位请换成素材库图片
+  3. 全部内联 style，勿依赖外部 CSS/JS
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区：深石板，不用翠绿渐变 -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:#1c1917;border-radius:10px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#a8a29e;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台 · 盘外加餐</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#fafaf9;line-height:1.55;letter-spacing:1px;">NanZi vs Dify / n8n / 扣子</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#d6d3d1;line-height:1.6;letter-spacing:0.5px;">不是比谁更火，而是比谁更适合你的企业场景</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      「NanZi」来自我一直使用的网名（南孜），取「孜孜不倦」之意。仓库：
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      做企业智能体选型时，同事常会问同一句：<strong>「你们跟 Dify、n8n、扣子（Coze）比，差在哪？强在哪？」</strong>
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      这四个产品其实不在同一条赛道上——有的偏 LLM 应用编排，有的偏自动化工作流，有的偏 C 端 Bot 与渠道分发，NanZi 则更接近<strong>企业级多智能体编排中枢</strong>：对话只是入口；内置<strong>通用 / 企业级 ChatBI / 知识库</strong>三类专属智能体引擎，再叠权限、审计、调度与嵌入，才是主干。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      本篇是连载<strong>盘外加餐</strong>：不黑同行、不堆功能清单，只帮你把「选什么」想清楚。读完应能回答：我的团队更像哪种买家；NanZi 真正拉开差距的能力在哪几块。
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>一句话结论：</strong>要快速搭 Bot / 工作流 / 渠道分发，Dify、n8n、扣子各自很强；若目标是<strong>私有化落地 + 通用/ChatBI/知识库三类专属引擎 + 权限/审计/嵌入业务系统</strong>，NanZi 的产品形状会更贴。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 一句话画像 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">01｜先对齐：四个产品各自是什么</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">NanZi · 企业智能体编排中枢</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      开源（MIT）、可私有化部署。本地 AI 跑在 <strong>AgentScope ReAct</strong> 上，并<strong>内置三类专属智能体引擎</strong>：通用智能体（工具链 / 写作 / 通知 / 任务）、企业级 <strong>ChatBI</strong>（元数据、SQL 护栏、自愈、数据门户、黄金报表）、知识库专属智能体（授权检索、引用与 Grounding）。还可混编 RAGFlow / OpenClaw 等外部引擎；再加上 MCP / Skills、调度通知、Embed / V1 API，以及贯穿全链路的 RBAC、工作区隔离、工具审批与 Token 额度。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">Dify · LLM 应用与工作流平台</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      面向「把大模型做成应用」：Chatbot、Agent、Workflow、知识库、插件市场。上手快、可视化强、社区与模板丰富，适合产品/研发快速验证对话应用与 RAG。企业侧可自托管，但核心叙事仍是<strong>LLM App 工厂</strong>，不是专为经营问数与数据治理打磨的中枢。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">n8n · 自动化工作流引擎</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      更接近「开源版 Zapier」：节点多、集成广、定时与事件驱动一流。适合把 API、数据库、消息系统串成流水线。近年也接 LLM，但基因是<strong>流程自动化</strong>——对话式多智能体、企业问数护栏、专家路由，不是它的主战场。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">扣子 Coze · Bot 创作与渠道分发</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      字节系产品，强项是<strong>低门槛搭 Bot + 多渠道发布</strong>（抖音、飞书等生态友好）。适合运营/产品快速做出可发布助手。企业私有化、复杂数仓权限、深度二次开发与审计，通常不是其首要设计目标；数据与能力边界也更依赖平台侧策略。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;">
+      【配图建议：四象限——横轴「对话/工作流」纵轴「消费级/企业治理」，把四者点在不同位置】
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 维度对比 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">02｜六个维度对照（选型用）</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      下面用「更适合 / 够用 / 非主场」定性，避免假精确打分。真实项目还要看团队栈、合规、已有资产。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">① 核心定位</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>NanZi</strong>：通用 / ChatBI / 知识库三类专属引擎 + 编排治理与嵌入</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Dify</strong>：LLM 应用 / Agent / Workflow 工厂</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>n8n</strong>：跨系统自动化编排</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>扣子</strong>：Bot 创作与渠道分发</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">② 企业问数（Text-to-SQL）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>NanZi</strong>：原生强项——元数据 / Schema 门禁 / SQL Gate / 自愈 / sql_plan / 数据门户 / 黄金报表订阅</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Dify</strong>：可接工具与工作流拼查数，深度护栏与连续分析需自建</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>n8n</strong>：适合固定 SQL/API 流水线，不适合自然语言多轮经营分析</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>扣子</strong>：可接插件查数，企业口径治理与私有数仓深度一般非主场景</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">③ 权限 · 隔离 · 审计</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>NanZi</strong>：RBAC（系统/资源/菜单元素）+ 用户工作区隔离 + 工具审批/黑名单 + Skills/API 白名单 + Trace / Grounding + Token 额度</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Dify</strong>：工作区与权限可用，偏应用级；数据行级、SQL 硬门禁需自行补齐</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>n8n</strong>：凭据与工作流权限成熟，对话侧「人-数据-工具」细粒度治理非主叙事</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>扣子</strong>：平台账号体系为主，私有化细粒度治理取决于部署形态</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">④ 编排形态</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>NanZi</strong>：意图路由 / @专家 / 多专家合成；本地 ReAct + 外部引擎混编；主助手委派</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Dify</strong>：可视化 Workflow + Agent 节点，编排体验优秀</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>n8n</strong>：节点图编排王者，适合确定性流程</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>扣子</strong>：工作流 + 插件 + 多 Agent，面向 Bot 场景友好</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">⑤ 嵌入业务系统 / 运维闭环</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>NanZi</strong>：Embed SDK（postMessage）+ V1 API；Cron 任务中心；站内信 / 钉钉 / 企微 / 邮件；场景模板与工作台</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Dify</strong>：API / 嵌入可用，企业门户与报表订阅需二次拼装</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>n8n</strong>：Webhook / 调度极强，聊天 UI 与专家工作室需另搭</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>扣子</strong>：渠道分发强；嵌进自有 ERP/BI 门户通常要额外适配</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">⑥ 部署与数据主权</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>NanZi</strong>：个人开源 MIT，Docker / 源码私有化；依赖 MySQL + Redis Stack + 自备 LLM</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Dify</strong>：开源自托管成熟，也有云服务；社区活跃</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>n8n</strong>：开源自托管友好；企业版另有商业能力</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>扣子</strong>：以平台服务为主；企业版/私有化需按官方方案评估</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 NanZi 优势 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">03｜NanZi 真正拉开差距的五件事</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      别人也能「接个数据库工具让模型写 SQL」。NanZi 的差异不在「能不能查」，而在<strong>查得是否可控、能否进入日常经营节奏</strong>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">① 企业 ChatBI 是一等公民，不是插件</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      从元数据与案例 Few-Shot，到 Schema 授权、SQL Gate、空结果诊断与自动修复、结构化 sql_plan 卡片，再到数据门户、业务简报、黄金报表钉选与订阅——这是一整条<strong>问数交付链</strong>，不是对话框里挂一个「execute_sql」。
+    </p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;">
+      业务同学问「本月华东签单同比」，要的是可信数字、可下钻、可订阅，而不是一次抽奖式生成 SQL。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">② 治理写进运行时，而不是写进提示词</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      「请遵守权限」这句话挡不住越权。NanZi 把 RBAC、数据集授权、工具 permission_scope / 审批、用户级禁止工具与命令、工作区文件系统隔离、Token 额度，做成<strong>运行时闸门</strong>；Grounding 再给对话侧补一层证据账本。
+    </p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;">
+      企业落地时，往往是权限与隔离先卡住，而不是模型选哪家。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">③ 三类内置引擎 + 可混编外部大脑</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      本地不只「通用 Agent」：产品主类型就是 <strong>GENERAL / CHATBI / KNOWLEDGE_BASE</strong> 三条专属引擎，各自带就绪门禁与能力面，统一跑在 AgentScope 上。已有 RAGFlow 资产可挂托管 Agent；需要安全网关与数据集 ACL 时可走 OpenClaw——<strong>统一入口、统一鉴权叙事，内置专家 + 外部引擎可混编</strong>。这不是「再做一个 Agent 页面」，而是编排中枢。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">④ 工具 · Skill · 调度 · 通知拧成一条运维闭环</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      工具是手，Skill 是打法，调度是班车，通知是喊人。NanZi 内置办公文档、MCP、个人/平台 Skills、APScheduler 任务中心、四通道通知，让「早报、巡检、黄金报表告警」可以<strong>无人值守</strong>，而不是每次人工打开对话框。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">⑤ 嵌进现有系统，而不是逼业务搬家</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      Embed Chat SDK 用 postMessage 握手，对接现有鉴权与租户；V1 API 给服务端编排。助手长在 ERP、数据门户、知识库旁边，而不是再开一个「只有 AI 自己的世界」。
+    </p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;">
+      系列金句：会聊天只是起点；会查数、可审计、嵌得进业务，才是企业智能体。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;">
+      【配图建议：一张能力地图——对话编排 / ChatBI / 知识 / MCP·Skills / 调度通知 / Embed，圈出相对竞品的「深水区」】
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 怎么选 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">04｜怎么选：诚实决策树</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">更建议选 NanZi，如果你……</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· 核心痛点是<strong>经营问数 / 制度问答 / 多专家协同</strong>，而不是先做一个营销 Bot</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· 必须<strong>私有化</strong>，数据、权限、审计要握在自己手里</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· 已经有（或计划有）数仓 / 业务库，需要 Schema 门禁与 SQL 护栏</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· 要把助手<strong>嵌进现有业务页</strong>，并接受开源二次开发</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">· 需要定时简报、报表订阅、钉钉/企微通知这类运维闭环</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">更建议选 Dify，如果你……</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      要快速搭 LLM 应用与可视化工作流、重度依赖社区模板与插件生态、团队以「做对话产品」为主、问数深度可以后补。Dify 在 LLM App 工厂这条路上非常成熟——NanZi 并不试图在「拖拽工作流编辑器」上硬刚。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">更建议选 n8n，如果你……</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      主需求是<strong>系统间自动化</strong>（同步、审批流、告警管道），对话只是偶发一环。很多团队甚至会：n8n 跑确定性流程，NanZi / Dify 扛智能对话——它们可以互补，而不是互斥。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background-color:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">更建议选扣子，如果你……</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      要快速做出可在抖音 / 飞书等渠道发布的 Bot，运营同学要低代码上手，且能接受平台侧能力与合规边界。面向 C 端增长与内容生态，扣子往往更「开箱即用」。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 边界 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">05｜NanZi 的边界（也写清楚）</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>不是免运维 SaaS</strong>：需要 MySQL、Redis Stack、自备 LLM；知识库 / 部分 ChatBI 链路常依赖 RAGFlow。<br/>
+      · <strong>不是纯拖拽工作流 IDE</strong>：编排重心在专家路由、工具与 Skill，复杂确定性流水线可交给 n8n。<br/>
+      · <strong>ChatBI 上限看元数据质量</strong>：护栏防越权与胡写 SQL，不替你补错口径。<br/>
+      · <strong>Grounding 降低无依据胡说，不承诺零幻觉</strong>。<br/>
+      · <strong>个人开源</strong>：适合学习、二次开发与私有化试点；商业 SLA / 大规模多租户要自己评估运维能力。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      能力边界写清楚，比堆砌「全面超越」更涨信任——这也是连载一贯的写法。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06 收束 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">06｜收束：编排智能，连接数据</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      Dify 擅长把模型做成应用；n8n 擅长把系统连成流水线；扣子擅长把 Bot 发到渠道；NanZi 想做的是：在企业墙内，把<strong>数据、专家、工具、权限、调度</strong>编排成可审计的智能中枢。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      选型没有唯一正确答案。若你的下一句话是「我们要周末把助手跑起来，先查清本月经营数，再嵌进门户」，欢迎从仓库与实战连载起步。
+    </p>
+    <p style="margin:0;padding:12px 14px;background:#f5f5f4;border-radius:8px;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>Connect Data. Orchestrate Intelligence.</strong><br/>
+      工具是手，Skill 是打法，调度是班车，Embed 是工位。
+    </p>
+  </section>
+
+  <!-- 下期 / CTA -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;">接着看实战连载</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;">
+      本篇为<strong>盘外加餐</strong>。要动手落地，建议从系列首篇读起：
+    </p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;line-height:1.75;">· <strong>A01</strong> 企业级智能体平台长什么样？（架构与治理）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;line-height:1.75;">· <strong>A02</strong> 从零装上 NanZi</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;line-height:1.75;">· <strong>A04</strong> 深入 ChatBI：自然语言到可信 SQL</p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.75;">· <strong>A11</strong> Embed SDK 与 V1 API：嵌进业务系统</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 16px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.8;">
+      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;">GitHub · RandyChen1985/nanzi-ai-agent-platform</a>
+      · 觉得有用，欢迎 Star；选型讨论与 Issue 也欢迎砸过来。
+    </p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 盘外加餐 · C01 · 克制配色版</p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#9ca3af;">不是比谁更火，是比谁更贴你的场景。</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">点个「在看」，转给正在做智能体选型的同事</p>
+  </section>
+
+</section>

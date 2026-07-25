@@ -80,6 +80,10 @@ def test_incomplete_task_result_detects_pending_and_busy_states():
         "status": "error",
         "content": "自动任务未实际调用任何工具，本次只产生了模型回复。",
     })
+    assert _is_incomplete_task_result({
+        "status": "error",
+        "content": "模型调用失败",
+    })
     assert not _is_incomplete_task_result({
         "status": "success",
         "content": "执行完成",
