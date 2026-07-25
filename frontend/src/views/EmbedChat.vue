@@ -4049,17 +4049,6 @@ const findUniqueDataQueryAgent = () => {
 
 const hasDataQueryAgent = () => listDataQueryAgents().length > 0;
 
-const lockToDataQueryAgentForDatasetMenu = async (): Promise<boolean> => {
-    if (isUrlAgentPinned.value) {
-      return agentHasCapability("data_query");
-    }
-    await fetchAllowedAgents();
-    const dataQueryAgent = findUniqueDataQueryAgent();
-    if (!dataQueryAgent) return false;
-    handleSwitchMode(dataQueryAgent);
-    return true;
-};
-
 const handleReorderCommands = async (reorderData: any[]) => {
     try {
         await axios.post("/api/portal/slash-commands/reorder", { items: reorderData });
@@ -4907,7 +4896,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   showReportRunModal.value = false;
 
   if (showPortalDrawer.value && !portalKeepOpenOnQuestion.value) {
-    closePortalDrawer({ keepDataQueryAgent: true });
+    closePortalDrawer();
   }
 
   isProcessing.value = true;
@@ -6291,8 +6280,6 @@ const {
 } = useDatasetPortal({
   getAuthHeaders: () => embedAuthHeaders() || {},
   showToast,
-  lockToDataQueryAgentForDatasetMenu,
-  switchToAutoRouting: switchToAuto,
   onQuickQuestion: handleQuickQuestion,
   hasDataQueryAgent,
   keepOpenStorageKey: "embed_portal_keep_open",
@@ -6352,12 +6339,6 @@ const openKnowledgePortal = async () => {
     return;
   }
   await rawOpenKnowledgePortal();
-  if (isUrlAgentPinned.value) return;
-  const kbExpert = resolveKnowledgeExpertAgent();
-  if (kbExpert) {
-    config.overrideAgentId = "";
-    switchToExpert(kbExpert.id);
-  }
 };
 
 watch(showPortalDrawer, (val) => {
@@ -6365,18 +6346,6 @@ watch(showPortalDrawer, (val) => {
     closeKnowledgePortal();
   } else {
     stopPortalLoadingTips();
-  }
-});
-
-watch(showKnowledgePortal, (val) => {
-  if (!val) {
-    // 只有在未打开数据门户的情况下，关闭知识库中心才退回到自动路由
-    if (!showPortalDrawer.value && !isUrlAgentPinned.value) {
-      config.routingMode = "auto";
-      config.expertAgentId = "";
-      saveRoutingSettings();
-      showToast("已切换为自动路由模式", "success");
-    }
   }
 });
 

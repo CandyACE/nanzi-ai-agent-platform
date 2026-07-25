@@ -950,7 +950,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   showReportRunModal.value = false;
 
   if (showPortalDrawer.value && !portalKeepOpenOnQuestion.value) {
-    closePortalDrawer({ keepDataQueryAgent: true });
+    closePortalDrawer();
   }
 
   isProcessing.value = true;
@@ -1962,16 +1962,6 @@ const findUniqueDataQueryAgent = () => {
 
 const hasDataQueryAgent = () => listDataQueryAgents().length > 0;
 
-const lockToDataQueryAgentForDatasetMenu = async (): Promise<boolean> => {
-  if (!agents.value.length) {
-    await fetchAgents();
-  }
-  const dataQueryAgent = findUniqueDataQueryAgent();
-  if (!dataQueryAgent) return false;
-  handleSwitchMode(dataQueryAgent);
-  return true;
-};
-
 const openImagePreview = (url: string) => {
   window.open(url, "_blank");
 };
@@ -2239,11 +2229,6 @@ const {
 } = useDatasetPortal({
   getAuthHeaders: () => debugAuthHeaders() || {},
   showToast,
-  lockToDataQueryAgentForDatasetMenu,
-  switchToAutoRouting: () => {
-    debugMode.value = "auto";
-    agentParams.agent_id = null;
-  },
   onQuickQuestion: handleQuickQuestion,
   hasDataQueryAgent,
   keepOpenStorageKey: "debug_portal_keep_open",
@@ -2400,26 +2385,11 @@ const {
 
 const openKnowledgePortal = async () => {
   await rawOpenKnowledgePortal();
-  const kbExpert = resolveKnowledgeExpertAgent();
-  if (kbExpert) {
-    debugMode.value = 'specific';
-    agentParams.agent_id = kbExpert.id;
-  }
 };
 
 watch(showPortalDrawer, (val) => {
   if (val) {
     closeKnowledgePortal();
-  }
-});
-
-watch(showKnowledgePortal, (val) => {
-  if (!val) {
-    // 只有在未打开数据门户的情况下，关闭知识库中心才退回到自动路由
-    if (!showPortalDrawer.value) {
-      debugMode.value = "auto";
-      agentParams.agent_id = null;
-    }
   }
 });
 

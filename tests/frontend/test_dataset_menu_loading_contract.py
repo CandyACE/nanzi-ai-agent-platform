@@ -20,11 +20,12 @@ def _assert_embed_portal_contract(source: str) -> None:
     assert "await openPortalDrawer();" in source
     assert "DatasetCapabilityMenu" in source
     assert "datasetNavigation?: DatasetNavigationPayload;" in source
-    assert "lockToDataQueryAgentForDatasetMenu" in source
     assert "findUniqueDataQueryAgent" in source
     assert "matches.length === 1" in source
     assert "listKnowledgeExpertAgents" in source
     assert "resolveKnowledgeExpertAgent" in source
+    assert "lockToDataQueryAgentForDatasetMenu" not in source
+    assert "switchToAutoRouting" not in source
     assert "capabilities.includes(\"knowledge_base\")" in source
     assert "capabilities.includes(\"data_query\")" in source
     assert "refreshDatasetMenuNavigation" in source
@@ -34,6 +35,8 @@ def _assert_embed_portal_contract(source: str) -> None:
     assert "embed_portal_keep_open" in source
     assert "onPortalLoadingChange" in source
     assert "applyPortalViewportLayout" in _source("frontend/src/composables/useDatasetPortal.ts")
+    assert "lockToDataQueryAgentForDatasetMenu" not in _source("frontend/src/composables/useDatasetPortal.ts")
+    assert "switchToAutoRouting" not in _source("frontend/src/composables/useDatasetPortal.ts")
 
 
 def _assert_agent_debug_portal_contract(source: str) -> None:
@@ -44,11 +47,12 @@ def _assert_agent_debug_portal_contract(source: str) -> None:
     assert "await openPortalDrawer();" in source
     assert "DatasetCapabilityMenu" in source
     assert "datasetNavigation?: DatasetNavigationPayload;" in source
-    assert "lockToDataQueryAgentForDatasetMenu" in source
     assert "findUniqueDataQueryAgent" in source
     assert "matches.length === 1" in source
     assert "listKnowledgeExpertAgents" in source
     assert "resolveKnowledgeExpertAgent" in source
+    assert "lockToDataQueryAgentForDatasetMenu" not in source
+    assert "switchToAutoRouting" not in source
     assert "refreshDatasetMenuNavigation" in source
     assert "recordPortalQuestionClick" in source
 
