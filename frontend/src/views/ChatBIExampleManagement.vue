@@ -21,15 +21,16 @@ import {
   DocumentDuplicateIcon,
   MagnifyingGlassIcon
 } from "@heroicons/vue/24/outline";
+import { copyToClipboard as copyText } from "../utils/clipboard";
 
 const { hasPermission } = useUser();
 const { showToast } = useToast();
 
 const copyToClipboard = async (text: string) => {
-  try {
-    await navigator.clipboard.writeText(text);
+  const ok = await copyText(text);
+  if (ok) {
     showToast("已复制到剪贴板", "success");
-  } catch (err) {
+  } else {
     showToast("复制失败", "error");
   }
 };

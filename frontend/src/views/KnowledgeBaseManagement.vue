@@ -5,6 +5,7 @@ import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
+import { copyToClipboard as copyText } from '../utils/clipboard'
 
 type KnowledgeBase = {
   id: string
@@ -1062,9 +1063,13 @@ const parseSingleDocument = async (docId: string) => {
   }
 }
 
-const copyToClipboard = (text: string) => {
-  navigator.clipboard.writeText(text)
-  showToast('已复制到剪贴板', 'success')
+const copyToClipboard = async (text: string) => {
+  const ok = await copyText(text)
+  if (ok) {
+    showToast('已复制到剪贴板', 'success')
+  } else {
+    showToast('复制失败，请手动复制', 'error')
+  }
 }
 
 const formatTime = (value?: string) => value ? new Date(value).toLocaleString() : '-'

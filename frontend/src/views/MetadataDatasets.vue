@@ -10,6 +10,7 @@ import RowFilterOptionSelect from '../components/metadata/RowFilterOptionSelect.
 import PermissionVariableMenu from '../components/metadata/PermissionVariableMenu.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
+import { copyToClipboard } from '../utils/clipboard'
 
 const { isAdmin, hasPermission } = useUser()
 
@@ -212,10 +213,10 @@ const syncVisualToJson = () => {
 
 // 复制JSON到剪贴板
 const copyJSON = async () => {
-  try {
-    await navigator.clipboard.writeText(jsonEditorContent.value)
+  const ok = await copyToClipboard(jsonEditorContent.value)
+  if (ok) {
     showToast('JSON配置已复制到剪贴板', 'success')
-  } catch (e) {
+  } else {
     showToast('复制失败，请手动复制', 'error')
   }
 }

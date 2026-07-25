@@ -2595,6 +2595,7 @@ import { applyAgentHandoffEvent } from "@/utils/agentHandoff";
 import KnowledgePortalDrawer from "@/components/knowledge/KnowledgePortalDrawer.vue";
 import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
 import CitationPopover from "@/components/CitationPopover.vue";
+import { copyToClipboard as copyTextSecure } from "@/utils/clipboard";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import ConfirmModal from "@/components/ConfirmModal.vue";
@@ -4183,16 +4184,16 @@ const groupedHistoryList = computed(() => groupChatHistoryByDate(aggregatedHisto
 const copiedId = ref("");
 const copyToClipboard = async (text: string, id?: string) => {
   if (!text) return;
-  try {
-    await navigator.clipboard.writeText(text);
-    if (id) {
-      copiedId.value = id;
-      setTimeout(() => {
-        if (copiedId.value === id) copiedId.value = "";
-      }, 2000);
-    }
-  } catch (err) {
-    console.error('Failed to copy:', err);
+  const ok = await copyTextSecure(text);
+  if (!ok) {
+    console.error('Failed to copy');
+    return;
+  }
+  if (id) {
+    copiedId.value = id;
+    setTimeout(() => {
+      if (copiedId.value === id) copiedId.value = "";
+    }, 2000);
   }
 };
 const fetchHistory = async (isLoadMore = false) => {
@@ -5882,32 +5883,15 @@ const setColor = (color: string) => {
   applyTheme(config.theme, { "--primary-color": color });
 };
 // --- Actions ---
-const copyMessage = (content: string) => {
+const copyMessage = async (content: string) => {
   if (!content) return;
-  if (!navigator.clipboard) {
-    const textArea = document.createElement("textarea");
-    textArea.value = content;
-    document.body.appendChild(textArea);
-    textArea.select();
-    try {
-      document.execCommand("copy");
-      showToast("已复制到剪贴板", "success");
-    } catch (err) {
-      console.error("Fallback: Oops, unable to copy", err);
-      showToast("复制失败，请手动复制", "error");
-    }
-    document.body.removeChild(textArea);
-    return;
+  const ok = await copyTextSecure(content);
+  if (ok) {
+    showToast("已复制到剪贴板", "success");
+  } else {
+    console.error("Failed to copy");
+    showToast("复制失败，请手动复制", "error");
   }
-  navigator.clipboard
-    .writeText(content)
-    .then(() => {
-      showToast("已复制到剪贴板", "success");
-    })
-    .catch((err) => {
-      console.error("Failed to copy:", err);
-      showToast("复制失败，请手动复制", "error");
-    });
 };
 
 const exportData = async (traceId: string, format = 'xlsx') => {

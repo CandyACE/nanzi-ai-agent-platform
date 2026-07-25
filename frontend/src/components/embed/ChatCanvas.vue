@@ -7,6 +7,7 @@ import { renderMarkdownPreview } from '@/utils/markdown';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
 import { canWriteWorkspaceFile, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
+import { copyToClipboard } from '@/utils/clipboard';
 
 const pinned = defineModel<boolean>('pinned', { default: false });
 const canvasWidth = defineModel<number>('canvasWidth', { default: 520 });
@@ -76,15 +77,15 @@ const getFileExtension = (title: string): string => {
 };
 
 // 复制代码内容
-const copyContent = () => {
+const copyContent = async () => {
   const text = codeTextContent.value;
   if (!text) return;
-  navigator.clipboard.writeText(text).then(() => {
-    copied.value = true;
-    setTimeout(() => {
-      copied.value = false;
-    }, 2000);
-  });
+  const ok = await copyToClipboard(text);
+  if (!ok) return;
+  copied.value = true;
+  setTimeout(() => {
+    copied.value = false;
+  }, 2000);
 };
 
 // 下载代码或 HTML

@@ -79,6 +79,7 @@ import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
+import { copyToClipboard } from "@/utils/clipboard";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
   splitSqlToolLogDetails,
@@ -1054,25 +1055,25 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
 };
 
 const copyContent = async (content: string, event: Event) => {
-  try {
-    await navigator.clipboard.writeText(content);
-
-    // Visual feedback
-    const btn = event.currentTarget as HTMLElement;
-    const originalHtml = btn.innerHTML;
-
-    btn.innerHTML = `<svg class="w-3 h-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg><span>已复制</span>`;
-    btn.classList.add("text-green-600", "bg-green-50");
-    btn.classList.remove("text-gray-400", "hover:text-gray-600");
-
-    setTimeout(() => {
-      btn.innerHTML = originalHtml;
-      btn.classList.remove("text-green-600", "bg-green-50");
-      btn.classList.add("text-gray-400", "hover:text-gray-600");
-    }, 2000);
-  } catch (err) {
-    console.error("Failed to copy:", err);
+  const ok = await copyToClipboard(content);
+  if (!ok) {
+    console.error("Failed to copy");
+    return;
   }
+
+  // Visual feedback
+  const btn = event.currentTarget as HTMLElement;
+  const originalHtml = btn.innerHTML;
+
+  btn.innerHTML = `<svg class="w-3 h-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg><span>已复制</span>`;
+  btn.classList.add("text-green-600", "bg-green-50");
+  btn.classList.remove("text-gray-400", "hover:text-gray-600");
+
+  setTimeout(() => {
+    btn.innerHTML = originalHtml;
+    btn.classList.remove("text-green-600", "bg-green-50");
+    btn.classList.add("text-gray-400", "hover:text-gray-600");
+  }, 2000);
 };
 
 const exportData = async (traceId: string, format = 'xlsx') => {
@@ -2607,11 +2608,11 @@ const handleViewOriginal = (citation: any) => {
 };
 
 const copyCitationContent = async (content: string) => {
-  try {
-    await navigator.clipboard.writeText(content);
+  const ok = await copyToClipboard(content);
+  if (ok) {
     showToast("已复制引用内容", "success");
-  } catch (err) {
-    console.error("Failed to copy citation:", err);
+  } else {
+    console.error("Failed to copy citation");
     showToast("复制失败", "error");
   }
 };

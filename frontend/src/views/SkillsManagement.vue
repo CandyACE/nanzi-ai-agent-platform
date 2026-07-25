@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import SkillFileTree from '../components/SkillFileTree.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MarkdownIt from 'markdown-it'
+import { copyToClipboard } from '../utils/clipboard'
 
 interface Skill {
   id: string
@@ -246,6 +247,16 @@ const editingContent = ref('')
 const originalContent = ref('')
 const saving = ref(false)
 const fetchingDetail = ref(false)
+const contentCopied = ref(false)
+let contentCopiedTimer: ReturnType<typeof setTimeout> | null = null
+
+const resetContentCopied = () => {
+  contentCopied.value = false
+  if (contentCopiedTimer) {
+    clearTimeout(contentCopiedTimer)
+    contentCopiedTimer = null
+  }
+}
 
 watch(showDrawer, (open) => {
   if (!open) {
@@ -391,16 +402,36 @@ const clearSearch = () => {
 // 复制 CLI 命令
 const copyCommand = async () => {
   const cmd = 'npx skills add https://github.com/vercel-labs/skills --skill find-skills'
-  try {
-    await navigator.clipboard.writeText(cmd)
+  const ok = await copyToClipboard(cmd)
+  if (ok) {
     commandCopied.value = true
     showToast('命令已成功复制到剪贴板！', 'success')
     setTimeout(() => {
       commandCopied.value = false
     }, 2000)
-  } catch (err) {
+  } else {
     showToast('复制失败，请手动选择复制', 'error')
   }
+}
+
+// 复制当前编辑器内容
+const copyEditorContent = async () => {
+  const text = editingContent.value
+  if (!text) {
+    showToast('当前文件内容为空', 'warning')
+    return
+  }
+  const ok = await copyToClipboard(text)
+  if (!ok) {
+    showToast('复制失败，请手动选择复制', 'error')
+    return
+  }
+  contentCopied.value = true
+  if (contentCopiedTimer) clearTimeout(contentCopiedTimer)
+  contentCopiedTimer = setTimeout(() => {
+    contentCopied.value = false
+    contentCopiedTimer = null
+  }, 2000)
 }
 
 // 打开创建弹窗
@@ -527,6 +558,7 @@ const fetchSkillDetail = async (skillId: string) => {
       if (selectedFilePath.value === 'SKILL.md') {
         editingContent.value = data.skill_md_content || ''
         originalContent.value = data.skill_md_content || ''
+        resetContentCopied()
       } else {
         // 如果选中了其他文件，递归查找读取它
         await loadFileContent(skillId, selectedFilePath.value)
@@ -551,6 +583,7 @@ const loadFileContent = async (skillId: string, filePath: string) => {
     if (response.data && response.data.status === 'success') {
       editingContent.value = response.data.content || ''
       originalContent.value = response.data.content || ''
+      resetContentCopied()
     }
   } catch (e: any) {
     showToast(e.response?.data?.detail || `读取文件 ${filePath} 失败`, 'error')
@@ -1998,7 +2031,35 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 编辑区 -->
-                <div class="skill-editor-body flex-1 overflow-hidden min-h-0 flex flex-col">
+                <div class="skill-editor-body flex-1 overflow-hidden min-h-0 flex flex-col relative">
+                  <button
+                    type="button"
+                    class="skill-editor-copy-fab"
+                    :class="{ 'is-copied': contentCopied }"
+                    :title="contentCopied ? '已复制' : '复制全文'"
+                    @click="copyEditorContent"
+                  >
+                    <svg
+                      v-if="contentCopied"
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <svg
+                      v-else
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                    <span>{{ contentCopied ? '已复制' : '复制' }}</span>
+                  </button>
+
                   <div v-if="editorMode === 'edit'" class="skill-editor-code-pane flex-1 flex overflow-hidden min-h-0">
                     <div ref="lineNumbersRef" class="skill-editor-gutter overflow-hidden select-none">
                       <div v-for="n in lineCount" :key="n" class="skill-editor-line-num">{{ n }}</div>
@@ -2784,6 +2845,41 @@ textarea:focus {
   flex-direction: column;
   overflow: hidden;
   background: #ffffff;
+  position: relative;
+}
+
+.skill-editor-copy-fab {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.92);
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(6px);
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.skill-editor-copy-fab:hover {
+  color: #2563eb;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.skill-editor-copy-fab.is-copied {
+  color: #059669;
+  border-color: #a7f3d0;
+  background: #ecfdf5;
 }
 
 .skill-editor-code-pane {
@@ -2814,7 +2910,7 @@ textarea:focus {
 
 .skill-editor-textarea {
   flex: 1;
-  padding: 12px 16px;
+  padding: 12px 72px 12px 16px;
   background: #ffffff;
   color: #1e293b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -2847,7 +2943,7 @@ textarea:focus {
 .skill-editor-preview {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 24px 80px 24px 32px;
   color: #1e293b;
   background: #ffffff;
 }
@@ -3058,7 +3154,7 @@ textarea:focus {
   
   .skill-editor-textarea {
     font-size: 11px !important;
-    padding: 10px !important;
+    padding: 10px 64px 10px 10px !important;
   }
   
   .skill-editor-gutter {

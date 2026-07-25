@@ -25,6 +25,7 @@ import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue
 import MessageRenderer from "../components/MessageRenderer.vue";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
+import { copyToClipboard } from "../utils/clipboard";
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -1978,22 +1979,30 @@ const openHistoryModal = (agent: AIAgent) => {
   showHistoryModal.value = true;
 };
 
-const copySystemPrompt = () => {
+const copySystemPrompt = async () => {
   if (!versionForm.value.system_prompt) {
     showToast("内容为空，无法复制", "warning");
     return;
   }
-  navigator.clipboard.writeText(versionForm.value.system_prompt);
-  showToast("提示词已复制到剪贴板", "success");
+  const ok = await copyToClipboard(versionForm.value.system_prompt);
+  if (ok) {
+    showToast("提示词已复制到剪贴板", "success");
+  } else {
+    showToast("复制失败，请手动复制", "error");
+  }
 };
 
-const copyText = (text: string, label: string = "内容") => {
+const copyText = async (text: string, label: string = "内容") => {
   if (!text) {
     showToast("内容为空", "warning");
     return;
   }
-  navigator.clipboard.writeText(text);
-  showToast(`${label}已复制`, "success");
+  const ok = await copyToClipboard(text);
+  if (ok) {
+    showToast(`${label}已复制`, "success");
+  } else {
+    showToast("复制失败，请手动复制", "error");
+  }
 };
 
 const getAgentEmoji = (agent: AIAgent) => {

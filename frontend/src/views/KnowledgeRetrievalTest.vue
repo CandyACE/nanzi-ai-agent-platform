@@ -4,6 +4,7 @@ import axios from '../utils/axios'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
+import { copyToClipboard } from '../utils/clipboard'
 
 type RetrievalChunk = {
   id?: string
@@ -197,10 +198,10 @@ const runRetrieval = async () => {
 
 const copyText = async (text: string, message = '已复制') => {
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
+  const ok = await copyToClipboard(text)
+  if (ok) {
     showToast(message, 'success')
-  } catch {
+  } else {
     showToast('复制失败', 'error')
   }
 }

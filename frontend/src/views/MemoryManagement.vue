@@ -5,6 +5,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import Modal from '../components/Modal.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
+import { copyToClipboard as copyText } from '../utils/clipboard'
 
 type ConfigItem = {
   key: string
@@ -625,13 +626,14 @@ const runSearchTest = async () => {
   }
 }
 
-const copyToClipboard = (text: string) => {
+const copyToClipboard = async (text: string) => {
   if (!text) return
-  navigator.clipboard.writeText(text).then(() => {
+  const ok = await copyText(text)
+  if (ok) {
     showToast('会话 ID 已复制到剪贴板', 'success')
-  }).catch(() => {
+  } else {
     showToast('复制失败，请手动选择复制', 'error')
-  })
+  }
 }
 
 onMounted(async () => {

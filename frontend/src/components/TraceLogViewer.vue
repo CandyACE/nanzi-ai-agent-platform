@@ -15,6 +15,7 @@ import {
   ClockIcon,
   ListBulletIcon,
 } from "@heroicons/vue/24/outline";
+import { copyToClipboard as copyText } from "@/utils/clipboard";
 
 const props = defineProps<{
   traceId: string;
@@ -39,15 +40,15 @@ const toggleSection = (id: string) => {
 const copyToClipboard = async (text: any, id: string) => {
   const content =
     typeof text === "string" ? text : JSON.stringify(text, null, 2);
-  try {
-    await navigator.clipboard.writeText(content);
-    copiedId.value = id;
-    setTimeout(() => {
-      copiedId.value = null;
-    }, 2000);
-  } catch (err) {
-    console.error("Failed to copy: ", err);
+  const ok = await copyText(content);
+  if (!ok) {
+    console.error("Failed to copy");
+    return;
   }
+  copiedId.value = id;
+  setTimeout(() => {
+    copiedId.value = null;
+  }, 2000);
 };
 
 const fetchLogs = async () => {

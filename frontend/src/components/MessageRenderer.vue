@@ -5,6 +5,7 @@ import { renderMarkdown } from '@/utils/markdown';
 import { parseQuickButtons, postProcessQuickButtonHtml } from '@/utils/quickButtons';
 import { buildChartTableRows, mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
+import { copyToClipboard } from '@/utils/clipboard';
 import MermaidRenderer from './MermaidRenderer.vue';
 import SqlPlanCard from './SqlPlanCard.vue';
 
@@ -286,7 +287,8 @@ const handleContentClick = (event: MouseEvent) => {
     const wrapper = copyBtn.closest('.code-block-wrapper');
     const codeEl = wrapper?.querySelector('pre code');
     if (codeEl) {
-      navigator.clipboard.writeText(codeEl.textContent || '').then(() => {
+      void copyToClipboard(codeEl.textContent || '').then((ok) => {
+        if (!ok) return;
         copyBtn.classList.add('copied');
         setTimeout(() => copyBtn.classList.remove('copied'), 2000);
       });

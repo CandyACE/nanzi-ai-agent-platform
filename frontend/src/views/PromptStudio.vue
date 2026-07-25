@@ -29,6 +29,7 @@ import {
 import { renderMarkdown } from "../utils/markdown";
 import * as Diff from "diff";
 import ConfirmModal from "../components/ConfirmModal.vue";
+import { copyToClipboard as copyText } from "../utils/clipboard";
 
 interface PromptVersionSummary {
   version_number: number;
@@ -169,11 +170,11 @@ const toggleFullscreen = () => {
 
 const copyToClipboard = async (text: string) => {
   if (!text) return;
-  try {
-    await navigator.clipboard.writeText(text);
+  const ok = await copyText(text);
+  if (ok) {
     showToast("已复制到剪贴板");
-  } catch (err) {
-    console.error("Failed to copy text: ", err);
+  } else {
+    console.error("Failed to copy text");
     showToast("复制失败", "error");
   }
 };

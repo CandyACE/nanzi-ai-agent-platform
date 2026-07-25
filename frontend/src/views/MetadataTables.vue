@@ -14,6 +14,7 @@ import SchemaGraph from '../components/metadata/SchemaGraph.vue'
 import ChangelogList from '../components/metadata/ChangelogList.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
+import { copyToClipboard } from '../utils/clipboard'
 
 const { isAdmin: _isAdmin, hasPermission } = useUser()
 const { showToast } = useToast()
@@ -283,26 +284,26 @@ const fetchYaml = async () => {
 // saveTables and handleAnalyze are removed as they are handled by SmartImportWizard
 
 const copyYaml = async (event: Event) => {
-  try {
-    await navigator.clipboard.writeText(yamlContent.value)
-    
-    // Visual feedback
-    const btn = event.currentTarget as HTMLElement
-    const originalHtml = btn.innerHTML
-    const originalClasses = Array.from(btn.classList)
-
-    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> 已复制`
-    btn.classList.add('bg-green-50', 'text-green-600', 'border-green-200')
-    btn.classList.remove('bg-white', 'text-gray-700', 'border-gray-200')
-
-    setTimeout(() => {
-        btn.innerHTML = originalHtml
-        btn.classList.add(...originalClasses)
-        btn.classList.remove('bg-green-50', 'text-green-600', 'border-green-200')
-    }, 2000)
-  } catch (err) {
-    console.error('Failed to copy', err)
+  const ok = await copyToClipboard(yamlContent.value)
+  if (!ok) {
+    console.error('Failed to copy')
+    return
   }
+
+  // Visual feedback
+  const btn = event.currentTarget as HTMLElement
+  const originalHtml = btn.innerHTML
+  const originalClasses = Array.from(btn.classList)
+
+  btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> 已复制`
+  btn.classList.add('bg-green-50', 'text-green-600', 'border-green-200')
+  btn.classList.remove('bg-white', 'text-gray-700', 'border-gray-200')
+
+  setTimeout(() => {
+      btn.innerHTML = originalHtml
+      btn.classList.add(...originalClasses)
+      btn.classList.remove('bg-green-50', 'text-green-600', 'border-green-200')
+  }, 2000)
 }
 
 const getDatasetEmoji = (name: string) => {

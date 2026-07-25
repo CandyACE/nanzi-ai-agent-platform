@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref } from 'vue';
 import axios from 'axios';
 import { SparklesIcon, ClipboardDocumentIcon, CheckBadgeIcon, XMarkIcon } from '@heroicons/vue/24/outline';
 import ConfirmModal from './ConfirmModal.vue';
+import { copyToClipboard as copyText } from '../utils/clipboard';
 
 export type PromptOptimizeSuggestion = {
   title?: string;
@@ -98,10 +99,10 @@ const applySuggestion = (content: string) => {
 };
 
 const copyToClipboard = async (content: string) => {
-  try {
-    await navigator.clipboard.writeText(content || '');
+  const ok = await copyText(content || '');
+  if (ok) {
     notify('已复制到剪贴板', 'success');
-  } catch {
+  } else {
     notify('复制失败', 'error');
   }
 };
