@@ -602,7 +602,11 @@
                       </div>
                     </div>
 
-                    <div class="relative ml-2 pl-4 py-2 space-y-1.5 border-l border-gray-200 dark:border-gray-700/50">
+                    <div
+                      :ref="(el) => bindThoughtLogsEl(msg.id, el)"
+                      class="relative ml-1 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto border-l border-gray-200 py-2 pl-3 sm:ml-2 sm:max-h-none sm:space-y-1.5 sm:pl-4 dark:border-gray-700/50"
+                      @scroll.passive="onThoughtLogsScroll(msg.id, $event)"
+                    >
                       <!-- 骨架屏占位 (响应初期的等待动效) -->
                       <div
                         v-if="msg.isThinking && (!msg.logs || getDisplayLogs(msg).length === 0)"
@@ -624,10 +628,13 @@
                         v-for="(log, idx) in getDisplayLogs(msg)"
                         :key="idx"
                         class="relative group/log transition-opacity duration-300"
-                        :class="{ 'opacity-45 group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking) }"
+                        :class="{
+                          // 移动端无 hover：保持可读；桌面端弱化并用 hover 提亮
+                          'opacity-70 sm:opacity-45 sm:group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking),
+                        }"
                       >
                         <!-- Timeline Numbered Badge (Soft) -->
-                        <div class="absolute -left-[23px] top-2 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold group-hover/log:scale-110 transition-all z-10 select-none ring-4 ring-white dark:ring-gray-800"
+                        <div class="absolute -left-[19px] top-2 z-10 flex h-[18px] w-[18px] select-none items-center justify-center rounded-full text-[9px] font-bold ring-4 ring-white transition-all sm:-left-[23px] dark:ring-gray-800 sm:group-hover/log:scale-110"
                              :class="{
                                'bg-red-50 text-red-500 border border-red-200 dark:bg-red-900/30 dark:border-red-800/50': log.status === 'error',
                                'bg-primary/10 text-primary border border-primary/25 dark:bg-primary/20 dark:border-primary/30': isActiveThoughtStep(log, msg.isThinking),
@@ -639,36 +646,48 @@
                         </div>
                         <!-- Log Card (Lightweight Row) -->
                         <div
-                          class="rounded-lg p-2 text-xs transition-all duration-300 cursor-pointer"
+                          class="min-h-[40px] rounded-lg p-2 text-xs transition-all duration-300 cursor-pointer sm:min-h-0"
                           :class="{
                              'bg-blue-50/50 dark:bg-blue-900/15 border border-blue-100/80 dark:border-blue-800/40 shadow-sm animate-pulse-subtle': isActiveThoughtStep(log, msg.isThinking),
-                             'bg-transparent hover:bg-gray-50 dark:hover:bg-gray-700/30': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
-                             'bg-red-50/30 hover:bg-red-50/50 dark:bg-red-900/10 dark:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
+                             'bg-transparent active:bg-gray-50 sm:hover:bg-gray-50 dark:active:bg-gray-700/30 dark:sm:hover:bg-gray-700/30': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
+                             'bg-red-50/30 active:bg-red-50/50 sm:hover:bg-red-50/50 dark:bg-red-900/10 dark:active:bg-red-900/20 dark:sm:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
                           }"
                           @click="log.details ? (log.isExpanded = !log.isExpanded) : null"
                         >
-                          <div class="flex items-center justify-between gap-2">
-                             <div class="flex items-center gap-2 flex-1 min-w-0"
+                          <div class="flex items-start justify-between gap-2 sm:items-center">
+                             <div class="flex items-start gap-2 flex-1 min-w-0 sm:items-center"
                                   :class="[
                                     isTechnicalLogStep(log)
-                                      ? 'text-[11px] font-normal text-gray-500/90 dark:text-gray-400/90'
+                                      ? 'text-[11px] font-normal'
                                       : 'font-medium',
                                     {
                                       'text-red-700 dark:text-red-400': log.status === 'error',
                                       'text-gray-800 dark:text-gray-100': isActiveThoughtStep(log, msg.isThinking) && !isTechnicalLogStep(log),
-                                      'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && log.status !== 'error' && !isTechnicalLogStep(log),
+                                      // 已完成步骤统一浅灰（技术步骤也走同一套）
+                                      'text-gray-400 dark:text-gray-500': isDimmedThoughtStep(log, msg.isThinking) && log.status !== 'error',
+                                      'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && !isDimmedThoughtStep(log, msg.isThinking) && log.status !== 'error' && !isTechnicalLogStep(log),
                                     }
                                   ]">
                                <!-- Semantic Icon -->
-                               <span class="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center" :class="{ 'animate-pulse': log.status === 'pending' }">
+                               <span
+                                 class="mt-0.5 flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center sm:mt-0"
+                                 :class="{
+                                   'animate-pulse': log.status === 'pending',
+                                   'grayscale opacity-80': isDimmedThoughtStep(log, msg.isThinking) && log.status !== 'error',
+                                 }"
+                               >
                                  <template v-if="log.status === 'error'">⚠️</template>
                                  <template v-else-if="log.category === 'router'">🧠</template>
                                  <template v-else-if="log.category === 'tool' || log.category === 'sql'">🛠️</template>
                                  <template v-else-if="log.category === 'permission'">🔒</template>
-                                 <SparklesIcon v-else class="h-3.5 w-3.5 text-primary" />
+                                 <SparklesIcon
+                                   v-else
+                                   class="h-3.5 w-3.5"
+                                   :class="isDimmedThoughtStep(log, msg.isThinking) ? 'text-gray-400 dark:text-gray-500' : 'text-primary'"
+                                 />
                                </span>
-                               <!-- Main Text -->
-                               <span class="truncate">{{ log.title }}</span>
+                               <!-- Main Text：窄屏允许两行，避免关键信息被截没 -->
+                               <span class="line-clamp-2 break-all sm:line-clamp-none sm:truncate" :title="log.title">{{ log.title }}</span>
                                <span
                                  v-if="logHasRowFilterApplied(log)"
                                  class="flex-shrink-0 text-[12px]"
@@ -682,16 +701,16 @@
                                </span>
                                <span
                                  v-if="log.status === 'success' && (log.category === 'sql' || (log.title && log.title.toLowerCase().includes('sql')))"
-                                 class="text-emerald-500 dark:text-emerald-400 font-bold ml-1 flex-shrink-0 select-none"
+                                 class="ml-1 flex-shrink-0 select-none font-bold text-gray-400 dark:text-gray-500"
                                >
                                  ☑
                                </span>
 
                              </div>
-                             <div class="flex items-center gap-2 flex-shrink-0">
+                             <div class="flex items-center gap-1 flex-shrink-0 pt-0.5 sm:gap-2 sm:pt-0">
                                <span
                                  v-if="formatLogDuration(log, getDisplayLogs(msg))"
-                                 class="w-12 text-right justify-end inline-flex text-[10px] font-mono flex-shrink-0"
+                                 class="min-w-[2.25rem] text-right justify-end inline-flex text-[10px] font-mono flex-shrink-0 sm:w-12"
                                  :class="getLogDurationColor(log, getDisplayLogs(msg))"
                                  :title="log.status === 'pending' ? '当前步骤已等待时间' : '当前步骤耗时'"
                                >
@@ -700,23 +719,32 @@
                                <button
                                  v-if="log.details && log.isExpanded"
                                  @click.stop="copyMessage(log.details)"
-                                 class="p-1 text-gray-400 hover:text-primary transition-colors"
+                                 class="flex h-8 w-8 items-center justify-center rounded text-gray-400 transition-colors hover:text-primary active:bg-gray-100 dark:active:bg-gray-700/40 sm:h-auto sm:w-auto sm:p-1"
                                  title="复制详情"
                                >
-                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012-2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                                 <svg class="h-4 w-4 sm:h-3.5 sm:w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                 </svg>
                                </button>
+                               <!-- 有详情时可展开：移动端常显箭头，桌面端 hover 再加强 -->
                                <svg
                                  v-if="log.details"
-                                 class="w-3 h-3 text-gray-400 transition-all duration-200 group-hover/log:opacity-100"
-                                 :class="{ 'rotate-180': log.isExpanded, 'opacity-100': log.isExpanded, 'opacity-0': !log.isExpanded }"
+                                 class="h-3.5 w-3.5 text-gray-400 transition-all duration-200 sm:h-3 sm:w-3"
+                                 :class="{
+                                   'rotate-180': log.isExpanded,
+                                   'opacity-100': log.isExpanded,
+                                   'opacity-60 sm:opacity-0 sm:group-hover/log:opacity-100': !log.isExpanded,
+                                 }"
                                  fill="none"
                                  stroke="currentColor"
                                  viewBox="0 0 24 24"
+                                 aria-hidden="true"
                                >
                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                                </svg>
                              </div>
-                          </div>                          <!-- Details -->
+                          </div>
+                          <!-- Details -->
                           <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
                             <KnowledgeToolLogDetails
                               v-if="isKnowledgeToolLog(log.details)"
@@ -2353,7 +2381,8 @@ function getThoughtPanelTitle(msg: Message) {
     turnType: msg.turnType,
   });
 
-  if (msg.isThinking && !msg.isThoughtExpanded) {
+  // 窄屏折叠态只保留进度短句，避免标题被「正在进行: 超长步骤名」挤没
+  if (msg.isThinking && !msg.isThoughtExpanded && !isMobile.value) {
     const logs = getDisplayLogs(msg);
     const activeLog = logs.find(log => isActiveThoughtStep(log, msg.isThinking));
     if (activeLog && activeLog.title) {
@@ -2406,6 +2435,11 @@ const isTechnicalLogStep = (log: LogEntry): boolean => {
 };
 
 const getLogDurationColor = (log: LogEntry, allLogs?: LogEntry[]): string => {
+  // 已完成步骤统一灰色，避免绿/橙耗时色破坏「已完成变灰」
+  if (log.status !== "pending") {
+    return "text-gray-400 dark:text-gray-500";
+  }
+
   let ms = 0;
   if (log.execution_time_ms !== undefined && log.execution_time_ms !== null) {
     ms = log.execution_time_ms;
@@ -5968,6 +6002,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       started_at: currentLog.started_at ?? (data.status === "pending" ? Date.now() : data.started_at),
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,
     };
+    scheduleThoughtLogsAutoScroll(msg);
     return;
   }
   msg.logs.push({
@@ -5982,6 +6017,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
     rowFilterApplied: data.row_filter_applied === true,
   });
+  scheduleThoughtLogsAutoScroll(msg);
 };
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
@@ -6523,6 +6559,45 @@ const sendMessage = async () => {
 };
 
 const BOTTOM_THRESHOLD_PX = 80;
+const THOUGHT_LOGS_BOTTOM_THRESHOLD_PX = 48;
+
+/** 思考步骤限高滚动容器：按消息 id 绑定，流式新增时自动跟底 */
+const thoughtLogsEls = new Map<number, HTMLElement>();
+/** false = 用户在步骤列表里上滑阅读，暂停跟底 */
+const thoughtLogsFollow = new Map<number, boolean>();
+
+const bindThoughtLogsEl = (msgId: number, el: unknown) => {
+  if (el instanceof HTMLElement) {
+    thoughtLogsEls.set(msgId, el);
+    if (!thoughtLogsFollow.has(msgId)) thoughtLogsFollow.set(msgId, true);
+  } else {
+    thoughtLogsEls.delete(msgId);
+    thoughtLogsFollow.delete(msgId);
+  }
+};
+
+const onThoughtLogsScroll = (msgId: number, e: Event) => {
+  const el = e.target as HTMLDivElement;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= THOUGHT_LOGS_BOTTOM_THRESHOLD_PX;
+  thoughtLogsFollow.set(msgId, nearBottom);
+};
+
+const scrollThoughtLogsToBottom = (msgId: number, force = false) => {
+  const el = thoughtLogsEls.get(msgId);
+  if (!el) return;
+  if (!force && thoughtLogsFollow.get(msgId) === false) return;
+  el.scrollTop = el.scrollHeight;
+  thoughtLogsFollow.set(msgId, true);
+};
+
+const scheduleThoughtLogsAutoScroll = (msg: Message, force = false) => {
+  if (!msg.isThinking || !msg.isThoughtExpanded) return;
+  nextTick(() => {
+    scrollThoughtLogsToBottom(msg.id, force);
+    // 布局偶发晚一帧（图标/两行标题），再补一次
+    requestAnimationFrame(() => scrollThoughtLogsToBottom(msg.id, force));
+  });
+};
 
 const runScrollToBottom = (force: boolean) => {
   const el = messagesContainer.value;
@@ -6545,6 +6620,10 @@ const runScrollToBottom = (force: boolean) => {
   } else {
     showNewMessageHint.value = true;
   }
+
+  // 外层跟底时，同步把正在思考的步骤列表滚到底
+  const thinkingMsg = [...messages.value].reverse().find((m) => m.isThinking && m.isThoughtExpanded);
+  if (thinkingMsg) scheduleThoughtLogsAutoScroll(thinkingMsg, force);
 };
 
 const scrollToBottom = (force = false) => {
