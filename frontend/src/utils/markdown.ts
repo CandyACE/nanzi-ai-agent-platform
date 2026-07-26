@@ -55,34 +55,28 @@ md.renderer.rules.link_open = function (tokens, idx, options, _env, self) {
   const hAttr = token.attrIndex('href');
   if (hAttr >= 0 && token.attrs!) {
     const href = token.attrs![hAttr]![1];
-    // Check if it's an external link (starts with http or https)
-    // OR a "quick:" protocol link
-    if (/^https?:\/\//.test(href) || href.startsWith('quick:')) {
+
+    // quick: 是站内快捷动作，不能当外链开新页（否则移动端易出现点两次才生效）
+    if (href.startsWith('quick:')) {
+      const classIndex = token.attrIndex('class');
+      const className = 'quick-action-btn';
+      if (classIndex < 0) {
+        token.attrPush(['class', className]);
+      } else {
+        token.attrs![classIndex]![1] = className;
+      }
+      token.attrPush(['data-quick-link', 'true']);
+    } else if (/^https?:\/\//.test(href)) {
       const aIndex = token.attrIndex('target');
       if (aIndex < 0) {
         token.attrPush(['target', '_blank']);
       } else {
         token.attrs![aIndex]![1] = '_blank';
       }
-      
-      // Also add security rel attribute for external links
-      if (/^https?:\/\//.test(href)) {
-        const rIndex = token.attrIndex('rel');
-        if (rIndex < 0) {
-          token.attrPush(['rel', 'noopener noreferrer']);
-        }
-      }
-      
-      // Add special class for quick links
-      if (href.startsWith('quick:')) {
-        const classIndex = token.attrIndex('class');
-        const className = 'quick-action-btn';
-        if (classIndex < 0) {
-          token.attrPush(['class', className]);
-        } else {
-          token.attrs![classIndex]![1] = className;
-        }
-        token.attrPush(['data-quick-link', 'true']);
+
+      const rIndex = token.attrIndex('rel');
+      if (rIndex < 0) {
+        token.attrPush(['rel', 'noopener noreferrer']);
       }
     }
   }

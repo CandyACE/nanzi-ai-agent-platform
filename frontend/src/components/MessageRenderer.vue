@@ -222,11 +222,14 @@ const handleContentClick = (event: MouseEvent) => {
     const href = linkEl.getAttribute('href');
     if (href) {
       if (href.startsWith('quick:')) {
+        event.preventDefault();
+        event.stopPropagation();
         const rawQuestion = href.replace(/^quick:/, '');
         let question = '';
         try { question = decodeURIComponent(decodeURIComponent(rawQuestion)); }
         catch { question = decodeURIComponent(rawQuestion); }
-        if (question) { emit('quick-question', question.trim()); event.preventDefault(); event.stopPropagation(); return; }
+        if (question) emit('quick-question', question.trim());
+        return;
       } else {
         const lowerHref = ((href.toLowerCase().split('?')[0] ?? '').split('#')[0] ?? '');
         const isPdf = lowerHref.endsWith('.pdf');
@@ -602,10 +605,12 @@ const segments = computed<ContentSegment[]>(() => {
   font-weight: 800 !important;
   text-decoration: none !important;
   box-shadow: 0 4px 14px -2px var(--primary-color-alpha, rgba(22, 119, 255, 0.3)) !important;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  transition: filter 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease !important;
   cursor: pointer !important;
   position: relative !important;
   line-height: 1.2 !important;
+  -webkit-tap-highlight-color: transparent !important;
+  touch-action: manipulation !important;
 }
 
 .markdown-body :deep(.quick-action-btn::before),
@@ -615,11 +620,20 @@ const segments = computed<ContentSegment[]>(() => {
   font-size: 11px !important;
 }
 
-.markdown-body :deep(.quick-action-btn:hover),
-.markdown-body :deep(a[href^="quick:"]:hover) {
-  filter: brightness(1.05) !important;
-  transform: translateY(-2px) scale(1.03) !important;
-  box-shadow: 0 8px 20px -4px var(--primary-color-alpha, rgba(22, 119, 255, 0.45)) !important;
+/* 仅精细指针设备使用 hover，避免移动端首次触摸被 sticky :hover 吃掉 */
+@media (hover: hover) and (pointer: fine) {
+  .markdown-body :deep(.quick-action-btn:hover),
+  .markdown-body :deep(a[href^="quick:"]:hover) {
+    filter: brightness(1.05) !important;
+    transform: translateY(-2px) scale(1.03) !important;
+    box-shadow: 0 8px 20px -4px var(--primary-color-alpha, rgba(22, 119, 255, 0.45)) !important;
+  }
+}
+
+.markdown-body :deep(.quick-action-btn:active),
+.markdown-body :deep(a[href^="quick:"]:active) {
+  filter: brightness(0.96) !important;
+  transform: scale(0.98) !important;
 }
 
 .markdown-body :deep(.citation-badge) { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #3b82f6; background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 4px; padding: 0 4px; margin: 0 2px; cursor: pointer; vertical-align: super; transition: all 0.2s ease; }

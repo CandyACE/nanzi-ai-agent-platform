@@ -1,48 +1,48 @@
 <template>
-  <div class="mt-3 rounded-xl border border-emerald-100 dark:border-emerald-900/40 bg-emerald-50/30 dark:bg-emerald-950/10 text-xs">
-    <button type="button" class="w-full flex items-center justify-between gap-3 px-3 py-2 text-left" @click="showDetails = !showDetails">
-      <span class="min-w-0 flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-semibold">
-        <span>✓</span>
+  <div class="mt-3 rounded-xl border border-gray-200 bg-gray-50/80 text-xs dark:border-gray-700 dark:bg-gray-800/40">
+    <button type="button" class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left" @click="showDetails = !showDetails">
+      <span class="flex min-w-0 items-center gap-2 font-semibold text-gray-700 dark:text-gray-200">
+        <span class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">✓</span>
         <span class="truncate">数据查询成功 · {{ meta.execution.row_count }} 行{{ permissionLabel }}</span>
       </span>
-      <span class="shrink-0 text-[11px] text-emerald-600 dark:text-emerald-400">查看数据依据</span>
+      <span class="shrink-0 text-[11px] font-semibold text-primary hover:underline">查看数据依据</span>
     </button>
-    <div v-if="showDetails" class="border-t border-emerald-100 dark:border-emerald-900/40 px-3 py-3 space-y-3 text-gray-600 dark:text-gray-300">
+    <div v-if="showDetails" class="space-y-3 border-t border-gray-200 px-3 py-3 text-gray-600 dark:border-gray-700 dark:text-gray-300">
       <section class="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">证据状态</div>
+          <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">证据状态</div>
           <div>{{ evidenceStatusLabel }}</div>
         </div>
         <div>
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">来源标识</div>
+          <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">来源标识</div>
           <div class="break-all">{{ meta.evidence?.source_ref || '未识别' }}</div>
         </div>
         <div>
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">观测时间</div>
+          <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">观测时间</div>
           <div>{{ formatEvidenceTime(meta.evidence?.observed_at) }}</div>
         </div>
         <div>
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">数据截至</div>
+          <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">数据截至</div>
           <div>{{ formatEvidenceTime(meta.evidence?.source_as_of) }}</div>
         </div>
         <div>
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">数据时效</div>
+          <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">数据时效</div>
           <div>{{ freshnessLabel }}</div>
         </div>
       </section>
       <section v-if="meta.sources.length">
-        <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">数据来源</div>
+        <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">数据来源</div>
         <div v-for="(source, index) in meta.sources" :key="index" class="leading-relaxed">
           {{ source.dataset_name || '授权数据集' }}
           <span class="text-gray-400">· {{ source.tables.map(item => item.physical_name).join('、') }}</span>
         </div>
       </section>
       <section v-if="meta.permission?.row_filter_applied">
-        <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">权限说明</div>
+        <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">权限说明</div>
         <div>{{ meta.permission.message || '已按你的数据权限自动过滤结果' }}<span v-if="meta.permission.rule_count">（{{ meta.permission.rule_count }} 条规则）</span></div>
       </section>
       <section>
-        <div class="font-bold text-gray-700 dark:text-gray-200 mb-1">执行说明</div>
+        <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">执行说明</div>
         <div>{{ executionLabel }}</div>
       </section>
       <section v-if="meta.final_sql">

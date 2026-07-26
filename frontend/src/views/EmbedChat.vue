@@ -604,7 +604,7 @@
 
                     <div
                       :ref="(el) => bindThoughtLogsEl(msg.id, el)"
-                      class="relative ml-1 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto border-l border-gray-200 py-2 pl-3 sm:ml-2 sm:max-h-none sm:space-y-1.5 sm:pl-4 dark:border-gray-700/50"
+                      class="relative ml-2 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto border-l border-gray-200 py-2 pl-5 sm:max-h-none sm:space-y-1.5 dark:border-gray-700/50"
                       @scroll.passive="onThoughtLogsScroll(msg.id, $event)"
                     >
                       <!-- 骨架屏占位 (响应初期的等待动效) -->
@@ -633,8 +633,8 @@
                           'opacity-70 sm:opacity-45 sm:group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking),
                         }"
                       >
-                        <!-- Timeline Numbered Badge (Soft) -->
-                        <div class="absolute -left-[19px] top-2 z-10 flex h-[18px] w-[18px] select-none items-center justify-center rounded-full text-[9px] font-bold ring-4 ring-white transition-all sm:-left-[23px] dark:ring-gray-800 sm:group-hover/log:scale-110"
+                        <!-- Timeline Numbered Badge：落在 pl 区域内，避免 overflow-y 裁切双位数字 -->
+                        <div class="absolute -left-[19px] top-2 z-10 flex h-[18px] w-[18px] select-none items-center justify-center rounded-full text-[9px] font-bold ring-4 ring-white transition-all dark:ring-gray-800 sm:group-hover/log:scale-110"
                              :class="{
                                'bg-red-50 text-red-500 border border-red-200 dark:bg-red-900/30 dark:border-red-800/50': log.status === 'error',
                                'bg-primary/10 text-primary border border-primary/25 dark:bg-primary/20 dark:border-primary/30': isActiveThoughtStep(log, msg.isThinking),
