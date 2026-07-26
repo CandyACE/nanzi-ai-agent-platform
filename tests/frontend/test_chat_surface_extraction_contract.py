@@ -1,0 +1,72 @@
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+pytestmark = pytest.mark.no_infrastructure
+
+
+def _read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_agent_debug_uses_extracted_logic_flow_modal_without_losing_diagram_content():
+    debug = _read("frontend/src/views/AgentDebug.vue")
+    modal_path = ROOT / "frontend/src/components/debug/AgentLogicFlowModal.vue"
+
+    assert modal_path.exists()
+    modal = modal_path.read_text(encoding="utf-8")
+
+    assert "<AgentLogicFlowModal" in debug
+    assert "<!-- Modal: Logic Flow SVG -->" not in debug
+    assert "visible: boolean" in modal
+    assert '"close"' in modal
+    for label in ("用户提问", "意图识别", "Agent Service", "结果合成渲染", "审计"):
+        assert label in modal
+
+
+def test_both_chat_surfaces_use_shared_model_call_stats_modal():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+    modal_path = ROOT / "frontend/src/components/chat/ChatModelCallStatsModal.vue"
+
+    assert modal_path.exists()
+    modal = modal_path.read_text(encoding="utf-8")
+
+    for source in (embed, debug):
+        assert "<ChatModelCallStatsModal" in source
+        assert "<!-- Model Call Stats Modal -->" not in source
+    assert "visible: boolean" in modal
+    assert "loading: boolean" in modal
+    assert "stats: any[]" in modal
+    assert '"close"' in modal
+    assert '"toggle"' in modal
+    assert "大模型调用明细指标" in modal
+
+
+def test_both_chat_surfaces_use_shared_saved_report_dialogs():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    for path in (
+        "frontend/src/components/chat/SavedReportEditorModal.vue",
+        "frontend/src/components/chat/SavedReportRunModal.vue",
+    ):
+        assert (ROOT / path).exists()
+
+    for source in (embed, debug):
+        assert "<SavedReportEditorModal" in source
+        assert "<SavedReportRunModal" in source
+        assert "<!-- Modal: Save Report -->" not in source
+        assert "<!-- Modal: Run Saved Report -->" not in source
+
+    editor = _read("frontend/src/components/chat/SavedReportEditorModal.vue")
+    runner = _read("frontend/src/components/chat/SavedReportRunModal.vue")
+    assert "form: Record<string, any>" in editor
+    assert '"submit"' in editor
+    assert '@click.self="emit(\'close\')"' in editor
+    assert "pendingReport: any" in runner
+    assert '"execute"' in runner
+    assert '@click.self="emit(\'close\')"' in runner
+    assert "实际执行 SQL" in runner

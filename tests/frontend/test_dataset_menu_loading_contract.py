@@ -157,6 +157,7 @@ def test_dataset_capability_menu_component_contract():
 
 def test_saved_report_parameterized_execution_contract():
     source = _source("frontend/src/views/EmbedChat.vue")
+    run_modal = _source("frontend/src/components/chat/SavedReportRunModal.vue")
     workflow = _source("frontend/src/composables/chat/useSavedReportWorkflow.ts")
     assert "showReportRunModal" in source
     assert "reportRunForm" in source
@@ -176,7 +177,7 @@ def test_saved_report_parameterized_execution_contract():
     assert "start_month" in source
     assert "end_month" in source
     assert "last_6_completed_months" in source
-    assert "type=\"month\"" in source
+    assert "type=\"month\"" in run_modal
     assert "extractSavedReportExecuteErrorMessage" in source
     assert "responseData?.message" in workflow
     assert "暂无该报表所需数据权限" in workflow
@@ -184,7 +185,7 @@ def test_saved_report_parameterized_execution_contract():
     assert "previewSavedReportRun" in source
     assert "/preview" in source
     assert "reportRunPreview" in source
-    assert "实际执行 SQL" in source
+    assert "实际执行 SQL" in run_modal
     assert "沉淀为黄金报表" in source
     assert "savedReportNeedsRunOptions" in source
     assert "scheduleSavedReportPreview" in source
@@ -232,13 +233,11 @@ def test_saved_report_modal_avoids_pinned_dataset_portal_drawer():
     for source in (embed_source, debug_source):
         assert "saveReportModalOverlayClass" in source
         assert "return isPinned ? 'right-[28rem]' : 'right-0'" in source
-        assert ":class=\"saveReportModalOverlayClass\"" in source
+        assert ':overlay-class="saveReportModalOverlayClass"' in source
 
-    run_modal_start = embed_source.index("<!-- Modal: Run Saved Report -->")
-    run_modal_end = embed_source.index("<!-- Modal: Help Guide -->")
-    run_modal_source = embed_source[run_modal_start:run_modal_end]
+    run_modal_source = _source("frontend/src/components/chat/SavedReportRunModal.vue")
     assert "inset-y-0 left-0" in run_modal_source
-    assert ":class=\"saveReportModalOverlayClass\"" in run_modal_source
+    assert ':class="overlayClass"' in run_modal_source
 
 
 def test_saved_report_edit_contract():

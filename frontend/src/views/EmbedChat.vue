@@ -131,18 +131,14 @@
         </div>
       </div>
 
-      <!-- Project / Session resource scope bar -->
-      <div v-if="resourceScope.project_name || resourceScopeCount > 0" class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 overflow-x-auto border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20">
-        <span class="font-bold shrink-0">{{ resourceScope.project_name ? `📁 ${resourceScope.project_name}` : '📌 会话固定资源' }}</span>
-        <span v-if="resourceScopeCount === 0" class="text-gray-400 shrink-0">未挂载，按默认权限自动使用</span>
-        <template v-else>
-          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800" :title="`当前会话已锁定在【${item.label}】范围内，AI 问数时将仅分析此资源。点击 × 可解绑。`">
-            {{ item.icon }} {{ item.label }}
-            <button type="button" class="hover:text-red-600 dark:hover:text-red-400" title="移除资源" @click="removeMountedResource(item)">×</button>
-          </span>
-        </template>
-        <button type="button" class="px-2 py-1 rounded-full border border-gray-200 hover:border-primary hover:text-primary dark:border-gray-700 dark:hover:border-primary shrink-0" @click="openResourceScopeModal">管理会话资源</button>
-      </div>
+      <SessionResourceScopeBar
+        v-if="resourceScope.project_name || resourceScopeCount > 0"
+        :project-name="resourceScope.project_name"
+        :resource-count="resourceScopeCount"
+        :mounted-resources="mountedResourceLabels"
+        @manage="openResourceScopeModal"
+        @remove="removeMountedResource"
+      />
 
       <!-- Main Chat Area -->
       <div
@@ -1299,164 +1295,29 @@
       </ChatInput>
     </div>
 
-    <div
-      v-if="showResourceScopeModal"
-      class="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
-      @click.self="closeResourceScopeModal"
-      @keydown.esc="closeResourceScopeModal"
-    >
-      <div
-        class="w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden rounded-2xl bg-white dark:bg-gray-800 shadow-2xl"
-        role="dialog"
-        aria-labelledby="resource-scope-modal-title"
-        aria-modal="true"
-      >
-        <div class="flex-shrink-0 px-5 pt-5 pb-3 border-b border-gray-100 dark:border-gray-700">
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <h3 id="resource-scope-modal-title" class="text-base font-black text-gray-900 dark:text-gray-100">项目会话资源</h3>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">为本会话命名并可选定数据集、知识库与技能。保存后在本会话内持续生效。</p>
-            </div>
-            <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none p-1" aria-label="关闭" @click="closeResourceScopeModal">×</button>
-          </div>
-          <p class="mt-3 text-[11px] leading-relaxed rounded-lg bg-slate-50 dark:bg-gray-900/50 text-slate-600 dark:text-slate-400 border border-slate-100 dark:border-gray-700 px-3 py-2">
-            不选择任何资源时，按账号默认权限使用；选择后仅允许已挂载项（数据集影响 ChatBI / 数据门户，知识库影响检索范围，技能影响自动匹配）。
-          </p>
-          <p v-if="modalResourceOrphanCount > 0" class="mt-2 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/50 rounded-lg px-3 py-2">
-            有 {{ modalResourceOrphanCount }} 项已保存的资源当前不可用，请移除或重新选择。
-          </p>
-        </div>
-
-        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
-          <label class="block">
-            <span class="text-xs font-bold text-gray-500 dark:text-gray-400">项目名称 <span class="text-red-500">*</span></span>
-            <input
-              ref="resourceScopeProjectNameInput"
-              v-model="resourceScopeModalDraft.project_name"
-              class="mt-1.5 w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-900/30 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-              placeholder="例如：销售经营分析"
-            />
-          </label>
-
-          <div class="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col min-h-[280px]">
-            <div class="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-900/40" role="tablist" aria-label="资源类型">
-              <button
-                v-for="group in resourceOptionGroups"
-                :key="group.key"
-                type="button"
-                role="tab"
-                :id="`resource-scope-tab-${group.key}`"
-                :aria-selected="resourceScopeActiveTab === group.key"
-                :aria-controls="`resource-scope-panel-${group.key}`"
-                class="relative flex-1 min-w-0 px-2 py-2.5 text-xs font-bold transition-colors border-b-2 -mb-px"
-                :class="resourceScopeActiveTab === group.key
-                  ? 'border-primary text-primary bg-white dark:bg-gray-800'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
-                @click="resourceScopeActiveTab = group.key"
-              >
-                <span class="block truncate text-center">{{ group.shortLabel || group.label }}</span>
-                <span class="mt-0.5 flex items-center justify-center gap-1">
-                  <span
-                    v-if="modalSelectedCount(group.key)"
-                    class="text-[9px] font-black px-1 py-px rounded"
-                    :class="resourceScopeActiveTab === group.key ? 'bg-primary/15 text-primary' : 'bg-gray-200/80 dark:bg-gray-700 text-gray-600 dark:text-gray-300'"
-                  >{{ modalSelectedCount(group.key) }}</span>
-                  <span v-if="modalOrphanSelections(group.key).length" class="text-[9px] font-bold text-amber-600 dark:text-amber-400" title="有失效项">!</span>
-                </span>
-              </button>
-            </div>
-
-            <div
-              v-for="group in resourceOptionGroups"
-              :key="'panel-' + group.key"
-              v-show="resourceScopeActiveTab === group.key"
-              :id="`resource-scope-panel-${group.key}`"
-              role="tabpanel"
-              :aria-labelledby="`resource-scope-tab-${group.key}`"
-              class="flex-1 p-3 space-y-2.5 min-h-0 flex flex-col"
-            >
-              <p class="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed shrink-0">{{ group.hint }}</p>
-
-              <div v-if="modalSelectedCount(group.key) > 0" class="flex flex-wrap gap-1.5 shrink-0">
-                <button
-                  v-for="chip in modalSelectedChips(group.key)"
-                  :key="chip.key"
-                  type="button"
-                  class="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded-full text-[10px] font-bold border transition-colors"
-                  :class="chip.orphan
-                    ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700'
-                    : 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800'"
-                  :title="chip.orphan ? '资源已不可用，点击移除' : '点击移除'"
-                  @click="removeModalDraftResource(group.key, chip.item)"
-                >
-                  <span class="truncate">{{ chip.label }}</span>
-                  <span class="shrink-0 opacity-70">×</span>
-                </button>
-              </div>
-
-              <input
-                v-model="resourceOptionSearch[group.key]"
-                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-transparent px-3 py-2 text-xs shrink-0"
-                :placeholder="`搜索${group.label}`"
-              />
-
-              <div v-if="resourceOptionsLoading" class="text-xs text-gray-400 py-6 text-center flex-1">正在加载资源…</div>
-              <div v-else-if="sortedModalResourceOptions(group.key).length" class="space-y-0.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
-                <button
-                  v-for="(option, optionIndex) in sortedModalResourceOptions(group.key)"
-                  :key="option.id"
-                  type="button"
-                  role="checkbox"
-                  :aria-checked="resourceModalOptionSelected(group.key, option)"
-                  class="w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors border border-transparent"
-                  :class="resourceModalOptionSelected(group.key, option)
-                    ? 'bg-primary/5 dark:bg-primary/10 border-primary/20'
-                    : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
-                  @click="toggleModalResourceOption(group.key, option)"
-                >
-                  <span class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-black text-white shrink-0" :class="resourceOptionAccent(optionIndex)">{{ resourceOptionInitial(option) }}</span>
-                  <span class="min-w-0 flex-1">
-                    <span class="block text-sm font-bold text-gray-900 dark:text-gray-100 truncate" :title="option.name || option.id">{{ option.name || option.id }}</span>
-                    <span class="block text-xs text-gray-400 dark:text-gray-500 truncate">{{ option.description || option.id }}</span>
-                  </span>
-                  <span
-                    class="w-5 h-5 rounded-md border flex items-center justify-center shrink-0"
-                    :class="resourceModalOptionSelected(group.key, option) ? 'bg-primary border-primary text-white' : 'border-gray-300 dark:border-gray-600'"
-                  >
-                    <svg v-if="resourceModalOptionSelected(group.key, option)" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 12 4 4L19 6" /></svg>
-                  </span>
-                </button>
-              </div>
-              <div v-else class="text-xs text-gray-400 py-6 text-center flex-1">
-                {{ (resourceOptionSearch[group.key] || '').trim() ? '无匹配结果，试试清空搜索' : '暂无可选资源' }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap items-center justify-between gap-3">
-          <button
-            type="button"
-            class="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-primary hover:bg-blue-50 dark:hover:bg-gray-700 disabled:opacity-40"
-            :disabled="resourceOptionsLoading || resourceScopeSaving"
-            @click="refreshResourceOptions"
-          >
-            ↻ 刷新资源列表
-          </button>
-          <div class="flex items-center gap-2 ml-auto">
-            <button type="button" class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" :disabled="resourceScopeSaving" @click="closeResourceScopeModal">取消</button>
-            <button
-              type="button"
-              class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed min-w-[6.5rem]"
-              :disabled="resourceScopeSaving || !resourceScopeModalDraft.project_name.trim()"
-              @click="saveResourceScope"
-            >
-              {{ resourceScopeSaving ? '保存中…' : '保存范围' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <ResourceScopeModal
+      :visible="showResourceScopeModal"
+      :draft="resourceScopeModalDraft"
+      :groups="resourceOptionGroups"
+      :active-tab="resourceScopeActiveTab"
+      :orphan-count="modalResourceOrphanCount"
+      :loading="resourceOptionsLoading"
+      :saving="resourceScopeSaving"
+      :option-search="resourceOptionSearch"
+      :selected-count="modalSelectedCount"
+      :orphan-selections="modalOrphanSelections"
+      :selected-chips="modalSelectedChips"
+      :sorted-options="sortedModalResourceOptions"
+      :option-selected="resourceModalOptionSelected"
+      :option-initial="resourceOptionInitial"
+      :option-accent="resourceOptionAccent"
+      @close="closeResourceScopeModal"
+      @refresh="refreshResourceOptions"
+      @save="saveResourceScope"
+      @update:active-tab="resourceScopeActiveTab = $event"
+      @remove-draft="removeModalDraftResource"
+      @toggle-option="toggleModalResourceOption"
+    />
 
     <ChatCanvas
       :visible="canvasVisible"
@@ -1763,204 +1624,30 @@
       @save-settings="saveRoutingSettings"
       @reset-session="resetSession"
     />
-    <!-- Modal: Save Report -->
-    <teleport to="body">
-    <div
-      v-if="showSaveReportModal"
-      class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-      :class="saveReportModalOverlayClass"
-      :style="saveReportModalOverlayStyle"
-      @click.self="showSaveReportModal = false"
-    >
-      <div
-        class="bg-white dark:bg-gray-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-gray-100 dark:border-gray-700"
-      >
-        <!-- Header -->
-        <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
-          <div class="flex items-center space-x-2">
-            <div class="p-1.5 bg-primary/10 rounded-lg text-primary">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V5zM12 9v12m-3-3l3 3 3-3" />
-              </svg>
-            </div>
-	            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">{{ isEditingReport ? '编辑黄金 SQL 报表' : '沉淀为黄金报表' }}</h3>
-          </div>
-          <button @click="showSaveReportModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
+    <SavedReportEditorModal
+      :visible="showSaveReportModal"
+      :form="saveReportForm"
+      :editing="isEditingReport"
+      :saving="isSavingReport"
+      :overlay-class="saveReportModalOverlayClass"
+      :overlay-style="saveReportModalOverlayStyle"
+      scrollbar-variant="embed"
+      @close="showSaveReportModal = false"
+      @submit="submitSaveReport"
+    />
 
-        <!-- Body -->
-        <div class="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar max-h-[60vh]">
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">报表名称 <span class="text-red-500">*</span></label>
-            <input
-              v-model="saveReportForm.title"
-              type="text"
-              placeholder="请输入自定义报表名称"
-              class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200"
-            />
-          </div>
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">报表描述</label>
-            <textarea
-              v-model="saveReportForm.description"
-              rows="2"
-              placeholder="说明这个报表适合回答什么业务问题"
-              class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200 resize-none"
-            />
-          </div>
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">标签</label>
-            <input
-              v-model="saveReportForm.tags_input"
-              type="text"
-              placeholder="例如：经营分析, 订单, 月报"
-              class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200"
-            />
-          </div>
-
-          <div v-if="saveReportForm.original_query">
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">原始提问</label>
-            <div class="px-3 py-2 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-600 dark:text-gray-400 break-all select-all font-mono leading-relaxed max-h-20 overflow-y-auto">
-              {{ saveReportForm.original_query }}
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">SQL 语句预览</label>
-            <pre class="px-3 py-2 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-600 dark:text-gray-400 break-all select-all font-mono leading-relaxed overflow-x-auto max-h-40 overflow-y-auto">{{ saveReportForm.sql_content }}</pre>
-            <span class="text-[10px] text-gray-400 mt-1 block">提示：系统将自动反查关联的数据集与数据源以保证直连执行时能够顺利通过权限安全校验。</span>
-          </div>
-          <div
-            v-if="saveReportForm.mode === 'param_sql'"
-            class="p-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-950/20 text-xs text-blue-700 dark:text-blue-300 leading-relaxed"
-          >
-            已识别到固定日期条件，将保存为动态日期报表。后续运行时可选择今天、昨天、最近 7 天、本月或自定义日期范围。
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex justify-end space-x-3 bg-gray-50/50 dark:bg-gray-800/50">
-          <button
-            @click="showSaveReportModal = false"
-            class="px-4 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          >
-            取消
-          </button>
-          <button
-            @click="submitSaveReport"
-            :disabled="isSavingReport"
-            class="px-4 py-2 text-xs font-bold text-white bg-primary rounded-xl hover:bg-primary-hover active:bg-primary-active disabled:opacity-50 transition-colors flex items-center space-x-1.5"
-          >
-            <svg v-if="isSavingReport" class="w-3.5 h-3.5 animate-spin text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-	            <span>{{ isEditingReport ? '保存修改' : '沉淀报表' }}</span>
-          </button>
-        </div>
-      </div>
-    </div>
-    </teleport>
-
-    <!-- Modal: Run Saved Report -->
-    <teleport to="body">
-    <div
-      v-if="showReportRunModal"
-      class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-      :class="saveReportModalOverlayClass"
-      :style="saveReportModalOverlayStyle"
-      @click.self="showReportRunModal = false"
-    >
-      <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-700">
-        <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
-          <div>
-            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">运行黄金报表</h3>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-[18rem]">{{ pendingSavedReport?.title }}</p>
-          </div>
-          <button @click="showReportRunModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="p-6 space-y-4">
-          <div v-if="!savedReportUsesMonthRange(pendingSavedReport)">
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
-            <select
-              v-model="reportRunForm.dateRange"
-              class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-gray-800 dark:text-gray-200"
-            >
-              <option value="today">今天</option>
-              <option value="yesterday">昨天</option>
-              <option value="last_7_days">最近 7 天</option>
-              <option value="month_start_to_today">本月截至今天</option>
-              <option value="custom_range">自定义日期</option>
-            </select>
-          </div>
-          <div v-if="reportRunForm.dateRange === 'custom_range'" class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始日期</label>
-              <input v-model="reportRunForm.startDate" type="date" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-            </div>
-            <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束日期</label>
-              <input v-model="reportRunForm.endDate" type="date" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-            </div>
-          </div>
-          <div v-if="savedReportUsesMonthRange(pendingSavedReport)">
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">月份范围</label>
-            <select
-              v-model="reportRunForm.monthRange"
-              class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-gray-800 dark:text-gray-200"
-            >
-              <option value="last_6_completed_months">最近 6 个完整月</option>
-              <option value="year_start_to_current_month">本年截至本月</option>
-              <option value="custom_month_range">自定义月份</option>
-            </select>
-          </div>
-          <div v-if="savedReportUsesMonthRange(pendingSavedReport) && reportRunForm.monthRange === 'custom_month_range'" class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始月份</label>
-              <input v-model="reportRunForm.startMonth" type="month" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-            </div>
-            <div>
-              <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束月份</label>
-              <input v-model="reportRunForm.endMonth" type="month" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-            </div>
-          </div>
-          <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/40 dark:bg-blue-950/20">
-            <span>
-              <span class="block text-sm font-bold text-gray-800 dark:text-gray-100">执行并分析</span>
-              <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">执行完成后将自动让 ChatBI 解读结果</span>
-            </span>
-          </div>
-          <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-950/40 overflow-hidden min-h-[10.5rem]">
-            <div class="px-3 py-2 flex items-center justify-between border-b border-gray-100 dark:border-gray-800">
-              <span class="text-xs font-black text-gray-600 dark:text-gray-300">实际执行 SQL</span>
-              <span
-                class="text-[10px] font-bold px-2 py-0.5 rounded"
-                :class="isPreviewingSavedReport ? 'bg-gray-100 text-gray-500' : reportRunPreview?.permission_status === 'denied' ? 'bg-red-50 text-red-600' : reportRunPreview?.permission_status === 'allowed' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'"
-              >
-                {{ isPreviewingSavedReport ? '预检中' : reportRunPreview?.permission_status === 'denied' ? '无权限' : reportRunPreview?.permission_status === 'allowed' ? '可运行' : '待校验' }}
-              </span>
-            </div>
-            <div v-if="isPreviewingSavedReport" class="px-3 py-4 text-xs text-gray-400">正在生成运行预览...</div>
-            <pre v-else class="max-h-44 overflow-auto px-3 py-2 text-[11px] font-mono leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{{ reportRunPreview?.rendered_sql || pendingSavedReport?.sql_content || '' }}</pre>
-            <p v-if="reportRunPreview?.permission_message" class="px-3 pb-3 text-[11px] text-red-500">{{ reportRunPreview.permission_message }}</p>
-          </div>
-        </div>
-        <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex justify-end space-x-3 bg-gray-50/50 dark:bg-gray-800/50">
-          <button @click="showReportRunModal = false" class="px-4 py-2 text-xs font-bold text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-            取消
-          </button>
-          <button
-            @click="executeSavedReportWithOptions()"
-            :disabled="isPreviewingSavedReport || !reportRunPreview || reportRunPreview?.can_run === false"
-            class="px-4 py-2 text-xs font-bold text-white bg-primary rounded-xl hover:bg-primary-hover active:bg-primary-active disabled:opacity-50 transition-colors"
-          >
-            开始运行
-          </button>
-        </div>
-      </div>
-    </div>
-    </teleport>
+    <SavedReportRunModal
+      :visible="showReportRunModal"
+      :pending-report="pendingSavedReport"
+      :form="reportRunForm"
+      :previewing="isPreviewingSavedReport"
+      :preview="reportRunPreview"
+      :uses-month-range="savedReportUsesMonthRange"
+      :overlay-class="saveReportModalOverlayClass"
+      :overlay-style="saveReportModalOverlayStyle"
+      @close="showReportRunModal = false"
+      @execute="executeSavedReportWithOptions"
+    />
 
     <!-- Modal: Help Guide -->
     <div
@@ -2306,190 +1993,14 @@
       </div>
     </div>
 
-    <!-- Model Call Stats Modal -->
-    <div
-      v-if="showStatsModal"
-      class="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-      @click.self="showStatsModal = false"
-    >
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700 flex flex-col max-h-[85%]">
-        <!-- Header -->
-        <div class="px-4 py-3.5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 shrink-0">
-          <div class="flex items-center space-x-2">
-            <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" :style="{ color: 'var(--primary-color, #1677ff)' }">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2" />
-            </svg>
-            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">大模型调用明细指标</h3>
-          </div>
-          <button @click="showStatsModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <!-- Body -->
-        <div class="p-4 overflow-y-auto space-y-4 flex-1">
-          <!-- Loading skeleton -->
-          <div v-if="loadingStats" class="space-y-3 py-6">
-            <div class="h-4 bg-gray-100 dark:bg-gray-700 rounded w-2/3 animate-pulse"></div>
-            <div class="space-y-2">
-              <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
-              <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse w-5/6"></div>
-              <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse w-4/5"></div>
-            </div>
-          </div>
-
-          <!-- Empty state -->
-          <div v-else-if="currentStats.length === 0" class="text-center py-8 text-gray-400 dark:text-gray-500 text-sm">
-            <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            暂无此消息的大模型调用明细记录
-          </div>
-
-          <!-- Content -->
-          <div v-else class="space-y-4">
-            <!-- Summary stats -->
-            <div class="grid grid-cols-4 gap-2 text-center">
-              <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">调用次数</div>
-                <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalCalls }}</div>
-              </div>
-              <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">总耗时</div>
-                <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalDuration }}s</div>
-              </div>
-              <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">总输入</div>
-                <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalIn }}</div>
-              </div>
-              <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">总输出</div>
-                <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalOut }}</div>
-              </div>
-            </div>
-
-            <!-- Detailed logs list -->
-            <div class="space-y-3">
-              <div
-                v-for="(stat, index) in currentStats"
-                :key="index"
-                class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/50 rounded-xl p-3 space-y-2 transition-all hover:shadow-sm"
-              >
-                <!-- Log header -->
-                <div class="flex items-start justify-between">
-                  <div class="flex flex-col">
-                    <div class="flex items-center space-x-1.5">
-                      <span class="inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white rounded bg-primary/80 shrink-0" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
-                        #{{ stat.call_index }}
-                      </span>
-                      <span class="text-xs font-bold text-gray-700 dark:text-gray-300 max-w-[150px] truncate" :title="stat.agent_name">
-                        {{ stat.agent_name }}
-                      </span>
-                    </div>
-                    <span v-if="stat.timestamp" class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 font-mono">
-                      调用时间: {{ formatModelCallTime(stat.timestamp) }}
-                    </span>
-                  </div>
-                  <span class="text-[10px] text-gray-400 dark:text-gray-500 font-mono text-right shrink-0">
-                    {{ (stat.elapsed_ms / 1000).toFixed(2) }}s ({{ stat.elapsed_ms }}ms)
-                  </span>
-                </div>
-
-                <!-- Log parameters -->
-                <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                  <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                    <span class="text-gray-400">大模型名称:</span>
-                    <span class="font-medium text-gray-700 dark:text-gray-300 font-mono text-[11px] truncate max-w-[130px]" :title="stat.model_name">
-                      {{ stat.model_name }}
-                    </span>
-                  </div>
-                  <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                    <span class="text-gray-400">输入信息数:</span>
-                    <span class="font-medium text-gray-700 dark:text-gray-300">
-                      {{ stat.input_message_count }}
-                    </span>
-                  </div>
-                  <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                    <span class="text-gray-400">输入 Token:</span>
-                    <span class="font-medium text-gray-700 dark:text-gray-300 font-mono">
-                      {{ stat.input_tokens }}
-                      <span v-if="stat.cache_input_tokens > 0" class="text-[10px] text-green-500 font-normal ml-0.5" :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens">
-                        (hit:{{ stat.cache_input_tokens }}, {{ ((stat.cache_input_tokens / stat.input_tokens) * 100).toFixed(0) }}%)
-                      </span>
-                    </span>
-                  </div>
-                  <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                    <span class="text-gray-400">输出 Token:</span>
-                    <span class="font-medium text-gray-700 dark:text-gray-300 font-mono">
-                      {{ stat.output_tokens }}
-                    </span>
-                  </div>
-                </div>
-
-                <!-- Tool Calls -->
-                <div class="pt-1 text-[11px] space-y-1.5">
-                  <div class="flex items-center space-x-1">
-                    <span class="text-gray-400 shrink-0">工具调用:</span>
-                    <span
-                      v-if="stat.has_tool_calls && stat.tool_names && stat.tool_names.length > 0"
-                      class="inline-flex flex-wrap gap-1"
-                    >
-                      <span
-                        v-for="tName in stat.tool_names"
-                        :key="tName"
-                        class="bg-blue-50 dark:bg-blue-900/30 text-blue-500 border border-blue-100/50 dark:border-blue-800/30 px-1 py-0.5 rounded text-[9px] font-mono"
-                      >
-                        {{ tName }}
-                      </span>
-                    </span>
-                    <span v-else-if="stat.has_tools_bound" class="text-gray-400 italic">
-                      无（已绑定工具但未调用）
-                    </span>
-                    <span v-else class="text-gray-400 italic">
-                      无（未绑定工具）
-                    </span>
-                  </div>
-                  <!-- Tool Call Arguments Details -->
-                  <div v-if="stat.tool_calls && stat.tool_calls.length > 0" class="bg-gray-100/60 dark:bg-gray-950/40 p-2 rounded-lg text-[10px] font-mono text-gray-600 dark:text-gray-400 border border-gray-100 dark:border-gray-800 space-y-1 max-h-[100px] overflow-y-auto">
-                    <div v-for="(call, cIdx) in stat.tool_calls" :key="cIdx" class="break-all whitespace-pre-wrap">
-                      <span class="text-blue-500 dark:text-blue-400 font-bold">{{ call.name }}</span>(<span class="text-gray-600 dark:text-gray-400">{{ formatToolArgs(call.arguments) }}</span>)
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Thoughts and Output Text Expansion Panel -->
-                <div v-if="stat.reasoning_content || stat.response_text" class="pt-1 border-t border-gray-100/50 dark:border-gray-700/20">
-                  <button
-                    @click="toggleStatExpand(stat.call_index)"
-                    class="text-[10px] text-primary dark:text-blue-400 hover:underline flex items-center space-x-1 font-bold focus:outline-none cursor-pointer"
-                  >
-                    <span>{{ expandedStats[stat.call_index] ? '收起思考与输出' : '展开思考与输出' }}</span>
-                    <svg class="w-3 h-3 transform transition-transform" :class="expandedStats[stat.call_index] ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  <div v-if="expandedStats[stat.call_index]" class="mt-2 space-y-2 text-[10px] font-mono">
-                    <!-- Reasoning/Thought -->
-                    <div v-if="stat.reasoning_content" class="bg-amber-50/40 dark:bg-amber-950/10 border border-amber-100/50 dark:border-amber-900/20 p-2 rounded-lg text-amber-800 dark:text-amber-300">
-                      <div class="font-bold text-[9px] uppercase text-amber-500 mb-1">思考过程 (Thought)</div>
-                      <div class="whitespace-pre-wrap leading-relaxed">{{ stat.reasoning_content }}</div>
-                    </div>
-                    <!-- Final text output -->
-                    <div v-if="stat.response_text" class="bg-gray-100/80 dark:bg-gray-950/60 border border-gray-200/50 dark:border-gray-800/40 p-2 rounded-lg text-gray-700 dark:text-gray-300">
-                      <div class="font-bold text-[9px] uppercase text-gray-400 mb-1">大模型输出 (Output)</div>
-                      <div class="whitespace-pre-wrap leading-relaxed max-h-[200px] overflow-y-auto break-all">{{ stat.response_text }}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
+    <ChatModelCallStatsModal
+      :visible="showStatsModal"
+      :loading="loadingStats"
+      :stats="currentStats"
+      :expanded="expandedStats"
+      @close="showStatsModal = false"
+      @toggle="toggleStatExpand"
+    />
     <DatasetPortalDrawer
       v-model="showPortalDrawer"
       v-model:keep-open-on-question="portalKeepOpenOnQuestion"
@@ -2609,9 +2120,14 @@ import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
 import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
+import SessionResourceScopeBar from "@/components/embed/SessionResourceScopeBar.vue";
+import ResourceScopeModal from "@/components/embed/ResourceScopeModal.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
+import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
+import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
+import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
@@ -2824,22 +2340,6 @@ const formatTimeLabel = (isoStr: string): string => {
     return `${month}-${day} ${hours}:${minutes}`;
   } catch (e) { return ""; }
 };
-
-const formatModelCallTime = (isoStr: string): string => {
-  try {
-    const date = new Date(isoStr);
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${y}-${m}-${d} ${hours}:${minutes}:${seconds}`;
-  } catch (e) {
-    return isoStr || "";
-  }
-};
-
 
 function getDisplayLogs(msg: Message) {
   return filterLogsForTurn(msg.logs, msg.turnType);
@@ -3087,33 +2587,10 @@ const toggleStatExpand = (callIndex: number) => {
   expandedStats.value[callIndex] = !expandedStats.value[callIndex];
 };
 
-const formatToolArgs = (args: any): string => {
-  if (!args) return "{}";
-  if (typeof args === "string") return args;
-  try {
-    return JSON.stringify(args);
-  } catch (e) {
-    return String(args);
-  }
-};
-
 watch(showStatsModal, (newVal) => {
   if (!newVal) {
     expandedStats.value = {};
   }
-});
-
-const statsSummary = computed(() => {
-  let totalCalls = currentStats.value.length;
-  let totalDuration = currentStats.value.reduce((acc, cur) => acc + (cur.elapsed_ms || 0), 0);
-  let totalIn = currentStats.value.reduce((acc, cur) => acc + (cur.input_tokens || 0), 0);
-  let totalOut = currentStats.value.reduce((acc, cur) => acc + (cur.output_tokens || 0), 0);
-  return {
-    totalCalls,
-    totalDuration: (totalDuration / 1000).toFixed(2),
-    totalIn,
-    totalOut
-  };
 });
 
 /** 知识库问答专家候选（capability 或名称命中） */
@@ -3495,7 +2972,6 @@ const resourceOptionGroups: { key: ResourceScopeGroupKey; label: string; shortLa
 ];
 const resourceScopeModalDraft = ref(emptyResourceScopeState());
 const resourceScopeSaving = ref(false);
-const resourceScopeProjectNameInput = ref<HTMLInputElement | null>(null);
 const resourceScopeActiveTab = ref<ResourceScopeGroupKey>('datasets');
 const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length);
 const projectSessionHasDatasetScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.datasets.length > 0);
@@ -3750,7 +3226,6 @@ const openResourceScopeModal = () => {
   syncResourceScopeActiveTabForDraft();
   showResourceScopeModal.value = true;
   if (!resourceOptionsLoaded.value) void loadResourceOptions();
-  void nextTick(() => resourceScopeProjectNameInput.value?.focus());
 };
 
 const refreshResourceOptions = async () => {

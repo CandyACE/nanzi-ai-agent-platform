@@ -47,8 +47,9 @@ env/
 *.log
 logs/
 
-# Testing
+# Testing / lint cache
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 

@@ -4,6 +4,7 @@ import { ref, nextTick, watch, onUnmounted, reactive, onMounted, computed } from
 import { useRoute, useRouter } from "vue-router";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import DebugConfigPanel from "@/components/DebugConfigPanel.vue";
+import AgentLogicFlowModal from "@/components/debug/AgentLogicFlowModal.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
@@ -76,6 +77,9 @@ import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vu
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
+import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
+import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
+import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
@@ -1583,21 +1587,6 @@ const openModelCallStats = async (msg: any) => {
   }
 };
 
-const formatModelCallTime = (isoStr: string): string => {
-  try {
-    const date = new Date(isoStr);
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${y}-${m}-${d} ${hours}:${minutes}:${seconds}`;
-  } catch (e) {
-    return isoStr || "";
-  }
-};
-
 const chatInputRef = ref<any>(null);
 const showWorkspaceDrawer = ref(false);
 
@@ -1664,34 +1653,12 @@ const toggleStatExpand = (callIndex: number) => {
   expandedStats.value[callIndex] = !expandedStats.value[callIndex];
 };
 
-const formatToolArgs = (args: any): string => {
-  if (!args) return "{}";
-  if (typeof args === "string") return args;
-  try {
-    return JSON.stringify(args);
-  } catch (e) {
-    return String(args);
-  }
-};
-
 watch(showStatsModal, (newVal) => {
   if (!newVal) {
     expandedStats.value = {};
   }
 });
 
-const statsSummary = computed(() => {
-  let totalCalls = currentStats.value.length;
-  let totalDuration = currentStats.value.reduce((acc, cur) => acc + (cur.elapsed_ms || 0), 0);
-  let totalIn = currentStats.value.reduce((acc, cur) => acc + (cur.input_tokens || 0), 0);
-  let totalOut = currentStats.value.reduce((acc, cur) => acc + (cur.output_tokens || 0), 0);
-  return {
-    totalCalls,
-    totalDuration: (totalDuration / 1000).toFixed(2),
-    totalIn,
-    totalOut
-  };
-});
 const openMemorySelector = () => {
   showMemoryDrawer.value = true;
 };
@@ -5130,426 +5097,7 @@ onUnmounted(() => {
     @cancel="showDeleteConfirm = false"
   />
 
-  <!-- Modal: Logic Flow SVG -->
-  <div
-    v-if="showLogicFlowModal"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-  >
-    <div
-      class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden animate-fade-in-up"
-    >
-      <div
-        class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50"
-      >
-        <h3 class="font-bold text-gray-800 text-lg flex items-center">
-          <svg
-            class="w-5 h-5 text-blue-600 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M13 10V3L4 14h7v7l9-11h-7z"
-            />
-          </svg>
-          智能体运行逻辑架构 (Agent Execution Logic)
-        </h3>
-        <button
-          @click="showLogicFlowModal = false"
-          class="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-all"
-        >
-          <svg
-            class="w-6 h-6"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
-      </div>
-      <div class="p-10 bg-white flex justify-center overflow-x-auto">
-        <!-- SVG Architecture Diagram (Final Refined Version) -->
-        <svg
-          width="800"
-          height="420"
-          viewBox="0 0 800 420"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <!-- Definitions -->
-          <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="10"
-              markerHeight="7"
-              refX="0"
-              refY="3.5"
-              orient="auto"
-            >
-              <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
-            </marker>
-            <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#3b82f6" />
-              <stop offset="100%" stop-color="#2563eb" />
-            </linearGradient>
-          </defs>
-
-          <!-- Main Path: User -> Intent -> Agent Service -> Rendering -> Audit -->
-
-          <!-- 1. User -->
-          <rect
-            x="20"
-            y="160"
-            width="110"
-            height="50"
-            rx="10"
-            fill="#f8fafc"
-            stroke="#e2e8f0"
-            stroke-width="2"
-          />
-          <text
-            x="75"
-            y="185"
-            text-anchor="middle"
-            fill="#1e293b"
-            font-weight="bold"
-            font-size="13"
-          >
-            用户提问
-          </text>
-          <text
-            x="75"
-            y="200"
-            text-anchor="middle"
-            fill="#94a3b8"
-            font-size="9"
-          >
-            User Query
-          </text>
-          <path
-            d="M130 185 H160"
-            stroke="#94a3b8"
-            stroke-width="2"
-            marker-end="url(#arrowhead)"
-          />
-
-          <!-- 2. Intent Recognition -->
-          <rect
-            x="170"
-            y="160"
-            width="130"
-            height="50"
-            rx="10"
-            fill="#eff6ff"
-            stroke="#3b82f6"
-            stroke-width="2"
-          />
-          <text
-            x="235"
-            y="185"
-            text-anchor="middle"
-            fill="#1e3a8a"
-            font-weight="bold"
-            font-size="13"
-          >
-            意图识别
-          </text>
-          <text
-            x="235"
-            y="200"
-            text-anchor="middle"
-            fill="#3b82f6"
-            font-size="9"
-          >
-            Intent Engine
-          </text>
-          <path
-            d="M300 185 H350"
-            stroke="#3b82f6"
-            stroke-width="2"
-            marker-end="url(#arrowhead)"
-          />
-
-          <!-- 3. Agent Service (Detailed ChatBI Path) -->
-          <rect
-            x="360"
-            y="135"
-            width="160"
-            height="100"
-            rx="12"
-            fill="url(#blueGrad)"
-            stroke="#1d4ed8"
-            stroke-width="2"
-            opacity="0.9"
-          />
-          <text
-            x="440"
-            y="175"
-            text-anchor="middle"
-            fill="white"
-            font-weight="bold"
-            font-size="15"
-          >
-            Agent Service
-          </text>
-          <text
-            x="440"
-            y="195"
-            text-anchor="middle"
-            fill="#bfdbfe"
-            font-size="10"
-          >
-            ChatBI 核心编排
-          </text>
-          <text
-            x="440"
-            y="212"
-            text-anchor="middle"
-            fill="white"
-            fill-opacity="0.6"
-            font-size="9"
-            font-family="monospace"
-          >
-            Tool-Calling
-          </text>
-
-          <!-- Metadata (Above) -->
-          <path
-            d="M440 135 V105"
-            stroke="#94a3b8"
-            stroke-width="1.5"
-            stroke-dasharray="2 2"
-            marker-end="url(#arrowhead)"
-          />
-          <rect
-            x="380"
-            y="50"
-            width="120"
-            height="45"
-            rx="8"
-            fill="#f0f9ff"
-            stroke="#0ea5e9"
-            stroke-width="1.5"
-          />
-          <text
-            x="440"
-            y="72"
-            text-anchor="middle"
-            fill="#0369a1"
-            font-weight="bold"
-            font-size="11"
-          >
-            Metadata Service
-          </text>
-          <text
-            x="440"
-            y="85"
-            text-anchor="middle"
-            fill="#0ea5e9"
-            font-size="9"
-          >
-            元数据/Schema检索
-          </text>
-
-          <!-- External API (Below) -->
-          <path
-            d="M440 235 V265"
-            stroke="#94a3b8"
-            stroke-width="1.5"
-            marker-end="url(#arrowhead)"
-          />
-          <rect
-            x="370"
-            y="275"
-            width="140"
-            height="50"
-            rx="8"
-            fill="#fff7ed"
-            stroke="#f59e0b"
-            stroke-width="1.5"
-          />
-          <text
-            x="440"
-            y="298"
-            text-anchor="middle"
-            fill="#9a3412"
-            font-weight="bold"
-            font-size="11"
-          >
-            外部数据接口 (8000)
-          </text>
-          <text
-            x="440"
-            y="312"
-            text-anchor="middle"
-            fill="#f59e0b"
-            font-size="9"
-          >
-            SQL执行 / 获取结果
-          </text>
-
-          <!-- 4. Secondary Path: RAG & Chat (Dashed Branches Below) -->
-          <path
-            d="M235 210 V360 H360"
-            stroke="#94a3b8"
-            stroke-width="1.5"
-            stroke-dasharray="4 3"
-            marker-end="url(#arrowhead)"
-          />
-          <rect
-            x="370"
-            y="340"
-            width="140"
-            height="40"
-            rx="8"
-            fill="#f9fafb"
-            stroke="#d1d5db"
-            stroke-width="1.5"
-            stroke-dasharray="4 2"
-          />
-          <text
-            x="440"
-            y="360"
-            text-anchor="middle"
-            fill="#64748b"
-            font-weight="bold"
-            font-size="11"
-          >
-            RAG / 基础闲聊
-          </text>
-          <text
-            x="440"
-            y="372"
-            text-anchor="middle"
-            fill="#9ca3af"
-            font-size="8"
-          >
-            规划中能力 (Extension)
-          </text>
-          <path
-            d="M510 360 H625 V245"
-            stroke="#94a3b8"
-            stroke-width="1.5"
-            stroke-dasharray="4 3"
-          />
-
-          <!-- 5. Rendering -->
-          <path
-            d="M520 185 H570"
-            stroke="#22c55e"
-            stroke-width="2"
-            marker-end="url(#arrowhead)"
-          />
-          <rect
-            x="580"
-            y="155"
-            width="130"
-            height="60"
-            rx="12"
-            fill="#f0fdf4"
-            stroke="#22c55e"
-            stroke-width="2"
-          />
-          <text
-            x="645"
-            y="185"
-            text-anchor="middle"
-            fill="#14532d"
-            font-weight="bold"
-            font-size="14"
-          >
-            结果合成渲染
-          </text>
-          <text
-            x="645"
-            y="200"
-            text-anchor="middle"
-            fill="#22c55e"
-            font-size="10"
-          >
-            Markdown/ECharts
-          </text>
-
-          <!-- 6. Audit -->
-          <path
-            d="M710 185 H740"
-            stroke="#94a3b8"
-            stroke-width="2"
-            marker-end="url(#arrowhead)"
-          />
-          <rect
-            x="750"
-            y="160"
-            width="40"
-            height="50"
-            rx="8"
-            fill="#fafafa"
-            stroke="#d1d5db"
-            stroke-width="1"
-          />
-          <text
-            x="770"
-            y="185"
-            text-anchor="middle"
-            fill="#4b5563"
-            font-weight="bold"
-            font-size="10"
-          >
-            审计
-          </text>
-          <text
-            x="770"
-            y="198"
-            text-anchor="middle"
-            fill="#9ca3af"
-            font-size="8"
-          >
-            Trace
-          </text>
-        </svg>
-      </div>
-      <div
-        class="px-8 py-6 bg-gray-50 border-t border-gray-100 flex items-start space-x-4"
-      >
-        <div class="bg-blue-100 p-2 rounded-lg">
-          <svg
-            class="w-5 h-5 text-blue-600"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-        </div>
-        <div class="text-xs text-gray-500 leading-relaxed">
-          <p class="font-bold text-gray-700 mb-1">
-            设计说明 (Architectural Notes):
-          </p>
-          1. <b>核心链路 (实线)</b>：专注于 ChatBI
-          数据查询，支持元数据自动注入与外部 SQL (8000端口) 代理执行。<br />
-          2. <b>扩展链路 (虚线)</b>：预留 RAG
-          知识库与通用对话分支，统一由意图引擎分发，最终汇聚至渲染引擎。<br />
-          3. <b>元数据与外部执行</b>：体现了 Agent
-          在执行过程中的上下游依赖关系，确保查数逻辑的闭环。
-        </div>
-      </div>
-    </div>
-  </div>
-
+  <AgentLogicFlowModal :visible="showLogicFlowModal" @close="showLogicFlowModal = false" />
   <KnowledgePortalDrawer
     v-model="showKnowledgePortal"
     v-model:pinned="knowledgePinned"
@@ -5595,190 +5143,14 @@ onUnmounted(() => {
     @cleared="handleMemoryCleared"
   />
 
-  <!-- Model Call Stats Modal -->
-  <div
-    v-if="showStatsModal"
-    class="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-    @click.self="showStatsModal = false"
-  >
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700 flex flex-col max-h-[85%]">
-      <!-- Header -->
-      <div class="px-4 py-3.5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 shrink-0">
-        <div class="flex items-center space-x-2">
-          <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" :style="{ color: 'var(--primary-color, #1677ff)' }">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2" />
-          </svg>
-          <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">大模型调用明细指标</h3>
-        </div>
-        <button @click="showStatsModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
-      <!-- Body -->
-      <div class="p-4 overflow-y-auto space-y-4 flex-1">
-        <!-- Loading skeleton -->
-        <div v-if="loadingStats" class="space-y-3 py-6">
-          <div class="h-4 bg-gray-100 dark:bg-gray-700 rounded w-2/3 animate-pulse"></div>
-          <div class="space-y-2">
-            <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
-            <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse w-5/6"></div>
-            <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse w-4/5"></div>
-          </div>
-        </div>
-
-        <!-- Empty state -->
-        <div v-else-if="currentStats.length === 0" class="text-center py-8 text-gray-400 dark:text-gray-500 text-sm">
-          <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          暂无此消息的大模型调用明细记录
-        </div>
-
-        <!-- Content -->
-        <div v-else class="space-y-4">
-          <!-- Summary stats -->
-          <div class="grid grid-cols-4 gap-2 text-center">
-            <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-              <div class="text-[10px] text-gray-400 dark:text-gray-500">调用次数</div>
-              <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalCalls }}</div>
-            </div>
-            <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-              <div class="text-[10px] text-gray-400 dark:text-gray-500">总耗时</div>
-              <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalDuration }}s</div>
-            </div>
-            <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-              <div class="text-[10px] text-gray-400 dark:text-gray-500">总输入</div>
-              <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalIn }}</div>
-            </div>
-            <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
-              <div class="text-[10px] text-gray-400 dark:text-gray-500">总输出</div>
-              <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalOut }}</div>
-            </div>
-          </div>
-
-          <!-- Detailed logs list -->
-          <div class="space-y-3">
-            <div
-              v-for="(stat, index) in currentStats"
-              :key="index"
-              class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/50 rounded-xl p-3 space-y-2 transition-all hover:shadow-sm"
-            >
-              <!-- Log header -->
-              <div class="flex items-start justify-between">
-                <div class="flex flex-col">
-                  <div class="flex items-center space-x-1.5">
-                    <span class="inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white rounded bg-primary/80 shrink-0" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
-                      #{{ stat.call_index }}
-                    </span>
-                    <span class="text-xs font-bold text-gray-700 dark:text-gray-300 max-w-[150px] truncate" :title="stat.agent_name">
-                      {{ stat.agent_name }}
-                    </span>
-                  </div>
-                  <span v-if="stat.timestamp" class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 font-mono">
-                    调用时间: {{ formatModelCallTime(stat.timestamp) }}
-                  </span>
-                </div>
-                <span class="text-[10px] text-gray-400 dark:text-gray-500 font-mono text-right shrink-0">
-                  {{ (stat.elapsed_ms / 1000).toFixed(2) }}s ({{ stat.elapsed_ms }}ms)
-                </span>
-              </div>
-
-              <!-- Log parameters -->
-              <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                  <span class="text-gray-400">大模型名称:</span>
-                  <span class="font-medium text-gray-700 dark:text-gray-300 font-mono text-[11px] truncate max-w-[130px]" :title="stat.model_name">
-                    {{ stat.model_name }}
-                  </span>
-                </div>
-                <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                  <span class="text-gray-400">输入信息数:</span>
-                  <span class="font-medium text-gray-700 dark:text-gray-300">
-                    {{ stat.input_message_count }}
-                  </span>
-                </div>
-                <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                  <span class="text-gray-400">输入 Token:</span>
-                  <span class="font-medium text-gray-700 dark:text-gray-300 font-mono">
-                    {{ stat.input_tokens }}
-                    <span v-if="stat.cache_input_tokens > 0" class="text-[10px] text-green-500 font-normal ml-0.5" :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens">
-                      (hit:{{ stat.cache_input_tokens }}, {{ ((stat.cache_input_tokens / stat.input_tokens) * 100).toFixed(0) }}%)
-                    </span>
-                  </span>
-                </div>
-                <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
-                  <span class="text-gray-400">输出 Token:</span>
-                  <span class="font-medium text-gray-700 dark:text-gray-300 font-mono">
-                    {{ stat.output_tokens }}
-                  </span>
-                </div>
-              </div>
-
-              <!-- Tool Calls -->
-              <div class="pt-1 text-[11px] space-y-1.5">
-                <div class="flex items-center space-x-1">
-                  <span class="text-gray-400 shrink-0">工具调用:</span>
-                  <span
-                    v-if="stat.has_tool_calls && stat.tool_names && stat.tool_names.length > 0"
-                    class="inline-flex flex-wrap gap-1"
-                  >
-                    <span
-                      v-for="tName in stat.tool_names"
-                      :key="tName"
-                      class="bg-blue-50 dark:bg-blue-900/30 text-blue-500 border border-blue-100/50 dark:border-blue-800/30 px-1 py-0.5 rounded text-[9px] font-mono"
-                    >
-                      {{ tName }}
-                    </span>
-                  </span>
-                  <span v-else-if="stat.has_tools_bound" class="text-gray-400 italic">
-                    无（已绑定工具但未调用）
-                  </span>
-                  <span v-else class="text-gray-400 italic">
-                    无（未绑定工具）
-                  </span>
-                </div>
-                <!-- Tool Call Arguments Details -->
-                <div v-if="stat.tool_calls && stat.tool_calls.length > 0" class="bg-gray-100/60 dark:bg-gray-950/40 p-2 rounded-lg text-[10px] font-mono text-gray-600 dark:text-gray-400 border border-gray-100 dark:border-gray-800 space-y-1 max-h-[100px] overflow-y-auto">
-                  <div v-for="(call, cIdx) in stat.tool_calls" :key="cIdx" class="break-all whitespace-pre-wrap">
-                    <span class="text-blue-500 dark:text-blue-400 font-bold">{{ call.name }}</span>(<span class="text-gray-600 dark:text-gray-400">{{ formatToolArgs(call.arguments) }}</span>)
-                  </div>
-                </div>
-              </div>
-
-              <!-- Thoughts and Output Text Expansion Panel -->
-              <div v-if="stat.reasoning_content || stat.response_text" class="pt-1 border-t border-gray-100/50 dark:border-gray-700/20">
-                <button
-                  @click="toggleStatExpand(stat.call_index)"
-                  class="text-[10px] text-primary dark:text-blue-400 hover:underline flex items-center space-x-1 font-bold focus:outline-none cursor-pointer"
-                >
-                  <span>{{ expandedStats[stat.call_index] ? '收起思考与输出' : '展开思考与输出' }}</span>
-                  <svg class="w-3 h-3 transform transition-transform" :class="expandedStats[stat.call_index] ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                <div v-if="expandedStats[stat.call_index]" class="mt-2 space-y-2 text-[10px] font-mono">
-                  <!-- Reasoning/Thought -->
-                  <div v-if="stat.reasoning_content" class="bg-amber-50/40 dark:bg-amber-950/10 border border-amber-100/50 dark:border-amber-900/20 p-2 rounded-lg text-amber-800 dark:text-amber-300">
-                    <div class="font-bold text-[9px] uppercase text-amber-500 mb-1">思考过程 (Thought)</div>
-                    <div class="whitespace-pre-wrap leading-relaxed">{{ stat.reasoning_content }}</div>
-                  </div>
-                  <!-- Final text output -->
-                  <div v-if="stat.response_text" class="bg-gray-100/80 dark:bg-gray-950/60 border border-gray-200/50 dark:border-gray-800/40 p-2 rounded-lg text-gray-700 dark:text-gray-300">
-                    <div class="font-bold text-[9px] uppercase text-gray-400 mb-1">大模型输出 (Output)</div>
-                    <div class="whitespace-pre-wrap leading-relaxed max-h-[200px] overflow-y-auto break-all">{{ stat.response_text }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
+  <ChatModelCallStatsModal
+    :visible="showStatsModal"
+    :loading="loadingStats"
+    :stats="currentStats"
+    :expanded="expandedStats"
+    @close="showStatsModal = false"
+    @toggle="toggleStatExpand"
+  />
   <DatasetPortalDrawer
     v-model="showPortalDrawer"
     v-model:keep-open-on-question="portalKeepOpenOnQuestion"
@@ -5801,204 +5173,31 @@ onUnmounted(() => {
     @open-full-page="openFullDataPortal"
   />
 
-  <!-- Modal: Run Saved Report -->
-  <teleport to="body">
-  <div
-    v-if="showReportRunModal"
-    class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-    :class="saveReportModalOverlayClass"
-    :style="saveReportModalOverlayStyle"
-    @click.self="showReportRunModal = false"
-  >
-    <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-700">
-      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
-        <div>
-          <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">运行黄金报表</h3>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-[18rem]">{{ pendingSavedReport?.title }}</p>
-        </div>
-        <button @click="showReportRunModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
-      <div class="p-6 space-y-4">
-        <div v-if="!savedReportUsesMonthRange(pendingSavedReport)">
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
-          <select
-            v-model="reportRunForm.dateRange"
-            class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-gray-800 dark:text-gray-200"
-          >
-            <option value="today">今天</option>
-            <option value="yesterday">昨天</option>
-            <option value="last_7_days">最近 7 天</option>
-            <option value="month_start_to_today">本月截至今天</option>
-            <option value="custom_range">自定义日期</option>
-          </select>
-        </div>
-        <div v-if="reportRunForm.dateRange === 'custom_range'" class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始日期</label>
-            <input v-model="reportRunForm.startDate" type="date" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-          </div>
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束日期</label>
-            <input v-model="reportRunForm.endDate" type="date" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-          </div>
-        </div>
-        <div v-if="savedReportUsesMonthRange(pendingSavedReport)">
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">月份范围</label>
-          <select
-            v-model="reportRunForm.monthRange"
-            class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-gray-800 dark:text-gray-200"
-          >
-            <option value="last_6_completed_months">最近 6 个完整月</option>
-            <option value="year_start_to_current_month">本年截至本月</option>
-            <option value="custom_month_range">自定义月份</option>
-          </select>
-        </div>
-        <div v-if="savedReportUsesMonthRange(pendingSavedReport) && reportRunForm.monthRange === 'custom_month_range'" class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始月份</label>
-            <input v-model="reportRunForm.startMonth" type="month" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-          </div>
-          <div>
-            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束月份</label>
-            <input v-model="reportRunForm.endMonth" type="month" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
-          </div>
-        </div>
-        <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/40 dark:bg-blue-950/20">
-          <span>
-            <span class="block text-sm font-bold text-gray-800 dark:text-gray-100">执行并分析</span>
-            <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">执行完成后将自动让 ChatBI 解读结果</span>
-          </span>
-        </div>
-        <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-950/40 overflow-hidden min-h-[10.5rem]">
-          <div class="px-3 py-2 flex items-center justify-between border-b border-gray-100 dark:border-gray-800">
-            <span class="text-xs font-black text-gray-600 dark:text-gray-300">实际执行 SQL</span>
-            <span
-              class="text-[10px] font-bold px-2 py-0.5 rounded"
-              :class="isPreviewingSavedReport ? 'bg-gray-100 text-gray-500' : reportRunPreview?.permission_status === 'denied' ? 'bg-red-50 text-red-600' : reportRunPreview?.permission_status === 'allowed' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'"
-            >
-              {{ isPreviewingSavedReport ? '预检中' : reportRunPreview?.permission_status === 'denied' ? '无权限' : reportRunPreview?.permission_status === 'allowed' ? '可运行' : '待校验' }}
-            </span>
-          </div>
-          <div v-if="isPreviewingSavedReport" class="px-3 py-4 text-xs text-gray-400">正在生成运行预览...</div>
-          <pre v-else class="max-h-44 overflow-auto px-3 py-2 text-[11px] font-mono leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{{ reportRunPreview?.rendered_sql || pendingSavedReport?.sql_content || '' }}</pre>
-          <p v-if="reportRunPreview?.permission_message" class="px-3 pb-3 text-[11px] text-red-500">{{ reportRunPreview.permission_message }}</p>
-        </div>
-      </div>
-      <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex justify-end space-x-3 bg-gray-50/50 dark:bg-gray-800/50">
-        <button @click="showReportRunModal = false" class="px-4 py-2 text-xs font-bold text-gray-500 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-          取消
-        </button>
-        <button
-          @click="executeSavedReportWithOptions()"
-          :disabled="isPreviewingSavedReport || !reportRunPreview || reportRunPreview?.can_run === false"
-          class="px-4 py-2 text-xs font-bold text-white bg-primary rounded-xl hover:bg-primary-hover active:bg-primary-active disabled:opacity-50 transition-colors"
-        >
-          开始运行
-        </button>
-      </div>
-    </div>
-  </div>
-  </teleport>
+  <SavedReportRunModal
+    :visible="showReportRunModal"
+    :pending-report="pendingSavedReport"
+    :form="reportRunForm"
+    :previewing="isPreviewingSavedReport"
+    :preview="reportRunPreview"
+    :uses-month-range="savedReportUsesMonthRange"
+    :overlay-class="saveReportModalOverlayClass"
+    :overlay-style="saveReportModalOverlayStyle"
+    @close="showReportRunModal = false"
+    @execute="executeSavedReportWithOptions"
+  />
 
-  <!-- Modal: Save Report -->
-  <teleport to="body">
-  <div
-    v-if="showSaveReportModal"
-    class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-    :class="saveReportModalOverlayClass"
-    :style="saveReportModalOverlayStyle"
-    @click.self="showSaveReportModal = false"
-  >
-    <div
-      class="bg-white dark:bg-gray-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-gray-100 dark:border-gray-700"
-    >
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
-        <div class="flex items-center space-x-2">
-          <div class="p-1.5 bg-primary/10 rounded-lg text-primary">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V5zM12 9v12m-3-3l3 3 3-3" />
-            </svg>
-          </div>
-          <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">{{ isEditingReport ? '编辑黄金 SQL 报表' : '沉淀为黄金报表' }}</h3>
-        </div>
-        <button @click="showSaveReportModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
+  <SavedReportEditorModal
+    :visible="showSaveReportModal"
+    :form="saveReportForm"
+    :editing="isEditingReport"
+    :saving="isSavingReport"
+    :overlay-class="saveReportModalOverlayClass"
+    :overlay-style="saveReportModalOverlayStyle"
+    scrollbar-variant="debug"
+    @close="showSaveReportModal = false"
+    @submit="submitSaveReport"
+  />
 
-      <!-- Body -->
-      <div class="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar max-h-[60vh]">
-        <div>
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">报表名称 <span class="text-red-500">*</span></label>
-          <input
-            v-model="saveReportForm.title"
-            type="text"
-            placeholder="请输入自定义报表名称"
-            class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">报表描述</label>
-          <textarea
-            v-model="saveReportForm.description"
-            rows="2"
-            placeholder="说明这个报表适合回答什么业务问题"
-            class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200 resize-none"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">标签</label>
-          <input
-            v-model="saveReportForm.tags_input"
-            type="text"
-            placeholder="例如：经营分析, 订单, 月报"
-            class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200"
-          />
-        </div>
-
-        <div v-if="saveReportForm.original_query">
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">原始提问</label>
-          <div class="px-3 py-2 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-600 dark:text-gray-400 break-all select-all font-mono leading-relaxed max-h-20 overflow-y-auto">
-            {{ saveReportForm.original_query }}
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">SQL 语句预览</label>
-          <pre class="px-3 py-2 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-600 dark:text-gray-400 break-all select-all font-mono leading-relaxed overflow-x-auto max-h-40 overflow-y-auto">{{ saveReportForm.sql_content }}</pre>
-          <span class="text-[10px] text-gray-400 mt-1 block">提示：系统将自动反查关联的数据集与数据源以保证直连执行时能够顺利通过权限安全校验。</span>
-        </div>
-        <div
-          v-if="saveReportForm.mode === 'param_sql'"
-          class="p-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-950/20 text-xs text-blue-700 dark:text-blue-300 leading-relaxed"
-        >
-          已识别到固定日期条件，将保存为动态日期报表。后续运行时可选择今天、昨天、最近 7 天、本月或自定义日期范围。
-        </div>
-      </div>
-
-      <!-- Footer -->
-      <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex justify-end space-x-3 bg-gray-50/50 dark:bg-gray-800/50">
-        <button
-          @click="showSaveReportModal = false"
-          class="px-4 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-        >
-          取消
-        </button>
-        <button
-          @click="submitSaveReport"
-          :disabled="isSavingReport"
-          class="px-4 py-2 text-xs font-bold text-white bg-primary rounded-xl hover:bg-primary-hover active:bg-primary-active disabled:opacity-50 transition-colors flex items-center space-x-1.5"
-        >
-          <svg v-if="isSavingReport" class="w-3.5 h-3.5 animate-spin text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-          <span>{{ isEditingReport ? '保存修改' : '沉淀报表' }}</span>
-        </button>
-      </div>
-    </div>
-  </div>
-  </teleport>
     <ChatBIMonitorDialog
       :open="chatbiMonitorDialogOpen"
       :conversation-id="conversationId"
