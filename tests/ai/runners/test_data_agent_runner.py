@@ -2815,7 +2815,8 @@ def test_diagnostic_repair_marks_next_sample_shaped_sql_as_final_business_query(
     assert state.ready_to_answer is True
 
 
-def test_final_business_query_role_survives_duration_anomaly_repair(data_config):
+def test_final_business_query_role_survives_duration_anomaly_soft_repair(data_config):
+    """时长异常走 soft repair：结果保留，repair 后正常业务 SQL 仍可完成角色切换。"""
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-final-role-duration", trace_buffer=[])
@@ -2825,6 +2826,7 @@ def test_final_business_query_role_survives_duration_anomaly_repair(data_config)
         sql_completed=True,
         expecting_final_sql_after_diagnostic=True,
         diagnostic_sql_pending_final=True,
+        next_sql_is_final_business_query=True,
     )
 
     runner._reset_state_for_repair(state)
@@ -2839,10 +2841,13 @@ def test_final_business_query_role_survives_duration_anomaly_repair(data_config)
         output={"items": [{"id": 1, "interval_seconds": -31400679}]},
     )
 
-    assert should_save is False
+    assert should_save is True
     assert state.duration_anomaly is True
+    assert state.last_successful_sql_output is not None
     runner._reset_state_for_repair(state)
+    assert state.last_successful_sql_output is not None
 
+    state.next_sql_is_final_business_query = True
     _, should_save = runner._apply_sql_tool_result(
         state,
         tool_args={
@@ -2855,6 +2860,7 @@ def test_final_business_query_role_survives_duration_anomaly_repair(data_config)
     )
 
     assert should_save is True
+    assert state.duration_anomaly is False
     assert state.diagnostic_sql_pending_final is False
     assert state.ready_to_answer is True
 
@@ -4308,7 +4314,8 @@ def test_failed_sql_repeat_fuses_at_two_after_prior_failure(data_config):
     assert "SQL 执行失败" in state.tool_loop_fuse_reason
 
 
-def test_data_agent_runner_detects_negative_duration_anomaly(data_config):
+def test_data_agent_runner_soft_flags_negative_duration_without_hard_block(data_config):
+    """负时延：标记 anomaly 供 soft repair/提示，但结果照常保存（不硬拦截）。"""
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-duration-anomaly", trace_buffer=[])
@@ -4331,12 +4338,16 @@ def test_data_agent_runner_detects_negative_duration_anomaly(data_config):
     )
 
     assert parsed == payload
-    assert should_save is False
+    assert should_save is True
     assert state.duration_anomaly is True
+    assert state.last_successful_sql_output is not None
     assert state.ready_to_answer is False
     assert runner._current_repair_kind(state) == "duration_anomaly"
     assert "interval_seconds" in state.duration_anomaly_reason
-    assert "时间差/时延" in runner._build_repair_message(state)
+    repair_msg = runner._build_repair_message(state)
+    assert "时间差/时延" in repair_msg
+    assert "不会硬拦截" in repair_msg
+    assert "禁止直接回答" not in repair_msg
 
 
 def test_data_agent_runner_detects_extreme_delay_seconds_anomaly(data_config):

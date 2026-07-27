@@ -970,6 +970,9 @@ class FederatedQueryExecutor:
                             "columns": columns,
                             "items": [list(r) for r in join_rows],
                         }
+                        join_details = (
+                            f"内存关联计算成功。汇总产出 {len(join_rows)} 行数据{limit_note}。\nSQL:\n{join_sql}"
+                        )
                         if join_rows:
                             parsed_join = {
                                 "columns": columns,
@@ -979,16 +982,16 @@ class FederatedQueryExecutor:
                                 self.agent_runner._detect_duration_anomaly(parsed_join)
                             )
                             if duration_anomaly:
-                                raise ValueError(
-                                    f"{FEDERATED_JOIN_RESULT_ANOMALY} 时长/时延结果异常：{duration_reason}"
+                                # Soft tip only：不抛错硬拦截联邦结果。
+                                join_details = (
+                                    f"{join_details}\n\n[系统提示] 时长/时延字段可能异常（未拦截）："
+                                    f"{duration_reason}"
                                 )
                         yield {
                             "type": "log",
                             "id": join_log_id,
                             "title": "内存联邦聚合计算",
-                            "details": (
-                                f"内存关联计算成功。汇总产出 {len(join_rows)} 行数据{limit_note}。\nSQL:\n{join_sql}"
-                            ),
+                            "details": join_details,
                             "status": "success",
                         }
                         # 联邦结果为空：尝试对主表子查询做 empty_filter 修正后重跑 join

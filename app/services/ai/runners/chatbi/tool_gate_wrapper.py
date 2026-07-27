@@ -262,8 +262,8 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                         parsed_output = runner._try_parse_json_output(result)
                         empty_reason = runner._detect_empty_result(parsed_output)
                         sql_error, _ = runner._detect_sql_error(result)
-                        duration_anomaly, _ = runner._detect_duration_anomaly(parsed_output)
-                        if not sql_error and not empty_reason and not duration_anomaly:
+                        # Soft tip：时长疑似异常仍缓存结果，避免硬拦截导致无可用数据。
+                        if not sql_error and not empty_reason:
                             if current_sql_normalized:
                                 state.successful_sqls[current_sql_normalized] = result
                             state.last_successful_sql_output = result

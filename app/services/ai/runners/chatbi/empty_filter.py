@@ -112,9 +112,9 @@ def apply_auto_retry_sql_result(
     state.duration_anomaly_reason = ""
     duration_anomaly, duration_reason = runner._detect_duration_anomaly(parsed_output)
     if duration_anomaly:
+        # Soft tip：结果仍视为成功落库，仅标记供 repair/提示。
         state.duration_anomaly = True
         state.duration_anomaly_reason = duration_reason
-        return False
     normalized_sql = runner._normalize_sql_text(sql_text)
     if normalized_sql:
         state.failed_sql_signatures.pop(normalized_sql, None)

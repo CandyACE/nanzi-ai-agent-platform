@@ -243,6 +243,7 @@ def is_delay_like_column(column: str) -> bool:
 
 
 def detect_duration_anomaly(parsed: Any) -> tuple[bool, str]:
+    """检测时长/时延疑似异常，仅用于 soft repair / 提示，不构成硬拦截依据。"""
     rows = iter_named_result_rows(parsed)
     if not rows:
         return False, ""
@@ -259,7 +260,7 @@ def detect_duration_anomaly(parsed: Any) -> tuple[bool, str]:
                 continue
             if numeric_value < 0:
                 return True, (
-                    f"字段 `{column}` 值为 {numeric_value:g}，时间差/时延/时长不应为负值，"
+                    f"字段 `{column}` 值为 {numeric_value:g}，时间差/时延/时长通常不应为负值，"
                     "疑似时间字段相减方向、时区或单位换算错误"
                 )
             if is_delay_like_column(str(column)) and numeric_value > DELAY_SECONDS_EXTREME_THRESHOLD:
@@ -271,6 +272,7 @@ def detect_duration_anomaly(parsed: Any) -> tuple[bool, str]:
 
 
 def detect_ratio_anomaly(parsed: Any) -> tuple[bool, str]:
+    """占比/比率启发式检测保留；当前未接入硬门禁，仅供提示类扩展使用。"""
     ratio_col_pattern = re.compile(
         r"(rate|ratio|pct|percent|proportion|utilization|utilisation|"
         r"\u7387|\u5360\u6bd4|\u6bd4\u4f8b|\u8d1f\u8f7d\u7387|\u5229\u7528\u7387|\u6210\u529f\u7387|\u8f6c\u5316\u7387|\u5b8c\u6210\u7387)",

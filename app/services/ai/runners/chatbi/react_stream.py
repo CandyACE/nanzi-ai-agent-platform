@@ -516,10 +516,9 @@ async def emit_final_guard(
         )
     elif state.duration_anomaly:
         content = (
-            "计算出的时延/时长数据疑似存在异常，为保证数据准确性，已自动拦截该次回答。\n\n"
-            "💡 **建议您可以尝试**：\n"
-            "1. 重新检查提问中涉及的时间字段方向、时区或单位定义。\n"
-            "2. 重新核对提问内容并以简化的表述重新提问。"
+            "系统提示：查询结果中的时延/时长字段可能存在异常，仅作参考提示，未硬拦截结果。\n\n"
+            f"原因：{state.duration_anomaly_reason or '时长类字段出现负值或极端延迟'}\n\n"
+            "💡 **建议**：核对时间字段相减方向、时区与单位；若业务口径确认无误，可直接使用当前结果并在解读中说明疑点。"
         )
     elif state.tool_loop_fuse_triggered:
         content = f"检测到工具调用出现循环，已被系统安全中止。{state.tool_loop_fuse_reason}"

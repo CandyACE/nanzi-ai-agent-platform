@@ -277,10 +277,11 @@ def build_repair_message(
         return repair
     if state.duration_anomaly:
         return (
-            "【时间差/时延结果异常复核】上一轮 execute_sql_query 返回了明显异常的时间差、"
+            "【时间差/时延结果提示】上一轮 execute_sql_query 返回了可能异常的时间差、"
             f"时延或时长字段。原因：{state.duration_anomaly_reason}\n"
-            "请检查 SQL 中时间字段的相减方向、时区口径、now()/当前时间来源、单位换算（秒/毫秒/分钟/小时），"
-            "修正 SQL 后重新调用 execute_sql_query。修正并执行成功前禁止直接回答用户。"
+            "建议检查 SQL 中时间字段的相减方向、时区口径、now()/当前时间来源、单位换算（秒/毫秒/分钟/小时），"
+            "必要时修正后重新调用 execute_sql_query。\n"
+            "若确认当前业务口径正确，可直接基于已有结果回答，并在回答中简要说明该疑点；系统不会硬拦截本次结果。"
         )
     if state.tool_loop_fuse_triggered:
         reason = (state.tool_loop_fuse_reason or "").strip()
@@ -368,9 +369,13 @@ def reset_state_for_repair(state: DataRunState) -> None:
     if repair_kind in {"empty_sql_result", "duration_anomaly"}:
         state.expecting_final_sql_after_diagnostic = True
     state.diagnostic_sql_pending_final = False
+    # Soft duration tip：保留已成功结果，预算用尽后仍可基于缓存合成回答，避免硬拦截无答。
+    preserved_sql_output = (
+        state.last_successful_sql_output if repair_kind == "duration_anomaly" else None
+    )
     state.duration_anomaly = False
     state.duration_anomaly_reason = ""
-    state.last_successful_sql_output = None
+    state.last_successful_sql_output = preserved_sql_output
     state.last_successful_sql_args = {}
     state.successful_sqls = {}
     state.sql_citation_counter = 0

@@ -469,12 +469,13 @@ def apply_sql_tool_result(
     state.last_successful_sql_output = output
     duration_anomaly, duration_reason = runner._detect_duration_anomaly(parsed_output)
     if duration_anomaly:
+        # Soft tip + repair：保留结果可供回答，不硬拒存。
         state.duration_anomaly = True
         state.duration_anomaly_reason = duration_reason
-        return parsed_output, False
+    else:
+        state.duration_anomaly = False
+        state.duration_anomaly_reason = ""
     state.next_sql_is_final_business_query = False
-    state.duration_anomaly = False
-    state.duration_anomaly_reason = ""
     state.empty_filter_diagnostics = []
     state.empty_filter_diagnostic_summary = ""
     return parsed_output, True

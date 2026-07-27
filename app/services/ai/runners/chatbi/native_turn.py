@@ -353,6 +353,44 @@ async def run_native_agent_turn(
             )
             return
 
+    # Soft tip：时长疑似异常且预算用尽时，优先基于已缓存结果合成回答，避免硬拦截无答。
+    if state.duration_anomaly and state.last_successful_sql_output is not None:
+        tip = (
+            "【系统提示】时延/时长字段可能异常（未硬拦截）："
+            f"{state.duration_anomaly_reason or '请核对时间字段方向、时区与单位'}。"
+            "以下基于已查询结果继续回答。"
+        )
+        yield {
+            "type": "log",
+            "id": f"duration_tip_{uuid.uuid4().hex[:8]}",
+            "title": "时间差/时延结果提示",
+            "details": tip,
+            "status": "warning",
+        }
+        state.duration_anomaly = False
+        async for chunk in runner._synthesize_from_cached_sql_result(
+            runtime_messages=runtime_messages,
+            system_prompt=system_content,
+            user_question=user_question,
+            state=state,
+        ):
+            yield chunk
+        insight_event = take_chatbi_insight_meta_event(
+            state,
+            evidence_metadata=getattr(runner, "_evidence_metadata", None),
+        )
+        if insight_event is not None:
+            yield insight_event
+        if not interrupted:
+            await _persist_agent_state(
+                runner,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+            )
+        return
+
     if state.sql_fatal_error:
         async for chunk in runner._yield_sql_fatal_abort(state):
             yield chunk
