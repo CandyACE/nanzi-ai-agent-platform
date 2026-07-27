@@ -10,7 +10,15 @@
 *   **Docker 容器化部署（生产首选，支持离线）**：通过位置参数指定版本号构建 Docker 归档包，可在隔离容器环境下运行并一键部署。
 *   **本地源码开发调试部署（开发首选）**：使用 Python 虚拟环境与 Node.js 宿主机环境，支持前后端热重载实时开发联调。
 
-无论采用何种部署方案，服务拉起前均需要完成 **MySQL 数据库结构与初始管理员账号数据**的导入。
+无论采用何种部署方案，服务拉起前均需要完成平台主库结构与初始管理员账号的初始化。
+
+> **重要：平台主库必须二选一。**
+>
+> 请根据实际环境选择 **MySQL** 或 **PostgreSQL** 其中一种：
+> - 选择 MySQL：配置 `DATABASE_TYPE=mysql`（不配置时默认使用 MySQL），执行 `db-prod/` 初始化脚本。
+> - 选择 PostgreSQL：配置 `DATABASE_TYPE=postgresql`，执行 `db-prod-pg/` 初始化脚本。
+>
+> 同一个平台运行环境不要同时初始化两套主库，也不要交叉执行两套迁移脚本。两套数据库都可以作为外部数据源被平台连接，但平台自身的主库运行时只使用其中一种。
 
 ---
 
@@ -24,7 +32,9 @@
 *   **Node.js**（建议 v18+ & npm，仅用于本地开发联调或宿主机前端预构建。如果不自行构建镜像且不进行本地源码调试，则无需安装）
 
 ### 🔌 数据库与外部依赖服务
-*   **MySQL**（建议 v8.0+）：必须支持 `utf8mb4` 字符集，用以存放平台系统级配置、角色权限、审计日志及智能体元数据。
+*   **平台主库（二选一）**：
+    *   **MySQL**（建议 v8.0+）：必须支持 `utf8mb4` 字符集，用以存放平台系统级配置、角色权限、审计日志及智能体元数据。
+    *   **PostgreSQL**（建议 v14+）：作为 MySQL 的替代主库；初始化脚本使用 PostgreSQL 原生方言和幂等迁移。
 *   **Redis**：**必须使用支持向量检索的 Redis Stack 版本**（例如 `redis/redis-stack-server:latest`），用以支持平台内部高并发缓存、长期记忆（LTM）向量检索、向量搜索诊断以及分布式异步调度队列（APScheduler）。
 *   **RAGFlow 生态（若使用知识库和 ChatBI，则为必选）**：如需接入非结构化 SOP 知识库或使用 ChatBI 数据洞察功能，必须保证 RAGFlow 服务就绪并提供相应的 API URL 与 API Key。更多信息请参考 [RAGFlow 官网](https://ragflow.io/)。
 
@@ -32,7 +42,10 @@
 
 ## 3. 部署流程 (Deployment Flow)
 
-### 3.1 第一步：MySQL 数据库结构初始化
+### 3.1 主库选项 A：MySQL（二选一）
+
+仅当平台主库选择 MySQL 时执行本节。若选择 PostgreSQL，请跳过本节，直接执行 [3.2 主库选项 B：PostgreSQL](#32-主库选项-bpostgresql二选一)。
+
 平台采用版本化迁移管理（数据库脚本位于 `db-prod/` 目录下）。导入方法如下：
 
 1.  **手动创建数据库**：
@@ -82,7 +95,67 @@
 
 ---
 
-### 3.2 方案 A：Docker 容器化部署 (推荐)
+### 3.2 主库选项 B：PostgreSQL（二选一）
+
+仅当平台主库选择 PostgreSQL 时执行本节。若选择 MySQL，请跳过本节。不要同时执行 `db-prod/` 和 `db-prod-pg/` 两套主库初始化脚本。
+
+平台同时提供独立的 PostgreSQL 初始化入口，脚本位于 `db-prod-pg/`，不会修改现有
+`db-prod/` MySQL 迁移链。新环境会按版本号自动执行 `V0-baseline.sql`、`V1-...sql`
+等全部版本文件；重复执行是安全的，V1 配置对齐迁移不会覆盖已有环境配置值。
+
+1.  **准备依赖**：
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
+    PostgreSQL 目标库必须使用 PostgreSQL 14 或更高版本；导入器会在目标库不存在时自动创建，
+    但必须显式输入目标库名称，不能使用 `postgres`、`template0` 或 `template1`。
+
+2.  **执行 PostgreSQL 初始化**：
+    ```bash
+    chmod +x db-prod-pg/apply-sql.sh
+    ./db-prod-pg/apply-sql.sh
+    ```
+    脚本会依次询问 Host、Port、User、Password 和目标数据库，并要求输入 `YES` 确认。
+    `V0-baseline.sql` 导入完成后会询问是否自动创建管理员。也支持兼容调用：
+    ```bash
+    sh db-prod-pg/apply-sql.sh
+    ```
+    但生产环境仍建议使用 `./db-prod-pg/apply-sql.sh`。
+
+3.  **管理员初始化与凭证维护**：
+    PostgreSQL 基线不写入固定管理员 API Key。初始化时选择 `Y` 会使用当前
+    `ENCRYPTION_KEY` 生成新的管理员凭证；如果初始化时跳过，可在配置好运行环境后执行：
+    ```bash
+    ./db-prod-pg/create-admin-user.sh
+    ./db-prod-pg/create-admin-key.sh
+    ./db-prod-pg/reset-admin-password.sh
+    ```
+    API Key 只在终端显示一次，请立即保存。三个脚本分别用于创建管理员、重新生成 API Key
+    和重置管理员密码。
+
+4.  **配置平台运行时**：
+    在项目根目录 `.env` 中选择 PostgreSQL 主库：
+    ```dotenv
+    DATABASE_TYPE=postgresql
+    POSTGRES_HOST=localhost
+    POSTGRES_PORT=5432
+    POSTGRES_DB=nanzi_ai_agent_platform
+    POSTGRES_USER=postgres
+    POSTGRES_PASSWORD=<password>
+    ```
+    不配置 `DATABASE_TYPE` 时默认仍使用 MySQL。应用 ORM 和 APScheduler 会根据该值选择
+    PostgreSQL 或 MySQL 连接。
+
+详细的 PostgreSQL 初始化、版本迁移和管理员脚本说明，请参考
+[db-prod-pg/README.md](db-prod-pg/README.md)。
+
+---
+
+完成上面 MySQL 或 PostgreSQL 两个主库选项中的任意一个后，再根据部署方式选择以下方案。
+
+### 3.3 方案 A：Docker 容器化部署 (推荐)
 通过 Docker 容器化可以避免环境依赖缺失造成的各种意外错误。
 
 1.  **获取离线镜像包（提供以下两种途径）**：
@@ -117,23 +190,24 @@
         ```bash
         cd docker
         cp env.example .env
-        # 编辑 .env 文件，填入 MySQL、Redis、Oracle 以及 Jira 相关的真实配置信息
+        # 编辑 .env 文件，选择并填入 MySQL 或 PostgreSQL 主库，以及 Redis、Oracle、Jira 配置
         vim .env
         ```
-        *注：因容器是网络隔离的沙箱，`MYSQL_HOST` 与 `REDIS_HOST` 严禁配置为 `localhost` 或 `127.0.0.1`，必须设置为宿主机的局域网 IP（在 Mac 系统上可通过 `ipconfig getifaddr en0` 查询，或使用 `host.docker.internal`）。*
-        *   **`ENCRYPTION_KEY`（必填）**：用户 API Key 的 Fernet 对称加密密钥（用于加密入库 / 后台解密查看）。`env.example` 已提供默认值，与 `db-prod/INIT-USER-ADMIN.sql` 预置的 admin 密文配套——**保持该默认值时**，导入初始化脚本后可用文档中的默认 API Key 登录。**若您修改了 `ENCRYPTION_KEY`，则不能再依赖该预置 admin，必须按当前密钥重新创建管理员**（见下方「如何创建 / 重建 admin」）。生成新密钥示例：
+        *注：因容器是网络隔离的沙箱，主库 Host 和 `REDIS_HOST` 均严禁配置为 `localhost` 或 `127.0.0.1`。使用 MySQL 时填写 `MYSQL_HOST`，使用 PostgreSQL 时填写 `POSTGRES_HOST`，可设置为宿主机局域网 IP 或 `host.docker.internal`。*
+        *   **`DATABASE_TYPE`（默认 `mysql`）**：选择平台主库类型。设置为 `mysql` 时使用 `MYSQL_*`，设置为 `postgresql` 时使用 `POSTGRES_*`。
+        *   **`ENCRYPTION_KEY`（必填）**：用户 API Key 的 Fernet 对称加密密钥（用于加密入库 / 后台解密查看）。MySQL 的 `db-prod/INIT-USER-ADMIN.sql` 固定管理员 Key 只在保持 `env.example` 默认密钥时有效；PostgreSQL 不写入固定管理员凭证，会在初始化或手动创建时使用当前密钥生成管理员。生成新密钥示例：
             ```bash
             python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
             ```
 
         ##### 如何创建 / 重建 admin 
-        *   **方式 A（默认密钥）**：`.env` 中 `ENCRYPTION_KEY` 仍为 `env.example` 默认值时，导入预置脚本即可：
+        *   **MySQL**：`.env` 中 `ENCRYPTION_KEY` 仍为 `env.example` 默认值时，可导入预置脚本：
             ```bash
             ./db-prod/apply-sql-native.sh db-prod/INIT-USER-ADMIN.sql
             # 或：./db-prod/apply-sql.sh db-prod/INIT-USER-ADMIN.sql
             ```
             登录使用文档「首次登录指引」中的默认 API Key。
-        *   **方式 B（已修改 ENCRYPTION_KEY，推荐）**：用当前 `.env` 里的密钥现场生成管理员（密文与密钥一致）：
+        *   **MySQL（已修改 ENCRYPTION_KEY）**：用当前 `.env` 里的密钥现场生成管理员：
             ```bash
             # 若库中已有旧 admin，先删除再创建
             # mysql ... -e "DELETE FROM ai_agent_users WHERE user_name = 'admin';"
@@ -144,6 +218,12 @@
             # 也可指定用户名：python scripts/create_admin_key.py <username>
             ```
             终端会打印**仅此一次**的 API Key，请立即保存并用该 Key 登录。
+        *   **PostgreSQL**：不使用 MySQL 的 `INIT-USER-ADMIN.sql`，执行以下脚本：
+            ```bash
+            ./db-prod-pg/create-admin-user.sh
+            ./db-prod-pg/create-admin-key.sh
+            ./db-prod-pg/reset-admin-password.sh
+            ```
 
     *   **检查与修改 Docker Compose 编排文件（[docker-compose.ai-agent.yml](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/docker/docker-compose.ai-agent.yml)）**：
         在启动前，您可以根据实际运行环境修改该配置文件：
@@ -167,7 +247,7 @@
 
 ---
 
-### 3.3 方案 B：本地源码开发调试部署
+### 3.4 方案 B：本地源码开发调试部署
 适合日常编写业务逻辑、开发调试新功能时采用。
 
 1.  **后端启动 (FastAPI)**：
@@ -178,7 +258,9 @@
     
     # 在项目根目录下，拷贝并配置本地 .env 文件
     cp env.example .env
-    # 编辑 .env：至少配置 MySQL、Redis；ENCRYPTION_KEY 若改动默认值，需重新创建 admin（见上文说明）
+    # 编辑 .env：选择配置 MySQL 或 PostgreSQL，并配置 Redis；ENCRYPTION_KEY 若改动需重新创建 admin
+    # MySQL（默认）：DATABASE_TYPE=mysql
+    # PostgreSQL：DATABASE_TYPE=postgresql，并填写 POSTGRES_* 参数
     
     # 启动后端 Uvicorn 调试服务
     uvicorn app.main:app --reload --port 8001
@@ -201,12 +283,13 @@
 
 ### 🔑 首次登录指引
 1.  南孜系统后台默认采用 **仅 API Key 认证** 的安全规则。
-2.  若您在初始化阶段执行过 `db-prod/INIT-USER-ADMIN.sql` 脚本，且 `.env` 中的 `ENCRYPTION_KEY` **仍为 `env.example` 默认值**，平台会预置以下默认管理员凭证：
+2.  **MySQL**：若您在初始化阶段执行过 `db-prod/INIT-USER-ADMIN.sql`，且 `.env` 中的 `ENCRYPTION_KEY` **仍为 `env.example` 默认值**，平台会预置以下默认管理员凭证：
     *   **默认用户名**：`admin`
     *   **默认管理员 API Key**：`5BYfsKWhU_Cfx83cuo8E0kd4AtEhlUHDVlKwwR2kN-c`
     *   若您已修改 `ENCRYPTION_KEY`，请**不要**使用上述默认 Key，应重新创建管理员并使用新生成的 API Key。
-3.  在登录框中粘贴上述 API Key 即可登录后台。
-4.  **安全提示**：由于默认管理员 API Key 是固定的，首次登录成功后，请务必立即前往**【用户管理】**或【个人中心】，为 `admin` 用户**自主设置登录密码**。系统此后将全面启用安全级别的身份校验。
+3.  **PostgreSQL**：没有固定预置 API Key。请使用 `db-prod-pg/apply-sql.sh` 初始化时自动生成的凭证，或执行 `create-admin-user.sh` / `create-admin-key.sh` 后使用终端输出的新 Key 登录。
+4.  在登录框中粘贴对应数据库初始化流程生成的 API Key 即可登录后台。
+5.  **安全提示**：首次登录成功后，请务必前往**【用户管理】**或【个人中心】，为 `admin` 用户设置登录密码，并妥善保存或轮换 API Key。
 
 ---
 
@@ -235,22 +318,23 @@
 *   **解决**：我们已经在构建系统中集成了 **宿主机预构建机制**。在构建异构镜像时，脚本会自动检测宿主机环境，并直接在宿主机进行极速 vite build 编译，跳过容器内模拟编译，彻底避免内存不足错误。请确保您的宿主机已提前安装了 Node.js（`node` 和 `npm` 可执行）。如果想强行在容器内编译，请手动将 Docker Desktop 的可用内存调大至 **8GB 或更大**。
 
 ### Q2: 容器启动后自动退出，通过 `docker logs` 查看报错 `Database health check failed`
-*   **原因**：在配置 `docker/.env` 文件时，`MYSQL_HOST` 或 `REDIS_HOST` 写了 `localhost` 或 `127.0.0.1`。因为 Docker 容器属于网络隔离沙箱，在容器内部，`localhost` 永远指向容器自身，从而连不上您电脑上的 MySQL 服务。
-*   **解决**：将 Host 配置修改为宿主机的局域网 IP（在 Mac 系统上可在终端执行 `ipconfig getifaddr en0` 快速查看）；或在 Mac/Windows 的 Docker Desktop 环境下修改为 `host.docker.internal` 即可。
+*   **原因**：在配置 `docker/.env` 文件时，选中的主库 Host 或 `REDIS_HOST` 写了 `localhost` 或 `127.0.0.1`。因为 Docker 容器属于网络隔离沙箱，在容器内部，`localhost` 永远指向容器自身。
+*   **解决**：使用 MySQL 时检查 `MYSQL_HOST`，使用 PostgreSQL 时检查 `POSTGRES_HOST`，将其改为宿主机局域网 IP；在 Mac/Windows 的 Docker Desktop 环境下也可使用 `host.docker.internal`。
 
-### Q3: 运行表初始化脚本时报错 `ModuleNotFoundError: No module named 'aiomysql'`
+### Q3: 运行表初始化脚本时报错缺少 `aiomysql` 或 `psycopg`
 *   **原因**：未激活 Python 虚拟环境，或未在此虚拟环境下正确运行依赖安装。
-*   **解决**：必须先在根目录下激活虚拟环境（`source venv/bin/activate`），运行 `pip install -r requirements.txt`，确保依赖库齐备后再执行部署脚本。
+*   **解决**：必须先在根目录下激活虚拟环境（`source venv/bin/activate`），运行 `pip install -r requirements.txt`，确保 MySQL 导入所需的 `aiomysql` 或 PostgreSQL 导入所需的 `psycopg` 已安装。
 
 ### Q4: 改了 `ENCRYPTION_KEY` 后，默认 admin API Key 登录失败 / 后台解不开 Key
-*   **原因**：`env.example` 的默认 `ENCRYPTION_KEY` 与 `INIT-USER-ADMIN.sql` 里预置的 admin 密文是一对的。改了密钥后，预置密文无法再用新密钥解密，默认 API Key 也就不可用。
-*   **解决**：不要再跑 `INIT-USER-ADMIN.sql` 指望默认 Key；按当前 `.env` 重新创建管理员：
+*   **原因**：MySQL 的 `env.example` 默认 `ENCRYPTION_KEY` 与 `INIT-USER-ADMIN.sql` 里预置的 admin 密文是一对的。改了密钥后，预置密文无法再用新密钥解密；PostgreSQL 本身不使用固定预置 Key，但已经创建的凭证同样依赖当时的密钥。
+*   **解决**：MySQL 不要再依赖 `INIT-USER-ADMIN.sql` 中的默认 Key，PostgreSQL 则直接使用对应目录的管理员脚本按当前配置重新生成：
     ```bash
-    # 可选：清掉旧 admin
-    # DELETE FROM ai_agent_users WHERE user_name = 'admin';
-
     source venv/bin/activate
     export PYTHONPATH=.
     python scripts/create_admin_user.py
+    # PostgreSQL 也可以直接使用：
+    # ./db-prod-pg/create-admin-user.sh
+    # ./db-prod-pg/create-admin-key.sh
+    # ./db-prod-pg/reset-admin-password.sh
     ```
     保存终端输出的新 API Key 后登录。若希望继续用初始化脚本里的默认 admin，请将 `ENCRYPTION_KEY` 保持为 `env.example` 中的默认值。

@@ -13,6 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core import database
 from app.services.auth_service import AuthService
+from app.core.orm import AsyncSessionLocal
+from sqlalchemy import select
+from app.models.user import User
+# Register the association table before SQLAlchemy configures User.roles.
+from app.models.permission import UserRoleRelation  # noqa: F401
 
 
 async def create_admin_user():
@@ -25,19 +30,20 @@ async def create_admin_user():
         await database.init_db()
         
         # 检查是否已存在管理员
-        async with database.get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM ai_agent_users WHERE user_name = 'admin'"
-                )
-                result = await cursor.fetchone()
-                
-                if result[0] > 0:
-                    print("⚠️  管理员账号已存在，跳过创建")
-                    print()
-                    print("提示：如需重置，请先手动删除：")
-                    print("  DELETE FROM ai_agent_users WHERE user_name = 'admin';")
-                    return
+        async with AsyncSessionLocal() as session:
+            admin = (
+                await session.execute(select(User).where(User.user_name == "admin"))
+            ).scalar_one_or_none()
+            if admin:
+                if admin.role != "admin":
+                    raise RuntimeError(
+                        "User 'admin' already exists but is not an admin; refusing to elevate it."
+                    )
+                print("⚠️  管理员账号已存在，跳过创建")
+                print()
+                print("提示：如需重置，请先手动删除：")
+                print("  DELETE FROM ai_agent_users WHERE user_name = 'admin';")
+                return
         
         # 创建管理员（自动使用新的加密机制）
         print("正在创建管理员账号...")
@@ -66,6 +72,7 @@ async def create_admin_user():
         print(f"❌ 创建管理员失败: {e}")
         import traceback
         traceback.print_exc()
+        raise
     finally:
         await database.close_db()
 

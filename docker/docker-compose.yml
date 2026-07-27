@@ -14,12 +14,22 @@ services:
       - API_SERVICE_ENV=${API_SERVICE_ENV:-dev}
       - API_SERVICE_LOG_LEVEL=${API_SERVICE_LOG_LEVEL:-INFO}
 
+      # Main database
+      - DATABASE_TYPE=${DATABASE_TYPE:-mysql}
+
       # MySQL (Mock / External)
       - MYSQL_HOST=${MYSQL_HOST:-mysql} # 假设有名为 mysql 的服务或外部注入
       - MYSQL_PORT=${MYSQL_PORT:-3306}
       - MYSQL_DB=${MYSQL_DB:-nanzi_ai_agent_platform}
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-root123}
+
+      # PostgreSQL (used when DATABASE_TYPE=postgresql)
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-nanzi_ai_agent_platform}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-your_password}
 
       # Redis (Internal Service)
       - REDIS_HOST=${REDIS_HOST:-redis}
@@ -47,4 +57,3 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
-

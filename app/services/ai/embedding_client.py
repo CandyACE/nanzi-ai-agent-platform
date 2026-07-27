@@ -16,7 +16,9 @@ class EmbeddingClient:
         if use_global:
             base_url = (await ConfigService.get("embed_api_url") or "").strip()
             api_key = (await ConfigService.get("embed_api_key") or "").strip()
-            model = (await ConfigService.get("embed_model_name") or "bge-m3").strip()
+            model = (await ConfigService.get("embed_model_name") or "").strip()
+            if not model:
+                model = (await MemoryConfigService.get("memory_embedding_model") or "bge-m3").strip()
 
             # 降级逻辑：如果全局没有配置，则尝试向记忆配置或默认 LLM 配置兼容
             if not base_url:
@@ -31,8 +33,7 @@ class EmbeddingClient:
         else:
             base_url = (await MemoryConfigService.get("memory_embedding_base_url") or "").strip()
             api_key = (await MemoryConfigService.get("memory_embedding_api_key") or "").strip()
-            model = (await MemoryConfigService.get("memory_embedding_model") or "text-embedding-3-small").strip()
-
+            model = (await MemoryConfigService.get("memory_embedding_model") or "bge-m3").strip()
             if not base_url:
                 base_url = (await ConfigService.get("llm_base_url") or "").strip()
             if not api_key:
@@ -85,4 +86,4 @@ class EmbeddingClient:
             if mem_dim > 0:
                 return mem_dim
             return 1024
-        return await MemoryConfigService.get_int("memory_embedding_dimensions", 1536)
+        return await MemoryConfigService.get_int("memory_embedding_dimensions", 1024)

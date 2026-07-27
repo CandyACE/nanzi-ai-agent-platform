@@ -10,19 +10,37 @@ if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
-# 等待 MySQL
-echo "⏳ Waiting for MySQL at ${MYSQL_HOST}:${MYSQL_PORT}..."
+# 等待平台主数据库
+database_type="${DATABASE_TYPE:-mysql}"
+case "${database_type,,}" in
+    mysql)
+        database_label="MySQL"
+        database_host="${MYSQL_HOST:-localhost}"
+        database_port="${MYSQL_PORT:-3306}"
+        ;;
+    postgres|postgresql|pg)
+        database_label="PostgreSQL"
+        database_host="${POSTGRES_HOST:-localhost}"
+        database_port="${POSTGRES_PORT:-5432}"
+        ;;
+    *)
+        echo "❌ Unsupported DATABASE_TYPE: ${DATABASE_TYPE}"
+        exit 1
+        ;;
+esac
+
+echo "⏳ Waiting for ${database_label} at ${database_host}:${database_port}..."
 timeout=60
 counter=0
-until nc -z ${MYSQL_HOST} ${MYSQL_PORT} 2>/dev/null; do
+until nc -z "${database_host}" "${database_port}" 2>/dev/null; do
     counter=$((counter+1))
     if [ $counter -gt $timeout ]; then
-        echo "❌ MySQL is not available after ${timeout}s"
+        echo "❌ ${database_label} is not available after ${timeout}s"
         exit 1
     fi
     sleep 1
 done
-echo "✅ MySQL is ready"
+echo "✅ ${database_label} is ready"
 
 # 等待 ClickHouse
 echo "⏳ Waiting for ClickHouse at ${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}..."

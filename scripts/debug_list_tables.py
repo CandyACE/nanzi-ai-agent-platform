@@ -1,34 +1,23 @@
 import asyncio
 import os
-import aiomysql
-from dotenv import load_dotenv
+import sys
+from sqlalchemy import inspect
 
-load_dotenv()
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.orm import engine
 
 async def list_tables():
-    host = os.getenv("MYSQL_HOST", "localhost")
-    port = int(os.getenv("MYSQL_PORT", 3306))
-    user = os.getenv("MYSQL_USER", "root")
-    password = os.getenv("MYSQL_PASSWORD", "")
-    db = os.getenv("MYSQL_DB", "nanzi_ai_agent_platform")
-
     try:
-        pool = await aiomysql.create_pool(
-            host=host, port=port,
-            user=user, password=password,
-            db=db
-        )
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SHOW TABLES")
-                tables = await cur.fetchall()
-                print("Current Tables:")
-                for t in tables:
-                    print(f"- {t[0]}")
-        pool.close()
-        await pool.wait_closed()
+        async with engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync_connection: inspect(sync_connection).get_table_names())
+        print("Current Tables:")
+        for table in tables:
+            print(f"- {table}")
     except Exception as e:
         print(f"Error: {e}")
+    finally:
+        await engine.dispose()
 
 if __name__ == "__main__":
     asyncio.run(list_tables())

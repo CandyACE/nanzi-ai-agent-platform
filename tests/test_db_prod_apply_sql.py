@@ -74,3 +74,12 @@ def test_migrations_include_indexes_seen_in_current_schema():
 
     assert "idx_agent_created" in sql
     assert "idx_category_updated" in sql
+
+
+def test_mysql_sql_execution_mode_seed_defaults_to_local():
+    migration = (
+        Path(__file__).resolve().parents[1] / "db-prod" / "V56-add_sql_execution_mode_to_system_configs.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "默认值为 local" in migration
+    assert "'sql_execution_mode', 'local'" in migration

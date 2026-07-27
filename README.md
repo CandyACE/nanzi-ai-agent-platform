@@ -182,7 +182,8 @@
 ├── frontend/             # 前端管理后台与内嵌聊天 SDK 工程 (Vue 3 + Tailwind)
 ├── .agent/               # Agent 专属自动化开发技能与工作流程配置 (opsx 等)
 ├── architech/            # 顶层架构设计规范与系统提示词 (Prompts) 管理控制
-├── db-prod/              # 数据库版本迁移与 SQL 升级脚本 (V0-VNN)
+├── db-prod/              # MySQL 历史版本迁移与 SQL 升级脚本 (V0-VNN)
+├── db-prod-pg/           # PostgreSQL 基线与幂等版本迁移脚本
 ├── docker/               # 容器化打包与一键 Docker-compose 部署方案
 ├── scripts/              # 运维辅助与工具脚本 (一键开发启动、数据同步、重部署工具)
 ├── tests/                # 自动化测试套件与测试验收清单 (CHECKLIST.md)
@@ -202,6 +203,40 @@ cd docker
 cp ../env.example .env   # 配置数据库、Redis、ENCRYPTION_KEY 等
 ```
 
+平台主库默认使用 MySQL；如需使用 PostgreSQL，编辑 `docker/.env`：
+
+```dotenv
+DATABASE_TYPE=postgresql
+POSTGRES_HOST=host.docker.internal
+POSTGRES_PORT=5432
+POSTGRES_DB=nanzi_ai_agent_platform
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<password>
+```
+
+容器中的主库 Host 不能填写 `localhost` 或 `127.0.0.1`，应使用宿主机地址、
+`host.docker.internal` 或 Docker 网络中的服务名。详细初始化步骤见
+[HOW_TO_INSTALL.md](HOW_TO_INSTALL.md) 和 [db-prod-pg/README.md](db-prod-pg/README.md)。
+
+**主库初始化**
+
+MySQL 使用 `db-prod/apply-sql.sh`；PostgreSQL 使用独立的幂等迁移入口：
+
+```bash
+# 返回项目根目录执行
+cd ..
+./db-prod-pg/apply-sql.sh
+```
+
+该脚本会按 `V0`、`V1`、`V2` 的版本顺序执行 PostgreSQL 迁移，并在首次初始化后询问是否创建管理员。
+PostgreSQL 不使用 MySQL 的 `INIT-USER-ADMIN.sql` 固定凭证；如需手动维护管理员，可执行：
+
+```bash
+./db-prod-pg/create-admin-user.sh
+./db-prod-pg/create-admin-key.sh
+./db-prod-pg/reset-admin-password.sh
+```
+
 **2. 构建镜像并导出 tar**
 
 | 脚本 | 目标环境 |
@@ -211,6 +246,8 @@ cp ../env.example .env   # 配置数据库、Redis、ENCRYPTION_KEY 等
 | `./build_native.sh` | 本机原生架构，仅用于本地试跑 |
 
 ```bash
+# 若上一步返回了项目根目录，先进入 docker 目录
+cd docker
 # 生产环境（x86 服务器）— Mac 上打 x86 包也用此脚本
 ./build_linux_x86.sh
 ```

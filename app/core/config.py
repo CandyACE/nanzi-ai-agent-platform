@@ -11,15 +11,25 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: List[str] = ["*"]
     APP_PUBLIC_URL: Optional[str] = None
 
+    # Main database type: mysql (default) / postgresql
+    DATABASE_TYPE: str = "mysql"
+
     # MySQL
-    MYSQL_HOST: str
+    MYSQL_HOST: Optional[str] = None
     MYSQL_PORT: int = 3306
-    MYSQL_DB: str
-    MYSQL_USER: str
-    MYSQL_PASSWORD: str
+    MYSQL_DB: Optional[str] = None
+    MYSQL_USER: Optional[str] = None
+    MYSQL_PASSWORD: Optional[str] = None
     MYSQL_POOL_SIZE: int = 20
     MYSQL_MAX_OVERFLOW: int = 50
     MYSQL_POOL_RECYCLE: int = 3600
+
+    # PostgreSQL (used when DATABASE_TYPE=postgresql)
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: Optional[str] = None
+    POSTGRES_USER: Optional[str] = None
+    POSTGRES_PASSWORD: Optional[str] = None
 
     # Redis
     REDIS_HOST: str
@@ -69,6 +79,20 @@ class Settings(BaseSettings):
 
     def build_mysql_url(self, driver: str = "mysql+aiomysql") -> URL:
         """构建 SQLAlchemy MySQL URL（自动对 user/password 中的 @:#/ 等特殊字符做编码）。"""
+        missing = [
+            name for name, value in (
+                ("MYSQL_HOST", self.MYSQL_HOST),
+                ("MYSQL_DB", self.MYSQL_DB),
+                ("MYSQL_USER", self.MYSQL_USER),
+                ("MYSQL_PASSWORD", self.MYSQL_PASSWORD),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "MySQL database configuration is incomplete; "
+                f"missing: {', '.join(missing)}"
+            )
         return URL.create(
             drivername=driver,
             username=self.MYSQL_USER,
@@ -77,6 +101,51 @@ class Settings(BaseSettings):
             port=self.MYSQL_PORT,
             database=self.MYSQL_DB,
         )
+
+    def build_postgresql_url(self, driver: str = "postgresql+psycopg") -> URL:
+        """构建 SQLAlchemy PostgreSQL URL，并对凭据中的特殊字符做编码。"""
+        missing = [
+            name for name, value in (
+                ("POSTGRES_DB", self.POSTGRES_DB),
+                ("POSTGRES_USER", self.POSTGRES_USER),
+                ("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "PostgreSQL database configuration is incomplete; "
+                f"missing: {', '.join(missing)}"
+            )
+        return URL.create(
+            drivername=driver,
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_HOST,
+            port=self.POSTGRES_PORT,
+            database=self.POSTGRES_DB,
+        )
+
+    @property
+    def normalized_database_type(self) -> str:
+        database_type = self.DATABASE_TYPE.strip().lower()
+        if database_type == "mysql":
+            return "mysql"
+        if database_type in {"postgres", "postgresql", "pg"}:
+            return "postgresql"
+        raise ValueError(f"Unsupported DATABASE_TYPE: {self.DATABASE_TYPE}")
+
+    @property
+    def DATABASE_ASYNC_URL(self) -> URL:
+        if self.normalized_database_type == "postgresql":
+            return self.build_postgresql_url("postgresql+psycopg")
+        return self.MYSQL_ASYNC_URL
+
+    @property
+    def DATABASE_SYNC_URL(self) -> str:
+        if self.normalized_database_type == "postgresql":
+            return self.build_postgresql_url("postgresql+psycopg").render_as_string(hide_password=False)
+        return self.MYSQL_SYNC_URL
 
     @property
     def MYSQL_ASYNC_URL(self) -> URL:

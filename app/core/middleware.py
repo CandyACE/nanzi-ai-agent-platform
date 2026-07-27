@@ -2,12 +2,39 @@ import time
 import uuid
 import json
 import asyncio
+import gzip
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core import database
 from typing import Optional
 
 from app.services.audit_service import AuditService
+
+
+def _decode_captured_response_body(
+    body: bytes,
+    *,
+    content_encoding: Optional[str],
+    content_type: Optional[str],
+) -> str:
+    """将响应体转换成可安全写入审计文本字段的字符串。"""
+    if not body:
+        return ""
+
+    encoding = (content_encoding or "").split(",", 1)[0].strip().lower()
+    payload = body
+    if encoding == "gzip" or body.startswith(b"\x1f\x8b"):
+        try:
+            payload = gzip.decompress(body)
+        except (OSError, EOFError):
+            return f"<compressed response: {encoding or 'gzip'}, {len(body)} bytes>"
+    elif encoding:
+        return f"<compressed response: {encoding}, {len(body)} bytes>"
+
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if media_type == "application/json" or media_type.startswith("text/"):
+        return payload.decode("utf-8", errors="replace").replace("\x00", "")
+    return f"<binary response: {len(payload)} bytes>"
 
 class AccessLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -39,6 +66,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             request_body_str = "<error capturing body>"
 
         response_body_chunks = []
+        response_content_encoding = None
+        response_content_type = None
         
         try:
             response = await call_next(request)
@@ -48,6 +77,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             
         # Add Trace ID to headers
         response.headers["X-Trace-Id"] = trace_id
+        response_content_encoding = response.headers.get("content-encoding")
+        response_content_type = response.headers.get("content-type")
 
         # Wrap body to capture for audit log
         async def body_iterator(actual_iterator):
@@ -66,12 +97,11 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             
             # Reconstruct response body
             full_body = b"".join(response_body_chunks)
-            response_body = ""
-            if full_body:
-                try:
-                    response_body = full_body.decode('utf-8', errors='ignore') if len(full_body) < 10240 else f"<too large: {len(full_body)}>"
-                except:
-                    response_body = "<binary>"
+            response_body = _decode_captured_response_body(
+                full_body,
+                content_encoding=response_content_encoding,
+                content_type=response_content_type,
+            )
 
             user_name = getattr(request.state, "user", {}).get("user_name") if hasattr(request.state, "user") else None
             
@@ -96,4 +126,3 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         response.background = BackgroundTask(perform_logging)
             
         return response
-

@@ -1,7 +1,9 @@
 import logging
 import os
 from typing import Optional, Dict, List
-from sqlalchemy import text
+from sqlalchemy import Boolean, Column, MetaData, String, Table, Text, func, select, text, update
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import AsyncSessionLocal
 from app.core.redis import get_redis
@@ -11,6 +13,81 @@ logger = logging.getLogger(__name__)
 
 CACHE_PREFIX = "sys_config:"
 CACHE_TTL = 300  # 5 minutes
+
+_SYSTEM_CONFIGS_TABLE = Table(
+    "system_configs",
+    MetaData(),
+    Column("key", String(255), primary_key=True, quote=True),
+    Column("value", Text),
+    Column("description", Text),
+    Column("category", String(100)),
+    Column("is_secret", Boolean),
+)
+
+
+def build_system_config_upsert_statement(
+    *,
+    key: str,
+    value: str,
+    description: Optional[str],
+    category: str,
+    is_secret: bool,
+    dialect_name: str,
+):
+    """Build a dialect-native system configuration upsert statement."""
+    values = {
+        "key": key,
+        "value": value,
+        "description": description,
+        "category": category,
+        "is_secret": is_secret,
+    }
+    normalized_dialect = dialect_name.strip().lower()
+    if normalized_dialect == "postgresql":
+        statement = postgresql_insert(_SYSTEM_CONFIGS_TABLE).values(**values)
+        return statement.on_conflict_do_update(
+            index_elements=[_SYSTEM_CONFIGS_TABLE.c.key],
+            set_={
+                "value": statement.excluded.value,
+                "description": func.coalesce(
+                    statement.excluded.description,
+                    _SYSTEM_CONFIGS_TABLE.c.description,
+                ),
+                "category": func.coalesce(
+                    statement.excluded.category,
+                    _SYSTEM_CONFIGS_TABLE.c.category,
+                ),
+                "is_secret": func.coalesce(
+                    statement.excluded.is_secret,
+                    _SYSTEM_CONFIGS_TABLE.c.is_secret,
+                ),
+            },
+        )
+    if normalized_dialect == "mysql":
+        statement = mysql_insert(_SYSTEM_CONFIGS_TABLE).values(**values)
+        return statement.on_duplicate_key_update(
+            value=statement.inserted.value,
+            description=func.coalesce(
+                statement.inserted.description,
+                _SYSTEM_CONFIGS_TABLE.c.description,
+            ),
+            category=func.coalesce(
+                statement.inserted.category,
+                _SYSTEM_CONFIGS_TABLE.c.category,
+            ),
+            is_secret=func.coalesce(
+                statement.inserted.is_secret,
+                _SYSTEM_CONFIGS_TABLE.c.is_secret,
+            ),
+        )
+    raise ValueError(f"Unsupported SQL dialect: {dialect_name}")
+
+
+def _session_dialect_name(session: AsyncSession) -> str:
+    try:
+        return session.get_bind().dialect.name
+    except Exception:
+        return settings.normalized_database_type
 
 class ConfigService:
     
@@ -31,7 +108,15 @@ class ConfigService:
             return ConfigService._all_configs_cache
 
         async with AsyncSessionLocal() as session:
-            result = await session.execute(text("SELECT `key`, `value`, `description`, `category`, `is_secret` FROM system_configs"))
+            result = await session.execute(
+                select(
+                    _SYSTEM_CONFIGS_TABLE.c.key,
+                    _SYSTEM_CONFIGS_TABLE.c.value,
+                    _SYSTEM_CONFIGS_TABLE.c.description,
+                    _SYSTEM_CONFIGS_TABLE.c.category,
+                    _SYSTEM_CONFIGS_TABLE.c.is_secret,
+                )
+            )
             rows = result.fetchall()
             configs = {}
             for row in rows:
@@ -69,14 +154,16 @@ class ConfigService:
         try:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    text("SELECT value FROM system_configs WHERE `key` = :key"), 
-                    {"key": key}
+                    select(_SYSTEM_CONFIGS_TABLE.c.value).where(
+                        _SYSTEM_CONFIGS_TABLE.c.key == key
+                    )
                 )
                 row = result.fetchone()
                 if row:
                     db_val = row[0]
                     # Cache it if found (even if empty string)
-                    await redis.set(f"{CACHE_PREFIX}{key}", db_val, ex=CACHE_TTL)
+                    if redis:
+                        await redis.set(f"{CACHE_PREFIX}{key}", db_val, ex=CACHE_TTL)
         except Exception as e:
             logger.error(f"Failed to fetch config '{key}' from DB: {e}")
         
@@ -106,31 +193,25 @@ class ConfigService:
         try:
             # 1. Fetch old value for audit
             result = await session.execute(
-                text("SELECT value FROM system_configs WHERE `key` = :key"), 
-                {"key": key}
+                select(_SYSTEM_CONFIGS_TABLE.c.value).where(
+                    _SYSTEM_CONFIGS_TABLE.c.key == key
+                )
             )
             row = result.fetchone()
             old_value = row[0] if row else None
             change_type = "UPDATE" if row else "CREATE"
 
-            # 2. Upsert config
-            # Note: ON DUPLICATE KEY UPDATE is specific to MySQL
-            sql = """
-                INSERT INTO system_configs (`key`, `value`, `description`, `category`, `is_secret`)
-                VALUES (:key, :value, :description, :category, :is_secret)
-                ON DUPLICATE KEY UPDATE
-                    `value` = VALUES(`value`),
-                    `description` = COALESCE(VALUES(`description`), system_configs.`description`),
-                    `category` = COALESCE(VALUES(`category`), system_configs.`category`),
-                    `is_secret` = COALESCE(VALUES(`is_secret`), system_configs.`is_secret`)
-            """
-            await session.execute(text(sql), {
-                "key": key, 
-                "value": value, 
-                "description": description, 
-                "category": category, 
-                "is_secret": is_secret
-            })
+            # 2. Upsert config with the active SQL dialect.
+            await session.execute(
+                build_system_config_upsert_statement(
+                    key=key,
+                    value=value,
+                    description=description,
+                    category=category,
+                    is_secret=is_secret,
+                    dialect_name=_session_dialect_name(session),
+                )
+            )
             
             # 3. Insert Audit Log
             # Only log if value changed or it's a new key
@@ -215,8 +296,9 @@ class ConfigService:
             try:
                 # 1. Fetch old value
                 result = await session.execute(
-                    text("SELECT value FROM system_configs WHERE `key` = :key"), 
-                    {"key": key}
+                    select(_SYSTEM_CONFIGS_TABLE.c.value).where(
+                        _SYSTEM_CONFIGS_TABLE.c.key == key
+                    )
                 )
                 row = result.fetchone()
                 old_value = row[0] if row else None
@@ -233,8 +315,9 @@ class ConfigService:
                 if old_value is not None:
                     # 2. Update value
                     await session.execute(
-                        text("UPDATE system_configs SET value = :value WHERE `key` = :key"),
-                        {"value": value, "key": key}
+                        update(_SYSTEM_CONFIGS_TABLE)
+                        .where(_SYSTEM_CONFIGS_TABLE.c.key == key)
+                        .values(value=value)
                     )
                     
                     # 3. Audit Log

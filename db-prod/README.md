@@ -12,6 +12,9 @@
 | `apply-sql.sh` | 基于 Python (aiomysql) 的交互式数据库部署脚本。 |
 | `apply-sql-native.sh` | 免 Python 依赖的原生 Shell 交互式导入脚本（仅依赖 `mysql` CLI 客户端）。 |
 | `apply_sql.py` | 实际执行 SQL 导入的核心 Python 脚本（由 `apply-sql.sh` 调用）。 |
+| `create-admin-user.sh` | 使用当前 `.env` 创建默认管理员账号的入口。 |
+| `create-admin-key.sh` | 创建或重新生成管理员 API Key 的入口。 |
+| `reset-admin-password.sh` | 交互式重置管理员登录密码的入口。 |
 
 ---
 
@@ -90,11 +93,21 @@ CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 CO
 ### Q3: 如何自定义创建新的管理员？
 如果不希望使用默认的 `INIT-USER-ADMIN.sql`（或已修改 `ENCRYPTION_KEY`），可在配置好 `.env` 后通过命令行按**当前密钥**生成：
 ```bash
-export PYTHONPATH=.
-./venv/bin/python scripts/create_admin_user.py
-# 或指定用户名：./venv/bin/python scripts/create_admin_key.py <username>
+./db-prod/create-admin-user.sh
+# 或指定用户名：./db-prod/create-admin-key.sh <username>
 ```
-若提示 admin 已存在，先执行 `DELETE FROM ai_agent_users WHERE user_name = 'admin';` 再重跑。终端会打印仅此一次的 API Key，请立即保存。
+`create-admin-user.sh` 对已存在的管理员会幂等跳过；需要重新生成 Key 时直接运行
+`create-admin-key.sh`，不需要手动删除用户。终端会打印仅此一次的 API Key，请立即保存。
+
+### Q4: 如何重置管理员登录密码？
+
+```bash
+./db-prod/reset-admin-password.sh
+# 或指定用户名
+./db-prod/reset-admin-password.sh admin
+```
+
+脚本会安全地交互询问两次密码，不会把密码写入命令行或日志。
 
 ---
 ⚠️ **安全提示**：在任何生产环境执行数据库结构变更前，请务必提前备份您的数据！
