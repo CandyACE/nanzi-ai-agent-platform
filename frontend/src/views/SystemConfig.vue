@@ -6,11 +6,11 @@ import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
 import ModelRegistry from '../components/system/ModelRegistry.vue'
 import ToolRegistry from '../components/system/ToolRegistry.vue'
-import McpServerRegistry from '../components/system/McpServerRegistry.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
 import Switch from '../components/Switch.vue'
+import { useRouter, useRoute } from 'vue-router'
 import {
   CircleStackIcon,
   CheckCircleIcon,
@@ -31,10 +31,12 @@ import {
   PaintBrushIcon
 } from '@heroicons/vue/24/outline'
 
+const router = useRouter()
+const route = useRoute()
 const { hasPermission, userInfo } = useUser()
 const canSave = hasPermission('element:system:config_save')
 
-const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'mcp' | 'logs' | 'branding'>('configs')
+const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding'>('configs')
 const diagSubTab = ref<'console' | 'redis'>('console')
 
 // --- Diagnostics Logic ---
@@ -1101,6 +1103,10 @@ const executeDeleteKey = async () => {
 }
 
 onMounted(() => {
+  if (route.query.tab === 'mcp') {
+    router.replace('/dashboard/mcp')
+    return
+  }
   fetchConfigs()
   fetchBrandingConfig()
   fetchModelsForConfigs()
@@ -1186,10 +1192,6 @@ onMounted(() => {
 
       <div v-else-if="activeTab === 'tools'" class="h-full">
           <ToolRegistry />
-      </div>
-
-      <div v-else-if="activeTab === 'mcp'" class="h-full">
-          <McpServerRegistry />
       </div>
 
         <!-- LOGS TAB -->

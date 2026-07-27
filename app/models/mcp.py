@@ -7,11 +7,14 @@ class McpServer(Base):
     __tablename__ = "sys_mcp_servers"
 
     id = Column(String(36), primary_key=True)
-    server_name = Column(String(100), nullable=False, unique=True)
+    server_name = Column(String(100), nullable=False)
     sse_url = Column(Text, nullable=False)
     auth_headers = Column(Text, nullable=True)  # JSON string
     enabled_status = Column(Integer, default=0) # 0: Offline/Disabled, 1: Online/Enabled
     last_sync_at = Column(DateTime, nullable=True)
+    
+    scope = Column(String(20), default="global", nullable=False)
+    user_id = Column(Integer, nullable=True)
     
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

@@ -98,6 +98,45 @@ const canPublishLocalVersion = computed(() =>
   && props.canEditVersion
   && (!props.versionForm.id || props.versionForm.status === 'DRAFT')
 );
+
+const mcpSubTab = ref<'global' | 'personal'>('global');
+
+const currentScopeGroupedMcpTools = computed(() => {
+  const result: Record<string, any[]> = {};
+  const targetScope = mcpSubTab.value;
+  
+  Object.entries(props.filteredGroupedMcpTools || {}).forEach(([serverName, tools]) => {
+    const isPersonalServer = tools[0]?.scope === 'personal';
+    if (targetScope === 'personal' && isPersonalServer) {
+      result[serverName] = tools;
+    } else if (targetScope === 'global' && !isPersonalServer) {
+      result[serverName] = tools;
+    }
+  });
+  
+  return result;
+});
+
+const currentScopeGroupedMcpToolsCount = computed(() => {
+  return Object.keys(currentScopeGroupedMcpTools.value).length;
+});
+
+const globalMcpToolsCount = computed(() => {
+  let count = 0;
+  Object.values(props.filteredGroupedMcpTools || {}).forEach((tools) => {
+    if (tools[0]?.scope !== 'personal') count += tools.length;
+  });
+  return count;
+});
+
+const personalMcpToolsCount = computed(() => {
+  let count = 0;
+  Object.values(props.filteredGroupedMcpTools || {}).forEach((tools) => {
+    if (tools[0]?.scope === 'personal') count += tools.length;
+  });
+  return count;
+});
+
 const welcomeIcons = [
   { value: 'chart', label: '数据' }, { value: 'knowledge', label: '知识' },
   { value: 'workspace', label: '工作台' }, { value: 'report', label: '报告' },
@@ -717,16 +756,50 @@ const externalCreationMissingFields = computed(() => {
 
             <!-- MCP Tools -->
             <div v-else-if="toolTab === 'mcp'" class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
-              <div v-if="mcpToolsCount === 0" class="p-12 text-center text-gray-400 text-sm">
-                暂无已发布的 MCP 工具，请前往系统设置配置。
+              <!-- MCP Scope Tab 选项卡：平台 MCP / 我的 MCP -->
+              <div class="flex items-center justify-between border-b border-indigo-100 dark:border-gray-800 pb-2 mb-1 sticky top-0 bg-white dark:bg-gray-900 z-10">
+                <div class="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 p-0.5 rounded-lg text-xs">
+                  <button
+                    type="button"
+                    @click="mcpSubTab = 'global'"
+                    class="px-3 py-1 font-semibold rounded-md transition-all flex items-center gap-1.5"
+                    :class="mcpSubTab === 'global' ? 'bg-white shadow-sm text-indigo-600 dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+                  >
+                    <span>平台 MCP</span>
+                    <span class="px-1.5 py-0.2 text-[9px] rounded-full font-mono" :class="mcpSubTab === 'global' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'">
+                      {{ globalMcpToolsCount }}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    @click="mcpSubTab = 'personal'"
+                    class="px-3 py-1 font-semibold rounded-md transition-all flex items-center gap-1.5"
+                    :class="mcpSubTab === 'personal' ? 'bg-white shadow-sm text-emerald-600 dark:bg-gray-700 dark:text-emerald-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+                  >
+                    <span>我的 MCP</span>
+                    <span class="px-1.5 py-0.2 text-[9px] rounded-full font-mono" :class="mcpSubTab === 'personal' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'">
+                      {{ personalMcpToolsCount }}
+                    </span>
+                  </button>
+                </div>
               </div>
-              <div v-else v-for="(tools, serverName) in filteredGroupedMcpTools" :key="serverName" class="rounded-lg border border-indigo-100 overflow-hidden">
+
+              <div v-if="currentScopeGroupedMcpToolsCount === 0" class="p-12 text-center text-gray-400 text-sm">
+                {{ mcpSubTab === 'personal' ? '暂无个人的 MCP 工具，请前往 MCP 工具集 配置。' : '暂无已发布的平台 MCP 工具，请前往 MCP 工具集 配置。' }}
+              </div>
+              <div v-else v-for="(tools, serverName) in currentScopeGroupedMcpTools" :key="serverName" class="rounded-lg border border-indigo-100 overflow-hidden">
                 <div class="flex items-center justify-between py-2 px-3 bg-indigo-50/60 border-b border-indigo-100/50">
                   <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
                     <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="text-[10px] font-bold text-indigo-700 uppercase truncate">{{ serverName }}</span>
+                    <span v-if="tools[0]?.scope === 'personal'" class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 flex-shrink-0">
+                      个人
+                    </span>
+                    <span v-else class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 flex-shrink-0">
+                      平台
+                    </span>
                     <span class="text-[10px] text-indigo-400">({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
                   </button>
                   <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0">

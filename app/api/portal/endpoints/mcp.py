@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, func
@@ -8,7 +8,7 @@ import time
 import logging
 
 from app.core.orm import get_db_session
-from app.core.dependencies import require_admin, require_permission
+from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.models.mcp import McpServer, McpToolCache
 from app.models.agent import AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
@@ -23,9 +23,12 @@ class McpServerBase(BaseModel):
     sse_url: str
     auth_headers: Optional[str] = "{}"
     enabled_status: Optional[int] = 1
+    scope: Optional[str] = "global"
 
 class McpServerResponse(McpServerBase):
     id: str
+    scope: str = "global"
+    user_id: Optional[int] = None
     last_sync_at: Optional[Any] = None
     tool_count: int = 0
     published_tool_count: int = 0
@@ -50,11 +53,10 @@ class McpToolResponseWithUsage(McpToolResponse):
 @router.post("/verify")
 async def verify_mcp_server(
     data: McpServerBase,
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    user: Dict = Depends(require_api_key)
 ):
     """Test connection and return discovered tools without saving"""
     temp_id = f"verify_{uuid.uuid4().hex[:8]}"
-    # ... (rest of function)
     auth_headers = {}
     if data.auth_headers:
         try: auth_headers = json.loads(data.auth_headers)
@@ -82,14 +84,26 @@ async def verify_mcp_server(
             del McpClientService._sessions[temp_id]
         raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")
 
+def _get_user_id(user: Dict) -> Optional[int]:
+    val = user.get("user_id") if user.get("user_id") is not None else user.get("id")
+    try:
+        return int(val) if val is not None else None
+    except Exception:
+        return None
+
 @router.get("/servers", response_model=List[McpServerResponse])
 async def list_mcp_servers(
+    scope: str = Query("global"),
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+    user: Dict = Depends(require_api_key)
 ):
-    """List all configured MCP servers with detailed tool counts"""
-    # ... (rest of function)
-    stmt = select(McpServer)
+    """List MCP servers filtered by scope (global / personal). Personal servers are strictly isolated by current user."""
+    if scope == "personal":
+        user_id = _get_user_id(user)
+        stmt = select(McpServer).where(McpServer.scope == "personal", McpServer.user_id == user_id)
+    else:
+        stmt = select(McpServer).where(McpServer.scope == "global")
+
     result = await db.execute(stmt)
     servers = result.scalars().all()
     
@@ -116,19 +130,44 @@ async def list_mcp_servers(
 async def create_mcp_server(
     data: McpServerBase,
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    user: Dict = Depends(require_api_key)
 ):
-    # Check for duplicates
-    # ... (rest of function)
-    exist_stmt = select(McpServer).where(McpServer.sse_url == data.sse_url)
+    is_admin = user.get("role") == "admin"
+    target_scope = data.scope or "global"
+    
+    if target_scope == "global" and not is_admin:
+        raise HTTPException(status_code=403, detail="只有系统管理员才能创建平台公共 MCP 服务")
+
+    # Check for name duplicates under same scope
+    user_id = _get_user_id(user) if target_scope == "personal" else None
+    name_stmt = select(McpServer).where(McpServer.server_name == data.server_name, McpServer.scope == target_scope)
+    if target_scope == "personal":
+        name_stmt = name_stmt.where(McpServer.user_id == user_id)
+    existing_name = (await db.execute(name_stmt)).scalar_one_or_none()
+    if existing_name:
+        raise HTTPException(status_code=400, detail=f"服务显示名称 '{data.server_name}' 在当前目录下已存在，请修饰修改名称后保存")
+
+    # Check for sse_url duplicates under same scope
+    exist_stmt = select(McpServer).where(McpServer.sse_url == data.sse_url, McpServer.scope == target_scope)
+    if target_scope == "personal":
+        exist_stmt = exist_stmt.where(McpServer.user_id == user_id)
     existing = (await db.execute(exist_stmt)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail=f"该服务地址已存在 (已命名为: {existing.server_name})")
 
     server_id = str(uuid.uuid4())
-    new_server = McpServer(id=server_id, **data.model_dump())
+    server_data = data.model_dump()
+    server_data["scope"] = target_scope
+    server_data["user_id"] = user_id
+    
+    new_server = McpServer(id=server_id, **server_data)
     db.add(new_server)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to commit new McpServer: {e}")
+        raise HTTPException(status_code=400, detail="服务保存冲突，请检查服务名称或地址是否重复")
     
     # Auto-sync tools immediately after creation
     try:
@@ -136,23 +175,30 @@ async def create_mcp_server(
     except Exception as e:
         logger.warning(f"Initial sync failed for new server {server_id}: {e}")
         
-    return {**data.model_dump(), "id": server_id, "tool_count": 0, "published_tool_count": 0}
+    return {**server_data, "id": server_id, "tool_count": 0, "published_tool_count": 0}
 
 @router.put("/servers/{server_id}", response_model=McpServerResponse)
 async def update_mcp_server(
     server_id: str,
     data: McpServerBase,
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    user: Dict = Depends(require_api_key)
 ):
-    # ... (rest of function)
     stmt = select(McpServer).where(McpServer.id == server_id)
     server = (await db.execute(stmt)).scalar_one_or_none()
     if not server: raise HTTPException(status_code=404, detail="Server not found")
     
-    # Check if new SSE URL is being used by another server
+    is_admin = user.get("role") == "admin"
+    if server.scope == "global" and not is_admin:
+        raise HTTPException(status_code=403, detail="只有系统管理员才能编辑平台公共 MCP 服务")
+    if server.scope == "personal" and server.user_id != _get_user_id(user):
+        raise HTTPException(status_code=403, detail="无法修改其他用户的私有 MCP 服务")
+
+    # Check if new SSE URL is being used by another server in same scope
     if data.sse_url != server.sse_url:
-        exist_stmt = select(McpServer).where(McpServer.sse_url == data.sse_url, McpServer.id != server_id)
+        exist_stmt = select(McpServer).where(McpServer.sse_url == data.sse_url, McpServer.id != server_id, McpServer.scope == server.scope)
+        if server.scope == "personal":
+            exist_stmt = exist_stmt.where(McpServer.user_id == _get_user_id(user))
         existing = (await db.execute(exist_stmt)).scalar_one_or_none()
         if existing:
             raise HTTPException(status_code=400, detail=f"新地址已被其他服务占用: {existing.server_name}")
@@ -175,15 +221,24 @@ async def update_mcp_server(
     pub_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == server_id, McpToolCache.is_published == True)
     pub = (await db.execute(pub_stmt)).scalar() or 0
     
-    return {**data.model_dump(), "id": server_id, "tool_count": total, "published_tool_count": pub}
+    return {**data.model_dump(), "id": server_id, "scope": server.scope, "user_id": server.user_id, "tool_count": total, "published_tool_count": pub}
 
 @router.delete("/servers/{server_id}")
 async def delete_mcp_server(
     server_id: str,
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    user: Dict = Depends(require_api_key)
 ):
-    # ... (rest of function)
+    stmt = select(McpServer).where(McpServer.id == server_id)
+    server = (await db.execute(stmt)).scalar_one_or_none()
+    if not server: raise HTTPException(status_code=404, detail="Server not found")
+
+    is_admin = user.get("role") == "admin"
+    if server.scope == "global" and not is_admin:
+        raise HTTPException(status_code=403, detail="只有系统管理员才能删除平台公共 MCP 服务")
+    if server.scope == "personal" and server.user_id != _get_user_id(user):
+        raise HTTPException(status_code=403, detail="无法删除其他用户的私有 MCP 服务")
+
     # 1. Cascade delete associated tools first
     await db.execute(delete(McpToolCache).where(McpToolCache.server_id == server_id))
     
@@ -196,9 +251,19 @@ async def delete_mcp_server(
 @router.post("/servers/{server_id}/sync")
 async def sync_mcp_tools(
     server_id: str,
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key)
 ):
-    # ... (rest of function)
+    stmt = select(McpServer).where(McpServer.id == server_id)
+    server = (await db.execute(stmt)).scalar_one_or_none()
+    if not server: raise HTTPException(status_code=404, detail="Server not found")
+
+    is_admin = user.get("role") == "admin"
+    if server.scope == "global" and not is_admin:
+        raise HTTPException(status_code=403, detail="只有系统管理员才能同步平台公共 MCP 服务")
+    if server.scope == "personal" and server.user_id != user.get("id") and not is_admin:
+        raise HTTPException(status_code=403, detail="无法同步其他用户的私有 MCP 服务")
+
     try:
         await McpClientService.sync_tools(server_id)
         return {"status": "success", "message": "Tools synchronized successfully"}
@@ -209,9 +274,8 @@ async def sync_mcp_tools(
 async def list_mcp_server_tools(
     server_id: str,
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+    user: Dict = Depends(require_api_key)
 ):
-    # ... (rest of function)
     stmt = select(McpToolCache).where(McpToolCache.server_id == server_id)
     tools = (await db.execute(stmt)).scalars().all()
     
@@ -245,12 +309,18 @@ async def execute_mcp_tool(
     tool_id: str,
     req: ToolExecutionRequest,
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    user: Dict = Depends(require_api_key)
 ):
-    # ... (rest of function)
     stmt = select(McpToolCache).where(McpToolCache.id == tool_id)
     tool = (await db.execute(stmt)).scalar_one_or_none()
     if not tool: raise HTTPException(status_code=404, detail="Tool not found")
+
+    server_stmt = select(McpServer).where(McpServer.id == tool.server_id)
+    server = (await db.execute(server_stmt)).scalar_one_or_none()
+    is_admin = user.get("role") == "admin"
+    if server and server.scope == "personal" and server.user_id != user.get("id") and not is_admin:
+        raise HTTPException(status_code=403, detail="无法测试其他用户的私有 MCP 工具")
+
     try:
         lc_tool = McpToolFactory.create_tool(tool)
         result = await lc_tool.ainvoke(req.arguments)
@@ -263,8 +333,21 @@ async def toggle_tool_publish(
     tool_id: str,
     published: bool,
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("element", "element:system:config_save"))
+    user: Dict = Depends(require_api_key)
 ) -> Dict:
+    tool_stmt = select(McpToolCache).where(McpToolCache.id == tool_id)
+    tool = (await db.execute(tool_stmt)).scalar_one_or_none()
+    if not tool: raise HTTPException(status_code=404, detail="Tool not found")
+
+    server_stmt = select(McpServer).where(McpServer.id == tool.server_id)
+    server = (await db.execute(server_stmt)).scalar_one_or_none()
+    is_admin = user.get("role") == "admin"
+    if server:
+        if server.scope == "global" and not is_admin:
+            raise HTTPException(status_code=403, detail="只有系统管理员才能修改平台公共 MCP 工具发布状态")
+        if server.scope == "personal" and server.user_id != user.get("id") and not is_admin:
+            raise HTTPException(status_code=403, detail="无法修改其他用户的私有 MCP 工具发布状态")
+
     stmt = update(McpToolCache).where(McpToolCache.id == tool_id).values(is_published=published)
     await db.execute(stmt)
     await db.commit()

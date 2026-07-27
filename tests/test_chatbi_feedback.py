@@ -133,3 +133,72 @@ async def test_feedback_idempotency(client: AsyncClient, setup_feedback_data, ad
         assert example.feedback_type == "down"
         # 逻辑已修改：不论点赞还是点踩，初始均为待审核状态
         assert example.status == "pending"
+
+@pytest.mark.asyncio
+async def test_feedback_collection_without_sql(client: AsyncClient, admin_api_key):
+    """验证无 SQL 查询的普通对话点赞反馈时，也能正常创建经验条目。"""
+    trace_id = "trace-test-nosql-feedback-002"
+    agent_id = "agent-test-id"
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(ChatBIExample).where(ChatBIExample.trace_id == trace_id))
+        await session.execute(delete(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id))
+        
+        history = AgentExecutionHistory(
+            agent_id=agent_id,
+            trace_id=trace_id,
+            query="你好，请介绍一下你自己",
+            summary="我是 NanZi AI 智能体助手。",
+            status="success"
+        )
+        session.add(history)
+        await session.commit()
+        
+    headers = {"X-API-Key": admin_api_key}
+    payload = {"trace_id": trace_id, "feedback": "up", "user_id": "test-user-002"}
+    
+    response = await client.post("/api/portal/chat/feedback", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["code"] == 200
+    
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(ChatBIExample).where(ChatBIExample.trace_id == trace_id))
+        example = res.scalars().first()
+        
+        assert example is not None
+        assert example.feedback_type == "up"
+        assert example.status == "pending"
+        assert example.sql_text == ""
+        assert example.user_query == "你好，请介绍一下你自己"
+        assert example.ai_answer == "我是 NanZi AI 智能体助手。"
+        assert example.category in ["general", "knowledge", "data_query"]
+
+@pytest.mark.asyncio
+async def test_data_query_approval_blocked_when_sql_empty(client: AsyncClient, admin_api_key):
+    """验证分类为 data_query 且 SQL 为空的案例在尝试通过审核时会被拦截。"""
+    trace_id = "trace-test-empty-sql-blocked-003"
+    agent_id = "agent-test-id"
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(ChatBIExample).where(ChatBIExample.trace_id == trace_id))
+        
+        example = ChatBIExample(
+            trace_id=trace_id,
+            agent_id=agent_id,
+            dataset_id=0,
+            user_query="查下数据",
+            sql_text="",
+            category="data_query",
+            status="pending"
+        )
+        session.add(example)
+        await session.commit()
+        await session.refresh(example)
+        example_id = example.id
+
+    headers = {"X-API-Key": admin_api_key}
+    audit_resp = await client.post("/api/portal/chatbi-examples/audit", json={"id": example_id, "status": "approved"}, headers=headers)
+    assert audit_resp.status_code == 400
+    res_data = audit_resp.json()
+    err_msg = res_data.get("message") or res_data.get("detail") or str(res_data)
+    assert "必须包含有效的 SQL" in err_msg

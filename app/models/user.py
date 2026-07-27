@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.orm import Base
+from app.models.permission import Role, UserRoleRelation  # noqa: F401
 
 class User(Base):
     __tablename__ = "ai_agent_users"

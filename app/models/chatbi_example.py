@@ -14,6 +14,7 @@ class ChatBIExample(Base):
     context_summary = Column(Text, nullable=True) # 新增：上下文背景
     sql_text = Column(Text, nullable=False)
     sql_metadata = Column(JSON, nullable=True) # 新增：SQL 特征元数据
+    category = Column(String(32), nullable=True, default="general") # 案例分类: general(通用), knowledge(知识库), data_query(数据查询)
     enhance_status = Column(String(20), nullable=False, default="pending") # 新增：增强状态
     ai_answer = Column(Text, nullable=True)
     feedback_type = Column(String(10), nullable=False, default="up")
