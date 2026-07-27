@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import desc, select, func
+from sqlalchemy import String, cast, desc, select, func
 from typing import Optional, List
 
 from app.core.orm import get_db_session as get_db
@@ -12,6 +12,16 @@ from app.models.agent import AIAgent
 from app.services.chatbi_example_service import ExampleService
 
 router = APIRouter()
+
+
+def _chatbi_example_user_join():
+    """构造兼容 MySQL/ PostgreSQL 的案例用户关联条件。
+
+    经验表的历史结构将 user_id 保存为字符串，而平台用户主键在 PostgreSQL
+    中是 BIGINT。显式把用户主键转成字符串，避免 PostgreSQL 拒绝 bigint
+    与 varchar 的直接比较，同时保持 MySQL 现有表结构兼容。
+    """
+    return cast(User.id, String) == ChatBIExample.user_id
 
 class AuditRequest(BaseModel):
     id: int
@@ -103,7 +113,7 @@ async def list_examples(
         User.user_name.label("user_account_name"),
         AIAgent.display_name.label("agent_display_name")
     ).outerjoin(
-        User, User.id == ChatBIExample.user_id
+        User, _chatbi_example_user_join()
     ).outerjoin(
         AIAgent, AIAgent.id == ChatBIExample.agent_id
     )

@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.ai.embedding_client import EmbeddingClient
-from app.api.portal.endpoints.system import test_connection, EmbedConnectionTestPayload
+from app.api.portal.endpoints.system import test_connection as system_test_connection, EmbedConnectionTestPayload
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -19,7 +19,7 @@ async def test_resolve_credentials_global_configured():
 
     with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get):
         url, key, model = await EmbeddingClient._resolve_credentials(use_global=True)
-        assert url == "https://global-embed.yovole.com"
+        assert url == "https://global-embed.yovole.com/v1"
         assert key == "global-key"
         assert model == "global-model-v1"
 
@@ -40,9 +40,9 @@ async def test_resolve_credentials_global_fallback_memory():
     with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get), \
          patch("app.services.ai.embedding_client.MemoryConfigService.get", side_effect=mock_memory_get):
         url, key, model = await EmbeddingClient._resolve_credentials(use_global=True)
-        assert url == "https://memory-embed.yovole.com"
+        assert url == "https://memory-embed.yovole.com/v1"
         assert key == "memory-key"
-        assert model == "bge-m3"  # global default is bge-m3
+        assert model == "memory-model-v2"
 
 @pytest.mark.asyncio
 async def test_resolve_credentials_global_fallback_llm():
@@ -61,7 +61,7 @@ async def test_resolve_credentials_global_fallback_llm():
     with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get), \
          patch("app.services.ai.embedding_client.MemoryConfigService.get", side_effect=mock_memory_get):
         url, key, model = await EmbeddingClient._resolve_credentials(use_global=True)
-        assert url == "https://llm-base.yovole.com"
+        assert url == "https://llm-base.yovole.com/v1"
         assert key == "llm-key"
         assert model == "fallback-global-model"
 
@@ -132,9 +132,9 @@ async def test_global_embed_connection_api():
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    with patch("app.api.portal.endpoints.system.httpx.AsyncClient", return_value=MockClientContext()), \
+    with patch("httpx.AsyncClient", return_value=MockClientContext()), \
          patch("app.api.portal.endpoints.system.require_permission", return_value=lambda x: None):
-        res = await test_connection(
+        res = await system_test_connection(
             component="global_embed",
             payload=payload,
             user={"username": "admin"}
@@ -178,7 +178,7 @@ async def test_search_examples_top_k_resolution():
         return default
 
     with patch("app.services.chatbi_example_service.ConfigService.get", side_effect=mock_config_get), \
-         patch("app.services.chatbi_example_service.EmbeddingClient.embed_text", return_value=mock_embed), \
+         patch("app.services.ai.embedding_client.EmbeddingClient.embed_text", return_value=mock_embed), \
          patch("app.services.ai.example_index_service.ExampleIndexService.search_knn", return_value=[]) as mock_search, \
          patch("app.services.chatbi_example_service.ExampleService._search_mysql_fallback", return_value=[]) as mock_fallback:
          
