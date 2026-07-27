@@ -158,6 +158,19 @@ def test_agent_wizard_blocks_later_steps_until_prior_complete():
     assert "请先完成前面的配置步骤" in drawer
     assert "disabled:cursor-not-allowed disabled:bg-gray-300" in drawer
 
+
+def test_knowledge_base_agent_blocks_tools_step_without_tool_or_binding():
+    management = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert "isKnowledgeBaseToolsStepComplete" in management
+    assert "getKnowledgeBaseDatasetIds" in management
+    assert "getEnabledToolNames" in management
+    assert "getActiveAgentType" in management
+    assert "if (step === 'tools') return isKnowledgeBaseToolsStepComplete();" in management
+    assert "search_knowledge_base" in management
+    assert "请先完善工具能力：选择知识库检索工具" in management
+    assert "请先完善工具能力：为知识库检索工具绑定至少一个知识库" in management
+
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
     list_section = management.split("<!-- List View -->", 1)[1]
 

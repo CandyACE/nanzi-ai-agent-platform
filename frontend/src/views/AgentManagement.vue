@@ -688,10 +688,39 @@ const isAgentConfigStepComplete = () => {
   return true;
 };
 
+const getActiveAgentType = (): AgentType =>
+  (selectedAgent.value?.agent_type ?? agentForm.value.agent_type ?? 'GENERAL') as AgentType;
+
+const getEnabledToolNames = () =>
+  (versionForm.value.tools || [])
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      if ((item as any).enabled === false) return '';
+      return String((item as any).name || '').trim();
+    })
+    .filter(Boolean);
+
+const getKnowledgeBaseDatasetIds = () => {
+  const raw =
+    agentForm.value.engine_config?.dataset_ids ??
+    selectedAgent.value?.engine_config?.dataset_ids ??
+    engineConfigUI.value.dataset_ids;
+  return (Array.isArray(raw) ? raw : String(raw || '').split(','))
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+};
+
+const isKnowledgeBaseToolsStepComplete = () => {
+  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return true;
+  const toolNames = new Set(getEnabledToolNames());
+  if (!toolNames.has('search_knowledge_base')) return false;
+  return getKnowledgeBaseDatasetIds().length > 0;
+};
+
 const isVersionConfigStepComplete = (step: VersionConfigStep) => {
   if (step === 'agent') return isAgentConfigStepComplete();
   if (step === 'model') return Boolean(versionForm.value.model_name?.trim());
-  if (step === 'tools') return true;
+  if (step === 'tools') return isKnowledgeBaseToolsStepComplete();
   if (step === 'prompt') return Boolean(versionForm.value.system_prompt?.trim());
   if (step === 'welcome') {
     const config = versionForm.value.welcome_config;
@@ -735,6 +764,18 @@ const describeIncompleteVersionConfigStep = (step: VersionConfigStep) => {
     return '请先完善智能体信息';
   }
   if (step === 'model') return '请先完善模型策略：选择编排模型';
+  if (step === 'tools') {
+    if (getActiveAgentType() === 'KNOWLEDGE_BASE') {
+      const toolNames = new Set(getEnabledToolNames());
+      if (!toolNames.has('search_knowledge_base')) {
+        return '请先完善工具能力：选择知识库检索工具';
+      }
+      if (getKnowledgeBaseDatasetIds().length === 0) {
+        return '请先完善工具能力：为知识库检索工具绑定至少一个知识库';
+      }
+    }
+    return '请先完成前面的配置步骤';
+  }
   if (step === 'prompt') return '请先填写系统提示词';
   if (step === 'welcome') return '请完整填写 3 张欢迎卡片，或关闭欢迎语设置';
   return '请先完成前面的配置步骤';
@@ -1427,6 +1468,12 @@ const openVersionModal = (
       skills: [],
       comment: "",
     };
+  }
+  if (selectedAgent.value) {
+    agentForm.value = { ...selectedAgent.value };
+    engineConfigUI.value.dataset_ids = Array.isArray(selectedAgent.value.engine_config?.dataset_ids)
+      ? selectedAgent.value.engine_config.dataset_ids.join(",")
+      : "";
   }
   resetVersionEditorUi();
   showVersionModal.value = true;

@@ -9,12 +9,34 @@ from app.models.audit import AccessLog
 
 logger = logging.getLogger(__name__)
 
+MAX_AUDIT_TEXT_BYTES = 10 * 1024
+_TRUNCATION_SUFFIX = "...(truncated)"
+
 
 def _sanitize_text_field(value: Optional[str]) -> Optional[str]:
     """移除 PostgreSQL 文本字段不允许的 NUL 字节。"""
     if value is None:
         return None
     return value.replace("\x00", "")
+
+
+def _truncate_text_field(
+    value: Optional[str],
+    max_bytes: int = MAX_AUDIT_TEXT_BYTES,
+) -> Optional[str]:
+    """按 UTF-8 字节数截断审计文本，避免超出 MySQL TEXT 字段限制。"""
+    value = _sanitize_text_field(value)
+    if value is None:
+        return None
+
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+
+    suffix_bytes = _TRUNCATION_SUFFIX.encode("utf-8")
+    content_bytes = max(0, max_bytes - len(suffix_bytes))
+    prefix = encoded[:content_bytes].decode("utf-8", errors="ignore")
+    return prefix + _TRUNCATION_SUFFIX
 
 class AuditService:
     _queue = asyncio.Queue()
@@ -150,9 +172,9 @@ class AuditService:
                         "status_code": item.get("status_code"),
                         "process_time_ms": item.get("process_time_ms"),
                         "client_ip": item.get("client_ip"),
-                        "request_params": _sanitize_text_field(item.get("request_params")),
-                        "response_body": _sanitize_text_field(item.get("response_body")),
-                        "error_message": _sanitize_text_field(item.get("error_message"))
+                        "request_params": _truncate_text_field(item.get("request_params")),
+                        "response_body": _truncate_text_field(item.get("response_body")),
+                        "error_message": _truncate_text_field(item.get("error_message"))
                     })
                 
                 await session.execute(stmt, mappings)
@@ -181,10 +203,10 @@ class AuditService:
         from app.utils.masking import mask_sensitive_data
 
         # 应用脱敏逻辑
-        masked_request = _sanitize_text_field(
+        masked_request = _truncate_text_field(
             mask_sensitive_data(request_params) if request_params else None
         )
-        masked_response = _sanitize_text_field(
+        masked_response = _truncate_text_field(
             mask_sensitive_data(response_body) if response_body else None
         )
 

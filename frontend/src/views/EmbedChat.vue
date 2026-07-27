@@ -6996,14 +6996,27 @@ onUnmounted(() => {
   color: #6b7280;
   margin: 1em 0;
 }
-:deep(.markdown-body table) {
-  display: block;
+:deep(.markdown-body .markdown-table-scroll) {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
-  border-collapse: collapse;
-  margin-bottom: 1em;
-  font-size: 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  margin: 1em 0;
+  background: #ffffff;
   -webkit-overflow-scrolling: touch;
+}
+:deep(.markdown-body table) {
+  display: table;
+  width: 100%;
+  min-width: 680px;
+  border: 0;
+  border-spacing: 0;
+  border-radius: 0;
+  margin: 0;
+  background: #ffffff;
+  font-size: 13px;
+  line-height: 1.55;
 }
 :deep(.markdown-body pre) {
   max-width: 100%;
@@ -7013,11 +7026,11 @@ onUnmounted(() => {
 }
 /* Scrollbar styles for mobile tables/code */
 :deep(.markdown-body pre)::-webkit-scrollbar,
-:deep(.markdown-body table)::-webkit-scrollbar {
+:deep(.markdown-body .markdown-table-scroll)::-webkit-scrollbar {
   height: 4px;
 }
 :deep(.markdown-body pre)::-webkit-scrollbar-thumb,
-:deep(.markdown-body table)::-webkit-scrollbar-thumb {
+:deep(.markdown-body .markdown-table-scroll)::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.1);
   border-radius: 2px;
 }
@@ -7029,12 +7042,41 @@ onUnmounted(() => {
 .drawer-leave-to {
   opacity: 0;
 }
-:deep(.markdown-body th, .markdown-body td) {
-  border: 1px solid #e5e7eb;
-  padding: 8px 12px;
+:deep(.markdown-body th) {
+  padding: 10px 14px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid #dbe3ec;
 }
-:deep(.markdown-body tr:nth-child(even)) {
-  background-color: #f9fafb;
+:deep(.markdown-body td) {
+  padding: 10px 14px;
+  color: #334155;
+  vertical-align: top;
+  border-bottom: 1px solid #eef2f7;
+  overflow-wrap: anywhere;
+}
+:deep(.markdown-body th + th),
+:deep(.markdown-body td + td) {
+  border-left: 1px solid #f1f5f9;
+}
+:deep(.markdown-body tbody tr:nth-child(even)) {
+  background-color: #fafbfd;
+}
+:deep(.markdown-body tbody tr:hover) {
+  background-color: #f1f5f9;
+}
+:deep(.markdown-body tbody tr:last-child td) {
+  border-bottom: 0;
+}
+:deep(.markdown-body td:first-child) {
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
 }
 /* Highlight.js Color Overrides - Light Theme */
 :deep(.hljs-keyword),
