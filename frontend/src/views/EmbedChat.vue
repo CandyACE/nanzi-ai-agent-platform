@@ -540,14 +540,16 @@
             <div class="mb-1 ml-1 flex items-center">
               <div
                 class="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-all duration-500 ease-out border"
-                :class="msg.agentName
+                :class="msg.agentName || msg.agentDisplayName
                   ? 'bg-blue-50/80 border-blue-100 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300 opacity-100 translate-y-0'
+                  : msg.isThinking
+                    ? 'bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800/70 dark:border-gray-700 dark:text-gray-400 opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-1 bg-transparent border-transparent'"
               >
                 <!-- Status Indicator Dot (Removed to reduce visual noise) -->
                 <!-- Text -->
-                <span>{{ msg.agentDisplayName || msg.agentName }}</span>
-                <span class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
+                <span>{{ msg.agentDisplayName || msg.agentName || '智能体正在分配调度中...' }}</span>
+                <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
               </div>
             </div>
             <div
@@ -7193,8 +7195,10 @@ onUnmounted(() => {
   padding: var(--md-table-cell-padding) !important;
 }
 .message-borderless {
+  border-width: 0 !important;
   border-color: transparent !important;
   border-left-color: transparent !important;
+  padding-left: 0.75rem !important;
   box-shadow: none !important;
 }
 :deep(.markdown-body .markdown-table-scroll) {

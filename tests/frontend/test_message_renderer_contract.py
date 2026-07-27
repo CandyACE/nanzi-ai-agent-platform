@@ -77,6 +77,9 @@ def test_ai_message_border_visibility_is_configurable_and_persisted():
     assert "hideMessageBorder: false" in embed_source
     assert "message-borderless" in embed_source
     assert "config.hideMessageBorder" in embed_source
+    borderless_css = embed_source.split(".message-borderless {", 1)[1].split("}", 1)[0]
+    assert "border-width: 0 !important;" in borderless_css
+    assert "padding-left: 0.75rem !important;" in borderless_css
 
 
 def test_embed_markdown_table_cells_are_left_aligned():
@@ -104,3 +107,12 @@ def test_bauhaus_message_background_is_white():
     bauhaus_theme = source.split(".markdown-theme-bauhaus {", 1)[1].split("}", 1)[0]
     assert "--ai-bubble-background: #ffffff;" in bauhaus_theme
     assert "--md-table-background: #ffffff;" in bauhaus_theme
+
+
+def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():
+    source = _source("frontend/src/views/EmbedChat.vue")
+
+    assert "智能体正在分配调度中..." in source
+    assert "msg.isThinking" in source
+    assert "bg-gray-50 border-gray-200" in source
+    assert "v-if=\"msg.agentName\"" in source
