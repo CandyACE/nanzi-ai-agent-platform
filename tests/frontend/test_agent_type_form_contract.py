@@ -180,6 +180,11 @@ def test_knowledge_base_agent_blocks_tools_step_without_tool_or_binding():
     assert "versionConfigIncompleteHint" in drawer
     assert "tool-action-btn--attention" in drawer
 
+    assert "CHATBI_TOOL_GROUP_LABEL" in management
+    assert "getDefaultCollapsedStaticGroups" in management
+    assert "applyKnowledgeBaseToolGroupDefaults" in management
+    assert "collapsed.add(CHATBI_TOOL_GROUP_LABEL)" in management
+
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
     list_section = management.split("<!-- List View -->", 1)[1]
 

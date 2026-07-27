@@ -128,6 +128,17 @@ const handleSetMarkdownTheme = (theme: string) => {
     saveAndClose();
 };
 
+const handleSetMessageBorder = (hidden: boolean) => {
+    props.config.hideMessageBorder = hidden;
+    localStorage.setItem("user_has_custom_border_preference", "true");
+    localStorage.setItem("yovole_hide_message_border", hidden ? "1" : "0");
+    showToast(
+        hidden ? "AI 消息外框已隐藏" : "AI 消息外框已显示",
+        hidden ? "success" : "info",
+    );
+    saveAndClose();
+};
+
 const handleSetGrounding = (enabled: boolean) => {
     if (props.config.enableGrounding === enabled) {
       saveAndClose();
@@ -384,6 +395,20 @@ const handleLogout = () => {
                   <span>禅意</span>
                 </button>
               </div>
+            </div>
+
+            <!-- Message Border -->
+            <div class="flex items-start justify-between py-1">
+              <div class="flex items-start space-x-2.5 pr-2">
+                <div class="mt-0.5 text-gray-400 dark:text-gray-500 shrink-0">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7a3 3 0 013-3h10a3 3 0 013 3v10a3 3 0 01-3 3H7a3 3 0 01-3-3V7z" /></svg>
+                </div>
+                <div>
+                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">隐藏 AI 消息外框</h5>
+                  <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">仅隐藏消息气泡外框，Markdown 表格边框保留</p>
+                </div>
+              </div>
+              <Switch :modelValue="!!config.hideMessageBorder" @update:modelValue="handleSetMessageBorder" class="scale-[0.8] origin-right" />
             </div>
           </div>
 

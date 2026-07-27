@@ -569,6 +569,16 @@ const externalCreationMissingFields = computed(() => {
                   <span>{{ themeOpt.label }}</span>
                 </button>
               </div>
+              <label class="mt-4 flex cursor-pointer items-center justify-between rounded-lg border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+                <span>
+                  <span class="block text-xs font-semibold text-gray-700">隐藏 AI 消息外框</span>
+                  <span class="mt-0.5 block text-[10px] text-gray-400">仅隐藏消息气泡边框，Markdown 表格边框保留</span>
+                </span>
+                <span class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors" :class="engineConfig.hide_message_border ? 'bg-primary' : 'bg-gray-300'">
+                  <input v-model="engineConfig.hide_message_border" type="checkbox" class="sr-only" />
+                  <span class="h-4 w-4 rounded-full bg-white shadow-sm transition-transform" :class="engineConfig.hide_message_border ? 'translate-x-4' : 'translate-x-0.5'"></span>
+                </span>
+              </label>
             </div>
           </div>
 

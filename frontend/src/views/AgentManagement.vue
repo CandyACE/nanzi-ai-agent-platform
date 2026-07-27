@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { agentApi } from "../api/agent";
 import type {
@@ -169,6 +169,7 @@ const showAdvancedSafety = ref(false);
 
 // AI 消息排版样式选择与效果预览变量
 const selectedMarkdownTheme = ref("default");
+const hideMessageBorder = ref(false);
 const showThemePreviewHelp = ref(false);
 const previewTheme = ref("default");
 const markdownThemeOptions = [
@@ -850,6 +851,23 @@ const filteredEnabledSkills = computed(() => {
 });
 
 const collapsedStaticGroups = ref<Set<string>>(new Set());
+const CHATBI_TOOL_GROUP_LABEL = 'ChatBI 数据分析';
+
+const getDefaultCollapsedStaticGroups = () => {
+  const collapsed = new Set<string>();
+  if (getActiveAgentType() === 'KNOWLEDGE_BASE') {
+    collapsed.add(CHATBI_TOOL_GROUP_LABEL);
+  }
+  return collapsed;
+};
+
+const applyKnowledgeBaseToolGroupDefaults = () => {
+  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return;
+  const next = new Set(collapsedStaticGroups.value);
+  next.add(CHATBI_TOOL_GROUP_LABEL);
+  collapsedStaticGroups.value = next;
+};
+
 const isStaticGroupCollapsed = (label: string) => collapsedStaticGroups.value.has(label);
 const toggleStaticGroupCollapse = (label: string) => {
   const next = new Set(collapsedStaticGroups.value);
@@ -909,8 +927,14 @@ const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
   collapsedMcpGroups.value = new Set();
-  collapsedStaticGroups.value = new Set();
+  collapsedStaticGroups.value = getDefaultCollapsedStaticGroups();
 };
+
+watch(versionConfigStep, (step, previousStep) => {
+  if (step === 'tools' && previousStep !== 'tools') {
+    applyKnowledgeBaseToolGroupDefaults();
+  }
+});
 
 const fetchTools = async () => {
   try {
@@ -1100,9 +1124,11 @@ const startAgentCreation = () => {
       safety_check_input_strategy: "append",
       safety_check_output_strategy: "append",
       default_markdown_theme: "default",
+      hide_message_border: false,
     },
   };
   selectedMarkdownTheme.value = "default";
+  hideMessageBorder.value = false;
   versionForm.value = {
     model_name: "",
     temperature: 0,
@@ -1140,6 +1166,7 @@ const openAgentModal = (agent?: AIAgent) => {
       engine_config: agent.engine_config ? { ...agent.engine_config } : {},
     };
     selectedMarkdownTheme.value = agent.engine_config?.default_markdown_theme || "default";
+    hideMessageBorder.value = agent.engine_config?.hide_message_border === true;
     if (isExternalEngine(agentForm.value.engine_type)) {
       agentForm.value.agent_type = "GENERAL";
     }
@@ -1293,6 +1320,7 @@ const saveAgent = async (exitAfterSave = false) => {
     agentForm.value.engine_config = {};
   }
   agentForm.value.engine_config.default_markdown_theme = selectedMarkdownTheme.value;
+  agentForm.value.engine_config.hide_message_border = hideMessageBorder.value;
 
   try {
     if (isEditingAgent.value && selectedAgent.value) {
@@ -1634,6 +1662,7 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
     ...(agentForm.value.engine_config || {}),
     dataset_ids: datasetIds,
     default_markdown_theme: selectedMarkdownTheme.value,
+    hide_message_border: hideMessageBorder.value,
   };
   isPersistingNewAgent.value = true;
   try {
@@ -3602,6 +3631,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <span>{{ themeOpt.label }}</span>
             </button>
           </div>
+          <label class="mt-4 flex cursor-pointer items-center justify-between rounded-lg border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+            <span>
+              <span class="block text-xs font-semibold text-gray-700">隐藏 AI 消息外框</span>
+              <span class="mt-0.5 block text-[10px] text-gray-400">仅隐藏消息气泡边框，Markdown 表格边框保留</span>
+            </span>
+            <span class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors" :class="hideMessageBorder ? 'bg-primary' : 'bg-gray-300'">
+              <input v-model="hideMessageBorder" type="checkbox" class="sr-only" />
+              <span class="h-4 w-4 rounded-full bg-white shadow-sm transition-transform" :class="hideMessageBorder ? 'translate-x-4' : 'translate-x-0.5'"></span>
+            </span>
+          </label>
         </div>
         </div>
 
