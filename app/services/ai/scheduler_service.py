@@ -764,7 +764,7 @@ class TaskSchedulerService:
         if self._scheduler and self._scheduler.running:
             return
 
-        db_url = settings.MYSQL_SYNC_URL
+        db_url = settings.DATABASE_SYNC_URL
         # Use a custom table name to ensure a clean slate and match project conventions
         job_stores = {
             'default': SQLAlchemyJobStore(url=db_url, tablename='ai_agent_scheduler_jobs')

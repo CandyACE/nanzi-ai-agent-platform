@@ -7,12 +7,19 @@ from app.core.dependencies import require_api_key, require_admin
 from app.core.orm import get_db_session
 from app.models.audit import AccessLog, AgentExecutionTrace
 from app.services.audit_service import AuditService
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import csv
 import io
 
 router = APIRouter()
+
+
+def _normalize_audit_datetime(value: Optional[datetime]) -> Optional[datetime]:
+    """将请求时间转换为数据库 DateTime 使用的无时区 datetime。"""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
 
 def is_admin(user: dict) -> bool:
     """Check if user has admin role"""
@@ -35,8 +42,8 @@ async def get_audit_features(
 async def export_logs(
     format: str = Query("csv", pattern="^(csv|json)$"),
     user_name: Optional[str] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
     method: Optional[str] = None,
     status_code: Optional[int] = None,
     min_status: Optional[int] = None,
@@ -49,15 +56,16 @@ async def export_logs(
 ):
     admin_flag = is_admin(user)
     target_user = user_name if admin_flag else user["user_name"]
+    start_dt = _normalize_audit_datetime(start_time)
+    end_dt = _normalize_audit_datetime(end_time)
     stmt = select(AccessLog).order_by(desc(AccessLog.created_at)).limit(10000)
     if target_user: stmt = stmt.where(AccessLog.user_name == target_user)
-    if start_time: 
-        stmt = stmt.where(AccessLog.created_at >= start_time)
+    if start_dt:
+        stmt = stmt.where(AccessLog.created_at >= start_dt)
     else:
-        from datetime import timedelta
-        default_start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+        default_start = datetime.now() - timedelta(days=90)
         stmt = stmt.where(AccessLog.created_at >= default_start)
-    if end_time: stmt = stmt.where(AccessLog.created_at <= end_time)
+    if end_dt: stmt = stmt.where(AccessLog.created_at <= end_dt)
     if method: stmt = stmt.where(AccessLog.method == method)
     if status_code: stmt = stmt.where(AccessLog.status_code == status_code)
     if min_status: stmt = stmt.where(AccessLog.status_code >= min_status)
@@ -87,8 +95,8 @@ async def get_audit_logs(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     user_name: Optional[str] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
     method: Optional[str] = None,
     status_code: Optional[int] = None,
     min_status: Optional[int] = None,
@@ -102,15 +110,16 @@ async def get_audit_logs(
 ):
     admin_flag = is_admin(user)
     target_user = user_name if admin_flag else user["user_name"]
+    start_dt = _normalize_audit_datetime(start_time)
+    end_dt = _normalize_audit_datetime(end_time)
     query = select(AccessLog)
     if target_user: query = query.where(AccessLog.user_name == target_user)
-    if start_time:
-        query = query.where(AccessLog.created_at >= start_time)
+    if start_dt:
+        query = query.where(AccessLog.created_at >= start_dt)
     else:
-        from datetime import timedelta
-        default_start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+        default_start = datetime.now() - timedelta(days=90)
         query = query.where(AccessLog.created_at >= default_start)
-    if end_time: query = query.where(AccessLog.created_at <= end_time)
+    if end_dt: query = query.where(AccessLog.created_at <= end_dt)
     if method: query = query.where(AccessLog.method == method)
     if status_code: query = query.where(AccessLog.status_code == status_code)
     if min_status: query = query.where(AccessLog.status_code >= min_status)
@@ -125,13 +134,12 @@ async def get_audit_logs(
     if include_stats:
         stats_query = select(func.count().label("total"), func.sum(case(((AccessLog.status_code >= 200) & (AccessLog.status_code < 300), 1), else_=0)).label("success"), func.sum(case((AccessLog.status_code >= 400, 1), else_=0)).label("error"), func.avg(AccessLog.process_time_ms).label("avg_time"))
         if target_user: stats_query = stats_query.where(AccessLog.user_name == target_user)
-        if start_time:
-            stats_query = stats_query.where(AccessLog.created_at >= start_time)
+        if start_dt:
+            stats_query = stats_query.where(AccessLog.created_at >= start_dt)
         else:
-            from datetime import timedelta
-            default_start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+            default_start = datetime.now() - timedelta(days=90)
             stats_query = stats_query.where(AccessLog.created_at >= default_start)
-        if end_time: stats_query = stats_query.where(AccessLog.created_at <= end_time)
+        if end_dt: stats_query = stats_query.where(AccessLog.created_at <= end_dt)
         if method: stats_query = stats_query.where(AccessLog.method == method)
         if status_code: stats_query = stats_query.where(AccessLog.status_code == status_code)
         if min_status: stats_query = stats_query.where(AccessLog.status_code >= min_status)
@@ -153,21 +161,17 @@ async def get_audit_logs(
 @router.get("/logs/{log_id}")
 async def get_log_detail(
     log_id: int, 
-    created_at: Optional[str] = Query(None, description="日志产生的大致或精确时间"),
+    created_at: Optional[datetime] = Query(None, description="日志产生的大致或精确时间"),
     user: dict = Depends(require_api_key), 
     db: AsyncSession = Depends(get_db_session)
 ):
     stmt = select(AccessLog).where(AccessLog.id == log_id)
     if created_at:
-        from datetime import datetime, timedelta
-        try:
-            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            stmt = stmt.where(
-                AccessLog.created_at >= dt - timedelta(seconds=2),
-                AccessLog.created_at <= dt + timedelta(seconds=2)
-            )
-        except ValueError:
-            stmt = stmt.where(AccessLog.created_at == created_at)
+        dt = _normalize_audit_datetime(created_at)
+        stmt = stmt.where(
+            AccessLog.created_at >= dt - timedelta(seconds=2),
+            AccessLog.created_at <= dt + timedelta(seconds=2)
+        )
     if not is_admin(user): stmt = stmt.where(AccessLog.user_name == user["user_name"])
     row = (await db.execute(stmt)).scalar_one_or_none()
     if not row: raise HTTPException(status_code=404, detail="Log not found")

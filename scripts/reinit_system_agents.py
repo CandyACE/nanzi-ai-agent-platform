@@ -29,6 +29,12 @@ async def run_sql_script(pool, file_path):
 
 async def reinit_agents():
     print("🚀 Starting Refactored System Agent Initialization...")
+
+    if settings.normalized_database_type != "mysql":
+        raise RuntimeError(
+            "reinit_system_agents.py replays the MySQL-only consolidated schema; "
+            "use db-prod-pg/V0-baseline.sql for PostgreSQL."
+        )
     
     pool = await aiomysql.create_pool(
         host=settings.MYSQL_HOST,

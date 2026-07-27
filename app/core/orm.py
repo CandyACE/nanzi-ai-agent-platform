@@ -8,7 +8,7 @@ class Base(DeclarativeBase):
 
 # SQLAlchemy Async Engine
 engine = create_async_engine(
-    settings.MYSQL_ASYNC_URL,
+    settings.DATABASE_ASYNC_URL,
     echo=False,
     pool_pre_ping=True,
     pool_size=settings.MYSQL_POOL_SIZE,

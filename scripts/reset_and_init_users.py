@@ -2,42 +2,44 @@ import asyncio
 import sys
 import os
 import json
+from sqlalchemy import text
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core import database
 from app.services.auth_service import AuthService
-from app.core.config import settings
+from app.core.orm import AsyncSessionLocal
+from app.models.permission import UserRoleRelation  # noqa: F401
 
 async def reset_and_init():
     print("🚀 开始重置数据库用户...")
     
     await database.init_db()
     
-    async with database.get_db_connection() as conn:
-        async with conn.cursor() as cursor:
-            # 1. 清空数据
-            print("🧹 清空 ai_agent_users 表...")
-            await cursor.execute("TRUNCATE TABLE ai_agent_users")
+    async with AsyncSessionLocal() as session:
+        # 1. 清空数据
+        print("🧹 清空 ai_agent_users 表...")
+        await session.execute(text("TRUNCATE TABLE ai_agent_users"))
+        await session.commit()
+
+    # 2. 创建管理员 (admin)
+    print("👤 创建管理员账号 (admin)...")
+    admin_key = await AuthService.generate_api_key(
+        user_name="admin",
+        role="admin",
+        remark="超级管理员"
+    )
             
-            # 2. 创建管理员 (admin)
-            print("👤 创建管理员账号 (admin)...")
-            admin_key = await AuthService.generate_api_key(
-                user_name="admin",
-                role="admin",
-                remark="超级管理员"
-            )
+    # 3. 创建普通用户 (demo_user)
+    print("👤 创建普通用户 (demo_user)...")
             
-            # 3. 创建普通用户 (demo_user)
-            print("👤 创建普通用户 (demo_user)...")
-            
-            # 直接生成 API Key
-            user_key = await AuthService.generate_api_key(
-                user_name="demo_user",
-                role="user",
-                remark="演示用户"
-            )
+    # 直接生成 API Key
+    user_key = await AuthService.generate_api_key(
+        user_name="demo_user",
+        role="user",
+        remark="演示用户"
+    )
 
     print("\n" + "="*50)
     print("✅ 重置完成！请使用以下 Key 登录：")
@@ -59,4 +61,4 @@ if __name__ == "__main__":
         # 如果是密码错误，提示用户
         if "Access denied" in str(e):
             print("\n⚠️  提示：无法连接数据库。")
-            print("   请检查 .env 文件中的 MYSQL_PASSWORD 是否正确。")
+            print("   请检查 .env 文件中当前 DATABASE_TYPE 对应的数据库连接配置是否正确。")

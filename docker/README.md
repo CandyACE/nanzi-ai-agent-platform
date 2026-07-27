@@ -40,12 +40,22 @@ vim .env
 API_SERVICE_ENV=prod                    # 环境: dev/prod
 API_SERVICE_LOG_LEVEL=INFO              # 日志级别
 
-# 数据库连接 (使用宿主机 IP 而非 localhost)
+# 平台主数据库类型：mysql（默认），也可设置为 postgresql
+DATABASE_TYPE=mysql
+
+# MySQL 连接（DATABASE_TYPE=mysql 时使用）
 MYSQL_HOST=192.168.x.x                  # 宿主机 IP 地址
 MYSQL_PORT=3306
 MYSQL_DB=nanzi_ai_agent_platform
 MYSQL_USER=root
 MYSQL_PASSWORD=your_password
+
+# PostgreSQL 连接（DATABASE_TYPE=postgresql 时使用）
+POSTGRES_HOST=192.168.x.x
+POSTGRES_PORT=5432
+POSTGRES_DB=nanzi_ai_agent_platform
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
 
 
 

@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import text
+from sqlalchemy import Boolean, Column, DateTime, MetaData, String, Table, Text, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.orm import AsyncSessionLocal
@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 CACHE_PREFIX = "memory_config:"
 CACHE_TTL = 300
+
+_MEMORY_CONFIGS_TABLE = Table(
+    "memory_service_configs",
+    MetaData(),
+    Column("key", String(255), primary_key=True, quote=True),
+    Column("value", Text),
+    Column("description", Text),
+    Column("is_secret", Boolean),
+    Column("updated_at", DateTime),
+)
 
 
 class MemoryConfigService:
@@ -28,10 +38,12 @@ class MemoryConfigService:
         """返回全部配置项（供记忆管理中心 UI）。"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text(
-                    "SELECT `key`, `value`, `description`, `is_secret` "
-                    "FROM memory_service_configs ORDER BY `key`"
-                )
+                select(
+                    _MEMORY_CONFIGS_TABLE.c.key,
+                    _MEMORY_CONFIGS_TABLE.c.value,
+                    _MEMORY_CONFIGS_TABLE.c.description,
+                    _MEMORY_CONFIGS_TABLE.c.is_secret,
+                ).order_by(_MEMORY_CONFIGS_TABLE.c.key)
             )
             rows = result.fetchall()
         return [
@@ -52,7 +64,12 @@ class MemoryConfigService:
             return MemoryConfigService._cache
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text("SELECT `key`, `value`, `description`, `is_secret` FROM memory_service_configs")
+                select(
+                    _MEMORY_CONFIGS_TABLE.c.key,
+                    _MEMORY_CONFIGS_TABLE.c.value,
+                    _MEMORY_CONFIGS_TABLE.c.description,
+                    _MEMORY_CONFIGS_TABLE.c.is_secret,
+                )
             )
             rows = result.fetchall()
         configs: Dict[str, dict] = {}
@@ -77,8 +94,9 @@ class MemoryConfigService:
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text("SELECT `value` FROM memory_service_configs WHERE `key` = :key"),
-                {"key": key},
+                select(_MEMORY_CONFIGS_TABLE.c.value).where(
+                    _MEMORY_CONFIGS_TABLE.c.key == key
+                ),
             )
             row = result.fetchone()
         if row is None:
@@ -129,11 +147,9 @@ class MemoryConfigService:
                 key = item["key"]
                 value = item.get("value", "")
                 await session.execute(
-                    text(
-                        "UPDATE memory_service_configs SET `value` = :value, "
-                        "`updated_at` = CURRENT_TIMESTAMP WHERE `key` = :key"
-                    ),
-                    {"key": key, "value": value},
+                    update(_MEMORY_CONFIGS_TABLE)
+                    .where(_MEMORY_CONFIGS_TABLE.c.key == key)
+                    .values(value=value, updated_at=func.now())
                 )
             await session.commit()
 

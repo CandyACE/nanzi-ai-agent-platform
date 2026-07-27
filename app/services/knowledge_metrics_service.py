@@ -2,14 +2,66 @@ import datetime
 import logging
 from typing import Dict, Any, List
 
-from sqlalchemy import text
+from sqlalchemy import func, text
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from app.core.orm import AsyncSessionLocal
 from app.core.redis import get_redis
+from app.models.knowledge import KnowledgeBaseMetric
 
 logger = logging.getLogger(__name__)
 
 DATASET_NAMES_REDIS_KEY = "kb:citation:dataset_names"
 DOC_NAMES_REDIS_KEY = "kb:citation:doc_names"
+
+
+def build_knowledge_metrics_upsert_statement(
+    *,
+    metric_date,
+    target_type: str,
+    target_id: str,
+    target_name: str,
+    search_count: int,
+    citation_count: int,
+    dialect_name: str,
+):
+    """Build the incremental knowledge metrics upsert for one SQL dialect."""
+    table = KnowledgeBaseMetric.__table__
+    values = {
+        "metric_date": metric_date,
+        "target_type": target_type,
+        "target_id": target_id,
+        "target_name": target_name,
+        "search_count": search_count,
+        "citation_count": citation_count,
+        "created_at": func.now(),
+        "updated_at": func.now(),
+    }
+    normalized_dialect = dialect_name.strip().lower()
+    if normalized_dialect == "postgresql":
+        statement = postgresql_insert(table).values(**values)
+        return statement.on_conflict_do_update(
+            constraint="uix_kb_metric_date_target",
+            set_={
+                "search_count": table.c.search_count + statement.excluded.search_count,
+                "citation_count": table.c.citation_count + statement.excluded.citation_count,
+                "target_name": statement.excluded.target_name,
+                "updated_at": func.now(),
+            },
+        )
+    if normalized_dialect == "mysql":
+        statement = mysql_insert(table).values(**values)
+        return statement.on_duplicate_key_update(
+            search_count=table.c.search_count + statement.inserted.search_count,
+            citation_count=table.c.citation_count + statement.inserted.citation_count,
+            target_name=statement.inserted.target_name,
+            updated_at=func.now(),
+        )
+    raise ValueError(f"Unsupported SQL dialect: {dialect_name}")
+
+
+def _session_dialect_name(session) -> str:
+    return session.get_bind().dialect.name
 
 
 class KnowledgeMetricsService:
@@ -200,26 +252,17 @@ class KnowledgeMetricsService:
                             else:
                                 target_name = doc_names.get(target_id) or f"文档: {target_id[:8]}"
 
-                            # MySQL INSERT ... ON DUPLICATE KEY UPDATE for clean upsert
-                            sql = """
-                                INSERT INTO knowledge_base_metrics 
-                                (metric_date, target_type, target_id, target_name, search_count, citation_count, created_at, updated_at)
-                                VALUES 
-                                (:metric_date, :target_type, :target_id, :target_name, :search_count, :citation_count, NOW(), NOW())
-                                ON DUPLICATE KEY UPDATE 
-                                search_count = search_count + :search_count,
-                                citation_count = citation_count + :citation_count,
-                                target_name = VALUES(target_name),
-                                updated_at = NOW()
-                            """
-                            await session.execute(text(sql), {
-                                "metric_date": metric_date,
-                                "target_type": target_type,
-                                "target_id": target_id,
-                                "target_name": target_name,
-                                "search_count": search_count,
-                                "citation_count": citation_count
-                            })
+                            await session.execute(
+                                build_knowledge_metrics_upsert_statement(
+                                    metric_date=metric_date,
+                                    target_type=target_type,
+                                    target_id=target_id,
+                                    target_name=target_name,
+                                    search_count=search_count,
+                                    citation_count=citation_count,
+                                    dialect_name=_session_dialect_name(session),
+                                )
+                            )
                 
                 await session.commit()
                 logger.info("[KnowledgeMetricsService] Sync metrics to DB successful.")

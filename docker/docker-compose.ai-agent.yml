@@ -16,6 +16,10 @@ services:
       # Service Config
       - API_SERVICE_ENV=${API_SERVICE_ENV:-prod}
       - API_SERVICE_LOG_LEVEL=${API_SERVICE_LOG_LEVEL:-INFO}
+
+      # Main database
+      - DATABASE_TYPE=${DATABASE_TYPE:-mysql}
+
       # Oracle Config
       - LD_LIBRARY_PATH=/opt/oracle/instantclient
       - USE_ORACLE_THICK_MODE=${USE_ORACLE_THICK_MODE:-1}  
@@ -26,6 +30,13 @@ services:
       - MYSQL_DB=${MYSQL_DB:-nanzi_ai_agent_platform}
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-root123}
+
+      # PostgreSQL (used when DATABASE_TYPE=postgresql)
+      - POSTGRES_HOST=${POSTGRES_HOST:-host.docker.internal}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-nanzi_ai_agent_platform}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-your_password}
 
       # Redis
       - REDIS_HOST=${REDIS_HOST:-host.docker.internal}

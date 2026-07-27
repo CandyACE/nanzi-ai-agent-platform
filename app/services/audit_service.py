@@ -9,6 +9,13 @@ from app.models.audit import AccessLog
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_text_field(value: Optional[str]) -> Optional[str]:
+    """移除 PostgreSQL 文本字段不允许的 NUL 字节。"""
+    if value is None:
+        return None
+    return value.replace("\x00", "")
+
 class AuditService:
     _queue = asyncio.Queue()
     _worker_task = None
@@ -143,9 +150,9 @@ class AuditService:
                         "status_code": item.get("status_code"),
                         "process_time_ms": item.get("process_time_ms"),
                         "client_ip": item.get("client_ip"),
-                        "request_params": item.get("request_params"),
-                        "response_body": item.get("response_body"),
-                        "error_message": item.get("error_message")
+                        "request_params": _sanitize_text_field(item.get("request_params")),
+                        "response_body": _sanitize_text_field(item.get("response_body")),
+                        "error_message": _sanitize_text_field(item.get("error_message"))
                     })
                 
                 await session.execute(stmt, mappings)
@@ -174,8 +181,12 @@ class AuditService:
         from app.utils.masking import mask_sensitive_data
 
         # 应用脱敏逻辑
-        masked_request = mask_sensitive_data(request_params) if request_params else None
-        masked_response = mask_sensitive_data(response_body) if response_body else None
+        masked_request = _sanitize_text_field(
+            mask_sensitive_data(request_params) if request_params else None
+        )
+        masked_response = _sanitize_text_field(
+            mask_sensitive_data(response_body) if response_body else None
+        )
 
         # Resolve human-readable feature name
         feature_name = cls.get_feature_name(endpoint)

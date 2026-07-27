@@ -1,12 +1,13 @@
 import asyncio
 import sys
 import os
-import aiomysql
+from sqlalchemy import select, update
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import settings
+from app.core.orm import AsyncSessionLocal
+from app.models.agent import AIAgent, AIAgentVersion
 
 
 def load_prompt_from_file():
@@ -27,39 +28,30 @@ NEW_PROMPT = load_prompt_from_file()
 
 async def update_prompt():
     print("🚀 Updating ChatBI System Prompt...")
-    
-    pool = await aiomysql.create_pool(
-        host=settings.MYSQL_HOST,
-        port=settings.MYSQL_PORT,
-        user=settings.MYSQL_USER,
-        password=settings.MYSQL_PASSWORD,
-        db=settings.MYSQL_DB,
-        autocommit=True
-    )
 
     try:
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                # 1. Find ChatBI Agent ID
-                await cursor.execute("SELECT id FROM ai_agents WHERE name = 'chat-bi'")
-                agent = await cursor.fetchone()
-                if not agent:
-                    print("❌ Error: Agent 'chat-bi' not found.")
-                    return
-                
-                agent_id = agent[0]
-                
-                # 2. Update the PUBLISHED version prompt
-                sql = "UPDATE ai_agent_versions SET system_prompt = %s WHERE agent_id = %s AND status = 'PUBLISHED'"
-                await cursor.execute(sql, (NEW_PROMPT, agent_id))
-                
-                print(f"✅ Successfully updated prompt for agent_id: {agent_id}")
-                
+        async with AsyncSessionLocal() as session:
+            agent_id = (
+                await session.execute(
+                    select(AIAgent.id).where(AIAgent.name == "chat-bi")
+                )
+            ).scalar_one_or_none()
+            if not agent_id:
+                print("❌ Error: Agent 'chat-bi' not found.")
+                return
+
+            await session.execute(
+                update(AIAgentVersion)
+                .where(
+                    AIAgentVersion.agent_id == agent_id,
+                    AIAgentVersion.status == "PUBLISHED",
+                )
+                .values(system_prompt=NEW_PROMPT)
+            )
+            await session.commit()
+            print(f"✅ Successfully updated prompt for agent_id: {agent_id}")
     except Exception as e:
         print(f"❌ Failed: {e}")
-    finally:
-        pool.close()
-        await pool.wait_closed()
 
 if __name__ == "__main__":
     asyncio.run(update_prompt())

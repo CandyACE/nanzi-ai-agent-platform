@@ -3,7 +3,8 @@ import json
 import re
 from datetime import datetime, timedelta
 from typing import Any, Optional, Dict, List, Tuple
-from sqlalchemy import select, update, func, or_, case
+from sqlalchemy import select, update, func, or_, case, cast
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 from fastapi import BackgroundTasks
@@ -40,6 +41,28 @@ MAX_PROFILE_PAGE_SIZE = 200
 
 class DbProfileService:
     """外部数据源元数据智能摸排与分析服务"""
+
+    @staticmethod
+    def _session_dialect_name(db: AsyncSession) -> str:
+        try:
+            return db.get_bind().dialect.name
+        except Exception:
+            return "mysql"
+
+    @staticmethod
+    def _is_postgresql_dialect(dialect_name: str) -> bool:
+        return str(dialect_name or "").strip().lower() in {
+            "postgres",
+            "postgresql",
+            "pg",
+        }
+
+    @staticmethod
+    def _profile_field_count_expression(dialect_name: str):
+        """构造字段画像数组长度表达式，适配平台主库方言。"""
+        if DbProfileService._is_postgresql_dialect(dialect_name):
+            return func.jsonb_array_length(DbTableProfile.columns_profile)
+        return func.json_length(DbTableProfile.columns_profile)
 
     @staticmethod
     async def trigger_profiling_task(
@@ -300,6 +323,7 @@ class DbProfileService:
         tag: Optional[str] = None,
         is_ignored: Optional[int] = None,
         status: Optional[int] = None,
+        dialect_name: str = "mysql",
     ):
         if q and q.strip():
             like_q = f"%{q.strip()}%"
@@ -311,9 +335,15 @@ class DbProfileService:
                 )
             )
         if tag and tag.strip():
-            stmt = stmt.where(
-                func.json_contains(DbTableProfile.ai_tags, f'"{tag.strip()}"')
-            )
+            normalized_tag = tag.strip()
+            if DbProfileService._is_postgresql_dialect(dialect_name):
+                stmt = stmt.where(
+                    DbTableProfile.ai_tags.op("@>")(cast([normalized_tag], JSONB))
+                )
+            else:
+                stmt = stmt.where(
+                    func.json_contains(DbTableProfile.ai_tags, f'"{normalized_tag}"')
+                )
         if is_ignored is not None:
             stmt = stmt.where(DbTableProfile.is_ignored == is_ignored)
         if status is not None:
@@ -392,6 +422,7 @@ class DbProfileService:
     ) -> DbTableProfileStatsResponse:
         """聚合统计与标签分布，供大库概览面板使用。"""
         base_filter = DbTableProfile.connection_id == config_id
+        dialect_name = DbProfileService._session_dialect_name(db)
 
         total_res = await db.execute(
             select(func.count()).select_from(DbTableProfile).where(base_filter)
@@ -434,7 +465,14 @@ class DbProfileService:
         ignored_count = int(ignored_res.scalar() or 0)
 
         field_res = await db.execute(
-            select(func.coalesce(func.sum(func.json_length(DbTableProfile.columns_profile)), 0))
+            select(
+                func.coalesce(
+                    func.sum(
+                        DbProfileService._profile_field_count_expression(dialect_name)
+                    ),
+                    0,
+                )
+            )
             .select_from(DbTableProfile)
             .where(base_filter, DbTableProfile.columns_profile.isnot(None))
         )
@@ -501,7 +539,12 @@ class DbProfileService:
 
         base = select(DbTableProfile).where(DbTableProfile.connection_id == config_id)
         base = DbProfileService._apply_profile_filters(
-            base, q=q, tag=tag, is_ignored=is_ignored, status=status
+            base,
+            q=q,
+            tag=tag,
+            is_ignored=is_ignored,
+            status=status,
+            dialect_name=DbProfileService._session_dialect_name(db),
         )
 
         count_res = await db.execute(select(func.count()).select_from(base.subquery()))

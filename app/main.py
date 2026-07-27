@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.orm import get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
 
 # Configure logging
@@ -158,6 +159,7 @@ async def _get_execution_mode() -> str:
 # Global Exception Handlers for Resilience
 @app.exception_handler(InterfaceError)
 @app.exception_handler(OperationalError)
+@app.exception_handler(SQLAlchemyOperationalError)
 async def database_connection_exception_handler(request: Request, exc: Exception):
     """
     Handle Database Connection Errors.

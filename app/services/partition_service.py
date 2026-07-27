@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import AsyncSessionLocal
+from app.core.config import settings
 from app.services.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,10 @@ class PartitionService:
         """
         Check if a given table has active Range partitioning.
         """
+        if settings.normalized_database_type == "postgresql":
+            # PostgreSQL baseline tables are intentionally unpartitioned. Native
+            # PostgreSQL partition lifecycle management is a separate concern.
+            return False
         sql = """
             SELECT COUNT(*) 
             FROM information_schema.partitions 
@@ -40,6 +45,8 @@ class PartitionService:
         """
         Retrieve range partition meta details for the monitored tables.
         """
+        if settings.normalized_database_type == "postgresql":
+            return []
         sql = """
             SELECT 
                 TABLE_NAME AS table_name,
@@ -83,6 +90,9 @@ class PartitionService:
         Examine logs tables and pre-create partitions for the next 2 months.
         Uses ALTER TABLE REORGANIZE PARTITION to avoid MAXVALUE boundary errors.
         """
+        if settings.normalized_database_type == "postgresql":
+            logger.info("PostgreSQL partition expansion is not enabled; skipping.")
+            return {}
         expanded = {}
         for table in PARTITION_TABLES:
             partitioned = await PartitionService.is_table_partitioned(db, table)
@@ -217,7 +227,18 @@ class PartitionService:
                 batch_size = 5000
                 total_deleted = 0
                 while True:
-                    del_sql = f"DELETE FROM `{table}` WHERE created_at < :threshold LIMIT :batch_size"
+                    if settings.normalized_database_type == "postgresql":
+                        table_ref = f'"{table}"'
+                        del_sql = f"""
+                            DELETE FROM {table_ref}
+                            WHERE ctid IN (
+                                SELECT ctid FROM {table_ref}
+                                WHERE created_at < :threshold
+                                LIMIT :batch_size
+                            )
+                        """
+                    else:
+                        del_sql = f"DELETE FROM `{table}` WHERE created_at < :threshold LIMIT :batch_size"
                     del_res = await db.execute(text(del_sql), {"threshold": threshold_date, "batch_size": batch_size})
                     await db.commit()
                     deleted = del_res.rowcount

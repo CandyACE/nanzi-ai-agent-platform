@@ -1,7 +1,13 @@
 import asyncio
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from app.core import database
 from app.services.auth_service import AuthService
-import sys
+# Register the association table before SQLAlchemy configures User.roles.
+from app.models.permission import UserRoleRelation  # noqa: F401
 
 async def create_key(username: str):
     await database.init_db()
