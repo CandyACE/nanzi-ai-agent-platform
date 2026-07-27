@@ -540,14 +540,16 @@
             <div class="mb-1 ml-1 flex items-center">
               <div
                 class="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-all duration-500 ease-out border"
-                :class="msg.agentName
+                :class="msg.agentName || msg.agentDisplayName
                   ? 'bg-blue-50/80 border-blue-100 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300 opacity-100 translate-y-0'
+                  : msg.isThinking
+                    ? 'bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800/70 dark:border-gray-700 dark:text-gray-400 opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-1 bg-transparent border-transparent'"
               >
                 <!-- Status Indicator Dot (Removed to reduce visual noise) -->
                 <!-- Text -->
-                <span>{{ msg.agentDisplayName || msg.agentName }}</span>
-                <span class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
+                <span>{{ msg.agentDisplayName || msg.agentName || '智能体正在分配调度中...' }}</span>
+                <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
               </div>
             </div>
             <div
@@ -2928,9 +2930,6 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
 };
-const triggerMultiAgentHint = (enabled: boolean) => {
-    showToast(enabled ? "已开启多智能体协同模式" : "已切换为单智能体模式", "info");
-};
 const switchToAuto = () => {
     if (isUrlAgentPinned.value) {
       showToast("当前链接已锁定指定智能体，无法切换到自动路由", "warning");
@@ -2961,11 +2960,6 @@ const onModeChange = (mode: string) => {
         showToast("已切换为自动路由模式", "success");
     }
 };
-watch(() => config.enableMultiAgent, (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-        triggerMultiAgentHint(newVal);
-    }
-});
 const conversationId = ref("");
 const showResourceScopeModal = ref(false);
 const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
@@ -7193,8 +7187,10 @@ onUnmounted(() => {
   padding: var(--md-table-cell-padding) !important;
 }
 .message-borderless {
+  border-width: 0 !important;
   border-color: transparent !important;
   border-left-color: transparent !important;
+  padding-left: 0.75rem !important;
   box-shadow: none !important;
 }
 :deep(.markdown-body .markdown-table-scroll) {
