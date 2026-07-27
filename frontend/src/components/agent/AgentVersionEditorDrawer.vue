@@ -52,6 +52,12 @@ const props = defineProps<{
   getModelDisplayName: (modelId?: string) => string;
   canReachVersionConfigStep?: (step: VersionConfigStep) => boolean;
   isVersionConfigStepComplete?: (step: VersionConfigStep) => boolean;
+  versionConfigIncompleteHint?: string;
+  knowledgeBaseToolsStepIssues?: {
+    missingTool: boolean;
+    missingBinding: boolean;
+    datasetCount: number;
+  } | null;
 }>();
 
 const emit = defineEmits<{
@@ -92,6 +98,16 @@ const isCurrentStepComplete = () =>
   props.isVersionConfigStepComplete
     ? props.isVersionConfigStepComplete(props.versionConfigStep)
     : true;
+const activeAgentType = computed(
+  () => (props.selectedAgent?.agent_type ?? props.agentForm.agent_type ?? 'GENERAL') as AgentType,
+);
+const showKnowledgeBaseToolsGuidance = computed(
+  () =>
+    props.versionConfigStep === 'tools'
+    && activeAgentType.value === 'KNOWLEDGE_BASE'
+    && !!props.knowledgeBaseToolsStepIssues
+    && (props.knowledgeBaseToolsStepIssues.missingTool || props.knowledgeBaseToolsStepIssues.missingBinding),
+);
 const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', step);
 const canPublishLocalVersion = computed(() =>
   props.agentForm.engine_type === 'LOCAL'
@@ -642,6 +658,47 @@ const externalCreationMissingFields = computed(() => {
 
           <!-- Step 2: Tools -->
           <div v-else-if="versionConfigStep === 'tools'" class="flex flex-col min-h-[calc(100vh-280px)]">
+            <div
+              v-if="showKnowledgeBaseToolsGuidance"
+              class="mb-4 flex-shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950"
+            >
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm font-semibold">知识库助手还需完成以下配置，才能进入下一步</div>
+                  <ul class="mt-2 space-y-1.5 text-xs leading-5 text-amber-900">
+                    <li class="flex items-start gap-2">
+                      <span :class="knowledgeBaseToolsStepIssues?.missingTool ? 'text-amber-600' : 'text-emerald-600'">
+                        {{ knowledgeBaseToolsStepIssues?.missingTool ? '○' : '✓' }}
+                      </span>
+                      <span>
+                        选择 <span class="font-mono font-semibold">search_knowledge_base</span> 检索工具
+                        <span v-if="knowledgeBaseToolsStepIssues?.missingTool" class="text-amber-700">（在下方系统工具中勾选）</span>
+                      </span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span :class="knowledgeBaseToolsStepIssues?.missingBinding ? 'text-amber-600' : 'text-emerald-600'">
+                        {{ knowledgeBaseToolsStepIssues?.missingBinding ? '○' : '✓' }}
+                      </span>
+                      <span>
+                        为检索工具绑定至少 1 个知识库
+                        <span v-if="knowledgeBaseToolsStepIssues?.missingBinding" class="text-amber-700">
+                          （点击工具卡片上的 <span class="font-semibold">知识库</span> 图标选择）
+                        </span>
+                        <span v-else class="text-emerald-700">（已绑定 {{ knowledgeBaseToolsStepIssues?.datasetCount }} 个）</span>
+                      </span>
+                    </li>
+                  </ul>
+                </div>
+                <button
+                  v-if="!knowledgeBaseToolsStepIssues?.missingTool && knowledgeBaseToolsStepIssues?.missingBinding && (selectedAgent?.engine_type || agentForm.engine_type) === 'LOCAL'"
+                  type="button"
+                  @click="emit('openRagSelector', 'dataset', 'agent_kb_immediate')"
+                  class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+                >
+                  去绑定知识库
+                </button>
+              </div>
+            </div>
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4 flex-shrink-0">
               <div class="flex items-center gap-2 flex-1 min-w-[200px]">
                 <div class="relative flex-1 max-w-md">
@@ -744,7 +801,16 @@ const externalCreationMissingFields = computed(() => {
                         <button v-if="tool.name === 'send_wechat_work_message'" type="button" @click="emit('openWeChatWorkConfig', tool.name)" class="tool-action-btn" title="企微">
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                         </button>
-                        <button v-if="tool.name === 'search_knowledge_base' && (selectedAgent?.engine_type || agentForm.engine_type) === 'LOCAL'" type="button" @click="emit('openRagSelector', 'dataset', 'agent_kb_immediate')" class="tool-action-btn" title="知识库">
+                        <button
+                          v-if="tool.name === 'search_knowledge_base' && (selectedAgent?.engine_type || agentForm.engine_type) === 'LOCAL'"
+                          type="button"
+                          @click="emit('openRagSelector', 'dataset', 'agent_kb_immediate')"
+                          class="tool-action-btn"
+                          :class="knowledgeBaseToolsStepIssues && !knowledgeBaseToolsStepIssues.missingBinding
+                            ? 'tool-action-btn--active'
+                            : (showKnowledgeBaseToolsGuidance ? 'tool-action-btn--attention' : '')"
+                          title="绑定知识库"
+                        >
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
                         </button>
                       </div>
@@ -1028,6 +1094,9 @@ const externalCreationMissingFields = computed(() => {
           <div v-else class="flex-1">
             <p v-if="externalCreationMissingFields.length > 0" class="text-xs font-medium text-amber-700">
               请先填写：{{ externalCreationMissingFields.join('、') }}
+            </p>
+            <p v-else-if="versionConfigIncompleteHint" class="text-xs font-medium text-amber-700">
+              {{ versionConfigIncompleteHint }}
             </p>
           </div>
 
@@ -1423,6 +1492,12 @@ const externalCreationMissingFields = computed(() => {
 .tool-action-btn--active {
   color: var(--color-primary, #2563eb);
   background: white;
+}
+
+.tool-action-btn--attention {
+  color: #b45309;
+  background: #fff7ed;
+  box-shadow: 0 0 0 1px #fdba74;
 }
 
 .summary-card {

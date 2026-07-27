@@ -717,6 +717,17 @@ const isKnowledgeBaseToolsStepComplete = () => {
   return getKnowledgeBaseDatasetIds().length > 0;
 };
 
+const knowledgeBaseToolsStepIssues = computed(() => {
+  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return null;
+  const toolNames = new Set(getEnabledToolNames());
+  const datasetCount = getKnowledgeBaseDatasetIds().length;
+  return {
+    missingTool: !toolNames.has('search_knowledge_base'),
+    missingBinding: datasetCount === 0,
+    datasetCount,
+  };
+});
+
 const isVersionConfigStepComplete = (step: VersionConfigStep) => {
   if (step === 'agent') return isAgentConfigStepComplete();
   if (step === 'model') return Boolean(versionForm.value.model_name?.trim());
@@ -780,6 +791,11 @@ const describeIncompleteVersionConfigStep = (step: VersionConfigStep) => {
   if (step === 'welcome') return '请完整填写 3 张欢迎卡片，或关闭欢迎语设置';
   return '请先完成前面的配置步骤';
 };
+
+const versionConfigIncompleteHint = computed(() => {
+  if (isVersionConfigStepComplete(versionConfigStep.value)) return '';
+  return describeIncompleteVersionConfigStep(versionConfigStep.value);
+});
 
 const handleVersionConfigStepChange = (step: VersionConfigStep) => {
   if (step === versionConfigStep.value) return;
@@ -3699,6 +3715,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :get-model-display-name="getModelDisplayName"
       :can-reach-version-config-step="canReachVersionConfigStep"
       :is-version-config-step-complete="isVersionConfigStepComplete"
+      :version-config-incomplete-hint="versionConfigIncompleteHint"
+      :knowledge-base-tools-step-issues="knowledgeBaseToolsStepIssues"
       @close="handleVersionEditorClose"
       @save="saveVersion"
       @publish="publishVersionFromEditor"

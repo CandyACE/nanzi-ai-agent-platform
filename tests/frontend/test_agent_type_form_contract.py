@@ -161,6 +161,7 @@ def test_agent_wizard_blocks_later_steps_until_prior_complete():
 
 def test_knowledge_base_agent_blocks_tools_step_without_tool_or_binding():
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
 
     assert "isKnowledgeBaseToolsStepComplete" in management
     assert "getKnowledgeBaseDatasetIds" in management
@@ -170,6 +171,14 @@ def test_knowledge_base_agent_blocks_tools_step_without_tool_or_binding():
     assert "search_knowledge_base" in management
     assert "请先完善工具能力：选择知识库检索工具" in management
     assert "请先完善工具能力：为知识库检索工具绑定至少一个知识库" in management
+    assert "knowledgeBaseToolsStepIssues" in management
+    assert "versionConfigIncompleteHint" in management
+    assert ":version-config-incomplete-hint=\"versionConfigIncompleteHint\"" in management
+    assert ":knowledge-base-tools-step-issues=\"knowledgeBaseToolsStepIssues\"" in management
+    assert "知识库助手还需完成以下配置，才能进入下一步" in drawer
+    assert "去绑定知识库" in drawer
+    assert "versionConfigIncompleteHint" in drawer
+    assert "tool-action-btn--attention" in drawer
 
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
     list_section = management.split("<!-- List View -->", 1)[1]
