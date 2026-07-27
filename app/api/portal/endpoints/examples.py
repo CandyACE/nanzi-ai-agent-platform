@@ -18,9 +18,12 @@ def _chatbi_example_user_join():
     """构造兼容 MySQL/ PostgreSQL 的案例用户关联条件。
 
     经验表的历史结构将 user_id 保存为字符串，而平台用户主键在 PostgreSQL
-    中是 BIGINT。显式把用户主键转成字符串，避免 PostgreSQL 拒绝 bigint
-    与 varchar 的直接比较，同时保持 MySQL 现有表结构兼容。
+    中是 BIGINT。在 MySQL 环境下使用 func.concat(User.id, '') 避开
+    utf8mb4_0900_ai_ci 与 utf8mb4_unicode_ci 的 1267 排序规则碰撞。
     """
+    from app.core.config import settings
+    if settings.DATABASE_TYPE == "mysql":
+        return func.concat(User.id, "") == ChatBIExample.user_id
     return cast(User.id, String) == ChatBIExample.user_id
 
 class AuditRequest(BaseModel):
@@ -33,6 +36,7 @@ class UpdateExampleRequest(BaseModel):
     context_summary: Optional[str] = None
     sql_text: Optional[str] = None
     sql_metadata: Optional[dict] = None
+    category: Optional[str] = None
 
 @router.post("/{id}/enhance")
 async def trigger_manual_enhance(
@@ -85,6 +89,8 @@ async def update_example(
         example.sql_text = request.sql_text
     if request.sql_metadata is not None:
         example.sql_metadata = request.sql_metadata
+    if request.category is not None:
+        example.category = request.category
     # 修改内容后，重置同步状态，提醒需要重新同步
     if example.rag_sync_status == "synced":
         example.rag_sync_status = "pending"
@@ -98,6 +104,8 @@ async def list_examples(
     agent_id: Optional[str] = None,
     dataset_id: Optional[int] = None,
     status: Optional[str] = None,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1),
     db: AsyncSession = Depends(get_db),
@@ -111,7 +119,8 @@ async def list_examples(
         ChatBIExample, 
         User.real_name.label("user_real_name"),
         User.user_name.label("user_account_name"),
-        AIAgent.display_name.label("agent_display_name")
+        AIAgent.display_name.label("agent_display_name"),
+        AIAgent
     ).outerjoin(
         User, _chatbi_example_user_join()
     ).outerjoin(
@@ -122,11 +131,34 @@ async def list_examples(
         stmt = stmt.filter(ChatBIExample.id == id)
     if agent_id:
         stmt = stmt.filter(ChatBIExample.agent_id == agent_id)
-
     if dataset_id:
         stmt = stmt.filter(ChatBIExample.dataset_id == dataset_id)
     if status:
         stmt = stmt.filter(ChatBIExample.status == status)
+    if category:
+        stmt = stmt.filter(ChatBIExample.category == category)
+    if search and search.strip():
+        s = search.strip()
+        if s.isdigit():
+            stmt = stmt.filter(
+                or_(
+                    ChatBIExample.id == int(s),
+                    ChatBIExample.dataset_id == int(s),
+                    ChatBIExample.user_query.like(f"%{s}%"),
+                    ChatBIExample.agent_id.like(f"%{s}%")
+                )
+            )
+        else:
+            stmt = stmt.filter(
+                or_(
+                    ChatBIExample.user_query.like(f"%{s}%"),
+                    ChatBIExample.refined_query.like(f"%{s}%"),
+                    ChatBIExample.sql_text.like(f"%{s}%"),
+                    ChatBIExample.agent_id.like(f"%{s}%"),
+                    ChatBIExample.trace_id.like(f"%{s}%"),
+                    AIAgent.display_name.like(f"%{s}%")
+                )
+            )
 
     # 获取总数
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -144,10 +176,28 @@ async def list_examples(
         real_name = row[1]
         account_name = row[2]
         agent_display_name = row[3]
+        agent_obj = row[4]
         
         # 将 SQLAlchemy 对象转为字典
         item_dict = {c.name: getattr(example, c.name) for c in example.__table__.columns}
         
+        # 兜底：若存量数据 category 为空，从智能体属性解析回填
+        if not item_dict.get("category"):
+            if agent_obj:
+                try:
+                    from app.services.ai.agent_types import resolve_agent_type, AgentType
+                    resolved = resolve_agent_type(agent_obj)
+                    if resolved == AgentType.CHATBI:
+                        item_dict["category"] = "data_query"
+                    elif resolved == AgentType.KNOWLEDGE_BASE:
+                        item_dict["category"] = "knowledge"
+                    else:
+                        item_dict["category"] = "general"
+                except Exception:
+                    item_dict["category"] = "data_query" if example.sql_text else "general"
+            else:
+                item_dict["category"] = "data_query" if example.sql_text else "general"
+
         # 优先级：真实姓名 > 账号名 > ID > 系统
         display_name = real_name or account_name
         if not display_name:
@@ -201,9 +251,12 @@ async def audit_example(
     if request.status not in ["approved", "rejected", "deprecated"]:
         raise HTTPException(status_code=400, detail="Invalid status.")
 
-    success = await ExampleService.audit_example(db, request.id, request.status)
-    if not success:
-        raise HTTPException(status_code=404, detail="Example not found.")
+    try:
+        success = await ExampleService.audit_example(db, request.id, request.status)
+        if not success:
+            raise HTTPException(status_code=404, detail="该案例记录不存在或已被删除，请刷新列表。")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
 
     return {"code": 200, "message": "审核操作成功。"}
 

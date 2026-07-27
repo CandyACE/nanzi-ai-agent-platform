@@ -26,8 +26,8 @@ async def collect_feedback(
     """
     收集用户对 AI 回答的反馈。
     """
-    if request.feedback not in ["up", "down"]:
-        raise HTTPException(status_code=400, detail="Invalid feedback type. Must be 'up' or 'down'.")
+    if request.feedback not in ["up", "down", "none"]:
+        raise HTTPException(status_code=400, detail="Invalid feedback type. Must be 'up', 'down', or 'none'.")
 
     # 1. 更新执行历史表
     stmt = select(AgentExecutionHistory).filter(
@@ -40,23 +40,25 @@ async def collect_feedback(
         raise HTTPException(status_code=404, detail="Trace not found.")
 
     try:
-        # 使用 setattr 动态设置字段
-        setattr(history, "feedback", request.feedback)
+        new_feedback = None if request.feedback == "none" else request.feedback
+        setattr(history, "feedback", new_feedback)
         await db.commit()
     except Exception as e:
         await db.rollback()
         pass
 
-    # 2. 触发经验沉淀
-    example = await ExampleService.create_from_feedback(
-        db=db, 
-        trace_id=request.trace_id, 
-        feedback_type=request.feedback,
-        user_id=request.user_id
-    )
+    # 2. 触发经验沉淀 (只有 up / down 时沉淀)
+    example = None
+    if request.feedback in ["up", "down"]:
+        example = await ExampleService.create_from_feedback(
+            db=db, 
+            trace_id=request.trace_id, 
+            feedback_type=request.feedback,
+            user_id=request.user_id
+        )
 
     return {
         "code": 200, 
-        "message": "感谢您的反馈！", 
+        "message": "已更新您的反馈" if request.feedback == "none" else "感谢您的反馈！", 
         "data": {"example_id": example.id if example else None}
     }

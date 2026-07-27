@@ -19,7 +19,10 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   DocumentDuplicateIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  EllipsisHorizontalIcon,
+  PencilSquareIcon,
+  DocumentArrowDownIcon
 } from "@heroicons/vue/24/outline";
 import { copyToClipboard as copyText } from "../utils/clipboard";
 
@@ -34,6 +37,7 @@ const copyToClipboard = async (text: string) => {
     showToast("复制失败", "error");
   }
 };
+
 interface ChatBIExample {
   id: number;
   trace_id: string;
@@ -44,6 +48,7 @@ interface ChatBIExample {
   context_summary?: string;
   sql_text: string;
   sql_metadata?: any;
+  category?: 'general' | 'knowledge' | 'data_query' | string;
   enhance_status: 'pending' | 'success' | 'failed';
   ai_answer: string;
   feedback_type: 'up' | 'down';
@@ -65,12 +70,12 @@ const total = ref(0);
 const page = ref(1);
 const pageSize = ref(10);
 const showSyncAllConfirm = ref(false);
+// 请求版本号，用于丢弃过期请求的响应，防止切换 tab 时旧数据覆盖新数据
+let fetchVersion = 0;
 
 /** 默认进入待审核，便于审核工作流 */
 const filterStatus = ref("pending");
-const filterId = ref<number | null>(null);
-const filterAgentId = ref("");
-const filterDatasetId = ref<number | null>(null);
+const filterCategory = ref("");
 const searchQuery = ref("");
 
 const statusTabs = [
@@ -81,42 +86,38 @@ const statusTabs = [
   { value: "", label: "全部" },
 ] as const;
 
-const hasExtraFilters = computed(() =>
-  Boolean(
-    searchQuery.value.trim() ||
-    filterId.value ||
-    filterAgentId.value.trim() ||
-    filterDatasetId.value
-  )
-);
-
 /** 相对默认「待审核」是否偏离，用于显示「重置」 */
 const hasActiveFilters = computed(
-  () => hasExtraFilters.value || filterStatus.value !== "pending"
+  () => Boolean(searchQuery.value.trim() || filterCategory.value) || filterStatus.value !== "pending"
 );
 
 const fetchExamples = async () => {
   loading.value = true;
+  // 用版本号丢弃过期响应（防止切换 tab 时旧请求覆盖新数据）
+  const currentVersion = ++fetchVersion;
   try {
     const params: any = {
       page: page.value,
       size: pageSize.value
     };
-    if (filterId.value) params.id = filterId.value;
     if (filterStatus.value) params.status = filterStatus.value;
-    if (filterAgentId.value.trim()) params.agent_id = filterAgentId.value.trim();
-    if (filterDatasetId.value) params.dataset_id = filterDatasetId.value;
+    if (filterCategory.value) params.category = filterCategory.value;
     if (searchQuery.value.trim()) params.search = searchQuery.value.trim();
 
-    const res = await axios.get("/api/portal/chatbi-examples", { params });
+    const res = await axios.get("/api/portal/examples", { params });
+    // 只处理最新的那次请求，避免竞态导致的数据闪烁
+    if (currentVersion !== fetchVersion) return;
     if (res.data.code === 200) {
       examples.value = res.data.data.items;
       total.value = res.data.data.total;
     }
   } catch (error) {
+    if (currentVersion !== fetchVersion) return;
     showToast("获取经验库失败", "error");
   } finally {
-    loading.value = false;
+    if (currentVersion === fetchVersion) {
+      loading.value = false;
+    }
   }
 };
 
@@ -136,29 +137,37 @@ const selectStatusTab = (value: string) => {
 };
 
 const resetFilters = () => {
-  filterId.value = null;
-  filterAgentId.value = "";
-  filterDatasetId.value = null;
   searchQuery.value = "";
   filterStatus.value = "pending";
+  filterCategory.value = "";
   page.value = 1;
   fetchExamples();
 };
 
-watch([searchQuery, filterAgentId], () => scheduleFetch(true));
-watch([filterId, filterDatasetId], () => scheduleFetch(true));
+watch([searchQuery, filterCategory, filterStatus], () => scheduleFetch(true));
 
 const auditExample = async (id: number, status: string) => {
   if (actionLoading.value[id]) return;
+
+  // 数据查询 (data_query) 类型的案例批准时，必须存在有效 SQL 文本
+  if (status === 'approved') {
+    const target = examples.value.find(ex => ex.id === id) || (currentExample.value?.id === id ? currentExample.value : null);
+    if (target && target.category === 'data_query' && (!target.sql_text || !target.sql_text.trim())) {
+      showToast("【数据查询】类型的案例必须包含有效的 SQL 语句，请先编辑补充 SQL 后再通过", "warning");
+      return;
+    }
+  }
+
   actionLoading.value[id] = true;
   try {
-    const res = await axios.post("/api/portal/chatbi-examples/audit", { id, status });
+    const res = await axios.post("/api/portal/examples/audit", { id, status });
     if (res.data.code === 200) {
       showToast("审核操作已完成", "success");
       await fetchExamples();
     }
-  } catch (error) {
-    showToast("操作失败", "error");
+  } catch (error: any) {
+    const errMsg = error.response?.data?.detail || "操作失败";
+    showToast(errMsg, "error");
   } finally {
     delete actionLoading.value[id];
   }
@@ -170,7 +179,7 @@ const syncAllToRag = async () => {
 
   loading.value = true;
   try {
-    const res = await axios.post("/api/portal/chatbi-examples/sync-all");
+    const res = await axios.post("/api/portal/examples/sync-all");
     if (res.data.code === 200) {
       showToast(res.data.message || "一键同步任务已启动", "success");
       // 3秒后自动刷新
@@ -189,7 +198,7 @@ const syncToRag = async (id: number) => {
   if (actionLoading.value[id]) return;
   actionLoading.value[id] = true;
   try {
-    const res = await axios.post(`/api/portal/chatbi-examples/sync/${id}`);
+    const res = await axios.post(`/api/portal/examples/sync/${id}`);
     if (res.data.code === 200) {
       showToast("已触发同步任务", "success");
       // 3秒后自动刷新
@@ -206,26 +215,29 @@ const syncToRag = async (id: number) => {
 
 const showDetailModal = ref(false);
 const currentExample = ref<ChatBIExample | null>(null);
-const showAnswer = ref(false);
+const showAnswer = ref(true);
 const isUpdating = ref(false);
 
 const viewDetail = (example: ChatBIExample) => {
-  currentExample.value = { ...example }; // 使用副本以便编辑
+  currentExample.value = { 
+    ...example 
+  }; // 使用副本以便编辑
   showDetailModal.value = true;
-  showAnswer.value = false;
+  showAnswer.value = true;
 };
 
 const updateExample = async () => {
   if (!currentExample.value || isUpdating.value) return;
   isUpdating.value = true;
   try {
-    const { id, user_query, refined_query, context_summary, sql_text, sql_metadata } = currentExample.value;
-    const res = await axios.put(`/api/portal/chatbi-examples/${id}`, {
+    const { id, user_query, refined_query, context_summary, sql_text, sql_metadata, category } = currentExample.value;
+    const res = await axios.put(`/api/portal/examples/${id}`, {
       user_query,
       refined_query,
       context_summary,
       sql_text,
-      sql_metadata
+      sql_metadata,
+      category
     });
     if (res.data.code === 200) {
       showToast("更新成功", "success");
@@ -241,6 +253,15 @@ const updateExample = async () => {
   return false;
 };
 
+const getCategoryLabel = (category?: string) => {
+  const map: Record<string, { label: string; color: string }> = {
+    data_query: { label: '数据查询', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+    knowledge: { label: '知识库', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+    general: { label: '通用问答', color: 'bg-gray-50 text-gray-600 border-gray-200' }
+  };
+  return map[category || 'general'] || { label: '通用问答', color: 'bg-gray-50 text-gray-600 border-gray-200' };
+};
+
 const isEnhanceTimedOut = (example: ChatBIExample) => {
   if (!example.created_at) return false;
   const created = new Date(example.created_at).getTime();
@@ -252,13 +273,13 @@ const manualEnhance = async () => {
   if (!currentExample.value || isUpdating.value) return;
   isUpdating.value = true;
   try {
-    const res = await axios.post(`/api/portal/chatbi-examples/${currentExample.value.id}/enhance`);
+    const res = await axios.post(`/api/portal/examples/${currentExample.value.id}/enhance`);
     if (res.data.code === 200) {
       showToast("智能增强任务已启动，请稍后刷新查看", "success");
       currentExample.value.enhance_status = 'pending';
       // 3秒后自动刷新一次详情数据
       setTimeout(async () => {
-        const checkRes = await axios.get("/api/portal/chatbi-examples", { params: { trace_id: currentExample.value?.trace_id } });
+        const checkRes = await axios.get("/api/portal/examples", { params: { trace_id: currentExample.value?.trace_id } });
         if (checkRes.data.code === 200 && checkRes.data.data.items.length > 0) {
           currentExample.value = { ...checkRes.data.data.items[0] };
         }
@@ -363,7 +384,114 @@ const checkRagFlowConnectivity = async () => {
   }
 };
 
+// --- 行内「更多」下拉菜单定位 ---
+const openRowMenuExample = ref<ChatBIExample | null>(null);
+const rowMenuPos = ref({ top: 0, left: 0 });
+
+const toggleRowMenu = (ex: ChatBIExample, evt: MouseEvent) => {
+  if (openRowMenuExample.value?.id === ex.id) {
+    openRowMenuExample.value = null;
+    return;
+  }
+  const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
+  rowMenuPos.value = {
+    top: rect.bottom + window.scrollY + 4,
+    left: rect.right + window.scrollX - 176
+  };
+  openRowMenuExample.value = ex;
+};
+
+const closeMenus = () => {
+  openRowMenuExample.value = null;
+};
+
+/** 导出当前页/筛选结果为 Markdown 文档 */
+const exportToMarkdown = () => {
+  if (!examples.value || examples.value.length === 0) {
+    showToast("当前列表暂无案例数据可供导出", "warning");
+    return;
+  }
+
+  const nowStr = new Date().toLocaleString("zh-CN");
+  let mdContent = `# 案例集管理 - 导出记录\n\n`;
+  mdContent += `> 📅 **导出时间**：${nowStr}  \n`;
+  mdContent += `> 🔍 **案例状态**：${getStatusLabel(filterStatus.value).label || '全部'}  \n`;
+  mdContent += `> 🏷 **案例分类**：${getCategoryLabel(filterCategory.value).label || '全部分类'}  \n`;
+  mdContent += `> 📊 **导出数量**：共 ${examples.value.length} 条案例\n\n`;
+
+  mdContent += `--- \n\n`;
+  mdContent += `## 📋 案例汇总列表\n\n`;
+  mdContent += `| ID | 分类 | 问答提问 | AI 回答 / SQL | 状态 | 智能体 | 建立时间 |\n`;
+  mdContent += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+
+  examples.value.forEach((ex) => {
+    const categoryName = getCategoryLabel(ex.category).label;
+    const statusName = getStatusLabel(ex.status).label;
+    const queryClean = (ex.user_query || '').replace(/\n/g, ' ').replace(/\|/g, '\\|');
+    const answerClean = (ex.ai_answer || ex.sql_text || '无回答摘要').replace(/\n/g, ' ').replace(/\|/g, '\\|');
+    const agentClean = (ex.agent_display_name || ex.agent_id || '未知').replace(/\|/g, '\\|');
+    const dateStr = ex.created_at ? new Date(ex.created_at).toLocaleDateString("zh-CN") : '-';
+
+    mdContent += `| #${ex.id} | ${categoryName} | ${queryClean} | ${answerClean} | ${statusName} | ${agentClean} | ${dateStr} |\n`;
+  });
+
+  mdContent += `\n---\n\n`;
+  mdContent += `## 📝 案例详细记录\n\n`;
+
+  examples.value.forEach((ex, idx) => {
+    const categoryName = getCategoryLabel(ex.category).label;
+    const statusName = getStatusLabel(ex.status).label;
+    mdContent += `### ${idx + 1}. #${ex.id} - ${ex.user_query.slice(0, 35)}${ex.user_query.length > 35 ? '...' : ''}\n\n`;
+    mdContent += `- **案例 ID**: \`#${ex.id}\`  \n`;
+    mdContent += `- **案例分类**: **${categoryName}** (\`${ex.category || 'general'}\`)  \n`;
+    mdContent += `- **审核状态**: **${statusName}** (\`${ex.status}\`)  \n`;
+    mdContent += `- **关联智能体**: ${ex.agent_display_name || ex.agent_id}  \n`;
+    if (ex.dataset_id) mdContent += `- **数据集 ID**: Dataset #${ex.dataset_id}  \n`;
+    mdContent += `- **Trace ID**: \`${ex.trace_id}\`  \n`;
+    mdContent += `- **反馈类型**: ${ex.feedback_type === 'up' ? '👍 点赞' : '👎 点踩'} (历史引用 ${ex.use_count} 次)  \n`;
+    mdContent += `- **创建时间**: ${ex.created_at ? new Date(ex.created_at).toLocaleString("zh-CN") : '-'}  \n\n`;
+
+    mdContent += `#### 💬 原始用户提问 (User Query)\n\`\`\`\n${ex.user_query}\n\`\`\`\n\n`;
+
+    if (ex.refined_query) {
+      mdContent += `#### 🎯 核心独立意图 (Refined Query)\n\`\`\`\n${ex.refined_query}\n\`\`\`\n\n`;
+    }
+
+    if (ex.context_summary) {
+      mdContent += `#### 🌐 上下文摘要 (Context Summary)\n\`\`\`\n${ex.context_summary}\n\`\`\`\n\n`;
+    }
+
+    if (ex.category === 'data_query' && ex.sql_text) {
+      mdContent += `#### 🛠 执行 SQL 文本\n\`\`\`sql\n${ex.sql_text}\n\`\`\`\n\n`;
+    }
+
+    if (ex.ai_answer) {
+      mdContent += `#### 🤖 AI 最终回答摘要\n${ex.ai_answer}\n\n`;
+    }
+
+    mdContent += `---\n\n`;
+  });
+
+  try {
+    const blob = new Blob([mdContent], { type: "text/markdown;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const fileNameDate = new Date().toISOString().slice(0, 10);
+    link.setAttribute("download", `examples_export_${fileNameDate}.md`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast(`已成功导出 ${examples.value.length} 条案例为 Markdown 文档`, "success");
+  } catch (err) {
+    showToast("导出 Markdown 文件失败", "error");
+  }
+};
+
 onMounted(async () => {
+  window.addEventListener("click", closeMenus);
   fetchExamples();
   await fetchRagFlowConfig();
   if (!isLocalMode.value) {
@@ -415,25 +543,39 @@ onMounted(async () => {
             </span>
           </div>
         </div>
-        <p class="text-sm text-gray-500 mt-1">管理 ChatBI 问答经验样本及 RAG 语义对齐案例</p>
+        <p class="text-sm text-gray-500 mt-1">管理问答经验样本及 RAG 语义对齐案例</p>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2.5">
         <div class="flex w-full items-center gap-2 sm:w-auto">
-          <div class="relative min-w-0 flex-1 sm:w-56 sm:flex-none lg:w-72">
+          <!-- 统一搜索框（支持提问内容、ID、Agent、数据集、Trace） -->
+          <div class="relative min-w-0 flex-1 sm:w-64 sm:flex-none lg:w-80">
             <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
               <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
             </span>
             <input
               v-model="searchQuery"
               type="search"
-              placeholder="搜索提问内容..."
-              class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
+              placeholder="搜索提问、ID、Agent、数据集..."
+              class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
             />
           </div>
+
+          <!-- 分类下拉过滤器 -->
+          <select
+            v-model="filterCategory"
+            class="h-9 px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white shadow-sm hover:bg-gray-50 text-gray-700 font-medium outline-none cursor-pointer transition-colors shrink-0"
+          >
+            <option value="">分类：全部</option>
+            <option value="data_query">分类：数据查询</option>
+            <option value="knowledge">分类：知识库</option>
+            <option value="general">分类：通用问答</option>
+          </select>
+
+          <!-- 刷新按钮 -->
           <button
             type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
             title="刷新列表"
             @click="fetchExamples"
           >
@@ -441,6 +583,18 @@ onMounted(async () => {
           </button>
         </div>
 
+        <!-- 导出 Markdown 按钮 -->
+        <button
+          type="button"
+          class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all hover:bg-gray-50 hover:text-blue-600 active:scale-95 sm:w-auto"
+          title="将当前案例列表格式化导出为 Markdown 文档"
+          @click="exportToMarkdown"
+        >
+          <DocumentArrowDownIcon class="h-4 w-4 text-gray-500" />
+          <span>导出</span>
+        </button>
+
+        <!-- 一键同步按钮 -->
         <button
           v-if="hasPermission('element:chatbi_example:sync') && !isLocalMode"
           type="button"
@@ -492,66 +646,26 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 次级筛选：ID / 数据集 / Agent -->
-    <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2.5 sm:gap-3">
-      <div class="w-full sm:w-28">
-        <label class="block text-xs font-medium text-gray-500 mb-1">序号 ID</label>
-        <input
-          type="number"
-          v-model="filterId"
-          placeholder="ID"
-          class="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-        />
-      </div>
-      <div class="w-full sm:w-28">
-        <label class="block text-xs font-medium text-gray-500 mb-1">数据集 ID</label>
-        <input
-          type="number"
-          v-model="filterDatasetId"
-          placeholder="Dataset"
-          class="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-        />
-      </div>
-      <div class="w-full sm:w-40">
-        <label class="block text-xs font-medium text-gray-500 mb-1">Agent ID</label>
-        <input
-          type="search"
-          v-model="filterAgentId"
-          placeholder="搜索 Agent"
-          class="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-        />
-      </div>
-      <button
-        v-if="hasActiveFilters"
-        type="button"
-        @click="resetFilters"
-        class="text-sm text-gray-500 hover:text-gray-800 px-2 py-1.5 transition-colors shrink-0"
-      >
-        重置筛选
-      </button>
-    </div>
-
     <!-- Table Card -->
     <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ID</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[12rem]">用户提问</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">反馈</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">RAG 同步</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">智能体</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">时间</th>
-              <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">ID</th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[20rem] whitespace-nowrap">问答内容</th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">分类</th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">反馈</th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">RAG 同步</th>
+              <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
             <tr v-if="!loading && examples.length === 0">
-              <td colspan="8" class="px-6 py-14 text-center">
+              <td colspan="7" class="px-6 py-14 text-center">
                 <p class="text-sm text-gray-500 font-medium">
-                  <template v-if="hasExtraFilters || filterStatus !== 'pending'">
+                  <template v-if="hasActiveFilters">
                     没有符合当前筛选条件的案例
                   </template>
                   <template v-else-if="filterStatus === 'pending'">
@@ -577,20 +691,62 @@ onMounted(async () => {
                 #{{ ex.id }}
               </td>
               <td class="px-4 py-3.5">
-                <div class="flex items-start group max-w-md">
-                  <div class="text-sm font-medium text-gray-900 line-clamp-2 flex-1">{{ ex.user_query }}</div>
-                  <button @click="copyToClipboard(ex.user_query)" class="ml-1.5 p-1 text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-all shrink-0" title="复制提问">
-                    <DocumentDuplicateIcon class="w-4 h-4" />
-                  </button>
+                <div class="space-y-2 max-w-2xl">
+                  <!-- 用户提问 (问) -->
+                  <div class="flex items-start group">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700 mr-1.5 shrink-0 mt-0.5">问</span>
+                    <div class="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 leading-snug">{{ ex.user_query }}</div>
+                    <button @click="copyToClipboard(ex.user_query)" class="ml-1.5 p-0.5 text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-all shrink-0" title="复制提问">
+                      <DocumentDuplicateIcon class="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  
+                  <!-- AI 回答 (答) -->
+                  <div v-if="ex.ai_answer || ex.sql_text" class="flex items-start group">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 mr-1.5 shrink-0 mt-0.5">答</span>
+                    <div class="text-xs text-gray-600 line-clamp-2 flex-1 font-normal leading-relaxed">
+                      {{ ex.ai_answer || ex.sql_text }}
+                    </div>
+                  </div>
+
+                  <!-- 胶囊元信息栏 (智能体、时间、用户、Dataset、Trace) -->
+                  <div class="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+                    <!-- 智能体胶囊 -->
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-medium border border-slate-200/80" :title="'Agent ID: ' + ex.agent_id">
+                      🤖 {{ ex.agent_display_name || ex.agent_id }}
+                    </span>
+
+                    <!-- 用户胶囊 -->
+                    <span v-if="ex.user_real_name || ex.user_account_name" class="inline-flex items-center px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">
+                      👤 {{ ex.user_real_name || ex.user_account_name }}
+                    </span>
+
+                    <!-- Dataset 胶囊 -->
+                    <span v-if="ex.dataset_id" class="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                      Dataset #{{ ex.dataset_id }}
+                    </span>
+
+                    <!-- 时间胶囊 -->
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-50 text-gray-400 font-mono border border-gray-100">
+                      🕒 {{ new Date(ex.created_at).toLocaleString() }}
+                    </span>
+
+                    <!-- Trace ID 悬浮/交互 -->
+                    <button
+                      type="button"
+                      class="text-[10px] text-gray-400 font-mono hover:text-blue-600 transition-colors ml-1"
+                      :title="'点击复制完整 Trace: ' + ex.trace_id"
+                      @click="copyToClipboard(ex.trace_id)"
+                    >
+                      Trace {{ ex.trace_id.substring(0, 8) }}…
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  class="mt-1 text-[10px] text-gray-400 font-mono hover:text-blue-600 transition-colors"
-                  :title="'点击复制完整 Trace: ' + ex.trace_id"
-                  @click="copyToClipboard(ex.trace_id)"
-                >
-                  Trace {{ ex.trace_id.substring(0, 8) }}…
-                </button>
+              </td>
+              <td class="px-4 py-3.5 whitespace-nowrap">
+                <span :class="['px-2.5 py-0.5 text-xs rounded-full font-medium border', getCategoryLabel(ex.category).color]">
+                  {{ getCategoryLabel(ex.category).label }}
+                </span>
               </td>
               <td class="px-4 py-3.5 whitespace-nowrap">
                 <div class="flex items-center gap-1.5">
@@ -612,36 +768,32 @@ onMounted(async () => {
                   <span v-if="ex.rag_synced_at" class="text-[10px] text-gray-400 font-mono">{{ new Date(ex.rag_synced_at).toLocaleString() }}</span>
                 </div>
               </td>
-              <td class="px-4 py-3.5 whitespace-nowrap">
-                <div class="text-xs font-medium text-gray-800">{{ ex.agent_display_name || '未知智能体' }}</div>
-                <div class="text-[10px] text-gray-400 mt-0.5">{{ ex.user_real_name || '系统' }} · Dataset {{ ex.dataset_id }}</div>
-              </td>
-              <td class="px-4 py-3.5 whitespace-nowrap text-xs text-gray-500 font-mono">
-                {{ new Date(ex.created_at).toLocaleString() }}
-              </td>
               <td class="px-4 py-3.5 whitespace-nowrap text-right text-sm font-medium">
-                <div class="flex justify-end space-x-1">
-                  <button @click="viewDetail(ex)" class="p-1.5 rounded-full text-blue-600 hover:bg-blue-50 active:scale-90 transition-all" title="查看详情">
-                    <InformationCircleIcon class="w-5 h-5" />
+                <div class="flex items-center justify-end gap-1">
+                  <!-- 高频编辑/详情按钮 -->
+                  <button
+                    @click="viewDetail(ex)"
+                    class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
+                    title="编辑/查看详情"
+                  >
+                    <PencilSquareIcon class="w-4 h-4" />
                   </button>
 
                   <template v-if="actionLoading[ex.id]">
                     <div class="p-1.5">
-                      <ArrowPathIcon class="w-5 h-5 text-gray-400 animate-spin" />
+                      <ArrowPathIcon class="w-4 h-4 text-gray-400 animate-spin" />
                     </div>
                   </template>
+
+                  <!-- 更多操作下拉触发表 -->
                   <template v-else>
-                    <button v-if="hasPermission('element:chatbi_example:audit') && ex.status === 'pending'" @click="auditExample(ex.id, 'approved')" class="p-1.5 rounded-full text-green-600 hover:bg-green-50 active:scale-90 transition-all" title="批准">
-                      <CheckCircleIcon class="w-5 h-5" />
-                    </button>
-                    <button v-if="hasPermission('element:chatbi_example:audit') && ex.status === 'pending'" @click="auditExample(ex.id, 'rejected')" class="p-1.5 rounded-full text-red-600 hover:bg-red-50 active:scale-90 transition-all" title="驳回">
-                      <XCircleIcon class="w-5 h-5" />
-                    </button>
-                    <button v-if="hasPermission('element:chatbi_example:sync') && ex.status === 'approved' && !isLocalMode" @click="isEngineReady && syncToRag(ex.id)" :disabled="!isEngineReady" class="p-1.5 rounded-full text-indigo-600 hover:bg-indigo-50 active:scale-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed" :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '同步到 RAGFlow'">
-                      <CloudArrowUpIcon class="w-5 h-5" />
-                    </button>
-                    <button v-if="hasPermission('element:chatbi_example:delete') && ex.status !== 'deprecated'" @click="auditExample(ex.id, 'deprecated')" class="p-1.5 rounded-full text-gray-400 hover:bg-gray-100 active:scale-90 transition-all" title="废弃">
-                      <TrashIcon class="w-5 h-5" />
+                    <button
+                      type="button"
+                      @click.stop="toggleRowMenu(ex, $event)"
+                      class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                      title="更多操作"
+                    >
+                      <EllipsisHorizontalIcon class="w-4 h-4" />
                     </button>
                   </template>
                 </div>
@@ -688,7 +840,7 @@ onMounted(async () => {
 
     <Modal :show="showDetailModal" @close="showDetailModal = false" :title="currentExample ? 'SQL 经验详情 - ' + currentExample.trace_id.substring(0,8) : '详情'" size="max-w-4xl">
       <div v-if="currentExample" class="space-y-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div :class="currentExample.category === 'data_query' ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'space-y-4'">
           <div class="space-y-4">
             <div>
               <div class="flex items-center justify-between mb-1">
@@ -704,10 +856,11 @@ onMounted(async () => {
                 placeholder="输入原始用户问题..."
                 class="w-full text-sm text-gray-900 bg-gray-50 p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
               ></textarea>
-            </div>            <div>
+            </div>
+            <div>
               <div class="flex items-center justify-between mb-1">
                 <label class="block text-xs font-semibold text-blue-600 uppercase tracking-wider">🎯 核心意图 (自动还原/可手动微调)</label>
-                <div class="flex items-center space-x-2">
+                <div v-if="currentExample.category === 'data_query'" class="flex items-center space-x-2">
                     <span v-if="currentExample.enhance_status === 'pending'" class="text-[10px] text-orange-500 animate-pulse font-medium flex items-center">
                         <ArrowPathIcon class="w-3 h-3 mr-1 animate-spin" /> ✨ AI 智能增强中...
                     </span>
@@ -744,13 +897,14 @@ onMounted(async () => {
             </div>
           </div>
           
-          <div class="space-y-4">
+          <div v-if="currentExample.category === 'data_query'" class="space-y-4">
             <div>
-              <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">🛠 提取的 SQL (可微调优化)</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">🛠 提取的 SQL (可微调优化/无 SQL 可留空)</label>
               <textarea 
                 v-model="currentExample.sql_text" 
                 :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated'"
                 rows="8"
+                placeholder="请输入有效 SQL 语句"
                 class="w-full text-xs bg-gray-900 text-green-400 p-4 rounded-lg font-mono border border-gray-800 shadow-inner focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-80 disabled:cursor-not-allowed"
               ></textarea>
             </div>
@@ -825,6 +979,59 @@ onMounted(async () => {
       @confirm="syncAllToRag"
       @cancel="showSyncAllConfirm = false"
     />
+
+    <!-- 行内「更多」操作浮动下拉菜单：Teleport 到 body，防止被表格裁切 -->
+    <Teleport to="body">
+      <div
+        v-if="openRowMenuExample"
+        class="fixed w-44 bg-white border border-gray-200/90 rounded-xl shadow-xl py-1.5 z-[200] text-left transition-all"
+        :style="{ top: `${rowMenuPos.top}px`, left: `${rowMenuPos.left}px` }"
+        @click.stop
+      >
+        <button
+          v-if="openRowMenuExample.status !== 'approved'"
+          type="button"
+          class="w-full text-left px-3.5 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50/70 flex items-center gap-2 transition-colors"
+          @click="auditExample(openRowMenuExample.id, 'approved'); closeMenus()"
+        >
+          <CheckCircleIcon class="w-4 h-4 text-emerald-600 shrink-0" />
+          通过案例
+        </button>
+
+        <button
+          v-if="openRowMenuExample.status !== 'rejected'"
+          type="button"
+          class="w-full text-left px-3.5 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50/70 flex items-center gap-2 transition-colors"
+          @click="auditExample(openRowMenuExample.id, 'rejected'); closeMenus()"
+        >
+          <XCircleIcon class="w-4 h-4 text-rose-500 shrink-0" />
+          驳回案例
+        </button>
+
+        <button
+          v-if="openRowMenuExample.status === 'approved' && !isLocalMode"
+          type="button"
+          class="w-full text-left px-3.5 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50/70 flex items-center gap-2 transition-colors disabled:opacity-50"
+          :disabled="!isEngineReady"
+          @click="syncToRag(openRowMenuExample.id); closeMenus()"
+        >
+          <CloudArrowUpIcon class="w-4 h-4 text-blue-500 shrink-0" />
+          同步到 RAGFlow
+        </button>
+
+        <div class="my-1 border-t border-gray-100"></div>
+
+        <button
+          v-if="openRowMenuExample.status !== 'deprecated'"
+          type="button"
+          class="w-full text-left px-3.5 py-2 text-xs font-medium text-gray-600 hover:bg-gray-100 flex items-center gap-2 transition-colors"
+          @click="auditExample(openRowMenuExample.id, 'deprecated'); closeMenus()"
+        >
+          <TrashIcon class="w-4 h-4 text-gray-400 shrink-0" />
+          废弃案例
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 

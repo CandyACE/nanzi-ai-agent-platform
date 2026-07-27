@@ -48,6 +48,11 @@ export const MENU_TREE = [
         children: []
     },
     {
+        id: 'menu:mcp_management',
+        label: 'MCP 工具集',
+        children: []
+    },
+    {
         id: 'menu:memory_management',
         label: '记忆工作台',
         children: [

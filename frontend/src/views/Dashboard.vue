@@ -292,6 +292,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { name: '智能体中心', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
       { name: '技能工作台', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
+      { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
       { name: '记忆工作台', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
       { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
 
@@ -306,7 +307,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { name: '数据源管理', to: '/dashboard/data-sources', icon: 'data_source', perm: 'menu:data_sources', desktopOnly: true, activeNames: ['DataSourceManagement'] },
       { name: '元数据管理', to: '/dashboard/metadata', icon: 'metadata', perm: 'menu:metadata', activeNames: ['Metadata', 'MetadataTables'] },
-      { name: '案例集管理', to: '/dashboard/chatbi-examples', icon: 'chat_bubble_left_right', perm: 'menu:chatbi_examples', activeNames: ['ChatBIExampleManagement'] }
+      { name: '案例集管理', to: '/dashboard/examples', icon: 'chat_bubble_left_right', perm: 'menu:chatbi_examples', activeNames: ['ExampleManagement'] }
     ]
   },
   {
@@ -482,6 +483,7 @@ const filteredMenuGroups = computed(() => {
                 <svg v-else-if="item.icon === 'chat_bubble_left_right'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" /></svg>
                 <svg v-else-if="item.icon === 'prompts'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                 <svg v-else-if="item.icon === 'skills'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                <svg v-else-if="item.icon === 'mcp'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" /></svg>
                 <svg v-else-if="item.icon === 'memory'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
 
                 <svg v-else-if="item.icon === 'tasks'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>

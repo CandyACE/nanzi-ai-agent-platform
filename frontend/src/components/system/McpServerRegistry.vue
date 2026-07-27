@@ -22,9 +22,18 @@ import {
   ShoppingBagIcon
 } from '@heroicons/vue/24/outline'
 
+const props = withDefaults(defineProps<{
+  scope?: 'global' | 'personal'
+}>(), {
+  scope: 'global'
+})
+
 const { showToast } = useToast()
-const { hasPermission } = useUser()
-const canSave = hasPermission('element:system:config_save')
+const { userInfo } = useUser()
+const canSave = computed(() => {
+  if (props.scope === 'personal') return true
+  return userInfo.value?.role === 'admin'
+})
 const servers = ref<any[]>([])
 const loading = ref(false)
 const showAddModal = ref(false)
@@ -145,7 +154,9 @@ const toggleHeaderMode = () => {
 const fetchServers = async () => {
   loading.value = true
   try {
-    const res = await axios.get('/api/portal/mcp/servers')
+    const res = await axios.get('/api/portal/mcp/servers', {
+      params: { scope: props.scope }
+    })
     servers.value = res.data
   } catch (e) {
     showToast('获取 MCP 服务列表失败', 'error')
@@ -193,9 +204,17 @@ const handleVerify = async () => {
     if (!newServer.value.server_name) {
         try {
             const url = new URL(newServer.value.sse_url)
-            newServer.value.server_name = url.hostname.replace(/\./g, '-') + '-mcp'
+            let baseName = url.hostname.replace(/\./g, '-') + '-mcp'
+            if (props.scope === 'personal') baseName += '-my'
+            let candidateName = baseName
+            let counter = 1
+            while (servers.value.some((s: any) => s.server_name === candidateName)) {
+                counter++
+                candidateName = `${baseName}-${counter}`
+            }
+            newServer.value.server_name = candidateName
         } catch {
-            newServer.value.server_name = 'new-mcp-server'
+            newServer.value.server_name = props.scope === 'personal' ? 'my-mcp-server' : 'new-mcp-server'
         }
     }
     showToast('连接成功，已发现工具', 'success')
@@ -217,11 +236,12 @@ const addServer = async () => {
   }
 
   try {
+    const payload = { ...newServer.value, scope: props.scope }
     if (isEditing.value) {
-      await axios.put(`/api/portal/mcp/servers/${editingId.value}`, newServer.value)
+      await axios.put(`/api/portal/mcp/servers/${editingId.value}`, payload)
       showToast('更新成功', 'success')
     } else {
-      await axios.post('/api/portal/mcp/servers', newServer.value)
+      await axios.post('/api/portal/mcp/servers', payload)
       showToast('添加成功', 'success')
     }
     showAddModal.value = false
@@ -309,19 +329,30 @@ onMounted(fetchServers)
   <div class="flex h-full gap-6">
     <!-- Left: Server List -->
     <div class="w-1/3 flex flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-      <!-- Market Guide (High Contrast) -->
-      <div class="p-4 bg-slate-900 text-white border-b border-white/10">
+      <!-- Market Guide (High Contrast with Dynamic Scope Theme) -->
+      <div 
+        class="p-4 text-white border-b border-white/10 transition-colors duration-300"
+        :class="props.scope === 'personal' ? 'bg-slate-950' : 'bg-slate-900'"
+      >
         <div class="flex items-start justify-between">
           <div class="flex-1">
-            <h4 class="text-sm font-black flex items-center text-indigo-400">
+            <h4 
+              class="text-sm font-black flex items-center transition-colors duration-300"
+              :class="props.scope === 'personal' ? 'text-emerald-400' : 'text-indigo-400'"
+            >
               <ShoppingBagIcon class="w-4 h-4 mr-1.5" />
               探索 MCP 市场
             </h4>
             <p class="text-[10px] text-slate-400 mt-1 leading-relaxed">
-              去魔搭(ModelScope)寻找更多好用的工具集
+              {{ props.scope === 'personal' ? '去魔搭(ModelScope)寻找并接入属于您的私有扩展' : '去魔搭(ModelScope)寻找更多公共好用的工具集' }}
             </p>
             <div class="mt-2">
-              <a href="https://modelscope.cn/mcp" target="_blank" class="inline-flex items-center text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2 py-1 rounded transition-all">
+              <a 
+                href="https://modelscope.cn/mcp" 
+                target="_blank" 
+                class="inline-flex items-center text-[10px] font-bold text-white px-2 py-1 rounded transition-all duration-200 shadow-sm"
+                :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'"
+              >
                 立即前往市场
                 <MagnifyingGlassIcon class="w-3 h-3 ml-1" />
               </a>
@@ -331,10 +362,20 @@ onMounted(fetchServers)
       </div>
 
       <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
-        <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">
-          已连接服务
-        </h3>
-        <button v-if="canSave" @click="resetWizard(); showAddModal = true" class="px-3 py-1.5 bg-primary text-white rounded-md transition-all flex items-center text-[11px] font-bold shadow-sm hover:bg-primary-dark">
+        <div class="flex items-center space-x-2">
+          <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">
+            {{ props.scope === 'personal' ? '已连接服务 (我的私有)' : '已连接服务 (平台公共)' }}
+          </h3>
+          <span v-if="props.scope === 'global' && !canSave" class="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60 font-normal">
+            管理员可编辑
+          </span>
+        </div>
+        <button 
+          v-if="canSave" 
+          @click="resetWizard(); showAddModal = true" 
+          class="px-3 py-1.5 text-white rounded-md transition-all flex items-center text-[11px] font-bold shadow-sm"
+          :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
+        >
           <PlusIcon class="w-3.5 h-3.5 mr-1" />
           添加服务
         </button>

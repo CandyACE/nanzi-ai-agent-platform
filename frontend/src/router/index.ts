@@ -160,9 +160,9 @@ const router = createRouter({
           meta: { perm: 'menu:agent_management', title: '交付向导' }
         },
         {
-          path: 'chatbi-examples',
-          name: 'ChatBIExampleManagement',
-          component: () => import('../views/ChatBIExampleManagement.vue'),
+          path: 'examples',
+          name: 'ExampleManagement',
+          component: () => import('../views/ExampleManagement.vue'),
           meta: { perm: 'menu:chatbi_examples' }
         },
         {
@@ -194,6 +194,12 @@ const router = createRouter({
           name: 'SkillsManagement',
           component: () => import('../views/SkillsManagement.vue'),
           meta: { perm: 'menu:skills_management', title: '技能工作台' }
+        },
+        {
+          path: 'mcp',
+          name: 'McpManagement',
+          component: () => import('../views/McpManagement.vue'),
+          meta: { perm: 'menu:mcp_management', title: 'MCP 工具集' }
         },
         {
           path: 'memory',
@@ -280,6 +286,8 @@ const MENU_HOME_CANDIDATES: Array<{ perm: string; name: string }> = [
   { perm: 'menu:ai_chat', name: 'PersonalWorkbench' },
   { perm: 'menu:dashboard', name: 'Overview' },
   { perm: 'menu:agent_management', name: 'AgentManagement' },
+  { perm: 'menu:skills_management', name: 'SkillsManagement' },
+  { perm: 'menu:mcp_management', name: 'McpManagement' },
   { perm: 'menu:chat_logs', name: 'ChatLogs' },
   { perm: 'menu:metadata', name: 'Metadata' },
   { perm: 'menu:task_center', name: 'TaskCenter' },

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, changelog, chat_feedback, chatbi_examples, chatbi_briefs, chatbi_monitors, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench
+from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench
 
 portal_router = APIRouter()
 
@@ -18,8 +18,8 @@ portal_router.include_router(scenario_templates.router, prefix="/scenario-templa
 portal_router.include_router(chat.router, prefix="/chat", tags=["智能体对话"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(chat_feedback.router, prefix="/chat", tags=["反馈收集"], dependencies=[Depends(require_api_key)])
 
-# 4.1 ChatBI 经验库 (Examples)
-portal_router.include_router(chatbi_examples.router, prefix="/chatbi-examples", tags=["ChatBI经验库"], dependencies=[Depends(require_api_key)])
+# 4.1 问答经验库 (Examples)
+portal_router.include_router(examples.router, prefix="/examples", tags=["问答经验库"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(chatbi_briefs.router, prefix="/chatbi-briefs", tags=["ChatBI业务简报"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(chatbi_monitors.router, prefix="/chatbi-monitors", tags=["ChatBI指标监控"], dependencies=[Depends(require_api_key)])
 

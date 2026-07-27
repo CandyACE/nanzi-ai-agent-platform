@@ -9,6 +9,7 @@ from datetime import datetime
 
 from app.models.chatbi_example import ChatBIExample, ChatBIExampleUsage
 from app.models.audit import AgentExecutionTrace, AgentExecutionHistory
+from app.models.agent import AIAgent
 from app.models.metadata import MetaDataset
 from app.core.orm import AsyncSessionLocal
 from app.services.config_service import ConfigService
@@ -77,11 +78,11 @@ class ExampleService:
                         break
 
             if not sql_text:
-                logger.info(f"[ExampleService] No extractable SQL found in traces for trace_id: {trace_id}")
-                return None
+                sql_text = ""
+                logger.info(f"[ExampleService] No extractable SQL found in traces for trace_id: {trace_id}, saving as non-SQL example.")
         except Exception as e:
             logger.error(f"[ExampleService] Error during SQL extraction from trace {trace_id}: {e}")
-            return None
+            sql_text = ""
 
         try:
             # 2. ORM 方式查找 Execution History
@@ -102,6 +103,26 @@ class ExampleService:
                 res_ds = await db.execute(stmt_ds)
                 dataset_id = res_ds.scalar() or 0
 
+            # 从智能体属性中直接获取智能体的主类型作为案例类别
+            category = "general"
+            try:
+                from app.services.ai.agent_types import resolve_agent_type, AgentType
+                stmt_agent = select(AIAgent).where(AIAgent.id == history.agent_id)
+                res_agent = await db.execute(stmt_agent)
+                agent_obj = res_agent.scalars().first()
+
+                if agent_obj:
+                    resolved_type = resolve_agent_type(agent_obj)
+                    if resolved_type == AgentType.CHATBI:
+                        category = "data_query"
+                    elif resolved_type == AgentType.KNOWLEDGE_BASE:
+                        category = "knowledge"
+                    else:
+                        category = "general"
+            except Exception as cat_err:
+                logger.warning(f"[ExampleService] Failed to resolve category from agent attributes: {cat_err}")
+                category = "general"
+
             # 4. 幂等创建或更新 (ORM 模式)
             stmt_ex = select(ChatBIExample).where(ChatBIExample.trace_id == trace_id)
             result_ex = await db.execute(stmt_ex)
@@ -115,6 +136,7 @@ class ExampleService:
                     user_query=history.query,
                     sql_text=sql_text,
                     ai_answer=history.summary,
+                    category=category,
                     feedback_type=feedback_type,
                     status="pending",
                     user_id=user_id or history.user_id
@@ -124,6 +146,8 @@ class ExampleService:
                 example.feedback_type = feedback_type
                 example.sql_text = sql_text
                 example.ai_answer = history.summary
+                if category:
+                    example.category = category
                 # 不论点赞还是点踩，统一重置为待审核状态，由管理员决定最终状态
                 example.status = "pending"
                 # 重置同步状态，待审核通过后再次触发同步
@@ -176,16 +200,18 @@ class ExampleService:
                     context_text += f"User: {h.query}\nAI: {h.summary[:200]}...\n---\n"
 
                 # 3. 构建 Prompt
+                sql_part = f"【执行的 SQL】: \n{example.sql_text}\n\n" if example.sql_text else "【执行的 SQL】: 无 SQL (纯对话/知识库问答)\n\n"
                 prompt = (
-                    "你是一个数据仓库专家和提示词工程师。请根据提供的【对话背景】和最终生成的【SQL】，对该案例进行增强处理。\n\n"
+                    "你是一个数据分析与对话专家及提示词工程师。请根据提供的【对话背景】、【问答】和【SQL】(若有)，对该案例进行增强处理。\n\n"
                     "【对话背景】:\n"
                     f"{context_text}\n"
                     "【当前碎片化提问】: " + example.user_query + "\n"
-                    "【执行成功的 SQL】: \n" + example.sql_text + "\n\n"
+                    f"【AI 回答摘要】: {(example.ai_answer or '')[:300]}\n"
+                    + sql_part +
                     "请输出 JSON 格式，包含以下字段：\n"
                     "1. refined_query: 将碎片化提问改写为【独立且完整】的自然语言问题。例如：将“那去年的呢”改写为“查询2025年全年的销售额总额”。\n"
-                    "2. context_summary: 简述产生该 SQL 的业务背景和对话脉络（100字以内）。\n"
-                    "3. sql_metadata: 一个对象，包含 tables (涉及的物理表名列表), query_type (聚合/同比/TopN等), dimensions (核心维度)。\n"
+                    "2. context_summary: 简述产生该回答的业务背景和对话脉络（100字以内）。\n"
+                    "3. sql_metadata: 一个对象，包含 tables (涉及的物理表名列表，无 SQL 则为 []), query_type (问答/数据查询/聚合等), dimensions (核心维度)。\n"
                 )
 
                 llm = await AgentConfigProvider.get_configured_llm(streaming=False)
@@ -360,19 +386,31 @@ class ExampleService:
                 # 核心：Markdown 内容用于 RAG 检索意图
                 title = example.refined_query or example.user_query
                 content_lines = [
-                    f"# ChatBI 优质案例: {title}\n",
+                    f"# AI 优质案例: {title}\n",
                     "## 🎯 核心意图 (Refined Query)",
                     f"{example.refined_query or '尚未自动改写'}\n",
                     "## 🌐 业务背景 (Context Summary)",
                     f"{example.context_summary or '无前置上下文'}\n",
-                    "## 🛠 验证通过的 SQL",
-                    "```sql",
-                    f"{example.sql_text}",
-                    "```\n",
+                ]
+
+                if example.sql_text:
+                    content_lines.extend([
+                        "## 🛠 验证通过的 SQL",
+                        "```sql",
+                        f"{example.sql_text}",
+                        "```\n",
+                    ])
+                else:
+                    content_lines.extend([
+                        "## 💬 验证通过的 AI 回答",
+                        f"{example.ai_answer or '无回答内容'}\n",
+                    ])
+
+                content_lines.extend([
                     "---",
                     "## 🤖 结构化数据 (仅供系统解析，请勿删除)",
                     "```json"
-                ]
+                ])
 
                 # 将所有核心数据打包成 JSON 存放在末尾，确保解析稳定性
                 payload = {
@@ -478,17 +516,21 @@ class ExampleService:
                         top_k=top_k
                     )
                     
-                    # 关联读取并应用相似度阈值过滤，防止非相似问答混入 Prompt 中
+                    # 关联读取并应用相似度阈值过滤，且丢弃 sql 为空的案例，防止无 SQL 问答混入 SQL 生成 Prompt 中
                     threshold_str = await ConfigService.get("chatbi_sample_similarity_threshold")
                     similarity_threshold = float(threshold_str) if threshold_str else 0.4
                     
-                    filtered_examples = [ex for ex in examples if ex.get("similarity", 0.0) >= similarity_threshold]
+                    filtered_examples = [
+                        ex for ex in examples 
+                        if ex.get("similarity", 0.0) >= similarity_threshold 
+                        and ex.get("sql") and str(ex.get("sql")).strip()
+                    ]
                     
-                    logger.info(f"[ExampleSearch] Local Redis search returned {len(examples)} examples, filtered to {len(filtered_examples)} above threshold ({similarity_threshold}).")
+                    logger.info(f"[ExampleSearch] Local Redis search returned {len(examples)} examples, filtered to {len(filtered_examples)} valid SQL examples above threshold ({similarity_threshold}).")
                     if filtered_examples:
                         return filtered_examples
                     
-                    logger.info("[ExampleSearch] Local Redis search returned empty or no examples passed threshold. Falling back to MySQL LIKE search.")
+                    logger.info("[ExampleSearch] Local Redis search returned empty or no valid SQL examples passed threshold. Falling back to MySQL LIKE search.")
                     return await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
                 except Exception as local_err:
                     logger.warning(f"[ExampleSearch] Local Redis search failed: {local_err}. Falling back to MySQL LIKE search.")
@@ -532,10 +574,16 @@ class ExampleService:
                 if json_match:
                     try:
                         data = json.loads(json_match.group(1))
+                        sql_val = data.get("sql")
+                        # 如果没有 sql 或 sql 为空，丢弃此条记录
+                        if not sql_val or not str(sql_val).strip():
+                            logger.info(f"[ExampleSearch] Discarding example #{data.get('id')} because sql is empty.")
+                            continue
+
                         examples.append({
                             "id": data.get("id"),
                             "question": data.get("question") or data.get("raw_query"),
-                            "sql": data.get("sql"),
+                            "sql": sql_val.strip(),
                             "context_summary": data.get("context_summary"),
                             "dataset_name": data.get("dataset_name"),
                             "trace_id": data.get("metadata", {}).get("trace_id"),
@@ -551,11 +599,13 @@ class ExampleService:
                 sql_match = re.search(r"```sql\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)
                 
                 if sql_match and q_match:
-                    examples.append({
-                        "question": q_match.group(1).strip(),
-                        "sql": sql_match.group(1).strip(),
-                        "similarity": similarity
-                    })
+                    extracted_sql = sql_match.group(1).strip()
+                    if extracted_sql:
+                        examples.append({
+                            "question": q_match.group(1).strip(),
+                            "sql": extracted_sql,
+                            "similarity": similarity
+                        })
             
             logger.info(f"[ExampleSearch] Final Matched Examples: {len(examples)} (After parsing)")
             return examples
@@ -602,16 +652,17 @@ class ExampleService:
                         
                 result_list = []
                 for ex in examples:
-                    result_list.append({
-                        "id": ex.id,
-                        "question": ex.refined_query or ex.user_query,
-                        "sql": ex.sql_text,
-                        "context_summary": ex.context_summary or "",
-                        "dataset_name": dataset_name_map.get(ex.dataset_id) or "通用数据集",
-                        "trace_id": ex.trace_id or "",
-                        "sql_metadata": ex.sql_metadata,
-                        "similarity": 0.35
-                    })
+                    if ex.sql_text and ex.sql_text.strip():
+                        result_list.append({
+                            "id": ex.id,
+                            "question": ex.refined_query or ex.user_query,
+                            "sql": ex.sql_text.strip(),
+                            "context_summary": ex.context_summary or "",
+                            "dataset_name": dataset_name_map.get(ex.dataset_id) or "通用数据集",
+                            "trace_id": ex.trace_id or "",
+                            "sql_metadata": ex.sql_metadata,
+                            "similarity": 0.35
+                        })
                 logger.info(f"[ExampleSearch] MySQL Fallback retrieved {len(result_list)} examples.")
                 return result_list
             except Exception as db_err:
@@ -715,15 +766,17 @@ class ExampleService:
                 if logic_parts:
                     prompt_lines.append(f"- **专家策略**: {' | '.join(logic_parts)}")
 
-            prompt_lines.append("- **验证通过的 SQL（核心表和 JOIN 逻辑必须复用）**:")
-            prompt_lines.append(f"```sql\n{ex['sql']}\n```\n")
+            if ex.get('sql'):
+                prompt_lines.append("- **验证通过的 SQL（核心表和 JOIN 逻辑必须复用）**:")
+                prompt_lines.append(f"```sql\n{ex['sql']}\n```\n")
+            elif ex.get('ai_answer'):
+                prompt_lines.append(f"- **标准参考回答**: {ex.get('ai_answer')}\n")
 
         prompt_lines.append(
             "---\n"
             "**最终提醒**：\n"
-            "1. 优先使用案例中的物理表，不要「幻觉」出新表\n"
-            "2. 案例的 JOIN/聚合逻辑已经过业务验证，请直接复用结构，仅调整 WHERE/SELECT 细节\n"
-            "3. 若案例表名在当前 Schema 中确实不存在，才可改用其他表，并需在思考中说明原因\n"
+            "1. 优先复用相关案例中的解题逻辑与选表策略\n"
+            "2. 案例中的表名和结构已经过业务验证，请优先参考\n"
         )
         return "\n".join(prompt_lines)
 
@@ -739,7 +792,7 @@ class ExampleService:
             return ""
 
         lines = [
-            "⚠️ **【经验库二次提醒】** 你已获取到表结构数据。在生成 SQL 之前，请务必回顾以下经过人工验证的历史案例核心逻辑：\n"
+            "⚠️ **【经验库二次提醒】** 在回答或生成 SQL 之前，请务必回顾以下经过人工验证的历史案例核心逻辑：\n"
         ]
 
         for i, ex in enumerate(examples, 1):
@@ -767,12 +820,15 @@ class ExampleService:
                 case_lines.append(f"  - 📌 核心表: `{'`, `'.join(tables)}`（请优先从这些表查询）")
             if query_type:
                 case_lines.append(f"  - 查询类型: {query_type}" + (f" | 核心维度: {', '.join(dimensions)}" if dimensions else ""))
-            # 仅展示前3行 SQL 作为线索，不重复整段
+            # 仅展示前3行 SQL 或 回答作为线索
             if sql:
                 sql_preview = "\n".join(sql.strip().splitlines()[:3])
                 if len(sql.strip().splitlines()) > 3:
                     sql_preview += "\n  ..."
                 case_lines.append(f"  - SQL 逻辑线索:\n```sql\n{sql_preview}\n```")
+            elif ex.get('ai_answer'):
+                answer_preview = ex['ai_answer'][:100]
+                case_lines.append(f"  - 参考回答线索: {answer_preview}...")
 
             lines.append("\n".join(case_lines))
 
@@ -823,6 +879,11 @@ class ExampleService:
         example = result.scalars().first()
         if not example:
             return False
+
+        # 数据查询类型的案例在审核通过 (approved) 时必须具备有效 SQL
+        if status == "approved" and example.category == "data_query":
+            if not example.sql_text or not example.sql_text.strip():
+                raise ValueError("数据查询类型的案例必须包含有效的 SQL 语句才能通过审核")
         
         # 联动删除逻辑增强：不仅是 deprecated，如果是 rejected 也需要同步清理远程数据
         if status in ["deprecated", "rejected"] and example.rag_doc_id:
