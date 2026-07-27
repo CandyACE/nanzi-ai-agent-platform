@@ -116,3 +116,12 @@ def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():
     assert "msg.isThinking" in source
     assert "bg-gray-50 border-gray-200" in source
     assert "v-if=\"msg.agentName\"" in source
+
+
+def test_multi_agent_toggle_has_single_toast_source():
+    settings_source = _source("frontend/src/components/embed/ChatSettings.vue")
+    embed_source = _source("frontend/src/views/EmbedChat.vue")
+
+    assert "多智能体协同已关闭" in settings_source
+    assert "triggerMultiAgentHint" not in embed_source
+    assert "watch(() => config.enableMultiAgent" not in embed_source

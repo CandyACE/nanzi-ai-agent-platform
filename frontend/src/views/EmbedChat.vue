@@ -2930,9 +2930,6 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
 };
-const triggerMultiAgentHint = (enabled: boolean) => {
-    showToast(enabled ? "已开启多智能体协同模式" : "已切换为单智能体模式", "info");
-};
 const switchToAuto = () => {
     if (isUrlAgentPinned.value) {
       showToast("当前链接已锁定指定智能体，无法切换到自动路由", "warning");
@@ -2963,11 +2960,6 @@ const onModeChange = (mode: string) => {
         showToast("已切换为自动路由模式", "success");
     }
 };
-watch(() => config.enableMultiAgent, (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-        triggerMultiAgentHint(newVal);
-    }
-});
 const conversationId = ref("");
 const showResourceScopeModal = ref(false);
 const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
