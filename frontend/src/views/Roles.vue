@@ -916,6 +916,7 @@ const availableToolsToForbid = [
   { id: "exec_command", name: "执行终端命令 (exec_command)", description: "在沙箱中执行 Bash/shell 命令行" },
   { id: "write_file", name: "写入/修改文件 (write_file)", description: "对沙箱目录物理写入或修改代码文件" },
   { id: "read_file", name: "读取文件内容 (read_file)", description: "读取沙箱工作目录中的文本或源代码" },
+  { id: "search_qa_examples", name: "检索经验库 (search_qa_examples)", description: "检索历史问答优质案例及 SQL" },
   { id: "manage_process", name: "进程管理 (manage_process)", description: "查看或终止沙箱中的系统进程" }
 ]
 

@@ -197,6 +197,12 @@ interface ContentSegment {
     // 兜底：Markdown 反引号会把路径包进 <code>，上面占位符还原后再处理一次 code 内文本
     res = res.replace(/<code>([^<]*)<\/code>/gi, (_match, inner) => `<code>${injectOpenLinksForPaths(inner)}</code>`);
 
+    // 表格由外层容器负责横向滚动，避免 table 自身 display:block 后出现右侧空白
+    res = res.replace(
+      /<table\b[^>]*>[\s\S]*?<\/table>/gi,
+      (table) => `<div class="markdown-table-scroll">${table}</div>`,
+    );
+
     return res;
   };
 

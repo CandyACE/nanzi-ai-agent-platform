@@ -8,7 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core import database
 from typing import Optional
 
-from app.services.audit_service import AuditService
+from app.services.audit_service import AuditService, MAX_AUDIT_TEXT_BYTES
 
 
 def _decode_captured_response_body(
@@ -66,6 +66,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             request_body_str = "<error capturing body>"
 
         response_body_chunks = []
+        captured_response_bytes = 0
         response_content_encoding = None
         response_content_type = None
         
@@ -82,9 +83,14 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
 
         # Wrap body to capture for audit log
         async def body_iterator(actual_iterator):
+            nonlocal captured_response_bytes
             async for chunk in actual_iterator:
-                if len(response_body_chunks) * 4096 < 10240: # limit to 10KB
-                     response_body_chunks.append(chunk)
+                remaining = MAX_AUDIT_TEXT_BYTES - captured_response_bytes
+                if remaining > 0:
+                    captured_chunk = chunk[:remaining]
+                    if captured_chunk:
+                        response_body_chunks.append(captured_chunk)
+                        captured_response_bytes += len(captured_chunk)
                 yield chunk
 
         original_iterator = response.body_iterator

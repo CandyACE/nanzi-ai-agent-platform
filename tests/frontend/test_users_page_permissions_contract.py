@@ -40,3 +40,11 @@ def test_edit_user_hides_save_on_quota_tab_with_hint():
     users_vue = _read("frontend/src/views/Users.vue")
     assert "activeTab !== 'quota'" in users_vue
     assert "额度请在上方点击「保存额度」" in users_vue
+
+
+def test_closing_user_dialog_clears_create_only_api_key_state():
+    users_vue = _read("frontend/src/views/Users.vue")
+    close_dialog = users_vue.split("const closeDialogs = () => {", 1)[1].split(
+        "const closeViewKeyDialog", 1
+    )[0]
+    assert 'createdApiKey.value = "";' in close_dialog

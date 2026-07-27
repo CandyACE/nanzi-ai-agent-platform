@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { agentApi } from "../api/agent";
 import type {
@@ -169,6 +169,7 @@ const showAdvancedSafety = ref(false);
 
 // AI 消息排版样式选择与效果预览变量
 const selectedMarkdownTheme = ref("default");
+const hideMessageBorder = ref(false);
 const showThemePreviewHelp = ref(false);
 const previewTheme = ref("default");
 const markdownThemeOptions = [
@@ -545,6 +546,11 @@ const availableTools = [
     isSystem: true,
   },
   {
+    name: "search_qa_examples",
+    description: "检索已验证的历史问答优质案例及 SQL",
+    isSystem: true,
+  },
+  {
     name: "write_file",
     description: "AgentScope Write：创建或覆写文件，运行时替代旧 write_file",
     isSystem: true,
@@ -683,10 +689,50 @@ const isAgentConfigStepComplete = () => {
   return true;
 };
 
+const getActiveAgentType = (): AgentType =>
+  (selectedAgent.value?.agent_type ?? agentForm.value.agent_type ?? 'GENERAL') as AgentType;
+
+const getEnabledToolNames = () =>
+  (versionForm.value.tools || [])
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      if ((item as any).enabled === false) return '';
+      return String((item as any).name || '').trim();
+    })
+    .filter(Boolean);
+
+const getKnowledgeBaseDatasetIds = () => {
+  const raw =
+    agentForm.value.engine_config?.dataset_ids ??
+    selectedAgent.value?.engine_config?.dataset_ids ??
+    engineConfigUI.value.dataset_ids;
+  return (Array.isArray(raw) ? raw : String(raw || '').split(','))
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+};
+
+const isKnowledgeBaseToolsStepComplete = () => {
+  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return true;
+  const toolNames = new Set(getEnabledToolNames());
+  if (!toolNames.has('search_knowledge_base')) return false;
+  return getKnowledgeBaseDatasetIds().length > 0;
+};
+
+const knowledgeBaseToolsStepIssues = computed(() => {
+  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return null;
+  const toolNames = new Set(getEnabledToolNames());
+  const datasetCount = getKnowledgeBaseDatasetIds().length;
+  return {
+    missingTool: !toolNames.has('search_knowledge_base'),
+    missingBinding: datasetCount === 0,
+    datasetCount,
+  };
+});
+
 const isVersionConfigStepComplete = (step: VersionConfigStep) => {
   if (step === 'agent') return isAgentConfigStepComplete();
   if (step === 'model') return Boolean(versionForm.value.model_name?.trim());
-  if (step === 'tools') return true;
+  if (step === 'tools') return isKnowledgeBaseToolsStepComplete();
   if (step === 'prompt') return Boolean(versionForm.value.system_prompt?.trim());
   if (step === 'welcome') {
     const config = versionForm.value.welcome_config;
@@ -730,10 +776,27 @@ const describeIncompleteVersionConfigStep = (step: VersionConfigStep) => {
     return '请先完善智能体信息';
   }
   if (step === 'model') return '请先完善模型策略：选择编排模型';
+  if (step === 'tools') {
+    if (getActiveAgentType() === 'KNOWLEDGE_BASE') {
+      const toolNames = new Set(getEnabledToolNames());
+      if (!toolNames.has('search_knowledge_base')) {
+        return '请先完善工具能力：选择知识库检索工具';
+      }
+      if (getKnowledgeBaseDatasetIds().length === 0) {
+        return '请先完善工具能力：为知识库检索工具绑定至少一个知识库';
+      }
+    }
+    return '请先完成前面的配置步骤';
+  }
   if (step === 'prompt') return '请先填写系统提示词';
   if (step === 'welcome') return '请完整填写 3 张欢迎卡片，或关闭欢迎语设置';
   return '请先完成前面的配置步骤';
 };
+
+const versionConfigIncompleteHint = computed(() => {
+  if (isVersionConfigStepComplete(versionConfigStep.value)) return '';
+  return describeIncompleteVersionConfigStep(versionConfigStep.value);
+});
 
 const handleVersionConfigStepChange = (step: VersionConfigStep) => {
   if (step === versionConfigStep.value) return;
@@ -788,6 +851,23 @@ const filteredEnabledSkills = computed(() => {
 });
 
 const collapsedStaticGroups = ref<Set<string>>(new Set());
+const CHATBI_TOOL_GROUP_LABEL = 'ChatBI 数据分析';
+
+const getDefaultCollapsedStaticGroups = () => {
+  const collapsed = new Set<string>();
+  if (getActiveAgentType() === 'KNOWLEDGE_BASE') {
+    collapsed.add(CHATBI_TOOL_GROUP_LABEL);
+  }
+  return collapsed;
+};
+
+const applyKnowledgeBaseToolGroupDefaults = () => {
+  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return;
+  const next = new Set(collapsedStaticGroups.value);
+  next.add(CHATBI_TOOL_GROUP_LABEL);
+  collapsedStaticGroups.value = next;
+};
+
 const isStaticGroupCollapsed = (label: string) => collapsedStaticGroups.value.has(label);
 const toggleStaticGroupCollapse = (label: string) => {
   const next = new Set(collapsedStaticGroups.value);
@@ -847,8 +927,14 @@ const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
   collapsedMcpGroups.value = new Set();
-  collapsedStaticGroups.value = new Set();
+  collapsedStaticGroups.value = getDefaultCollapsedStaticGroups();
 };
+
+watch(versionConfigStep, (step, previousStep) => {
+  if (step === 'tools' && previousStep !== 'tools') {
+    applyKnowledgeBaseToolGroupDefaults();
+  }
+});
 
 const fetchTools = async () => {
   try {
@@ -1038,9 +1124,11 @@ const startAgentCreation = () => {
       safety_check_input_strategy: "append",
       safety_check_output_strategy: "append",
       default_markdown_theme: "default",
+      hide_message_border: false,
     },
   };
   selectedMarkdownTheme.value = "default";
+  hideMessageBorder.value = false;
   versionForm.value = {
     model_name: "",
     temperature: 0,
@@ -1078,6 +1166,7 @@ const openAgentModal = (agent?: AIAgent) => {
       engine_config: agent.engine_config ? { ...agent.engine_config } : {},
     };
     selectedMarkdownTheme.value = agent.engine_config?.default_markdown_theme || "default";
+    hideMessageBorder.value = agent.engine_config?.hide_message_border === true;
     if (isExternalEngine(agentForm.value.engine_type)) {
       agentForm.value.agent_type = "GENERAL";
     }
@@ -1231,6 +1320,7 @@ const saveAgent = async (exitAfterSave = false) => {
     agentForm.value.engine_config = {};
   }
   agentForm.value.engine_config.default_markdown_theme = selectedMarkdownTheme.value;
+  agentForm.value.engine_config.hide_message_border = hideMessageBorder.value;
 
   try {
     if (isEditingAgent.value && selectedAgent.value) {
@@ -1423,6 +1513,12 @@ const openVersionModal = (
       comment: "",
     };
   }
+  if (selectedAgent.value) {
+    agentForm.value = { ...selectedAgent.value };
+    engineConfigUI.value.dataset_ids = Array.isArray(selectedAgent.value.engine_config?.dataset_ids)
+      ? selectedAgent.value.engine_config.dataset_ids.join(",")
+      : "";
+  }
   resetVersionEditorUi();
   showVersionModal.value = true;
 };
@@ -1566,6 +1662,7 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
     ...(agentForm.value.engine_config || {}),
     dataset_ids: datasetIds,
     default_markdown_theme: selectedMarkdownTheme.value,
+    hide_message_border: hideMessageBorder.value,
   };
   isPersistingNewAgent.value = true;
   try {
@@ -3534,6 +3631,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <span>{{ themeOpt.label }}</span>
             </button>
           </div>
+          <label class="mt-4 flex cursor-pointer items-center justify-between rounded-lg border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+            <span>
+              <span class="block text-xs font-semibold text-gray-700">隐藏 AI 消息外框</span>
+              <span class="mt-0.5 block text-[10px] text-gray-400">仅隐藏消息气泡边框，Markdown 表格边框保留</span>
+            </span>
+            <span class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors" :class="hideMessageBorder ? 'bg-primary' : 'bg-gray-300'">
+              <input v-model="hideMessageBorder" type="checkbox" class="sr-only" />
+              <span class="h-4 w-4 rounded-full bg-white shadow-sm transition-transform" :class="hideMessageBorder ? 'translate-x-4' : 'translate-x-0.5'"></span>
+            </span>
+          </label>
         </div>
         </div>
 
@@ -3647,6 +3754,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :get-model-display-name="getModelDisplayName"
       :can-reach-version-config-step="canReachVersionConfigStep"
       :is-version-config-step-complete="isVersionConfigStepComplete"
+      :version-config-incomplete-hint="versionConfigIncompleteHint"
+      :knowledge-base-tools-step-issues="knowledgeBaseToolsStepIssues"
       @close="handleVersionEditorClose"
       @save="saveVersion"
       @publish="publishVersionFromEditor"
