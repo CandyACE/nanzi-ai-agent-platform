@@ -1,3 +1,6 @@
+import re
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.core.context import AgentContext, set_agent_context
@@ -134,6 +137,25 @@ def test_registry_assigns_external_tool_evidence_to_read_only_mcp_tools(name, de
     assert resolved.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
 
 
+def test_registry_keeps_mcp_evidence_inference_on_model_safe_aliases():
+    """MCP 工具改用模型别名后，grounding 仍必须依据原始配置名判断只读性。"""
+    spec = RuntimeToolSpec(
+        name="mcp_data-analytics-mcp_list_events_0123456789",
+        description="Analytics event catalog",
+        parameters_schema={"type": "object"},
+        source_type="mcp",
+        callable=_noop,
+    )
+
+    resolved = ToolRegistry._attach_evidence_metadata(
+        "data-analytics-mcp:list_events",
+        spec,
+    )
+
+    assert resolved.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
+    assert resolved.evidence_policy == "allow_empty_success"
+
+
 @pytest.mark.parametrize(
     ("name", "description"),
     [
@@ -175,6 +197,36 @@ def test_mcp_read_only_annotation_assigns_evidence_without_name_heuristic():
 
     assert resolved.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
     assert resolved.evidence_policy == "allow_empty_success"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_factory_uses_model_safe_name_and_preserves_remote_tool_name(monkeypatch):
+    """模型侧别名不得改变实际发送给 MCP 服务的原始工具名。"""
+    record = McpToolCache(
+        id="tool-safe-name",
+        server_id="server-1",
+        tool_name="data-analytics-mcp:list_events",
+        tool_description="List analytics events",
+        parameter_schema='{"type":"object","properties":{"glibId":{"type":"string"}},"required":["glibId"]}',
+        is_published=True,
+    )
+    remote_call = AsyncMock(return_value="event list")
+    monkeypatch.setattr(
+        "app.services.ai.tools.mcp_factory.McpClientService.call_remote_tool",
+        remote_call,
+    )
+
+    tool = McpToolFactory.create_tool(record)
+
+    assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", tool.name)
+    assert ":" not in tool.name
+    assert tool.name.startswith("mcp_data-analytics-mcp_list_events_")
+    assert await tool.ainvoke({"glibId": "pt3_v3"}) == "event list"
+    remote_call.assert_awaited_once_with(
+        server_id="server-1",
+        tool_name="list_events",
+        arguments={"glibId": "pt3_v3"},
+    )
 
 
 def test_mcp_schema_can_declare_precise_internal_evidence_type():

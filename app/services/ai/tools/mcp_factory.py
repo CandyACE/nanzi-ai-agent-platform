@@ -1,5 +1,7 @@
 import json
 import logging
+import hashlib
+import re
 from typing import Dict, Any
 from pydantic import create_model, Field
 from app.services.ai.tools.tool_compat import StructuredTool
@@ -8,6 +10,22 @@ from app.services.ai.tools.mcp_client import McpClientService
 from app.services.ai.grounding.models import EvidenceType
 
 logger = logging.getLogger(__name__)
+
+
+def _build_model_tool_name(tool_name: str) -> str:
+    """将平台 MCP 标识转换为模型 Function Calling 可接受的稳定工具名。
+
+    平台以 ``server_name:tool_name`` 保存 MCP 工具，用冒号避免跨服务器重名；
+    但 OpenAI 兼容模型只允许字母、数字、下划线和连字符。保留可读部分并追加
+    原始名称哈希，既避免非法字符，也避免不同原名清洗后发生碰撞。
+    """
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(tool_name)).strip("_")
+    readable_name = normalized or "mcp_tool"
+    name_hash = hashlib.sha256(str(tool_name).encode("utf-8")).hexdigest()[:10]
+    # OpenAI Function Calling 通常限制工具名最多 64 个字符，提前截断以兼容该约束。
+    max_readable_length = 64 - len("mcp_") - len(name_hash) - 1
+    return f"mcp_{readable_name[:max_readable_length]}_{name_hash}"
+
 
 class McpToolFactory:
     @staticmethod
@@ -54,11 +72,11 @@ class McpToolFactory:
         
         _execute.__doc__ = tool_record.tool_description or f"MCP tool: {tool_record.tool_name}"
         
-        # Tool name should ideally be our full name to avoid collisions
+        # 数据库存储的冒号名称仅作平台标识；模型侧使用合法别名，执行闭包仍保留原始 MCP 名称。
         tool = StructuredTool.from_function(
             func=None,
             coroutine=_execute,
-            name=tool_record.tool_name,
+            name=_build_model_tool_name(tool_record.tool_name),
             description=tool_record.tool_description or "",
             args_schema=args_schema
         )
