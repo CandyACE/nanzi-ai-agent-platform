@@ -413,7 +413,8 @@ class ToolRegistry:
             and getattr(spec, "source_type", None) == "mcp"
             and not bool(getattr(spec, "evidence_inference_disabled", False))
             and _is_read_only_mcp_tool(
-                name=spec_name or name,
+                # MCP 的模型别名可能已移除动作前缀；取证推断必须使用配置中的原始名称。
+                name=name or spec_name,
                 description=str(getattr(spec, "description", "") or ""),
             )
         ):
