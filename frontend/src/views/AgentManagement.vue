@@ -545,6 +545,11 @@ const availableTools = [
     isSystem: true,
   },
   {
+    name: "search_qa_examples",
+    description: "检索已验证的历史问答优质案例及 SQL",
+    isSystem: true,
+  },
+  {
     name: "write_file",
     description: "AgentScope Write：创建或覆写文件，运行时替代旧 write_file",
     isSystem: true,

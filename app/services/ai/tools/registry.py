@@ -10,6 +10,7 @@ from app.services.ai.tools.generic_api import GenericApiToolFactory
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.ai.tools.system_tools import system_http_request, SYSTEM_IMPLICIT_TOOLS
 from app.services.ai.tools.knowledge_tool import search_knowledge_base
+from app.services.ai.tools.example_search_tool import search_qa_examples
 from app.services.ai.tools.task_manager_tools import (
     create_recurring_task, get_my_tasks, cancel_task, 
     start_task, pause_task, run_task_manually
@@ -85,6 +86,7 @@ TOOL_EVIDENCE_TYPES = {
     "get_dataset_schema": frozenset({EvidenceType.INTERNAL_DATA}),
     "execute_sql_query": frozenset({EvidenceType.INTERNAL_DATA}),
     "search_knowledge_base": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
+    "search_qa_examples": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
     "jira_search": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
     "jira_get_projects": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
     "fetch_static_web_url": frozenset({EvidenceType.PUBLIC_WEB}),
@@ -116,6 +118,7 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     "memory_search": "allow_empty_success",
     "fetch_user_long_term_memory": "allow_empty_success",
     "search_knowledge_base": "allow_empty_success",
+    "search_qa_examples": "allow_empty_success",
     "jira_search": "allow_empty_success",
     "read_file": "allow_empty_success",
     "search_text": "allow_empty_success",
@@ -230,6 +233,7 @@ class ToolRegistry:
         "update_dashboard_context": update_dashboard_context,
         "system_http_request": system_http_request,
         "search_knowledge_base": search_knowledge_base,
+        "search_qa_examples": search_qa_examples,
         # Register Task Manager Tools
         "create_recurring_task": create_recurring_task,
         "get_my_tasks": get_my_tasks,
