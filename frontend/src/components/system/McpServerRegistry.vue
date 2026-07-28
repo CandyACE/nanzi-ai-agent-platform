@@ -4,6 +4,7 @@ import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
 import ConfirmModal from '../../components/ConfirmModal.vue'
+import Switch from '../Switch.vue'
 import McpToolTester from './McpToolTester.vue'
 import { buildDefaultMcpServerName } from '@/utils/mcpServerName'
 import { 
@@ -67,6 +68,31 @@ const wizardStep = ref<1 | 2>(1) // 1: Input & Verify, 2: Preview & Name
 const verifying = ref(false)
 const discoveredTools = ref<any[]>([])
 const syncLoading = ref<Record<string, boolean>>({})
+const statusLoading = ref<Record<string, boolean>>({})
+
+type McpAgentUsage = {
+  id: string
+  name: string
+  display_name: string
+  is_enabled: boolean
+  active: boolean
+  version_count: number
+}
+
+type McpServerUsage = {
+  server_id: string
+  bound_agent_count: number
+  active_agent_count: number
+  bound_version_count: number
+  agents: McpAgentUsage[]
+}
+
+const selectedServerUsage = ref<McpServerUsage | null>(null)
+const usageLoading = ref<Record<string, boolean>>({})
+const showStatusConfirm = ref(false)
+const statusConfirmServer = ref<any | null>(null)
+const statusConfirmUsage = ref<McpServerUsage | null>(null)
+const statusConfirmLoading = ref(false)
 
 // Batch Actions Logic
 const selectedToolIds = ref<Set<string>>(new Set())
@@ -106,7 +132,12 @@ const batchUpdateStatus = async (published: boolean) => {
     ))
     
     showToast(`成功${published ? '发布' : '下线'} ${ids.length} 个工具`, 'success')
-    if (selectedServer.value) fetchTools(selectedServer.value.id)
+    if (selectedServer.value) {
+      fetchTools(selectedServer.value.id)
+      fetchServerUsage(selectedServer.value.id).then((usage) => {
+        if (selectedServer.value) selectedServerUsage.value = usage
+      })
+    }
     selectedToolIds.value.clear()
   } catch (e) {
     showToast(getApiErrorMessage(e, '批量操作失败'), 'error')
@@ -204,6 +235,94 @@ const openEditModal = (server: any) => {
   showAddModal.value = true
 }
 
+const toggleServerStatus = async (server: any, enabled: boolean) => {
+  if (!canSave.value || statusLoading.value[server.id]) return false
+
+  const nextStatus = enabled ? 1 : 0
+  if (Number(server.enabled_status) === nextStatus) return true
+
+  statusLoading.value[server.id] = true
+  try {
+    const response = await axios.put(`/api/portal/mcp/servers/${server.id}`, {
+      server_name: server.server_name,
+      sse_url: server.sse_url,
+      auth_headers: server.auth_headers || '{}',
+      enabled_status: nextStatus,
+      scope: props.scope,
+    })
+    const savedStatus = Number(response.data?.enabled_status ?? nextStatus)
+    server.enabled_status = savedStatus
+    if (selectedServer.value?.id === server.id) {
+      selectedServer.value = { ...selectedServer.value, enabled_status: savedStatus }
+    }
+    showToast(savedStatus === 1 ? 'MCP 服务已启用' : 'MCP 服务已禁用', 'success')
+    return true
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '更新 MCP 服务状态失败'), 'error')
+    return false
+  } finally {
+    statusLoading.value[server.id] = false
+  }
+}
+
+const fetchServerUsage = async (serverId: string): Promise<McpServerUsage | null> => {
+  usageLoading.value[serverId] = true
+  try {
+    const response = await axios.get(`/api/portal/mcp/servers/${serverId}/usage`)
+    return response.data
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '获取 MCP 使用情况失败'), 'error')
+    return null
+  } finally {
+    usageLoading.value[serverId] = false
+  }
+}
+
+const formatUsageImpact = (usage: McpServerUsage | null, action: '禁用' | '删除') => {
+  if (!usage || usage.bound_agent_count === 0) {
+    return `${action}后，关联的 MCP 工具将立即不可用。`
+  }
+
+  const names = usage.agents
+    .slice(0, 5)
+    .map(agent => agent.display_name || agent.name)
+    .join('、')
+  const more = usage.agents.length > 5 ? ` 等 ${usage.agents.length} 个智能体` : ''
+  return `${action}后，关联的 MCP 工具将立即不可用。\n受影响智能体：${names}${more}\n其中当前生效：${usage.active_agent_count} 个。`
+}
+
+const handleServerStatusChange = async (server: any, enabled: boolean) => {
+  if (enabled) {
+    await toggleServerStatus(server, true)
+    return
+  }
+
+  const usage = await fetchServerUsage(server.id)
+  if (!usage) return
+  statusConfirmServer.value = server
+  statusConfirmUsage.value = usage
+  showStatusConfirm.value = true
+}
+
+const executeStatusChange = async () => {
+  if (!statusConfirmServer.value) return
+  statusConfirmLoading.value = true
+  const success = await toggleServerStatus(statusConfirmServer.value, false)
+  statusConfirmLoading.value = false
+  if (success) {
+    showStatusConfirm.value = false
+    statusConfirmServer.value = null
+    statusConfirmUsage.value = null
+  }
+}
+
+const cancelStatusConfirm = () => {
+  if (statusConfirmLoading.value) return
+  showStatusConfirm.value = false
+  statusConfirmServer.value = null
+  statusConfirmUsage.value = null
+}
+
 const handleVerify = async () => {
   if (!newServer.value.sse_url) {
     showToast('请输入 SSE 握手地址', 'warning')
@@ -276,24 +395,44 @@ const addServer = async () => {
 // Deletion Logic
 const showDeleteConfirm = ref(false)
 const serverToDelete = ref<string | null>(null)
+const deleteServerUsage = ref<McpServerUsage | null>(null)
+const deleteLoading = ref(false)
 
-const confirmDeleteServer = (id: string) => {
-  serverToDelete.value = id
+const confirmDeleteServer = async (server: any) => {
+  const usage = await fetchServerUsage(server.id)
+  if (!usage) return
+  serverToDelete.value = server.id
+  deleteServerUsage.value = usage
   showDeleteConfirm.value = true
 }
 
 const executeDeleteServer = async () => {
   if (!serverToDelete.value) return
+  const deletingId = serverToDelete.value
+  deleteLoading.value = true
   try {
-    await axios.delete(`/api/portal/mcp/servers/${serverToDelete.value}`)
+    await axios.delete(`/api/portal/mcp/servers/${deletingId}`)
     showToast('删除成功', 'success')
     showDeleteConfirm.value = false
     serverToDelete.value = null
+    deleteServerUsage.value = null
     fetchServers()
-    if (selectedServer.value?.id === serverToDelete.value) selectedServer.value = null
+    if (selectedServer.value?.id === deletingId) {
+      selectedServer.value = null
+      selectedServerUsage.value = null
+    }
   } catch (e) {
     showToast(getApiErrorMessage(e, '删除失败'), 'error')
+  } finally {
+    deleteLoading.value = false
   }
+}
+
+const cancelDeleteServer = () => {
+  if (deleteLoading.value) return
+  showDeleteConfirm.value = false
+  serverToDelete.value = null
+  deleteServerUsage.value = null
 }
 
 const syncTools = async (id: string) => {
@@ -301,11 +440,20 @@ const syncTools = async (id: string) => {
   
   syncLoading.value[id] = true
   try {
-    await axios.post(`/api/portal/mcp/servers/${id}/sync`)
-    showToast('同步成功', 'success')
+    const response = await axios.post(`/api/portal/mcp/servers/${id}/sync`)
+    const staleUnpublished = Number(response.data?.stale_unpublished || 0)
+    showToast(
+      staleUnpublished > 0
+        ? `同步成功，已自动下线 ${staleUnpublished} 个远端已删除工具`
+        : '同步成功',
+      'success',
+    )
     fetchServers()
     if (selectedServer.value?.id === id) {
         fetchTools(id)
+        fetchServerUsage(id).then((usage) => {
+          if (selectedServer.value?.id === id) selectedServerUsage.value = usage
+        })
     }
   } catch (e: any) {
     showToast(getApiErrorMessage(e, '同步失败'), 'error')
@@ -328,8 +476,12 @@ const fetchTools = async (serverId: string) => {
 
 const selectServer = (server: any) => {
   selectedServer.value = server
+  selectedServerUsage.value = null
   selectedToolIds.value = new Set()
   fetchTools(server.id)
+  fetchServerUsage(server.id).then((usage) => {
+    if (selectedServer.value?.id === server.id) selectedServerUsage.value = usage
+  })
 }
 
 const togglePublish = async (tool: any) => {
@@ -338,6 +490,11 @@ const togglePublish = async (tool: any) => {
     await axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=${newStatus}`)
     tool.is_published = newStatus
     showToast(newStatus ? '工具已发布' : '工具已下线', 'success')
+    if (selectedServer.value) {
+      fetchServerUsage(selectedServer.value.id).then((usage) => {
+        if (selectedServer.value) selectedServerUsage.value = usage
+      })
+    }
   } catch (e) {
     showToast(getApiErrorMessage(e, '操作失败'), 'error')
   }
@@ -417,18 +574,32 @@ onMounted(fetchServers)
             class="p-4 cursor-pointer transition-all hover:bg-blue-50/30"
             :class="selectedServer?.id === server.id ? 'bg-blue-50 border-l-4 border-primary' : 'border-l-4 border-transparent'"
           >
-            <div class="flex justify-between items-start mb-1">
-              <span class="text-sm font-bold text-gray-900">{{ server.server_name }}</span>
-              <div v-if="canSave" class="flex space-x-1">
-                <button @click.stop="openEditModal(server)" class="p-1 text-gray-400 hover:text-blue-500 transition-colors" title="编辑配置">
-                  <PencilSquareIcon class="w-4 h-4" />
-                </button>
-                <button @click.stop="syncTools(server.id)" :disabled="syncLoading[server.id]" class="p-1 text-gray-400 hover:text-primary transition-colors">
-                  <CloudArrowDownIcon class="w-4 h-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
-                </button>
-                <button @click.stop="confirmDeleteServer(server.id)" class="p-1 text-gray-400 hover:text-red-500 transition-colors">
-                  <TrashIcon class="w-4 h-4" />
-                </button>
+            <div class="flex justify-between items-start mb-1 gap-2">
+              <span class="text-sm font-bold text-gray-900 truncate">{{ server.server_name }}</span>
+              <div class="flex items-center gap-2 shrink-0" @click.stop>
+                <span
+                  class="text-[10px] font-semibold"
+                  :class="server.enabled_status === 1 ? 'text-emerald-600' : 'text-gray-400'"
+                >
+                  {{ server.enabled_status === 1 ? '运行中' : '已禁用' }}
+                </span>
+                <Switch
+                  :model-value="server.enabled_status === 1"
+                  :disabled="!canSave || statusLoading[server.id]"
+                  :aria-label="`${server.server_name}${server.enabled_status === 1 ? '禁用' : '启用'}`"
+                  @update:model-value="handleServerStatusChange(server, $event)"
+                />
+                <div v-if="canSave" class="flex space-x-1">
+                  <button @click="openEditModal(server)" class="p-1 text-gray-400 hover:text-blue-500 transition-colors" title="编辑配置">
+                    <PencilSquareIcon class="w-4 h-4" />
+                  </button>
+                  <button @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="p-1 text-gray-400 hover:text-primary transition-colors">
+                    <CloudArrowDownIcon class="w-4 h-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
+                  </button>
+                  <button @click="confirmDeleteServer(server)" class="p-1 text-gray-400 hover:text-red-500 transition-colors">
+                    <TrashIcon class="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
             <div class="flex items-center text-[10px] text-gray-400 font-mono truncate mb-2">
@@ -467,6 +638,12 @@ onMounted(fetchServers)
               <h3 class="text-sm font-bold text-slate-800">{{ selectedServer.server_name }} 工具</h3>
               <p class="text-[10px] text-slate-500 mt-0.5" v-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
               <p class="text-[10px] text-primary font-black mt-0.5" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
+              <div v-if="selectedServerUsage" class="flex items-center gap-2 mt-1 text-[10px]">
+                <span class="text-slate-500">绑定 {{ selectedServerUsage.bound_agent_count }} 个智能体</span>
+                <span class="text-emerald-600">生效 {{ selectedServerUsage.active_agent_count }} 个</span>
+                <span class="text-slate-400">{{ selectedServerUsage.bound_version_count }} 个版本配置</span>
+              </div>
+              <span v-else-if="usageLoading[selectedServer.id]" class="text-[10px] text-slate-400 mt-1">正在统计使用情况...</span>
             </div>
           </div>
           
@@ -684,10 +861,22 @@ onMounted(fetchServers)
     <ConfirmModal 
       v-if="showDeleteConfirm"
       title="删除 MCP 服务"
-      message="确定要删除该服务及其缓存的所有工具吗？此操作不可恢复，且关联这些工具的智能体将失效。"
+      :message="`确定要删除该服务及其缓存的所有工具吗？此操作不可恢复。\n${formatUsageImpact(deleteServerUsage, '删除')}`"
       type="danger"
+      :loading="deleteLoading"
       @confirm="executeDeleteServer"
-      @cancel="showDeleteConfirm = false"
+      @cancel="cancelDeleteServer"
+    />
+
+    <ConfirmModal
+      v-if="showStatusConfirm"
+      title="禁用 MCP 服务"
+      :message="formatUsageImpact(statusConfirmUsage, '禁用')"
+      type="warning"
+      confirm-text="确认禁用"
+      :loading="statusConfirmLoading"
+      @confirm="executeStatusChange"
+      @cancel="cancelStatusConfirm"
     />
   </div>
 </template>

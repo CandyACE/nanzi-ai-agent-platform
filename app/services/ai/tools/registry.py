@@ -290,6 +290,13 @@ class ToolRegistry:
     _db_tool_cache_ttl = 60.0 # 60 seconds
     _db_tool_ids_fetched_at: Dict[tuple[str, str], float] = {}
 
+    @classmethod
+    def clear_db_tool_cache(cls) -> None:
+        """Invalidate database-backed tools after MCP configuration changes."""
+        cls._db_tool_cache.clear()
+        cls._db_tool_source_cache.clear()
+        cls._db_tool_ids_fetched_at.clear()
+
     @staticmethod
     def _db_tool_cache_key(name: str) -> tuple[str, str]:
         """Keep personal and public tool resolutions isolated in-process."""
@@ -305,10 +312,15 @@ class ToolRegistry:
         from app.core.context import get_current_agent_context
 
         context = get_current_agent_context()
-        global_condition = or_(McpServer.scope == "global", McpServer.scope.is_(None))
+        enabled_condition = McpServer.enabled_status == 1
+        global_condition = and_(
+            enabled_condition,
+            or_(McpServer.scope == "global", McpServer.scope.is_(None)),
+        )
         if not context or context.user_id is None:
             return global_condition
         personal_condition = and_(
+            enabled_condition,
             McpServer.scope == "personal",
             McpServer.user_id == context.user_id,
         )

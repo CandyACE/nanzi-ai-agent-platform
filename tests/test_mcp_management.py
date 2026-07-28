@@ -3,6 +3,7 @@ import uuid
 from httpx import AsyncClient
 from unittest.mock import patch, AsyncMock
 from app.models.mcp import McpServer, McpToolCache
+from app.models.agent import AIAgent, AIAgentVersion
 from app.models.user import User
 from app.core.context import AgentContext, agent_context
 from app.services.ai.tools.registry import ToolRegistry
@@ -125,6 +126,7 @@ async def test_runtime_mcp_visibility_is_global_plus_current_user(
                 server_name=f"Global Visible {suffix}",
                 sse_url=f"https://global.example/{suffix}",
                 scope="global",
+                enabled_status=1,
             ),
             McpServer(
                 id=personal_server_id,
@@ -132,6 +134,7 @@ async def test_runtime_mcp_visibility_is_global_plus_current_user(
                 sse_url=f"https://personal.example/{suffix}",
                 scope="personal",
                 user_id=current_user.id,
+                enabled_status=1,
             ),
             McpToolCache(
                 id=f"global-tool-{suffix}",
@@ -188,6 +191,100 @@ async def test_runtime_mcp_visibility_is_global_plus_current_user(
         )
         await db_session.commit()
 
+
+@pytest.mark.asyncio
+async def test_mcp_usage_reports_distinct_agents_and_active_published_agents(
+    client: AsyncClient,
+    admin_api_key: str,
+    db_session,
+):
+    suffix = uuid.uuid4().hex[:10]
+    server_id = f"usage-server-{suffix}"
+    tool_name = f"usage-server-{suffix}:search"
+    agent_one_id = f"usage-agent-one-{suffix}"
+    agent_two_id = f"usage-agent-two-{suffix}"
+
+    db_session.add_all(
+        [
+            McpServer(
+                id=server_id,
+                server_name=f"Usage Server {suffix}",
+                sse_url=f"https://usage.example/{suffix}",
+                scope="global",
+                enabled_status=1,
+            ),
+            McpToolCache(
+                id=f"usage-tool-{suffix}",
+                server_id=server_id,
+                tool_name=tool_name,
+                tool_description="Usage test tool",
+                parameter_schema='{"type":"object"}',
+                is_published=True,
+            ),
+            AIAgent(
+                id=agent_one_id,
+                name=f"usage-agent-one-{suffix}",
+                display_name=f"Usage Agent One {suffix}",
+                is_enabled=True,
+            ),
+            AIAgent(
+                id=agent_two_id,
+                name=f"usage-agent-two-{suffix}",
+                display_name=f"Usage Agent Two {suffix}",
+                is_enabled=True,
+            ),
+            AIAgentVersion(
+                id=f"usage-v1-{suffix}",
+                agent_id=agent_one_id,
+                version_number=1,
+                system_prompt="usage test",
+                tools=[tool_name],
+                status="DRAFT",
+            ),
+            AIAgentVersion(
+                id=f"usage-v2-{suffix}",
+                agent_id=agent_one_id,
+                version_number=2,
+                system_prompt="usage test",
+                tools=[{"name": tool_name}],
+                status="PUBLISHED",
+            ),
+            AIAgentVersion(
+                id=f"usage-v3-{suffix}",
+                agent_id=agent_two_id,
+                version_number=1,
+                system_prompt="usage test",
+                tools=[tool_name],
+                status="DRAFT",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    try:
+        response = await client.get(
+            f"/api/portal/mcp/servers/{server_id}/usage",
+            headers={"Authorization": f"Bearer {admin_api_key}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["bound_agent_count"] == 2
+        assert data["active_agent_count"] == 1
+        assert data["bound_version_count"] == 3
+        assert {item["id"] for item in data["agents"]} == {agent_one_id, agent_two_id}
+        assert next(item for item in data["agents"] if item["id"] == agent_one_id)["active"] is True
+        assert next(item for item in data["agents"] if item["id"] == agent_two_id)["active"] is False
+    finally:
+        await db_session.execute(
+            delete(AIAgentVersion).where(
+                AIAgentVersion.agent_id.in_([agent_one_id, agent_two_id])
+            )
+        )
+        await db_session.execute(delete(AIAgent).where(AIAgent.id.in_([agent_one_id, agent_two_id])))
+        await db_session.execute(delete(McpToolCache).where(McpToolCache.server_id == server_id))
+        await db_session.execute(delete(McpServer).where(McpServer.id == server_id))
+        await db_session.commit()
+
 @pytest.mark.asyncio
 async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     # Use random name to avoid potential unique constraints if any
@@ -237,6 +334,49 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     servers = resp.json()
     found = next((s for s in servers if s["id"] == server_id), None)
     assert found is None
+
+
+@pytest.mark.asyncio
+async def test_disabling_mcp_server_does_not_trigger_resync(
+    client: AsyncClient,
+    admin_api_key: str,
+):
+    headers = {"Authorization": f"Bearer {admin_api_key}"}
+    server_name = f"Disable Server {uuid.uuid4().hex[:8]}"
+
+    with patch(
+        "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
+        new_callable=AsyncMock,
+    ) as sync_tools:
+        create_resp = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": server_name,
+                "sse_url": f"https://disable.example/{uuid.uuid4().hex}",
+                "scope": "global",
+                "enabled_status": 1,
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200
+        server_id = create_resp.json()["id"]
+        sync_tools.reset_mock()
+
+        update_resp = await client.put(
+            f"/api/portal/mcp/servers/{server_id}",
+            json={
+                "server_name": server_name,
+                "sse_url": create_resp.json()["sse_url"],
+                "scope": "global",
+                "enabled_status": 0,
+            },
+            headers=headers,
+        )
+
+    assert update_resp.status_code == 200
+    assert update_resp.json()["enabled_status"] == 0
+    sync_tools.assert_not_awaited()
+    await client.delete(f"/api/portal/mcp/servers/{server_id}", headers=headers)
 
 @pytest.mark.asyncio
 async def test_mcp_tools_sync_and_publish(client: AsyncClient, admin_api_key: str, db_session):

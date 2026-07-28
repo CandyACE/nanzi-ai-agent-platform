@@ -392,3 +392,21 @@ async def test_tool_registry_limits_mcp_lookup_to_global_and_current_user_scope(
     assert "sys_mcp_servers" in mcp_query
     assert "scope" in mcp_query
     assert "user_id" in mcp_query
+    assert "enabled_status" in mcp_query
+
+
+def test_tool_registry_can_clear_db_tool_cache():
+    from app.services.ai.tools.registry import ToolRegistry
+
+    cache_key = ("mcp:search", "42")
+    ToolRegistry._db_tool_cache[cache_key] = object()
+    ToolRegistry._db_tool_source_cache[cache_key] = "mcp"
+    ToolRegistry._db_tool_ids_fetched_at[cache_key] = 123.0
+
+    try:
+        ToolRegistry.clear_db_tool_cache()
+        assert ToolRegistry._db_tool_cache == {}
+        assert ToolRegistry._db_tool_source_cache == {}
+        assert ToolRegistry._db_tool_ids_fetched_at == {}
+    finally:
+        ToolRegistry.clear_db_tool_cache()

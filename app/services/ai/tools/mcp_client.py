@@ -477,10 +477,19 @@ class McpClientService:
             server = result.scalar_one_or_none()
             if not server: return
             from datetime import datetime
+            cached_result = await db.execute(
+                select(McpToolCache).where(McpToolCache.server_id == server_id)
+            )
+            cached_tools = cached_result.scalars().all()
+            cached_by_name = {tool.tool_name: tool for tool in cached_tools}
+            remote_tool_names = set()
+            stale_unpublished = 0
             server.enabled_status = 1
             server.last_sync_at = datetime.now()
             for t in tools:
                 t_name = t.name if hasattr(t, 'name') else t.get('name')
+                if not t_name:
+                    continue
                 t_desc = t.description if hasattr(t, 'description') else t.get('description')
                 t_schema = t.inputSchema if hasattr(t, 'inputSchema') else t.get('inputSchema', t.get('parameter_schema'))
                 if hasattr(t_schema, "model_dump"):
@@ -494,14 +503,28 @@ class McpClientService:
                 if isinstance(annotations, dict) and annotations:
                     schema_payload["x-nanzi-mcp-annotations"] = annotations
                 full_name = f"{server.server_name}:{t_name}"
-                stmt = select(McpToolCache).where(McpToolCache.server_id == server_id, McpToolCache.tool_name == full_name)
-                existing = (await db.execute(stmt)).scalar_one_or_none()
+                remote_tool_names.add(full_name)
+                existing = cached_by_name.get(full_name)
                 if existing:
                     existing.tool_description = t_desc
                     existing.parameter_schema = json.dumps(schema_payload)
                 else:
                     db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False))
+            for cached_tool in cached_tools:
+                if cached_tool.tool_name not in remote_tool_names and cached_tool.is_published:
+                    cached_tool.is_published = False
+                    stale_unpublished += 1
             await db.commit()
+            try:
+                from app.services.ai.tools.registry import ToolRegistry
+                ToolRegistry.clear_db_tool_cache()
+            except Exception:
+                logger.exception("[MCP] Failed to clear runtime tool cache after sync for %s", server_id)
+            return {
+                "server_id": server_id,
+                "remote_tool_count": len(remote_tool_names),
+                "stale_unpublished": stale_unpublished,
+            }
 
     @classmethod
     async def _idle_cleanup_loop(cls):

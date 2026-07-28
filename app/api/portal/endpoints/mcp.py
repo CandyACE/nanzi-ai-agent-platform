@@ -10,13 +10,20 @@ import logging
 from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.models.mcp import McpServer, McpToolCache
-from app.models.agent import AIAgentVersion
+from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from pydantic import BaseModel, Field, ConfigDict
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _clear_runtime_tool_cache() -> None:
+    """Make MCP configuration changes effective without waiting for TTL."""
+    from app.services.ai.tools.registry import ToolRegistry
+
+    ToolRegistry.clear_db_tool_cache()
 
 class McpServerBase(BaseModel):
     server_name: str
@@ -51,8 +58,43 @@ class McpToolResponseWithUsage(McpToolResponse):
     model_config = ConfigDict(from_attributes=True)
 
 
+class McpAgentUsageItem(BaseModel):
+    id: str
+    name: str
+    display_name: str
+    is_enabled: bool
+    active: bool
+    version_count: int
+
+
+class McpServerUsageResponse(BaseModel):
+    server_id: str
+    bound_agent_count: int
+    active_agent_count: int
+    bound_version_count: int
+    agents: List[McpAgentUsageItem]
+
+
 def _normalized_server_name(value: str) -> str:
     return str(value or "").strip()
+
+
+def _configured_tool_names(value: Any) -> set[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {value}
+    if not isinstance(value, list):
+        return set()
+
+    names = set()
+    for item in value:
+        if isinstance(item, str):
+            names.add(item)
+        elif isinstance(item, dict) and item.get("name"):
+            names.add(str(item["name"]))
+    return names
 
 
 async def _find_server_with_name(
@@ -242,12 +284,15 @@ async def update_mcp_server(
     server.auth_headers = data.auth_headers
     server.enabled_status = data.enabled_status
     await db.commit()
+    _clear_runtime_tool_cache()
     
-    # Auto-sync tools after update to capture any changes
-    try:
-        await McpClientService.sync_tools(server_id)
-    except Exception as e:
-        logger.warning(f"Sync failed during update for server {server_id}: {e}")
+    # Only enabled servers should be synchronized. Syncing a disabled server
+    # would mark it enabled again inside McpClientService.sync_tools().
+    if server.enabled_status == 1:
+        try:
+            await McpClientService.sync_tools(server_id)
+        except Exception as e:
+            logger.warning(f"Sync failed during update for server {server_id}: {e}")
     
     # Return with updated counts
     count_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == server_id)
@@ -282,6 +327,7 @@ async def delete_mcp_server(
     await db.execute(delete(McpServer).where(McpServer.id == server_id))
     
     await db.commit()
+    _clear_runtime_tool_cache()
     return {"message": "Server and associated tools deleted"}
 
 @router.post("/servers/{server_id}/sync")
@@ -301,10 +347,90 @@ async def sync_mcp_tools(
         raise HTTPException(status_code=403, detail="无法同步其他用户的私有 MCP 服务")
 
     try:
-        await McpClientService.sync_tools(server_id)
-        return {"status": "success", "message": "Tools synchronized successfully"}
+        sync_result = await McpClientService.sync_tools(server_id) or {}
+        _clear_runtime_tool_cache()
+        stale_unpublished = int(sync_result.get("stale_unpublished", 0))
+        return {
+            "status": "success",
+            "message": (
+                f"工具同步成功，已自动下线 {stale_unpublished} 个远端已删除工具"
+                if stale_unpublished
+                else "工具同步成功"
+            ),
+            "stale_unpublished": stale_unpublished,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/servers/{server_id}/usage", response_model=McpServerUsageResponse)
+async def get_mcp_server_usage(
+    server_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    server_stmt = select(McpServer).where(McpServer.id == server_id)
+    server = (await db.execute(server_stmt)).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    if server.scope == "personal" and server.user_id != _get_user_id(user) and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 使用情况")
+
+    tool_rows = (
+        await db.execute(
+            select(McpToolCache.tool_name, McpToolCache.is_published).where(
+                McpToolCache.server_id == server_id
+            )
+        )
+    ).all()
+    all_tool_names = {row[0] for row in tool_rows if row[0]}
+    published_tool_names = {row[0] for row in tool_rows if row[0] and row[1]}
+
+    version_rows = (
+        await db.execute(
+            select(AIAgentVersion, AIAgent)
+            .join(AIAgent, AIAgent.id == AIAgentVersion.agent_id)
+        )
+    ).all()
+
+    usage_by_agent: Dict[str, Dict[str, Any]] = {}
+    bound_version_count = 0
+    for version, agent in version_rows:
+        matched_tool_names = _configured_tool_names(version.tools) & all_tool_names
+        if not matched_tool_names:
+            continue
+
+        bound_version_count += 1
+        item = usage_by_agent.setdefault(
+            agent.id,
+            {
+                "id": agent.id,
+                "name": agent.name,
+                "display_name": agent.display_name or agent.name,
+                "is_enabled": bool(agent.is_enabled),
+                "active": False,
+                "version_count": 0,
+            },
+        )
+        item["version_count"] += 1
+        if (
+            agent.is_enabled
+            and str(version.status or "").upper() == "PUBLISHED"
+            and matched_tool_names & published_tool_names
+        ):
+            item["active"] = True
+
+    agents = sorted(
+        usage_by_agent.values(),
+        key=lambda item: (not item["active"], item["display_name"] or item["name"]),
+    )
+    return {
+        "server_id": server_id,
+        "bound_agent_count": len(agents),
+        "active_agent_count": sum(1 for item in agents if item["active"]),
+        "bound_version_count": bound_version_count,
+        "agents": agents,
+    }
 
 @router.get("/servers/{server_id}/tools", response_model=List[McpToolResponseWithUsage])
 async def list_mcp_server_tools(
@@ -385,4 +511,5 @@ async def toggle_tool_publish(
     stmt = update(McpToolCache).where(McpToolCache.id == tool_id).values(is_published=published)
     await db.execute(stmt)
     await db.commit()
+    _clear_runtime_tool_cache()
     return {"status": "success", "is_published": published}
