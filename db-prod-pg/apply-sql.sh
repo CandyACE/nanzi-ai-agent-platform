@@ -15,6 +15,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CALLER_DIR="$PWD"
 cd "$ROOT_DIR"
 
 PYTHON_BIN="python3"
@@ -33,7 +34,21 @@ if [[ $# -eq 0 ]]; then
         SQL_FILES+=("$sql_file")
     done
 else
-    SQL_FILES=("$@")
+    for sql_file in "$@"; do
+        if [[ "$sql_file" = /* ]]; then
+            resolved_sql_file="$sql_file"
+        elif [[ -f "$CALLER_DIR/$sql_file" ]]; then
+            resolved_sql_file="$CALLER_DIR/$sql_file"
+        elif [[ -f "$ROOT_DIR/$sql_file" ]]; then
+            resolved_sql_file="$ROOT_DIR/$sql_file"
+        elif [[ -f "$SCRIPT_DIR/$sql_file" ]]; then
+            resolved_sql_file="$SCRIPT_DIR/$sql_file"
+        else
+            # 保留原始路径，让后面的错误信息继续显示用户传入的值。
+            resolved_sql_file="$sql_file"
+        fi
+        SQL_FILES+=("$resolved_sql_file")
+    done
 fi
 
 if [[ ${#SQL_FILES[@]} -eq 0 ]]; then

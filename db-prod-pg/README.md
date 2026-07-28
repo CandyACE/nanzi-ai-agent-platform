@@ -27,12 +27,12 @@ cd /Users/chenxiaolong/workspace/nanzi-ai-agent-platform/db-prod-pg
 ./apply-sql.sh
 ```
 
-但在 `db-prod-pg` 目录下指定文件时，建议使用绝对路径，因为脚本启动后会切换到
-项目根目录：
+在 `db-prod-pg` 目录下指定文件时，现在可以直接使用文件名；脚本会自动按调用目录、
+项目根目录和 `db-prod-pg` 目录解析相对路径：
 
 ```bash
-./apply-sql.sh "$PWD/V3-add_mcp_scope_and_user_id.sql" \
-               "$PWD/V4-add_category_to_chatbi_examples.sql"
+./apply-sql.sh V3-add_mcp_scope_and_user_id.sql \
+               V4-add_category_to_chatbi_examples.sql
 ```
 
 ## 一、首次初始化：单次全量执行
