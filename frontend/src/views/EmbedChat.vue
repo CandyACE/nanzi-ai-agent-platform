@@ -7023,10 +7023,10 @@ onUnmounted(() => {
   --ai-bubble-border: #e2e8f0;
   --ai-bubble-accent: #94a3b8;
   --md-table-background: #ffffff;
-  --md-table-header: #f8fafc;
+  --md-table-header: #ffffff;
   --md-table-text: #334155;
-  --md-table-border: #e2e8f0;
-  --md-table-cell-border: #eef2f7;
+  --md-table-border: #f1f5f9;
+  --md-table-cell-border: #f8fafc;
   --md-table-cell-padding: 9px 12px;
 }
 .markdown-theme-academic {
@@ -7045,11 +7045,11 @@ onUnmounted(() => {
   --ai-bubble-border: #d2d2d7;
   --ai-bubble-accent: #86868b;
   --md-table-background: #ffffff;
-  --md-table-header: #f5f5f7;
-  --md-table-text: #1d1d1f;
-  --md-table-border: #d2d2d7;
-  --md-table-cell-border: #e8e8ed;
-  --md-table-cell-padding: 10px 14px;
+  --md-table-header: #ffffff;
+  --md-table-text: #334155;
+  --md-table-border: #f1f5f9;
+  --md-table-cell-border: #f8fafc;
+  --md-table-cell-padding: 9px 12px;
 }
 .markdown-theme-warm {
   --ai-bubble-background: #fffdf5;
@@ -7069,8 +7069,8 @@ onUnmounted(() => {
   --md-table-background: #ffffff;
   --md-table-header: #f8fafc;
   --md-table-text: #334155;
-  --md-table-border: #e5e7eb;
-  --md-table-cell-border: #eef2f7;
+  --md-table-border: #f1f5f9;
+  --md-table-cell-border: #f8fafc;
   --md-table-cell-padding: 6px 10px;
 }
 .markdown-theme-bauhaus {

@@ -109,6 +109,39 @@ def test_bauhaus_message_background_is_white():
     assert "--md-table-background: #ffffff;" in bauhaus_theme
 
 
+def test_minimal_table_uses_near_white_borders():
+    source = _source("frontend/src/views/EmbedChat.vue")
+
+    minimal_theme = source.split(".markdown-theme-minimal {", 1)[1].split("}", 1)[0]
+    assert "--md-table-border: #f1f5f9;" in minimal_theme
+    assert "--md-table-cell-border: #f8fafc;" in minimal_theme
+    assert "--md-table-header: #ffffff;" in minimal_theme
+
+
+def test_apple_table_matches_minimal_table_style():
+    source = _source("frontend/src/views/EmbedChat.vue")
+
+    apple_theme = source.split(".markdown-theme-apple {", 1)[1].split("}", 1)[0]
+    for token in (
+        "--md-table-background: #ffffff;",
+        "--md-table-header: #ffffff;",
+        "--md-table-text: #334155;",
+        "--md-table-border: #f1f5f9;",
+        "--md-table-cell-border: #f8fafc;",
+        "--md-table-cell-padding: 9px 12px;",
+    ):
+        assert token in apple_theme
+
+
+def test_compact_table_uses_near_white_borders():
+    source = _source("frontend/src/views/EmbedChat.vue")
+
+    compact_theme = source.split(".markdown-theme-compact {", 1)[1].split("}", 1)[0]
+    assert "--md-table-header: #f8fafc;" in compact_theme
+    assert "--md-table-border: #f1f5f9;" in compact_theme
+    assert "--md-table-cell-border: #f8fafc;" in compact_theme
+
+
 def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():
     source = _source("frontend/src/views/EmbedChat.vue")
 
