@@ -1008,6 +1008,8 @@ const externalCreationMissingFields = computed(() => {
                 placeholder="你是一个..."
                 fill
                 enable-optimize
+                optimize-endpoint="/api/portal/prompts/optimize/agent-editor"
+                :require-optimize-permission="false"
                 :disabled="!canEditVersion"
               />
             </div>

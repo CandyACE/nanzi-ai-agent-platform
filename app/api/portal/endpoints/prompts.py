@@ -75,6 +75,24 @@ async def optimize_prompt(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/optimize/agent-editor", response_model=PromptOptimizeResponse)
+async def optimize_agent_editor_prompt(
+    data: Dict[str, str],
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """为已登录的智能体版本编辑器提供润色；不要求提示词工坊专属权限。"""
+    content = data.get("content")
+    if not content:
+        raise HTTPException(status_code=400, detail="Missing content")
+
+    try:
+        return await PromptService.optimize_prompt(content)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"AI 润色结果解析失败，请重试：{e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/history")
 async def get_prompt_history(
     source: PromptSource,
