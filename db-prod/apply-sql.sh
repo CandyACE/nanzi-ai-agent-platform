@@ -11,11 +11,32 @@ if [ -z "$BASH_VERSION" ]; then
     fi
 fi
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CALLER_DIR="$PWD"
+cd "$ROOT_DIR"
 
 
 if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
+fi
+
+SQL_FILES=()
+if [ $# -gt 0 ]; then
+    for sql_file in "$@"; do
+        if [[ "$sql_file" = /* ]]; then
+            resolved_sql_file="$sql_file"
+        elif [ -f "$CALLER_DIR/$sql_file" ]; then
+            resolved_sql_file="$CALLER_DIR/$sql_file"
+        elif [ -f "$ROOT_DIR/$sql_file" ]; then
+            resolved_sql_file="$ROOT_DIR/$sql_file"
+        elif [ -f "$SCRIPT_DIR/$sql_file" ]; then
+            resolved_sql_file="$SCRIPT_DIR/$sql_file"
+        else
+            resolved_sql_file="$sql_file"
+        fi
+        SQL_FILES+=("$resolved_sql_file")
+    done
 fi
 
 read -r -p "MySQL host: " MYSQL_HOST_INPUT
@@ -42,7 +63,7 @@ echo "  Password : ******"
 if [ $# -eq 0 ]; then
     echo "  SQL files: db-prod/V*.sql"
 else
-    echo "  SQL file : $*"
+    echo "  SQL file : ${SQL_FILES[*]}"
 fi
 read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
 CONFIRM_UPPER=$(echo "$CONFIRM_INPUT" | tr '[:lower:]' '[:upper:]')
@@ -119,8 +140,8 @@ if [ $# -eq 0 ]; then
         echo "💡 已跳过默认管理员账号数据的导入。"
     fi
 else
-    python3 db-prod/apply_sql.py "$@" "${COMMON_ARGS[@]}"
-    for f in "$@"; do
+    python3 db-prod/apply_sql.py "${SQL_FILES[@]}" "${COMMON_ARGS[@]}"
+    for f in "${SQL_FILES[@]}"; do
         if [[ "$f" =~ INIT-USER-ADMIN.sql$ ]]; then
             echo -e "\033[1;32m===================================================\033[0m"
             echo -e "\033[1;32m🔑 首次登录重要指引：\033[0m"

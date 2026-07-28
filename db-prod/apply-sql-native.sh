@@ -3,7 +3,28 @@
 # 依靠系统已安装的 mysql 命令行客户端。
 # 实现了与 Python 脚本相同的幂等性过滤机制（忽略 1007, 1050, 1054, 1060, 1061, 1062, 1091 等错误码）。
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CALLER_DIR="$PWD"
+cd "$ROOT_DIR"
+
+SQL_FILES=()
+if [ $# -gt 0 ]; then
+    for sql_file in "$@"; do
+        if [[ "$sql_file" = /* ]]; then
+            resolved_sql_file="$sql_file"
+        elif [ -f "$CALLER_DIR/$sql_file" ]; then
+            resolved_sql_file="$CALLER_DIR/$sql_file"
+        elif [ -f "$ROOT_DIR/$sql_file" ]; then
+            resolved_sql_file="$ROOT_DIR/$sql_file"
+        elif [ -f "$SCRIPT_DIR/$sql_file" ]; then
+            resolved_sql_file="$SCRIPT_DIR/$sql_file"
+        else
+            resolved_sql_file="$sql_file"
+        fi
+        SQL_FILES+=("$resolved_sql_file")
+    done
+fi
 
 # 默认端口
 MYSQL_PORT_INPUT=3306
@@ -39,7 +60,7 @@ echo "  Password : ******"
 if [ $# -eq 0 ]; then
     echo "  SQL files: db-prod/V*.sql"
 else
-    echo "  SQL file : $*"
+    echo "  SQL file : ${SQL_FILES[*]}"
 fi
 read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
 CONFIRM_UPPER=$(echo "$CONFIRM_INPUT" | tr '[:lower:]' '[:upper:]')
@@ -313,7 +334,7 @@ if [ $# -eq 0 ]; then
         echo "💡 已跳过默认管理员账号数据的导入。"
     fi
 else
-    for f in "$@"; do
+    for f in "${SQL_FILES[@]}"; do
         echo "---------------------------------------------------"
         echo "🚀 Applying $f..."
         if ! execute_sql_file "$f"; then
