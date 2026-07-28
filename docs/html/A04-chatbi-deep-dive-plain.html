@@ -1,16 +1,17 @@
 <!--
-  微信公众号排版 HTML — NanZi 实战连载 · 第 04 篇（深度修订 v2）
+  微信公众号排版 HTML — NanZi 实战连载 · 第 04 篇（克制配色版）
   系列：《NanZi 开源智能体平台实战连载》
+  说明：正文与 A04-chatbi-deep-dive.html 同源；石板灰基调 + ChatBI 赭石点缀（本篇主题色）。
   使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式；全部内联 style
 -->
 
 <section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
 
   <!-- 标题区 -->
-  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
-    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 04</p>
-    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;letter-spacing:1px;">深入 ChatBI：问数是护栏工程</p>
-    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">端到端流程 · 分诊 · Binding · 门禁 · 计划自愈 · 结果栈 · 门户</p>
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:#1c1917;border-radius:10px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#a8a29e;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 04 · 克制配色预览</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#fafaf9;line-height:1.55;letter-spacing:1px;">深入 ChatBI：问数是护栏工程</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#d6d3d1;line-height:1.6;letter-spacing:0.5px;">端到端流程 · 分诊 · Binding · 门禁 · 计划自愈 · 结果栈 · 门户</p>
   </section>
 
   <!-- 项目声明 -->
@@ -20,7 +21,7 @@
       本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议。
     </p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
-      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
     </p>
   </section>
 
@@ -39,8 +40,8 @@
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· 按排障顺序定位：分诊 → 门禁前缀 → Binding → 修复轮次 → 元数据/授权</p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>先给结论：</strong>ChatBI 的护栏强度是三类专家里最强的。外层路由只负责「把话交给问数专家」；<strong>本轮要不要写 SQL、写之前过几道闸</strong>，全由 ChatBI 内部说了算。口径与元数据质量决定上限——模型再强，表结构脏、授权乱，护栏也只能拦错，不能替你补治理。
     </p>
   </section>
@@ -49,11 +50,11 @@
 
   <!-- ========== 00 端到端主流程 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">00｜端到端主流程：用户一句话之后发生了什么</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #a16207;padding-left:12px;line-height:1.4;">00｜端到端主流程：用户一句话之后发生了什么</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>先别钻分诊枚举和门禁前缀。这一节只回答一件事：用户敲下「上个月华东销售额」之后，平台<strong>按什么顺序</strong>干活。后面各章是这条流水线上的放大镜；迷路时随时回到这里对号入座。
     </p>
   </section>
@@ -64,9 +65,9 @@
     </p>
   </section>
 
-  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#fde68a;line-height:1.5;">新查数主路径（示意）</p>
-    <p style="margin:0;font-size:12px;color:#e2e8f0;line-height:1.95;font-family:Menlo,Monaco,Consolas,monospace;">
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#1c1917;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#e7d9c8;line-height:1.5;">新查数主路径（示意）</p>
+    <p style="margin:0;font-size:12px;color:#e7e5e4;line-height:1.95;font-family:Menlo,Monaco,Consolas,monospace;">
       ① 用户输入 → ② 分诊 → ③ 结构化需求分析（IntentFrame）<br/>
       → ④ 查样例集（Few-Shot） → ⑤ 获取数据集 Schema<br/>
       → ⑥ 构建 SQL（+ sql_plan） → ⑦ 各类门禁 + Binding 预检<br/>
@@ -78,59 +79,59 @@
     <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
       <thead>
         <tr>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#92400e;color:#fffbeb;text-align:left;width:12%;">步骤</th>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#92400e;color:#fffbeb;text-align:left;width:28%;">做什么</th>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#92400e;color:#fffbeb;text-align:left;">要点 / Trace 里看什么</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#78350f;color:#faf8f5;text-align:left;width:12%;">步骤</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#78350f;color:#faf8f5;text-align:left;width:28%;">做什么</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#78350f;color:#faf8f5;text-align:left;">要点 / Trace 里看什么</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fafafa;color:#111827;">① 用户输入</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fafaf9;color:#1c1917;">① 用户输入</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">对话 / Embed / V1 进入 ChatBI</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">外层已选中 DataQuery；亲和性 KEEP/BREAK/UNCERTAIN 决定是否留在问数会话</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fffbeb;color:#92400e;">② 分诊</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#faf8f5;color:#78350f;">② 分诊</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">判定本轮类型</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;"><code style="font-size:11px;">DataQueryTurnClassifier</code> 为最终判定。非查数走处置/委派；复用/呈现可跳过后续查库（详第 02 节）</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">③ 结构化需求分析</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#44403c;">③ 结构化需求分析</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">生成 IntentFrame</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">指标 / 维度 / 筛选语义 / 时间 / 粒度 → 派生 Schema 检索词。Trace「用户需求分析」卡片（详第 03 节）</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#ecfeff;color:#0e7490;">④ 查样例集</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f6f8fa;color:#334155;">④ 查样例集</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">Few-Shot 案例检索</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">相似历史问法与 SQL 作参考；未命中也要可观测，避免模型从零瞎编口径</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">⑤ 获取数据集</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#44403c;">⑤ 获取数据集</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;"><code style="font-size:11px;">get_dataset_schema</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">仅授权元数据范围内。无授权 / 服务不可用 / 未同步 / 连续 miss → 终止。多候选接近 → 先澄清</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fffbeb;color:#92400e;">⑥ 构建 SQL</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#faf8f5;color:#78350f;">⑥ 构建 SQL</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">ReAct 生成只读 SQL</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">可附带 <code style="font-size:11px;">sql_plan</code> 前端卡片（goal/tables/metrics/…）。须<strong>先 Schema 后 SQL</strong>，顺序反了会被 SCHEMA_GATE 打回</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fef2f2;color:#b91c1c;">⑦ 各类门禁</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#1c1917;">⑦ 各类门禁</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">工具返回前缀，不真执行</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">SCHEMA / STATIC / REPEAT / FAILED_REPEAT / PLAN / TIME_RANGE / Performance…（详第 04 节）。Binding 把表↔数据集钉死</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">⑧ 执行查询</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#faf8f5;color:#78350f;">⑧ 执行查询</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;"><code style="font-size:11px;">execute_sql_query</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">预检通过后落库只读查询；跨 dataset 表引用可自动升级联邦（详第 07 节）</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#ecfeff;color:#0e7490;">⑨ 结果检查</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f6f8fa;color:#334155;">⑨ 结果检查</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">空结果 / 报错 / 异常指标</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">空结果结合 IntentFrame 诊断筛选项；报错进 repair；比率/时延异常触发复核。成功则推入结果栈（深度≤10）</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#faf5ff;color:#6b21a8;">⑩ 输出与交付</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#44403c;">⑩ 输出与交付</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">回答 / 图表 / 简报</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">自然语言呈现；追问下钻走结果栈；简报与订阅须绑 result_id（详第 06 节）。可选 Grounding 事实审核</td>
         </tr>
@@ -138,15 +139,15 @@
     </table>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">三条旁路（不必走完全程）</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">三条旁路（不必走完全程）</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>复用 / 分析 / 改格式</strong>：分诊后直接 synthesis，用结果栈里已有数据</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>元数据问答</strong>：问有哪些表字段，未必执行业务 SQL</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>非查数</strong>：本地帮助、结果动作、或 handoff 委派主助手 / 联网助手</p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #57534e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>排障怎么用这张图：</strong>Trace 停在哪一步，就翻对应章节——分诊不对 → 02；IntentFrame / Schema → 03；门禁前缀 / Binding → 04；计划与修复 → 05；栈与门户 → 06。别一上来改 system prompt。
     </p>
   </section>
@@ -155,11 +156,11 @@
 
   <!-- ========== 01 定位 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜定位：薄 Runner + 厚护栏</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">01｜定位：薄 Runner + 厚护栏</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>可以把 ChatBI 想成「带安检的数据分析师」：用户每说一句话，先判断是查数、追问、看表结构、还是闲聊委派；真要查库，必须先摸清有哪些表、再写只读 SQL，写完还要过安检才执行。底层仍是 AgentScope 的「想一步、用工具、再想」循环，外面多了一整层 NanZi 自己写的安检与记忆。
     </p>
   </section>
@@ -170,22 +171,22 @@
     </p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">和代码怎么对应</p>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">和代码怎么对应</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 第 00 节流水线 = 产品视角；本节说<strong>代码落点</strong></p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 门面 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">DataAgentRunner</code> 编排；域逻辑在 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">runners/chatbi/</code></p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· ReAct 主循环与修复轮：<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">native_turn</code> / <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">react_stream</code>；状态在 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">DataRunState</code></p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 门面 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">DataAgentRunner</code> 编排；域逻辑在 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">runners/chatbi/</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· ReAct 主循环与修复轮：<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">native_turn</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">react_stream</code>；状态在 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">DataRunState</code></p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
 
   <!-- ========== 02 分诊 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜分诊：本轮到底要不要写 SQL</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">02｜分诊：本轮到底要不要写 SQL</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>用户连着聊「上个月销售额」「换成柱状图」「这个表有哪些字段」「帮我写个邮件」——不能句句冲进数据库。分诊就像急诊分诊台：有的要开刀（新查数），有的只看片子（分析已有结果），有的转科（委派通用助手）。Trace 里先看分诊类型，再骂「怎么没 SQL」。
     </p>
   </section>
@@ -194,24 +195,24 @@
     <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
       <thead>
         <tr>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">类型</th>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">白话</th>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">通常路径</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">类型</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">白话</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">通常路径</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fffbeb;color:#92400e;"><code style="font-size:11px;">new_data_query</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#faf8f5;color:#78350f;"><code style="font-size:11px;">new_data_query</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">新开一刀查数</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">意图帧 → Schema → SQL</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fffbeb;color:#92400e;"><code style="font-size:11px;">data_followup_query</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#faf8f5;color:#78350f;"><code style="font-size:11px;">data_followup_query</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">在上一刀上改条件/下钻</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">继承结果栈上下文再查</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#ecfeff;color:#0e7490;"><code style="font-size:11px;">federated_data_query</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f6f8fa;color:#334155;"><code style="font-size:11px;">federated_data_query</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">跨多个数据集</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">联邦升级 + Binding 校正</td>
         </tr>
@@ -221,12 +222,12 @@
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">元数据问答，未必执行业务 SQL</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;"><code style="font-size:11px;">reuse_previous_result</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#44403c;"><code style="font-size:11px;">reuse_previous_result</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">直接用上次数</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">可跳过 Agent，走 synthesis</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;"><code style="font-size:11px;">result_analysis</code> / <code style="font-size:11px;">result_presentation</code> / <code style="font-size:11px;">format_correction</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#44403c;"><code style="font-size:11px;">result_analysis</code> / <code style="font-size:11px;">result_presentation</code> / <code style="font-size:11px;">format_correction</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">分析 / 出图 / 改格式</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">依赖结果栈，通常不再查库</td>
         </tr>
@@ -236,7 +237,7 @@
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">交付链 / 工具，须绑 result_id</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#fef2f2;color:#b91c1c;"><code style="font-size:11px;">non_data_request</code> / <code style="font-size:11px;">clarification_required</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#44403c;"><code style="font-size:11px;">non_data_request</code> / <code style="font-size:11px;">clarification_required</code></td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">非查数 / 缺条件要澄清</td>
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">见下方处置，禁止臆造字段</td>
         </tr>
@@ -244,16 +245,16 @@
     </table>
   </section>
 
-  <section style="margin:0 0 12px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;line-height:1.5;">非查数怎么处置（NonDataDisposition）</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">LOCAL_HELP</code> — ChatBI 本地答（怎么用门户、怎么问数）</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">RESULT_ACTION</code> — 留在交付链（发简报等），勿误判成「闲聊」</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">DELEGATE_MAIN</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">DELEGATE_WEB</code> — <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">agent_handoff</code> 无感委派；失败才提示「请切换智能体」</p>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">非查数怎么处置（NonDataDisposition）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">LOCAL_HELP</code> — ChatBI 本地答（怎么用门户、怎么问数）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">RESULT_ACTION</code> — 留在交付链（发简报等），勿误判成「闲聊」</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">DELEGATE_MAIN</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">DELEGATE_WEB</code> — <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">agent_handoff</code> 无感委派；失败才提示「请切换智能体」</p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
-      <strong>要点：</strong>外层 Router 只选中 DataQuery；<strong>最终判定是</strong> <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">DataQueryTurnClassifier</code>。会话亲和性三态：仅 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">BREAK</code> 可启发式离开 ChatBI；<code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">UNCERTAIN</code> 必须语义路由，不得直接 fallback Main。澄清候选必须来自授权 Schema / 数据集 / 结果栈。
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #57534e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>要点：</strong>外层 Router 只选中 DataQuery；<strong>最终判定是</strong> <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">DataQueryTurnClassifier</code>。会话亲和性三态：仅 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">BREAK</code> 可启发式离开 ChatBI；<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">UNCERTAIN</code> 必须语义路由，不得直接 fallback Main。澄清候选必须来自授权 Schema / 数据集 / 结果栈。
     </p>
   </section>
 
@@ -261,33 +262,33 @@
 
   <!-- ========== 03 新查数流水线 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜新查数流水线：意图帧 → Schema → SQL</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">03｜新查数流水线：意图帧 → Schema → SQL</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>真要查数时，平台<strong>禁止</strong>模型一上来就写 SQL。先把用户话翻译成「要查什么指标、什么维度、什么时间、什么粒度」——这叫意图帧；再拿授权范围内的表结构（Schema）；最后才允许执行查询。顺序反了，门禁会直接打回。<strong>Schema 不是模型编的</strong>——要先在控制台把数据源、元数据集建好并同步，问数才能检索到。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">DataQueryIntentFrame（用户需求分析）</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">DataQueryIntentFrame（用户需求分析）</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
       结构化记下业务目标、指标、维度、筛选语义、时间范围、粒度等，并派生 Schema 检索词。Trace 上会看到「用户需求分析」卡片。它还是字段绑定自检与<strong>空结果修复</strong>的依据——空结果不能只因「候选值不含用户原词」就断定没数据。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;line-height:1.5;">硬顺序</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf8f5;border:1px solid #e7d9c8;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#78350f;line-height:1.5;">硬顺序</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. 意图帧 / Schema 预取（失败：无授权、元数据不可用、未同步知识库、连续 miss → <strong>终止</strong>）</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. 需要写 SQL 时做 few-shot 案例检索（未命中也要可观测）</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. <strong>必须先</strong> <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">get_dataset_schema</code>，再允许 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">execute_sql_query</code></p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. <strong>必须先</strong> <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">get_dataset_schema</code>，再允许 <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">execute_sql_query</code></p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">4. 多候选高置信且分数接近 → <strong>先澄清</strong>，禁止直接 SQL</p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#111827;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#fde68a;line-height:1.5;">Schema 长什么样（get_dataset_schema 命中片段示例）</p>
-    <p style="margin:0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;">--- [Schema:1] type=table dataset=sales_ds table=fact_sales score=0.91 ---
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#1c1917;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#e7d9c8;line-height:1.5;">Schema 长什么样（get_dataset_schema 命中片段示例）</p>
+    <p style="margin:0;font-size:12px;color:#e7e5e4;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;">--- [Schema:1] type=table dataset=sales_ds table=fact_sales score=0.91 ---
 dataset: sales_ds
 table_name: fact_sales
 table_term: 销售明细
@@ -301,34 +302,34 @@ columns:
   - physical_name: sale_amount
     term: 销售额
     type: decimal</p>
-    <p style="margin:10px 0 0 0;font-size:13px;color:#94a3b8;line-height:1.75;">
-      要点：SQL 里只能用 <code style="background:#1e293b;color:#fde68a;padding:1px 4px;border-radius:3px;">table_name</code> / <code style="background:#1e293b;color:#fde68a;padding:1px 4px;border-radius:3px;">physical_name</code>（物理名）；<code style="background:#1e293b;color:#fde68a;padding:1px 4px;border-radius:3px;">term</code> 是给人看的业务名。数据集级还会有 <code style="background:#1e293b;color:#fde68a;padding:1px 4px;border-radius:3px;">_metrics.txt</code> 指标口径块（算数参考，不是表结构）。多表命中时用 <code style="background:#1e293b;color:#fde68a;padding:1px 4px;border-radius:3px;">--- [Schema:n] ---</code> 分隔。
+    <p style="margin:10px 0 0 0;font-size:13px;color:#a8a29e;line-height:1.75;">
+      要点：SQL 里只能用 <code style="background:#292524;color:#e7d9c8;padding:1px 4px;border-radius:3px;">table_name</code> / <code style="background:#292524;color:#e7d9c8;padding:1px 4px;border-radius:3px;">physical_name</code>（物理名）；<code style="background:#292524;color:#e7d9c8;padding:1px 4px;border-radius:3px;">term</code> 是给人看的业务名。数据集级还会有 <code style="background:#292524;color:#e7d9c8;padding:1px 4px;border-radius:3px;">_metrics.txt</code> 指标口径块（算数参考，不是表结构）。多表命中时用 <code style="background:#292524;color:#e7d9c8;padding:1px 4px;border-radius:3px;">--- [Schema:n] ---</code> 分隔。
     </p>
   </section>
 
-  <section style="margin:12px 0 10px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;line-height:1.5;">Schema 从哪来：怎么建（运维流程）</p>
+  <section style="margin:12px 0 10px 0;padding:14px 16px;background:#f6f8fa;border:1px solid #d4dde6;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">Schema 从哪来：怎么建（运维流程）</p>
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
       ChatBI 运行时<strong>不现场扫整库字典</strong>，而是检索你事先建好并同步好的元数据。建议按这个顺序：
     </p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. <strong>【数据源管理】</strong>登记业务库连接（MySQL / ClickHouse / Oracle…），测通</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. <strong>【元数据管理】</strong>创建数据集（Dataset），勾选要暴露的表 / 视图</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. <strong>同步表结构</strong>：从数据源拉取物理列；再补 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">term</code>（业务名）、枚举、指标口径（metrics）</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">4. <strong>同步到检索侧</strong>：执行元数据 RAG 同步（生成表级 chunk + <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">_metrics.txt</code>），供向量 / 本地检索；表结构变更后要<strong>重新同步</strong></p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. <strong>同步表结构</strong>：从数据源拉取物理列；再补 <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">term</code>（业务名）、枚举、指标口径（metrics）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">4. <strong>同步到检索侧</strong>：执行元数据 RAG 同步（生成表级 chunk + <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">_metrics.txt</code>），供向量 / 本地检索；表结构变更后要<strong>重新同步</strong></p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">5. <strong>授权</strong>：给用户 / 角色授 dataset（元数据）资源；菜单能进 ≠ 库表可读</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">6. <strong>挂到 ChatBI</strong>：版本工具勾选 schema/SQL；可选工具级 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">metadata_dataset_ids</code> 收窄可见集（见第 03 篇）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">6. <strong>挂到 ChatBI</strong>：版本工具勾选 schema/SQL；可选工具级 <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">metadata_dataset_ids</code> 收窄可见集（见第 03 篇）</p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
-    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">建好了怎么验</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">建好了怎么验</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 元数据页「测试 / 检索测试」：用业务词能命中目标表</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 对话问「有哪些销售相关表」→ Trace 见 schema 命中，而不是空召回</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 故意用中文表名写 SQL → 应被拦并引导回 <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">get_dataset_schema</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 故意用中文表名写 SQL → 应被拦并引导回 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">get_dataset_schema</code></p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
-      Schema 连续未命中达到阈值 → <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">source_reclassification</code> 来源重判，禁止无限重试查库。模型若在完成查数顺序前输出自然语言结论，最终 guard 会拦截。<strong>上限仍看元数据质量</strong>：term 乱、指标没写、不同步，护栏拦得了胡写 SQL，补不了脏口径。
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      Schema 连续未命中达到阈值 → <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">source_reclassification</code> 来源重判，禁止无限重试查库。模型若在完成查数顺序前输出自然语言结论，最终 guard 会拦截。<strong>上限仍看元数据质量</strong>：term 乱、指标没写、不同步，护栏拦得了胡写 SQL，补不了脏口径。
     </p>
   </section>
 
@@ -336,20 +337,20 @@ columns:
 
   <!-- ========== 04 Binding + 门禁 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜SqlQueryBinding 与 SQL 门禁前缀</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #a16207;padding-left:12px;line-height:1.4;">04｜SqlQueryBinding 与 SQL 门禁前缀</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>Binding 是「工作单」：这张单上写明——你查的是哪张物理表、归属哪个数据集、Schema 长什么样、预检过没过。预检和真正执行共用同一张单，防止「看的是 A 表结构、跑的是 B 表 SQL」。门禁前缀是安检章：没过就<strong>不执行</strong>，把带前缀的说明还给模型改。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">Binding 关键字段</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">Binding 关键字段</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
-      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">sql</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">primary_dataset_name</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">schema_output</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">tables</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">preflight_validated</code> 等。<br/>
-      Agent 路径在执行前走 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">resolve_sql_schema_preflight_with_binding</code>：字段/表与 Schema 一致；Schema 外物理表仅在有元数据权限时放行并回填 dataset。Core 若见 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">preflight_validated=True</code> 不重复字段校验。
+      <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">sql</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">primary_dataset_name</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">schema_output</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">tables</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">preflight_validated</code> 等。<br/>
+      Agent 路径在执行前走 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">resolve_sql_schema_preflight_with_binding</code>：字段/表与 Schema 一致；Schema 外物理表仅在有元数据权限时放行并回填 dataset。Core 若见 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">preflight_validated=True</code> 不重复字段校验。
     </p>
   </section>
 
@@ -357,9 +358,9 @@ columns:
     <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
       <thead>
         <tr>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#92400e;color:#fffbeb;text-align:left;">前缀</th>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#92400e;color:#fffbeb;text-align:left;">拦什么</th>
-          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#92400e;color:#fffbeb;text-align:left;">你该怎么做</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#78350f;color:#faf8f5;text-align:left;">前缀</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#78350f;color:#faf8f5;text-align:left;">拦什么</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#78350f;color:#faf8f5;text-align:left;">你该怎么做</th>
         </tr>
       </thead>
       <tbody>
@@ -369,9 +370,9 @@ columns:
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">先 get_dataset_schema；或澄清数据集</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;"><code style="font-size:11px;">[SQL_STATIC_GATE]</code></td>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;color:#374151;">非只读、多语句、危险关键字、sqlglot 方言风险</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;color:#374151;">改成 SELECT/WITH 等只读；禁 SELECT *</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;"><code style="font-size:11px;">[SQL_STATIC_GATE]</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;color:#374151;">非只读、多语句、危险关键字、sqlglot 方言风险</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;color:#374151;">改成 SELECT/WITH 等只读；禁 SELECT *</td>
         </tr>
         <tr>
           <td style="padding:8px;border:1px solid #e5e7eb;"><code style="font-size:11px;">[SQL_REPEAT_GATE]</code></td>
@@ -379,9 +380,9 @@ columns:
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">复用首次结果作答，勿空转</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;"><code style="font-size:11px;">[FAILED_SQL_REPEAT_GATE]</code></td>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;color:#374151;">失败 SQL 同参死磕</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;color:#374151;">改 SQL / 改 Schema，勿原样重试</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;"><code style="font-size:11px;">[FAILED_SQL_REPEAT_GATE]</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;color:#374151;">失败 SQL 同参死磕</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;color:#374151;">改 SQL / 改 Schema，勿原样重试</td>
         </tr>
         <tr>
           <td style="padding:8px;border:1px solid #e5e7eb;"><code style="font-size:11px;">[SQL_PLAN_GATE]</code></td>
@@ -389,9 +390,9 @@ columns:
           <td style="padding:8px;border:1px solid #e5e7eb;color:#374151;">看计划卡片，确认口径后再执行</td>
         </tr>
         <tr>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;"><code style="font-size:11px;">[TIME_RANGE_GATE]</code></td>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;color:#374151;">时间范围不合理</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;background:#fffbeb;color:#374151;">收窄或修正时间条件</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;"><code style="font-size:11px;">[TIME_RANGE_GATE]</code></td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;color:#374151;">时间范围不合理</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;background:#faf8f5;color:#374151;">收窄或修正时间条件</td>
         </tr>
         <tr>
           <td style="padding:8px;border:1px solid #e5e7eb;"><code style="font-size:11px;">[Performance Blocked]</code></td>
@@ -402,7 +403,7 @@ columns:
     </table>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
       静态策略偏只读（SELECT / WITH / EXPLAIN / SHOW / DESC）；禁多语句与危险关键字；用 sqlglot 做方言校验。JOIN 须有明确 ON。工具同参无进展会触发循环熔断。
     </p>
@@ -412,26 +413,26 @@ columns:
 
   <!-- ========== 05 计划与自愈 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #059669;padding-left:12px;line-height:1.4;">05｜sql_plan 与自愈修复</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">05｜sql_plan 与自愈修复</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>计划卡片相当于「手术方案摘要」——目标、表、字段、指标、筛选、时间、粒度、JOIN、风险备注，给人看也给门禁看。SQL 报错或结果是空的，不是让模型瞎重写，而是按<strong>修复策略</strong>再开一轮：空结果要结合意图帧判断是不是筛错字段、别名、父级范围。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">计划 JSON 字段</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">计划 JSON 字段</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
-      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">goal</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">tables</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">fields</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">metrics</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">filters</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">time_range</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">grain</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">joins</code> · <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">risk_notes</code><br/>
-      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">build_platform_sql_plan</code> 基于授权 Schema + 待执行 SQL；前端展示卡片；高风险可强制 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">[SQL_PLAN_GATE]</code>。
+      <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">goal</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">tables</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">fields</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">metrics</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">filters</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">time_range</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">grain</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">joins</code> · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">risk_notes</code><br/>
+      <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">build_platform_sql_plan</code> 基于授权 Schema + 待执行 SQL；前端展示卡片；高风险可强制 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">[SQL_PLAN_GATE]</code>。
     </p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;line-height:1.5;">repair_policy</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">触发：SQL 报错 / 空结果 / 缺计划 → 决策 → 再开一轮 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">reply_stream</code></p>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f6f8fa;border:1px solid #d4dde6;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#44403c;line-height:1.5;">repair_policy</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">触发：SQL 报错 / 空结果 / 缺计划 → 决策 → 再开一轮 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">reply_stream</code></p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 执行错误：成功前不得当最终回答</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 空结果：先诊断筛选、时间、JOIN；诊断 SQL 不能当结论</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 比率异常 → 对账复核；时延异常 → 复核时间字段方向/时区/单位</p>
@@ -441,36 +442,36 @@ columns:
 
   <!-- ========== 06 结果栈 · 门户 · 交付 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b91c1c;padding-left:12px;line-height:1.4;">06｜结果栈 · 数据门户 · 简报与订阅</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">06｜结果栈 · 数据门户 · 简报与订阅</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>查成功的每一刀结果会推进「结果栈」，后面说「按城市拆一下」「做成简报」才有据可依——不能让模型凭空编关键数字。数据门户是给业务同学的菜单入口；黄金报表订阅则是「定时再跑一遍 + 通知你」。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">结果栈</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">结果栈</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
-      键名 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">chatbi_result_stack</code> / <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">data_result_stack_v1</code>（<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">ChatBIResultRef</code>）。SQL 成功后双写兼容键 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">last_data_result</code>。<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">push_result_ref</code> 最大深度 <strong>10</strong>。可指「当前 / 上一个结果」或显式 result_id 下钻，条件可继承。简报 / 监控等交付<strong>必须</strong>绑定可追溯 result_id。
+      键名 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">chatbi_result_stack</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">data_result_stack_v1</code>（<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">ChatBIResultRef</code>）。SQL 成功后双写兼容键 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">last_data_result</code>。<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">push_result_ref</code> 最大深度 <strong>10</strong>。可指「当前 / 上一个结果」或显式 result_id 下钻，条件可继承。简报 / 监控等交付<strong>必须</strong>绑定可追溯 result_id。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;line-height:1.5;">数据门户</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf8f5;border:1px solid #e7d9c8;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#78350f;line-height:1.5;">数据门户</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
-      斜杠 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">/dataset_portal</code>（兼容旧 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">/dataset_menu</code>）；系统指令 id <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">sys_dataset_portal</code>。按用户授权生成数据集菜单 + LLM quick 追问。深链参数如 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">dataset_portal=1</code>、<code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">report_id</code>、<code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">run_id</code>。
+      斜杠 <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">/dataset_portal</code>（兼容旧 <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">/dataset_menu</code>）；系统指令 id <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">sys_dataset_portal</code>。按用户授权生成数据集菜单 + LLM quick 追问。深链参数如 <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">dataset_portal=1</code>、<code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">report_id</code>、<code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">run_id</code>。
     </p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;line-height:1.5;">简报与黄金报表订阅</p>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">简报与黄金报表订阅</p>
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
-      · 简报 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">chatbi_briefs</code>：从结果栈沉淀证据化 brief（v2：title / facts / evidence / markdown），可导出 Word；门户 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">/chatbi-briefs</code>
+      · 简报 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">chatbi_briefs</code>：从结果栈沉淀证据化 brief（v2：title / facts / evidence / markdown），可导出 Word；门户 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">/chatbi-briefs</code>
     </p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
-      · 订阅表 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">portal_saved_report_subscriptions</code>：<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">schedule_type</code>=daily|weekly|monthly|cron；可选 AI 分析、成功/失败通知、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">external_channels</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">alert_condition</code>；投递审计 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">portal_saved_report_digest_deliveries</code>
+      · 订阅表 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">portal_saved_report_subscriptions</code>：<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">schedule_type</code>=daily|weekly|monthly|cron；可选 AI 分析、成功/失败通知、<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">external_channels</code>、<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">alert_condition</code>；投递审计 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">portal_saved_report_digest_deliveries</code>
     </p>
   </section>
 
@@ -478,36 +479,36 @@ columns:
 
   <!-- ========== 07 联邦 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">07｜跨库联邦：自动升级，不靠猜</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">07｜跨库联邦：自动升级，不靠猜</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>一条 SQL 里出现了不属于当前数据集的表，而且牵涉多个库——平台应自动升成「联邦查数」，并用 Binding 把每张物理表钉死到正确的 dataset。不能只靠模型从 Schema 文本里猜库名。
     </p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f6f8fa;border:1px solid #d4dde6;border-radius:10px;">
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 单源执行检测到跨 dataset 表引用 → 自动升级联邦（G12）</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 构造 Binding，注入联邦 plan 的【物理表与数据集绑定】块</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 解析子查询后按 Binding 修正 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">dataset_name</code>；跨库要治理，不是功能开关一开就完事</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 解析子查询后按 Binding 修正 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">dataset_name</code>；跨库要治理，不是功能开关一开就完事</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
 
   <!-- ========== 08 排障 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #dc2626;padding-left:12px;line-height:1.4;">08｜排障顺序与十分钟验收</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">08｜排障顺序与十分钟验收</p>
   </section>
 
-  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#faf8f5;border-left:4px solid #a16207;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>大白话：</strong>ChatBI 出问题，先别急着改提示词。打开 Trace，按下面顺序从上往下看——八成卡在分诊、门禁或授权，而不是「模型不够聪明」。
     </p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b91c1c;line-height:1.5;">推荐排障顺序</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">推荐排障顺序</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. 智能体是否 CHATBI + 已发布 + 问数工具齐全（见第 03 篇）</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. Trace <strong>分诊类型</strong>：是不是根本不该查库？</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. 工具返回是否带 <strong>门禁前缀</strong>？对着上表改</p>
@@ -516,17 +517,17 @@ columns:
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">6. 数据源连通、元数据同步、RBAC 数据集授权、Few-Shot 案例库</p>
   </section>
 
-  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">十分钟验收</p>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">十分钟验收</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ 问简单计数 → Trace 见 new_data_query + schema 再 SQL</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ 「换成表格」→ reuse / presentation，不再无故重查</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ 故意写危险 SQL → 见 STATIC_GATE，不落库</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">/dataset_portal</code> 能出授权菜单</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">/dataset_portal</code> 能出授权菜单</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">☐ 无权限用户查不到未授权库表</p>
   </section>
 
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
-    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #57534e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
       <strong>边界：</strong>口径与元数据质量决定上限。Few-Shot 案例库值得运营投入。联邦跨库要治理。已知细节：静态风险门控目前可能先于重复 SQL 门控触发——排障时别被顺序迷惑。
     </p>
   </section>
@@ -534,13 +535,13 @@ columns:
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
 
   <!-- 下期预告 -->
-  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">下期预告</p>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:#faf8f5;border:1px solid #e7d9c8;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;">下期预告</p>
     <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>第 05 篇 · 内置工具箱手册</strong></p>
-    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">静态工具、问数工具、MCP 挂载与权限 scope——挂什么、别乱挂什么。</p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;">静态工具、问数工具、MCP 挂载与权限 scope——挂什么、别乱挂什么。</p>
   </section>
 
-  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#fafaf9;border-radius:8px;">
     <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 04</p>
     <p style="margin:0;font-size:13px;color:#9ca3af;">问数是护栏工程，不是提示词魔术。</p>
   </section>

@@ -1,0 +1,496 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 03 篇（克制配色版）
+  系列：《NanZi 开源智能体平台实战连载》
+  说明：正文与 A03-create-agents.html 同源；整体石板灰基调，三类专家用低饱和区分色（石墨 / 赭石 / 板岩蓝），避免高亮「AI 彩虹」。
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式；全部内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:#1c1917;border-radius:10px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#a8a29e;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 03 · 克制配色预览</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#fafaf9;line-height:1.55;letter-spacing:1px;">三种智能体怎么选、怎么配、怎么发布？</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#d6d3d1;line-height:1.6;letter-spacing:0.5px;">NanZi AI 引擎 · 三类专家场景 · 配置门禁与运行护栏</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      上篇把平台装起来了；这篇解决更实操的问题：<strong>在控制台里新建一个能跑、能发布、能被路由和委派调用的智能体，到底要点什么、填什么、为什么会被拦。</strong>
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      很多教程停在「选类型 → 填名字 → 保存」。NanZi 要多几步：<strong>选对专家类型 → 配好模型和工具 → 点发布</strong>，用户才能真正用起来。下面分章讲；每章开头先用大白话交代「这节在解决什么问题」，再展开技术细节。读完后你应该能：
+    </p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.85;">· 按业务场景选对通用助手 / 问数专家 / 知识库专家</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.85;">· 走完版本配置向导，知道哪些在「智能体档案」里改、哪些在「版本」里改</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.85;">· 发布失败或被拦时，对着提示改配置，不用猜</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· 用「十分钟验收」确认三类智能体真的在跑，而不是页面能开、对话空转</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>先给结论：</strong>类型选错比模型选错更伤——想让 AI 查数，就得建「问数专家」，不是给通用助手多挂几个工具。知识库要先绑文档库，不然检索是空的。改完配置记得<strong>点发布</strong>，否则用户聊到的还是旧版。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 NanZi AI 引擎与三类专家 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">01｜NanZi AI 引擎（LOCAL）与三类专家</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>可以把 NanZi 想成一家公司：<strong>LOCAL 引擎</strong>是自家办公大楼（NanZi AI 引擎），楼里再请三种岗位——<em>前台万能助手</em>、<em>数据分析师</em>、<em>档案管理员</em>。岗位不同，能干的活和「上岗前检查清单」也不一样。选错岗位，后面挂再多工具也白搭。下面先讲这三种岗位分别干什么、上岗前要查什么、上班后平台怎么管。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      控制台「引擎」下拉里的 <strong>LOCAL</strong>，就是 NanZi 自研的本地 AI 执行引擎——底层统一跑在 <strong>AgentScope 2.x ReAct</strong>（<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">Agent + Toolkit + ReActConfig</code>），经平台适配层 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">app/services/ai/runtime/agentscope/</code> 接入调度。文档和后文统称 <strong>NanZi AI 引擎</strong>。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      在这个引擎下，你再选<strong>主类型</strong>（<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent_type</code>）——平台据此锁定主能力、选 Executor/Runner，并套上对应的<strong>配置门禁</strong>与<strong>运行后门控</strong>。三者共用同一套 AgentScope 工具权限模型，但业务护栏强度不同。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f5f5f4;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">NanZi AI 引擎（LOCAL）= AgentScope ReAct</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>版本化配置</strong>：模型 / 工具 / 提示词 / Skills / 欢迎语写在 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">AIAgentVersion</code>，必须<strong>发布</strong>后才参与运行时
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>运行时真相</strong>：<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">get_active_agent_config</code> 读 Agent 元数据 + 最新 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">PUBLISHED</code> 版本
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>统一工具门控</strong>：三类专家都走 AgentScope <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">permission_scope</code>（read / write / ask / dangerous）→ 用户确认 / 外部执行挂起与恢复
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>与外部引擎区分</strong>：RAGFlow / OpenClaw 不走 NanZi AI 引擎，不经 AgentScope ReAct，也不吃本地版本向导（后文第 04 节 engine_config 再提）
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:4px 0;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">主类型</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">锁定能力</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">执行路径</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #d6d3d1;font-weight:bold;background:#f5f5f4;color:#44403c;">GENERAL</td>
+          <td style="padding:9px 8px;border:1px solid #d6d3d1;background:#f5f5f4;color:#374151;"><code style="font-size:11px;">general_chat</code></td>
+          <td style="padding:9px 8px;border:1px solid #d6d3d1;background:#f5f5f4;color:#374151;"><code style="font-size:11px;">AssistantExecutor</code> → <code style="font-size:11px;">AssistantAgentRunner</code></td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e7d9c8;font-weight:bold;background:#faf8f5;color:#78350f;">CHATBI</td>
+          <td style="padding:9px 8px;border:1px solid #e7d9c8;background:#faf8f5;color:#374151;"><code style="font-size:11px;">data_query</code></td>
+          <td style="padding:9px 8px;border:1px solid #e7d9c8;background:#faf8f5;color:#374151;"><code style="font-size:11px;">DataQueryExecutor</code> → <code style="font-size:11px;">DataAgentRunner</code> + ChatBI 域</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;font-weight:bold;background:#f6f8fa;color:#334155;">KNOWLEDGE_BASE</td>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;background:#f6f8fa;color:#374151;"><code style="font-size:11px;">knowledge_base</code></td>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;background:#f6f8fa;color:#374151;"><code style="font-size:11px;">KnowledgeExecutor</code> → <code style="font-size:11px;">KnowledgeAgentRunner</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#6b7280;line-height:1.7;">
+      <span style="color:#44403c;">■ GENERAL</span> 石墨灰 · <span style="color:#78350f;">■ CHATBI</span> 赭石 · <span style="color:#334155;">■ KNOWLEDGE_BASE</span> 板岩蓝（全文三类专家沿用此配色）
+    </p>
+    <p style="margin:4px 0 0 0;font-size:12px;color:#6b7280;line-height:1.7;">
+      <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">normalize_agent_capabilities</code> 保证锁定主能力始终在 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">capabilities</code> 首位，扩展标签可追加、不可替换。
+    </p>
+  </section>
+
+  <!-- GENERAL -->
+  <section style="margin:16px 0 10px 0;padding:14px 16px;background:#f5f5f4;border:1px solid #d6d3d1;border-left:4px solid #57534e;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#44403c;line-height:1.5;">① GENERAL · 通用助手</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>适用场景：</strong>主工作台对话、办公自动化、多 Agent 编排中枢、挂 MCP / 通知 / HTTP / 任务调度 / Skills。不直连业务库，<strong>不得编造内部业务数据</strong>。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#44403c;line-height:1.5;">上岗前检查（发布 / 委派时）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#ecebea;padding:1px 4px;border-radius:3px;">published_version</code> — 须有已发布版本</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#ecebea;padding:1px 4px;border-radius:3px;">primary_capability</code> — 须含 <code style="background:#ecebea;padding:1px 4px;border-radius:3px;">general_chat</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#44403c;line-height:1.5;">上班后怎么管（对话运行时）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>路由/意图</strong>：会话级通用分类（data query 降级、knowledge、skill、general 等）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>工具权限</strong>：write/ask 默认要用户确认；dangerous 拒绝；支持 external_execution 挂起恢复</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>工具预检</strong>（可选）：<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">agent_tool_preflight_mode</code> off / soft / hard，按问题与已挂工具相关度促发</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>主助手数据 Guard</strong>：主通用助手在强内部查数信号下，拦截「假装已查库」等话术（柔性追加提示，不硬阻断流）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Grounding</strong>（会话可选，默认关）：<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">debug_options.grounding_enabled=true</code> 才启用事实审核</p>
+  </section>
+
+  <!-- CHATBI -->
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf8f5;border:1px solid #e7d9c8;border-left:4px solid #a16207;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#78350f;line-height:1.5;">② CHATBI · 问数专家</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>适用场景：</strong>自然语言查数、报表下钻、数据门户（<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">/dataset_portal</code>）、简报订阅。必须配数据源 + 元数据/数据集授权。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.5;">上岗前检查</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 通用两项：<code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">published_version</code> + <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">primary_capability</code>（<code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">data_query</code>）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">data_query_tool</code> — 版本 tools 须启用 <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> 或 <code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">execute_sql_query</code>（任一）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.5;">上班后怎么管（护栏最强，第 04 篇展开）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>分诊</strong>：外层路由进 ChatBI 后，<code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">DataQueryTurnClassifier</code> 为最终判定（新查数 / 追问 / 元数据 / 复用结果 / 非查数等）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>SQL 安全</strong>：只读 SQL；必须先 schema 后 SQL；静态风险 / 重复 SQL / 计划门禁；<code style="background:#f3ede4;padding:1px 4px;border-radius:3px;">SqlQueryBinding</code> 防「Schema 一套、执行另一套」</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>数据真实性</strong>：空结果诊断、修复轮次、结果栈（最大深度 10）；交付须绑定可追溯 result_id</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>工具权限</strong>：同 AgentScope 统一模型；另叠加 RBAC 数据源 / 元数据 / 数据集授权</p>
+  </section>
+
+  <!-- KNOWLEDGE_BASE -->
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f6f8fa;border:1px solid #d4dde6;border-left:4px solid #475569;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.5;">③ KNOWLEDGE_BASE · 知识库专家</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>适用场景：</strong>企业制度 / 产品手册 / 内部文档问答，回答应带 chunk 引用。菜单权 <strong>≠</strong> 全库可读，须单独授 dataset 资源。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#475569;line-height:1.5;">上岗前检查</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 通用两项：<code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">published_version</code> + <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">primary_capability</code>（<code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">knowledge_base</code>）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">knowledge_base_binding</code> — <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">engine_config.dataset_ids</code> 非空</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">knowledge_base_tool</code> — 版本 tools 须启用 <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">search_knowledge_base</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#475569;line-height:1.5;">上班后怎么管</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>检索前置</strong>：ReAct 前自动调用 <code style="background:#eef2f6;padding:1px 4px;border-radius:3px;">search_knowledge_base</code>；无 dataset / 服务不可用则终止，不让模型脑补</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>范围约束</strong>：检索范围 = 显式参数 ∩ Agent 绑定 dataset ∩ 用户授权 dataset</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>引用约束</strong>：空召回或缺有效引用时长事实回答 → 反思重写；耗尽后保留回答并追加风险提示</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>工具权限</strong>：同 AgentScope 统一模型；可叠加通知 / MCP 等业务工具</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">三类护栏强度对比（一句话）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <span style="display:inline-block;padding:1px 8px;margin:0 4px 0 0;background:#f5f5f4;border:1px solid #d6d3d1;border-radius:4px;color:#44403c;font-weight:bold;">GENERAL</span>偏柔性（工具确认 + 可选预检）→
+      <span style="display:inline-block;padding:1px 8px;margin:0 4px;background:#f6f8fa;border:1px solid #d4dde6;border-radius:4px;color:#334155;font-weight:bold;">KNOWLEDGE_BASE</span>中等（检索范围 + 引用）→
+      <span style="display:inline-block;padding:1px 8px;margin:0 4px;background:#faf8f5;border:1px solid #e7d9c8;border-radius:4px;color:#78350f;font-weight:bold;">CHATBI</span>最强（分诊 + SQL 全链路 + 结果栈）。选错类型 = 选错护栏，不是换几个工具能补救的。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #57534e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>旁路：外部引擎（非 NanZi AI 引擎）</strong><br/>
+      若已有 RAGFlow App → 选 <strong>RAGFLOW</strong>（<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">RAGExecutor</code>）；已有 OpenClaw 集群 → 选 <strong>OPENCLAW</strong>。二者主类型强制 GENERAL，不走版本发布，门控由外部系统自管。企业问数 / 知识库若要用 NanZi 护栏，请选 <strong>LOCAL + 对应主类型</strong>。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 控制台路径 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">02｜控制台路径：从新建到第一次对话</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>这一节就是「跟着点一遍」。打开<strong>智能体管理 → 新建</strong>，相当于填入职表：先登记是谁（名字、类型），再配技能包（模型、工具、提示词），最后挂牌上岗（发布）。<strong>只点保存不算上岗</strong>——没发布，用户对话时用的还是旧配置，或者根本调不起来。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      入口：<strong>智能体管理</strong> → 新建。平台有两种心智模型——<strong>快速编辑</strong>（已有 Agent 点版本抽屉）和<strong>引导式 onboarding</strong>（首次创建 LOCAL 专家）。下面按 LOCAL 新建一条完整链路讲。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;">Phase A · 创建 Agent 骨架</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. 选主类型 + 引擎（此步决定后续向导步数）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. 填<strong>物理标识符 name</strong>（全局唯一，路由 / API / 委派用）和<strong>显示名称 display_name</strong></p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. 填引擎必填项：RAGFlow 的 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">app_id</code>；OpenClaw 的 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">base_url</code> + <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">model</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">4. 服务端 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">create_agent_onboarding</code>：按类型拉系统模板（<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">main</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">chat-bi</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">knowledge-base</code> 的已发布配置），生成 <strong>v1 DRAFT</strong>；<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">onboarding_step=VERSION</code></p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#44403c;line-height:1.5;">Phase B · 版本配置向导（VersionConfigStep）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      LOCAL <strong>新建</strong>走 <strong>六步</strong>（含欢迎语）；<strong>编辑已有 LOCAL</strong> 从「模型策略」起（不再改 agent 步）；<strong>新建 RAGFLOW/OPENCLAW</strong> 通常<strong>只走 agent 一步</strong>就结束——外部引擎不吃本地版本工具/提示词向导。
+    </p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">① <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">agent</code> 智能体信息 — name / 引擎必填项</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">② <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">model</code> 模型策略 — 编排模型 + temperature；可选合成模型</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">③ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">tools</code> 工具能力 — 静态 / MCP / Skills 三 Tab；KB 类型此步<strong>强制</strong>勾选 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">search_knowledge_base</code> 且 agent 已绑 dataset</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">④ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">prompt</code> 系统提示词 — 必填；可从模板复制再改</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">⑤ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">welcome</code> 欢迎语 — 仅 LOCAL；关 enabled 可跳过；开 manual 须填齐 3 张卡片</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">⑥ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">review</code> 确认保存 — 草稿入库；<strong>不等于发布</strong></p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">Phase C · 资源与发布</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 保存版本后 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">onboarding_step</code> 进入 <strong>RESOURCE</strong>（知识库绑 dataset_ids、ChatBI 绑数据源/元数据等）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 点<strong>发布</strong> → <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">publishVersion</code> → 服务端跑就绪门禁 → 旧 PUBLISHED 变 ARCHIVED → 目标版本 PUBLISHED → onboarding <strong>COMPLETE</strong></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 发布后 Router 缓存失效；委派列表只展示<strong>就绪且已发布</strong>的子 Agent</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;">向导门禁（前端也会拦）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">canReachVersionConfigStep</code>：前面的步未完成不能跳步。常见提示：「请先完善模型策略」「请先完善工具能力：为知识库检索工具绑定至少一个知识库」。这和后端 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">409 AGENT_NOT_READY</code> 是同一套契约的前后端分工。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 发布状态机 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">03｜版本与发布状态机</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>版本就像 Word 文档的「草稿」和「定稿」。你在抽屉里改模型、改提示词，改完<strong>保存</strong>只是存了草稿；用户聊天用的是<strong>已发布</strong>那一版。所以最常见的一句抱怨是「我明明改了提示词，怎么没变？」——十有八九是没点发布，或者改的是草稿。已发布的版本不能直接改，要<strong>克隆一份新草稿 → 改完 → 再发布</strong>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      LOCAL 智能体的「线上行为」= Agent 元数据 + <strong>唯一活跃 PUBLISHED 版本</strong>。理解状态机，就不会疑惑「我明明改了提示词为什么没变」。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">版本 status</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">DRAFT</code> — 可编辑；不参与运行时
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">PUBLISHED</code> — 运行时唯一真相；不可原地改，需<strong>克隆新版本</strong>再发布
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      · <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">ARCHIVED</code> — 历史发布快照；可删；不可再激活
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">publishVersion 事务（简化）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;font-family:Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.9;">
+      evaluate_agent_readiness(missing?) →<br/>
+      UPDATE all PUBLISHED → ARCHIVED →<br/>
+      UPDATE target → PUBLISHED →<br/>
+      agent.onboarding_step = COMPLETE →<br/>
+      router_service.invalidate_cache()
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #57534e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>反例：</strong>只保存 DRAFT 就去对话 → <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">get_active_agent_config</code> 返回空 / 404，路由可能 fallback 别的 Agent。只改工具不发布 → 线上仍跑旧工具集。PUBLISHED 版本想改字段 → 必须「克隆为新版本 → 编辑 DRAFT → 再发布」。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 engine_config ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">04｜engine_config：Agent 层运行时参数</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>智能体有两层配置容易混：<strong>版本</strong>管「这人会不会说话、会哪些技能」（模型、工具、提示词）；<strong>engine_config</strong> 管「这人连哪条线、查哪个库」（比如绑哪些知识库、RAGFlow 的 App ID）。改 engine_config 一般<strong>不用重新发布版本</strong>，但知识库专家如果这里没绑库，发布时照样会被拦。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">engine_config</code> 挂在 <strong>Agent 记录</strong>上，不随版本 DRAFT 走——改它<strong>不需要重新发布版本</strong>（但 KB 的 dataset 绑定会影响就绪门禁）。按引擎分列如下。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">LOCAL</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">dataset_ids</code> — 知识增强（GENERAL 也可挂库做 RAG 增强；KB 类型<strong>发布门禁必填</strong>）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">ragflow_similarity_threshold</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">ragflow_vector_weight</code> — 检索参数，运行时可能归一进 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">rag_params</code></p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">default_markdown_theme</code> / <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">hide_message_border</code> — 对话 UI 偏好</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· ChatBI 问数工具在<strong>版本 tools</strong> 里勾；<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> 还可绑 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">metadata_dataset_ids</code> 收窄 Schema 范围</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">RAGFLOW（必填 app_id）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>必填</strong> <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">app_id</code> — RAGFlow 侧 Agent/App 标识</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 可选 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">dataset_ids</code>、相似度 / 向量权重</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 运行时 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">model_name</code> 固定展示为 RAGFlow-Remote；不走 AgentScope Toolkit</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">OPENCLAW（必填 base_url + model）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>必填</strong> <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">base_url</code>、<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">model</code>（机器人 ID）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 可选 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">api_key</code>、<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">safety_check_enabled</code>（默认开）、input/output prompt 与 strategy（默认 append）、<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">stream</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 安全审计在 OpenClaw 适配层，不走本地 SQL / 工具权限矩阵（见门控契约）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 就绪门禁 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">05｜就绪门禁：发布前的「上岗检查」</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>点「发布」时，平台会跑一张<strong>上岗检查表</strong>：有没有定稿版本？问数专家有没有查数工具？知识库专家有没有绑库？缺一项就发布失败，页面会告诉你缺什么（missing 码）。主助手要<strong>委派</strong>子智能体时，也只看「检查通过」的那些——没配齐的子 Agent 根本不会出现在列表里。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      技术名是 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">evaluate_agent_readiness</code>。HTTP 409 会返回 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">AGENT_NOT_READY</code> 和 missing 列表——对着下表改就行。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:4px 0;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">missing 码</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">含义</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#1c1917;color:#fafaf9;text-align:left;">怎么修</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;"><code style="font-size:11px;">published_version</code></td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">没有已发布版本</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">保存 DRAFT 后点发布（RAGFlow/OpenClaw 不走此条）</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f5f5f4;color:#1c1917;"><code style="font-size:11px;">primary_capability</code></td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f5f5f4;color:#374151;">缺锁定主能力</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f5f5f4;color:#374151;">检查 agent_type 与 capabilities 是否被 normalize 破坏</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e7d9c8;font-weight:bold;background:#faf8f5;color:#78350f;"><code style="font-size:11px;">data_query_tool</code></td>
+          <td style="padding:9px 8px;border:1px solid #e7d9c8;background:#faf8f5;color:#374151;">CHATBI 未启用问数工具</td>
+          <td style="padding:9px 8px;border:1px solid #e7d9c8;background:#faf8f5;color:#374151;">版本 tools 勾选 <code style="font-size:11px;">get_dataset_schema</code> 或 <code style="font-size:11px;">execute_sql_query</code>（任一即可）</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;font-weight:bold;background:#f6f8fa;color:#334155;"><code style="font-size:11px;">knowledge_base_binding</code></td>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;background:#f6f8fa;color:#374151;">KB 的 dataset_ids 为空</td>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;background:#f6f8fa;color:#374151;">Agent engine_config 或 RESOURCE 步绑至少一个知识库</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;font-weight:bold;background:#f6f8fa;color:#334155;"><code style="font-size:11px;">knowledge_base_tool</code></td>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;background:#f6f8fa;color:#374151;">未启用检索工具</td>
+          <td style="padding:9px 8px;border:1px solid #d4dde6;background:#f6f8fa;color:#374151;">版本 tools 勾选 <code style="font-size:11px;">search_knowledge_base</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #57534e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>委派侧：</strong>主 Agent 的 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">sub_agent_call</code> 工具枚举子 Agent 时，只列出<strong>用户有权访问 + evaluate 通过</strong>的目标。子 Agent 缺发布版或缺问数工具，列表里直接没有——不是运行时失败，是配置期就被滤掉。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06 三类实战 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">06｜三类最小可用：跟着做就能验收</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>前面讲原理，这节是<strong>菜谱</strong>。按 A/B/C 三套步骤各建一个智能体，再用最后清单打勾——十分钟内能确认「真的在跑」，而不是页面能开、一问就懵。建议第一次部署时三种各做一个，后面再按业务裁剪。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f5f5f4;border:1px solid #d6d3d1;border-left:4px solid #57534e;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#44403c;line-height:1.5;">A. GENERAL 通用助手（LOCAL）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>目标：</strong>主工作台对话 + 可挂通知/MCP/HTTP/任务调度</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. 类型 GENERAL · 引擎 LOCAL · 从 main 模板生成 DRAFT</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. 选编排模型 · 勾需要的静态/MCP 工具 · 写 system_prompt</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. 发布 · RBAC 给用户授权 agent 资源</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;"><strong>验收：</strong>对话能触发已挂工具（Trace 见 tool_call）；主助手建议开工具预检（<code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">agent_tool_preflight_mode</code>）与 Skill 扫描</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf8f5;border:1px solid #e7d9c8;border-left:4px solid #a16207;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#78350f;line-height:1.5;">B. CHATBI 问数专家（LOCAL）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>目标：</strong>自然语言查数 + 数据门户 + SQL 护栏</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. 类型 CHATBI · 模板自带 schema/SQL 工具 · 发布前确认 tools 未删</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. 【数据源管理】登记连接 · 【元数据/数据集】授权给目标用户/角色</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. 可选：工具级 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">metadata_dataset_ids</code> 收窄可见表</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;"><strong>验收：</strong>问简单计数 → Trace 见分诊类型 + schema/SQL 工具链；门户 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">/dataset_portal</code> 能出菜单。护栏细节见第 04 篇</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f6f8fa;border:1px solid #d4dde6;border-left:4px solid #475569;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">C. KNOWLEDGE_BASE 知识库专家（LOCAL）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>目标：</strong>基于企业文档问答，回答带引用</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. 先在【知识库管理】建 dataset · 同步 RAGFlow 索引</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. 类型 KNOWLEDGE_BASE · tools 勾 search_knowledge_base · engine_config 绑 dataset_ids</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">3. 发布 · 给用户 dataset 资源授权（<strong>菜单权 ≠ 全库可读</strong>）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;"><strong>验收：</strong>问库内事实 → 回答带 chunk 引用；换无权限用户应检索不到</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;">十分钟总验收清单</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ 三类各一条：发布成功 · onboarding COMPLETE</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">GET /api/portal/agents/{id}/active-config</code> 能返回预期 model/tools</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">☐ 对话 Trace 里 Executor 类型与 agent_type 一致</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">☐ 主 Agent 委派列表能看到就绪的子 Agent（若做了多 Agent 编排）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 07 踩坑 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #1c1917;padding-left:12px;line-height:1.4;">07｜常见踩坑与排障顺序</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #78716c;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>大白话：</strong>这一节是过来人经验贴。配置智能体时，十个人里有八个会在同一几个坑里绊一下——类型选错、只保存不发布、有菜单没数据权限、以为 RAGFlow 引擎会吃本地提示词……每条后面给了「该怎么改」。真遇到问题，按文末排障顺序从上往下查，比乱改配置快。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;">把 ChatBI 建成 GENERAL 再硬挂 SQL 工具</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">→ 路由可能进 Assistant 而非 DataQueryExecutor；分诊 / 结果栈 / SQL 门禁全吃不到。应改 agent_type=CHATBI。</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;">知识库只勾工具不绑 dataset_ids</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">→ 前端 tools 步可能拦；就算绕过，发布报 <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">knowledge_base_binding</code>。RESOURCE 步和 engine_config 都要填。</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;">RAGFlow 引擎却期待本地 prompt/tools 生效</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">→ <code style="background:#f5f5f4;padding:1px 4px;border-radius:3px;">get_active_agent_config</code> 对 RAGFlow 返回 managed 占位配置；行为由 RAGFlow App 决定。改 NanZi 版本抽屉无效。</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#1c1917;">有菜单无 dataset 授权</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">→ 智能体能打开，检索/SQL 空结果或权限错误。排障：用户有效权限 ∩ agent 绑定资源。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #1c1917;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.85;">
+      <strong>推荐排障顺序：</strong>active-config 有没有 → 版本是否 PUBLISHED → missing 码 → RBAC 资源授权 → Trace 里 Executor 对不对 → 再查模型/数据源/RAGFlow 连通性。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- 下期预告 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:#f5f5f4;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;">下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>第 04 篇 · 深入 ChatBI</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">分诊枚举、SQL 门禁前缀、Binding、计划 JSON、结果栈与数据门户——问数不是「让模型写 SQL」这么简单。</p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#fafaf9;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 03</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">选型与门禁对齐代码，再谈编排。</p>
+  </section>
+
+</section>
