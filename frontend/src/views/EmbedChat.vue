@@ -7291,6 +7291,178 @@ onUnmounted(() => {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12.5px;
 }
+:deep(.markdown-body .markdown-table-toolbar) {
+  display: none;
+}
+@media (max-width: 639px) {
+  /* 少列表格：取消桌面端最小宽度，让常见结果一屏完成阅读。 */
+  :deep(.markdown-body .markdown-table-scroll) {
+    overflow-x: hidden;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-cards) {
+    border: 0 !important;
+    border-radius: 0;
+    background: transparent !important;
+  }
+  :deep(.markdown-body .markdown-table-toolbar) {
+    display: flex;
+    justify-content: flex-start;
+    padding: 6px 6px 10px;
+  }
+  :deep(.markdown-body .markdown-table-view-toggle) {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 3px 8px;
+    border: 1px solid var(--md-table-border);
+    border-radius: 0;
+    color: var(--md-table-text);
+    background: var(--md-table-header);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.35;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+  }
+  :deep(.markdown-body .markdown-table-view-toggle::before) {
+    content: '▦';
+    font-size: 12px;
+    line-height: 1;
+  }
+  :deep(.markdown-body .markdown-table-view-toggle:hover) {
+    border-color: var(--md-table-text);
+    background: var(--md-table-background);
+  }
+  :deep(.markdown-body .markdown-table-view-toggle:focus-visible) {
+    outline: 2px solid var(--md-table-text);
+    outline-offset: 2px;
+  }
+  :deep(.markdown-body .markdown-table-view-toggle:active) {
+    transform: scale(0.97);
+  }
+  :deep(.markdown-body table.markdown-table-mobile-compact) {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-compact th),
+  :deep(.markdown-body table.markdown-table-mobile-compact td) {
+    padding: 7px 6px !important;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-compact th) {
+    font-size: 11px;
+  }
+
+  /* 多列表格：按数据行转成纵向信息卡片，字段名来自 th 的 data-label。 */
+  :deep(.markdown-body table.markdown-table-mobile-cards) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    font-size: 12px;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards thead) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards tbody),
+  :deep(.markdown-body table.markdown-table-mobile-cards tr) {
+    display: block;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards tr) {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--md-table-border) !important;
+    border-radius: 10px;
+    background: var(--md-table-background) !important;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards tr:last-child) {
+    margin-bottom: 0;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards td) {
+    display: grid;
+    grid-template-columns: minmax(72px, 34%) minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--md-table-cell-border) !important;
+    color: var(--md-table-text) !important;
+    font-family: inherit;
+    font-size: 12px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards td:last-child) {
+    border-bottom: 0 !important;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards td::before) {
+    content: attr(data-label);
+    color: var(--md-table-text);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  :deep(.markdown-body table.markdown-table-mobile-cards tbody tr:nth-child(even)) {
+    background: var(--md-table-background) !important;
+  }
+  /* 切换到表格后恢复宽表布局，由外层容器提供横向滚动。 */
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table) {
+    overflow-x: auto;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards) {
+    display: table;
+    width: 100%;
+    min-width: 680px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards thead) {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards tbody) {
+    display: table-row-group;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards tr) {
+    display: table-row;
+    margin: 0;
+    padding: 0;
+    border: 0 !important;
+    border-radius: 0;
+    background: var(--md-table-background) !important;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards td) {
+    display: table-cell;
+    grid-template-columns: none;
+    gap: 0;
+    padding: var(--md-table-cell-padding) !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--md-table-cell-border) !important;
+    color: var(--md-table-text) !important;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards td + td) {
+    border-left: 1px solid var(--md-table-cell-border) !important;
+  }
+  :deep(.markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards td::before) {
+    content: none;
+  }
+}
 /* Highlight.js Color Overrides - Light Theme */
 :deep(.hljs-keyword),
 :deep(.hljs-selector-tag) {

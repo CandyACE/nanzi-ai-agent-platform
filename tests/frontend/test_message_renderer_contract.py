@@ -1,3 +1,5 @@
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,32 @@ pytestmark = pytest.mark.no_infrastructure
 
 def _source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _run_typescript(module_path: str, expression: str):
+    script = f"""
+(async () => {{
+const fs = require('fs');
+const ts = require('./frontend/node_modules/typescript');
+const source = fs.readFileSync({json.dumps(module_path)}, 'utf8');
+const code = ts.transpileModule(source, {{
+  compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
+}}).outputText;
+const moduleRef = {{ exports: {{}} }};
+new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, require);
+const api = moduleRef.exports;
+const result = await (async () => {{ {expression} }})();
+process.stdout.write(JSON.stringify(result));
+}})().catch(error => {{ console.error(error); process.exit(1); }});
+"""
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def test_chart_card_supports_table_view():
@@ -35,7 +63,8 @@ def test_message_renderer_wraps_markdown_tables_with_scroll_container():
     source = _source("frontend/src/components/MessageRenderer.vue")
 
     assert "markdown-table-scroll" in source
-    assert "<div class=\"markdown-table-scroll\">${table}</div>" in source
+    assert "const responsiveTable = enhanceMarkdownTablesForMobile(table)" in source
+    assert "markdown-table-toolbar" in source
 
 
 def test_embed_markdown_tables_have_breathing_room_and_mobile_overflow():
@@ -88,6 +117,83 @@ def test_embed_markdown_table_cells_are_left_aligned():
     assert ":deep(.markdown-body th)" in source
     assert ":deep(.markdown-body td)" in source
     assert "text-align: left !important;" in source
+
+
+def test_markdown_tables_get_mobile_layout_metadata():
+    source = _source("frontend/src/components/MessageRenderer.vue")
+    helper = _source("frontend/src/utils/markdownTableResponsive.ts")
+
+    assert "enhanceMarkdownTablesForMobile" in source
+    assert "markdown-table-view-toggle" in source
+    assert "markdown-table-view-table" in source
+    assert "markdown-table-toolbar" in source
+    assert "markdown-table-mobile-compact" in helper
+    assert "markdown-table-mobile-cards" in helper
+    assert "data-label" in helper
+    assert "MOBILE_CARD_COLUMN_THRESHOLD" in helper
+    assert "let cellIndex = 0" in helper
+    assert "const label = headers[currentIndex]" in helper
+
+
+def test_embed_mobile_tables_use_compact_and_card_layouts():
+    source = _source("frontend/src/views/EmbedChat.vue")
+
+    assert "@media (max-width: 639px)" in source
+    assert "table-layout: fixed" in source
+    assert "min-width: 0" in source
+    assert "td::before" in source
+    assert "content: attr(data-label)" in source
+    assert "grid-template-columns" in source
+    assert "padding: 7px 6px !important" in source
+    assert "var(--md-table-background)" in source
+
+
+def test_embed_mobile_table_toggle_restores_scrollable_table_view():
+    source = _source("frontend/src/views/EmbedChat.vue")
+    renderer = _source("frontend/src/components/MessageRenderer.vue")
+
+    assert "markdown-table-view-cards" in renderer
+    assert "markdown-table-view-table" in source
+    assert "const viewClass = hasMobileCardView ? ' markdown-table-view-table' : '';" in renderer
+    assert 'aria-label="切换到卡片视图" aria-pressed="true" title="切换到卡片视图">卡片' in renderer
+    assert "overflow-x: auto" in source
+    assert "justify-content: flex-start" in source
+    assert ".markdown-table-scroll.markdown-table-view-cards" in source
+    card_view_css = source.split(".markdown-table-scroll.markdown-table-view-cards", 1)[1].split("}", 1)[0]
+    assert "border: 0 !important;" in card_view_css
+    assert "display: inline-flex;" in source
+    assert "content: '▦';" in source
+    assert ":focus-visible" in source
+    assert "padding: 6px 6px 10px;" in source
+    assert "border-radius: 0;" in source
+    assert "切换到表格视图" in renderer
+    assert "切换到卡片视图" in renderer
+
+
+def test_markdown_table_mobile_metadata_maps_headers_and_falls_back_safely():
+    result = _run_typescript(
+        "frontend/src/utils/markdownTableResponsive.ts",
+        """
+const transform = api.enhanceMarkdownTablesForMobile;
+return {
+  cards: transform('<table><thead><tr><th>名称</th><th>A &quot;标记&quot;</th><th>状态</th><th>备注</th></tr></thead><tbody><tr><td>项目</td><td>甲</td><td>正常</td><td>已完成</td></tr></tbody></table>'),
+  compact: transform('<table><thead><tr><th>A</th><th>B</th><th>C</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>'),
+  empty: transform('<table><thead><tr><th>A</th><th>B</th><th>C</th><th>D</th></tr></thead></table>'),
+  noHeader: transform('<table><tbody><tr><td>1</td><td>2</td><td>3</td><td>4</td></tr></tbody></table>'),
+  complex: transform('<table><thead><tr><th rowspan="2">A</th><th>B</th><th>C</th><th>D</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td><td>4</td></tr></tbody></table>')
+};
+""",
+    )
+
+    assert "markdown-table-mobile-cards" in result["cards"]
+    assert 'data-label="名称"' in result["cards"]
+    assert 'data-label="A &quot;标记&quot;"' in result["cards"]
+    assert "markdown-table-mobile-compact" in result["compact"]
+    assert "data-label" not in result["compact"]
+    assert "markdown-table-mobile-compact" in result["empty"]
+    assert "markdown-table-mobile-cards" not in result["empty"]
+    assert "markdown-table-mobile-compact" in result["noHeader"]
+    assert "markdown-table-mobile-compact" in result["complex"]
 
 
 def test_embed_settings_exposes_and_persists_message_border_preference():

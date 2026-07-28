@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { normalizeGeneratedFileHref } from '@/utils/generatedFileUrl';
 import { renderMarkdown } from '@/utils/markdown';
+import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
 import { parseQuickButtons, postProcessQuickButtonHtml } from '@/utils/quickButtons';
 import { buildChartTableRows, mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
@@ -198,10 +199,15 @@ interface ContentSegment {
     res = res.replace(/<code>([^<]*)<\/code>/gi, (_match, inner) => `<code>${injectOpenLinksForPaths(inner)}</code>`);
 
     // 表格由外层容器负责横向滚动，避免 table 自身 display:block 后出现右侧空白
-    res = res.replace(
-      /<table\b[^>]*>[\s\S]*?<\/table>/gi,
-      (table) => `<div class="markdown-table-scroll">${table}</div>`,
-    );
+    res = res.replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (table) => {
+      const responsiveTable = enhanceMarkdownTablesForMobile(table);
+      const hasMobileCardView = responsiveTable.includes('markdown-table-mobile-cards');
+      const toolbar = hasMobileCardView
+        ? '<div class="markdown-table-toolbar"><button type="button" class="markdown-table-view-toggle" aria-label="切换到卡片视图" aria-pressed="true" title="切换到卡片视图">卡片</button></div>'
+        : '';
+      const viewClass = hasMobileCardView ? ' markdown-table-view-table' : '';
+      return `<div class="markdown-table-scroll${viewClass}">${toolbar}${responsiveTable}</div>`;
+    });
 
     return res;
   };
@@ -212,6 +218,24 @@ interface ContentSegment {
 
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
+  const tableToggle = target.closest<HTMLButtonElement>('.markdown-table-view-toggle');
+  if (tableToggle) {
+    const tableWrapper = tableToggle.closest('.markdown-table-scroll');
+    const table = tableWrapper?.querySelector('table.markdown-table-mobile-cards');
+    if (tableWrapper && table) {
+      const tableViewEnabled = tableWrapper.classList.toggle('markdown-table-view-table');
+      tableWrapper.classList.toggle('markdown-table-view-cards', !tableViewEnabled);
+      const nextLabel = tableViewEnabled ? '卡片' : '表格';
+      const nextTitle = tableViewEnabled ? '切换到卡片视图' : '切换到表格视图';
+      tableToggle.textContent = nextLabel;
+      tableToggle.title = nextTitle;
+      tableToggle.setAttribute('aria-label', nextTitle);
+      tableToggle.setAttribute('aria-pressed', String(tableViewEnabled));
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+  }
   const citeEl = target.closest('[data-cite-id]');
   if (citeEl) {
     const citeId = citeEl.getAttribute('data-cite-id');
