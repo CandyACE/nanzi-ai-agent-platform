@@ -156,6 +156,124 @@ _EXTERNAL_TOOL_COMPATIBLE_TYPES = frozenset(
         EvidenceType.RUNTIME_STATE,
     }
 )
+_READ_SIDE_EVIDENCE_TYPES = frozenset(
+    {
+        EvidenceType.EXTERNAL_TOOL,
+        EvidenceType.PUBLIC_WEB,
+        EvidenceType.RUNTIME_STATE,
+        EvidenceType.INTERNAL_DATA,
+        EvidenceType.INTERNAL_KNOWLEDGE,
+        EvidenceType.USER_FILE,
+        EvidenceType.CONVERSATION_MEMORY,
+    }
+)
+_CROSS_DOMAIN_BACKING_TYPES = frozenset(
+    {
+        EvidenceType.EXTERNAL_TOOL,
+        EvidenceType.PUBLIC_WEB,
+        EvidenceType.RUNTIME_STATE,
+        EvidenceType.CONVERSATION_MEMORY,
+    }
+)
+
+
+def _ledger_has_partial_overlap(
+    ledger: EvidenceLedger,
+    candidate_text: str,
+    *,
+    evidence_types: frozenset[EvidenceType] | None = None,
+) -> bool:
+    search_types = evidence_types or ledger.available_evidence_types
+    if not search_types:
+        return False
+    return ledger.has_candidate_overlap(
+        candidate_text,
+        search_types,
+        allow_empty=False,
+    )
+
+
+def _requires_internal_trusted_backing(
+    *,
+    requirement: FactRequirement,
+    candidate_text: str,
+) -> bool:
+    if requirement.accepted_types & _INTERNAL_TRUSTED_TYPES:
+        return True
+    return _looks_like_internal_business_fact(candidate_text)
+
+
+def _is_cross_domain_high_risk_warning(
+    *,
+    requirement: FactRequirement,
+    candidate_text: str,
+    available_types: frozenset[EvidenceType],
+    ledger: EvidenceLedger,
+) -> bool:
+    """Unrelated read-side families must not soften internal business facts."""
+    if not available_types or available_types & _INTERNAL_TRUSTED_TYPES:
+        return False
+    if not _requires_internal_trusted_backing(
+        requirement=requirement,
+        candidate_text=candidate_text,
+    ):
+        return False
+    if not (available_types & _CROSS_DOMAIN_BACKING_TYPES):
+        return False
+    return not _ledger_has_partial_overlap(
+        ledger,
+        candidate_text,
+        evidence_types=available_types & _READ_SIDE_EVIDENCE_TYPES,
+    )
+
+
+def resolve_soft_warning_risk_level(
+    *,
+    requirement: FactRequirement,
+    candidate_text: str,
+    ledger: EvidenceLedger,
+    reason: str = "",
+    force_high: bool = False,
+) -> GroundingRiskLevel:
+    """Map PASS_WITH_WARNING cases to low / medium / high notice tiers."""
+    if force_high:
+        return GroundingRiskLevel.HIGH
+
+    available_types = ledger.available_evidence_types
+    if not available_types:
+        return GroundingRiskLevel.HIGH
+
+    if _is_cross_domain_high_risk_warning(
+        requirement=requirement,
+        candidate_text=candidate_text,
+        available_types=available_types,
+        ledger=ledger,
+    ):
+        return GroundingRiskLevel.HIGH
+
+    overlap_types = requirement.accepted_types or available_types
+    if _ledger_has_partial_overlap(
+        ledger,
+        candidate_text,
+        evidence_types=overlap_types & _READ_SIDE_EVIDENCE_TYPES,
+    ):
+        return GroundingRiskLevel.MEDIUM
+
+    if _ledger_has_partial_overlap(
+        ledger,
+        candidate_text,
+        evidence_types=available_types & _READ_SIDE_EVIDENCE_TYPES,
+    ):
+        return GroundingRiskLevel.MEDIUM
+
+    if "stale" in str(reason or "").lower() and _ledger_has_partial_overlap(
+        ledger,
+        candidate_text,
+        evidence_types=overlap_types & _READ_SIDE_EVIDENCE_TYPES,
+    ):
+        return GroundingRiskLevel.MEDIUM
+
+    return GroundingRiskLevel.HIGH
 
 
 def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequirement:
@@ -397,7 +515,12 @@ def evaluate_grounding(
                 "required evidence is stale or does not satisfy the freshness requirement",
                 requirement.accepted_types,
                 available_types,
-                GroundingRiskLevel.HIGH,
+                resolve_soft_warning_risk_level(
+                    requirement=requirement,
+                    candidate_text=text,
+                    ledger=ledger,
+                    reason="stale evidence",
+                ),
             )
         if (
             EvidenceType.EXTERNAL_TOOL in available_types
@@ -430,7 +553,12 @@ def evaluate_grounding(
                 "matching evidence type exists but the answer is not correlated with its content",
                 requirement.accepted_types,
                 available_types,
-                GroundingRiskLevel.HIGH,
+                resolve_soft_warning_risk_level(
+                    requirement=requirement,
+                    candidate_text=text,
+                    ledger=ledger,
+                    reason="uncorrelated exact evidence",
+                ),
             )
         internal_requirement = bool(requirement.accepted_types & _INTERNAL_TRUSTED_TYPES)
         internal_evidence = bool(available_types & _INTERNAL_TRUSTED_TYPES)
@@ -461,7 +589,12 @@ def evaluate_grounding(
             "required evidence receipt is missing",
             requirement.accepted_types,
             available_types,
-            GroundingRiskLevel.HIGH,
+            resolve_soft_warning_risk_level(
+                requirement=requirement,
+                candidate_text=text,
+                ledger=ledger,
+                reason="required evidence receipt is missing",
+            ),
         )
 
     if requirement.scrutinize_unknown_output:
@@ -505,7 +638,12 @@ def evaluate_grounding(
                 "unknown request emitted a dynamic or structured fact without matched evidence",
                 missing_types,
                 available_types,
-                GroundingRiskLevel.HIGH,
+                resolve_soft_warning_risk_level(
+                    requirement=requirement,
+                    candidate_text=text,
+                    ledger=ledger,
+                    reason="unknown structured fact without matched evidence",
+                ),
             )
         return GroundingDecision(
             GroundingAction.PASS,

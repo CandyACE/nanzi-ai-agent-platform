@@ -80,8 +80,8 @@ class GroundingService:
             )
         elif risk_level == GroundingRiskLevel.MEDIUM:
             notice = (
-                "> **信息来源提示**：本回答参考了已取得的资料，但部分结论未获得"
-                "完全匹配的数据来源，请结合原始资料核对。"
+                "> **信息来源提示**：本回答参考了已取得的工具或资料结果，"
+                "但部分结论未获得完全匹配的数据来源，请结合原始资料核对。"
             )
         else:
             notice = (
