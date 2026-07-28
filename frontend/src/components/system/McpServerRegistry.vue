@@ -101,9 +101,11 @@ const tools = ref<any[]>([])
 const toolsLoading = ref(false)
 const isSelectedServerEnabled = computed(() => Number(selectedServer.value?.enabled_status) === 1)
 const canManageSelectedTools = computed(() => canSave.value && isSelectedServerEnabled.value)
+const canManageTool = (tool: any) => canManageSelectedTools.value && tool?.is_available !== false
 
 const isAllSelected = computed(() => {
-  return tools.value.length > 0 && selectedToolIds.value.size === tools.value.length
+  const selectableTools = tools.value.filter(tool => tool.is_available !== false)
+  return selectableTools.length > 0 && selectedToolIds.value.size === selectableTools.length
 })
 
 const toggleSelectAll = () => {
@@ -111,7 +113,9 @@ const toggleSelectAll = () => {
   if (isAllSelected.value) {
     selectedToolIds.value.clear()
   } else {
-    tools.value.forEach(t => selectedToolIds.value.add(t.id))
+    tools.value
+      .filter(tool => tool.is_available !== false)
+      .forEach(tool => selectedToolIds.value.add(tool.id))
   }
 }
 
@@ -125,11 +129,13 @@ const toggleSelectTool = (id: string) => {
 }
 
 const batchUpdateStatus = async (published: boolean) => {
-  if (!canManageSelectedTools.value || selectedToolIds.value.size === 0) return
+  const ids = tools.value
+    .filter(tool => selectedToolIds.value.has(tool.id) && tool.is_available !== false)
+    .map(tool => tool.id)
+  if (!canManageSelectedTools.value || ids.length === 0) return
   
   loading.value = true
   try {
-    const ids = Array.from(selectedToolIds.value)
     // Batch update in parallel
     await Promise.all(ids.map(id => 
       axios.put(`/api/portal/mcp/tools/${id}/publish?published=${published}`)
@@ -451,10 +457,10 @@ const syncTools = async (id: string) => {
   syncLoading.value[id] = true
   try {
     const response = await axios.post(`/api/portal/mcp/servers/${id}/sync`)
-    const staleUnpublished = Number(response.data?.stale_unpublished || 0)
+    const remoteDeletedCount = Number(response.data?.remote_deleted_count || 0)
     showToast(
-      staleUnpublished > 0
-        ? `同步成功，已自动下线 ${staleUnpublished} 个远端已删除工具`
+      remoteDeletedCount > 0
+        ? `同步成功，已标记 ${remoteDeletedCount} 个远端已删除工具`
         : '同步成功',
       'success',
     )
@@ -495,7 +501,7 @@ const selectServer = (server: any) => {
 }
 
 const togglePublish = async (tool: any) => {
-  if (!canManageSelectedTools.value) return
+  if (!canManageTool(tool)) return
   try {
     const newStatus = !tool.is_published
     await axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=${newStatus}`)
@@ -623,6 +629,7 @@ onMounted(fetchServers)
                 {{ server.tool_count }} 工具 /
                 <span v-if="server.enabled_status === 1" class="text-green-600 font-bold">{{ server.published_tool_count }} 已发布</span>
                 <span v-else class="text-gray-400 font-bold">服务已禁用</span>
+                <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
               </span>
               <span class="text-[9px] text-gray-400 italic" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
             </div>
@@ -686,10 +693,10 @@ onMounted(fetchServers)
             <div 
               v-for="tool in tools" 
               :key="tool.id" 
-              @click="canManageSelectedTools && toggleSelectTool(tool.id)"
+              @click="canManageTool(tool) && toggleSelectTool(tool.id)"
               class="p-4 rounded-lg border flex justify-between items-start group transition-all"
               :class="[
-                canManageSelectedTools ? 'cursor-pointer' : 'cursor-default',
+                canManageTool(tool) ? 'cursor-pointer' : 'cursor-default',
                 selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
               ]"
             >
@@ -698,7 +705,7 @@ onMounted(fetchServers)
                   v-if="canSave"
                   type="checkbox" 
                   :checked="selectedToolIds.has(tool.id)" 
-                  :disabled="!canManageSelectedTools"
+                  :disabled="!canManageTool(tool)"
                   @click.stop="toggleSelectTool(tool.id)"
                   class="w-3.5 h-3.5 mt-1 text-primary border-gray-300 rounded focus:ring-primary mr-3" 
                 />
@@ -709,6 +716,7 @@ onMounted(fetchServers)
                       <LinkIcon class="w-3 h-3 mr-0.5" />{{ tool.usage_count }}
                     </span>
                     <span v-if="!isSelectedServerEnabled" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">服务已禁用</span>
+                    <span v-else-if="tool.is_available === false" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">远端已删除</span>
                     <span v-else-if="tool.is_published" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">已发布</span>
                     <span v-else class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-400 border border-gray-200 uppercase tracking-tighter">待发布</span>
                   </div>
@@ -723,7 +731,7 @@ onMounted(fetchServers)
               <div v-if="canSave" class="flex flex-col items-end space-y-2">
                 <button 
                   @click.stop="openTester(tool)"
-                  :disabled="!canManageSelectedTools"
+                  :disabled="!canManageTool(tool)"
                   class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm bg-white text-indigo-600 hover:bg-indigo-50 border-indigo-100 opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                   title="在线测试"
                 >
@@ -732,7 +740,7 @@ onMounted(fetchServers)
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
-                  :disabled="!canManageSelectedTools"
+                  :disabled="!canManageTool(tool)"
                   class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                   :class="tool.is_published ? 'bg-white text-gray-600 hover:text-red-600' : 'bg-primary text-white hover:bg-primary-dark'"
                 >

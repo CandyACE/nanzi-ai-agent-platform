@@ -30,3 +30,10 @@ def test_disabled_server_blocks_tool_actions_and_shows_effective_status():
     assert "服务已禁用" in SOURCE
     assert "canManageSelectedTools" in SOURCE
     assert ":disabled=\"!canManageSelectedTools\"" in SOURCE
+
+
+def test_remote_deleted_tool_is_visible_but_cannot_be_managed():
+    assert "remote_deleted_count" in SOURCE
+    assert "远端已删除" in SOURCE
+    assert "tool?.is_available !== false" in SOURCE
+    assert ":disabled=\"!canManageTool(tool)\"" in SOURCE

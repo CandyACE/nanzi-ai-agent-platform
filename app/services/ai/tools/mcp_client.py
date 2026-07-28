@@ -484,7 +484,7 @@ class McpClientService:
             cached_by_name = {tool.tool_name: tool for tool in cached_tools}
             remote_tool_names = set()
             stale_unpublished = 0
-            server.enabled_status = 1
+            remote_deleted_count = 0
             server.last_sync_at = datetime.now()
             for t in tools:
                 t_name = t.name if hasattr(t, 'name') else t.get('name')
@@ -506,14 +506,19 @@ class McpClientService:
                 remote_tool_names.add(full_name)
                 existing = cached_by_name.get(full_name)
                 if existing:
+                    existing.is_available = True
                     existing.tool_description = t_desc
                     existing.parameter_schema = json.dumps(schema_payload)
                 else:
-                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False))
+                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False, is_available=True))
             for cached_tool in cached_tools:
                 if cached_tool.tool_name not in remote_tool_names and cached_tool.is_published:
                     cached_tool.is_published = False
                     stale_unpublished += 1
+                if cached_tool.tool_name not in remote_tool_names:
+                    if getattr(cached_tool, "is_available", True):
+                        remote_deleted_count += 1
+                    cached_tool.is_available = False
             await db.commit()
             try:
                 from app.services.ai.tools.registry import ToolRegistry
@@ -524,6 +529,7 @@ class McpClientService:
                 "server_id": server_id,
                 "remote_tool_count": len(remote_tool_names),
                 "stale_unpublished": stale_unpublished,
+                "remote_deleted_count": remote_deleted_count,
             }
 
     @classmethod

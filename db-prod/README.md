@@ -52,7 +52,7 @@ CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 CO
    ./db-prod/apply-sql-native.sh
    ```
 
-无论采用何种选项，脚本均会以交互式方式提示您依次输入数据库的 Host、Port、User、Password 及数据库名，核对配置信息并输入 **`YES`** 二次确认后即可安全导入。
+无论采用何种选项，脚本均会以交互式方式提示您依次输入数据库的 Host、Port、User、Password 及数据库名；Host 留空默认使用 `localhost`，Port 留空默认使用 `3306`。核对配置信息并输入 **`YES`** 二次确认后即可安全导入。
 
 > 💡 **幂等性说明**：脚本具备幂等性（Idempotency），如果某些表、字段或索引已经存在，脚本会自动跳过。重复执行时日志里可能出现 `幂等跳过（可忽略…）` 并附带 MySQL 的 `ERROR 1050/1060/1061…` 字样——这只是被吞掉的“已存在”提示，**不是失败**。只有出现 `❌ 执行失败（非幂等可忽略错误，需处理）` 才需要排查。
 

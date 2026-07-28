@@ -360,6 +360,7 @@ class ToolRegistry:
                 mcp_stmt = select(McpToolCache).where(
                     McpToolCache.tool_name == name, 
                     McpToolCache.is_published == True,
+                    McpToolCache.is_available == True,
                 ).join(
                     McpServer,
                     McpServer.id == McpToolCache.server_id,
