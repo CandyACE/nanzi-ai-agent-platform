@@ -5,6 +5,7 @@ import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 import McpToolTester from './McpToolTester.vue'
+import { buildDefaultMcpServerName } from '@/utils/mcpServerName'
 import { 
   PlusIcon,
   BeakerIcon,
@@ -217,8 +218,11 @@ const handleVerify = async () => {
     if (!newServer.value.server_name) {
         try {
             const url = new URL(newServer.value.sse_url)
-            let baseName = url.hostname.replace(/\./g, '-') + '-mcp'
-            if (props.scope === 'personal') baseName += '-my'
+            const baseName = buildDefaultMcpServerName(
+              props.scope,
+              userInfo.value?.user_name,
+              url.hostname,
+            )
             let candidateName = baseName
             let counter = 1
             while (servers.value.some((s: any) => s.server_name === candidateName)) {
@@ -227,7 +231,11 @@ const handleVerify = async () => {
             }
             newServer.value.server_name = candidateName
         } catch {
-            newServer.value.server_name = props.scope === 'personal' ? 'my-mcp-server' : 'new-mcp-server'
+            newServer.value.server_name = buildDefaultMcpServerName(
+              props.scope,
+              userInfo.value?.user_name,
+              '',
+            )
         }
     }
     showToast('连接成功，已发现工具', 'success')
