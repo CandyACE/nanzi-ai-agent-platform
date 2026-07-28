@@ -29,17 +29,18 @@ fi
 # 默认端口
 MYSQL_PORT_INPUT=3306
 
-read -r -p "MySQL host: " MYSQL_HOST_INPUT
+read -r -p "MySQL host [localhost]: " MYSQL_HOST_INPUT
 read -r -p "MySQL port [3306]: " MYSQL_PORT_INPUT
 read -r -p "MySQL user: " MYSQL_USER_INPUT
 read -r -s -p "MySQL password: " MYSQL_PASSWORD_INPUT
 echo
 read -r -p "Target database: " MYSQL_DATABASE_INPUT
 
+MYSQL_HOST_INPUT=${MYSQL_HOST_INPUT:-localhost}
 MYSQL_PORT_INPUT=${MYSQL_PORT_INPUT:-3306}
 
-if [ -z "$MYSQL_HOST_INPUT" ] || [ -z "$MYSQL_USER_INPUT" ] || [ -z "$MYSQL_DATABASE_INPUT" ]; then
-    echo "❌ Host、User、Target database 都必须手动输入。"
+if [ -z "$MYSQL_USER_INPUT" ] || [ -z "$MYSQL_DATABASE_INPUT" ]; then
+    echo "❌ User、Target database 都必须手动输入。"
     exit 1
 fi
 

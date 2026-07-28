@@ -31,6 +31,31 @@ class McpSseSession:
         self._rpc_id_counter += 1
         return self._rpc_id_counter
 
+    async def _looks_like_sse_endpoint(self) -> bool:
+        """Quick probe: skip SSE when the gateway clearly speaks JSON/HTTP."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+                response = await client.get(self.sse_url, headers=self.auth_headers)
+            content_type = (response.headers.get("content-type") or "").lower()
+            if "text/event-stream" in content_type:
+                return True
+            if "application/json" in content_type or "application/rpc" in content_type:
+                logger.info(
+                    "[MCP] Endpoint %s reports Content-Type=%s; skipping SSE probe",
+                    self.server_id,
+                    content_type.split(";")[0].strip() or "unknown",
+                )
+                return False
+            # Unknown type: still try SSE for legacy gateways.
+            return True
+        except Exception as probe_err:
+            logger.info(
+                "[MCP] SSE probe skipped for %s due to %s; trying SSE anyway",
+                self.server_id,
+                type(probe_err).__name__,
+            )
+            return True
+
     async def connect(self):
         """Establishes connection with protocol detection"""
         async with self._lock:
@@ -47,28 +72,36 @@ class McpSseSession:
             try:
                 from contextlib import AsyncExitStack
                 self._exit_stack = AsyncExitStack()
-                
-                # 1. Try Standard SSE Connection
-                try:
-                    async def _connect_sse():
-                        read_stream, write_stream = await self._exit_stack.enter_async_context(
-                            sse_client(url=self.sse_url, headers=self.auth_headers)
-                        )
-                        self.session = await self._exit_stack.enter_async_context(
-                            ClientSession(read_stream, write_stream)
-                        )
-                        await self.session.initialize()
 
-                    await asyncio.wait_for(_connect_sse(), timeout=10.0)
-                    
-                    self.last_used_at = time.time()
-                    self.is_direct_http = False
-                    logger.info(f"[MCP] Standard SSE initialized for {self.server_id}")
-                    return
-                except Exception as sse_err:
-                    logger.error(f"[MCP] Standard SSE failed for {self.server_id}. Error: {str(sse_err)}", exc_info=True)
-                    await self._exit_stack.aclose()
-                    self._exit_stack = AsyncExitStack()
+                try_sse = await self._looks_like_sse_endpoint()
+                
+                # 1. Try Standard SSE Connection (only when probe suggests SSE)
+                if try_sse:
+                    try:
+                        async def _connect_sse():
+                            read_stream, write_stream = await self._exit_stack.enter_async_context(
+                                sse_client(url=self.sse_url, headers=self.auth_headers)
+                            )
+                            self.session = await self._exit_stack.enter_async_context(
+                                ClientSession(read_stream, write_stream)
+                            )
+                            await self.session.initialize()
+
+                        await asyncio.wait_for(_connect_sse(), timeout=10.0)
+                        
+                        self.last_used_at = time.time()
+                        self.is_direct_http = False
+                        logger.info(f"[MCP] Standard SSE initialized for {self.server_id}")
+                        return
+                    except Exception as sse_err:
+                        # 多数网关（如 ModelScope）返回 JSON/HTTP 而非 SSE；探测失败后降级，不打堆栈。
+                        logger.warning(
+                            "[MCP] Standard SSE unavailable for %s (%s); falling back to Direct HTTP",
+                            self.server_id,
+                            type(sse_err).__name__,
+                        )
+                        await self._exit_stack.aclose()
+                        self._exit_stack = AsyncExitStack()
 
                 # 2. Fallback: Direct HTTP Gateway
                 self.is_direct_http = True
@@ -444,10 +477,19 @@ class McpClientService:
             server = result.scalar_one_or_none()
             if not server: return
             from datetime import datetime
-            server.enabled_status = 1
+            cached_result = await db.execute(
+                select(McpToolCache).where(McpToolCache.server_id == server_id)
+            )
+            cached_tools = cached_result.scalars().all()
+            cached_by_name = {tool.tool_name: tool for tool in cached_tools}
+            remote_tool_names = set()
+            stale_unpublished = 0
+            remote_deleted_count = 0
             server.last_sync_at = datetime.now()
             for t in tools:
                 t_name = t.name if hasattr(t, 'name') else t.get('name')
+                if not t_name:
+                    continue
                 t_desc = t.description if hasattr(t, 'description') else t.get('description')
                 t_schema = t.inputSchema if hasattr(t, 'inputSchema') else t.get('inputSchema', t.get('parameter_schema'))
                 if hasattr(t_schema, "model_dump"):
@@ -461,14 +503,34 @@ class McpClientService:
                 if isinstance(annotations, dict) and annotations:
                     schema_payload["x-nanzi-mcp-annotations"] = annotations
                 full_name = f"{server.server_name}:{t_name}"
-                stmt = select(McpToolCache).where(McpToolCache.server_id == server_id, McpToolCache.tool_name == full_name)
-                existing = (await db.execute(stmt)).scalar_one_or_none()
+                remote_tool_names.add(full_name)
+                existing = cached_by_name.get(full_name)
                 if existing:
+                    existing.is_available = True
                     existing.tool_description = t_desc
                     existing.parameter_schema = json.dumps(schema_payload)
                 else:
-                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False))
+                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False, is_available=True))
+            for cached_tool in cached_tools:
+                if cached_tool.tool_name not in remote_tool_names and cached_tool.is_published:
+                    cached_tool.is_published = False
+                    stale_unpublished += 1
+                if cached_tool.tool_name not in remote_tool_names:
+                    if getattr(cached_tool, "is_available", True):
+                        remote_deleted_count += 1
+                    cached_tool.is_available = False
             await db.commit()
+            try:
+                from app.services.ai.tools.registry import ToolRegistry
+                ToolRegistry.clear_db_tool_cache()
+            except Exception:
+                logger.exception("[MCP] Failed to clear runtime tool cache after sync for %s", server_id)
+            return {
+                "server_id": server_id,
+                "remote_tool_count": len(remote_tool_names),
+                "stale_unpublished": stale_unpublished,
+                "remote_deleted_count": remote_deleted_count,
+            }
 
     @classmethod
     async def _idle_cleanup_loop(cls):

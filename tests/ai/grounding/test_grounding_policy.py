@@ -819,3 +819,103 @@ def test_stale_runtime_evidence_returns_warning_instead_of_silent_pass():
 
     assert decision.action == GroundingAction.PASS_WITH_WARNING
     assert "stale" in decision.reason
+    assert decision.risk_level == GroundingRiskLevel.MEDIUM
+
+
+def test_global_tiering_mcp_partial_overlap_uses_medium_warning():
+    """MCP-backed answers with partial marker overlap should warn gently."""
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-travel-mcp",
+        producer="railway:get-tickets",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={
+            "trains": [
+                {"number": "G2", "departure": "06:43", "price": 661},
+            ]
+        },
+    )
+    answer = (
+        "根据查询结果，明天上海到北京推荐如下：\n"
+        "| 车次 | 出发 | 二等座 |\n"
+        "| --- | --- | --- |\n"
+        "| G2 | 06:43 | ¥661 |\n"
+        "| G4 | 07:00 | ¥553 |\n"
+        "其中 G4 为最快车次，仅供参考。"
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(
+            _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
+        ),
+        candidate_text=answer,
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.MEDIUM
+
+
+def test_global_tiering_unrelated_external_tool_stays_high_for_internal_table():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-current-date",
+        producer="calendar:get-current-date",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"date": "2026-07-15"},
+    )
+    answer = (
+        "| 排名 | 业务员 | 销售额 |\n"
+        "| --- | --- | --- |\n"
+        "| 1 | 王强 | ¥663.98万 |"
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(
+            _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
+        ),
+        candidate_text=answer,
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
+
+
+def test_global_tiering_no_evidence_stays_high():
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(
+            _decision(RequestSource.INTERNAL_STRUCTURED_DATA, RequestCapability.DATA_QUERY)
+        ),
+        candidate_text="当前销售额排名第一的是王强，金额为 663.98 万元。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
+
+
+def test_global_tiering_ambiguous_public_web_overlap_uses_medium_warning():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-travel",
+        producer="travel-query",
+        evidence_types={EvidenceType.PUBLIC_WEB},
+        result={"trains": [{"number": "G1505", "price": 973}]},
+    )
+    answer = (
+        "| 车次 | 出发时间 | 票价 |\n"
+        "| --- | --- | --- |\n"
+        "| G1505 | 07:50 | 973元 |"
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(
+            _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
+        ),
+        candidate_text=answer,
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.MEDIUM

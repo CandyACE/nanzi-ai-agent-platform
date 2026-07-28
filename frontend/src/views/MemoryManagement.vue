@@ -816,6 +816,15 @@ onMounted(async () => {
           class="text-gray-400 font-mono text-[11px] sm:text-xs break-all"
           :title="indexStatus.index_name"
         >{{ indexStatus.index_name }}</span>
+        <button
+          v-if="canIndex && !indexStatus.available"
+          type="button"
+          class="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 shadow-sm hover:bg-amber-100 sm:ml-auto"
+          title="检查/创建索引"
+          @click="requestRebuildIndex"
+        >
+          检查/创建索引
+        </button>
       </div>
 
       <div v-if="configLoading" class="flex flex-col items-center justify-center py-16">

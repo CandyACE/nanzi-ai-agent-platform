@@ -124,6 +124,41 @@ def test_mysql_python_wrapper_resolves_relative_sql_from_db_prod_directory(tmp_p
     assert "File not found" not in output
 
 
+def test_mysql_wrappers_default_blank_host_and_port_to_localhost(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    temp_root = tmp_path / "repo"
+    temp_db_prod = temp_root / "db-prod"
+    temp_bin = tmp_path / "bin"
+    temp_db_prod.mkdir(parents=True)
+    temp_bin.mkdir()
+
+    wrapper = temp_db_prod / "apply-sql.sh"
+    shutil.copy2(root / "db-prod" / "apply-sql.sh", wrapper)
+    wrapper.chmod(0o755)
+    (temp_db_prod / "V0-test.sql").write_text("-- test SQL\n", encoding="utf-8")
+
+    fake_python = temp_bin / "python3"
+    fake_python.write_text("#!/bin/sh\nprintf '%s\\n' 'fake python invoked' \"$@\"\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{temp_bin}:{env['PATH']}"
+    result = subprocess.run(
+        ["bash", str(wrapper), "V0-test.sql"],
+        input="\n\nroot\n\nnanzi_demo\nyes\n",
+        text=True,
+        capture_output=True,
+        cwd=temp_db_prod,
+        env=env,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "Host     : localhost" in output
+    assert "Port     : 3306" in output
+
+
 def test_mysql_native_wrapper_resolves_relative_sql_from_db_prod_directory(tmp_path):
     root = Path(__file__).resolve().parents[1]
     temp_root = tmp_path / "repo"

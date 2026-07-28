@@ -30,6 +30,7 @@ class McpToolCache(Base):
     tool_description = Column(Text, nullable=True)
     parameter_schema = Column(Text, nullable=True) # JSON Schema string
     is_published = Column(Boolean, default=False)
+    is_available = Column(Boolean, nullable=False, default=True)
     
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

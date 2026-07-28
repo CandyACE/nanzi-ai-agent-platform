@@ -44,9 +44,9 @@ from app.services.ai.tools.agent_delegate_tool import sub_agent_call
 from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
 from app.models.tool import SysApiTool
-from app.models.mcp import McpToolCache
+from app.models.mcp import McpServer, McpToolCache
 from app.core.orm import AsyncSessionLocal
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 logger = logging.getLogger(__name__)
 
@@ -285,10 +285,46 @@ class ToolRegistry:
     }
 
     # Cache for DB Tools
-    _db_tool_cache: Dict[str, Any] = {}
-    _db_tool_source_cache: Dict[str, str] = {}
+    _db_tool_cache: Dict[tuple[str, str], Any] = {}
+    _db_tool_source_cache: Dict[tuple[str, str], str] = {}
     _db_tool_cache_ttl = 60.0 # 60 seconds
-    _db_tool_ids_fetched_at: Dict[str, float] = {}
+    _db_tool_ids_fetched_at: Dict[tuple[str, str], float] = {}
+
+    @classmethod
+    def clear_db_tool_cache(cls) -> None:
+        """Invalidate database-backed tools after MCP configuration changes."""
+        cls._db_tool_cache.clear()
+        cls._db_tool_source_cache.clear()
+        cls._db_tool_ids_fetched_at.clear()
+
+    @staticmethod
+    def _db_tool_cache_key(name: str) -> tuple[str, str]:
+        """Keep personal and public tool resolutions isolated in-process."""
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+        user_id = getattr(context, "user_id", None) if context else None
+        return name, str(user_id) if user_id is not None else "global-only"
+
+    @staticmethod
+    def _mcp_visible_scope_condition():
+        """Return the same public/personal visibility rule as the portal API."""
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+        enabled_condition = McpServer.enabled_status == 1
+        global_condition = and_(
+            enabled_condition,
+            or_(McpServer.scope == "global", McpServer.scope.is_(None)),
+        )
+        if not context or context.user_id is None:
+            return global_condition
+        personal_condition = and_(
+            enabled_condition,
+            McpServer.scope == "personal",
+            McpServer.user_id == context.user_id,
+        )
+        return or_(global_condition, personal_condition)
 
     @classmethod
     async def get_tool(cls, name: str) -> Optional[Any]:
@@ -299,10 +335,11 @@ class ToolRegistry:
 
         # 2. Check Memory Cache
         now = time.time()
-        if name in cls._db_tool_cache:
-            last_fetched = cls._db_tool_ids_fetched_at.get(name, 0)
+        cache_key = cls._db_tool_cache_key(name)
+        if cache_key in cls._db_tool_cache:
+            last_fetched = cls._db_tool_ids_fetched_at.get(cache_key, 0)
             if now - last_fetched < cls._db_tool_cache_ttl:
-                return cls._db_tool_cache[name]
+                return cls._db_tool_cache[cache_key]
 
         # 3. Check DB for Generic or MCP Tools
         loaded = await cls._load_db_tool_with_source(name)
@@ -311,26 +348,31 @@ class ToolRegistry:
     @classmethod
     async def _load_db_tool_with_source(cls, name: str) -> Optional[tuple[Any, str]]:
         now = time.time()
-        if name in cls._db_tool_cache:
-            last_fetched = cls._db_tool_ids_fetched_at.get(name, 0)
+        cache_key = cls._db_tool_cache_key(name)
+        if cache_key in cls._db_tool_cache:
+            last_fetched = cls._db_tool_ids_fetched_at.get(cache_key, 0)
             if now - last_fetched < cls._db_tool_cache_ttl:
-                return cls._db_tool_cache[name], cls._db_tool_source_cache.get(name, "static")
+                return cls._db_tool_cache[cache_key], cls._db_tool_source_cache.get(cache_key, "static")
 
         try:
             async with AsyncSessionLocal() as session:
                 # A. Check MCP Tools first
                 mcp_stmt = select(McpToolCache).where(
                     McpToolCache.tool_name == name, 
-                    McpToolCache.is_published == True
-                )
+                    McpToolCache.is_published == True,
+                    McpToolCache.is_available == True,
+                ).join(
+                    McpServer,
+                    McpServer.id == McpToolCache.server_id,
+                ).where(cls._mcp_visible_scope_condition())
                 mcp_res = await session.execute(mcp_stmt)
                 mcp_config = mcp_res.scalar_one_or_none()
                 
                 if mcp_config:
                     tool_instance = McpToolFactory.create_tool(mcp_config)
-                    cls._db_tool_cache[name] = tool_instance
-                    cls._db_tool_source_cache[name] = "mcp"
-                    cls._db_tool_ids_fetched_at[name] = time.time()
+                    cls._db_tool_cache[cache_key] = tool_instance
+                    cls._db_tool_source_cache[cache_key] = "mcp"
+                    cls._db_tool_ids_fetched_at[cache_key] = time.time()
                     return tool_instance, "mcp"
 
                 # B. Check Generic API Tools
@@ -340,9 +382,9 @@ class ToolRegistry:
                 
                 if tool_config:
                     tool_instance = GenericApiToolFactory.create_tool(tool_config)
-                    cls._db_tool_cache[name] = tool_instance
-                    cls._db_tool_source_cache[name] = "generic_api"
-                    cls._db_tool_ids_fetched_at[name] = time.time()
+                    cls._db_tool_cache[cache_key] = tool_instance
+                    cls._db_tool_source_cache[cache_key] = "generic_api"
+                    cls._db_tool_ids_fetched_at[cache_key] = time.time()
                     return tool_instance, "generic_api"
         except Exception as e:
             logger.error(f"Error loading tool {name} from DB: {e}")

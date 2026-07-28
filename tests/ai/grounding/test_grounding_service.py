@@ -75,6 +75,18 @@ def test_audit_returns_pass_when_explicitly_disabled():
     assert result.should_warn is False
 
 
+def test_warning_chunk_medium_uses_tool_backed_notice():
+    chunk = GroundingService.warning_chunk(
+        risk_level=GroundingRiskLevel.MEDIUM,
+        reason="partial overlap",
+    )
+
+    assert "信息来源提示" in chunk["content"]
+    assert "工具或资料结果" in chunk["content"]
+    assert "风险提示" not in chunk["content"]
+    assert chunk["grounding_risk"]["level"] == "medium"
+
+
 def test_warning_chunk_can_reuse_an_external_guard_reason():
     chunk = GroundingService.warning_chunk(
         risk_level=GroundingRiskLevel.HIGH,

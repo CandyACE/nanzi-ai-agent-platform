@@ -4,7 +4,9 @@ import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
 import ConfirmModal from '../../components/ConfirmModal.vue'
+import Switch from '../Switch.vue'
 import McpToolTester from './McpToolTester.vue'
+import { buildDefaultMcpServerName } from '@/utils/mcpServerName'
 import { 
   PlusIcon,
   BeakerIcon,
@@ -34,6 +36,19 @@ const canSave = computed(() => {
   if (props.scope === 'personal') return true
   return userInfo.value?.role === 'admin'
 })
+
+const getApiErrorMessage = (error: any, fallback: string) => {
+  const responseData = error?.response?.data
+  const candidates = [
+    responseData?.message,
+    responseData?.detail,
+    responseData?.data?.message,
+    responseData?.data?.detail,
+  ]
+  const message = candidates.find((value) => typeof value === 'string' && value.trim())
+  return message || fallback
+}
+
 const servers = ref<any[]>([])
 const loading = ref(false)
 const showAddModal = ref(false)
@@ -53,26 +68,59 @@ const wizardStep = ref<1 | 2>(1) // 1: Input & Verify, 2: Preview & Name
 const verifying = ref(false)
 const discoveredTools = ref<any[]>([])
 const syncLoading = ref<Record<string, boolean>>({})
+const statusLoading = ref<Record<string, boolean>>({})
+
+type McpAgentUsage = {
+  id: string
+  name: string
+  display_name: string
+  is_enabled: boolean
+  active: boolean
+  version_count: number
+}
+
+type McpServerUsage = {
+  server_id: string
+  bound_agent_count: number
+  active_agent_count: number
+  bound_version_count: number
+  agents: McpAgentUsage[]
+}
+
+const selectedServerUsage = ref<McpServerUsage | null>(null)
+const usageLoading = ref<Record<string, boolean>>({})
+const showStatusConfirm = ref(false)
+const statusConfirmServer = ref<any | null>(null)
+const statusConfirmUsage = ref<McpServerUsage | null>(null)
+const statusConfirmLoading = ref(false)
 
 // Batch Actions Logic
 const selectedToolIds = ref<Set<string>>(new Set())
 const selectedServer = ref<any>(null)
 const tools = ref<any[]>([])
 const toolsLoading = ref(false)
+const isSelectedServerEnabled = computed(() => Number(selectedServer.value?.enabled_status) === 1)
+const canManageSelectedTools = computed(() => canSave.value && isSelectedServerEnabled.value)
+const canManageTool = (tool: any) => canManageSelectedTools.value && tool?.is_available !== false
 
 const isAllSelected = computed(() => {
-  return tools.value.length > 0 && selectedToolIds.value.size === tools.value.length
+  const selectableTools = tools.value.filter(tool => tool.is_available !== false)
+  return selectableTools.length > 0 && selectedToolIds.value.size === selectableTools.length
 })
 
 const toggleSelectAll = () => {
+  if (!canManageSelectedTools.value) return
   if (isAllSelected.value) {
     selectedToolIds.value.clear()
   } else {
-    tools.value.forEach(t => selectedToolIds.value.add(t.id))
+    tools.value
+      .filter(tool => tool.is_available !== false)
+      .forEach(tool => selectedToolIds.value.add(tool.id))
   }
 }
 
 const toggleSelectTool = (id: string) => {
+  if (!canManageSelectedTools.value) return
   if (selectedToolIds.value.has(id)) {
     selectedToolIds.value.delete(id)
   } else {
@@ -81,21 +129,28 @@ const toggleSelectTool = (id: string) => {
 }
 
 const batchUpdateStatus = async (published: boolean) => {
-  if (selectedToolIds.value.size === 0) return
+  const ids = tools.value
+    .filter(tool => selectedToolIds.value.has(tool.id) && tool.is_available !== false)
+    .map(tool => tool.id)
+  if (!canManageSelectedTools.value || ids.length === 0) return
   
   loading.value = true
   try {
-    const ids = Array.from(selectedToolIds.value)
     // Batch update in parallel
     await Promise.all(ids.map(id => 
       axios.put(`/api/portal/mcp/tools/${id}/publish?published=${published}`)
     ))
     
     showToast(`成功${published ? '发布' : '下线'} ${ids.length} 个工具`, 'success')
-    if (selectedServer.value) fetchTools(selectedServer.value.id)
+    if (selectedServer.value) {
+      fetchTools(selectedServer.value.id)
+      fetchServerUsage(selectedServer.value.id).then((usage) => {
+        if (selectedServer.value) selectedServerUsage.value = usage
+      })
+    }
     selectedToolIds.value.clear()
   } catch (e) {
-    showToast('批量操作失败', 'error')
+    showToast(getApiErrorMessage(e, '批量操作失败'), 'error')
   } finally {
     loading.value = false
   }
@@ -159,7 +214,7 @@ const fetchServers = async () => {
     })
     servers.value = res.data
   } catch (e) {
-    showToast('获取 MCP 服务列表失败', 'error')
+    showToast(getApiErrorMessage(e, '获取 MCP 服务列表失败'), 'error')
   } finally {
     loading.value = false
   }
@@ -190,6 +245,100 @@ const openEditModal = (server: any) => {
   showAddModal.value = true
 }
 
+const toggleServerStatus = async (server: any, enabled: boolean) => {
+  if (!canSave.value || statusLoading.value[server.id]) return false
+
+  const nextStatus = enabled ? 1 : 0
+  if (Number(server.enabled_status) === nextStatus) return true
+
+  statusLoading.value[server.id] = true
+  try {
+    const response = await axios.put(`/api/portal/mcp/servers/${server.id}`, {
+      server_name: server.server_name,
+      sse_url: server.sse_url,
+      auth_headers: server.auth_headers || '{}',
+      enabled_status: nextStatus,
+      scope: props.scope,
+    })
+    const savedStatus = Number(response.data?.enabled_status ?? nextStatus)
+    server.enabled_status = savedStatus
+    if (selectedServer.value?.id === server.id) {
+      selectedServer.value = { ...selectedServer.value, enabled_status: savedStatus }
+    }
+    showToast(savedStatus === 1 ? 'MCP 服务已启用' : 'MCP 服务已禁用', 'success')
+    return true
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '更新 MCP 服务状态失败'), 'error')
+    return false
+  } finally {
+    statusLoading.value[server.id] = false
+  }
+}
+
+const fetchServerUsage = async (serverId: string): Promise<McpServerUsage | null> => {
+  usageLoading.value[serverId] = true
+  try {
+    const response = await axios.get(`/api/portal/mcp/servers/${serverId}/usage`)
+    return response.data
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '获取 MCP 使用情况失败'), 'error')
+    return null
+  } finally {
+    usageLoading.value[serverId] = false
+  }
+}
+
+const formatUsageImpact = (usage: McpServerUsage | null, action: '禁用' | '删除') => {
+  if (!usage || usage.bound_agent_count === 0) {
+    return `${action}后，关联的 MCP 工具将立即不可用。`
+  }
+
+  const names = usage.agents
+    .slice(0, 5)
+    .map(agent => agent.display_name || agent.name)
+    .join('、')
+  const more = usage.agents.length > 5 ? ` 等 ${usage.agents.length} 个智能体` : ''
+  return `${action}后，关联的 MCP 工具将立即不可用。\n受影响智能体：${names}${more}\n其中当前生效：${usage.active_agent_count} 个。`
+}
+
+const handleServerStatusChange = async (server: any, enabled: boolean) => {
+  if (enabled) {
+    await toggleServerStatus(server, true)
+    return
+  }
+
+  if (statusLoading.value[server.id]) return
+  statusLoading.value[server.id] = true
+  try {
+    const usage = await fetchServerUsage(server.id)
+    if (!usage) return
+    statusConfirmServer.value = server
+    statusConfirmUsage.value = usage
+    showStatusConfirm.value = true
+  } finally {
+    statusLoading.value[server.id] = false
+  }
+}
+
+const executeStatusChange = async () => {
+  if (!statusConfirmServer.value) return
+  statusConfirmLoading.value = true
+  const success = await toggleServerStatus(statusConfirmServer.value, false)
+  statusConfirmLoading.value = false
+  if (success) {
+    showStatusConfirm.value = false
+    statusConfirmServer.value = null
+    statusConfirmUsage.value = null
+  }
+}
+
+const cancelStatusConfirm = () => {
+  if (statusConfirmLoading.value) return
+  showStatusConfirm.value = false
+  statusConfirmServer.value = null
+  statusConfirmUsage.value = null
+}
+
 const handleVerify = async () => {
   if (!newServer.value.sse_url) {
     showToast('请输入 SSE 握手地址', 'warning')
@@ -204,8 +353,11 @@ const handleVerify = async () => {
     if (!newServer.value.server_name) {
         try {
             const url = new URL(newServer.value.sse_url)
-            let baseName = url.hostname.replace(/\./g, '-') + '-mcp'
-            if (props.scope === 'personal') baseName += '-my'
+            const baseName = buildDefaultMcpServerName(
+              props.scope,
+              userInfo.value?.user_name,
+              url.hostname,
+            )
             let candidateName = baseName
             let counter = 1
             while (servers.value.some((s: any) => s.server_name === candidateName)) {
@@ -214,12 +366,16 @@ const handleVerify = async () => {
             }
             newServer.value.server_name = candidateName
         } catch {
-            newServer.value.server_name = props.scope === 'personal' ? 'my-mcp-server' : 'new-mcp-server'
+            newServer.value.server_name = buildDefaultMcpServerName(
+              props.scope,
+              userInfo.value?.user_name,
+              '',
+            )
         }
     }
     showToast('连接成功，已发现工具', 'success')
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '连接失败，请检查地址或认证信息', 'error')
+    showToast(getApiErrorMessage(e, '连接失败，请检查地址或认证信息'), 'error')
   } finally {
     verifying.value = false
   }
@@ -248,31 +404,51 @@ const addServer = async () => {
     fetchServers()
     resetWizard()
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '操作失败', 'error')
+    showToast(getApiErrorMessage(e, '操作失败'), 'error')
   }
 }
 
 // Deletion Logic
 const showDeleteConfirm = ref(false)
 const serverToDelete = ref<string | null>(null)
+const deleteServerUsage = ref<McpServerUsage | null>(null)
+const deleteLoading = ref(false)
 
-const confirmDeleteServer = (id: string) => {
-  serverToDelete.value = id
+const confirmDeleteServer = async (server: any) => {
+  const usage = await fetchServerUsage(server.id)
+  if (!usage) return
+  serverToDelete.value = server.id
+  deleteServerUsage.value = usage
   showDeleteConfirm.value = true
 }
 
 const executeDeleteServer = async () => {
   if (!serverToDelete.value) return
+  const deletingId = serverToDelete.value
+  deleteLoading.value = true
   try {
-    await axios.delete(`/api/portal/mcp/servers/${serverToDelete.value}`)
+    await axios.delete(`/api/portal/mcp/servers/${deletingId}`)
     showToast('删除成功', 'success')
     showDeleteConfirm.value = false
     serverToDelete.value = null
+    deleteServerUsage.value = null
     fetchServers()
-    if (selectedServer.value?.id === serverToDelete.value) selectedServer.value = null
+    if (selectedServer.value?.id === deletingId) {
+      selectedServer.value = null
+      selectedServerUsage.value = null
+    }
   } catch (e) {
-    showToast('删除失败', 'error')
+    showToast(getApiErrorMessage(e, '删除失败'), 'error')
+  } finally {
+    deleteLoading.value = false
   }
+}
+
+const cancelDeleteServer = () => {
+  if (deleteLoading.value) return
+  showDeleteConfirm.value = false
+  serverToDelete.value = null
+  deleteServerUsage.value = null
 }
 
 const syncTools = async (id: string) => {
@@ -280,14 +456,23 @@ const syncTools = async (id: string) => {
   
   syncLoading.value[id] = true
   try {
-    await axios.post(`/api/portal/mcp/servers/${id}/sync`)
-    showToast('同步成功', 'success')
+    const response = await axios.post(`/api/portal/mcp/servers/${id}/sync`)
+    const remoteDeletedCount = Number(response.data?.remote_deleted_count || 0)
+    showToast(
+      remoteDeletedCount > 0
+        ? `同步成功，已标记 ${remoteDeletedCount} 个远端已删除工具`
+        : '同步成功',
+      'success',
+    )
     fetchServers()
     if (selectedServer.value?.id === id) {
         fetchTools(id)
+        fetchServerUsage(id).then((usage) => {
+          if (selectedServer.value?.id === id) selectedServerUsage.value = usage
+        })
     }
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '同步失败', 'error')
+    showToast(getApiErrorMessage(e, '同步失败'), 'error')
   } finally {
     syncLoading.value[id] = false
   }
@@ -299,7 +484,7 @@ const fetchTools = async (serverId: string) => {
     const res = await axios.get(`/api/portal/mcp/servers/${serverId}/tools`)
     tools.value = res.data
   } catch (e) {
-    showToast('获取工具列表失败', 'error')
+    showToast(getApiErrorMessage(e, '获取工具列表失败'), 'error')
   } finally {
     toolsLoading.value = false
   }
@@ -307,18 +492,28 @@ const fetchTools = async (serverId: string) => {
 
 const selectServer = (server: any) => {
   selectedServer.value = server
+  selectedServerUsage.value = null
   selectedToolIds.value = new Set()
   fetchTools(server.id)
+  fetchServerUsage(server.id).then((usage) => {
+    if (selectedServer.value?.id === server.id) selectedServerUsage.value = usage
+  })
 }
 
 const togglePublish = async (tool: any) => {
+  if (!canManageTool(tool)) return
   try {
     const newStatus = !tool.is_published
     await axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=${newStatus}`)
     tool.is_published = newStatus
     showToast(newStatus ? '工具已发布' : '工具已下线', 'success')
+    if (selectedServer.value) {
+      fetchServerUsage(selectedServer.value.id).then((usage) => {
+        if (selectedServer.value) selectedServerUsage.value = usage
+      })
+    }
   } catch (e) {
-    showToast('操作失败', 'error')
+    showToast(getApiErrorMessage(e, '操作失败'), 'error')
   }
 }
 
@@ -396,18 +591,33 @@ onMounted(fetchServers)
             class="p-4 cursor-pointer transition-all hover:bg-blue-50/30"
             :class="selectedServer?.id === server.id ? 'bg-blue-50 border-l-4 border-primary' : 'border-l-4 border-transparent'"
           >
-            <div class="flex justify-between items-start mb-1">
-              <span class="text-sm font-bold text-gray-900">{{ server.server_name }}</span>
-              <div v-if="canSave" class="flex space-x-1">
-                <button @click.stop="openEditModal(server)" class="p-1 text-gray-400 hover:text-blue-500 transition-colors" title="编辑配置">
-                  <PencilSquareIcon class="w-4 h-4" />
-                </button>
-                <button @click.stop="syncTools(server.id)" :disabled="syncLoading[server.id]" class="p-1 text-gray-400 hover:text-primary transition-colors">
-                  <CloudArrowDownIcon class="w-4 h-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
-                </button>
-                <button @click.stop="confirmDeleteServer(server.id)" class="p-1 text-gray-400 hover:text-red-500 transition-colors">
-                  <TrashIcon class="w-4 h-4" />
-                </button>
+            <div class="flex justify-between items-start mb-1 gap-2">
+              <span class="text-sm font-bold text-gray-900 truncate">{{ server.server_name }}</span>
+              <div class="flex items-center gap-2 shrink-0" @click.stop>
+                <span
+                  class="text-[10px] font-semibold"
+                  :class="server.enabled_status === 1 ? 'text-emerald-600' : 'text-gray-400'"
+                >
+                  {{ server.enabled_status === 1 ? '运行中' : '已禁用' }}
+                </span>
+                <Switch
+                  :model-value="server.enabled_status === 1"
+                  :disabled="!canSave || statusLoading[server.id]"
+                  :loading="statusLoading[server.id]"
+                  :aria-label="`${server.server_name}${server.enabled_status === 1 ? '禁用' : '启用'}`"
+                  @update:model-value="handleServerStatusChange(server, $event)"
+                />
+                <div v-if="canSave" class="flex space-x-1">
+                  <button @click="openEditModal(server)" class="p-1 text-gray-400 hover:text-blue-500 transition-colors" title="编辑配置">
+                    <PencilSquareIcon class="w-4 h-4" />
+                  </button>
+                  <button @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="p-1 text-gray-400 hover:text-primary transition-colors">
+                    <CloudArrowDownIcon class="w-4 h-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
+                  </button>
+                  <button @click="confirmDeleteServer(server)" class="p-1 text-gray-400 hover:text-red-500 transition-colors">
+                    <TrashIcon class="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
             <div class="flex items-center text-[10px] text-gray-400 font-mono truncate mb-2">
@@ -416,7 +626,10 @@ onMounted(fetchServers)
             </div>
             <div class="flex justify-between items-center">
               <span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-                {{ server.tool_count }} 工具 / <span class="text-green-600 font-bold">{{ server.published_tool_count }} 已发布</span>
+                {{ server.tool_count }} 工具 /
+                <span v-if="server.enabled_status === 1" class="text-green-600 font-bold">{{ server.published_tool_count }} 已发布</span>
+                <span v-else class="text-gray-400 font-bold">服务已禁用</span>
+                <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
               </span>
               <span class="text-[9px] text-gray-400 italic" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
             </div>
@@ -439,20 +652,28 @@ onMounted(fetchServers)
               v-if="canSave"
               type="checkbox" 
               :checked="isAllSelected" 
+              :disabled="!canManageSelectedTools"
               @change="toggleSelectAll"
               class="w-4 h-4 text-primary border-gray-400 rounded focus:ring-primary mr-3" 
             />
             <div>
               <h3 class="text-sm font-bold text-slate-800">{{ selectedServer.server_name }} 工具</h3>
-              <p class="text-[10px] text-slate-500 mt-0.5" v-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
+              <p class="text-[10px] text-amber-600 mt-0.5" v-if="!isSelectedServerEnabled">服务已禁用，工具暂不可测试、发布或下线</p>
+              <p class="text-[10px] text-slate-500 mt-0.5" v-else-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
               <p class="text-[10px] text-primary font-black mt-0.5" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
+              <div v-if="selectedServerUsage" class="flex items-center gap-2 mt-1 text-[10px]">
+                <span class="text-slate-500">绑定 {{ selectedServerUsage.bound_agent_count }} 个智能体</span>
+                <span class="text-emerald-600">生效 {{ selectedServerUsage.active_agent_count }} 个</span>
+                <span class="text-slate-400">{{ selectedServerUsage.bound_version_count }} 个版本配置</span>
+              </div>
+              <span v-else-if="usageLoading[selectedServer.id]" class="text-[10px] text-slate-400 mt-1">正在统计使用情况...</span>
             </div>
           </div>
           
           <div class="flex items-center space-x-3">
             <div v-if="canSave && selectedToolIds.size > 0" class="flex items-center space-x-2 animate-fade-in bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
-              <button @click="batchUpdateStatus(true)" class="text-[10px] font-bold bg-green-600 text-white px-3 py-1 rounded shadow-sm hover:bg-green-700 transition-all">批量发布</button>
-              <button @click="batchUpdateStatus(false)" class="text-[10px] font-bold bg-slate-600 text-white px-3 py-1 rounded shadow-sm hover:bg-slate-700 transition-all">批量下线</button>
+              <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="text-[10px] font-bold bg-green-600 text-white px-3 py-1 rounded shadow-sm hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">批量发布</button>
+              <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="text-[10px] font-bold bg-slate-600 text-white px-3 py-1 rounded shadow-sm hover:bg-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">批量下线</button>
             </div>
             <button v-if="canSave" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="text-[11px] font-bold text-primary flex items-center hover:underline bg-white px-2 py-1 rounded border border-gray-200">
               <ArrowPathIcon class="w-3.5 h-3.5 mr-1" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
@@ -472,10 +693,10 @@ onMounted(fetchServers)
             <div 
               v-for="tool in tools" 
               :key="tool.id" 
-              @click="canSave && toggleSelectTool(tool.id)"
+              @click="canManageTool(tool) && toggleSelectTool(tool.id)"
               class="p-4 rounded-lg border flex justify-between items-start group transition-all"
               :class="[
-                canSave ? 'cursor-pointer' : '',
+                canManageTool(tool) ? 'cursor-pointer' : 'cursor-default',
                 selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
               ]"
             >
@@ -484,6 +705,7 @@ onMounted(fetchServers)
                   v-if="canSave"
                   type="checkbox" 
                   :checked="selectedToolIds.has(tool.id)" 
+                  :disabled="!canManageTool(tool)"
                   @click.stop="toggleSelectTool(tool.id)"
                   class="w-3.5 h-3.5 mt-1 text-primary border-gray-300 rounded focus:ring-primary mr-3" 
                 />
@@ -493,7 +715,9 @@ onMounted(fetchServers)
                     <span v-if="tool.usage_count > 0" class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-blue-100 text-blue-700" title="被智能体引用次数">
                       <LinkIcon class="w-3 h-3 mr-0.5" />{{ tool.usage_count }}
                     </span>
-                    <span v-if="tool.is_published" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">已发布</span>
+                    <span v-if="!isSelectedServerEnabled" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">服务已禁用</span>
+                    <span v-else-if="tool.is_available === false" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">远端已删除</span>
+                    <span v-else-if="tool.is_published" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">已发布</span>
                     <span v-else class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-400 border border-gray-200 uppercase tracking-tighter">待发布</span>
                   </div>
                   <p class="text-xs text-gray-500 line-clamp-2 leading-relaxed italic">
@@ -507,7 +731,8 @@ onMounted(fetchServers)
               <div v-if="canSave" class="flex flex-col items-end space-y-2">
                 <button 
                   @click.stop="openTester(tool)"
-                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm bg-white text-indigo-600 hover:bg-indigo-50 border-indigo-100 opacity-0 group-hover:opacity-100"
+                  :disabled="!canManageTool(tool)"
+                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm bg-white text-indigo-600 hover:bg-indigo-50 border-indigo-100 opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                   title="在线测试"
                 >
                   <BeakerIcon class="w-3.5 h-3.5 mr-1.5" />
@@ -515,7 +740,8 @@ onMounted(fetchServers)
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
-                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm opacity-0 group-hover:opacity-100"
+                  :disabled="!canManageTool(tool)"
+                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                   :class="tool.is_published ? 'bg-white text-gray-600 hover:text-red-600' : 'bg-primary text-white hover:bg-primary-dark'"
                 >
                   <component :is="tool.is_published ? EyeSlashIcon : EyeIcon" class="w-3.5 h-3.5 mr-1.5" />
@@ -663,10 +889,22 @@ onMounted(fetchServers)
     <ConfirmModal 
       v-if="showDeleteConfirm"
       title="删除 MCP 服务"
-      message="确定要删除该服务及其缓存的所有工具吗？此操作不可恢复，且关联这些工具的智能体将失效。"
+      :message="`确定要删除该服务及其缓存的所有工具吗？此操作不可恢复。\n${formatUsageImpact(deleteServerUsage, '删除')}`"
       type="danger"
+      :loading="deleteLoading"
       @confirm="executeDeleteServer"
-      @cancel="showDeleteConfirm = false"
+      @cancel="cancelDeleteServer"
+    />
+
+    <ConfirmModal
+      v-if="showStatusConfirm"
+      title="禁用 MCP 服务"
+      :message="formatUsageImpact(statusConfirmUsage, '禁用')"
+      type="warning"
+      confirm-text="确认禁用"
+      :loading="statusConfirmLoading"
+      @confirm="executeStatusChange"
+      @cancel="cancelStatusConfirm"
     />
   </div>
 </template>

@@ -110,7 +110,7 @@ class AgentServicePrompts:
     })
 
     # 固定欢迎语
-    GREETING = "您好！我是南孜智能体，期待为您服务。"
+    GREETING = "您好！我是你的智能体助手，期待为您服务。"
 
     # 固定错误/拒绝话术
     EMPTY_REQUEST = "请求内容不能为空。"
