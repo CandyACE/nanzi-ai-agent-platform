@@ -546,10 +546,25 @@
                     ? 'bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800/70 dark:border-gray-700 dark:text-gray-400 opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-1 bg-transparent border-transparent'"
               >
-                <!-- Status Indicator Dot (Removed to reduce visual noise) -->
-                <!-- Text -->
-                <span>{{ msg.agentDisplayName || msg.agentName || '智能体正在分配调度中...' }}</span>
-                <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
+                <!-- Text：调度占位（三点跳动）→ 智能体名（淡入轻微上滑） -->
+                <Transition name="slide-fade" mode="out-in">
+                  <span
+                    v-if="msg.agentDisplayName || msg.agentName"
+                    :key="`agent-${msg.agentDisplayName || msg.agentName}`"
+                    class="inline-flex items-center space-x-1.5"
+                  >
+                    <span>{{ msg.agentDisplayName || msg.agentName }}</span>
+                    <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
+                  </span>
+                  <span v-else key="dispatch-placeholder" class="inline-flex items-center">
+                    智能体正在分配调度中
+                    <span class="inline-flex ml-0.5" aria-hidden="true">
+                      <span class="animate-bounce-dot font-bold" style="animation-delay: 0s">.</span>
+                      <span class="animate-bounce-dot font-bold" style="animation-delay: 0.15s">.</span>
+                      <span class="animate-bounce-dot font-bold" style="animation-delay: 0.3s">.</span>
+                    </span>
+                  </span>
+                </Transition>
               </div>
             </div>
             <div

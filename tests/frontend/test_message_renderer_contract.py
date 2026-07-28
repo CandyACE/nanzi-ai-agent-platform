@@ -152,7 +152,9 @@ def test_thought_steps_timeline_line_is_subtle():
 def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():
     source = _source("frontend/src/views/EmbedChat.vue")
 
-    assert "智能体正在分配调度中..." in source
+    assert "智能体正在分配调度中" in source
+    assert "animate-bounce-dot" in source
+    assert 'name="slide-fade"' in source
     assert "msg.isThinking" in source
     assert "bg-gray-50 border-gray-200" in source
     assert "v-if=\"msg.agentName\"" in source
