@@ -20,5 +20,13 @@ def test_mcp_server_card_exposes_enabled_status_switch():
 def test_mcp_server_status_switch_updates_existing_server_configuration():
     assert "@update:model-value=\"handleServerStatusChange(server, $event)\"" in SOURCE
     assert "const handleServerStatusChange = async" in SOURCE
+    assert ':loading="statusLoading[server.id]"' in SOURCE
     assert "`/api/portal/mcp/servers/${server.id}`" in SOURCE
     assert "enabled_status: nextStatus" in SOURCE
+
+
+def test_disabled_server_blocks_tool_actions_and_shows_effective_status():
+    assert "const isSelectedServerEnabled = computed" in SOURCE
+    assert "服务已禁用" in SOURCE
+    assert "canManageSelectedTools" in SOURCE
+    assert ":disabled=\"!canManageSelectedTools\"" in SOURCE

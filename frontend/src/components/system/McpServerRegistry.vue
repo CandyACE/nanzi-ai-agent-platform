@@ -99,12 +99,15 @@ const selectedToolIds = ref<Set<string>>(new Set())
 const selectedServer = ref<any>(null)
 const tools = ref<any[]>([])
 const toolsLoading = ref(false)
+const isSelectedServerEnabled = computed(() => Number(selectedServer.value?.enabled_status) === 1)
+const canManageSelectedTools = computed(() => canSave.value && isSelectedServerEnabled.value)
 
 const isAllSelected = computed(() => {
   return tools.value.length > 0 && selectedToolIds.value.size === tools.value.length
 })
 
 const toggleSelectAll = () => {
+  if (!canManageSelectedTools.value) return
   if (isAllSelected.value) {
     selectedToolIds.value.clear()
   } else {
@@ -113,6 +116,7 @@ const toggleSelectAll = () => {
 }
 
 const toggleSelectTool = (id: string) => {
+  if (!canManageSelectedTools.value) return
   if (selectedToolIds.value.has(id)) {
     selectedToolIds.value.delete(id)
   } else {
@@ -121,7 +125,7 @@ const toggleSelectTool = (id: string) => {
 }
 
 const batchUpdateStatus = async (published: boolean) => {
-  if (selectedToolIds.value.size === 0) return
+  if (!canManageSelectedTools.value || selectedToolIds.value.size === 0) return
   
   loading.value = true
   try {
@@ -297,11 +301,17 @@ const handleServerStatusChange = async (server: any, enabled: boolean) => {
     return
   }
 
-  const usage = await fetchServerUsage(server.id)
-  if (!usage) return
-  statusConfirmServer.value = server
-  statusConfirmUsage.value = usage
-  showStatusConfirm.value = true
+  if (statusLoading.value[server.id]) return
+  statusLoading.value[server.id] = true
+  try {
+    const usage = await fetchServerUsage(server.id)
+    if (!usage) return
+    statusConfirmServer.value = server
+    statusConfirmUsage.value = usage
+    showStatusConfirm.value = true
+  } finally {
+    statusLoading.value[server.id] = false
+  }
 }
 
 const executeStatusChange = async () => {
@@ -485,6 +495,7 @@ const selectServer = (server: any) => {
 }
 
 const togglePublish = async (tool: any) => {
+  if (!canManageSelectedTools.value) return
   try {
     const newStatus = !tool.is_published
     await axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=${newStatus}`)
@@ -586,6 +597,7 @@ onMounted(fetchServers)
                 <Switch
                   :model-value="server.enabled_status === 1"
                   :disabled="!canSave || statusLoading[server.id]"
+                  :loading="statusLoading[server.id]"
                   :aria-label="`${server.server_name}${server.enabled_status === 1 ? '禁用' : '启用'}`"
                   @update:model-value="handleServerStatusChange(server, $event)"
                 />
@@ -608,7 +620,9 @@ onMounted(fetchServers)
             </div>
             <div class="flex justify-between items-center">
               <span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-                {{ server.tool_count }} 工具 / <span class="text-green-600 font-bold">{{ server.published_tool_count }} 已发布</span>
+                {{ server.tool_count }} 工具 /
+                <span v-if="server.enabled_status === 1" class="text-green-600 font-bold">{{ server.published_tool_count }} 已发布</span>
+                <span v-else class="text-gray-400 font-bold">服务已禁用</span>
               </span>
               <span class="text-[9px] text-gray-400 italic" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
             </div>
@@ -631,12 +645,14 @@ onMounted(fetchServers)
               v-if="canSave"
               type="checkbox" 
               :checked="isAllSelected" 
+              :disabled="!canManageSelectedTools"
               @change="toggleSelectAll"
               class="w-4 h-4 text-primary border-gray-400 rounded focus:ring-primary mr-3" 
             />
             <div>
               <h3 class="text-sm font-bold text-slate-800">{{ selectedServer.server_name }} 工具</h3>
-              <p class="text-[10px] text-slate-500 mt-0.5" v-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
+              <p class="text-[10px] text-amber-600 mt-0.5" v-if="!isSelectedServerEnabled">服务已禁用，工具暂不可测试、发布或下线</p>
+              <p class="text-[10px] text-slate-500 mt-0.5" v-else-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
               <p class="text-[10px] text-primary font-black mt-0.5" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
               <div v-if="selectedServerUsage" class="flex items-center gap-2 mt-1 text-[10px]">
                 <span class="text-slate-500">绑定 {{ selectedServerUsage.bound_agent_count }} 个智能体</span>
@@ -649,8 +665,8 @@ onMounted(fetchServers)
           
           <div class="flex items-center space-x-3">
             <div v-if="canSave && selectedToolIds.size > 0" class="flex items-center space-x-2 animate-fade-in bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
-              <button @click="batchUpdateStatus(true)" class="text-[10px] font-bold bg-green-600 text-white px-3 py-1 rounded shadow-sm hover:bg-green-700 transition-all">批量发布</button>
-              <button @click="batchUpdateStatus(false)" class="text-[10px] font-bold bg-slate-600 text-white px-3 py-1 rounded shadow-sm hover:bg-slate-700 transition-all">批量下线</button>
+              <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="text-[10px] font-bold bg-green-600 text-white px-3 py-1 rounded shadow-sm hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">批量发布</button>
+              <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="text-[10px] font-bold bg-slate-600 text-white px-3 py-1 rounded shadow-sm hover:bg-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">批量下线</button>
             </div>
             <button v-if="canSave" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="text-[11px] font-bold text-primary flex items-center hover:underline bg-white px-2 py-1 rounded border border-gray-200">
               <ArrowPathIcon class="w-3.5 h-3.5 mr-1" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
@@ -670,10 +686,10 @@ onMounted(fetchServers)
             <div 
               v-for="tool in tools" 
               :key="tool.id" 
-              @click="canSave && toggleSelectTool(tool.id)"
+              @click="canManageSelectedTools && toggleSelectTool(tool.id)"
               class="p-4 rounded-lg border flex justify-between items-start group transition-all"
               :class="[
-                canSave ? 'cursor-pointer' : '',
+                canManageSelectedTools ? 'cursor-pointer' : 'cursor-default',
                 selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
               ]"
             >
@@ -682,6 +698,7 @@ onMounted(fetchServers)
                   v-if="canSave"
                   type="checkbox" 
                   :checked="selectedToolIds.has(tool.id)" 
+                  :disabled="!canManageSelectedTools"
                   @click.stop="toggleSelectTool(tool.id)"
                   class="w-3.5 h-3.5 mt-1 text-primary border-gray-300 rounded focus:ring-primary mr-3" 
                 />
@@ -691,7 +708,8 @@ onMounted(fetchServers)
                     <span v-if="tool.usage_count > 0" class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-blue-100 text-blue-700" title="被智能体引用次数">
                       <LinkIcon class="w-3 h-3 mr-0.5" />{{ tool.usage_count }}
                     </span>
-                    <span v-if="tool.is_published" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">已发布</span>
+                    <span v-if="!isSelectedServerEnabled" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">服务已禁用</span>
+                    <span v-else-if="tool.is_published" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">已发布</span>
                     <span v-else class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-400 border border-gray-200 uppercase tracking-tighter">待发布</span>
                   </div>
                   <p class="text-xs text-gray-500 line-clamp-2 leading-relaxed italic">
@@ -705,7 +723,8 @@ onMounted(fetchServers)
               <div v-if="canSave" class="flex flex-col items-end space-y-2">
                 <button 
                   @click.stop="openTester(tool)"
-                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm bg-white text-indigo-600 hover:bg-indigo-50 border-indigo-100 opacity-0 group-hover:opacity-100"
+                  :disabled="!canManageSelectedTools"
+                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm bg-white text-indigo-600 hover:bg-indigo-50 border-indigo-100 opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                   title="在线测试"
                 >
                   <BeakerIcon class="w-3.5 h-3.5 mr-1.5" />
@@ -713,7 +732,8 @@ onMounted(fetchServers)
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
-                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm opacity-0 group-hover:opacity-100"
+                  :disabled="!canManageSelectedTools"
+                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
                   :class="tool.is_published ? 'bg-white text-gray-600 hover:text-red-600' : 'bg-primary text-white hover:bg-primary-dark'"
                 >
                   <component :is="tool.is_published ? EyeSlashIcon : EyeIcon" class="w-3.5 h-3.5 mr-1.5" />
