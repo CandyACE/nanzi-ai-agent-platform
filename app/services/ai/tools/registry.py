@@ -39,6 +39,7 @@ from app.services.ai.tools.resource_catalog_tools import (
     list_accessible_datasets,
     list_accessible_knowledge_bases,
 )
+from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.agent_delegate_tool import sub_agent_call
 from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
@@ -104,6 +105,7 @@ TOOL_EVIDENCE_TYPES = {
     "word_document_read": frozenset({EvidenceType.USER_FILE}),
     "memory_search": frozenset({EvidenceType.CONVERSATION_MEMORY}),
     "fetch_user_long_term_memory": frozenset({EvidenceType.CONVERSATION_MEMORY}),
+    "get_myinfo": frozenset({EvidenceType.INTERNAL_DATA}),
 }
 
 # 工具取证策略：
@@ -117,6 +119,7 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     # 记忆/知识/文件检索：查无结果 = "未找到"，属于合法事实依据
     "memory_search": "allow_empty_success",
     "fetch_user_long_term_memory": "allow_empty_success",
+    "get_myinfo": "allow_empty_success",
     "search_knowledge_base": "allow_empty_success",
     "search_qa_examples": "allow_empty_success",
     "jira_search": "allow_empty_success",
@@ -273,6 +276,7 @@ class ToolRegistry:
         "memory_search": memory_search,
         "list_accessible_datasets": list_accessible_datasets,
         "list_accessible_knowledge_bases": list_accessible_knowledge_bases,
+        "get_myinfo": get_myinfo,
         "sub_agent_call": sub_agent_call,
         "excel_document_read": excel_document_read,
         "excel_document_write": excel_document_write,
@@ -747,6 +751,7 @@ class ToolRegistry:
             memory_search,
             list_accessible_datasets,
             list_accessible_knowledge_bases,
+            get_myinfo,
             create_skills,
             list_available_skills,
             read_skill_instruction,
