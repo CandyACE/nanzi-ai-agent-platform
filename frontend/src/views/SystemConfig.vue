@@ -1156,14 +1156,6 @@ onMounted(() => {
            品牌个性化
          </button>
          <button
-           @click="activeTab = 'mcp'"
-           class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-           :class="activeTab === 'mcp' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
-         >
-           <ServerStackIcon class="w-4 h-4 mr-2" />
-           MCP管理
-         </button>
-         <button
            @click="activeTab = 'diagnostics'"
            class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
            :class="activeTab === 'diagnostics' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"

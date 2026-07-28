@@ -259,3 +259,31 @@ async def test_failed_initialized_notification_does_not_reenter_recovery_lock(mo
                 ),
                 timeout=0.2,
             )
+
+
+@pytest.mark.asyncio
+async def test_json_content_type_skips_sse_probe_without_raising():
+    session = McpSseSession(SERVER_ID, SSE_URL, AUTH_HEADERS)
+
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_client_instance = AsyncMock()
+        MockClient.return_value.__aenter__.return_value = mock_client_instance
+        mock_client_instance.get.return_value = Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"ok": True},
+        )
+
+        assert await session._looks_like_sse_endpoint() is False
+
+
+@pytest.mark.asyncio
+async def test_connect_skips_sse_when_probe_reports_json():
+    session = McpSseSession(SERVER_ID, SSE_URL, AUTH_HEADERS)
+
+    with patch.object(session, "_looks_like_sse_endpoint", AsyncMock(return_value=False)):
+        with patch("app.services.ai.tools.mcp_client.sse_client") as mock_sse:
+            await session.connect()
+
+    assert session.is_direct_http is True
+    mock_sse.assert_not_called()

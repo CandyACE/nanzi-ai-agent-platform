@@ -31,6 +31,31 @@ class McpSseSession:
         self._rpc_id_counter += 1
         return self._rpc_id_counter
 
+    async def _looks_like_sse_endpoint(self) -> bool:
+        """Quick probe: skip SSE when the gateway clearly speaks JSON/HTTP."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+                response = await client.get(self.sse_url, headers=self.auth_headers)
+            content_type = (response.headers.get("content-type") or "").lower()
+            if "text/event-stream" in content_type:
+                return True
+            if "application/json" in content_type or "application/rpc" in content_type:
+                logger.info(
+                    "[MCP] Endpoint %s reports Content-Type=%s; skipping SSE probe",
+                    self.server_id,
+                    content_type.split(";")[0].strip() or "unknown",
+                )
+                return False
+            # Unknown type: still try SSE for legacy gateways.
+            return True
+        except Exception as probe_err:
+            logger.info(
+                "[MCP] SSE probe skipped for %s due to %s; trying SSE anyway",
+                self.server_id,
+                type(probe_err).__name__,
+            )
+            return True
+
     async def connect(self):
         """Establishes connection with protocol detection"""
         async with self._lock:
@@ -47,28 +72,36 @@ class McpSseSession:
             try:
                 from contextlib import AsyncExitStack
                 self._exit_stack = AsyncExitStack()
-                
-                # 1. Try Standard SSE Connection
-                try:
-                    async def _connect_sse():
-                        read_stream, write_stream = await self._exit_stack.enter_async_context(
-                            sse_client(url=self.sse_url, headers=self.auth_headers)
-                        )
-                        self.session = await self._exit_stack.enter_async_context(
-                            ClientSession(read_stream, write_stream)
-                        )
-                        await self.session.initialize()
 
-                    await asyncio.wait_for(_connect_sse(), timeout=10.0)
-                    
-                    self.last_used_at = time.time()
-                    self.is_direct_http = False
-                    logger.info(f"[MCP] Standard SSE initialized for {self.server_id}")
-                    return
-                except Exception as sse_err:
-                    logger.error(f"[MCP] Standard SSE failed for {self.server_id}. Error: {str(sse_err)}", exc_info=True)
-                    await self._exit_stack.aclose()
-                    self._exit_stack = AsyncExitStack()
+                try_sse = await self._looks_like_sse_endpoint()
+                
+                # 1. Try Standard SSE Connection (only when probe suggests SSE)
+                if try_sse:
+                    try:
+                        async def _connect_sse():
+                            read_stream, write_stream = await self._exit_stack.enter_async_context(
+                                sse_client(url=self.sse_url, headers=self.auth_headers)
+                            )
+                            self.session = await self._exit_stack.enter_async_context(
+                                ClientSession(read_stream, write_stream)
+                            )
+                            await self.session.initialize()
+
+                        await asyncio.wait_for(_connect_sse(), timeout=10.0)
+                        
+                        self.last_used_at = time.time()
+                        self.is_direct_http = False
+                        logger.info(f"[MCP] Standard SSE initialized for {self.server_id}")
+                        return
+                    except Exception as sse_err:
+                        # 多数网关（如 ModelScope）返回 JSON/HTTP 而非 SSE；探测失败后降级，不打堆栈。
+                        logger.warning(
+                            "[MCP] Standard SSE unavailable for %s (%s); falling back to Direct HTTP",
+                            self.server_id,
+                            type(sse_err).__name__,
+                        )
+                        await self._exit_stack.aclose()
+                        self._exit_stack = AsyncExitStack()
 
                 # 2. Fallback: Direct HTTP Gateway
                 self.is_direct_http = True

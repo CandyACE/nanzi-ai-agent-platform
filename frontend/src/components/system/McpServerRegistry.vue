@@ -34,6 +34,19 @@ const canSave = computed(() => {
   if (props.scope === 'personal') return true
   return userInfo.value?.role === 'admin'
 })
+
+const getApiErrorMessage = (error: any, fallback: string) => {
+  const responseData = error?.response?.data
+  const candidates = [
+    responseData?.message,
+    responseData?.detail,
+    responseData?.data?.message,
+    responseData?.data?.detail,
+  ]
+  const message = candidates.find((value) => typeof value === 'string' && value.trim())
+  return message || fallback
+}
+
 const servers = ref<any[]>([])
 const loading = ref(false)
 const showAddModal = ref(false)
@@ -95,7 +108,7 @@ const batchUpdateStatus = async (published: boolean) => {
     if (selectedServer.value) fetchTools(selectedServer.value.id)
     selectedToolIds.value.clear()
   } catch (e) {
-    showToast('批量操作失败', 'error')
+    showToast(getApiErrorMessage(e, '批量操作失败'), 'error')
   } finally {
     loading.value = false
   }
@@ -159,7 +172,7 @@ const fetchServers = async () => {
     })
     servers.value = res.data
   } catch (e) {
-    showToast('获取 MCP 服务列表失败', 'error')
+    showToast(getApiErrorMessage(e, '获取 MCP 服务列表失败'), 'error')
   } finally {
     loading.value = false
   }
@@ -219,7 +232,7 @@ const handleVerify = async () => {
     }
     showToast('连接成功，已发现工具', 'success')
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '连接失败，请检查地址或认证信息', 'error')
+    showToast(getApiErrorMessage(e, '连接失败，请检查地址或认证信息'), 'error')
   } finally {
     verifying.value = false
   }
@@ -248,7 +261,7 @@ const addServer = async () => {
     fetchServers()
     resetWizard()
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '操作失败', 'error')
+    showToast(getApiErrorMessage(e, '操作失败'), 'error')
   }
 }
 
@@ -271,7 +284,7 @@ const executeDeleteServer = async () => {
     fetchServers()
     if (selectedServer.value?.id === serverToDelete.value) selectedServer.value = null
   } catch (e) {
-    showToast('删除失败', 'error')
+    showToast(getApiErrorMessage(e, '删除失败'), 'error')
   }
 }
 
@@ -287,7 +300,7 @@ const syncTools = async (id: string) => {
         fetchTools(id)
     }
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '同步失败', 'error')
+    showToast(getApiErrorMessage(e, '同步失败'), 'error')
   } finally {
     syncLoading.value[id] = false
   }
@@ -299,7 +312,7 @@ const fetchTools = async (serverId: string) => {
     const res = await axios.get(`/api/portal/mcp/servers/${serverId}/tools`)
     tools.value = res.data
   } catch (e) {
-    showToast('获取工具列表失败', 'error')
+    showToast(getApiErrorMessage(e, '获取工具列表失败'), 'error')
   } finally {
     toolsLoading.value = false
   }
@@ -318,7 +331,7 @@ const togglePublish = async (tool: any) => {
     tool.is_published = newStatus
     showToast(newStatus ? '工具已发布' : '工具已下线', 'success')
   } catch (e) {
-    showToast('操作失败', 'error')
+    showToast(getApiErrorMessage(e, '操作失败'), 'error')
   }
 }
 

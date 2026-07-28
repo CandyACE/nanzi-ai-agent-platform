@@ -3,7 +3,190 @@ import uuid
 from httpx import AsyncClient
 from unittest.mock import patch, AsyncMock
 from app.models.mcp import McpServer, McpToolCache
+from app.models.user import User
+from app.core.context import AgentContext, agent_context
+from app.services.ai.tools.registry import ToolRegistry
 from sqlalchemy import select, delete
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_name_cannot_duplicate_between_global_and_personal(
+    client: AsyncClient,
+    admin_api_key: str,
+    valid_api_key: str,
+):
+    headers = {"Authorization": f"Bearer {admin_api_key}"}
+    personal_headers = {"Authorization": f"Bearer {valid_api_key}"}
+    server_name = f"Shared MCP {uuid.uuid4().hex[:8]}"
+
+    with patch(
+        "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
+        new_callable=AsyncMock,
+    ):
+        global_resp = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": server_name,
+                "sse_url": f"https://global.example/{uuid.uuid4().hex}",
+                "scope": "global",
+            },
+            headers=headers,
+        )
+        assert global_resp.status_code == 200
+        global_server_id = global_resp.json()["id"]
+
+        personal_resp = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": server_name,
+                "sse_url": f"https://personal.example/{uuid.uuid4().hex}",
+                "scope": "personal",
+            },
+            headers=personal_headers,
+        )
+
+    assert personal_resp.status_code == 400
+    assert "服务显示名称" in personal_resp.json()["message"]
+    await client.delete(f"/api/portal/mcp/servers/{global_server_id}", headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_update_rejects_name_used_by_other_scope(
+    client: AsyncClient,
+    admin_api_key: str,
+    valid_api_key: str,
+):
+    admin_headers = {"Authorization": f"Bearer {admin_api_key}"}
+    personal_headers = {"Authorization": f"Bearer {valid_api_key}"}
+    existing_name = f"Existing MCP {uuid.uuid4().hex[:8]}"
+
+    with patch(
+        "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
+        new_callable=AsyncMock,
+    ):
+        existing_resp = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": existing_name,
+                "sse_url": f"https://global.example/{uuid.uuid4().hex}",
+                "scope": "global",
+            },
+            headers=admin_headers,
+        )
+        assert existing_resp.status_code == 200
+        existing_server_id = existing_resp.json()["id"]
+
+        personal_resp = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": f"Personal MCP {uuid.uuid4().hex[:8]}",
+                "sse_url": f"https://personal.example/{uuid.uuid4().hex}",
+                "scope": "personal",
+            },
+            headers=personal_headers,
+        )
+        assert personal_resp.status_code == 200
+        personal_server_id = personal_resp.json()["id"]
+
+        update_resp = await client.put(
+            f"/api/portal/mcp/servers/{personal_server_id}",
+            json={
+                "server_name": existing_name,
+                "sse_url": f"https://personal.example/{uuid.uuid4().hex}",
+                "scope": "personal",
+            },
+            headers=personal_headers,
+        )
+
+    assert update_resp.status_code == 400
+    assert "服务显示名称" in update_resp.json()["message"]
+    await client.delete(f"/api/portal/mcp/servers/{existing_server_id}", headers=admin_headers)
+    await client.delete(f"/api/portal/mcp/servers/{personal_server_id}", headers=personal_headers)
+
+
+@pytest.mark.asyncio
+async def test_runtime_mcp_visibility_is_global_plus_current_user(
+    db_session,
+):
+    user_result = await db_session.execute(
+        select(User).where(User.user_name == "test_user")
+    )
+    current_user = user_result.scalar_one()
+    suffix = uuid.uuid4().hex[:10]
+    global_server_id = f"global-visible-{suffix}"
+    personal_server_id = f"personal-visible-{suffix}"
+    global_tool_name = f"global-visible-{suffix}:search"
+    personal_tool_name = f"personal-visible-{suffix}:search"
+
+    db_session.add_all(
+        [
+            McpServer(
+                id=global_server_id,
+                server_name=f"Global Visible {suffix}",
+                sse_url=f"https://global.example/{suffix}",
+                scope="global",
+            ),
+            McpServer(
+                id=personal_server_id,
+                server_name=f"Personal Visible {suffix}",
+                sse_url=f"https://personal.example/{suffix}",
+                scope="personal",
+                user_id=current_user.id,
+            ),
+            McpToolCache(
+                id=f"global-tool-{suffix}",
+                server_id=global_server_id,
+                tool_name=global_tool_name,
+                tool_description="Global test tool",
+                parameter_schema='{"type":"object"}',
+                is_published=True,
+            ),
+            McpToolCache(
+                id=f"personal-tool-{suffix}",
+                server_id=personal_server_id,
+                tool_name=personal_tool_name,
+                tool_description="Personal test tool",
+                parameter_schema='{"type":"object"}',
+                is_published=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    ToolRegistry._db_tool_cache.clear()
+    ToolRegistry._db_tool_source_cache.clear()
+    ToolRegistry._db_tool_ids_fetched_at.clear()
+    current_token = agent_context.set(
+        AgentContext(agent_id="visibility-test", agent_name="Main", user_id=current_user.id)
+    )
+    try:
+        assert (await ToolRegistry.get_runtime_tool(global_tool_name)).source_type == "mcp"
+        assert (await ToolRegistry.get_runtime_tool(personal_tool_name)).source_type == "mcp"
+
+        other_token = agent_context.set(
+            AgentContext(agent_id="visibility-test", agent_name="Main", user_id=999999999)
+        )
+        try:
+            assert (await ToolRegistry.get_runtime_tool(global_tool_name)).source_type == "mcp"
+            assert await ToolRegistry.get_runtime_tool(personal_tool_name) is None
+        finally:
+            agent_context.reset(other_token)
+    finally:
+        agent_context.reset(current_token)
+        ToolRegistry._db_tool_cache.clear()
+        ToolRegistry._db_tool_source_cache.clear()
+        ToolRegistry._db_tool_ids_fetched_at.clear()
+        await db_session.execute(
+            delete(McpToolCache).where(
+                McpToolCache.server_id.in_([global_server_id, personal_server_id])
+            )
+        )
+        await db_session.execute(
+            delete(McpServer).where(
+                McpServer.id.in_([global_server_id, personal_server_id])
+            )
+        )
+        await db_session.commit()
 
 @pytest.mark.asyncio
 async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):

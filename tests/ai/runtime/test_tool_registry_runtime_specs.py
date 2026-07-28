@@ -338,3 +338,57 @@ async def test_tool_registry_marks_db_mcp_runtime_tool_source():
     assert spec.permission_scope == "ask"
     assert spec.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
     assert await spec.invoke({"query": "project = YS"}) == "mcp result"
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_limits_mcp_lookup_to_global_and_current_user_scope():
+    from app.core.context import AgentContext, agent_context
+    from app.models.mcp import McpToolCache
+    from app.services.ai.tools.registry import ToolRegistry
+
+    tool_config = McpToolCache(
+        id="mcp-visible-tool-id",
+        server_id="server-42",
+        tool_name="jira:search",
+        tool_description="Search Jira",
+        parameter_schema='{"type":"object"}',
+        is_published=True,
+    )
+    legacy_tool = MagicMock()
+    legacy_tool.name = "jira:search"
+    legacy_tool.description = "Search Jira"
+    legacy_tool.args_schema = None
+    legacy_tool.ainvoke = AsyncMock(return_value="mcp result")
+
+    captured_statements = []
+    mock_session = AsyncMock()
+
+    def mock_execute_side_effect(stmt):
+        captured_statements.append(str(stmt))
+        result = MagicMock()
+        if "mcp" in str(stmt).lower():
+            result.scalar_one_or_none.return_value = tool_config
+        else:
+            result.scalar_one_or_none.return_value = None
+        return result
+
+    mock_session.execute.side_effect = mock_execute_side_effect
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__.return_value = mock_session
+    mock_session_ctx.__aexit__.return_value = None
+
+    token = agent_context.set(
+        AgentContext(agent_id="agent-1", agent_name="Main", user_id=42)
+    )
+    try:
+        with patch("app.services.ai.tools.registry.AsyncSessionLocal", return_value=mock_session_ctx), \
+             patch("app.services.ai.tools.registry.McpToolFactory.create_tool", return_value=legacy_tool):
+            spec = await ToolRegistry.get_runtime_tool("jira:search")
+    finally:
+        agent_context.reset(token)
+
+    assert spec.source_type == "mcp"
+    mcp_query = next(statement for statement in captured_statements if "mcp" in statement.lower())
+    assert "sys_mcp_servers" in mcp_query
+    assert "scope" in mcp_query
+    assert "user_id" in mcp_query

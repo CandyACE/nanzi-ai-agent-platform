@@ -1333,7 +1333,7 @@ const loadGreeting = async () => {
       {
         id: Date.now(),
         role: "agent",
-        content: "您好！我是南孜智能体，期待为您服务。",
+        content: "您好！我是你的智能体助手，期待为您服务。",
         isGreeting: true,
       },
     ];

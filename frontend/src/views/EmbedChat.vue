@@ -5085,7 +5085,7 @@ const initChat = async () => {
     if (!config.welcomeMessage) {
       const displayName = accountInfo.value?.real_name || accountInfo.value?.user_name || "";
       const greeting = displayName ? `您好，${displayName}！` : "您好！";
-      config.welcomeMessage = `${greeting}我是南孜智能体，很高兴为您服务。`;
+      config.welcomeMessage = `${greeting}我是你的智能体助手，很高兴为您服务。`;
     }
     // 4. Background tasks (non-blocking)
     Promise.all([fetchModels(), fetchAccountInfo(), fetchSlashCommands()]).catch(err => {
