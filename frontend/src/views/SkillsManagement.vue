@@ -348,10 +348,15 @@ const filteredSkills = computed(() => {
   )
 })
 
+const getSkillStatusRank = (skill: Skill) => skill.enabled === 'false' ? 1 : 0
+
 const sortedSkills = computed(() => {
   const list = [...filteredSkills.value]
   const dir = skillSortOrder.value === 'asc' ? 1 : -1
   list.sort((a, b) => {
+    const statusOrder = getSkillStatusRank(a) - getSkillStatusRank(b)
+    if (statusOrder !== 0) return statusOrder
+
     if (skillSortBy.value === 'time') {
       return ((a.modified_at || 0) - (b.modified_at || 0)) * dir
     }
@@ -1819,9 +1824,9 @@ onUnmounted(() => {
           <!-- 生态外链 -->
           <div class="border-t border-gray-100 dark:border-gray-800 pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shrink-0">
             <span class="text-[11px] text-gray-400">想寻找更多好玩的 AI 技能？前往官方市场发现并下载</span>
-            <a 
-              href="https://www.skills.sh/" 
-              target="_blank" 
+            <a
+              href="https://modelscope.cn/skills"
+              target="_blank"
               class="market-link inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs shadow-md shadow-blue-500/20 active:scale-95 transition-all text-center"
             >
               <span>💡 前往官方 Skills 开放市场</span>

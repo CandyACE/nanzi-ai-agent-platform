@@ -3,9 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import column
 from sqlalchemy.dialects import mysql, postgresql
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
+from app.api.portal.endpoints import dashboard
 from app.services.config_service import ConfigService, build_system_config_upsert_statement
 from app.services.knowledge_metrics_service import build_knowledge_metrics_upsert_statement
 from app.services.memory_config_service import MemoryConfigService
@@ -109,6 +111,25 @@ def test_db_profile_tag_filter_uses_native_json_contains_operator():
     assert "json_contains" in mysql_sql.lower()
     assert " @> " in postgresql_sql
     assert "json_contains" not in postgresql_sql.lower()
+
+
+def test_dashboard_hour_key_expression_uses_native_date_functions():
+    created_at = column("created_at")
+
+    assert hasattr(dashboard, "_hour_key_expression")
+    mysql_sql = _sql(
+        dashboard._hour_key_expression(created_at, "mysql"),
+        mysql.dialect(),
+    ).lower()
+    postgresql_sql = _sql(
+        dashboard._hour_key_expression(created_at, "postgresql"),
+        postgresql.dialect(),
+    ).lower()
+
+    assert "date_format" in mysql_sql
+    assert "date_format" not in postgresql_sql
+    assert "date_trunc('hour'" in postgresql_sql
+    assert "to_char" in postgresql_sql
 
 
 @pytest.mark.asyncio

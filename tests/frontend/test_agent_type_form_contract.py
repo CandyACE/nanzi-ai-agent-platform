@@ -272,3 +272,17 @@ def test_agent_onboarding_key_works_on_plain_http():
     assert "crypto.randomUUID" not in source
     assert 'from "../utils/conversationId"' in source
     assert "createUuid" in source
+
+
+def test_static_tool_groups_offer_group_level_select_all():
+    management = Path("frontend/src/views/AgentManagement.vue").read_text()
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
+
+    assert "const isAllStaticGroupSelected" in management
+    assert "const toggleSelectAllStatic" in management
+    assert "groupedTools.value.find" in management
+    assert "toggleSelectAllStatic: [label: string]" in drawer
+    assert "isAllStaticGroupSelected: (label: string) => boolean" in drawer
+    assert "@click.stop=\"emit('toggleSelectAllStatic', group.label)\"" in drawer
+    assert "isAllStaticGroupSelected(group.label)" in drawer
+    assert '@toggle-select-all-static="toggleSelectAllStatic"' in management

@@ -1,5 +1,7 @@
 import importlib.util
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -162,8 +164,114 @@ def test_pg_wrapper_can_start_via_sh_without_shell_syntax_error():
 
     output = result.stdout + result.stderr
     assert result.returncode == 1
-    assert "Host、User、Target database 都必须手动输入" in output
+    assert "User、Target database 都必须手动输入" in output
+    assert "Host、User、Target database 都必须手动输入" not in output
     assert "syntax error" not in output
+
+
+def test_pg_wrapper_accepts_lowercase_yes_under_legacy_bash(tmp_path):
+    temp_root = tmp_path / "repo"
+    temp_pg_prod = temp_root / "db-prod-pg"
+    temp_bin = tmp_path / "bin"
+    temp_pg_prod.mkdir(parents=True)
+    temp_bin.mkdir()
+
+    wrapper = temp_pg_prod / "apply-sql.sh"
+    shutil.copy2(PG_PROD / "apply-sql.sh", wrapper)
+    wrapper.chmod(0o755)
+    (temp_pg_prod / "V0-baseline.sql").write_text("-- test SQL\n", encoding="utf-8")
+
+    fake_python = temp_bin / "python3"
+    fake_python.write_text("#!/bin/sh\nprintf '%s\\n' 'fake importer invoked'\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{temp_bin}:{env['PATH']}"
+    result = subprocess.run(
+        ["sh", str(wrapper)],
+        input="localhost\n5432\npostgres\n\nnanzi_demo\nyes\nn\n",
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "fake importer invoked" in output
+    assert "bad substitution" not in output
+
+
+def test_pg_wrapper_defaults_blank_host_and_port(tmp_path):
+    temp_root = tmp_path / "repo"
+    temp_pg_prod = temp_root / "db-prod-pg"
+    temp_bin = tmp_path / "bin"
+    temp_pg_prod.mkdir(parents=True)
+    temp_bin.mkdir()
+
+    wrapper = temp_pg_prod / "apply-sql.sh"
+    shutil.copy2(PG_PROD / "apply-sql.sh", wrapper)
+    wrapper.chmod(0o755)
+    (temp_pg_prod / "V0-baseline.sql").write_text("-- test SQL\n", encoding="utf-8")
+
+    fake_python = temp_bin / "python3"
+    fake_python.write_text("#!/bin/sh\nprintf '%s\\n' 'fake importer invoked'\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{temp_bin}:{env['PATH']}"
+    result = subprocess.run(
+        ["sh", str(wrapper)],
+        input="\n\npostgres\n\nnanzi_demo\nyes\nn\n",
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "  Host     : localhost" in output
+    assert "  Port     : 5432" in output
+    assert "fake importer invoked" in output
+
+
+def test_pg_mcp_migration_matches_postgresql_types_and_idempotency():
+    migration = (PG_PROD / "V3-add_mcp_scope_and_user_id.sql").read_text(encoding="utf-8")
+
+    assert 'ADD COLUMN IF NOT EXISTS "user_id" BIGINT NULL' in migration
+    assert "TRUE" in migration
+    assert 'ON CONFLICT ("resource_type", "resource_id") DO NOTHING' not in migration
+    assert 'INSERT INTO "ai_agent_resource_permissions"' in migration
+    assert 'WHERE NOT EXISTS' in migration
+
+
+def test_pg_example_migrations_use_postgresql_boolean_and_column_comment():
+    v4 = (PG_PROD / "V4-add_category_to_chatbi_examples.sql").read_text(encoding="utf-8")
+    v5_path = PG_PROD / "V5-register_example_search_tool.sql"
+    assert v5_path.exists()
+    v5 = v5_path.read_text(encoding="utf-8")
+
+    assert 'COMMENT ON COLUMN "ai_chatbi_examples"."category"' in v4
+    expected_tools = {
+        "get_current_weather",
+        "get_ip_info",
+        "search_github_repos",
+        "get_exchange_rate",
+        "jira_search",
+        "jira_create_issue",
+        "jira_get_projects",
+        "send_dingtalk_message",
+        "send_email",
+        "send_wechat_work_message",
+        "search_qa_examples",
+    }
+    declared_tools = set(re.findall(r"(?m)^\s+'([a-z][a-z0-9_]*)',\s*$", v5))
+    assert declared_tools == expected_tools
+    assert len(declared_tools) == 11
+    assert 'ON CONFLICT ("name") DO NOTHING' in v5
+    assert "TRUE" in v5
+    assert " 1," not in v5
 
 
 def test_pg_config_alignment_migration_contains_mysql_final_config_keys():

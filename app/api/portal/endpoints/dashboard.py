@@ -20,6 +20,21 @@ def is_admin(user: dict) -> bool:
     return user.get("role") == "admin"
 
 
+def _hour_key_expression(column, dialect_name: str):
+    """Build the hourly grouping key for the configured platform database."""
+    normalized_dialect = str(dialect_name or "").strip().lower()
+    if normalized_dialect in {"postgres", "postgresql", "pg"}:
+        return func.to_char(
+            func.date_trunc("hour", column),
+            "YYYY-MM-DD HH24:00:00",
+        )
+    return func.date_format(column, "%Y-%m-%d %H:00:00")
+
+
+def _session_dialect_name(db: AsyncSession) -> str:
+    return db.get_bind().dialect.name
+
+
 def _resolve_token_stats_range(
     days: int = 7,
     start_date: Optional[str] = None,
@@ -255,8 +270,10 @@ async def get_api_trends_24h(
     now = datetime.now()
     start_time = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
     
-    # MySQL specific date format
-    hour_key_expr = func.date_format(AccessLog.created_at, '%Y-%m-%d %H:00:00')
+    hour_key_expr = _hour_key_expression(
+        AccessLog.created_at,
+        _session_dialect_name(db),
+    )
     
     stmt = select(
         hour_key_expr.label("hour_key"),
@@ -454,7 +471,10 @@ async def get_agent_stats(
     
     # 3. Performance Trend
     trend_start = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
-    hour_key_expr = func.date_format(AgentExecutionTrace.created_at, '%Y-%m-%d %H:00:00')
+    hour_key_expr = _hour_key_expression(
+        AgentExecutionTrace.created_at,
+        _session_dialect_name(db),
+    )
     stmt_trend = select(
         hour_key_expr.label("hour_key"),
         func.avg(AgentExecutionTrace.execution_time_ms).label("avg_ms")
