@@ -880,6 +880,40 @@ const getStaticGroupSelectedCount = (tools: any[]) => {
   return tools.filter((tool) => isToolSelected(tool.name)).length;
 };
 
+const getStaticGroupTools = (label: string) => {
+  return groupedTools.value.find((group) => group.label === label)?.tools || [];
+};
+
+const isAllStaticGroupSelected = (label: string) => {
+  const tools = getStaticGroupTools(label);
+  return tools.length > 0 && tools.every((tool) => isToolSelected(tool.name));
+};
+
+const toggleSelectAllStatic = (label: string) => {
+  if (!canEditVersion.value) return;
+  const tools = getStaticGroupTools(label);
+  if (tools.length === 0) return;
+
+  const currentTools = [...(versionForm.value.tools || [])];
+  if (isAllStaticGroupSelected(label)) {
+    const groupToolNames = new Set(tools.map((tool) => tool.name));
+    versionForm.value.tools = currentTools.filter((item) => {
+      const name = typeof item === 'string' ? item : (item as any).name;
+      return !groupToolNames.has(name);
+    });
+    return;
+  }
+
+  tools.forEach((tool) => {
+    const isSelected = currentTools.some((item) => {
+      const name = typeof item === 'string' ? item : (item as any).name;
+      return name === tool.name;
+    });
+    if (!isSelected) currentTools.push(tool.name);
+  });
+  versionForm.value.tools = currentTools;
+};
+
 const nextVersionStep = () => {
   if (!isVersionConfigStepComplete(versionConfigStep.value)) {
     showToast(describeIncompleteVersionConfigStep(versionConfigStep.value), 'warning');
@@ -3747,6 +3781,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :get-tool-custom-config="getToolCustomConfig"
       :has-tool-metadata-dataset-binding="hasToolMetadataDatasetBinding"
       :is-all-mcp-selected="isAllMcpSelected"
+      :is-all-static-group-selected="isAllStaticGroupSelected"
       :is-mcp-group-collapsed="isMcpGroupCollapsed"
       :get-mcp-group-selected-count="getMcpGroupSelectedCount"
       :is-static-group-collapsed="isStaticGroupCollapsed"
@@ -3766,6 +3801,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @toggle-skill="toggleSkill"
       @set-skills-custom="setSkillsCustom"
       @toggle-select-all-mcp="toggleSelectAllMcp"
+      @toggle-select-all-static="toggleSelectAllStatic"
       @toggle-mcp-group-collapse="toggleMcpGroupCollapse"
       @toggle-static-group-collapse="toggleStaticGroupCollapse"
       @set-orchestrator-temperature="setOrchestratorTemperature"

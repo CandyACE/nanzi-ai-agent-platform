@@ -142,6 +142,13 @@ def test_compact_table_uses_near_white_borders():
     assert "--md-table-cell-border: #f8fafc;" in compact_theme
 
 
+def test_thought_steps_timeline_line_is_subtle():
+    source = _source("frontend/src/views/EmbedChat.vue")
+
+    assert "overflow-y-auto border-l border-gray-100" in source
+    assert "dark:border-gray-700/30" in source
+
+
 def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():
     source = _source("frontend/src/views/EmbedChat.vue")
 

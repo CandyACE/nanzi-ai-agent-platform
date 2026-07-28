@@ -15,6 +15,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CALLER_DIR="$PWD"
 cd "$ROOT_DIR"
 
 PYTHON_BIN="python3"
@@ -33,7 +34,21 @@ if [[ $# -eq 0 ]]; then
         SQL_FILES+=("$sql_file")
     done
 else
-    SQL_FILES=("$@")
+    for sql_file in "$@"; do
+        if [[ "$sql_file" = /* ]]; then
+            resolved_sql_file="$sql_file"
+        elif [[ -f "$CALLER_DIR/$sql_file" ]]; then
+            resolved_sql_file="$CALLER_DIR/$sql_file"
+        elif [[ -f "$ROOT_DIR/$sql_file" ]]; then
+            resolved_sql_file="$ROOT_DIR/$sql_file"
+        elif [[ -f "$SCRIPT_DIR/$sql_file" ]]; then
+            resolved_sql_file="$SCRIPT_DIR/$sql_file"
+        else
+            # 保留原始路径，让后面的错误信息继续显示用户传入的值。
+            resolved_sql_file="$sql_file"
+        fi
+        SQL_FILES+=("$resolved_sql_file")
+    done
 fi
 
 if [[ ${#SQL_FILES[@]} -eq 0 ]]; then
@@ -51,16 +66,17 @@ for sql_file in "${SQL_FILES[@]}"; do
     fi
 done
 
-read -r -p "PostgreSQL host: " PG_HOST
+read -r -p "PostgreSQL host [localhost]: " PG_HOST
 read -r -p "PostgreSQL port [5432]: " PG_PORT
 read -r -p "PostgreSQL user: " PG_USER
 read -r -s -p "PostgreSQL password: " PG_PASSWORD
 echo
 read -r -p "Target database: " PG_DATABASE
 PG_PORT="${PG_PORT:-5432}"
+PG_HOST="${PG_HOST:-localhost}"
 
-if [[ -z "$PG_HOST" || -z "$PG_USER" || -z "$PG_DATABASE" ]]; then
-    echo "❌ Host、User、Target database 都必须手动输入。" >&2
+if [[ -z "$PG_USER" || -z "$PG_DATABASE" ]]; then
+    echo "❌ User、Target database 都必须手动输入。" >&2
     exit 1
 fi
 
@@ -76,10 +92,13 @@ for sql_file in "${SQL_FILES[@]}"; do
 done
 echo "  Password : ******"
 read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
-if [[ "${CONFIRM_INPUT^^}" != "YES" ]]; then
-    echo "❌ 已取消，未执行 SQL。"
-    exit 1
-fi
+case "$CONFIRM_INPUT" in
+    [Yy][Ee][Ss]) ;;
+    *)
+        echo "❌ 已取消，未执行 SQL。"
+        exit 1
+        ;;
+esac
 
 COMMON_ARGS=(
     --host "$PG_HOST"
@@ -108,10 +127,13 @@ fi
 
 echo "---------------------------------------------------"
 read -r -p "是否需要顺带创建默认管理员 admin 并生成新的 API Key？ (推荐首次部署时创建) [Y/N]: " RUN_INIT_ADMIN
-if [[ "${RUN_INIT_ADMIN^^}" != "Y" && "${RUN_INIT_ADMIN^^}" != "YES" ]]; then
-    echo "💡 已跳过管理员创建，可稍后运行 ./db-prod-pg/create-admin-user.sh。"
-    exit 0
-fi
+case "$RUN_INIT_ADMIN" in
+    [Yy]|[Yy][Ee][Ss]) ;;
+    *)
+        echo "💡 已跳过管理员创建，可稍后运行 ./db-prod-pg/create-admin-user.sh。"
+        exit 0
+        ;;
+esac
 
 echo "🚀 正在创建默认管理员账号..."
 if DATABASE_TYPE=postgresql \

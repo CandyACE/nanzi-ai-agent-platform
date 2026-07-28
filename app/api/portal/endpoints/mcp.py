@@ -261,7 +261,7 @@ async def sync_mcp_tools(
     is_admin = user.get("role") == "admin"
     if server.scope == "global" and not is_admin:
         raise HTTPException(status_code=403, detail="只有系统管理员才能同步平台公共 MCP 服务")
-    if server.scope == "personal" and server.user_id != user.get("id") and not is_admin:
+    if server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
         raise HTTPException(status_code=403, detail="无法同步其他用户的私有 MCP 服务")
 
     try:
@@ -318,7 +318,7 @@ async def execute_mcp_tool(
     server_stmt = select(McpServer).where(McpServer.id == tool.server_id)
     server = (await db.execute(server_stmt)).scalar_one_or_none()
     is_admin = user.get("role") == "admin"
-    if server and server.scope == "personal" and server.user_id != user.get("id") and not is_admin:
+    if server and server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
         raise HTTPException(status_code=403, detail="无法测试其他用户的私有 MCP 工具")
 
     try:
@@ -343,9 +343,7 @@ async def toggle_tool_publish(
     server = (await db.execute(server_stmt)).scalar_one_or_none()
     is_admin = user.get("role") == "admin"
     if server:
-        if server.scope == "global" and not is_admin:
-            raise HTTPException(status_code=403, detail="只有系统管理员才能修改平台公共 MCP 工具发布状态")
-        if server.scope == "personal" and server.user_id != user.get("id") and not is_admin:
+        if server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
             raise HTTPException(status_code=403, detail="无法修改其他用户的私有 MCP 工具发布状态")
 
     stmt = update(McpToolCache).where(McpToolCache.id == tool_id).values(is_published=published)

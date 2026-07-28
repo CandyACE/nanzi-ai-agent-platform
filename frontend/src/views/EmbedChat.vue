@@ -608,7 +608,7 @@
 
                     <div
                       :ref="(el) => bindThoughtLogsEl(msg.id, el)"
-                      class="relative ml-2 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto border-l border-gray-200 py-2 pl-5 sm:max-h-none sm:space-y-1.5 dark:border-gray-700/50"
+                      class="relative ml-2 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto border-l border-gray-100 py-2 pl-5 sm:max-h-none sm:space-y-1.5 dark:border-gray-700/30"
                       @scroll.passive="onThoughtLogsScroll(msg.id, $event)"
                     >
                       <!-- 骨架屏占位 (响应初期的等待动效) -->

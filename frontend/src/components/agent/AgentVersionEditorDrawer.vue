@@ -45,6 +45,7 @@ const props = defineProps<{
   getToolCustomConfig: (name: string) => any;
   hasToolMetadataDatasetBinding: (name: string) => boolean;
   isAllMcpSelected: (serverName: string, tools: any[]) => boolean;
+  isAllStaticGroupSelected: (label: string) => boolean;
   isMcpGroupCollapsed: (serverName: string) => boolean;
   getMcpGroupSelectedCount: (tools: any[]) => number;
   isStaticGroupCollapsed: (label: string) => boolean;
@@ -71,6 +72,7 @@ const emit = defineEmits<{
   toggleSkill: [skillId: string];
   setSkillsCustom: [enabled: boolean];
   toggleSelectAllMcp: [serverName: string, tools: any[]];
+  toggleSelectAllStatic: [label: string];
   toggleMcpGroupCollapse: [serverName: string];
   toggleStaticGroupCollapse: [label: string];
   setOrchestratorTemperature: [value: number];
@@ -764,6 +766,14 @@ const externalCreationMissingFields = computed(() => {
                     <span class="text-xs">{{ group.icon }}</span>
                     <span class="text-xs font-bold text-gray-700">{{ group.label }}</span>
                     <span class="text-[10px] text-gray-400">({{ getStaticGroupSelectedCount(group.tools) }}/{{ group.tools.length }})</span>
+                  </button>
+                  <button
+                    v-if="canEditVersion"
+                    type="button"
+                    @click.stop="emit('toggleSelectAllStatic', group.label)"
+                    class="text-[10px] font-bold text-primary hover:text-primary-dark ml-2 flex-shrink-0"
+                  >
+                    {{ isAllStaticGroupSelected(group.label) ? '取消全选' : '全选' }}
                   </button>
                 </div>
                 <div v-show="!isStaticGroupCollapsed(group.label)" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
