@@ -105,6 +105,46 @@ def test_sub_agent_call_nudge_for_data_query():
     assert "`finance-expense`" in nudge.message
 
 
+def test_current_user_profile_nudge_precedes_data_sub_agent():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("get_myinfo", "读取当前登录用户本人的基本信息、部门、组织路径、扩展信息、角色和权限"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "看看我的详细信息",
+        tools,
+        available_sub_agent_names={"data-agent"},
+        sub_agent_candidates_by_capability={"data_query": ["data-agent"]},
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.99,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "get_myinfo"
+    assert nudge.should_force_first_call is True
+    assert "必须先调用 sub_agent_call" not in nudge.message
+
+
+def test_business_data_query_does_not_use_current_user_profile_nudge():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("get_myinfo", "读取当前登录用户本人的基本信息、部门、组织路径、扩展信息、角色和权限"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "看看我的订单详细信息",
+        tools,
+        available_sub_agent_names={"data-agent"},
+        sub_agent_candidates_by_capability={"data_query": ["data-agent"]},
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.99,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+
+
 def test_sub_agent_call_is_not_selected_by_generic_tool_relevance_without_intent():
     tools = [
         _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),

@@ -344,6 +344,33 @@ def _resolve_resource_catalog_nudge(query: str, tools: List[Any]) -> Optional[To
     )
 
 
+def _resolve_current_user_profile_nudge(query: str, tools: List[Any]) -> Optional[ToolNudge]:
+    """优先读取当前用户资料，避免被 DATA_QUERY 委派规则抢先锁定。"""
+    from app.services.ai.intent_service import looks_like_current_user_profile_query
+
+    if not looks_like_current_user_profile_query(query):
+        return None
+
+    available_tool_names = {
+        str(getattr(tool, "name", "") or "")
+        for tool in (tools or [])
+        if getattr(tool, "name", None)
+    }
+    if "get_myinfo" not in available_tool_names:
+        return None
+
+    return ToolNudge(
+        tool_name="get_myinfo",
+        score=0.99,
+        message=(
+            "【本轮工具优先】用户正在查询当前登录用户本人的资料。"
+            "必须先调用 get_myinfo 获取本人基本信息、扩展信息、角色和权限；"
+            "禁止调用 sub_agent_call 查询其他用户或业务数据。"
+        ),
+        force_first_call=True,
+    )
+
+
 def _resolve_notification_nudge(query: str, tools: List[Any]) -> Optional[ToolNudge]:
     normalized_query = query.lower()
     if not _contains_any(normalized_query, _NOTIFICATION_ACTION_TERMS):
@@ -430,6 +457,10 @@ def resolve_tool_nudge(
                 message=_build_explicit_sub_agent_message(explicit_sub_agent),
                 force_first_call=True,
             )
+
+    current_user_profile_nudge = _resolve_current_user_profile_nudge(query, tools)
+    if current_user_profile_nudge is not None:
+        return current_user_profile_nudge
 
     # data_query is a ChatBI capability in this platform, not a generic
     # "anything that looks like data" capability.  Only allow it when the

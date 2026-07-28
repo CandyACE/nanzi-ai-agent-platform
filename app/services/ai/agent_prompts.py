@@ -82,6 +82,7 @@ class AgentServicePrompts:
         "memory_search": "跨会话摘要/历史对话检索",
         "list_accessible_datasets": "列出当前用户有权限的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
+        "get_myinfo": "读取当前用户本人的基本信息、扩展信息、详情信息、角色与权限",
         "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
@@ -307,6 +308,9 @@ class AgentServicePrompts:
 
         if "list_accessible_knowledge_bases" in tool_names:
             table_rows.append("| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |")
+
+        if "get_myinfo" in tool_names:
+            table_rows.append("| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |")
             
         if "fetch_user_long_term_memory" in tool_names:
             table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")

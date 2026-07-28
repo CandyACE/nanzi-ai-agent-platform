@@ -112,6 +112,33 @@ def test_data_query_intent_delegates_without_strong_keyword_signal():
     assert decision.allows_data_route is True
 
 
+def test_current_user_profile_query_overrides_misclassified_data_intent():
+    decision = resolve_request_decision(
+        "看看我的详细信息",
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.99,
+    )
+
+    assert decision.source == RequestSource.PLATFORM_SELF_HELP
+    assert decision.capability == RequestCapability.ANSWER
+    assert decision.should_delegate is False
+    assert decision.delegate_capability is None
+    assert decision.allows_data_route is False
+
+
+def test_business_data_profile_wording_still_uses_data_route():
+    decision = resolve_request_decision(
+        "看看我的订单详细信息",
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.99,
+    )
+
+    assert decision.source == RequestSource.INTERNAL_STRUCTURED_DATA
+    assert decision.capability == RequestCapability.DATA_QUERY
+    assert decision.should_delegate is True
+    assert decision.allows_data_route is True
+
+
 def test_runtime_diagnostic_is_tool_capability_not_data_route():
     decision = resolve_request_decision(
         "查看当前系统的CPU和内存使用情况",

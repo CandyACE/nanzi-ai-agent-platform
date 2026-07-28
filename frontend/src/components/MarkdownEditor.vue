@@ -11,11 +11,15 @@ const props = withDefaults(defineProps<{
   theme?: 'light' | 'dark';
   enableOptimize?: boolean;
   disabled?: boolean;
+  optimizeEndpoint?: string;
+  requireOptimizePermission?: boolean;
 }>(), {
   theme: 'light',
   fill: false,
   enableOptimize: false,
   disabled: false,
+  optimizeEndpoint: '/api/portal/prompts/optimize',
+  requireOptimizePermission: true,
 });
 
 const emit = defineEmits<{
@@ -77,6 +81,8 @@ const forwardToast = (message: string, type?: 'success' | 'error' | 'info') => {
           v-if="enableOptimize && activeTab === 'edit'"
           :content="modelValue || ''"
           :disabled="disabled"
+          :endpoint="optimizeEndpoint"
+          :require-permission="requireOptimizePermission"
           @apply="applyOptimizedContent"
           @toast="forwardToast"
         />

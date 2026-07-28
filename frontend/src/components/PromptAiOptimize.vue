@@ -11,10 +11,15 @@ export type PromptOptimizeSuggestion = {
   content: string;
 };
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   content: string;
   disabled?: boolean;
-}>();
+  endpoint?: string;
+  requirePermission?: boolean;
+}>(), {
+  endpoint: '/api/portal/prompts/optimize',
+  requirePermission: true,
+});
 
 const emit = defineEmits<{
   (e: 'apply', content: string): void;
@@ -59,7 +64,7 @@ const runOptimize = async () => {
   optimizing.value = true;
   try {
     const res = await axios.post(
-      '/api/portal/prompts/optimize',
+      props.endpoint,
       { content: props.content },
       { signal },
     );
@@ -115,7 +120,7 @@ onUnmounted(() => {
 
 <template>
   <button
-    v-has-perm="'element:prompts:optimize'"
+    v-has-perm="props.requirePermission ? 'element:prompts:optimize' : ''"
     type="button"
     @click="openConfirm"
     :disabled="!canOptimize"

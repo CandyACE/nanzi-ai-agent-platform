@@ -15,6 +15,7 @@ from app.services.ai.intent_service import (
     IntentType,
     looks_like_accessible_resource_catalog_query,
     looks_like_context_action,
+    looks_like_current_user_profile_query,
     looks_like_data_followup,
     looks_like_dynamic_public_fact_query,
     looks_like_general_query,
@@ -290,6 +291,16 @@ def _resolve_request_decision(
             RequestCapability.ANSWER,
             0.94,
             "accessible dataset/knowledge-base catalog listing",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+
+    if looks_like_current_user_profile_query(q):
+        return _decision(
+            RequestSource.PLATFORM_SELF_HELP,
+            RequestCapability.ANSWER,
+            0.97,
+            "current authenticated user's profile query is handled by the self-service tool",
             semantic_name=effective_intent,
             semantic_confidence=semantic_score,
         )

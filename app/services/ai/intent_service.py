@@ -245,6 +245,80 @@ def looks_like_platform_self_service_query(user_question: str) -> bool:
     return any(sig in q for sig in _PLATFORM_SELF_SERVICE_ACTIONS)
 
 
+_CURRENT_USER_PROFILE_MARKERS = (
+    "我的",
+    "本人",
+    "当前用户",
+    "自己的",
+    "my",
+    "myself",
+)
+_CURRENT_USER_PROFILE_FIELDS = (
+    "我的信息",
+    "详细信息",
+    "详情信息",
+    "用户信息",
+    "个人信息",
+    "基本信息",
+    "用户资料",
+    "个人资料",
+    "用户详情",
+    "详细资料",
+    "账户信息",
+    "profile",
+    "user info",
+    "details",
+    "部门",
+    "组织",
+    "角色",
+    "权限",
+    "扩展信息",
+    "用户名",
+    "真实姓名",
+    "账号状态",
+    "department",
+    "organization",
+    "role",
+    "permission",
+)
+_CURRENT_USER_PROFILE_DATA_BLOCKERS = (
+    "订单",
+    "销售",
+    "客户",
+    "资产",
+    "数据集",
+    "数据库",
+    "报表",
+    "指标",
+    "记录",
+    "工单",
+    "告警",
+    "sql",
+    "dataset",
+    "database",
+    "report",
+    "metric",
+    "order",
+    "sales",
+)
+
+
+def looks_like_current_user_profile_query(user_question: str) -> bool:
+    """判断是否在查询当前用户本人资料，而不是业务数据详情。
+
+    该边界必须早于 DATA_QUERY 语义兜底，以免「看看我的详细信息」被模型的
+    泛化 DATA_QUERY 标签送入数据智能体；带订单、销售、资产等业务对象时保留
+    数据查询语义。
+    """
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    has_self_marker = any(marker in q for marker in _CURRENT_USER_PROFILE_MARKERS)
+    has_profile_field = any(field in q for field in _CURRENT_USER_PROFILE_FIELDS)
+    has_business_data = any(blocker in q for blocker in _CURRENT_USER_PROFILE_DATA_BLOCKERS)
+    return has_self_marker and has_profile_field and not has_business_data
+
+
 _RESOURCE_CATALOG_SUBJECTS = (
     "数据集",
     "知识库",
