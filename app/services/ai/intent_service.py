@@ -582,9 +582,21 @@ _DYNAMIC_PUBLIC_FACT_PATTERNS = [
     re.compile(r"(今日新闻|最新新闻|实时新闻|头条|热搜)", re.I),
 ]
 
+_CURRENT_TIME_QUERY_PATTERNS = [
+    re.compile(
+        r"(?:今天|今日|现在|当前).{0,8}(?:几号|日期|星期几|周几|几点|时间)",
+        re.I,
+    ),
+    re.compile(
+        r"(?:几号|日期|星期几|周几|几点|时间).{0,8}(?:今天|今日|现在|当前|什么)",
+        re.I,
+    ),
+]
+
 # 强通用边界：编程知识、文本处理等不应走 DATA_QUERY 的查询类型
 _GENERAL_BOUNDARY_PATTERNS = [
     *_DYNAMIC_PUBLIC_FACT_PATTERNS,
+    *_CURRENT_TIME_QUERY_PATTERNS,
     re.compile(r"(python|java|javascript|typescript|vue|react|sqlalchemy|fastapi|api|接口|代码|函数|报错|bug).{0,24}(用法|怎么写|怎么用|解释|示例|区别|原因)", re.I),
     re.compile(r"(查询|查一下|查下|看看).{0,24}(python|java|javascript|typescript|vue|react|api|接口|代码).{0,24}(用法|文档|示例|区别)", re.I),
     re.compile(r"(分析|总结|润色|改写|翻译|解释).{0,12}(这段话|这段文字|这段文本|下面这段|这句话|文本)", re.I),
@@ -599,6 +611,14 @@ def looks_like_dynamic_public_fact_query(user_question: str) -> bool:
     return any(pattern.search(q) for pattern in _DYNAMIC_PUBLIC_FACT_PATTERNS)
 
 
+def looks_like_current_time_query(user_question: str) -> bool:
+    """判断是否在询问当前日期/时间，而不是业务数据中的「今天」字段。"""
+    q = (user_question or "").strip()
+    if not q:
+        return False
+    return any(pattern.search(q) for pattern in _CURRENT_TIME_QUERY_PATTERNS)
+
+
 def looks_like_general_query(user_question: str) -> bool:
     """强通用边界：生活信息、编程/API、文本处理等，不应因泛化查词走 DATA_QUERY。"""
     q = (user_question or "").strip()
@@ -609,6 +629,41 @@ def looks_like_general_query(user_question: str) -> bool:
     if looks_like_web_search_query(q):
         return True
     return any(pattern.search(q) for pattern in _GENERAL_BOUNDARY_PATTERNS)
+
+
+_KNOWLEDGE_FOLLOWUP_REFERENCES = (
+    "刚才",
+    "刚刚",
+    "上面",
+    "上轮",
+    "上一轮",
+    "前面",
+    "之前",
+    "这个",
+    "这些",
+    "这份",
+    "它",
+)
+_KNOWLEDGE_FOLLOWUP_ACTIONS = (
+    "翻译",
+    "总结",
+    "概括",
+    "解释",
+    "简短",
+    "口语化",
+    "详细说明",
+    "改写",
+)
+
+
+def looks_like_knowledge_followup(user_question: str) -> bool:
+    """判断是否在对上一轮知识库回答做转换/解释，而非发起新检索。"""
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    return any(ref in q for ref in _KNOWLEDGE_FOLLOWUP_REFERENCES) and any(
+        action in q for action in _KNOWLEDGE_FOLLOWUP_ACTIONS
+    )
 
 
 def looks_like_knowledge_query(user_question: str) -> bool:

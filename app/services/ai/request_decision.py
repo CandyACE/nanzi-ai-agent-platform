@@ -16,6 +16,7 @@ from app.services.ai.intent_service import (
     looks_like_accessible_resource_catalog_query,
     looks_like_context_action,
     looks_like_current_user_profile_query,
+    looks_like_current_time_query,
     looks_like_data_followup,
     looks_like_dynamic_public_fact_query,
     looks_like_general_query,
@@ -236,6 +237,7 @@ def _resolve_request_decision(
     turn_intent: Any = None,
     has_last_data_result: bool = False,
     has_knowledge_binding: bool = False,
+    has_explicit_knowledge_context: bool = False,
     semantic_intent_blocks_followup: bool = False,
     semantic_domain: Any = None,
     semantic_operation: Any = None,
@@ -321,6 +323,16 @@ def _resolve_request_decision(
             RequestCapability.RUNTIME_TOOL,
             0.9,
             "current runtime/system diagnostic signal",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+
+    if looks_like_current_time_query(q):
+        return _decision(
+            RequestSource.GENERAL,
+            RequestCapability.ANSWER,
+            max(semantic_score, 0.88),
+            "current date/time question is handled by the main assistant",
             semantic_name=effective_intent,
             semantic_confidence=semantic_score,
         )
@@ -500,7 +512,10 @@ def _resolve_request_decision(
             semantic_confidence=semantic_score,
         )
 
-    if has_knowledge_binding and semantic_name not in {
+    # ``has_knowledge_binding`` only describes an available agent capability.
+    # It must not preempt an unrelated turn; only current-turn evidence may
+    # open the knowledge route here.
+    if has_explicit_knowledge_context and semantic_name not in {
         IntentType.DATA_QUERY.value,
         IntentType.GENERAL.value,
     }:
@@ -508,7 +523,7 @@ def _resolve_request_decision(
             RequestSource.INTERNAL_DOCS,
             RequestCapability.KNOWLEDGE_SEARCH,
             max(semantic_score, 0.72),
-            "knowledge binding is explicit and no stronger non-knowledge boundary matched",
+            "explicit knowledge context is present and no stronger non-knowledge boundary matched",
             should_delegate=True,
             delegate_capability="knowledge_base",
             requires_knowledge_search=True,
@@ -538,6 +553,7 @@ def resolve_request_decision(
     turn_intent: Any = None,
     has_last_data_result: bool = False,
     has_knowledge_binding: bool = False,
+    has_explicit_knowledge_context: bool = False,
     semantic_intent_blocks_followup: bool = False,
     semantic_domain: Any = None,
     semantic_operation: Any = None,
@@ -562,6 +578,7 @@ def resolve_request_decision(
         turn_intent=turn_intent,
         has_last_data_result=has_last_data_result,
         has_knowledge_binding=has_knowledge_binding,
+        has_explicit_knowledge_context=has_explicit_knowledge_context,
         semantic_intent_blocks_followup=semantic_intent_blocks_followup,
         semantic_domain=semantic_domain,
         semantic_operation=semantic_operation,

@@ -349,6 +349,31 @@ def collect_knowledge_dataset_ids_from_messages(messages: List[Dict[str, Any]]) 
     return normalize_dataset_ids(ids)
 
 
+def collect_current_turn_knowledge_dataset_ids_from_messages(
+    messages: List[Dict[str, Any]],
+) -> List[str]:
+    """只提取最后一条 user 消息的知识库附件，作为本轮显式检索证据。"""
+    if not messages:
+        return []
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return collect_knowledge_dataset_ids_from_messages([message])
+    return []
+
+
+def has_knowledge_context_in_messages(messages: List[Dict[str, Any]]) -> bool:
+    """判断历史是否包含可复用的知识库上下文，而不是把它当成本轮检索指令。"""
+    if collect_knowledge_dataset_ids_from_messages(messages):
+        return True
+    for message in messages or []:
+        if message.get("role") != "assistant":
+            continue
+        content = str(message.get("content") or "")
+        if _CITATION_MARKER_RE.search(content):
+            return True
+    return False
+
+
 def merge_request_knowledge_dataset_ids(
     request_ids: Optional[List[str]],
     messages: Optional[List[Dict[str, Any]]] = None,

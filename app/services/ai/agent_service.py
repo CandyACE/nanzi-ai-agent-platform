@@ -1378,6 +1378,8 @@ class AgentService:
 
             from app.services.ai.knowledge_utils import (
                 build_rag_retrieval_debug_meta,
+                collect_current_turn_knowledge_dataset_ids_from_messages,
+                has_knowledge_context_in_messages,
                 merge_request_knowledge_dataset_ids,
             )
 
@@ -1385,6 +1387,12 @@ class AgentService:
                 knowledge_dataset_ids,
                 messages,
             )
+            # 会话范围/历史附件只代表“可复用”，不能单独触发本轮知识检索。
+            # 当前轮显式附件才是本轮的 knowledge evidence。
+            current_turn_knowledge_dataset_ids = (
+                collect_current_turn_knowledge_dataset_ids_from_messages(messages)
+            )
+            has_knowledge_history = has_knowledge_context_in_messages(messages)
 
             await AgentContextManager.setup_context(
                 config=agent_config,
@@ -1457,12 +1465,17 @@ class AgentService:
                 "messages": messages,
                 "user_info": user_info,
                 "conversation_id": conversation_id,
-                "knowledge_dataset_ids": request_knowledge_dataset_ids or None,
+                "knowledge_dataset_ids": current_turn_knowledge_dataset_ids or None,
                 "agent_has_knowledge_binding": agent_has_knowledge_binding,
+                "has_explicit_knowledge_context": bool(current_turn_knowledge_dataset_ids),
+                "has_knowledge_history": has_knowledge_history,
                 "intent_evidence": route_intent_evidence,
             }
-            explicit_knowledge_context = bool(request_knowledge_dataset_ids or agent_has_knowledge_binding)
-            if can_do_data and not explicit_knowledge_context:
+            knowledge_context_available = bool(
+                current_turn_knowledge_dataset_ids or agent_has_knowledge_binding
+                or request_knowledge_dataset_ids
+            )
+            if can_do_data and not knowledge_context_available:
                 turn_classification = TurnClassification(
                     turn_type=TurnType.DATA_QUERY_REQUEST,
                     reasoning="ChatBI 轮次由 DataQueryExecutor 内部请求类别分析器最终判定",

@@ -105,6 +105,67 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
 
 
 @pytest.mark.asyncio
+async def test_general_turn_does_not_expose_knowledge_search_tool(monkeypatch):
+    from app.schemas.agent import ChatConfig
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+    from app.services.ai.turn_classifier import TurnClassification, TurnType
+    from app.services.ai.intent_service import IntentType
+
+    config = ChatConfig(
+        agent_id="general-agent-id",
+        agent_name="GeneralAgent",
+        agent_version=None,
+        model_name="gpt-4o",
+        temperature=0.0,
+        system_prompt="You are a general agent.",
+        tools=["search_knowledge_base", "get_current_time"],
+    )
+    runner = AssistantAgentRunner(
+        config=config,
+        trace_id="trace-general-tool-gate",
+        trace_buffer=[],
+        conversation_id="conv-1",
+    )
+    runner.turn_classification = TurnClassification(
+        turn_type=TurnType.GENERAL,
+        reasoning="unrelated common question",
+        intent=IntentType.GENERAL,
+    )
+
+    captured_tool_names = []
+
+    async def fake_get_runtime_tools(tool_configs):
+        captured_tool_names.extend(
+            item if isinstance(item, str) else getattr(item, "name", "")
+            for item in tool_configs
+        )
+        return [
+            RuntimeToolSpec(
+                name="get_current_time",
+                description="current time",
+                parameters_schema={"type": "object", "properties": {}},
+                source_type="static",
+                callable=AsyncMock(return_value="2026-07-29"),
+                permission_scope="read",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.assistant_agent_runner.ToolRegistry.get_runtime_tools",
+        fake_get_runtime_tools,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.assistant_agent_runner.ToolRegistry.get_system_implicit_tools",
+        lambda: [],
+    )
+
+    await runner._resolve_runtime_tools_from_config()
+
+    assert captured_tool_names == ["get_current_time"]
+
+
+@pytest.mark.asyncio
 async def test_general_runner_second_turn_skips_repeat_read_with_restored_state():
     """恢复 AgentState 后，第二轮不应再次触发 Read 工具调用。"""
     from agentscope.credential import CredentialBase

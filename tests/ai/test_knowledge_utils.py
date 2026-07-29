@@ -5,11 +5,13 @@ from app.core.context import AgentContext, set_agent_context
 from app.services.ai.knowledge_utils import (
     NO_KNOWLEDGE_DATASET_MESSAGE,
     collect_citation_ids_from_payload,
+    collect_current_turn_knowledge_dataset_ids_from_messages,
     collect_knowledge_dataset_ids_from_messages,
     extract_dataset_ids_from_message,
     filter_invalid_citation_markers,
     format_dataset_ids_for_tool,
     format_knowledge_tool_log_display,
+    has_knowledge_context_in_messages,
     knowledge_prefetch_had_citations,
     merge_request_knowledge_dataset_ids,
     resolve_knowledge_dataset_ids,
@@ -125,6 +127,19 @@ def test_collect_knowledge_dataset_ids_inherits_from_earlier_turn():
     ]
     assert collect_knowledge_dataset_ids_from_messages(messages) == [rid]
     assert merge_request_knowledge_dataset_ids(None, messages) == [rid]
+
+
+def test_current_turn_knowledge_ids_do_not_treat_earlier_attachment_as_explicit():
+    rid = "4525d66cec7111f0a3d00242ac120006"
+    messages = [
+        {"role": "user", "content": "换电流程", "files": [{"type": "knowledge_base", "url": rid}]},
+        {"role": "assistant", "content": "换电流程说明 [ID:1]"},
+        {"role": "user", "content": "今天几号"},
+    ]
+
+    assert collect_knowledge_dataset_ids_from_messages(messages) == [rid]
+    assert collect_current_turn_knowledge_dataset_ids_from_messages(messages) == []
+    assert has_knowledge_context_in_messages(messages) is True
 
 
 @pytest.mark.asyncio
