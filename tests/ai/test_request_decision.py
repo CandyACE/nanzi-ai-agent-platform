@@ -28,6 +28,30 @@ def test_platform_self_help_overrides_knowledge_binding_and_semantic_knowledge()
     assert decision.allows_data_route is False
 
 
+def test_knowledge_binding_alone_does_not_preempt_an_unrelated_turn():
+    decision = resolve_request_decision(
+        "今天几号",
+        has_knowledge_binding=True,
+    )
+
+    assert decision.source == RequestSource.GENERAL
+    assert decision.capability == RequestCapability.ANSWER
+    assert decision.requires_knowledge_search is False
+    assert decision.should_delegate is False
+
+
+def test_explicit_knowledge_context_still_allows_generic_document_question():
+    decision = resolve_request_decision(
+        "换电过程中可以开门吗？",
+        has_knowledge_binding=True,
+        has_explicit_knowledge_context=True,
+    )
+
+    assert decision.source == RequestSource.INTERNAL_DOCS
+    assert decision.capability == RequestCapability.KNOWLEDGE_SEARCH
+    assert decision.requires_knowledge_search is True
+
+
 @pytest.mark.parametrize(
     "query",
     [

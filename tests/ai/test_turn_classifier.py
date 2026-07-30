@@ -107,6 +107,61 @@ def test_platform_self_service_query_stays_general_even_with_knowledge_binding()
     assert result.intent == IntentType.GENERAL
 
 
+def test_unrelated_current_date_query_stays_general_with_bound_knowledge():
+    result = classify_turn_heuristic(
+        "今天几号",
+        can_do_data=False,
+        has_last_data_result=False,
+        knowledge_dataset_ids=["4525d66cec7111f0a3d00242ac120006"],
+        agent_has_knowledge_binding=True,
+        has_explicit_knowledge_context=False,
+    )
+
+    assert result is not None
+    assert result.turn_type == TurnType.GENERAL
+    assert result.intent == IntentType.GENERAL
+    assert result.requires_knowledge_search is False
+
+
+def test_knowledge_followup_reuses_previous_knowledge_context():
+    result = classify_turn_heuristic(
+        "把刚才的内容总结一下",
+        can_do_data=False,
+        has_knowledge_history=True,
+        has_explicit_knowledge_context=False,
+    )
+
+    assert result is not None
+    assert result.turn_type == TurnType.KNOWLEDGE
+    assert result.requires_knowledge_search is True
+
+
+@pytest.mark.asyncio
+async def test_session_classifier_does_not_use_historical_dataset_as_current_trigger():
+    with patch(
+        "app.services.ai.turn_classifier.intent_service.identify_intent",
+        AsyncMock(),
+    ) as mock_identify:
+        classification, intent_info, elapsed_ms = await resolve_turn_for_session(
+            "今天几号",
+            [
+                {"role": "user", "content": "换电流程"},
+                {"role": "assistant", "content": "换电流程说明 [ID:1]"},
+                {"role": "user", "content": "今天几号"},
+            ],
+            can_do_data=False,
+            knowledge_dataset_ids=["4525d66cec7111f0a3d00242ac120006"],
+            agent_has_knowledge_binding=True,
+            has_explicit_knowledge_context=False,
+        )
+
+    mock_identify.assert_not_awaited()
+    assert classification.turn_type == TurnType.GENERAL
+    assert classification.requires_knowledge_search is False
+    assert intent_info is None
+    assert elapsed_ms == 0.0
+
+
 def test_internal_sop_still_classified_as_knowledge():
     result = classify_turn_heuristic(
         "高温告警的标准处理流程是什么",

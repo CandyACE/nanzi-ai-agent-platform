@@ -15,6 +15,7 @@ from app.services.ai.intent_service import (
     looks_like_context_action,
     looks_like_general_query,
     looks_like_greeting,
+    looks_like_knowledge_followup,
     looks_like_knowledge_query,
     looks_like_meta_action,
     looks_like_pure_result_followup,
@@ -112,12 +113,19 @@ def classify_turn_heuristic(
     has_last_data_result: bool = False,
     knowledge_dataset_ids: Optional[List[str]] = None,
     agent_has_knowledge_binding: bool = False,
+    has_explicit_knowledge_context: Optional[bool] = None,
+    has_knowledge_history: bool = False,
     request_decision: Optional[RequestDecision] = None,
 ) -> Optional[TurnClassification]:
     """启发式分类；若无法确定则返回 None，需再调用意图 LLM。"""
     q = (user_query or "").strip()
     if not q:
         return None
+    explicit_knowledge_context = (
+        bool(knowledge_dataset_ids)
+        if has_explicit_knowledge_context is None
+        else bool(has_explicit_knowledge_context)
+    )
 
     if looks_like_meta_action(q):
         return TurnClassification(
@@ -163,7 +171,8 @@ def classify_turn_heuristic(
         request_decision = resolve_request_decision(
             q,
             has_last_data_result=has_last_data_result,
-            has_knowledge_binding=bool(knowledge_dataset_ids or agent_has_knowledge_binding),
+            has_knowledge_binding=agent_has_knowledge_binding,
+            has_explicit_knowledge_context=explicit_knowledge_context,
         )
     if request_decision.source in {
         RequestSource.PLATFORM_SELF_HELP,
@@ -176,6 +185,16 @@ def classify_turn_heuristic(
             reasoning=f"{request_decision.reasoning}（统一请求决策：按通用助手处理）",
             skip_intent_llm=True,
             intent=IntentType.GENERAL,
+        )
+
+    if has_knowledge_history and looks_like_knowledge_followup(q):
+        return TurnClassification(
+            turn_type=TurnType.KNOWLEDGE,
+            reasoning="检测到对上一轮知识库回答的追问/转换，复用历史知识上下文",
+            requires_knowledge_search=True,
+            skip_intent_llm=True,
+            intent=IntentType.KNOWLEDGE_BASE,
+            knowledge_preemption_allowed=True,
         )
 
     if can_do_data and looks_like_pure_result_followup(q) and has_last_data_result:
@@ -193,7 +212,9 @@ def classify_turn_heuristic(
             requires_knowledge_search=True,
             skip_intent_llm=True,
             intent=IntentType.KNOWLEDGE_BASE,
-            knowledge_preemption_allowed=bool(knowledge_dataset_ids or agent_has_knowledge_binding),
+            knowledge_preemption_allowed=(
+                explicit_knowledge_context or has_knowledge_history
+            ),
         )
 
     # 联网/外部搜索：未绑定内部知识库时，交给通用助手（含 web_search 工具），
@@ -233,6 +254,7 @@ def classify_turn_from_intent(
     user_query: str = "",
     has_last_data_result: bool = False,
     has_knowledge_binding: bool = False,
+    has_explicit_knowledge_context: bool = False,
     request_decision: Optional[RequestDecision] = None,
 ) -> TurnClassification:
     """将意图 LLM 结果映射为统一轮次分类。
@@ -248,6 +270,7 @@ def classify_turn_from_intent(
             semantic_confidence=intent_info.confidence,
             has_last_data_result=has_last_data_result,
             has_knowledge_binding=has_knowledge_binding,
+            has_explicit_knowledge_context=has_explicit_knowledge_context,
             semantic_domain=getattr(intent_info, "domain", None),
             semantic_operation=getattr(intent_info, "operation", None),
             fact_kind=getattr(intent_info, "fact_kind", None),
@@ -268,6 +291,7 @@ def classify_turn_from_intent(
                 semantic_confidence=intent_info.confidence,
                 has_last_data_result=has_last_data_result,
                 has_knowledge_binding=has_knowledge_binding,
+                has_explicit_knowledge_context=has_explicit_knowledge_context,
                 semantic_domain=getattr(intent_info, "domain", None),
                 semantic_operation=getattr(intent_info, "operation", None),
                 fact_kind=getattr(intent_info, "fact_kind", None),
@@ -299,7 +323,7 @@ def classify_turn_from_intent(
             requires_knowledge_search=True,
             skip_intent_llm=False,
             intent=IntentType.KNOWLEDGE_BASE,
-            knowledge_preemption_allowed=has_knowledge_binding,
+            knowledge_preemption_allowed=has_explicit_knowledge_context,
         )
 
     if can_do_data and intent_info.intent == IntentType.DATA_QUERY:
@@ -451,10 +475,17 @@ async def resolve_turn_classification(
     conversation_id: Optional[str] = None,
     knowledge_dataset_ids: Optional[List[str]] = None,
     agent_has_knowledge_binding: bool = False,
+    has_explicit_knowledge_context: Optional[bool] = None,
+    has_knowledge_history: bool = False,
     intent_evidence: Optional[IntentResponse] = None,
 ) -> Tuple[TurnClassification, Optional[IntentResponse], float]:
     """启发式 + 意图 LLM 的统一分类入口（Dispatcher 使用）。"""
     has_last_data_result = False
+    explicit_knowledge_context = (
+        bool(knowledge_dataset_ids)
+        if has_explicit_knowledge_context is None
+        else bool(has_explicit_knowledge_context)
+    )
     if conversation_id and can_do_data:
         has_last_data_result = await load_last_data_result(user_info, conversation_id) is not None
 
@@ -462,7 +493,8 @@ async def resolve_turn_classification(
     heuristic_request_decision = resolve_request_decision(
         user_query,
         has_last_data_result=has_last_data_result,
-        has_knowledge_binding=bool(knowledge_dataset_ids or agent_has_knowledge_binding),
+        has_knowledge_binding=agent_has_knowledge_binding,
+        has_explicit_knowledge_context=explicit_knowledge_context,
     )
 
     classification = classify_turn_heuristic(
@@ -471,6 +503,8 @@ async def resolve_turn_classification(
         has_last_data_result=has_last_data_result,
         knowledge_dataset_ids=knowledge_dataset_ids,
         agent_has_knowledge_binding=agent_has_knowledge_binding,
+        has_explicit_knowledge_context=explicit_knowledge_context,
+        has_knowledge_history=has_knowledge_history,
         request_decision=heuristic_request_decision,
     )
 
@@ -484,13 +518,14 @@ async def resolve_turn_classification(
             prior_messages = messages[:-1] if messages else None
             intent_info = await intent_service.identify_intent(user_query, history=prior_messages)
             intent_elapsed_ms = (time.time() - intent_start) * 1000
-        has_knowledge_binding = bool(knowledge_dataset_ids or agent_has_knowledge_binding)
+        has_knowledge_binding = agent_has_knowledge_binding
         classification = classify_turn_from_intent(
             intent_info,
             can_do_data=can_do_data,
             user_query=user_query,
             has_last_data_result=has_last_data_result,
             has_knowledge_binding=has_knowledge_binding,
+            has_explicit_knowledge_context=explicit_knowledge_context,
             request_decision=heuristic_request_decision,
         )
 
@@ -526,6 +561,8 @@ async def resolve_turn_for_session(
     conversation_id: Optional[str] = None,
     knowledge_dataset_ids: Optional[List[str]] = None,
     agent_has_knowledge_binding: bool = False,
+    has_explicit_knowledge_context: Optional[bool] = None,
+    has_knowledge_history: bool = False,
     intent_evidence: Optional[IntentResponse] = None,
 ) -> SharedTurn:
     """AgentService 统一入口：启发式优先，判不准则调用意图 LLM。"""
@@ -537,5 +574,7 @@ async def resolve_turn_for_session(
         conversation_id=conversation_id,
         knowledge_dataset_ids=knowledge_dataset_ids,
         agent_has_knowledge_binding=agent_has_knowledge_binding,
+        has_explicit_knowledge_context=has_explicit_knowledge_context,
+        has_knowledge_history=has_knowledge_history,
         intent_evidence=intent_evidence,
     )

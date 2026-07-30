@@ -1750,6 +1750,12 @@ class AssistantAgentRunner(BaseExecutor):
 
     async def _resolve_runtime_tools_from_config(self) -> List[RuntimeToolSpec]:
         configured_tools = self.config.tools or []
+        if not self._knowledge_search_allowed_for_turn():
+            configured_tools = [
+                tool
+                for tool in configured_tools
+                if self._tool_config_name(tool) != "search_knowledge_base"
+            ]
         tools: List[RuntimeToolSpec] = []
         if configured_tools:
             tools = await ToolRegistry.get_runtime_tools(configured_tools)
@@ -1765,6 +1771,36 @@ class AssistantAgentRunner(BaseExecutor):
                 spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
                 tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
         return tools
+
+    @staticmethod
+    def _tool_config_name(tool_config: Any) -> str:
+        if isinstance(tool_config, str):
+            return tool_config
+        if isinstance(tool_config, dict):
+            return str(tool_config.get("name") or "")
+        return str(getattr(tool_config, "name", "") or "")
+
+    def _knowledge_search_allowed_for_turn(self) -> bool:
+        """知识库是本轮能力，不因智能体的长期工具绑定而自动暴露。"""
+        classification = self.turn_classification
+        if classification is not None:
+            return (
+                classification.turn_type == TurnType.KNOWLEDGE
+                or classification.requires_knowledge_search
+            )
+
+        source = str(self.route_hints.get("request_source") or "").strip().lower()
+        capability = str(self.route_hints.get("request_capability") or "").strip().lower()
+        if capability == RequestCapability.KNOWLEDGE_SEARCH.value or source == RequestSource.INTERNAL_DOCS.value:
+            return True
+        if source in {
+            RequestSource.GENERAL.value,
+            RequestSource.PUBLIC_WEB.value,
+            RequestSource.PLATFORM_SELF_HELP.value,
+            RequestSource.RUNTIME_DIAGNOSTIC.value,
+        }:
+            return False
+        return True
 
     @staticmethod
     def _record_external_execution_evidence(

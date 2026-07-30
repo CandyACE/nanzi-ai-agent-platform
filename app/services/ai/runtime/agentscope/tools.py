@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal
 
 from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.runtime.agentscope.errors import RuntimeToolError, RuntimeTimeoutError, ToolLoopFuseError
+from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 
@@ -256,6 +257,14 @@ class AgentScopeRuntimeTool:
         except Exception:
             return None
 
+        deletion_decision = _shell_deletion_permission_decision(
+            self.name,
+            tool_input,
+            cwd=os.getcwd(),
+        )
+        if deletion_decision and deletion_decision.behavior == PermissionBehavior.DENY:
+            return deletion_decision
+
         forbidden_decision = await _enforce_tool_forbidden(self.name, getattr(self, "user_id", None))
         if forbidden_decision:
             return forbidden_decision
@@ -263,6 +272,9 @@ class AgentScopeRuntimeTool:
         blacklist_decision = await _enforce_command_blacklist(self.name, tool_input, getattr(self, "user_id", None))
         if blacklist_decision:
             return blacklist_decision
+
+        if deletion_decision:
+            return deletion_decision
 
         if self.spec.permission_scope == "read":
             return PermissionDecision(
@@ -357,6 +369,14 @@ class AgentScopeNativeApprovalTool:
         except Exception:
             return None
 
+        deletion_decision = _shell_deletion_permission_decision(
+            self.name,
+            tool_input,
+            cwd=getattr(self.native_tool, "_cwd", None) or os.getcwd(),
+        )
+        if deletion_decision and deletion_decision.behavior == PermissionBehavior.DENY:
+            return deletion_decision
+
         forbidden_decision = await _enforce_tool_forbidden(self.name, self.user_id)
         if forbidden_decision:
             return forbidden_decision
@@ -368,6 +388,9 @@ class AgentScopeNativeApprovalTool:
         )
         if blacklist_decision:
             return blacklist_decision
+
+        if deletion_decision:
+            return deletion_decision
 
         if self.permission_scope == "read":
             return PermissionDecision(
@@ -657,6 +680,38 @@ def infer_runtime_permission_scope(
     if source_type in {"generic_api", "mcp"}:
         return "ask"
     return "ask"
+
+
+def _shell_deletion_permission_decision(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    *,
+    cwd: str,
+) -> Any:
+    if tool_name.lower() not in {"exec_command", "bash"}:
+        return None
+
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    assessment = assess_shell_deletion(
+        str(tool_input.get("command", "")),
+        cwd=cwd,
+    )
+    if assessment.action == "deny":
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=f"安全策略拦截：{assessment.reason}",
+            decision_reason="protected_shell_deletion",
+            bypass_immune=True,
+        )
+    if assessment.action == "ask":
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message=f"需要确认：{assessment.reason}",
+            decision_reason="shell_deletion_requires_confirmation",
+            bypass_immune=True,
+        )
+    return None
 
 
 async def _enforce_tool_forbidden(tool_name: str, explicit_user_id: int | str | None = None) -> Any:

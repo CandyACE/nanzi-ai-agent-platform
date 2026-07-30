@@ -8,6 +8,7 @@ import json
 import re
 import fnmatch
 from app.services.ai.tools.tool_compat import tool
+from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
 
 logger = logging.getLogger(__name__)
 
@@ -421,6 +422,12 @@ async def exec_command(command: str) -> str:
         command: 要执行的 Shell 命令。
     """
     try:
+        deletion_assessment = assess_shell_deletion(command, cwd=os.getcwd())
+        if deletion_assessment.action == "deny":
+            return f"安全拦截：{deletion_assessment.reason}。该删除命令被禁止执行。"
+        if deletion_assessment.action == "ask":
+            return f"需要用户确认：{deletion_assessment.reason}。该删除命令未执行。"
+
         forbidden_reason = _is_forbidden_shell_command(command)
         if forbidden_reason:
             return f"安全拦截：{forbidden_reason}。该命令被禁止执行。"
