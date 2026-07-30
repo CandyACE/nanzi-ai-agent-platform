@@ -92,6 +92,30 @@ async def test_unknown_request_directly_passes_structured_output_without_tool_ev
     assert not any(event.get("type") == "grounding_blocked" for event in events)
 
 
+@pytest.mark.asyncio
+async def test_unknown_date_answer_does_not_append_grounding_warning():
+    runner = _runner(debug_options={"grounding_enabled": True})
+    answer = "今天是 2026年7月30日，星期四。"
+
+    async def fake_core(_history):
+        yield {"content": answer}
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "今天日期"}]
+            )
+        ]
+
+    assert answer == "".join(str(event.get("content") or "") for event in events)
+    assert "风险提示" not in "".join(str(event.get("content") or "") for event in events)
+    assert not any(
+        event.get("type") == "log" and event.get("category") == "grounding"
+        for event in events
+    )
+
+
 def test_structured_grounding_retry_overrides_unknown_route_with_typed_requirement():
     runner = _runner(
         request_source="unknown",
@@ -241,6 +265,17 @@ async def test_missing_evidence_preserves_answer_and_appends_risk_warning():
     assert answer in content
     assert content.count("风险提示") == 1
     assert not any(event.get("type") == "grounding_blocked" for event in events)
+    grounding_logs = [
+        event
+        for event in events
+        if event.get("type") == "log" and event.get("category") == "grounding"
+    ]
+    assert len(grounding_logs) == 1
+    decision_meta = grounding_logs[0]["grounding_decision"]
+    assert decision_meta["decision_origin"] == "router"
+    assert decision_meta["evidence_mode"] == "required"
+    assert decision_meta["accepted_evidence_types"] == ["internal_data"]
+    assert decision_meta["decision_conflicts"] == []
 
 
 @pytest.mark.asyncio

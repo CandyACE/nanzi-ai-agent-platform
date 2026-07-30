@@ -26,6 +26,12 @@ from app.services.ai.runtime.session_run_lane import (
 from app.services.ai.executors.common import _attachment_abs_path, extract_tokens_from_message
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.core.orm import AsyncSessionLocal
+from app.services.ai.grounding.policy import resolve_fact_requirement
+from app.services.ai.request_decision import (
+    RequestCapability,
+    RequestDecision,
+    RequestSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +82,52 @@ def _apply_turn_status_signal(current: str, chunk: Dict[str, Any]) -> str:
     if signal == "success" and current in AWAITING_RESUME_STATUSES:
         return current
     return signal
+
+
+def _build_route_grounding_metadata(
+    *,
+    request_source: Optional[str],
+    request_capability: Optional[str],
+    confidence: float,
+    semantic_intent: Optional[str],
+    semantic_confidence: Optional[float],
+    semantic_domain: Optional[str],
+    fact_kind: Optional[str],
+) -> Dict[str, Any]:
+    """Expose the normalized grounding contract alongside router telemetry."""
+    try:
+        source = RequestSource(str(request_source or ""))
+        capability = RequestCapability(str(request_capability or ""))
+    except ValueError:
+        requirement = resolve_fact_requirement(None)
+        return {
+            "decision_origin": requirement.decision_origin,
+            "decision_confidence": requirement.decision_confidence,
+            "evidence_mode": requirement.evidence_mode,
+            "accepted_evidence_types": [],
+            "decision_conflicts": list(requirement.decision_conflicts),
+        }
+
+    decision = RequestDecision(
+        source=source,
+        capability=capability,
+        confidence=float(confidence or 0.0),
+        reasoning="router telemetry",
+        semantic_intent=semantic_intent,
+        semantic_confidence=float(semantic_confidence or 0.0),
+        semantic_domain=semantic_domain,
+        fact_kind=fact_kind,
+    )
+    requirement = resolve_fact_requirement(decision)
+    return {
+        "decision_origin": requirement.decision_origin,
+        "decision_confidence": requirement.decision_confidence,
+        "evidence_mode": requirement.evidence_mode,
+        "accepted_evidence_types": sorted(
+            evidence_type.value for evidence_type in requirement.accepted_types
+        ),
+        "decision_conflicts": list(requirement.decision_conflicts),
+    }
 
 
 class AgentService:
@@ -1320,6 +1372,15 @@ class AgentService:
                     "needs_fresh_data",
                     getattr(route_intent_evidence, "needs_fresh_data", False),
                 )
+                route_grounding_metadata = _build_route_grounding_metadata(
+                    request_source=r_request_source,
+                    request_capability=r_request_capability,
+                    confidence=r_conf,
+                    semantic_intent=getattr(route_intent_evidence, "intent", None),
+                    semantic_confidence=getattr(route_intent_evidence, "confidence", None),
+                    semantic_domain=r_semantic_domain,
+                    fact_kind=r_fact_kind,
+                )
                 route_hints = {
                     "turn_labels": r_turn_labels,
                     "relation_to_previous": r_relation,
@@ -1341,6 +1402,7 @@ class AgentService:
                     "chatbi_evidence_level": r_chatbi_evidence_level,
                     "chatbi_reason": r_chatbi_reason,
                     "matched_dataset_ids": r_matched_dataset_ids,
+                    "grounding_decision": route_grounding_metadata,
                 }
                 yield {
                     "type": "router_log",
@@ -1367,6 +1429,7 @@ class AgentService:
                     "chatbi_evidence_level": r_chatbi_evidence_level,
                     "chatbi_reason": r_chatbi_reason,
                     "matched_dataset_ids": r_matched_dataset_ids,
+                    "grounding_decision": route_grounding_metadata,
                     "status": "success",
                     "execution_time_ms": route_elapsed_ms
                 }

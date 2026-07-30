@@ -74,6 +74,42 @@ def test_current_conversation_context_is_already_available_evidence():
     assert not requirement.required
 
 
+def test_unknown_request_does_not_require_evidence_for_dynamic_answer():
+    requirement = resolve_fact_requirement(
+        _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
+    )
+
+    assert requirement.required is False
+    assert requirement.scrutinize_unknown_output is True
+    assert requirement.evidence_mode == "optional"
+    assert requirement.accepted_types == frozenset()
+
+
+def test_unknown_public_web_metadata_records_conflict_without_requiring_evidence():
+    decision = RequestDecision(
+        source=RequestSource.UNKNOWN,
+        capability=RequestCapability.ANSWER,
+        confidence=0.0,
+        reasoning="fallback",
+        semantic_domain="public_web",
+        fact_kind="public_fact",
+    )
+
+    requirement = resolve_fact_requirement(decision)
+
+    assert requirement.required is False
+    assert "unknown_source_with_public_web_evidence" in requirement.decision_conflicts
+
+
+def test_explicit_public_web_source_still_requires_public_evidence():
+    requirement = resolve_fact_requirement(
+        _decision(RequestSource.PUBLIC_WEB, RequestCapability.WEB_SEARCH)
+    )
+
+    assert requirement.required is True
+    assert requirement.accepted_types == frozenset({EvidenceType.PUBLIC_WEB})
+
+
 def test_unknown_numeric_table_without_evidence_returns_warning():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     answer = (

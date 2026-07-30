@@ -4,6 +4,11 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from app.services.ai.grounding.contract import (
+    EvidenceContract,
+    EvidenceContractMode,
+    EvidenceDecisionOrigin,
+)
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.models import EvidenceType, FactFreshness
 from app.services.ai.request_decision import RequestDecision, RequestSource
@@ -34,6 +39,10 @@ class FactRequirement:
     allow_conversation_reuse: bool = False
     time_scope: str | None = None
     block_unsupported_facts: bool = False
+    evidence_mode: str = EvidenceContractMode.NONE.value
+    decision_origin: str = EvidenceDecisionOrigin.FALLBACK.value
+    decision_confidence: float = 0.0
+    decision_conflicts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -276,10 +285,17 @@ def resolve_soft_warning_risk_level(
     return GroundingRiskLevel.HIGH
 
 
-def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequirement:
-    if decision is None:
-        return FactRequirement(False, frozenset(), scrutinize_unknown_output=True)
-    accepted_types = _SOURCE_EVIDENCE_TYPES.get(decision.source, frozenset())
+def _evidence_conflict_name(evidence_type: EvidenceType) -> str:
+    return {
+        EvidenceType.INTERNAL_DATA: "internal_data",
+        EvidenceType.INTERNAL_KNOWLEDGE: "internal_knowledge",
+        EvidenceType.PUBLIC_WEB: "public_web",
+        EvidenceType.RUNTIME_STATE: "runtime_state",
+        EvidenceType.USER_FILE: "user_file",
+    }.get(evidence_type, evidence_type.value)
+
+
+def _semantic_evidence_types(decision: RequestDecision) -> frozenset[EvidenceType]:
     domain = str(getattr(decision, "semantic_domain", "") or "").strip().lower()
     fact_kind = str(getattr(decision, "fact_kind", "") or "").strip().lower()
     domain_evidence_types = {
@@ -298,11 +314,107 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
         "public_fact": frozenset({EvidenceType.PUBLIC_WEB}),
         "knowledge_document": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
     }
-    accepted_types = (
+    return (
         domain_evidence_types.get(domain)
         or fact_kind_evidence_types.get(fact_kind)
-        or accepted_types
+        or frozenset()
     )
+
+
+def _evidence_contract_for_decision(
+    decision: RequestDecision | None,
+) -> EvidenceContract:
+    if decision is None:
+        return EvidenceContract(
+            mode=EvidenceContractMode.NONE,
+            origin=EvidenceDecisionOrigin.FALLBACK,
+            reason="request decision is unavailable",
+        )
+
+    source_types = _SOURCE_EVIDENCE_TYPES.get(decision.source, frozenset())
+    semantic_types = _semantic_evidence_types(decision)
+    conflicts = tuple(
+        f"{decision.source.value}_source_with_{_evidence_conflict_name(evidence_type)}_evidence"
+        for evidence_type in sorted(
+            semantic_types - source_types,
+            key=lambda item: item.value,
+        )
+    )
+
+    if decision.source is RequestSource.UNKNOWN:
+        semantic_intent = str(getattr(decision, "semantic_intent", "") or "").strip().upper()
+        semantic_confidence = float(getattr(decision, "semantic_confidence", 0.0) or 0.0)
+        if semantic_confidence >= 0.7 and semantic_intent in {
+            "DATA_QUERY",
+            "KNOWLEDGE_BASE",
+        }:
+            accepted_types = (
+                frozenset({EvidenceType.INTERNAL_DATA})
+                if semantic_intent == "DATA_QUERY"
+                else frozenset({EvidenceType.INTERNAL_KNOWLEDGE})
+            )
+            return EvidenceContract(
+                mode=EvidenceContractMode.REQUIRED,
+                accepted_types=accepted_types,
+                origin=EvidenceDecisionOrigin.SEMANTIC,
+                confidence=semantic_confidence,
+                reason="high-confidence semantic intent requires matching evidence",
+                conflicts=conflicts,
+            )
+        return EvidenceContract(
+            mode=EvidenceContractMode.OPTIONAL,
+            origin=EvidenceDecisionOrigin.FALLBACK,
+            confidence=float(getattr(decision, "confidence", 0.0) or 0.0),
+            reason="unknown source does not establish a mandatory evidence requirement",
+            conflicts=conflicts,
+        )
+
+    if decision.source in {
+        RequestSource.GENERAL,
+        RequestSource.PLATFORM_SELF_HELP,
+        RequestSource.CONVERSATION_CONTEXT,
+    }:
+        return EvidenceContract(
+            mode=EvidenceContractMode.NONE,
+            origin=EvidenceDecisionOrigin.ROUTER,
+            confidence=float(getattr(decision, "confidence", 0.0) or 0.0),
+            reason="source does not require a new evidence receipt",
+            conflicts=conflicts,
+        )
+
+    accepted_types = source_types or semantic_types
+    return EvidenceContract(
+        mode=(
+            EvidenceContractMode.REQUIRED
+            if accepted_types
+            else EvidenceContractMode.NONE
+        ),
+        accepted_types=accepted_types,
+        origin=EvidenceDecisionOrigin.ROUTER,
+        confidence=float(getattr(decision, "confidence", 0.0) or 0.0),
+        reason=(
+            "request source requires matching evidence"
+            if accepted_types
+            else "request source has no evidence mapping"
+        ),
+        conflicts=conflicts,
+    )
+
+
+def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequirement:
+    contract = _evidence_contract_for_decision(decision)
+    if decision is None:
+        return FactRequirement(
+            required=False,
+            accepted_types=frozenset(),
+            scrutinize_unknown_output=False,
+            evidence_mode=contract.mode.value,
+            decision_origin=contract.origin.value,
+            decision_confidence=contract.confidence,
+            decision_conflicts=contract.conflicts,
+        )
+    accepted_types = contract.accepted_types
+    domain = str(getattr(decision, "semantic_domain", "") or "").strip().lower()
     raw_freshness = str(
         getattr(decision, "freshness_requirement", "unknown") or "unknown"
     ).strip().lower()
@@ -340,9 +452,9 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
         or freshness is FactFreshness.REUSE_PREVIOUS
     ) and not needs_fresh_data
     return FactRequirement(
-        required=bool(accepted_types),
+        required=contract.mode is EvidenceContractMode.REQUIRED,
         accepted_types=accepted_types,
-        scrutinize_unknown_output=decision.source == RequestSource.UNKNOWN,
+        scrutinize_unknown_output=decision.source is RequestSource.UNKNOWN,
         freshness=freshness,
         max_age_seconds=max_age_seconds,
         requires_source_timestamp=bool(
@@ -351,6 +463,10 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
         allow_conversation_reuse=allow_conversation_reuse,
         time_scope=getattr(decision, "time_scope", None),
         block_unsupported_facts=needs_fresh_data and bool(accepted_types),
+        evidence_mode=contract.mode.value,
+        decision_origin=contract.origin.value,
+        decision_confidence=contract.confidence,
+        decision_conflicts=contract.conflicts,
     )
 
 

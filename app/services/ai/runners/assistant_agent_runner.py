@@ -365,6 +365,14 @@ class AssistantAgentRunner(BaseExecutor):
             elif semantic_intent == IntentType.KNOWLEDGE_BASE.value:
                 source = RequestSource.INTERNAL_DOCS
                 capability = RequestCapability.KNOWLEDGE_SEARCH
+        inferred_decision = None
+        if source in {RequestSource.UNKNOWN, RequestSource.GENERAL}:
+            inferred_decision = resolve_request_decision(user_query)
+            if (
+                inferred_decision.source is not source
+                and inferred_decision.source is not RequestSource.UNKNOWN
+            ):
+                return inferred_decision
         if source is not None and capability is not None:
             routed_decision = RequestDecision(
                 source=source,
@@ -388,7 +396,7 @@ class AssistantAgentRunner(BaseExecutor):
                 matched_dataset_ids=matched_dataset_ids,
             )
             if source == RequestSource.GENERAL:
-                inferred_decision = resolve_request_decision(user_query)
+                inferred_decision = inferred_decision or resolve_request_decision(user_query)
                 if resolve_fact_requirement(inferred_decision).required:
                     return inferred_decision
             return routed_decision
@@ -448,6 +456,18 @@ class AssistantAgentRunner(BaseExecutor):
             or requirement.scrutinize_unknown_output
         )
 
+    @staticmethod
+    def _grounding_decision_metadata(requirement: FactRequirement) -> Dict[str, Any]:
+        return {
+            "decision_origin": requirement.decision_origin,
+            "decision_confidence": requirement.decision_confidence,
+            "evidence_mode": requirement.evidence_mode,
+            "accepted_evidence_types": sorted(
+                evidence_type.value for evidence_type in requirement.accepted_types
+            ),
+            "decision_conflicts": list(requirement.decision_conflicts),
+        }
+
     def _resolve_turn_grounding_requirement(
         self,
         user_query: str,
@@ -466,12 +486,21 @@ class AssistantAgentRunner(BaseExecutor):
                 required=False,
                 accepted_types=frozenset(),
                 scrutinize_unknown_output=True,
+                evidence_mode="optional",
+                decision_origin="explicit",
+                decision_confidence=1.0,
             )
         retry_types = self._parse_grounding_retry_evidence_types(
             grounding_action
         )
         if retry_types:
-            return FactRequirement(required=True, accepted_types=retry_types)
+            return FactRequirement(
+                required=True,
+                accepted_types=retry_types,
+                evidence_mode="required",
+                decision_origin="explicit",
+                decision_confidence=1.0,
+            )
         current_turn_paths = getattr(ctx, "current_turn_attachment_paths", None) or []
         references_file = bool(
             re.search(r"(?:附件|文件|文档|表格|工作簿|日志)(?:里|中|内|的|内容|数据)?", user_query or "", re.I)
@@ -531,9 +560,13 @@ class AssistantAgentRunner(BaseExecutor):
         )
         for has_signal, evidence_type in signal_contracts:
             if has_signal and ledger.has_valid_evidence({evidence_type}):
-                return FactRequirement(
+                return replace(
+                    requirement,
                     required=True,
                     accepted_types=frozenset({evidence_type}),
+                    evidence_mode="required",
+                    decision_origin="lexical",
+                    decision_confidence=1.0,
                 )
         return requirement
 
@@ -693,6 +726,9 @@ class AssistantAgentRunner(BaseExecutor):
                 "details": "检测到回答包含尚未完全核实的内部数据表述，已保留正文并追加风险提示。",
                 "status": "warning",
                 "category": "grounding",
+                "grounding_decision": self._grounding_decision_metadata(
+                    evaluated_requirement
+                ),
             }
             yield GroundingService.warning_chunk(
                 risk_level=GroundingRiskLevel.HIGH,
@@ -714,6 +750,9 @@ class AssistantAgentRunner(BaseExecutor):
                 "details": grounding_decision.reason,
                 "status": "warning",
                 "category": "grounding",
+                "grounding_decision": self._grounding_decision_metadata(
+                    evaluated_requirement
+                ),
             }
             yield grounding_audit.warning_chunk
         else:
@@ -1968,6 +2007,9 @@ class AssistantAgentRunner(BaseExecutor):
                             "details": decision.reason,
                             "status": "warning",
                             "category": "grounding",
+                            "grounding_decision": self._grounding_decision_metadata(
+                                evaluated_requirement
+                            ),
                         }
                         yield grounding_audit.warning_chunk
                     else:
