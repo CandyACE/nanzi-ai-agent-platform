@@ -116,14 +116,17 @@ def collapse_repeated_reply(text: str, *, min_half_len: int = 200) -> str:
     return raw
 
 
+_QUICK_TARGET = r"[^()\n]*(?:\([^()\n]*\)[^()\n]*)*"
+_QUICK_LINK = rf"\[[^\]]+\]\(\s*quick:{_QUICK_TARGET}\)"
+
 _QUICK_SECTION_BLOCK = re.compile(
     r"(###\s*[^\n]*(?:您可能还想了解|您可以这样继续)[^\n]*\s*"
     r"(?:---\s*)?"
-    r"(?:\n\s*- \[[^\]]+\]\(quick:[^)]+\))+)",
+    rf"(?:\n\s*- { _QUICK_LINK })+)",
     re.IGNORECASE | re.MULTILINE,
 )
-_QUICK_MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(\s*quick:[^)]+\)", re.IGNORECASE)
-_QUICK_PROTOCOL = re.compile(r"\(?\s*quick:[^)\n]+\)?", re.IGNORECASE)
+_QUICK_MARKDOWN_LINK = re.compile(_QUICK_LINK, re.IGNORECASE)
+_QUICK_PROTOCOL = re.compile(rf"\(?\s*quick:{_QUICK_TARGET}\)?", re.IGNORECASE)
 _QUICK_SECTION_TITLE = re.compile(
     r"^\s*#{2,6}\s*(?:💬\s*)?(?:您可能还想了解|您可以这样继续|一键继续)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -154,7 +157,7 @@ def suppress_quick_suggestions(text: str) -> str:
     """Remove interactive quick protocol from non-interactive delivery output."""
     cleaned = _QUICK_SECTION_BLOCK.sub("", text or "")
     cleaned = re.sub(
-        r"^\s*[-*]\s*\[[^\]]+\]\(\s*quick:[^)]+\)\s*$",
+        rf"^\s*[-*]\s*{_QUICK_LINK}\s*$",
         "",
         cleaned,
         flags=re.IGNORECASE | re.MULTILINE,

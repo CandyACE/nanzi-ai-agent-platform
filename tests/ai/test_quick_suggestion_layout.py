@@ -1,5 +1,9 @@
 from app.services.ai.runtime.agentscope.stream_reconcile import move_quick_suggestions_to_end
 
+import pytest
+
+pytestmark = pytest.mark.no_infrastructure
+
 
 def test_move_quick_suggestions_to_end_after_chart():
     content = """### 💡 建议
@@ -36,3 +40,16 @@ def test_move_quick_suggestions_keeps_already_last():
 ---
 - [🙋 继续分析](quick:继续分析回款结构)"""
     assert move_quick_suggestions_to_end(content) == content
+
+
+def test_move_quick_suggestions_supports_parentheses_in_sql_like_targets():
+    content = """### 💬 您可能还想了解
+---
+- [🙋 查看用户数](quick:统计 COUNT(DISTINCT user_id) 按月趋势)
+
+正文结果"""
+
+    fixed = move_quick_suggestions_to_end(content)
+
+    assert fixed.strip().endswith("统计 COUNT(DISTINCT user_id) 按月趋势)")
+    assert fixed.index("正文结果") < fixed.index("您可能还想了解")
