@@ -138,6 +138,8 @@ def test_dataset_capability_menu_component_contract():
     assert "已共享给" in source
     assert "showSavedReportDetailDrawer" in source
     assert "openSavedReportDetail" in source
+    detail_handler = source.split("const openSavedReportDetail", 1)[1].split("const openSavedReportSubscription", 1)[0]
+    assert "showSavedReportBrowser.value = false" in detail_handler
     assert "toggleSavedReportFavorite" in source
     assert "toggleSavedReportPinned" in source
     assert "savedReportSmartFilter" in source

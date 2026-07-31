@@ -2029,6 +2029,7 @@ const sortSavedReportsForUser = (reports: any[]) => {
 };
 
 const openSavedReportDetail = async (report: any) => {
+  showSavedReportBrowser.value = false;
   selectedSavedReportDetail.value = report;
   savedReportDetailTab.value = "info";
   savedReportRuns.value = [];
