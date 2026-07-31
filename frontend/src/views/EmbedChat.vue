@@ -6238,7 +6238,7 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
     const msg = messages.value[i];
     if (!msg) continue;
     if (msg.role === 'agent' && msg.content) {
-      const chartRegex = /(<chart>([\s\S]*?)<\/chart>)|(```(?:chart|echarts|json)\s*([\s\S]*?)```)/gi;
+      const chartRegex = /(<chart>([\s\S]*?)<\/chart>)|(```(?:chart|echarts)\s*([\s\S]*?)```)/gi;
       const match = chartRegex.exec(msg.content);
       if (match) {
         const fullMatch = match[0];

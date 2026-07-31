@@ -76,9 +76,11 @@ def test_platform_prompt_exposes_explicit_authority_and_safe_meta_contract():
     assert "可以概括说明" in prompt
     assert "仅调用已绑定工具" in prompt
     assert "quick:" in prompt
+    assert "quick 目标必须是自然语言问题" in prompt
+    assert "不得把 SQL、代码或物理表名" in prompt
 
 
-def test_platform_prompt_prefers_mermaid_for_structural_diagrams_without_replacing_chatbi_charts():
+def test_platform_prompt_prefers_mermaid_for_structural_diagrams_only():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,
         agent_config=SimpleNamespace(tools=[]),
@@ -88,7 +90,30 @@ def test_platform_prompt_prefers_mermaid_for_structural_diagrams_without_replaci
     assert "优先使用 Mermaid" in prompt
     assert "```mermaid" in prompt
     assert "```chart``` / ECharts" in prompt
-    assert "不要强行改成 Mermaid" in prompt
+    assert "Mermaid 仅用于流程图" in prompt
+
+
+def test_platform_prompt_applies_echarts_contract_to_all_numeric_data_charts():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=[]),
+    )
+
+    assert "全平台数据图表" in prompt
+    assert "趋势、排名、分类、占比" in prompt
+    assert "禁止使用 Mermaid、xychart" in prompt
+    assert "必须使用 ```chart``` 代码块" in prompt
+    assert "series 必须是数组" in prompt
+    assert "禁止 JavaScript 函数" in prompt
+    assert "不得使用根节点 type + data.datasets" in prompt
+
+
+def test_multi_agent_synthesis_prompt_keeps_global_echarts_contract():
+    prompt = AgentServicePrompts.MULTI_AGENT_SYNTHESIS_SYSTEM
+
+    assert "全平台数据图表" in prompt
+    assert "禁止使用 Mermaid、xychart" in prompt
+    assert "必须使用 ```chart``` 代码块" in prompt
 
 
 def test_interactive_prompt_keeps_inspirational_quick_suggestions_by_default():

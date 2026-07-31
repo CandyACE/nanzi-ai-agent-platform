@@ -2,7 +2,17 @@ import JSON5 from "json5";
 
 export type ChartParseResult =
   | { ok: true; option: Record<string, any> }
-  | { ok: false; error: Error };
+  | { ok: false; error: ChartParseError };
+
+export type ChartParseErrorCode =
+  | "invalid_json"
+  | "invalid_option"
+  | "invalid_series"
+  | "unsupported_series_type";
+
+export interface ChartParseError extends Error {
+  code: ChartParseErrorCode;
+}
 
 export interface ChartTableData {
   columns: string[];
@@ -20,6 +30,17 @@ const colors = [
 ];
 
 const cartesianSeriesTypes = new Set(["bar", "line", "scatter"]);
+export const supportedChartSeriesTypes = new Set([
+  "bar",
+  "line",
+  "pie",
+  "scatter",
+  "gauge",
+  "radar",
+  "funnel",
+  "heatmap",
+  "treemap",
+]);
 
 const axisLabelReadableColor = "#6b7280";
 const axisNameReadableColor = "#374151";
@@ -73,31 +94,126 @@ export function parseChartOptions(raw: string): ChartParseResult {
   const jsonStr = raw.trim().replace(/^(json|chart)\s+/i, "");
 
   try {
-    let chartOptions = JSON.parse(jsonStr);
-    if (chartOptions && chartOptions.option && !chartOptions.series) {
-      chartOptions = chartOptions.option;
-    }
-    if (isChartOption(chartOptions)) {
-      return { ok: true, option: chartOptions };
-    }
-    return { ok: false, error: new Error("Invalid ECharts option") };
+    return validateChartOption(JSON.parse(jsonStr));
   } catch (jsonError) {
     try {
-      let chartOptions = JSON5.parse(jsonStr);
-      if (chartOptions && chartOptions.option && !chartOptions.series) {
-        chartOptions = chartOptions.option;
-      }
-      if (isChartOption(chartOptions)) {
-        return { ok: true, option: chartOptions };
-      }
-      return { ok: false, error: new Error("Invalid ECharts option") };
+      return validateChartOption(JSON5.parse(jsonStr));
     } catch (json5Error) {
       return {
         ok: false,
-        error: json5Error instanceof Error ? json5Error : jsonError instanceof Error ? jsonError : new Error("Chart parse failed"),
+        error: chartParseError(
+          "invalid_json",
+          json5Error instanceof Error
+            ? json5Error.message
+            : jsonError instanceof Error
+              ? jsonError.message
+              : "Chart parse failed",
+        ),
       };
     }
   }
+}
+
+function validateChartOption(value: any): ChartParseResult {
+  let chartOptions = normalizeLegacyChartOption(value);
+  if (chartOptions && chartOptions.option && !chartOptions.series) {
+    chartOptions = chartOptions.option;
+  }
+  if (!chartOptions || typeof chartOptions !== "object" || Array.isArray(chartOptions)) {
+    return { ok: false, error: chartParseError("invalid_option", "Invalid ECharts option") };
+  }
+
+  if (chartOptions.series && !Array.isArray(chartOptions.series) && typeof chartOptions.series === "object") {
+    chartOptions = { ...chartOptions, series: [chartOptions.series] };
+  }
+  if (!Array.isArray(chartOptions.series)) {
+    return { ok: false, error: chartParseError("invalid_option", "ECharts option must contain a series array") };
+  }
+
+  for (const series of chartOptions.series) {
+    if (!series || typeof series !== "object" || Array.isArray(series) || typeof series.type !== "string" || !Array.isArray(series.data)) {
+      return { ok: false, error: chartParseError("invalid_series", "Each series must contain type and array data") };
+    }
+    if (!supportedChartSeriesTypes.has(series.type)) {
+      return {
+        ok: false,
+        error: chartParseError("unsupported_series_type", `Unsupported ECharts series type: ${series.type}`),
+      };
+    }
+    if (cartesianSeriesTypes.has(series.type) && (!chartOptions.xAxis || !chartOptions.yAxis)) {
+      return { ok: false, error: chartParseError("invalid_option", "Cartesian charts require xAxis and yAxis") };
+    }
+  }
+
+  return { ok: true, option: chartOptions };
+}
+
+/**
+ * 兼容模型偶发输出的 Chart.js 风格柱/线/散点图配置。
+ * 这不是平台推荐格式，只转换结构明确且无执行内容的旧格式，最终仍走标准 ECharts 校验。
+ */
+function normalizeLegacyChartOption(value: any): any {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  if (!cartesianSeriesTypes.has(value.type)) return value;
+
+  const legacyData = value.data;
+  if (!legacyData || typeof legacyData !== "object" || Array.isArray(legacyData)) return value;
+  if (!Array.isArray(legacyData.labels) || !Array.isArray(legacyData.datasets)) return value;
+  if (!legacyData.datasets.every((dataset: any) => dataset && typeof dataset === "object" && !Array.isArray(dataset) && Array.isArray(dataset.data))) {
+    return value;
+  }
+
+  const series = legacyData.datasets.map((dataset: any, index: number) => {
+    const backgroundColor = dataset.backgroundColor;
+    const borderColor = dataset.borderColor;
+    const borderWidth = dataset.borderWidth;
+    const pointData = dataset.data.map((point: any, pointIndex: number) => {
+      const normalizedPoint = point && typeof point === "object" && !Array.isArray(point)
+        ? { ...point }
+        : { value: point };
+      const itemStyle = {
+        ...(normalizedPoint.itemStyle || {}),
+      };
+      const pointColor = Array.isArray(backgroundColor) ? backgroundColor[pointIndex] : undefined;
+      if (typeof pointColor === "string") itemStyle.color = pointColor;
+      if (typeof borderColor === "string") itemStyle.borderColor = borderColor;
+      if (typeof borderWidth === "number") itemStyle.borderWidth = borderWidth;
+      if (Object.keys(itemStyle).length > 0) normalizedPoint.itemStyle = itemStyle;
+      return normalizedPoint;
+    });
+
+    const normalizedSeries: Record<string, any> = {
+      ...dataset,
+      name: dataset.label ?? dataset.name ?? `系列${index + 1}`,
+      type: value.type,
+      data: pointData,
+    };
+    delete normalizedSeries.label;
+    delete normalizedSeries.backgroundColor;
+    delete normalizedSeries.borderColor;
+    delete normalizedSeries.borderWidth;
+    if (typeof backgroundColor === "string") {
+      normalizedSeries.itemStyle = {
+        ...(normalizedSeries.itemStyle || {}),
+        color: backgroundColor,
+      };
+    }
+    return normalizedSeries;
+  });
+
+  const { type: _legacyType, data: _legacyData, ...rest } = value;
+  return {
+    ...rest,
+    xAxis: rest.xAxis || { type: "category", data: legacyData.labels },
+    yAxis: rest.yAxis || { type: "value" },
+    series,
+  };
+}
+
+function chartParseError(code: ChartParseErrorCode, message: string): ChartParseError {
+  const error = new Error(message) as ChartParseError;
+  error.code = code;
+  return error;
 }
 
 export function mergeChartDefaults(options: Record<string, any>): Record<string, any> {
@@ -305,11 +421,6 @@ function inferDimensionValue(series: any[], rowIndex: number): string {
     }
   }
   return String(rowIndex + 1);
-}
-
-function isChartOption(value: any): value is Record<string, any> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Array.isArray(value.series) || Boolean(value.xAxis);
 }
 
 function mergeAxisDefaults(defaultAxis: Record<string, any>, axis: any): any {

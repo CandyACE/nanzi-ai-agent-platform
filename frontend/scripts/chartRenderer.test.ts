@@ -18,10 +18,66 @@ if (parsed.ok) {
   assert.equal(parsed.option.series[0].type, "bar");
 }
 
-const echartsFencePattern = /(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts|json)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)/gi;
+const legacySeriesObject = parseChartOptions(`
+{
+  series: { type: "pie", data: [{ name: "A", value: 1 }] }
+}
+`);
+assert.equal(legacySeriesObject.ok, true);
+if (legacySeriesObject.ok) {
+  assert.equal(Array.isArray(legacySeriesObject.option.series), true);
+  assert.equal(legacySeriesObject.option.series[0].type, "pie");
+}
+
+const legacyChartJsOption = parseChartOptions(`
+{
+  type: "bar",
+  data: {
+    labels: ["2026-05", "2026-06"],
+    datasets: [{
+      label: "变化次数",
+      data: [46, 97],
+      backgroundColor: ["#111111", "#222222"]
+    }]
+  }
+}
+`);
+assert.equal(legacyChartJsOption.ok, true);
+if (legacyChartJsOption.ok) {
+  assert.deepEqual(legacyChartJsOption.option.xAxis.data, ["2026-05", "2026-06"]);
+  assert.equal(legacyChartJsOption.option.series[0].name, "变化次数");
+  assert.equal(legacyChartJsOption.option.series[0].type, "bar");
+  assert.deepEqual(legacyChartJsOption.option.series[0].data[0], {
+    value: 46,
+    itemStyle: { color: "#111111" },
+  });
+}
+
+const unsupportedType = parseChartOptions(`
+{
+  series: [{ type: "sankey", data: [] }]
+}
+`);
+assert.equal(unsupportedType.ok, false);
+if (!unsupportedType.ok) {
+  assert.equal(unsupportedType.error.code, "unsupported_series_type");
+}
+
+const missingSeries = parseChartOptions(`
+{
+  title: { text: "不是图表" }
+}
+`);
+assert.equal(missingSeries.ok, false);
+if (!missingSeries.ok) {
+  assert.equal(missingSeries.error.code, "invalid_option");
+}
+
+const echartsFencePattern = /(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)/gi;
 const echartsFence = '```echarts\n{"series":[{"type":"bar","data":[1]}]}\n```';
 const echartsMatch = echartsFencePattern.exec(echartsFence);
 assert.equal(echartsMatch?.[3]?.includes('"series"'), true);
+assert.equal(echartsFencePattern.exec('```json\n{"rows":[1]}\n```'), null);
 
 const executable = parseChartOptions(`
 {

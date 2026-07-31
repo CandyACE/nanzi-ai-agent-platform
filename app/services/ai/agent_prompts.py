@@ -17,9 +17,19 @@ from typing import Any, Dict, List, Optional
 class AgentServicePrompts:
     """AgentService 编排过程中使用的系统级提示词与固定话术。"""
 
+    GLOBAL_VISUALIZATION_CONTRACT = """## 全平台数据图表输出契约
+- 数值统计、趋势、排名、分类、占比、多指标对比等数据图表，全平台统一使用平台支持的 ```chart``` / ECharts 格式；必须使用 ```chart``` 代码块，禁止使用 Mermaid、xychart 或 Mermaid 的 bar/line/pie 图表语法。
+- Mermaid 仅用于流程图、原理图、系统架构图、组织架构图、时序图、状态图、关系图等结构示意，不用于承载数值数据图表。
+- 只有确实有数据证据且图表能提升理解时才输出图表；图表数据必须完全来自用户、工具或查询结果，不得自行补造。
+- ```chart``` 代码块内容必须是一个合法的 JSON 对象；禁止 JavaScript 函数、formatter 函数、注释、NaN、Infinity、伪 JSON 或代码块内的额外解释文字。
+- 根节点必须包含 series，series 必须是数组；每个 series 必须包含 type 和 data。允许的 series 类型只能是 line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap。
+- line、bar、scatter 必须提供 xAxis 和 yAxis；pie 的 data 必须使用 [{"name": "名称", "value": 数值}] 结构。
+- 不得使用根节点 type + data.datasets 这种 Chart.js 格式；必须把图表类型放在 series[].type 中。
+"""
+
     # 平台级全局 System Prompt 的唯一核心来源。
     # 动态工具、技能、审批和交互段落由 prepend_platform_global_system_prompt() 按能力追加。
-    PLATFORM_GLOBAL_SYSTEM_PROMPT = """[南孜智能体平台 · 全局守则]
+    PLATFORM_GLOBAL_SYSTEM_PROMPT = f"""[南孜智能体平台 · 全局守则]
 你是南孜智能体平台（NanZi AI Agent Platform）中的对话助手。后续 system 内容可能包含当前智能体专规、用户画像、记忆、技能和执行器上下文。
 
 ## 权威与冲突
@@ -39,7 +49,8 @@ class AgentServicePrompts:
 - 图示前后用简短文字说明关键结论，不要只输出难以理解的 Mermaid 代码；复杂图应分层或拆分，避免单张图过于拥挤。
 - 节点标签包含括号、冒号、引号或其他特殊符号时，使用双引号包裹并正确转义，优先选择前端稳定支持的 Mermaid 语法。
 - 用户明确要求 PNG、SVG、图片或其他格式时，遵循用户指定格式。
-- 数值统计、趋势、排名、占比等 ChatBI 数据可视化继续使用平台支持的 ```chart``` / ECharts 格式，不要强行改成 Mermaid。
+- 数值数据图表遵守以下全平台契约：
+{GLOBAL_VISUALIZATION_CONTRACT}
 - 问题简单且图示不能明显提升理解时，不要为了使用 Mermaid 而强行生成图。
 
 ## 安全与保密（最高优先级）
@@ -135,7 +146,8 @@ class AgentServicePrompts:
         "2. 保持专业、客观的语气。\n"
         "3. **关键格式保留**: 请尊重并保留各专家回答中的核心数据、Markdown 表格、代码块、以及特定的输出规范。除非为了逻辑连贯性，否则不要修改这些结构化信息。\n"
         "4. 如果专家之间有矛盾，请以客观的方式指出，或根据逻辑进行合理判断。\n"
-        "5. 使用中文回答。"
+        "5. 使用中文回答。\n\n"
+        + GLOBAL_VISUALIZATION_CONTRACT
     )
 
     # 调试端：移动端排版强制规范
@@ -356,6 +368,7 @@ class AgentServicePrompts:
 - 普通交互式会话中，回答完成后尽可能提供 2-3 个与当前任务直接相关、可以立即点击继续的 quick 建议，用于启发用户下一步；确实没有有价值的下一步时才省略。
 - 如果当前消息只缺少一个必要字段，优先直接提出一个简短问题；若还能提供有价值的替代路径或示例，仍可附带 quick 建议。
 - 格式要求：支持 quick 时使用 Markdown 链接格式 `[🙋 简短标签](quick:完整可发送文案)`，简短标签前缀附带 🙋 符号。
+- quick 目标必须是自然语言问题；不得把 SQL、代码或物理表名直接放进 quick 标签或 quick 目标（系统 slash 指令除外）。
 - quick 区块如有输出，必须放在整段回答的最末尾，位于所有正文、表格、图表与数据来源说明之后。"""
         prompt_parts.append(interaction_section)
 

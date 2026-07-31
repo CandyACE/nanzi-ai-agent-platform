@@ -49,6 +49,20 @@ def test_chart_card_supports_table_view():
     assert "v-if=\"localChartTypes[idx] === 'table'\"" in source
 
 
+def test_message_renderer_only_classifies_chart_specific_fences():
+    source = _source("frontend/src/components/MessageRenderer.vue")
+
+    assert "(?:chart|echarts)" in source
+    assert "(?:chart|echarts|json)" not in source
+
+
+def test_message_renderer_exposes_actionable_chart_parse_failures():
+    source = _source("frontend/src/components/MessageRenderer.vue")
+
+    assert "parsed.error.code" in source
+    assert "图表配置解析失败" in source
+
+
 def test_message_renderer_supports_clarification_card():
     source = _source("frontend/src/components/MessageRenderer.vue")
 

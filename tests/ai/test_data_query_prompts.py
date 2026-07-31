@@ -376,3 +376,44 @@ def test_build_federated_synthesis_prompt_includes_quick_format_and_data_source_
     assert "- [🙋 {简短标签}](quick:{完整可发送提问文本})" in content
     assert "quick 区块之前" in content
     assert "禁止把 quick 建议与数据来源写在同一行" in content
+
+
+def test_chatbi_synthesis_prompts_share_strict_echarts_output_contract():
+    contract_markers = (
+        "只能使用 ```chart 代码块",
+        "数值、趋势、分类和占比图表禁止使用",
+        "xychart",
+        "必须是一个合法的 JSON 对象",
+        "series 必须是数组",
+        "禁止 JavaScript 函数",
+        "不得使用根节点 type + data.datasets",
+        "line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap",
+    )
+    prompts = [
+        DataQueryPrompts.synthesis_user_message("统计销售额", "【查询结果】{}"),
+        DataQueryPrompts.followup_synthesis_user_message("可视化一下", "{}"),
+        DataQueryPrompts.format_correction_user_message("改成折线图", "{}"),
+        DataQueryPrompts.build_federated_synthesis_prompt(
+            "统计销售额",
+            "| 月份 | 销售额 |\n| --- | ---: |\n| 1月 | 10 |",
+            dataset_names=["sales"],
+        ),
+    ]
+
+    for prompt in prompts:
+        for marker in contract_markers:
+            assert marker in prompt
+
+
+def test_chatbi_interactive_synthesis_quick_targets_are_natural_language_only():
+    prompts = [
+        DataQueryPrompts.synthesis_user_message("统计销售额", "【查询结果】{}"),
+        DataQueryPrompts.followup_synthesis_user_message("可视化一下", "{}"),
+        DataQueryPrompts.build_federated_synthesis_prompt(
+            "统计销售额",
+            "| 月份 | 销售额 |\n| --- | ---: |\n| 1月 | 10 |",
+            dataset_names=["sales"],
+        ),
+    ]
+    for prompt in prompts:
+        assert "quick 目标必须是自然语言问题" in prompt

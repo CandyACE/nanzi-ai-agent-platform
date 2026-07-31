@@ -52,6 +52,7 @@ class SharedPrompts:
         "凡输出 `quick:` 协议追问按钮（如「您可能还想了解」「您可以这样继续」），"
         "该区块必须放在**整段回答的最后**，位于所有正文、表格、```chart``` 图表与数据来源说明之后。\n"
         "禁止在图表或后续分析段落之前提前输出 quick 按钮。"
+        "quick 目标必须是自然语言问题；quick 标签和目标不得直接放 SQL、代码或物理表名。"
     )
 
     QUICK_SUGGESTIONS_FORMAT = (
@@ -68,6 +69,7 @@ class SharedPrompts:
         "4. `quick:` 链接目标必须是完整、可直接发送的中文问题句；"
         "列表项前缀必须带 🙋，且必须写成 Markdown 链接 `- [🙋 ...](quick:...)`，"
         "前端才会渲染为可点击按钮。"
+        "quick 目标必须是自然语言问题；quick 标签和目标不得直接放 SQL、代码或物理表名。"
     )
 
     # 非图片附件信息块的标题（紧跟在用户消息后）
@@ -96,6 +98,17 @@ def is_dataset_portal_slash_query(query: str) -> bool:
 
 class DataQueryPrompts:
     """DataQueryExecutor 使用的系统级提示词。"""
+
+    ECHARTS_OUTPUT_CONTRACT = (
+        "【ECharts 图表输出契约（MUST）】\n"
+        "只有确实适合可视化时才输出图表；数值、趋势、分类和占比图表禁止使用 ```mermaid 或 xychart，必须只能使用 ```chart 代码块，不能使用普通 ```json 代码块。\n"
+        "代码块内容必须是一个合法的 JSON 对象；禁止 JavaScript 函数、formatter 函数、注释、NaN、Infinity、伪 JSON 或代码块内的额外解释文字。\n"
+        "根节点必须包含 series，series 必须是数组；每个 series 必须包含 type 和 data。\n"
+        "允许的 series 类型只能是：line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap。\n"
+        "line、bar、scatter 必须提供 xAxis 和 yAxis；pie 的 data 必须使用 [{\"name\": \"名称\", \"value\": 数值}] 结构。\n"
+        "不得使用根节点 type + data.datasets 这种 Chart.js 格式；必须把图表类型放在 series[].type 中。\n"
+        "图表数据必须完全来自查询结果，不得自行补造数据。"
+    )
 
     @staticmethod
     def build_federated_plan_prompt(
@@ -278,6 +291,7 @@ XML 示例：
 请结合该结果，直接针对用户的问题进行专业的总结和解读。
 【输出规范】
 {SharedPrompts.PRE_QUERY_SUMMARY_REQUIREMENT}
+{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}
 2. 必须使用标准 Markdown 格式进行总结，文字要专业简练。
 3. 输出中的所有 Markdown 表格表头 MUST 使用中文业务术语，禁止保留 visit_id、FOLLOW_UP_DATE 等英文/拼音物理列名。
 4. 如果合适，请附带生成符合 ECharts 格式的 ```chart 块进行可视化展示。
@@ -2379,6 +2393,7 @@ XML 示例：
             f"{result_json}\n\n"
             "请根据用户的样式微调要求（例如：折线图改柱状图、特定数值标记颜色、调整图表标题/图例、显示/隐藏数值等），"
             "对上一轮的图表配置进行微调。你必须输出对应的 ECharts 配置 JSON，并用 ```chart \\n {ECharts JSON} \\n ``` 包裹输出。\n"
+            f"{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}\n"
             "注意：\n"
             "1. 不要重新查询数据库，不要生成新的 SQL。\n"
             "2. 输出微调后的 ```chart JSON``` 即可，可包含简短的调整说明，但不要长篇大论或重复无关数据结论。\n"
@@ -2399,6 +2414,7 @@ XML 示例：
             "【排版特别约束】：因为是追问，请直接输出图表（```chart```） and 新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
             "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
             "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
+            f"{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}\n\n"
             f"{SharedPrompts.DATA_QUERY_MARKDOWN_OUTPUT_FORMAT}\n\n"
             f"{SharedPrompts.QUICK_SUGGESTIONS_PLACEMENT}"
         )
@@ -2416,6 +2432,7 @@ XML 示例：
             "【排版特别约束】：因为是追问，请直接输出图表（```chart```） and 新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
             "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
             "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
+            f"{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}\n\n"
             f"{SharedPrompts.DATA_QUERY_MARKDOWN_OUTPUT_FORMAT}\n\n"
             f"{SharedPrompts.QUICK_SUGGESTIONS_PLACEMENT}"
         )
@@ -2433,6 +2450,7 @@ XML 示例：
             f"{evidence_context}\n\n"
             "请结合上述【执行过程回顾】和查询结果，为用户提供连贯且专业的最终回答。\n"
             "注：如果执行过程主要是执行了一个外部动作（如发送消息、启动/暂停任务等），请直接简洁地告知执行结果即可，无需赘述。\n\n"
+            f"{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}\n\n"
             f"{SharedPrompts.DATA_QUERY_MARKDOWN_OUTPUT_FORMAT}\n\n"
             f"{SharedPrompts.QUICK_SUGGESTIONS_PLACEMENT}"
         )

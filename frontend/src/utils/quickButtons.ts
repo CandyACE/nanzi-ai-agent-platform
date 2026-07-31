@@ -10,6 +10,54 @@ export function buildQuickButtonHtml(label: string, target: string): string {
   return `<a class="quick-action-btn" href="quick:${encodedTarget}">${label.trim()}</a>`;
 }
 
+function replaceBalancedQuickMarkdownLinks(text: string): string {
+  const marker = /(?:\[|【)([^\]】]+?)(?:\]|】)\s*\(\s*quick:/gi;
+  let output = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = marker.exec(text)) !== null) {
+    const targetStart = marker.lastIndex;
+    let depth = 1;
+    let quote = "";
+    let targetEnd = -1;
+
+    for (let index = targetStart; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === "\\") {
+        index += 1;
+        continue;
+      }
+      if (quote) {
+        if (char === quote) quote = "";
+        continue;
+      }
+      if (char === "'" || char === '"' || char === "`") {
+        quote = char;
+        continue;
+      }
+      if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          targetEnd = index;
+          break;
+        }
+      }
+    }
+
+    if (targetEnd < 0) break;
+
+    output += text.slice(cursor, match.index);
+    output += buildQuickButtonHtml(match[1] || "", text.slice(targetStart, targetEnd));
+    cursor = targetEnd + 1;
+    marker.lastIndex = cursor;
+  }
+
+  return output + text.slice(cursor);
+}
+
 export function parseQuickButtons(text: string): string {
   if (!text) return "";
 
@@ -21,11 +69,8 @@ export function parseQuickButtons(text: string): string {
     (_match, label, target) => buildQuickButtonHtml(label, target),
   );
 
-  // [label](quick:...) — 匹配到闭合 ) 为止，允许 >、引号、空格
-  processed = processed.replace(
-    /(?:\[|【)([^\]】]+?)(?:\]|】)\s*\(quick:([^)]+)\)/gi,
-    (_match, label, target) => buildQuickButtonHtml(label, target),
-  );
+  // [label](quick:...) — 使用括号深度解析，避免 SQL COUNT(...) 等函数截断 quick 目标
+  processed = replaceBalancedQuickMarkdownLinks(processed);
 
   // AI 直接输出的 HTML：<a href="quick:..."> 或单引号
   processed = processed.replace(

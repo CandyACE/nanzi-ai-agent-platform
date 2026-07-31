@@ -340,7 +340,7 @@ const segments = computed<ContentSegment[]>(() => {
   // 2. 预处理 Quick 按钮 (核心改进)
   cleanContent = parseQuickButtons(cleanContent);
 
-  const regex = /(?:<sql_plan>([\s\S]*?)<\/sql_plan>)|(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts|json)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)|(?::::clarification\s*([^\n]*)\n([\s\S]*?)\n:::)|(?:```\s*([a-zA-Z0-9_\-]+)?\s*\n([\s\S]*?)```)/gi;
+  const regex = /(?:<sql_plan>([\s\S]*?)<\/sql_plan>)|(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)|(?::::clarification\s*([^\n]*)\n([\s\S]*?)\n:::)|(?:```\s*([a-zA-Z0-9_\-]+)?\s*\n([\s\S]*?)```)/gi;
   const result: ContentSegment[] = [];
   let lastIndex = 0;
   let match;
@@ -389,7 +389,11 @@ const segments = computed<ContentSegment[]>(() => {
         result.push({ type: 'chart', content: jsonStr, chartData: mergeChartDefaults(parsed.option) });
       } else {
         console.error('Failed to parse chart options:', parsed.error);
-        result.push({ type: 'text', content: renderMarkdown(`> ⚠️ **Chart Render Failed**\n\n\`\`\`json\n${jsonStr}\n\`\`\``) });
+        const errorCode = parsed.error.code;
+        result.push({
+          type: 'text',
+          content: renderMarkdown(`> ⚠️ **图表配置解析失败**\n> 原因：${parsed.error.message}（${errorCode}）\n\n\`\`\`json\n${jsonStr}\n\`\`\``),
+        });
       }
     }
     else if (match[11] !== undefined) {

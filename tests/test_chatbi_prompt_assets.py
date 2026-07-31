@@ -38,3 +38,12 @@ def test_fresh_init_chatbi_prompt_is_runner_aligned_v8():
     assert "DataQueryExecutor / DataAgentRunner 控制" in init_sql
     assert "V8: Runner-aligned ChatBI prompt" in init_sql
     assert "本轮请求分类（先判类，再裁剪流程）" not in init_sql
+
+
+def test_chatbi_v8_routes_numeric_visualizations_to_echarts_not_mermaid():
+    prompt = PROMPT_PATH.read_text(encoding="utf-8")
+
+    assert "数值、趋势、分类和占比图表禁止使用" in prompt
+    assert "xychart" in prompt
+    assert "必须使用 ECharts 的" in prompt
+    assert "JSON 配置" in prompt
