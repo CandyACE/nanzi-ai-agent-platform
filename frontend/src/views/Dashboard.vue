@@ -1038,10 +1038,10 @@ const filteredMenuGroups = computed(() => {
   opacity: 0;
 }
 
-/* Optional: Custom scrollbar styling for Webkit */
+/* Keep scrollbar gutter stable; only fade the thumb on hover to avoid layout shift. */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
@@ -1057,12 +1057,12 @@ const filteredMenuGroups = computed(() => {
   background-color: rgba(107, 114, 128, 0.5); /* gray-500 */
 }
 
-/* Firefox scrollbar hiding */
 .custom-scrollbar {
-  scrollbar-width: none;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
 .custom-scrollbar:hover {
-  scrollbar-width: thin;
   scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
 }
 

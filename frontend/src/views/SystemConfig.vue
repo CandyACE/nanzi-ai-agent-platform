@@ -1118,7 +1118,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6 h-full flex flex-col">
+  <div class="h-full min-h-0 flex flex-col gap-6">
     <div class="flex justify-between items-center flex-shrink-0">
       <h1 class="text-2xl font-semibold text-gray-900">系统配置与诊断</h1>
       <!-- Tabs -->
@@ -1176,13 +1176,13 @@ onMounted(() => {
     </div>
 
     <!-- Content Area -->
-    <div class="flex-1 overflow-hidden">
+    <div class="flex-1 min-h-0 overflow-hidden">
 
-      <div v-if="activeTab === 'models'" class="h-full">
+      <div v-if="activeTab === 'models'" class="h-full min-h-0">
           <ModelRegistry />
       </div>
 
-      <div v-else-if="activeTab === 'tools'" class="h-full">
+      <div v-else-if="activeTab === 'tools'" class="h-full min-h-0">
           <ToolRegistry />
       </div>
 
