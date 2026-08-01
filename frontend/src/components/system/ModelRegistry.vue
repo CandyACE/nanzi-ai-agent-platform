@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelUpdate } from '../../api/model'
+import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate } from '../../api/model'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
@@ -17,6 +17,10 @@ const canSave = hasPermission('element:system:config_save')
 
 const models = ref<AIModel[]>([])
 const loadingModels = ref(false)
+const modelSearchQuery = ref('')
+const modelProviderFilter = ref('all')
+const modelTypeFilter = ref('all')
+const modelStatusFilter = ref('all')
 const testingModelId = ref<string | null>(null)
 const testingFormModel = ref(false)
 const showModelModal = ref(false)
@@ -26,6 +30,7 @@ const pendingDeleteModel = ref<AIModel | null>(null)
 const showStatusConfirm = ref(false)
 const pendingStatusModel = ref<AIModel | null>(null)
 const pendingStatusValue = ref(false)
+const pendingModelReferences = ref<AIModelReference[]>([])
 const showProviderMenu = ref(false)
 const showModelPicker = ref(false)
 const showAdvancedModelOptions = ref(false)
@@ -84,10 +89,40 @@ const contextSizePresets = [32768, 65536, 131072, 262144]
 const outputTokenPresets = [8192, 16384, 32768, 65536]
 const lastProvider = ref<string>('openai')
 const selectedProvider = computed(() =>
-    providerCatalog.find((item) => item.value === String(modelForm.value.provider)) || providerCatalog[0]
+    providerCatalog.find((item) => item.value === String(modelForm.value.provider)) || providerCatalog[0]!
 )
 const providerMeta = (provider: string) =>
-    providerCatalog.find((item) => item.value === provider) || providerCatalog[providerCatalog.length - 1]
+    providerCatalog.find((item) => item.value === provider) || providerCatalog[providerCatalog.length - 1]!
+const knownProviderValues = new Set(providerCatalog.map((provider) => provider.value))
+
+const filteredModels = computed(() => {
+    const keyword = modelSearchQuery.value.trim().toLowerCase()
+    return models.value.filter((model) => {
+        const matchesKeyword = !keyword || [model.name, model.model_id]
+            .some((value) => String(value || '').toLowerCase().includes(keyword))
+        const providerKey = knownProviderValues.has(model.provider) ? model.provider : 'other'
+        const matchesProvider = modelProviderFilter.value === 'all' || providerKey === modelProviderFilter.value
+        const matchesType = modelTypeFilter.value === 'all' || model.type === modelTypeFilter.value
+        const matchesStatus = modelStatusFilter.value === 'all'
+            || (modelStatusFilter.value === 'active' && model.is_active)
+            || (modelStatusFilter.value === 'inactive' && !model.is_active)
+        return matchesKeyword && matchesProvider && matchesType && matchesStatus
+    })
+})
+
+const hasModelFilters = computed(() => Boolean(
+    modelSearchQuery.value.trim()
+    || modelProviderFilter.value !== 'all'
+    || modelTypeFilter.value !== 'all'
+    || modelStatusFilter.value !== 'all'
+))
+
+const clearModelFilters = () => {
+    modelSearchQuery.value = ''
+    modelProviderFilter.value = 'all'
+    modelTypeFilter.value = 'all'
+    modelStatusFilter.value = 'all'
+}
 
 const formatTokenSize = (value?: number | null) => {
     if (!value) return ''
@@ -140,15 +175,39 @@ const fetchModels = async () => {
     }
 }
 
-const requestStatusChange = (model: AIModel) => {
+const loadModelReferences = async (model: AIModel) => {
+    try {
+        const response = await modelApi.references(model.id)
+        pendingModelReferences.value = response.data
+    } catch (e: any) {
+        pendingModelReferences.value = []
+        showToast('读取模型引用关系失败，将继续显示确认提示', 'warning')
+    }
+}
+
+const requestStatusChange = async (model: AIModel) => {
     pendingStatusModel.value = model
     pendingStatusValue.value = !model.is_active
+    pendingModelReferences.value = []
+    if (model.is_active) {
+        await loadModelReferences(model)
+    }
     showStatusConfirm.value = true
 }
+
+const referenceWarning = (action: string) => {
+    if (!pendingModelReferences.value.length) return ''
+    return `\n\n注意：${action}后仍有 ${pendingModelReferences.value.length} 个配置引用此模型，运行时将无法调用。请先切换这些配置。`
+}
+
+const modelReferenceDetails = computed(() => pendingModelReferences.value.map((reference) =>
+    `${reference.label}（${reference.detail}）`
+))
 
 const closeStatusConfirm = () => {
     showStatusConfirm.value = false
     pendingStatusModel.value = null
+    pendingModelReferences.value = []
 }
 
 const confirmStatusChange = async () => {
@@ -222,11 +281,6 @@ const testCurrentModel = async () => {
         showToast('请先填写模型 ID', 'warning')
         return
     }
-    if (modelType === 'embedding') {
-        showToast('Embedding 模型不能使用聊天模型测试', 'warning')
-        return
-    }
-
     testingFormModel.value = true
     try {
         const response = await modelApi.testConfig({
@@ -337,14 +391,16 @@ const saveModel = async () => {
     }
 }
 
-const deleteModel = (model: AIModel) => {
+const deleteModel = async (model: AIModel) => {
     pendingDeleteModel.value = model
+    await loadModelReferences(model)
     showDeleteConfirm.value = true
 }
 
 const closeDeleteConfirm = () => {
     showDeleteConfirm.value = false
     pendingDeleteModel.value = null
+    pendingModelReferences.value = []
 }
 
 const confirmDeleteModel = async () => {
@@ -381,15 +437,39 @@ onBeforeUnmount(() => {
 <template>
   <div class="h-full overflow-y-auto pb-6 custom-scrollbar p-1">
       <div class="bg-white shadow rounded-lg overflow-hidden">
-         <div class="p-4 border-b border-gray-100 flex justify-between items-center">
+         <div class="p-4 border-b border-gray-100 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <h3 class="text-lg font-medium text-gray-900">AI 模型注册表</h3>
-            <button 
-                v-if="canSave"
-                @click="openModelModal()"
-                class="px-3 py-1.5 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
-            >
-                + 添加模型
-            </button>
+            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                <input
+                    v-model="modelSearchQuery"
+                    type="search"
+                    placeholder="搜索模型名称或 ID..."
+                    class="w-full sm:w-52 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+                <select v-model="modelProviderFilter" class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按供应商筛选">
+                    <option value="all">供应商：全部</option>
+                    <option v-for="provider in providerCatalog" :key="provider.value" :value="provider.value">{{ provider.label }}</option>
+                </select>
+                <select v-model="modelTypeFilter" class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按模型类型筛选">
+                    <option value="all">类型：全部</option>
+                    <option value="llm">LLM</option>
+                    <option value="embedding">Embedding</option>
+                    <option value="multimodal">Multimodal</option>
+                </select>
+                <select v-model="modelStatusFilter" class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按状态筛选">
+                    <option value="all">状态：全部</option>
+                    <option value="active">启用</option>
+                    <option value="inactive">停用</option>
+                </select>
+                <button v-if="hasModelFilters" type="button" class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary" @click="clearModelFilters">清空</button>
+                <button
+                    v-if="canSave"
+                    @click="openModelModal()"
+                    class="px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
+                >
+                    + 添加模型
+                </button>
+            </div>
          </div>
          
          <div v-if="loadingModels" class="p-8 text-center text-gray-400">加载中...</div>
@@ -405,7 +485,7 @@ onBeforeUnmount(() => {
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="m in models" :key="m.id" class="hover:bg-gray-50">
+                <tr v-for="m in filteredModels" :key="m.id" class="hover:bg-gray-50">
                     <td class="px-6 py-4 min-w-[360px]">
                         <div class="text-sm font-semibold text-gray-900">{{ m.name }}</div>
                         <div class="mt-1 text-xs text-gray-500 font-mono truncate max-w-[520px]" :title="m.model_id">{{ m.model_id }}</div>
@@ -490,8 +570,8 @@ onBeforeUnmount(() => {
                         <span v-else class="text-gray-400 italic text-xs">仅限管理</span>
                      </td>
                 </tr>
-                <tr v-if="models.length === 0">
-                    <td colspan="5" class="px-6 py-8 text-center text-gray-400 text-sm">暂无模型配置</td>
+                <tr v-if="filteredModels.length === 0">
+                    <td colspan="5" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasModelFilters ? '暂无匹配模型' : '暂无模型配置' }}</td>
                 </tr>
             </tbody>
          </table>
@@ -613,7 +693,7 @@ onBeforeUnmount(() => {
               
               <div class="flex justify-end space-x-3 mt-6">
                   <button @click="showModelModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
-                  <button type="button" @click="testCurrentModel" :disabled="testingFormModel || !String(modelForm.model_id || '').trim() || modelForm.type === 'embedding'" class="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 rounded-md text-sm font-medium text-primary bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button type="button" @click="testCurrentModel" :disabled="testingFormModel || !String(modelForm.model_id || '').trim()" class="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 rounded-md text-sm font-medium text-primary bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed">
                       <svg v-if="testingFormModel" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
                       {{ testingFormModel ? '测试中' : '测试连接' }}
                   </button>
@@ -625,7 +705,9 @@ onBeforeUnmount(() => {
       <ConfirmModal
         v-if="showStatusConfirm && pendingStatusModel"
         :title="pendingStatusValue ? '启用模型' : '禁用模型'"
-        :message="pendingStatusValue ? `确定启用模型「${pendingStatusModel.name}」吗？启用后它会重新出现在模型选择列表中。` : `确定禁用模型「${pendingStatusModel.name}」吗？禁用后新请求将不能选择它。`"
+        :message="pendingStatusValue ? `确定启用模型「${pendingStatusModel.name}」吗？启用后它会重新出现在模型选择列表中。` : `确定禁用模型「${pendingStatusModel.name}」吗？禁用后新请求将不能选择它。${referenceWarning('禁用')}`"
+        :details="!pendingStatusValue ? modelReferenceDetails : []"
+        details-label="受影响配置"
         :confirm-text="pendingStatusValue ? '确认启用' : '确认禁用'"
         cancel-text="取消"
         :type="pendingStatusValue ? 'primary' : 'danger'"
@@ -636,7 +718,9 @@ onBeforeUnmount(() => {
       <ConfirmModal
         v-if="showDeleteConfirm && pendingDeleteModel"
         title="删除模型"
-        :message="`确定要删除模型「${pendingDeleteModel.name}」吗？删除后将无法恢复。`"
+        :message="`确定要删除模型「${pendingDeleteModel.name}」吗？删除后将无法恢复。${referenceWarning('删除')}`"
+        :details="modelReferenceDetails"
+        details-label="受影响配置"
         confirm-text="删除"
         cancel-text="取消"
         type="danger"

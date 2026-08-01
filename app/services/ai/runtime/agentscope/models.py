@@ -13,6 +13,7 @@ class AgentScopeModelConfig:
     max_retries: int = 3
     context_size: int | None = None
     max_output_tokens: int | None = None
+    provider: str | None = None
 
 
 def create_openai_chat_model(config: AgentScopeModelConfig):
@@ -41,6 +42,21 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
         "parameters": parameters,
         "max_retries": config.max_retries,
     }
+    if config.provider == "azure":
+        from app.utils.model_providers import azure_openai_request_config
+
+        azure_base_url, api_version = azure_openai_request_config(
+            config.base_url,
+            config.model,
+        )
+        model_kwargs["credential"] = OpenAICredential(
+            api_key=config.api_key,
+            base_url=azure_base_url,
+        )
+        model_kwargs["client_kwargs"] = {
+            "default_headers": {"api-key": config.api_key},
+            "default_query": {"api-version": api_version},
+        }
     if config.context_size is not None:
         model_kwargs["context_size"] = config.context_size
 

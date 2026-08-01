@@ -51,6 +51,13 @@ export interface AIModelOption {
   name: string
 }
 
+export interface AIModelReference {
+  kind: string
+  key: string
+  label: string
+  detail: string
+}
+
 export interface AIModelTestRequest {
   provider: string
   type: string
@@ -77,6 +84,10 @@ export const modelApi = {
   
   delete: (id: string) => {
     return axios.delete(`/api/portal/models/${id}`)
+  },
+
+  references: (id: string) => {
+    return axios.get<AIModelReference[]>(`/api/portal/models/${id}/references`)
   },
 
   testConnection: (id: string) => {

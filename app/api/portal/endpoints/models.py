@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 import httpx
-from sqlalchemy import select
+from sqlalchemy import Boolean, Column, MetaData, String, Table, Text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from app.core.orm import get_db_session
 from app.models.ai_model import AIModel
+from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.ai_model import (
     AIModelCreate,
     AIModelDiscoverRequest,
@@ -19,12 +20,21 @@ from app.schemas.ai_model import (
 )
 from app.utils.model_credentials import encrypt_model_api_key, decrypt_model_api_key
 from app.utils.model_providers import (
+    azure_openai_request_config,
     default_model_api_base_url,
     resolve_model_api_base_url,
 )
 import uuid
 
 router = APIRouter()
+
+_SYSTEM_CONFIGS_TABLE = Table(
+    "system_configs",
+    MetaData(),
+    Column("key", String(255)),
+    Column("value", Text),
+    Column("is_secret", Boolean),
+)
 
 
 async def _ensure_model_id_available(
@@ -219,6 +229,70 @@ async def update_model(
     await db.refresh(model)
     return AIModelResponse.from_orm_custom(model)
 
+
+async def _collect_model_references(db: AsyncSession, model: AIModel) -> list[dict[str, str]]:
+    """Return runtime configuration rows that still point at this model."""
+
+    identifiers = {str(model.model_id).strip()}
+    if model.name:
+        identifiers.add(str(model.name).strip())
+    references: list[dict[str, str]] = []
+
+    config_result = await db.execute(
+        select(_SYSTEM_CONFIGS_TABLE.c.key, _SYSTEM_CONFIGS_TABLE.c.value).where(
+            _SYSTEM_CONFIGS_TABLE.c.key.in_(["llm_model_name", "embed_model_name"]),
+            _SYSTEM_CONFIGS_TABLE.c.value.in_(identifiers),
+        )
+    )
+    config_labels = {
+        "llm_model_name": "系统默认 LLM 模型",
+        "embed_model_name": "系统默认 Embedding 模型",
+    }
+    for key, value in config_result.all():
+        references.append({
+            "kind": "system_config",
+            "key": str(key),
+            "label": config_labels.get(str(key), str(key)),
+            "detail": str(value),
+        })
+
+    version_result = await db.execute(
+        select(AIAgentVersion, AIAgent)
+        .join(AIAgent, AIAgent.id == AIAgentVersion.agent_id)
+        .where(
+            (AIAgentVersion.model_name.in_(identifiers))
+            | (AIAgentVersion.synthesis_model_name.in_(identifiers))
+        )
+    )
+    for version, agent in version_result.all():
+        slots = []
+        if version.model_name in identifiers:
+            slots.append("主模型")
+        if version.synthesis_model_name in identifiers:
+            slots.append("合成模型")
+        references.append({
+            "kind": "agent_version",
+            "key": ",".join(slots),
+            "label": f"智能体「{agent.display_name or agent.name}」v{version.version_number}",
+            "detail": "、".join(slots),
+        })
+    return references
+
+
+@router.get("/{model_id}/references")
+async def model_references(
+    model_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """List system and agent configurations affected by disabling this model."""
+
+    result = await db.execute(select(AIModel).where(AIModel.id == model_id))
+    model = result.scalars().first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return await _collect_model_references(db, model)
+
 @router.delete("/{model_id}")
 async def delete_model(
     model_id: str,
@@ -250,6 +324,7 @@ async def test_model(
     return await _test_model_connection(
         model_id=model_obj.model_id,
         model_type=model_obj.type,
+        provider=model_obj.provider,
         api_key=decrypt_model_api_key(model_obj.api_key),
         api_base_url=model_obj.api_base_url,
         context_size=model_obj.context_size,
@@ -261,25 +336,30 @@ async def _test_model_connection(
     *,
     model_id: str,
     model_type: str,
-    api_key: str | None,
-    api_base_url: str | None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    api_base_url: str | None = None,
     context_size: int | None = None,
     max_output_tokens: int | None = None,
 ):
-    from app.core.llm.client import get_llm_async
-    from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
-    from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
     try:
         if model_type == "embedding":
-            return {
-                "status": "error",
-                "message": "Embedding 模型不能使用聊天模型测试，请使用 Embedding 专用连通性测试。",
-            }
+            return await _test_embedding_connection(
+                provider=provider,
+                model_id=model_id,
+                api_key=api_key,
+                api_base_url=api_base_url,
+            )
+
+        from app.core.llm.client import get_llm_async
+        from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+        from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 
         llm = await get_llm_async(
             model=model_id,
             api_key=api_key,
             base_url=api_base_url,
+            provider=provider,
             temperature=0,
             context_size=context_size,
             max_output_tokens=max_output_tokens,
@@ -314,6 +394,80 @@ async def _test_model_connection(
         return {"status": "error", "message": f"连接失败: {str(e)}"}
 
 
+def _embedding_request_url(
+    *,
+    provider: str | None,
+    model_id: str,
+    api_base_url: str | None,
+) -> tuple[str, dict[str, str]]:
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider == "azure":
+        chat_url, api_version = azure_openai_request_config(api_base_url, model_id)
+        return f"{chat_url.rstrip('/')}/embeddings", {
+            "api-key": "__azure__",
+            "x-api-version": api_version,
+        }
+
+    base_url = (api_base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("请填写 API Base URL")
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("API Base URL 必须是有效的 HTTP/HTTPS 地址")
+    if parsed.path.rstrip("/").endswith("/embeddings"):
+        return base_url, {}
+    if parsed.path.rstrip("/").endswith("/v1"):
+        path = f"{parsed.path.rstrip('/')}/embeddings"
+    else:
+        path = f"{parsed.path.rstrip('/')}/v1/embeddings"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, "")), {}
+
+
+async def _test_embedding_connection(
+    *,
+    provider: str | None,
+    model_id: str,
+    api_key: str | None,
+    api_base_url: str | None,
+):
+    request_url, special_headers = _embedding_request_url(
+        provider=provider,
+        model_id=model_id,
+        api_base_url=api_base_url,
+    )
+    headers = {}
+    if special_headers.get("api-key") == "__azure__":
+        headers["api-key"] = api_key or ""
+        api_version = special_headers["x-api-version"]
+        separator = "&" if "?" in request_url else "?"
+        request_url = f"{request_url}{separator}api-version={api_version}"
+    elif api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        response = await client.post(
+            request_url,
+            headers=headers,
+            json={"model": model_id, "input": "ping"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    embedding = data[0].get("embedding") if isinstance(data, list) and data else None
+    if not isinstance(embedding, list) or not embedding:
+        raise ValueError("供应商未返回有效 embedding")
+    return {
+        "status": "success",
+        "message": "连接成功",
+        "response": f"Embedding 维度: {len(embedding)}",
+    }
+
+
 @router.post("/test-config")
 async def test_model_config(
     request: AIModelTestRequest,
@@ -330,6 +484,7 @@ async def test_model_config(
     return await _test_model_connection(
         model_id=request.model_id,
         model_type=request.type,
+        provider=request.provider,
         api_key=api_key,
         api_base_url=resolve_model_api_base_url(request.provider, request.api_base_url),
         context_size=request.context_size,

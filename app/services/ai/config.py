@@ -6,6 +6,7 @@ from app.schemas.agent import ChatConfig
 from app.core.llm.client import get_llm
 from app.services.config_service import ConfigService
 from app.utils.model_credentials import decrypt_model_api_key
+from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class RuntimeModelInfo:
     base_url: Optional[str] = None
     context_size: Optional[int] = None
     max_output_tokens: Optional[int] = None
+    provider: Optional[str] = None
 
     def public_dict(self) -> Dict[str, object]:
         return {
@@ -39,18 +41,10 @@ class RuntimeModelInfo:
 async def _lookup_registered_model(model: str):
     """Look up an active model alias without exposing its credentials."""
     try:
-        from app.core.orm import AsyncSessionLocal
-        from app.models.ai_model import AIModel
-        from sqlalchemy import or_, select
-
-        async with AsyncSessionLocal() as session:
-            stmt = select(AIModel).where(
-                AIModel.is_active == True,
-                or_(AIModel.model_id == model, AIModel.name == model),
-            )
-            result = await session.execute(stmt)
-            return result.scalars().first()
+        return await lookup_registered_model(model)
     except Exception as exc:
+        if isinstance(exc, ModelRegistryError):
+            raise
         logger.warning("Failed to lookup runtime model registry: %s", exc)
         raise
 
@@ -88,6 +82,8 @@ async def resolve_runtime_model_info(
 
     try:
         registered = await _lookup_registered_model(configured_model)
+    except ModelRegistryError:
+        raise
     except Exception:
         return RuntimeModelInfo(
             configured_model=configured_model,
@@ -110,6 +106,7 @@ async def resolve_runtime_model_info(
             base_url=getattr(registered, "api_base_url", None),
             context_size=getattr(registered, "context_size", None),
             max_output_tokens=getattr(registered, "max_output_tokens", None),
+            provider=getattr(registered, "provider", None),
         )
 
     return RuntimeModelInfo(
@@ -188,6 +185,8 @@ class AgentConfigProvider:
             "model": model,
             "temperature": temperature,
         }
+        if runtime_model_info.provider is not None:
+            llm_kwargs["provider"] = runtime_model_info.provider
         if runtime_model_info.context_size is not None:
             llm_kwargs["context_size"] = runtime_model_info.context_size
         if runtime_model_info.max_output_tokens is not None:

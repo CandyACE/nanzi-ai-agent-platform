@@ -72,18 +72,14 @@ class ConfigServiceProxy:
 
 async def _lookup_ai_model_record(model: str):
     try:
-        from app.core.orm import AsyncSessionLocal
-        from app.models.ai_model import AIModel
-        from sqlalchemy import or_, select
+        from app.services.ai.model_registry import lookup_registered_model
 
-        async with AsyncSessionLocal() as session:
-            stmt = select(AIModel).where(
-                AIModel.is_active == True,
-                or_(AIModel.model_id == model, AIModel.name == model),
-            )
-            result = await session.execute(stmt)
-            return result.scalars().first()
+        return await lookup_registered_model(model)
     except Exception as exc:
+        from app.services.ai.model_registry import ModelRegistryError
+
+        if isinstance(exc, ModelRegistryError):
+            raise
         logger.warning("Model registry lookup failed in get_llm_async: %s", exc)
         return None
 
@@ -109,6 +105,7 @@ class LLMFactory:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        provider: str | None = None,
         temperature: float | None = None,
         context_size: int | None = None,
         max_output_tokens: int | None = None,
@@ -139,6 +136,7 @@ class LLMFactory:
                 api_key=final_api_key,
                 base_url=final_base_url,
                 model=final_model,
+                provider=provider,
                 temperature=float(final_temp),
                 streaming=streaming,
                 context_size=context_size,
@@ -175,6 +173,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
     base_url = kwargs.get("base_url")
     context_size = kwargs.get("context_size")
     max_output_tokens = kwargs.get("max_output_tokens")
+    provider = kwargs.get("provider")
 
     lookup_result = _lookup_ai_model_record(model)
     ai_model = await lookup_result if inspect.isawaitable(lookup_result) else lookup_result
@@ -182,6 +181,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         api_key = api_key or decrypt_model_api_key(getattr(ai_model, "api_key", None))
         base_url = base_url or getattr(ai_model, "api_base_url", None)
         model = getattr(ai_model, "model_id", model)
+        provider = provider or getattr(ai_model, "provider", None)
         context_size = (
             context_size
             if context_size is not None
@@ -213,8 +213,11 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         "api_key": api_key,
         "base_url": base_url,
         "model": model,
+        "provider": provider,
         "temperature": temperature,
     }
+    if provider is None:
+        factory_kwargs.pop("provider")
     if context_size is not None:
         factory_kwargs["context_size"] = context_size
     if max_output_tokens is not None:

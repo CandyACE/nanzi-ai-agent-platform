@@ -43,6 +43,26 @@ class EmbeddingClient:
     @staticmethod
     async def embed_text(text: str, use_global: bool = False) -> List[float]:
         base_url, api_key, model = await EmbeddingClient._resolve_credentials(use_global)
+        provider = None
+        try:
+            from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
+            from app.utils.model_credentials import decrypt_model_api_key
+
+            registered = await lookup_registered_model(model)
+            if registered is not None:
+                if getattr(registered, "type", None) != "embedding":
+                    raise RuntimeError(f"模型不是 Embedding 类型：{model}")
+                model = str(getattr(registered, "model_id", model))
+                provider = getattr(registered, "provider", None)
+                base_url = (getattr(registered, "api_base_url", None) or base_url).strip()
+                api_key = decrypt_model_api_key(getattr(registered, "api_key", None)) or api_key
+        except ModelRegistryError:
+            raise
+        except Exception as exc:
+            # Registry lookup is additive for legacy global/memory settings;
+            # an unavailable registry must not break those existing settings.
+            logger.debug("Embedding model registry lookup unavailable: %s", exc)
+
         if not base_url or not api_key:
             err_msg = (
                 "Embedding API 未配置：请在智能体设置中配置全局 Embedding URL 与 Key"
@@ -61,9 +81,18 @@ class EmbeddingClient:
 
         payload = {"model": model, "input": text}
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        request_url = url
+        if str(provider or "").strip().lower() == "azure":
+            from app.utils.model_providers import azure_openai_request_config
+
+            chat_url, api_version = azure_openai_request_config(base_url, model)
+            request_url = f"{chat_url.rstrip('/')}/embeddings"
+            request_url = f"{request_url}?api-version={api_version}"
+            headers.pop("Authorization", None)
+            headers["api-key"] = api_key
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await client.post(request_url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
 
