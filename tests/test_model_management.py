@@ -55,7 +55,7 @@ async def test_model_management_flow(client: AsyncClient, admin_headers):
     llms = response.json()
     assert all(m["type"] == "llm" for m in llms)
     
-    # 5. Delete Model (Soft Delete)
+    # 5. Delete Model (Physical Delete)
     response = await client.delete(f"/api/portal/models/{model_db_id}", headers=admin_headers)
     assert response.status_code == 200
     
@@ -63,6 +63,13 @@ async def test_model_management_flow(client: AsyncClient, admin_headers):
     response = await client.get("/api/portal/models", headers=admin_headers)
     models_after = response.json()
     assert not any(m["id"] == model_db_id for m in models_after)
+
+    # Physical deletion must not leave a hidden row behind either.
+    response = await client.get(
+        "/api/portal/models?include_inactive=true",
+        headers=admin_headers,
+    )
+    assert not any(m["id"] == model_db_id for m in response.json())
 
 
 @pytest.mark.asyncio

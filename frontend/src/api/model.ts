@@ -56,6 +56,13 @@ export interface AIModelReference {
   key: string
   label: string
   detail: string
+  config_key?: string
+  agent_id?: string
+  agent_name?: string
+  version_id?: string
+  version_number?: number
+  version_status?: string
+  agent_enabled?: boolean
 }
 
 export interface AIModelTestRequest {

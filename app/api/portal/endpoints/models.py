@@ -230,7 +230,30 @@ async def update_model(
     return AIModelResponse.from_orm_custom(model)
 
 
-async def _collect_model_references(db: AsyncSession, model: AIModel) -> list[dict[str, str]]:
+def _build_agent_model_reference(version: AIAgentVersion, agent: AIAgent, slots: list[str]) -> dict:
+    """Build a stable, navigable model-usage record for an agent version."""
+
+    return {
+        "kind": "agent_version",
+        "key": ",".join(slots),
+        "label": f"智能体「{agent.display_name or agent.name}」v{version.version_number}",
+        "detail": "、".join(slots),
+        "agent_id": str(agent.id),
+        "agent_name": str(agent.name),
+        "version_id": str(version.id),
+        "version_number": version.version_number,
+        "version_status": str(version.status or "DRAFT"),
+        "agent_enabled": bool(agent.is_enabled),
+    }
+
+
+def _should_include_agent_model_reference(version: AIAgentVersion) -> bool:
+    """Keep draft and published references; archived versions are historical only."""
+
+    return str(version.status or "DRAFT").upper() != "ARCHIVED"
+
+
+async def _collect_model_references(db: AsyncSession, model: AIModel) -> list[dict]:
     """Return runtime configuration rows that still point at this model."""
 
     identifiers = {str(model.model_id).strip()}
@@ -254,6 +277,7 @@ async def _collect_model_references(db: AsyncSession, model: AIModel) -> list[di
             "key": str(key),
             "label": config_labels.get(str(key), str(key)),
             "detail": str(value),
+            "config_key": str(key),
         })
 
     version_result = await db.execute(
@@ -265,17 +289,14 @@ async def _collect_model_references(db: AsyncSession, model: AIModel) -> list[di
         )
     )
     for version, agent in version_result.all():
+        if not _should_include_agent_model_reference(version):
+            continue
         slots = []
         if version.model_name in identifiers:
             slots.append("主模型")
         if version.synthesis_model_name in identifiers:
             slots.append("合成模型")
-        references.append({
-            "kind": "agent_version",
-            "key": ",".join(slots),
-            "label": f"智能体「{agent.display_name or agent.name}」v{version.version_number}",
-            "detail": "、".join(slots),
-        })
+        references.append(_build_agent_model_reference(version, agent, slots))
     return references
 
 
@@ -293,20 +314,27 @@ async def model_references(
         raise HTTPException(status_code=404, detail="Model not found")
     return await _collect_model_references(db, model)
 
+
+async def _delete_model_record(db: AsyncSession, model: AIModel) -> None:
+    """Permanently remove a model registry row."""
+
+    await db.delete(model)
+    await db.commit()
+
+
 @router.delete("/{model_id}")
 async def delete_model(
     model_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_permission("element", "element:system:config_save"))
 ):
-    """Soft delete an AI model"""
+    """Permanently delete an AI model registry row."""
     result = await db.execute(select(AIModel).where(AIModel.id == model_id))
     model = result.scalars().first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     
-    model.is_active = False # Soft delete
-    await db.commit()
+    await _delete_model_record(db, model)
     return {"status": "success", "message": "Model deleted"}
 
 @router.post("/{model_id}/test")

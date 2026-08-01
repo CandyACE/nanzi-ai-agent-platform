@@ -4,6 +4,7 @@ import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AI
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
+import ModelUsageDrawer from './ModelUsageDrawer.vue'
 import { 
   PlayIcon,
   PencilSquareIcon,
@@ -31,6 +32,11 @@ const showStatusConfirm = ref(false)
 const pendingStatusModel = ref<AIModel | null>(null)
 const pendingStatusValue = ref(false)
 const pendingModelReferences = ref<AIModelReference[]>([])
+const showModelUsage = ref(false)
+const usageModel = ref<AIModel | null>(null)
+const usageReferences = ref<AIModelReference[]>([])
+const loadingModelUsage = ref(false)
+const modelUsageError = ref('')
 const showProviderMenu = ref(false)
 const showModelPicker = ref(false)
 const showAdvancedModelOptions = ref(false)
@@ -183,6 +189,33 @@ const loadModelReferences = async (model: AIModel) => {
         pendingModelReferences.value = []
         showToast('读取模型引用关系失败，将继续显示确认提示', 'warning')
     }
+}
+
+const openModelUsage = async (model: AIModel) => {
+    usageModel.value = model
+    usageReferences.value = []
+    modelUsageError.value = ''
+    showModelUsage.value = true
+    loadingModelUsage.value = true
+    try {
+        const response = await modelApi.references(model.id)
+        if (usageModel.value?.id === model.id) {
+            usageReferences.value = response.data
+        }
+    } catch (e: any) {
+        modelUsageError.value = e.response?.data?.detail || e.message || '读取模型使用关系失败'
+    } finally {
+        if (usageModel.value?.id === model.id) {
+            loadingModelUsage.value = false
+        }
+    }
+}
+
+const closeModelUsage = () => {
+    showModelUsage.value = false
+    usageModel.value = null
+    usageReferences.value = []
+    modelUsageError.value = ''
 }
 
 const requestStatusChange = async (model: AIModel) => {
@@ -435,7 +468,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto pb-6 custom-scrollbar p-1">
+  <div class="registry-scroll h-full overflow-y-auto pb-6 custom-scrollbar p-1">
       <div class="bg-white shadow rounded-lg overflow-hidden">
          <div class="p-4 border-b border-gray-100 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <h3 class="text-lg font-medium text-gray-900">AI 模型注册表</h3>
@@ -461,7 +494,14 @@ onBeforeUnmount(() => {
                     <option value="active">启用</option>
                     <option value="inactive">停用</option>
                 </select>
-                <button v-if="hasModelFilters" type="button" class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary" @click="clearModelFilters">清空</button>
+                <button
+                    type="button"
+                    class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary"
+                    :class="{ invisible: !hasModelFilters }"
+                    :disabled="!hasModelFilters"
+                    :tabindex="hasModelFilters ? 0 : -1"
+                    @click="clearModelFilters"
+                >清空</button>
                 <button
                     v-if="canSave"
                     @click="openModelModal()"
@@ -472,8 +512,14 @@ onBeforeUnmount(() => {
             </div>
          </div>
          
-         <div v-if="loadingModels" class="p-8 text-center text-gray-400">加载中...</div>
-         <div v-else class="overflow-x-auto">
+         <div v-if="loadingModels && models.length === 0" class="p-8 text-center text-gray-400">加载中...</div>
+         <div v-else class="relative overflow-x-auto">
+         <div
+            v-if="loadingModels"
+            class="pointer-events-none absolute inset-0 z-10 bg-white/45"
+            aria-busy="true"
+            aria-label="正在刷新模型列表"
+         ></div>
          <table class="min-w-[1080px] w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
                 <tr>
@@ -481,17 +527,20 @@ onBeforeUnmount(() => {
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[220px]">提供商</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">类型</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">使用关系</th>
                     <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50">操作</th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
                 <tr v-for="m in filteredModels" :key="m.id" class="hover:bg-gray-50">
                     <td class="px-6 py-4 min-w-[360px]">
+                        <div class="model-cell">
                         <div class="text-sm font-semibold text-gray-900">{{ m.name }}</div>
                         <div class="mt-1 text-xs text-gray-500 font-mono truncate max-w-[520px]" :title="m.model_id">{{ m.model_id }}</div>
-                        <div v-if="m.context_size || m.max_output_tokens" class="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                        <div class="mt-2 flex min-h-[1.5rem] flex-wrap gap-1.5 text-[11px]">
                             <span v-if="m.context_size" class="token-limit-badge">输入 {{ formatTokenSize(m.context_size) }}</span>
                             <span v-if="m.max_output_tokens" class="token-limit-badge">输出 {{ formatTokenSize(m.max_output_tokens) }}</span>
+                        </div>
                         </div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -527,6 +576,21 @@ onBeforeUnmount(() => {
                             <span class="text-xs font-semibold" :class="m.is_active ? 'text-green-700' : 'text-gray-500'">{{ m.is_active ? '启用' : '停用' }}</span>
                         </button>
                         <span v-else class="text-xs font-semibold" :class="m.is_active ? 'text-green-700' : 'text-gray-500'">{{ m.is_active ? '启用' : '停用' }}</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <button
+                            v-if="canSave"
+                            type="button"
+                            class="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50"
+                            title="查看模型使用关系"
+                            @click="openModelUsage(m)"
+                        >
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 7h10M7 12h10M7 17h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" />
+                            </svg>
+                            查看关系
+                        </button>
+                        <span v-else class="text-xs text-gray-400">—</span>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.4)]">
                         <div v-if="canSave" class="flex items-center justify-end space-x-2">
@@ -571,7 +635,7 @@ onBeforeUnmount(() => {
                      </td>
                 </tr>
                 <tr v-if="filteredModels.length === 0">
-                    <td colspan="5" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasModelFilters ? '暂无匹配模型' : '暂无模型配置' }}</td>
+                    <td colspan="6" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasModelFilters ? '暂无匹配模型' : '暂无模型配置' }}</td>
                 </tr>
             </tbody>
          </table>
@@ -616,7 +680,7 @@ onBeforeUnmount(() => {
                   <div>
                      <label class="block text-sm font-medium text-gray-700">API Base URL (可选)</label>
                      <input v-model="modelForm.api_base_url" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="providerBaseUrlHint" />
-                     <p class="text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
+                     <p class="provider-url-hint text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
                   </div>
                   <div>
                      <label class="block text-sm font-medium text-gray-700">API Key (可选)</label>
@@ -645,7 +709,7 @@ onBeforeUnmount(() => {
                          </div>
                      </div>
                      <p class="text-xs text-gray-500 mt-1">云服务商定义的实际模型标识符；可手工填写，也可从供应商列表选择</p>
-                     <p v-if="modelIdConflict" class="text-xs text-red-600 mt-1">该 model_id 已存在，模型 ID 必须全局唯一</p>
+                     <p class="text-xs mt-1 min-h-[1rem]" :class="modelIdConflict ? 'text-red-600' : 'invisible'" aria-live="polite">该 model_id 已存在，模型 ID 必须全局唯一</p>
                   </div>
                   <div>
                      <label class="block text-sm font-medium text-gray-700">模型类型</label>
@@ -662,12 +726,18 @@ onBeforeUnmount(() => {
                   </div>
                   <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
                       <span class="flex items-center gap-2">
-                          <svg class="w-4 h-4" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                          <svg class="w-4 h-4 transition-transform" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
                           <span>高级设置</span>
                       </span>
-                      <span v-if="modelForm.context_size || modelForm.max_output_tokens" class="text-xs text-gray-400">已配置</span>
+                      <span class="text-xs text-gray-400" :class="{ invisible: !(modelForm.context_size || modelForm.max_output_tokens) }">已配置</span>
                   </button>
-                  <div v-if="showAdvancedModelOptions" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div
+                      class="advanced-options-panel"
+                      :class="{ 'advanced-options-panel-open': showAdvancedModelOptions }"
+                      :inert="!showAdvancedModelOptions"
+                      :aria-hidden="!showAdvancedModelOptions"
+                  >
+                      <div class="advanced-options-panel-inner grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                           <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
                           <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
@@ -683,6 +753,7 @@ onBeforeUnmount(() => {
                               <button v-for="size in outputTokenPresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
                           </div>
                           <p class="text-xs text-gray-500 mt-1">发送为 API 的最大输出 token；留空使用供应商默认值</p>
+                      </div>
                       </div>
                   </div>
                   <div class="flex items-center">
@@ -727,10 +798,23 @@ onBeforeUnmount(() => {
         @confirm="confirmDeleteModel"
         @cancel="closeDeleteConfirm"
       />
+
+      <ModelUsageDrawer
+        :open="showModelUsage"
+        :model="usageModel"
+        :references="usageReferences"
+        :loading="loadingModelUsage"
+        :error="modelUsageError"
+        @close="closeModelUsage"
+      />
   </div>
 </template>
 
 <style scoped>
+.registry-scroll {
+  scrollbar-gutter: stable;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
 }
@@ -743,6 +827,30 @@ onBeforeUnmount(() => {
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.5);
+}
+
+.model-cell {
+  min-height: 4.25rem;
+}
+
+.provider-url-hint {
+  min-height: 2.5rem;
+}
+
+.advanced-options-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 180ms ease;
+}
+
+.advanced-options-panel-open {
+  grid-template-rows: 1fr;
+}
+
+.advanced-options-panel-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 0.25rem;
 }
 
 .provider-icon,
@@ -918,7 +1026,9 @@ onBeforeUnmount(() => {
 .discover-model-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.3rem;
+  min-width: 7.75rem;
   border-radius: 0.45rem;
   background: rgb(239 246 255);
   padding: 0.35rem 0.55rem;
