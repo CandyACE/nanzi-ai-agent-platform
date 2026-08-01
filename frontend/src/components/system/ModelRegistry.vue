@@ -678,12 +678,12 @@ onBeforeUnmount(() => {
                      </div>
                   </div>
                   <div>
-                     <label class="block text-sm font-medium text-gray-700">API Base URL (可选)</label>
+                     <label class="block text-sm font-medium text-gray-700">API Base URL</label>
                      <input v-model="modelForm.api_base_url" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="providerBaseUrlHint" />
                      <p class="provider-url-hint text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
                   </div>
                   <div>
-                     <label class="block text-sm font-medium text-gray-700">API Key (可选)</label>
+                     <label class="block text-sm font-medium text-gray-700">API Key</label>
                      <input v-model="modelForm.api_key" type="password" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="isEditingModel && modelForm.has_api_key ? '已配置，留空则保留原密钥' : '留空则使用系统默认密钥'" />
                   </div>
                   <div>
