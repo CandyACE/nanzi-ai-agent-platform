@@ -28,6 +28,7 @@ const pendingStatusModel = ref<AIModel | null>(null)
 const pendingStatusValue = ref(false)
 const showProviderMenu = ref(false)
 const showModelPicker = ref(false)
+const showAdvancedModelOptions = ref(false)
 const loadingDiscoveredModels = ref(false)
 const discoveredModels = ref<AIModelOption[]>([])
 const modelForm = ref<Partial<AIModelCreate> & { id?: string; has_api_key?: boolean }>({
@@ -253,6 +254,7 @@ const testCurrentModel = async () => {
 const openModelModal = (model?: AIModel, isClone = false) => {
     showProviderMenu.value = false
     showModelPicker.value = false
+    showAdvancedModelOptions.value = false
     discoveredModels.value = []
     if (model) {
         if (isClone) {
@@ -552,7 +554,10 @@ onBeforeUnmount(() => {
                      <div class="relative mt-1">
                          <input v-model="modelForm.model_id" :class="modelIdConflict ? 'border-red-400 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary focus:border-primary'" class="block w-full rounded-md shadow-sm sm:text-sm font-mono pr-3" placeholder="例如: gpt-4o" />
                          <div v-if="showModelPicker" class="model-picker-menu" @click.stop>
-                             <div class="px-3 py-2 border-b border-gray-100 text-xs text-gray-500">选择 {{ providerLabels[String(modelForm.provider)] || modelForm.provider }} 模型</div>
+                             <div class="flex items-center justify-between gap-3 px-3 py-2 border-b border-gray-100 text-xs text-gray-500">
+                                 <span>选择 {{ providerLabels[String(modelForm.provider)] || modelForm.provider }} 模型</span>
+                                 <button type="button" class="model-picker-close" aria-label="关闭模型列表" title="关闭" @click.stop="showModelPicker = false">×</button>
+                             </div>
                              <button v-for="option in discoveredModels" :key="option.model_id" type="button" class="model-picker-item" @click="selectDiscoveredModel(option)">
                                  <span class="font-medium text-gray-800">{{ option.name }}</span>
                                  <span class="text-xs font-mono text-gray-500">{{ option.model_id }}</span>
@@ -575,7 +580,14 @@ onBeforeUnmount(() => {
                      <input v-model="modelForm.name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="例如: GPT-4o 生产版" />
                      <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
                   </div>
-                  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
+                      <span class="flex items-center gap-2">
+                          <svg class="w-4 h-4" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                          <span>高级设置</span>
+                      </span>
+                      <span v-if="modelForm.context_size || modelForm.max_output_tokens" class="text-xs text-gray-400">已配置</span>
+                  </button>
+                  <div v-if="showAdvancedModelOptions" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                           <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
                           <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
@@ -737,6 +749,23 @@ onBeforeUnmount(() => {
   padding: 0.15rem 0.45rem;
 }
 
+.advanced-options-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgb(226 232 240);
+  padding-top: 0.75rem;
+  color: rgb(51 65 85);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.advanced-options-toggle:hover {
+  color: rgb(37 99 235);
+}
+
 .token-preset-row {
   display: flex;
   flex-wrap: wrap;
@@ -783,6 +812,23 @@ onBeforeUnmount(() => {
   gap: 0.15rem;
   border-radius: 0;
   padding: 0.65rem 0.75rem;
+}
+
+.model-picker-close {
+  display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: rgb(100 116 139);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.model-picker-close:hover {
+  background: rgb(241 245 249);
+  color: rgb(30 41 59);
 }
 
 .discover-model-button {
