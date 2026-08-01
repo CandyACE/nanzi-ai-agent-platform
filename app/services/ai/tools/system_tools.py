@@ -15,6 +15,24 @@ from app.services.ai.tools.notification_tools import send_dingtalk_message
 
 logger = logging.getLogger(__name__)
 
+
+@tool
+def get_current_model() -> str:
+    """查询本轮实际生效的模型身份和调用阶段，不返回凭据或服务地址。"""
+    from app.core.context import get_current_agent_context
+
+    context = get_current_agent_context()
+    info = dict(getattr(context, "runtime_model_info", {}) or {}) if context else {}
+    if not info:
+        return json.dumps(
+            {
+                "status": "unavailable",
+                "reason": "当前请求没有可用的运行时模型信息",
+            },
+            ensure_ascii=False,
+        )
+    return json.dumps(info, ensure_ascii=False)
+
 def validate_url(url: str) -> bool:
     """
     Validates URL to prevent SSRF attacks by blocking internal IP ranges.
@@ -148,6 +166,7 @@ def get_current_time(timezone: str = "Asia/Shanghai") -> str:
 
 
 SYSTEM_IMPLICIT_TOOLS = [
+    get_current_model,
     get_current_time,
     resolve_relative_dates,
     create_recurring_task,

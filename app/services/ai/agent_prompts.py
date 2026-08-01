@@ -90,6 +90,7 @@ class AgentServicePrompts:
 - 用户拒绝或请求过期后，不得重复发起相同高风险调用，除非用户明确要求重试。"""
 
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
+        "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
         "list_accessible_datasets": "列出当前用户有权限的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",

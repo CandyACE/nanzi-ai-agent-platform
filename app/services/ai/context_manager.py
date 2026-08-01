@@ -200,6 +200,7 @@ class AgentContextManager:
         current_turn_attachment_paths: Optional[List[str]] = None,
         require_explicit_dataset: bool = False,
         trace_buffer: Optional[List[Any]] = None,
+        runtime_model_info: Optional[Dict[str, Any]] = None,
     ):
         """
         Setup the execution context (debug options + agent config).
@@ -312,4 +313,5 @@ class AgentContextManager:
             trace_buffer=trace_buffer or [],
             skills_custom=bool(getattr(config, "skills_custom", False)),
             skills=list(getattr(config, "skills", None) or []),
+            runtime_model_info=dict(runtime_model_info or {}),
         ))

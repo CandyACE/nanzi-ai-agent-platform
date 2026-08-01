@@ -120,6 +120,7 @@ def test_system_executive_tool_names_are_current():
     assert "manage_process" in ToolRegistry._registry
     assert "list_process" in ToolRegistry._registry
     assert "search_text" in ToolRegistry._registry
+    assert "get_current_model" in ToolRegistry._registry
 
     assert "read_local_file" not in ToolRegistry._registry
     assert "write_local_file" not in ToolRegistry._registry

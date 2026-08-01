@@ -178,6 +178,19 @@ _PLATFORM_SELF_SERVICE_ACTIONS = (
     "安装", "挂载", "加载", "启用", "配置", "设置", "创建", "管理", "使用",
     "触发", "执行", "怎么", "如何", "哪里", "在哪", "用法", "说明",
 )
+_CURRENT_MODEL_IDENTITY_PATTERNS = (
+    re.compile(
+        r"(?:当前|本轮|现在|你|系统|平台).{0,16}(?:用|使用|采用|调用|是).{0,8}"
+        r"(?:什么|哪个|哪一个)?(?:模型|大模型|llm)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:模型|大模型|llm).{0,8}(?:是什么|是哪个|什么模型|名称|名字)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"what\s+model\s+are\s+you\s+(?:using|running)", re.IGNORECASE),
+    re.compile(r"(?:current|active)\s+model(?:\s+name)?", re.IGNORECASE),
+)
 _DATA_QUERY_SIGNALS = [
     "查询", "查一下", "查下", "统计", "多少", "列表", "记录", "趋势",
     "最近", "今天", "本月", "上月", "top", "明细", "汇总", "对比",
@@ -239,10 +252,20 @@ def looks_like_platform_self_service_query(user_question: str) -> bool:
     q = (user_question or "").strip().lower()
     if not q:
         return False
+    if looks_like_current_model_query(q):
+        return True
     has_subject = any(sig in q for sig in _PLATFORM_SELF_SERVICE_SUBJECTS)
     if not has_subject:
         return False
     return any(sig in q for sig in _PLATFORM_SELF_SERVICE_ACTIONS)
+
+
+def looks_like_current_model_query(user_question: str) -> bool:
+    """判断用户是否在询问本轮实际使用的模型身份。"""
+    q = (user_question or "").strip()
+    if not q:
+        return False
+    return any(pattern.search(q) for pattern in _CURRENT_MODEL_IDENTITY_PATTERNS)
 
 
 _CURRENT_USER_PROFILE_MARKERS = (

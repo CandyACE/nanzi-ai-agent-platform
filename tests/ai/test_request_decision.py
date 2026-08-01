@@ -7,10 +7,36 @@ from app.services.ai.request_decision import (
     apply_chatbi_qualification,
     resolve_request_decision,
 )
+from app.services.ai.intent_service import looks_like_current_model_query
 from app.services.ai.chatbi_qualification import ChatBIMode, qualify_chatbi_request
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "你当前的模型是什么",
+        "本轮用了哪个模型",
+        "what model are you using",
+        "current model name",
+    ],
+)
+def test_current_model_identity_queries_are_detected(query):
+    assert looks_like_current_model_query(query) is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "模型怎么配置",
+        "如何切换模型",
+        "什么是大语言模型",
+    ],
+)
+def test_model_configuration_or_definition_queries_are_not_identity_queries(query):
+    assert looks_like_current_model_query(query) is False
 
 
 def test_platform_self_help_overrides_knowledge_binding_and_semantic_knowledge():
