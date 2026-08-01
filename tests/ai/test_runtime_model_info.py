@@ -131,3 +131,41 @@ async def test_get_configured_llm_reuses_runtime_model_resolution(monkeypatch):
     assert handle.model_name == "deepseek-chat"
     assert captured["model"] == "deepseek-chat"
     resolve_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_configured_llm_passes_registered_token_limits(monkeypatch):
+    from app.services.ai import config as config_module
+
+    resolved = RuntimeModelInfo(
+        configured_model="团队默认模型",
+        effective_model_id="deepseek-chat",
+        source="agent_config",
+        resolution_status="registry_resolved",
+        context_size=262144,
+        max_output_tokens=65536,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "resolve_runtime_model_info",
+        AsyncMock(return_value=resolved),
+    )
+    monkeypatch.setattr(
+        config_module.ConfigService,
+        "get_all_from_db",
+        AsyncMock(return_value={"llm_api_key": {"value": "system-key"}}),
+    )
+    captured = {}
+
+    def fake_get_llm(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model_name=kwargs["model"])
+
+    monkeypatch.setattr(config_module, "get_llm", fake_get_llm)
+
+    await config_module.AgentConfigProvider.get_configured_llm(
+        config=SimpleNamespace(model_name="团队默认模型", temperature=0.2)
+    )
+
+    assert captured["context_size"] == 262144
+    assert captured["max_output_tokens"] == 65536

@@ -5,6 +5,7 @@ from typing import Optional, Dict
 from app.schemas.agent import ChatConfig
 from app.core.llm.client import get_llm
 from app.services.config_service import ConfigService
+from app.utils.model_credentials import decrypt_model_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,8 @@ class RuntimeModelInfo:
     resolution_status: str = "direct"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    context_size: Optional[int] = None
+    max_output_tokens: Optional[int] = None
 
     def public_dict(self) -> Dict[str, object]:
         return {
@@ -103,8 +106,10 @@ async def resolve_runtime_model_info(
             phase=phase,
             is_fallback=is_fallback,
             resolution_status="registry_resolved",
-            api_key=getattr(registered, "api_key", None),
+            api_key=decrypt_model_api_key(getattr(registered, "api_key", None)),
             base_url=getattr(registered, "api_base_url", None),
+            context_size=getattr(registered, "context_size", None),
+            max_output_tokens=getattr(registered, "max_output_tokens", None),
         )
 
     return RuntimeModelInfo(
@@ -176,13 +181,19 @@ class AgentConfigProvider:
         if runtime_model_info.base_url:
             base_url = runtime_model_info.base_url
 
-        return get_llm(
-            streaming=streaming,
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            temperature=temperature
-        )
+        llm_kwargs = {
+            "streaming": streaming,
+            "api_key": api_key,
+            "base_url": base_url,
+            "model": model,
+            "temperature": temperature,
+        }
+        if runtime_model_info.context_size is not None:
+            llm_kwargs["context_size"] = runtime_model_info.context_size
+        if runtime_model_info.max_output_tokens is not None:
+            llm_kwargs["max_output_tokens"] = runtime_model_info.max_output_tokens
+
+        return get_llm(**llm_kwargs)
 
     @staticmethod
     async def get_synthesis_llm(

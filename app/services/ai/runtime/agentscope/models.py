@@ -11,6 +11,8 @@ class AgentScopeModelConfig:
     temperature: float = 0.0
     streaming: bool = True
     max_retries: int = 3
+    context_size: int | None = None
+    max_output_tokens: int | None = None
 
 
 def create_openai_chat_model(config: AgentScopeModelConfig):
@@ -25,13 +27,23 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
             "AgentScope OpenAI chat model dependencies are not available"
         ) from exc
 
-    return OpenAIChatModel(
-        credential=OpenAICredential(
+    parameters = OpenAIChatModel.Parameters(
+        temperature=config.temperature,
+        max_tokens=config.max_output_tokens,
+    )
+    model_kwargs = {
+        "credential": OpenAICredential(
             api_key=config.api_key,
             base_url=config.base_url,
         ),
-        model=config.model,
-        stream=config.streaming,
-        parameters=OpenAIChatModel.Parameters(temperature=config.temperature),
-        max_retries=config.max_retries,
+        "model": config.model,
+        "stream": config.streaming,
+        "parameters": parameters,
+        "max_retries": config.max_retries,
+    }
+    if config.context_size is not None:
+        model_kwargs["context_size"] = config.context_size
+
+    return OpenAIChatModel(
+        **model_kwargs,
     )

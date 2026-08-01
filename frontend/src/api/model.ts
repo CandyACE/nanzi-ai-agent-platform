@@ -7,6 +7,8 @@ export interface AIModel {
   provider: string
   type: string
   api_base_url?: string
+  context_size?: number | null
+  max_output_tokens?: number | null
   has_api_key?: boolean
   is_active: boolean
   created_at: string
@@ -19,6 +21,8 @@ export interface AIModelCreate {
   provider: string
   type: string
   api_base_url?: string
+  context_size?: number | null
+  max_output_tokens?: number | null
   api_key?: string
   is_active?: boolean
 }
@@ -29,13 +33,38 @@ export interface AIModelUpdate {
   provider?: string
   type?: string
   api_base_url?: string
+  context_size?: number | null
+  max_output_tokens?: number | null
   api_key?: string
   is_active?: boolean
 }
 
+export interface AIModelDiscoverRequest {
+  provider: string
+  api_base_url?: string
+  api_key?: string
+  model_config_id?: string
+}
+
+export interface AIModelOption {
+  model_id: string
+  name: string
+}
+
+export interface AIModelTestRequest {
+  provider: string
+  type: string
+  model_id: string
+  api_base_url?: string | null
+  api_key?: string | null
+  context_size?: number | null
+  max_output_tokens?: number | null
+  model_config_id?: string
+}
+
 export const modelApi = {
-  list: (type?: string) => {
-    return axios.get<AIModel[]>('/api/portal/models', { params: { type } })
+  list: (type?: string, includeInactive = false) => {
+    return axios.get<AIModel[]>('/api/portal/models', { params: { type, include_inactive: includeInactive } })
   },
   
   create: (data: AIModelCreate) => {
@@ -52,5 +81,13 @@ export const modelApi = {
 
   testConnection: (id: string) => {
     return axios.post<{ status: string; message: string; response?: string }>(`/api/portal/models/${id}/test`)
+  },
+
+  testConfig: (data: AIModelTestRequest) => {
+    return axios.post<{ status: string; message: string; response?: string }>('/api/portal/models/test-config', data)
+  },
+
+  discover: (data: AIModelDiscoverRequest) => {
+    return axios.post<AIModelOption[]>('/api/portal/models/discover', data)
   }
 }

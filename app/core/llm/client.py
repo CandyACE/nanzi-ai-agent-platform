@@ -8,6 +8,7 @@ from app.services.ai.runtime.agentscope.models import (
     AgentScopeModelConfig,
     create_openai_chat_model,
 )
+from app.utils.model_credentials import decrypt_model_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,8 @@ class LLMFactory:
         base_url: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
+        context_size: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> AgentScopeLLMHandle:
         final_api_key = api_key or (settings.LLM_API_KEY if settings.LLM_API_KEY else None)
         final_base_url = base_url or (settings.LLM_BASE_URL if settings.LLM_BASE_URL else None)
@@ -138,6 +141,8 @@ class LLMFactory:
                 model=final_model,
                 temperature=float(final_temp),
                 streaming=streaming,
+                context_size=context_size,
+                max_output_tokens=max_output_tokens,
             )
         )
 
@@ -168,13 +173,25 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
 
     api_key = kwargs.get("api_key")
     base_url = kwargs.get("base_url")
+    context_size = kwargs.get("context_size")
+    max_output_tokens = kwargs.get("max_output_tokens")
 
     lookup_result = _lookup_ai_model_record(model)
     ai_model = await lookup_result if inspect.isawaitable(lookup_result) else lookup_result
     if ai_model:
-        api_key = api_key or getattr(ai_model, "api_key", None)
+        api_key = api_key or decrypt_model_api_key(getattr(ai_model, "api_key", None))
         base_url = base_url or getattr(ai_model, "api_base_url", None)
         model = getattr(ai_model, "model_id", model)
+        context_size = (
+            context_size
+            if context_size is not None
+            else getattr(ai_model, "context_size", None)
+        )
+        max_output_tokens = (
+            max_output_tokens
+            if max_output_tokens is not None
+            else getattr(ai_model, "max_output_tokens", None)
+        )
 
     if not api_key:
         api_key = await ConfigServiceProxy.get("llm_api_key") or settings.LLM_API_KEY
@@ -191,10 +208,16 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         logger.error("LLM API Key is missing for model '%s'. Cannot create LLM instance.", model)
         return None
 
-    return LLMFactory.get_chat_model(
-        streaming=streaming,
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        temperature=temperature,
-    )
+    factory_kwargs = {
+        "streaming": streaming,
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model,
+        "temperature": temperature,
+    }
+    if context_size is not None:
+        factory_kwargs["context_size"] = context_size
+    if max_output_tokens is not None:
+        factory_kwargs["max_output_tokens"] = max_output_tokens
+
+    return LLMFactory.get_chat_model(**factory_kwargs)
