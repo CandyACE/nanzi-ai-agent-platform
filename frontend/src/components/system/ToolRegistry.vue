@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { toolApi, type SysApiTool, type SysApiToolCreate } from '../../api/tool'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
@@ -15,6 +15,9 @@ const canSave = hasPermission('element:system:config_save')
 
 const tools = ref<SysApiTool[]>([])
 const loading = ref(false)
+const toolSearchQuery = ref('')
+const toolMethodFilter = ref('all')
+const toolStatusFilter = ref('all')
 const showModal = ref(false)
 const isEditing = ref(false)
 
@@ -27,6 +30,37 @@ const toolForm = ref<Partial<SysApiToolCreate> & { id?: string; parameter_schema
   parameter_schema_str: '{}',
   is_active: true
 })
+
+const filteredTools = computed(() => {
+    const keyword = toolSearchQuery.value.trim().toLowerCase()
+    return tools.value.filter((tool) => {
+        const matchesKeyword = !keyword || [tool.name, tool.description, tool.url_template]
+            .some((value) => String(value || '').toLowerCase().includes(keyword))
+        const matchesMethod = toolMethodFilter.value === 'all'
+            || String(tool.method || '').toUpperCase() === toolMethodFilter.value
+        const matchesStatus = toolStatusFilter.value === 'all'
+            || (toolStatusFilter.value === 'active' && tool.is_active)
+            || (toolStatusFilter.value === 'inactive' && !tool.is_active)
+        return matchesKeyword && matchesMethod && matchesStatus
+    })
+})
+
+const toolMethodOptions = computed(() => Array.from(new Set([
+    'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS',
+    ...tools.value.map((tool) => String(tool.method || '').toUpperCase()).filter(Boolean),
+])))
+
+const hasToolFilters = computed(() => Boolean(
+    toolSearchQuery.value.trim()
+    || toolMethodFilter.value !== 'all'
+    || toolStatusFilter.value !== 'all'
+))
+
+const clearToolFilters = () => {
+    toolSearchQuery.value = ''
+    toolMethodFilter.value = 'all'
+    toolStatusFilter.value = 'all'
+}
 
 const fetchTools = async () => {
     loading.value = true
@@ -140,19 +174,38 @@ onMounted(() => {
 <template>
   <div class="h-full overflow-y-auto pb-6 custom-scrollbar p-1">
       <div class="bg-white shadow rounded-lg overflow-hidden">
-         <div class="p-4 border-b border-gray-100 flex justify-between items-center">
+         <div class="p-4 border-b border-gray-100 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <h3 class="text-lg font-medium text-gray-900">API 工具注册表</h3>
-            <button 
-                v-if="canSave"
-                @click="openModal()"
-                class="px-3 py-1.5 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
-            >
-                + 添加工具
-            </button>
+            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+                <input
+                    v-model="toolSearchQuery"
+                    type="search"
+                    placeholder="搜索名称、描述或 URL..."
+                    class="w-full sm:w-56 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+                <select v-model="toolMethodFilter" class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按 HTTP 方法筛选">
+                    <option value="all">Method：全部</option>
+                    <option v-for="method in toolMethodOptions" :key="method" :value="method">{{ method }}</option>
+                </select>
+                <select v-model="toolStatusFilter" class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按状态筛选">
+                    <option value="all">状态：全部</option>
+                    <option value="active">启用</option>
+                    <option value="inactive">停用</option>
+                </select>
+                <button v-if="hasToolFilters" type="button" class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary" @click="clearToolFilters">清空</button>
+                <button
+                    v-if="canSave"
+                    @click="openModal()"
+                    class="px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
+                >
+                    + 添加工具
+                </button>
+            </div>
          </div>
          
          <div v-if="loading" class="p-8 text-center text-gray-400">加载中...</div>
-         <table v-else class="min-w-full divide-y divide-gray-200">
+         <div v-else class="overflow-x-auto">
+         <table class="min-w-[900px] w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
                 <tr>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称</th>
@@ -163,7 +216,7 @@ onMounted(() => {
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="t in tools" :key="t.id" class="hover:bg-gray-50">
+                <tr v-for="t in filteredTools" :key="t.id" class="hover:bg-gray-50">
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {{ t.name }}
                         <p class="text-xs text-gray-500 font-normal truncate max-w-xs">{{ t.description }}</p>
@@ -211,11 +264,12 @@ onMounted(() => {
                         <span v-else class="text-gray-400 italic text-xs">仅限管理</span>
                      </td>
                 </tr>
-                <tr v-if="tools.length === 0">
-                    <td colspan="5" class="px-6 py-8 text-center text-gray-400 text-sm">暂无工具配置</td>
+                <tr v-if="filteredTools.length === 0">
+                    <td colspan="5" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
                 </tr>
             </tbody>
          </table>
+         </div>
       </div>
 
       <!-- Modal -->

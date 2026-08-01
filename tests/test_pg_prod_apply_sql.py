@@ -280,6 +280,37 @@ def test_pg_mcp_migration_matches_postgresql_types_and_idempotency():
     assert 'WHERE NOT EXISTS' in migration
 
 
+def test_pg_ai_model_migration_enforces_global_model_id_and_secret_capacity():
+    migration = (PG_PROD / "V8-enforce_ai_model_id_uniqueness.sql").read_text(encoding="utf-8")
+    assert '"model_id" = BTRIM("model_id")' in migration
+    assert 'CREATE UNIQUE INDEX IF NOT EXISTS "uq_ai_models_model_id"' in migration
+    assert 'ON "ai_models" ("model_id")' in migration
+    assert 'ALTER COLUMN "api_key" TYPE TEXT' in migration
+
+
+def test_mysql_ai_model_migration_is_idempotent_and_expands_secret_capacity():
+    migration = (ROOT / "db-prod" / "V110-enforce_ai_model_id_uniqueness.sql").read_text(encoding="utf-8")
+    assert "TRIM(model_id)" in migration
+    assert "uq_ai_models_model_id" in migration
+    assert "CREATE UNIQUE INDEX uq_ai_models_model_id ON ai_models (model_id)" in migration
+    assert "THIS IS INVALID SQL" in migration
+    assert "MODIFY COLUMN api_key TEXT" in migration
+
+
+def test_model_token_limit_migrations_are_optional_and_idempotent():
+    mysql_migration = (ROOT / "db-prod" / "V111-add_ai_model_token_limits.sql").read_text(encoding="utf-8")
+    postgres_migration = (PG_PROD / "V9-add_ai_model_token_limits.sql").read_text(encoding="utf-8")
+
+    for migration in (mysql_migration, postgres_migration):
+        assert "context_size" in migration
+        assert "max_output_tokens" in migration
+        assert "NULL" in migration
+
+    assert "information_schema.columns" in mysql_migration
+    assert 'ADD COLUMN IF NOT EXISTS "context_size" INTEGER NULL' in postgres_migration
+    assert 'ADD COLUMN IF NOT EXISTS "max_output_tokens" INTEGER NULL' in postgres_migration
+
+
 def test_pg_example_migrations_use_postgresql_boolean_and_column_comment():
     v4 = (PG_PROD / "V4-add_category_to_chatbi_examples.sql").read_text(encoding="utf-8")
     v5_path = PG_PROD / "V5-register_example_search_tool.sql"

@@ -8,7 +8,7 @@ from app.services.ai.tools.data_api import get_dataset_schema, execute_sql_query
 from app.services.ai.tools.dashboard_tools import update_dashboard_context
 from app.services.ai.tools.generic_api import GenericApiToolFactory
 from app.services.ai.tools.mcp_factory import McpToolFactory
-from app.services.ai.tools.system_tools import system_http_request, SYSTEM_IMPLICIT_TOOLS
+from app.services.ai.tools.system_tools import get_current_model, system_http_request, SYSTEM_IMPLICIT_TOOLS
 from app.services.ai.tools.knowledge_tool import search_knowledge_base
 from app.services.ai.tools.example_search_tool import search_qa_examples
 from app.services.ai.tools.task_manager_tools import (
@@ -94,6 +94,7 @@ TOOL_EVIDENCE_TYPES = {
     "web_search_baidu": frozenset({EvidenceType.PUBLIC_WEB}),
     "system_http_request": frozenset({EvidenceType.PUBLIC_WEB}),
     "get_current_time": frozenset({EvidenceType.RUNTIME_STATE}),
+    "get_current_model": frozenset({EvidenceType.RUNTIME_STATE}),
     "resolve_relative_dates": frozenset({EvidenceType.RUNTIME_STATE}),
     "get_my_tasks": frozenset({EvidenceType.RUNTIME_STATE}),
     "list_process": frozenset({EvidenceType.RUNTIME_STATE}),
@@ -235,6 +236,7 @@ class ToolRegistry:
         "execute_sql_query": execute_sql_query,
         "update_dashboard_context": update_dashboard_context,
         "system_http_request": system_http_request,
+        "get_current_model": get_current_model,
         "search_knowledge_base": search_knowledge_base,
         "search_qa_examples": search_qa_examples,
         # Register Task Manager Tools

@@ -63,6 +63,59 @@ def test_create_openai_chat_model_uses_agentscope_parameters():
     assert model.parameters.temperature == 0.25
 
 
+def test_create_openai_chat_model_applies_optional_context_and_output_limits():
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="gpt-test",
+            context_size=262144,
+            max_output_tokens=65536,
+        )
+    )
+
+    assert model.context_size == 262144
+    assert model.parameters.max_tokens == 65536
+
+
+@pytest.mark.asyncio
+async def test_model_connection_test_passes_form_token_limits(monkeypatch):
+    from app.api.portal.endpoints.models import _test_model_connection
+    from app.services.ai.runtime.agentscope import chat as chat_module
+    from app.core.llm import client as llm_client
+
+    captured = {}
+
+    async def fake_get_llm_async(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    class FakeChatClient:
+        async def generate_text(self, messages):
+            return "pong"
+
+    monkeypatch.setattr(llm_client, "get_llm_async", fake_get_llm_async)
+    monkeypatch.setattr(chat_module, "chat_client_from_handle", lambda handle: FakeChatClient())
+
+    result = await _test_model_connection(
+        model_id="qwen3.6-35b",
+        model_type="multimodal",
+        api_key="sk-test",
+        api_base_url="https://llm.example.com/v1",
+        context_size=262144,
+        max_output_tokens=8192,
+    )
+
+    assert result["status"] == "success"
+    assert captured["context_size"] == 262144
+    assert captured["max_output_tokens"] == 8192
+
+
 @pytest.mark.asyncio
 async def test_get_llm_async_uses_config_service_fallbacks(monkeypatch):
     from app.core.llm import client
@@ -135,6 +188,89 @@ async def test_get_llm_async_prefers_model_registry_credentials(monkeypatch):
     assert captured["base_url"] == "https://model.example/v1"
     assert captured["model"] == "real-model-id"
     assert captured["temperature"] == 0.4
+
+
+@pytest.mark.asyncio
+async def test_get_llm_async_uses_model_registry_token_limits(monkeypatch):
+    from app.core.llm import client
+
+    async def fake_config_get(key):
+        return {
+            "llm_model_name": "friendly-name",
+            "llm_api_key": "system-key",
+            "llm_base_url": "https://system.example/v1",
+            "llm_temperature": "0.4",
+        }.get(key)
+
+    captured = {}
+
+    def fake_get_chat_model(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model_name=kwargs["model"])
+
+    monkeypatch.setattr(client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
+    monkeypatch.setattr(client.LLMFactory, "get_chat_model", staticmethod(fake_get_chat_model))
+    monkeypatch.setattr(
+        client,
+        "_lookup_ai_model_record",
+        lambda model: SimpleNamespace(
+            api_key="model-key",
+            api_base_url="https://model.example/v1",
+            model_id="real-model-id",
+            context_size=262144,
+            max_output_tokens=65536,
+        ),
+    )
+
+    await client.get_llm_async(streaming=True)
+
+    assert captured["context_size"] == 262144
+    assert captured["max_output_tokens"] == 65536
+
+
+@pytest.mark.asyncio
+async def test_get_llm_async_decrypts_model_registry_credentials(monkeypatch):
+    from app.core.llm import client
+    from app.utils.encryption import get_api_key_manager
+
+    async def fake_config_get(key):
+        return {
+            "llm_model_name": "friendly-name",
+            "llm_api_key": "system-key",
+            "llm_base_url": "https://system.example/v1",
+            "llm_temperature": "0.4",
+        }.get(key)
+
+    captured = {}
+
+    def fake_get_chat_model(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model_name=kwargs["model"])
+
+    monkeypatch.setattr(client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
+    monkeypatch.setattr(client.LLMFactory, "get_chat_model", staticmethod(fake_get_chat_model))
+    monkeypatch.setattr(
+        client,
+        "_lookup_ai_model_record",
+        lambda model: SimpleNamespace(
+            api_key=get_api_key_manager().encrypt_api_key("encrypted-model-key"),
+            api_base_url="https://model.example/v1",
+            model_id="real-model-id",
+        ),
+    )
+
+    await client.get_llm_async(streaming=True)
+
+    assert captured["api_key"] == "encrypted-model-key"
+    assert captured["base_url"] == "https://model.example/v1"
+    assert captured["model"] == "real-model-id"
+
+
+def test_model_credentials_reject_corrupted_versioned_ciphertext():
+    from app.utils.model_credentials import ModelCredentialError, decrypt_model_api_key
+
+    with pytest.raises(ModelCredentialError):
+        decrypt_model_api_key("modelkey:v1:not-a-valid-ciphertext")
 
 
 @pytest.mark.asyncio

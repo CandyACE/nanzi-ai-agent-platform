@@ -66,6 +66,9 @@ class AgentContext(BaseModel):
     skills_custom: bool = False
     skills: List[str] = Field(default_factory=list)
 
+    # Non-sensitive model identity for runtime diagnostics/tools.
+    runtime_model_info: Dict[str, Any] = Field(default_factory=dict)
+
     # Queue for streaming sub-agent log/progress chunks back to client
     event_queue: Optional[Any] = None
 

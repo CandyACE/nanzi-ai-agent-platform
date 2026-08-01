@@ -1,11 +1,122 @@
 import logging
 import re
+from dataclasses import dataclass
 from typing import Optional, Dict
 from app.schemas.agent import ChatConfig
 from app.core.llm.client import get_llm
 from app.services.config_service import ConfigService
+from app.utils.model_credentials import decrypt_model_api_key
+from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RuntimeModelInfo:
+    """Non-sensitive description of the model selected for the current phase."""
+
+    configured_model: str
+    effective_model_id: str
+    source: str
+    phase: str = "primary_agent"
+    is_fallback: bool = False
+    resolution_status: str = "direct"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    context_size: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    provider: Optional[str] = None
+
+    def public_dict(self) -> Dict[str, object]:
+        return {
+            "configured_model": self.configured_model,
+            "effective_model_id": self.effective_model_id,
+            "source": self.source,
+            "phase": self.phase,
+            "is_fallback": self.is_fallback,
+            "resolution_status": self.resolution_status,
+        }
+
+
+async def _lookup_registered_model(model: str):
+    """Look up an active model alias without exposing its credentials."""
+    try:
+        return await lookup_registered_model(model)
+    except Exception as exc:
+        if isinstance(exc, ModelRegistryError):
+            raise
+        logger.warning("Failed to lookup runtime model registry: %s", exc)
+        raise
+
+
+async def resolve_runtime_model_info(
+    *,
+    config: Optional[ChatConfig] = None,
+    model_override: Optional[str] = None,
+    debug_options: Optional[Dict[str, object]] = None,
+    phase: str = "primary_agent",
+    is_fallback: bool = False,
+) -> RuntimeModelInfo:
+    """Resolve the public, effective model identity using the LLM priority order."""
+    llm_config = await ConfigService.get_all_from_db()
+
+    def get_val(key: str, default: str) -> str:
+        return llm_config.get(key, {}).get("value") or default
+
+    from app.core.context import get_debug_option
+
+    explicit_debug_model = (debug_options or {}).get("model")
+    debug_model = explicit_debug_model or get_debug_option("model")
+    if model_override:
+        configured_model = str(model_override)
+        source = "runtime_override"
+    elif debug_model:
+        configured_model = str(debug_model)
+        source = "debug_override"
+    elif config and config.model_name:
+        configured_model = str(config.model_name)
+        source = "agent_config"
+    else:
+        configured_model = str(get_val("llm_model_name", "deepseek-chat"))
+        source = "system_default"
+
+    try:
+        registered = await _lookup_registered_model(configured_model)
+    except ModelRegistryError:
+        raise
+    except Exception:
+        return RuntimeModelInfo(
+            configured_model=configured_model,
+            effective_model_id=configured_model,
+            source=source,
+            phase=phase,
+            is_fallback=is_fallback,
+            resolution_status="registry_unresolved",
+        )
+
+    if registered is not None:
+        return RuntimeModelInfo(
+            configured_model=configured_model,
+            effective_model_id=str(getattr(registered, "model_id", None) or configured_model),
+            source=source,
+            phase=phase,
+            is_fallback=is_fallback,
+            resolution_status="registry_resolved",
+            api_key=decrypt_model_api_key(getattr(registered, "api_key", None)),
+            base_url=getattr(registered, "api_base_url", None),
+            context_size=getattr(registered, "context_size", None),
+            max_output_tokens=getattr(registered, "max_output_tokens", None),
+            provider=getattr(registered, "provider", None),
+        )
+
+    return RuntimeModelInfo(
+        configured_model=configured_model,
+        effective_model_id=configured_model,
+        source=source,
+        phase=phase,
+        is_fallback=is_fallback,
+        resolution_status="direct",
+    )
 
 class AgentConfigProvider:
     """
@@ -34,20 +145,16 @@ class AgentConfigProvider:
         def get_val(key, default):
             return llm_config.get(key, {}).get("value") or default
 
+        runtime_model_info = await resolve_runtime_model_info(
+            config=config,
+            model_override=model_override,
+        )
+
         # Check Debug Context Overrides
         from app.core.context import get_debug_option
-        
-        # 1. Model Name Priority
-        debug_model = get_debug_option("model")
-        
-        if model_override:
-            model = model_override
-        elif debug_model:
-            model = debug_model
-        elif config and config.model_name:
-            model = config.model_name
-        else:
-            model = get_val("llm_model_name", "deepseek-chat")
+
+        # 1. Model Name Priority (centralized in resolve_runtime_model_info)
+        model = runtime_model_info.effective_model_id
 
         # 2. Temperature Priority
         debug_temp = get_debug_option("temperature")
@@ -65,45 +172,27 @@ class AgentConfigProvider:
         api_key = get_val("llm_api_key", None)
         base_url = get_val("llm_base_url", None)
 
-        # 3. Model Management Registry Lookup
-        # If the selected 'model' string corresponds to an entry in ai_models table,
-        # use its specific credentials if available.
-        # This allows per-model API keys/BaseURLs.
-        try:
-            from app.core.orm import AsyncSessionLocal
-            from app.models.ai_model import AIModel
-            from sqlalchemy import select, or_
-            
-            async with AsyncSessionLocal() as session:
-                # Search for active model matching name or model_id
-                stmt = select(AIModel).where(
-                    AIModel.is_active == True,
-                    or_(AIModel.model_id == model, AIModel.name == model)
-                )
-                result = await session.execute(stmt)
-                ai_model = result.scalars().first()
-                
-                if ai_model:
-                    # Found a registered model, verify if we should override credentials
-                    if ai_model.api_key:
-                        api_key = ai_model.api_key
-                    if ai_model.api_base_url:
-                        base_url = ai_model.api_base_url
-                    
-                    # Update the model string to the actual model_id required by the provider
-                    # (e.g. user selected "My GPT4", acts as "gpt-4o")
-                    model = ai_model.model_id
-                    
-        except Exception as e:
-            logger.warning(f"Failed to lookup model registry: {e}")
+        # 3. Model registry credentials are kept out of the public metadata payload.
+        if runtime_model_info.api_key:
+            api_key = runtime_model_info.api_key
+        if runtime_model_info.base_url:
+            base_url = runtime_model_info.base_url
 
-        return get_llm(
-            streaming=streaming,
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            temperature=temperature
-        )
+        llm_kwargs = {
+            "streaming": streaming,
+            "api_key": api_key,
+            "base_url": base_url,
+            "model": model,
+            "temperature": temperature,
+        }
+        if runtime_model_info.provider is not None:
+            llm_kwargs["provider"] = runtime_model_info.provider
+        if runtime_model_info.context_size is not None:
+            llm_kwargs["context_size"] = runtime_model_info.context_size
+        if runtime_model_info.max_output_tokens is not None:
+            llm_kwargs["max_output_tokens"] = runtime_model_info.max_output_tokens
+
+        return get_llm(**llm_kwargs)
 
     @staticmethod
     async def get_synthesis_llm(

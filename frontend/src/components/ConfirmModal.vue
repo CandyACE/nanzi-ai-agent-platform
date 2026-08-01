@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 interface Props {
   title: string
@@ -8,13 +8,19 @@ interface Props {
   cancelText?: string
   type?: 'danger' | 'primary' | 'warning'
   loading?: boolean
+  details?: string[]
+  detailsLabel?: string
+  detailsLimit?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
   confirmText: '确认',
   cancelText: '取消',
   type: 'danger',
-  loading: false
+  loading: false,
+  details: () => [],
+  detailsLabel: '影响配置',
+  detailsLimit: 5
 })
 
 const emit = defineEmits<{
@@ -23,6 +29,13 @@ const emit = defineEmits<{
 }>()
 
 const confirmButtonRef = ref<HTMLButtonElement | null>(null)
+const showAllDetails = ref(false)
+const visibleDetails = computed(() => props.details?.slice(0, props.detailsLimit) || [])
+const hasHiddenDetails = computed(() => (props.details?.length || 0) > props.detailsLimit)
+
+const toggleDetails = () => {
+  showAllDetails.value = !showAllDetails.value
+}
 
 const handleKeydown = (e: KeyboardEvent) => {
   if (props.loading) return
@@ -68,6 +81,24 @@ onUnmounted(() => {
           </div>
           <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-gray-100">{{ title }}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400 mt-2 whitespace-pre-line">{{ message }}</p>
+          <div v-if="details?.length" class="mt-3 text-left">
+            <p class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+              {{ detailsLabel }}（{{ details.length }}）
+            </p>
+            <ul class="max-h-36 space-y-1 overflow-y-auto rounded-lg bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+              <li v-for="(detail, index) in (showAllDetails ? details : visibleDetails)" :key="`${index}-${detail}`" class="truncate" :title="detail">
+                {{ detail }}
+              </li>
+            </ul>
+            <button
+              v-if="hasHiddenDetails"
+              type="button"
+              class="mt-1 text-xs font-medium text-primary hover:underline"
+              @click="toggleDetails"
+            >
+              {{ showAllDetails ? '收起列表' : `还有 ${details.length - detailsLimit} 个，展开查看` }}
+            </button>
+          </div>
         </div>
         <div class="bg-gray-50 dark:bg-gray-900/50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
           <button

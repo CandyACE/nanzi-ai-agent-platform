@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.audit import AuditManager
-from app.services.ai.config import AgentConfigProvider
+from app.services.ai.config import AgentConfigProvider, RuntimeModelInfo, resolve_runtime_model_info
 from app.services.ai.context_manager import AgentContextManager
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
@@ -32,11 +32,33 @@ from app.services.ai.request_decision import (
     RequestDecision,
     RequestSource,
 )
+from app.services.ai.intent_service import looks_like_current_model_query
 
 logger = logging.getLogger(__name__)
 
 AWAITING_RESUME_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
+
+
+def build_current_model_answer(info: RuntimeModelInfo) -> str:
+    """Build a user-facing answer from non-sensitive runtime model metadata."""
+    phase_labels = {
+        "primary_agent": "主模型",
+        "synthesis": "合成模型",
+        "fallback": "fallback 模型",
+    }
+    phase_label = phase_labels.get(info.phase, info.phase)
+    if info.resolution_status == "registry_unresolved":
+        return (
+            f"本轮{phase_label}的配置标识是 **{info.configured_model}**，"
+            "但模型注册表暂时不可用，无法确认最终解析后的模型 ID。"
+        )
+    if info.configured_model != info.effective_model_id:
+        return (
+            f"本轮使用的是 **{info.effective_model_id}**（{phase_label}，"
+            f"配置名称：**{info.configured_model}**）。"
+        )
+    return f"本轮使用的是 **{info.effective_model_id}**（{phase_label}）。"
 
 
 def _accumulate_stream_content(full: str, chunk: Dict[str, Any]) -> str:
@@ -1325,6 +1347,36 @@ class AgentService:
                 yield {"content": AgentServicePrompts.NO_AGENT_CONFIG}
                 return
 
+            runtime_model_info = await resolve_runtime_model_info(
+                config=agent_config,
+                debug_options=debug_options,
+            )
+            if looks_like_current_model_query(user_query):
+                response = build_current_model_answer(runtime_model_info)
+                agent_config.model_name = runtime_model_info.configured_model
+                full_response_content = response
+                yield {
+                    "type": "meta",
+                    "agent_name": agent_config.agent_name,
+                    "agent_display_name": agent_config.agent_display_name or agent_config.agent_name,
+                    "model": runtime_model_info.effective_model_id,
+                    "runtime_model_info": runtime_model_info.public_dict(),
+                }
+                yield {"content": response, "status": "success"}
+                if conversation_id:
+                    u_id = user_info.get("user_id") if user_info else None
+                    asyncio.create_task(
+                        memory_service.add_message(
+                            u_id,
+                            conversation_id,
+                            "assistant",
+                            response,
+                            trace_id=trace_id,
+                            agent_name=agent_config.agent_name,
+                        )
+                    )
+                return
+
             route_hints = None
             route_intent_evidence = None
             if agent_id or agent_name:
@@ -1468,6 +1520,7 @@ class AgentService:
                 authorized_attachment_paths=self._authorized_attachment_paths(messages),
                 current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                 trace_buffer=trace_buffer,
+                runtime_model_info=runtime_model_info.public_dict(),
             )
 
             # 2. Inject Active Skills
@@ -1584,6 +1637,7 @@ class AgentService:
                     current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                     require_explicit_dataset=True,
                     trace_buffer=trace_buffer,
+                    runtime_model_info=runtime_model_info.public_dict(),
                 )
 
             # 3. Load Memory Context
@@ -1707,20 +1761,17 @@ class AgentService:
                     "data": raw_messages
                 }
 
-            from app.services.config_service import ConfigService
-            default_model = await ConfigService.get("llm_model_name") or "DeepSeek-V3.2"
-            actual_model = agent_config.model_name or default_model
-            if debug_options and debug_options.get("model"):
-                actual_model = debug_options["model"]
-                logger.info(f"[Debug] Overriding Model to: {actual_model}")
-
-            agent_config.model_name = actual_model
+            agent_config.model_name = runtime_model_info.configured_model
 
             meta_event: Dict[str, Any] = {
                 "type": "meta",
                 "agent_name": agent_config.agent_name,
                 "agent_display_name": agent_config.agent_display_name or agent_config.agent_name,
-                "model": actual_model,
+                "model": runtime_model_info.effective_model_id,
+                "configured_model": runtime_model_info.configured_model,
+                "effective_model_id": runtime_model_info.effective_model_id,
+                "model_source": runtime_model_info.source,
+                "model_resolution_status": runtime_model_info.resolution_status,
                 "turn_type": turn_classification.turn_type.value,
                 "turn_type_label": turn_display_label,
                 "thought_expanded_default": default_thought_expanded(turn_classification.turn_type),
@@ -2130,6 +2181,7 @@ class AgentService:
         effective_user_info = user_info or getattr(runner, "user_info", None)
         if effective_user_info and getattr(runner, "config", None) is not None:
             from app.services.ai.context_manager import AgentContextManager
+            runtime_model_info = await resolve_runtime_model_info(config=runner.config)
 
             await AgentContextManager.setup_context(
                 config=runner.config,
@@ -2140,6 +2192,7 @@ class AgentService:
                     or pending.snapshot.conversation_id
                 ),
                 trace_buffer=getattr(runner, "trace_buffer", None) or [],
+                runtime_model_info=runtime_model_info.public_dict(),
             )
             return
         if hasattr(runner, "_ensure_agent_context"):

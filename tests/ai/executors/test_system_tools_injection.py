@@ -11,6 +11,7 @@ def test_system_implicit_tools_registry():
     assert len(tools) >= 1
     tool_names = [t.name for t in tools]
     assert "get_current_time" in tool_names
+    assert "get_current_model" in tool_names
     assert len(tool_names) == len(set(tool_names))
 
     assert {

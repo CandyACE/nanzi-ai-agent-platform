@@ -1,9 +1,12 @@
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, UniqueConstraint
 from datetime import datetime
 from app.core.orm import Base
 
 class AIModel(Base):
     __tablename__ = "ai_models"
+    __table_args__ = (
+        UniqueConstraint("model_id", name="uq_ai_models_model_id"),
+    )
 
     id = Column(String(36), primary_key=True)
     name = Column(String(255), nullable=False)
@@ -12,7 +15,9 @@ class AIModel(Base):
     type = Column(String(50), nullable=False)       # e.g., llm, embedding
     
     api_base_url = Column(String(512), nullable=True)
-    api_key = Column(String(512), nullable=True)
+    api_key = Column(Text, nullable=True)
+    context_size = Column(Integer, nullable=True)  # Model context window in tokens
+    max_output_tokens = Column(Integer, nullable=True)  # Per-request output cap in tokens
     
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)

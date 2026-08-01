@@ -73,7 +73,7 @@ def build_task_notification_body(content: str, *, fallback: bool) -> str:
         body = body[: MAX_NOTIFICATION_BODY_CHARS - 20] + "\n\n…（内容已截断）"
     if fallback:
         return (
-            "⚙️ 本消息由 TaskCenter 自动补发（智能体未调用对应通知工具）。\n\n"
+            "⚙️ 本消息由 TaskCenter 自动补发。\n\n"
             f"{body}"
         )
     return body
