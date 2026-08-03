@@ -46,40 +46,87 @@
 
 仅当平台主库选择 MySQL 时执行本节。若选择 PostgreSQL，请跳过本节，直接执行 [3.2 主库选项 B：PostgreSQL](#32-主库选项-bpostgresql二选一)。
 
-平台采用版本化迁移管理（数据库脚本位于 `db-prod/` 目录下）。导入方法如下：
+平台采用版本化迁移管理（数据库脚本位于 `db-prod/` 目录下）。无参数执行导入脚本时，会按版本号依次执行全部 `V*.sql`。
 
-1.  **手动创建数据库**：
-    登录您的 MySQL 服务，手动创建一个干净的数据库，确保使用 `utf8mb4` 字符集以完美支持中文字符与 Emoji：
-    ```sql
-    CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+> **目标库不存在时会自动创建。**  
+> 导入器连接 MySQL 后，若你输入的目标库名尚不存在，会自动执行  
+> `CREATE DATABASE IF NOT EXISTS \`...\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci`，  
+> 无需事先手工建库。每个版本文件开始前都会再次确保目标库存在（已存在时可能打印无害 Warning，可忽略）。
+
+1.  **准备依赖（途径一需要）**：
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
     ```
+    MySQL 建议使用 **v8.0+**，字符集以 `utf8mb4` 为准。
 
 2.  **执行结构自动初始化（提供以下两种途径）**：
 
     *   **途径一：使用 Python 工具导入（推荐）**
-        需要在本地准备 Python 虚拟环境并安装 `aiomysql` 依赖：
         ```bash
-        # 激活 Python 虚拟环境并安装依赖
-        python3 -m venv venv
-        source venv/bin/activate
-        pip install -r requirements.txt
-        
-        # 授权并执行
+        # 推荐：在项目根目录执行
         chmod +x db-prod/apply-sql.sh
         ./db-prod/apply-sql.sh
+
+        # 也可进入目录后执行
+        cd db-prod
+        ./apply-sql.sh
         ```
-        *注：根据交互提示输入 Host、Port、User、Password 及数据库名，输入 `YES` 即可执行。*
+        脚本会依次询问 Host、Port、User、Password 和目标数据库，并要求输入 `YES` 确认。  
+        无参数时会执行 `db-prod/V*.sql` 全部版本文件。
 
     *   **途径二：免 Python 依赖的纯 Shell 脚本导入**
         仅依赖系统已安装的 `mysql` 命令行客户端。具备与 Python 脚本等价的幂等性过滤机制（自动跳过重复建表、重复列等容错）：
         ```bash
-        # 授权并执行原生 Shell 导入脚本
         chmod +x db-prod/apply-sql-native.sh
         ./db-prod/apply-sql-native.sh
         ```
-        *注：根据提示输入 Host、Port、User、Password 及数据库名，输入 `YES` 即可。*
+        *注：根据提示输入 Host、Port、User、Password 及数据库名，输入 `YES` 即可。目标库同样会在不存在时自动创建。*
 
-3.  **导入默认管理员账号与预置 API Key（可选）**：
+3.  **交互导入示例**（首次部署，目标库可不预先创建）：
+
+    以下示例将数据导入到本地库 `test222`（若不存在会自动创建）：
+
+    ```text
+    $ cd db-prod
+    $ ./apply-sql.sh
+    MySQL host [localhost]:                 # 回车使用默认 localhost
+    MySQL port [3306]:                      # 回车使用默认 3306
+    MySQL user: root
+    MySQL password: ******
+    Target database: test222                # 不存在则自动创建（utf8mb4）
+    ---------------------------------------------------
+    请确认本次 SQL 执行目标：
+      Host     : localhost
+      Port     : 3306
+      User     : root
+      Database : test222
+      Password : ******
+      SQL files: db-prod/V*.sql
+    确认无误请输入 YES 继续执行：yes
+    No arguments provided. Running all SQL files from db-prod/...
+    ---------------------------------------------------
+    🚀 Applying db-prod/V0-init_yunshu_ai_agent_metadata.sql...
+    🔌 Connecting to MySQL server to ensure database 'test222' exists...
+    🔌 Connecting to database 'test222'...
+    ✅ SQL applied successfully.
+    ---------------------------------------------------
+    🚀 Applying db-prod/V1-create_system_configs.sql...
+    🔌 Connecting to MySQL server to ensure database 'test222' exists...
+    ...（后续 V2、V3 … 直至最新版本依次执行）
+    ✅ SQL applied successfully.
+    ```
+
+    *说明：*
+    *   生产环境请将 `Target database` 换成正式库名（如 `nanzi_ai_agent_platform`），并与 `.env` 中的 `MYSQL_DB` / `MYSQL_DATABASE` 保持一致。
+    *   若库已存在，后续版本执行时可能出现 `Can't create database '...'; database exists` 的 Warning，属于幂等确保逻辑，可忽略。
+    *   可选：仍可事先手工建库（字符集须为 `utf8mb4`），例如：
+        ```sql
+        CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+        ```
+
+4.  **导入默认管理员账号与预置 API Key（可选）**：
     若是首次部署，建议导入管理员数据以建立系统初始连接。
     *提示：在第 2 步执行结构初始化时，导入脚本在执行完毕后会**自动弹出询问一键级联导入该数据**，若您当时已选择导入，此步骤可跳过。若当时选择了跳过，也可通过以下命令随时**手动单独导入**：*
     *   **使用 Python 工具**：
@@ -91,7 +138,7 @@
         ./db-prod/apply-sql-native.sh db-prod/INIT-USER-ADMIN.sql
         ```
 
-详细的库表结构说明，请参考：[db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/db-prod/README.md)。
+详细的库表结构说明，请参考：[db-prod/README.md](db-prod/README.md)。
 
 ---
 
@@ -103,28 +150,83 @@
 `db-prod/` MySQL 迁移链。新环境会按版本号自动执行 `V0-baseline.sql`、`V1-...sql`
 等全部版本文件；重复执行是安全的，V1 配置对齐迁移不会覆盖已有环境配置值。
 
+> **目标库不存在时会自动创建。**  
+> 导入器连接 PostgreSQL 后，若你输入的目标库名尚不存在，会自动执行 `CREATE DATABASE ... WITH ENCODING 'UTF8'`，无需事先手工建库。  
+> 但仍须**显式输入目标库名称**；禁止使用 `postgres`、`template0`、`template1` 作为应用库。
+
 1.  **准备依赖**：
     ```bash
     python3 -m venv venv
     source venv/bin/activate
     pip install -r requirements.txt
     ```
-    PostgreSQL 目标库必须使用 PostgreSQL 14 或更高版本；导入器会在目标库不存在时自动创建，
-    但必须显式输入目标库名称，不能使用 `postgres`、`template0` 或 `template1`。
+    PostgreSQL 目标实例建议使用 **v14+**。
 
-2.  **执行 PostgreSQL 初始化**：
+2.  **执行 PostgreSQL 初始化（导入结构与种子数据）**：
     ```bash
+    # 推荐：在项目根目录执行
     chmod +x db-prod-pg/apply-sql.sh
     ./db-prod-pg/apply-sql.sh
-    ```
-    脚本会依次询问 Host、Port、User、Password 和目标数据库，并要求输入 `YES` 确认。
-    `V0-baseline.sql` 导入完成后会询问是否自动创建管理员。也支持兼容调用：
-    ```bash
-    sh db-prod-pg/apply-sql.sh
-    ```
-    但生产环境仍建议使用 `./db-prod-pg/apply-sql.sh`。
 
-3.  **管理员初始化与凭证维护**：
+    # 也可进入目录后执行（兼容 sh）
+    cd db-prod-pg
+    sh apply-sql.sh
+    ```
+    无参数时，脚本会按版本号排序，依次执行当前目录下全部 `V*.sql`（如 `V0` ~ `V9`）。  
+    脚本会依次询问 Host、Port、User、Password 和目标数据库，并要求输入 `YES` 确认。  
+    全部 SQL 成功后，会询问是否顺带创建默认管理员 `admin` 并生成 API Key。
+
+3.  **交互导入示例**（首次部署，目标库可不预先创建）：
+
+    以下示例将数据导入到本地库 `test111`（若不存在会自动创建），并完成管理员初始化：
+
+    ```text
+    $ cd db-prod-pg
+    $ sh apply-sql.sh
+    PostgreSQL host [localhost]:            # 回车使用默认 localhost
+    PostgreSQL port [5432]:                 # 回车使用默认 5432
+    PostgreSQL user: postgres
+    PostgreSQL password: ******
+    Target database: test111                # 不存在则自动创建；勿填 postgres/template0/template1
+    ---------------------------------------------------
+    请确认本次 SQL 执行目标：
+      Host     : localhost
+      Port     : 5432
+      User     : postgres
+      Database : test111
+      SQL files:
+        - .../db-prod-pg/V0-baseline.sql
+        - .../db-prod-pg/V1-align_system_config_seeds.sql
+        - .../db-prod-pg/V2-update_memory_embedding_default_config.sql
+        - .../db-prod-pg/V3-add_mcp_scope_and_user_id.sql
+        - .../db-prod-pg/V4-add_category_to_chatbi_examples.sql
+        - .../db-prod-pg/V5-register_example_search_tool.sql
+        - .../db-prod-pg/V6-enforce_mcp_server_name_uniqueness.sql
+        - .../db-prod-pg/V7-add_mcp_tool_availability.sql
+        - .../db-prod-pg/V8-enforce_ai_model_id_uniqueness.sql
+        - .../db-prod-pg/V9-add_ai_model_token_limits.sql
+      Password : ******
+    确认无误请输入 YES 继续执行：yes
+    ---------------------------------------------------
+    🚀 Applying .../V0-baseline.sql ...
+    ✅ SQL applied successfully.
+    ...（V1 ~ V9 依次执行，全部 ✅）
+    ---------------------------------------------------
+    ✅ 所有 PostgreSQL 版本 SQL 文件执行成功。
+    ---------------------------------------------------
+    是否需要顺带创建默认管理员 admin 并生成新的 API Key？ (推荐首次部署时创建) [Y/N]: y
+    ✅ 管理员账号创建成功！
+    🔑 管理员 API Key（请立即保存）
+       用户名: admin
+       API Key: <仅显示一次，请立即保存>
+    ```
+
+    *说明：*
+    *   生产环境请将 `Target database` 换成正式库名（如 `nanzi_ai_agent_platform`），并与下文 `.env` 中的 `POSTGRES_DB` 保持一致。
+    *   若只需升级单个版本，可显式传文件，例如：  
+        `./db-prod-pg/apply-sql.sh db-prod-pg/V9-add_ai_model_token_limits.sql`
+
+4.  **管理员初始化与凭证维护（若第 2 步已选 Y 可跳过）**：
     PostgreSQL 基线不写入固定管理员 API Key。初始化时选择 `Y` 会使用当前
     `ENCRYPTION_KEY` 生成新的管理员凭证；如果初始化时跳过，可在配置好运行环境后执行：
     ```bash
@@ -135,13 +237,13 @@
     API Key 只在终端显示一次，请立即保存。三个脚本分别用于创建管理员、重新生成 API Key
     和重置管理员密码。
 
-4.  **配置平台运行时**：
-    在项目根目录 `.env` 中选择 PostgreSQL 主库：
+5.  **配置平台运行时**：
+    在项目根目录 `.env` 中选择 PostgreSQL 主库（`POSTGRES_DB` 须与导入时的目标库名一致）：
     ```dotenv
     DATABASE_TYPE=postgresql
     POSTGRES_HOST=localhost
     POSTGRES_PORT=5432
-    POSTGRES_DB=nanzi_ai_agent_platform
+    POSTGRES_DB=test111
     POSTGRES_USER=postgres
     POSTGRES_PASSWORD=<password>
     ```
