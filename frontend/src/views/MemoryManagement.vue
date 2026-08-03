@@ -83,10 +83,6 @@ type ConfigFieldType = 'boolean' | 'number' | 'text' | 'secret'
 const CONFIG_FIELD_TYPES: Record<string, ConfigFieldType> = {
   memory_service_enabled: 'boolean',
   memory_summary_enabled: 'boolean',
-  memory_embedding_base_url: 'text',
-  memory_embedding_api_key: 'secret',
-  memory_embedding_model: 'text',
-  memory_embedding_dimensions: 'number',
   memory_summary_max_sessions: 'number',
   memory_summary_ttl_days: 'number',
   memory_history_ttl_days: 'number',
@@ -101,10 +97,6 @@ const CONFIG_FIELD_TYPES: Record<string, ConfigFieldType> = {
 const CONFIG_LABELS: Record<string, string> = {
   memory_service_enabled: '启用记忆服务',
   memory_summary_enabled: '启用会话摘要',
-  memory_embedding_base_url: 'Embedding 接口地址',
-  memory_embedding_api_key: 'Embedding 密钥 (API Key)',
-  memory_embedding_model: 'Embedding 模型',
-  memory_embedding_dimensions: 'Embedding 向量维度',
   memory_summary_max_sessions: '每用户最大摘要数',
   memory_summary_ttl_days: '会话摘要有效期 (TTL)',
   memory_history_ttl_days: '会话历史有效期 (TTL)',
@@ -118,11 +110,7 @@ const CONFIG_LABELS: Record<string, string> = {
 
 const CONFIG_TIPS: Record<string, string> = {
   memory_service_enabled: '控制跨会话长期记忆（Long-Term Memory）服务的总开关。启用后，系统会记录并利用历史会话摘要；关闭后，对话将不再写入摘要，且大模型的 memory_search 工具将提示服务未启用。',
-  memory_summary_enabled: '控制会话摘要自动提取与向量索引写入。启用后，系统会在满足防抖条件时自动使用 LLM 总结历史对话并生成向量索引；关闭后，已有摘要数据变为只读，不再更新。',
-  memory_embedding_base_url: '生成记忆向量所使用的 Embedding 服务的 API 基础地址（OpenAI 兼容接口）。如果留空，系统将自动回退使用系统的 llm_base_url 配置。',
-  memory_embedding_api_key: '调用 Embedding 服务进行向量化所需的身份验证令牌（API Key）。为保障安全已进行脱敏处理。如果留空，系统将自动回退使用系统的 llm_api_key。',
-  memory_embedding_model: '生成向量所使用的具体 Embedding 模型名称（例如 bge-m3）。请确保该模型与下面的向量维度（Dimensions）匹配。',
-  memory_embedding_dimensions: '所选 Embedding 模型输出的向量长度（如 1024 或 1536）。更改此项后，必须在上方点击“检查/创建索引”重建 RediSearch 向量索引，否则搜索时会报错。',
+  memory_summary_enabled: '控制会话摘要自动提取与向量索引写入。启用后，系统会在满足防抖条件时自动使用 LLM 总结历史对话并生成向量索引；关闭后，已有摘要数据变为只读，不再更新。会话摘要向量使用【系统配置】中的全局 Embedding 模型。',
   memory_summary_max_sessions: '每个用户在 Redis 中最多保留的会话摘要（Session Summary）文档数量。超过限制后，系统会根据时间顺序淘汰最早的摘要，防止占用过多缓存内存。',
   memory_summary_ttl_days: '会话摘要文档 in Redis 中的物理留存天数。默认 30 天，超时后将自动过期释放。若希望永久保留，可适当设置较大值，或修改 Redis 的过期淘汰策略。',
   memory_history_ttl_days: '用于摘要提取的原始对话历史（List 格式）在 Redis 中的最大留存天数。该期限过后，历史对话列表会自动过期，不再参与摘要合并。',
@@ -144,20 +132,8 @@ const CONFIG_GROUPS: {
   {
     id: 'switches',
     title: '功能开关',
-    description: '总开关关闭后，下方详细配置将隐藏；摘要开关关闭后，Embedding 与摘要写入相关项将隐藏。',
+    description: '总开关关闭后，下方详细配置将隐藏；摘要开关关闭后，摘要写入相关项将隐藏。会话摘要向量使用系统配置中的全局 Embedding。',
     keys: ['memory_service_enabled', 'memory_summary_enabled'],
-  },
-  {
-    id: 'embedding',
-    title: 'Embedding 模型',
-    description: '用于会话摘要向量；URL/Key 留空时回退系统 LLM 配置。',
-    requireSummary: true,
-    keys: [
-      'memory_embedding_base_url',
-      'memory_embedding_api_key',
-      'memory_embedding_model',
-      'memory_embedding_dimensions',
-    ],
   },
   {
     id: 'summary',
@@ -774,7 +750,7 @@ onMounted(async () => {
             v-if="canSave && summaryEnabled"
             type="button"
             class="rounded-lg border border-gray-300 bg-white px-2 py-2 text-center text-xs shadow-sm hover:bg-gray-50 disabled:opacity-40 sm:px-3 sm:text-sm"
-            title="测试 Embedding"
+            title="使用系统配置中的全局 Embedding 做连通性测试"
             @click="testEmbedding"
           >
             测试 Embedding
