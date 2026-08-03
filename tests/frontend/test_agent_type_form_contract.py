@@ -124,6 +124,9 @@ def test_agent_center_card_ux_hierarchy_and_primary_cta():
     assert "调用 {{ agent.execution_count ?? 0 }} 次" in management
     assert ">工具</span>" in management or "font-normal\">工具</span>" in management
     assert ">技能</span>" in management or "font-normal\">技能</span>" in management
+    assert "formatSkillCountLabel" in management
+    assert 'return "全部"' not in management
+    assert "使用全部公共技能（${agent.skill_count ?? 0} 个，另含个人技能）" in management
     assert "showAgentCenterGuide" in management
     assert "dismissAgentCenterGuide" in management
     assert "batchMode" in management

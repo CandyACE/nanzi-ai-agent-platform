@@ -26,7 +26,7 @@ export interface AIAgent {
   tool_count?: number | null
   /** 已发布版本：MCP 工具数 */
   mcp_count?: number | null
-  /** 已发布版本：自定义 Skills 数；skills_custom=false 时为 null（表示全部） */
+  /** 已发布版本：Skills 数；skills_custom=false 时为启用中的公共技能总数 */
   skill_count?: number | null
   skills_custom?: boolean | null
   /** 显式绑定的元数据集数；未绑定（走全局）为 null */

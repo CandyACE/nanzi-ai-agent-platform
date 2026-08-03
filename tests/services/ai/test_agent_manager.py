@@ -140,13 +140,18 @@ def test_summarize_version_capabilities_mcp_and_skills_all():
         skills_custom=False,
         skills=["ignored-when-not-custom"],
     )
-    caps = AgentManagerService.summarize_version_capabilities(version)
+    caps = AgentManagerService.summarize_version_capabilities(
+        version, enabled_global_skill_count=12
+    )
     assert caps["tool_count"] == 1
     assert caps["mcp_count"] == 1
-    assert caps["skill_count"] is None
+    assert caps["skill_count"] == 12
     assert caps["skills_custom"] is False
     assert caps["metadata_dataset_count"] is None
     assert caps["knowledge_base_count"] is None
+
+    caps_default = AgentManagerService.summarize_version_capabilities(version)
+    assert caps_default["skill_count"] == 0
 
 
 def test_summarize_bound_datasets_and_knowledge_bases():
