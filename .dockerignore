@@ -41,3 +41,6 @@ AGENTS.md
 # Logs
 *.log
 logs/
+
+# Docker image export artifacts (kept on the host, never copied into images)
+docker/release/
