@@ -4,7 +4,7 @@ from app.services.config_service import ConfigService
 
 DEFAULT_PRODUCT_NAME = "NanZi·智能体平台"
 DEFAULT_LOGIN_SUBTITLE = "NanZi Intelligent Agent Platform"
-DEFAULT_ICON_URL = "/favicon.png"
+DEFAULT_ICON_URL = "/favicon.svg"
 DEFAULT_AGENT_NAME = "NanZi · AI"
 # 历史默认名：读取时映射到新兜底，不写库
 _LEGACY_DEFAULT_AGENT_NAMES = frozenset({"南孜智能助手", "南孜 · 智能助手"})

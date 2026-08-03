@@ -310,7 +310,7 @@ const brandingConfig = ref({
   enabled: false,
   product_name: 'NanZi·智能体平台',
   login_subtitle: 'NanZi Intelligent Agent Platform',
-  icon_url: '/favicon.png',
+  icon_url: '/favicon.svg',
   hide_login_sso: false,
   hide_version_link: false,
   contact_markdown: '',
@@ -327,7 +327,7 @@ const fetchBrandingConfig = async () => {
       enabled: !!data.enabled,
       product_name: data.product_name || 'NanZi·智能体平台',
       login_subtitle: data.login_subtitle || 'NanZi Intelligent Agent Platform',
-      icon_url: data.icon_url || '/favicon.png',
+      icon_url: data.icon_url || '/favicon.svg',
       hide_login_sso: !!data.hide_login_sso,
       hide_version_link: !!data.hide_version_link,
       contact_markdown: data.contact_markdown || '',
@@ -1627,7 +1627,7 @@ onMounted(() => {
               <label class="block text-sm font-medium text-gray-700 mb-1">Logo / Favicon</label>
               <div class="flex items-center gap-4">
                 <img
-                  :src="brandingConfig.icon_url || '/favicon.png'"
+                  :src="brandingConfig.icon_url || '/favicon.svg'"
                   alt="Logo 预览"
                   class="w-12 h-12 rounded-lg border border-gray-200 object-cover bg-white"
                 />
@@ -1636,7 +1636,7 @@ onMounted(() => {
                     v-model="brandingConfig.icon_url"
                     type="text"
                     class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm font-mono"
-                    placeholder="/favicon.png 或 /branding/icon.png"
+                    placeholder="/favicon.svg 或 /branding/icon.png"
                   />
                   <button
                     type="button"

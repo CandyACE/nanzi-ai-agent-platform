@@ -505,26 +505,14 @@
             ></div>
             <div
               class="relative w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white shadow-sm overflow-hidden cursor-pointer hover:scale-110 hover:shadow-md active:scale-95 transition-all duration-200"
-              :style="{
-                background:
-                  'linear-gradient(135deg, var(--primary-color, #1677ff), #9333ea)',
-              }"
               @click.stop="showSettings = true; fetchAllowedAgents()"
               title="点击配置主题"
             >
-              <svg
-                class="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
+              <img
+                :src="agentAvatarUrl"
+                class="w-full h-full object-cover"
+                alt="NanZi AI agent"
+              />
             </div>
             <!-- Tiny indicator dot to pulse when NOT hovered -->
             <div
@@ -2116,6 +2104,7 @@ import {
 
 import { SparklesIcon } from "@heroicons/vue/24/outline";
 import { useBranding } from "@/composables/useBranding";
+import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
 
 const toast = useToast();
 const router = useRouter();
