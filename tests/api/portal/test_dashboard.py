@@ -1,8 +1,13 @@
 """
 Tests for Dashboard API endpoints
 """
+from datetime import datetime, timedelta
+from uuid import uuid4
+
 import pytest
 from httpx import AsyncClient
+from app.models.audit import AccessLog
+from app.models.user import User
 
 
 @pytest.mark.asyncio
@@ -105,4 +110,64 @@ async def test_recent_activities_admin(client: AsyncClient, admin_api_key: str):
     assert "recent_errors" in data
 
 
+@pytest.mark.asyncio
+async def test_recent_users_are_sorted_by_latest_activity_not_registration_time(
+    client: AsyncClient,
+    admin_api_key: str,
+    db_session,
+):
+    now = datetime.now()
+    suffix = uuid4().hex[:8]
+    older_activity_user = f"created-later-{suffix}"
+    newer_activity_user = f"active-later-{suffix}"
 
+    db_session.add_all([
+        User(
+            user_name=older_activity_user,
+            api_key_hash=f"hash-older-{suffix}",
+            api_key_encrypted=f"encrypted-older-{suffix}",
+            role="user",
+            status=1,
+            created_at=now + timedelta(minutes=2),
+        ),
+        User(
+            user_name=newer_activity_user,
+            api_key_hash=f"hash-newer-{suffix}",
+            api_key_encrypted=f"encrypted-newer-{suffix}",
+            role="user",
+            status=1,
+            created_at=now,
+        ),
+        AccessLog(
+            user_name=older_activity_user,
+            trace_id=f"trace-older-{suffix}",
+            endpoint="/older",
+            method="GET",
+            status_code=200,
+            process_time_ms=1.0,
+            created_at=now - timedelta(minutes=2),
+        ),
+        AccessLog(
+            user_name=newer_activity_user,
+            trace_id=f"trace-newer-{suffix}",
+            endpoint="/newer",
+            method="GET",
+            status_code=200,
+            process_time_ms=1.0,
+            created_at=now - timedelta(minutes=1),
+        ),
+    ])
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/portal/dashboard/recent-activities",
+        headers={"X-API-Key": admin_api_key},
+        params={"limit": 10},
+    )
+
+    assert response.status_code == 200
+    users = response.json()["recent_users"]
+    names = [item["user_name"] for item in users]
+    assert names.index(newer_activity_user) < names.index(older_activity_user)
+    activity_item = next(item for item in users if item["user_name"] == newer_activity_user)
+    assert activity_item["last_active"] is not None

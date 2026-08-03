@@ -1,7 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
+
+pytestmark = pytest.mark.no_infrastructure
 
 
 def login_source():
@@ -35,6 +39,13 @@ def test_login_visual_carousel_contracts():
         assert text in source
     assert "nanzi-wordmark-on-light.svg" not in source
     assert "nanzi-wordmark-on-dark.svg" not in source
+
+
+def test_login_visual_carousel_starts_with_third_slide_and_ends_with_first():
+    source = login_source()
+
+    assert source.index("key: 'c'") < source.index("key: 'b'")
+    assert source.index("key: 'b'") < source.index("key: 'a'")
 
 
 def test_login_subtitle_defaults_are_consistent_across_branding_configuration():

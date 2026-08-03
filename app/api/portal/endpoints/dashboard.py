@@ -321,13 +321,31 @@ async def get_recent_activities(
     user_name = user["user_name"]
     result = {}
     
-    # Recent Users
+    # Active Users: one row per user, ordered by their latest access-log time.
     if admin_flag:
-        stmt_users = select(User).order_by(desc(User.created_at)).limit(min(limit, 5))
-        users = (await db.execute(stmt_users)).scalars().all()
+        latest_activity = (
+            select(
+                AccessLog.user_name.label("user_name"),
+                func.max(AccessLog.created_at).label("last_active"),
+            )
+            .where(AccessLog.user_name.is_not(None))
+            .group_by(AccessLog.user_name)
+            .subquery()
+        )
+        stmt_users = (
+            select(User, latest_activity.c.last_active)
+            .join(latest_activity, User.user_name == latest_activity.c.user_name)
+            .order_by(desc(latest_activity.c.last_active), desc(User.id))
+            .limit(min(limit, 5))
+        )
+        user_rows = (await db.execute(stmt_users)).all()
         result["recent_users"] = [
-            {"user_name": u.user_name, "role": u.role, "created_at": u.created_at.isoformat() if u.created_at else None}
-            for u in users
+            {
+                "user_name": user.user_name,
+                "role": user.role,
+                "last_active": last_active.isoformat() if last_active else None,
+            }
+            for user, last_active in user_rows
         ]
         
     # Recent Calls

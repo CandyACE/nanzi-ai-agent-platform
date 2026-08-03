@@ -3,7 +3,7 @@
     <div class="px-5 py-3.5 border-b border-gray-100">
       <h3 class="text-sm font-bold text-gray-900 flex items-center">
         <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
-        最新用户
+        活跃用户
       </h3>
     </div>
     <div class="p-5">
@@ -27,7 +27,7 @@
             </p>
           </div>
           <div class="text-xs text-gray-400 shrink-0">
-            {{ formatDate(user.created_at) }}
+            {{ formatDate(user.last_active) }}
           </div>
         </div>
       </div>

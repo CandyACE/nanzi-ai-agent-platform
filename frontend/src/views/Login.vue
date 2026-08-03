@@ -37,6 +37,18 @@ const pauseReasons = reactive(new Set<PauseReason>())
 const reducedMotion = ref(false)
 const slides = [
     {
+        key: 'c',
+        title: '一个入口，连接所有智能',
+        subtitle: 'One entrance to every intelligent capability',
+        desc: '连接智能体、工具与知识，形成可协作、可扩展的智能生态。',
+        features: ['Agents', 'Tools', 'Knowledge'],
+        gradient: 'from-violet-600/30 via-violet-950/60 to-[#0d0617]',
+        accent: 'text-violet-400',
+        glow: 'bg-violet-500/10',
+        bg: 'bg-[#0d0617]',
+        light: false,
+    },
+    {
         key: 'b',
         title: '从自然语言到可执行结果',
         subtitle: 'Natural language into executable outcomes',
@@ -58,18 +70,6 @@ const slides = [
         accent: 'text-blue-400',
         glow: 'bg-blue-500/10',
         bg: 'bg-[#020617]',
-        light: false,
-    },
-    {
-        key: 'c',
-        title: '一个入口，连接所有智能',
-        subtitle: 'One entrance to every intelligent capability',
-        desc: '连接智能体、工具与知识，形成可协作、可扩展的智能生态。',
-        features: ['Agents', 'Tools', 'Knowledge'],
-        gradient: 'from-violet-600/30 via-violet-950/60 to-[#0d0617]',
-        accent: 'text-violet-400',
-        glow: 'bg-violet-500/10',
-        bg: 'bg-[#0d0617]',
         light: false,
     }
 ]
