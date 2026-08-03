@@ -309,7 +309,7 @@ const showSecrets = ref<{ [key: string]: boolean }>({})
 const brandingConfig = ref({
   enabled: false,
   product_name: 'NanZi·智能体平台',
-  login_subtitle: 'NanZi Intelligent Agent Platform',
+  login_subtitle: 'Your Intelligent Agent Platform',
   icon_url: '/favicon.svg',
   hide_login_sso: false,
   hide_version_link: false,
@@ -326,7 +326,7 @@ const fetchBrandingConfig = async () => {
     brandingConfig.value = {
       enabled: !!data.enabled,
       product_name: data.product_name || 'NanZi·智能体平台',
-      login_subtitle: data.login_subtitle || 'NanZi Intelligent Agent Platform',
+      login_subtitle: data.login_subtitle || 'Your Intelligent Agent Platform',
       icon_url: data.icon_url || '/favicon.svg',
       hide_login_sso: !!data.hide_login_sso,
       hide_version_link: !!data.hide_version_link,
@@ -1608,7 +1608,7 @@ onMounted(() => {
                 v-model="brandingConfig.login_subtitle"
                 type="text"
                 class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm"
-                placeholder="NanZi Intelligent Agent Platform"
+                placeholder="Your Intelligent Agent Platform"
               />
             </div>
 

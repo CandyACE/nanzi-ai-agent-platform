@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
@@ -14,82 +14,116 @@ const password = ref('')
 const error = ref('')
 const loading = ref(false)
 
-const productName = computed(() => branding.value.product_name)
-const loginSubtitle = computed(() => branding.value.login_subtitle)
+const DEFAULT_LOGIN_BRAND_NAME = 'NanZi · 智能体平台'
+const DEFAULT_LOGIN_SUBTITLE = 'Your Intelligent Agent Platform'
+
+const productName = computed(() => {
+    const configured = branding.value.product_name?.trim()
+    return branding.value.enabled && configured ? configured : DEFAULT_LOGIN_BRAND_NAME
+})
+const loginSubtitle = computed(() => {
+    const configured = branding.value.login_subtitle?.trim()
+    return branding.value.enabled && configured ? configured : DEFAULT_LOGIN_SUBTITLE
+})
 const iconUrl = computed(() => branding.value.icon_url)
 const showCopyright = computed(() => branding.value.enabled && !!(branding.value.copyright_text || '').trim())
 const copyrightText = computed(() => (branding.value.copyright_text || '').trim())
 const showSsoFromBranding = computed(() => !branding.value.hide_login_sso)
 
-const displaySlides = computed(() => {
-    const list = slides.map((slide) => ({ ...slide }))
-    if (list[0]) {
-        list[0].title = productName.value
-        list[0].subtitle = loginSubtitle.value
-    }
-    return list
-})
-
 // Carousel Logic
 const currentSlide = ref(0)
+type PauseReason = 'visual-hover' | 'form-focus'
+const pauseReasons = reactive(new Set<PauseReason>())
+const reducedMotion = ref(false)
 const slides = [
     {
-        title: 'NanZi·智能体平台',
-        subtitle: 'NanZi Intelligent Agent Platform',
-        desc: '企业级多智能体编排 · 7x24 进化的数字大脑',
-        features: ['智能编排', '安全管控', '实时分析'],
+        key: 'b',
+        title: '从自然语言到可执行结果',
+        subtitle: 'Natural language into executable outcomes',
+        desc: '轻盈、可信、企业友好。把产品能力放进真实工作流的入口。',
+        features: ['ChatBI', 'Knowledge', 'MCP'],
+        gradient: 'from-blue-600/20 via-blue-100/10 to-[#dbeafe]',
+        accent: 'text-blue-600',
+        glow: 'bg-cyan-400/20',
+        bg: 'bg-[#eff6ff]',
+        light: true,
+    },
+    {
+        key: 'a',
+        title: '让智能体成为组织的第二操作系统',
+        subtitle: 'The second operating system for your organization',
+        desc: '开放连接模型、知识与工具，让每一次对话都能落到真实业务。',
+        features: ['开放', '智能', '可控'],
         gradient: 'from-blue-600/30 via-blue-950/60 to-[#020617]',
         accent: 'text-blue-400',
         glow: 'bg-blue-500/10',
-        bg: 'bg-[#020617]'
+        bg: 'bg-[#020617]',
+        light: false,
     },
     {
-        title: 'ChatBI 数据洞察',
-        subtitle: 'Natural Language Data Insights',
-        desc: '自然语言即刻透视业务指标 · 零门槛报表生成',
-        features: ['NL2SQL', '自动绘图', '数据自愈'],
-        gradient: 'from-emerald-600/30 via-emerald-950/60 to-[#061712]',
-        accent: 'text-emerald-400',
-        glow: 'bg-emerald-500/10',
-        bg: 'bg-[#061712]'
-    },
-    {
-        title: 'AIOps 自动化运维',
-        subtitle: 'AI-Powered Operations',
-        desc: '打通企业工具链 · 实现故障自愈与合规审计',
-        features: ['Jira 对接', '代码审计', '全量审计'],
+        key: 'c',
+        title: '一个入口，连接所有智能',
+        subtitle: 'One entrance to every intelligent capability',
+        desc: '连接智能体、工具与知识，形成可协作、可扩展的智能生态。',
+        features: ['Agents', 'Tools', 'Knowledge'],
         gradient: 'from-violet-600/30 via-violet-950/60 to-[#0d0617]',
         accent: 'text-violet-400',
         glow: 'bg-violet-500/10',
-        bg: 'bg-[#0d0617]'
-    },
-    {
-        title: 'RAG 知识增强',
-        subtitle: 'Enterprise Knowledge Base',
-        desc: '海量 SOP 毫秒级检索 · 零幻觉的企业级大脑',
-        features: ['语义搜索', '多源导入', '引用溯源'],
-        gradient: 'from-orange-600/30 via-orange-950/60 to-[#170d06]',
-        accent: 'text-orange-400',
-        glow: 'bg-orange-500/10',
-        bg: 'bg-[#170d06]'
-    },
-    {
-        title: '智能体生态超市',
-        subtitle: 'Agent Marketplace',
-        desc: '开箱即用的专家矩阵 · 覆盖全业务场景',
-        features: ['一键启用', '插件市场', '能力共建'],
-        gradient: 'from-cyan-600/30 via-cyan-950/60 to-[#061217]',
-        accent: 'text-cyan-400',
-        glow: 'bg-cyan-500/10',
-        bg: 'bg-[#061217]'
+        bg: 'bg-[#0d0617]',
+        light: false,
     }
 ]
 
-let slideTimer: any = null
-const startSlide = () => {
+let slideTimer: ReturnType<typeof setInterval> | null = null
+let motionMediaQuery: MediaQueryList | null = null
+const sessionStartKey = 'nanzi.login.visual.initial-slide'
+
+const clearSlideTimer = () => {
+    if (slideTimer) clearInterval(slideTimer)
+    slideTimer = null
+}
+
+const restartSlideTimer = () => {
+    clearSlideTimer()
+    if (reducedMotion.value || pauseReasons.size > 0) return
     slideTimer = setInterval(() => {
         currentSlide.value = (currentSlide.value + 1) % slides.length
-    }, 5000)
+    }, 7000)
+}
+
+const getInitialSlide = () => {
+    try {
+        const stored = window.sessionStorage.getItem(sessionStartKey)
+        const parsed = stored === null ? NaN : Number(stored)
+        if (Number.isInteger(parsed) && parsed >= 0 && parsed < slides.length) return parsed
+        const random = Math.random()
+        const next = random < 0.5 ? 0 : random < 0.75 ? 1 : 2
+        window.sessionStorage.setItem(sessionStartKey, String(next))
+        return next
+    } catch {
+        const random = Math.random()
+        return random < 0.5 ? 0 : random < 0.75 ? 1 : 2
+    }
+}
+
+const setPauseReason = (reason: PauseReason, paused: boolean) => {
+    if (paused) pauseReasons.add(reason)
+    else pauseReasons.delete(reason)
+    restartSlideTimer()
+}
+
+const pauseSlideTimer = (reason: PauseReason = 'visual-hover') => setPauseReason(reason, true)
+const resumeSlideTimer = (reason: PauseReason = 'visual-hover') => setPauseReason(reason, false)
+
+const selectSlide = (index: number) => {
+    if (index < 0 || index >= slides.length) return
+    currentSlide.value = index
+    restartSlideTimer()
+}
+
+const handleMotionPreferenceChange = (event: MediaQueryListEvent) => {
+    reducedMotion.value = event.matches
+    restartSlideTimer()
 }
 
 // Clear form when switching tabs
@@ -124,7 +158,11 @@ const fetchPublicConfig = async () => {
 
 onMounted(async () => { 
     window.addEventListener('mousemove', handleMouseMove)
-    startSlide()
+    currentSlide.value = getInitialSlide()
+    motionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    reducedMotion.value = motionMediaQuery.matches
+    motionMediaQuery.addEventListener?.('change', handleMotionPreferenceChange)
+    restartSlideTimer()
     await loadBranding()
     if (branding.value.hide_login_sso && activeTab.value === 'sso') {
         activeTab.value = 'password'
@@ -139,7 +177,8 @@ watch(() => branding.value.hide_login_sso, (hide) => {
 })
 onUnmounted(() => { 
     window.removeEventListener('mousemove', handleMouseMove)
-    if (slideTimer) clearInterval(slideTimer)
+    clearSlideTimer()
+    motionMediaQuery?.removeEventListener?.('change', handleMotionPreferenceChange)
 })
 
 const handleLogin = async () => {
@@ -196,70 +235,84 @@ const handleLogin = async () => {
   <div class="h-screen w-screen flex bg-slate-900 font-sans overflow-hidden">
     
     <!-- Left Section: Visuals & Branding (Carousel) -->
-    <div 
+    <div
         class="hidden lg:flex flex-1 relative overflow-hidden transition-all duration-1000"
         :class="slides[currentSlide]?.bg || ''"
+        @mouseenter="pauseSlideTimer('visual-hover')"
+        @mouseleave="resumeSlideTimer('visual-hover')"
     >
-        <!-- Refined Mesh Gradients -->
-        <div 
+        <div
+            class="absolute top-10 left-10 xl:top-12 xl:left-12 z-30 flex items-center gap-3"
+            :class="slides[currentSlide]?.light ? 'text-slate-900' : 'text-white'"
+        >
+            <img :src="iconUrl" class="w-12 h-12 rounded-2xl object-cover shadow-xl" alt="NanZi logo" />
+            <div class="text-left">
+                <div class="text-base font-bold tracking-tight">{{ productName }}</div>
+                <div class="text-[10px] tracking-[0.16em] uppercase" :class="slides[currentSlide]?.light ? 'text-slate-500' : 'text-slate-300/80'">{{ loginSubtitle }}</div>
+            </div>
+        </div>
+        <div
+            aria-hidden="true"
             class="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,_var(--tw-gradient-stops))] transition-all duration-1000 scale-150"
             :class="slides[currentSlide]?.gradient || ''"
         ></div>
-        <div 
+        <div
+            aria-hidden="true"
             class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1000px] h-[1000px] rounded-full blur-[180px] animate-pulse transition-all duration-1000 opacity-20"
             :class="slides[currentSlide]?.glow || ''"
         ></div>
-        
-        <!-- Animated Tech Grid Decoration -->
-        <div class="absolute inset-0 opacity-[0.03]" style="background-image: linear-gradient(#3b82f6 1px, transparent 1px), linear-gradient(90deg, #3b82f6 1px, transparent 1px); background-size: 60px 60px;"></div>
+        <div
+            aria-hidden="true"
+            class="absolute inset-0 opacity-[0.04]"
+            style="background-image: linear-gradient(#3b82f6 1px, transparent 1px), linear-gradient(90deg, #3b82f6 1px, transparent 1px); background-size: 60px 60px;"
+        ></div>
 
-        <!-- Carousel Container -->
         <div class="relative w-full h-full flex items-center justify-center">
-            <div 
-                v-for="(slide, index) in displaySlides" 
-                :key="index"
-                class="absolute inset-0 flex flex-col items-center justify-center text-center px-20 transition-all duration-1000 ease-in-out"
-                :class="[
-                    currentSlide === index ? 'opacity-100 translate-x-0' : (currentSlide > index ? 'opacity-0 -translate-x-full' : 'opacity-0 translate-x-full')
-                ]"
+            <div
+                v-for="(slide, index) in slides"
+                :key="slide.key"
+                class="absolute inset-0 flex flex-col items-center justify-center text-center px-12 xl:px-20 transition-all duration-700 ease-in-out motion-reduce:transition-none"
+                :class="currentSlide === index ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8 pointer-events-none'"
+                :aria-hidden="currentSlide !== index"
             >
-                <div class="relative z-10" :style="{ transform: `translate(${mouseX}px, ${mouseY}px)` }">
-                    <h1 class="text-7xl font-bold text-white tracking-tighter mb-4 drop-shadow-2xl">
+                <div class="relative z-10 max-w-4xl xl:max-w-[1100px]" :style="{ transform: `translate(${mouseX}px, ${mouseY}px)` }">
+                    <h1 class="text-5xl xl:text-7xl font-bold tracking-tighter mb-4 drop-shadow-2xl" :class="slide.light ? 'text-slate-900' : 'text-white'">
                         {{ slide.title }}
                     </h1>
-                    <p class="text-2xl text-slate-300 font-light tracking-[0.1em] mb-4">
+                    <p class="text-xl xl:text-2xl font-light tracking-[0.05em] mb-4" :class="slide.light ? 'text-slate-600' : 'text-slate-300'">
                         {{ slide.subtitle }}
                     </p>
-                    <p class="text-slate-500 text-sm tracking-[0.4em] uppercase mb-12 opacity-70">
+                    <p class="text-sm tracking-[0.12em] mb-12 opacity-80" :class="slide.light ? 'text-slate-500' : 'text-slate-400'">
                         {{ slide.desc }}
                     </p>
-                    
-                    <div class="flex items-center justify-center space-x-12">
-                        <template v-for="(feature, fIndex) in slide.features" :key="fIndex">
+
+                    <div class="flex items-center justify-center gap-7 xl:gap-12">
+                        <template v-for="(feature, fIndex) in slide.features" :key="feature">
                             <div class="flex flex-col items-center gap-2">
                                 <span class="font-bold text-lg tracking-widest transition-colors duration-500" :class="slide.accent">{{ feature }}</span>
-                                <span class="text-slate-600 text-[10px] uppercase font-mono tracking-tighter">Feature 0{{ fIndex + 1 }}</span>
+                                <span class="text-[10px] uppercase font-mono tracking-tighter" :class="slide.light ? 'text-slate-400' : 'text-slate-500'">Capability 0{{ fIndex + 1 }}</span>
                             </div>
-                            <div v-if="fIndex < slide.features.length - 1" class="w-px h-8 bg-slate-800"></div>
+                            <div v-if="fIndex < slide.features.length - 1" class="w-px h-8" :class="slide.light ? 'bg-slate-300' : 'bg-slate-700'"></div>
                         </template>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Carousel Indicators -->
-        <div class="absolute bottom-24 left-1/2 -translate-x-1/2 flex gap-3 z-30">
-            <button 
-                v-for="(_, index) in slides" 
-                :key="index"
-                @click="currentSlide = index"
-                class="h-1.5 transition-all duration-500 rounded-full"
-                :class="currentSlide === index ? `w-10 ${slides[index]?.accent?.replace('text-', 'bg-') || ''} shadow-[0_0_10px_rgba(255,255,255,0.3)]` : 'w-4 bg-slate-800 hover:bg-slate-700'"
+        <div class="absolute bottom-24 left-1/2 -translate-x-1/2 flex gap-3 z-30" role="group" aria-label="登录页主视觉章节">
+            <button
+                v-for="(slide, index) in slides"
+                :key="slide.key"
+                type="button"
+                :aria-label="`切换到${slide.title}主视觉`"
+                :aria-current="currentSlide === index ? 'true' : undefined"
+                @click="selectSlide(index)"
+                class="h-1.5 transition-all duration-500 rounded-full motion-reduce:transition-none"
+                :class="currentSlide === index ? 'w-10 bg-blue-400 shadow-[0_0_10px_rgba(96,165,250,0.7)]' : 'w-4 bg-slate-500/50 hover:bg-slate-300'"
             ></button>
         </div>
-        
-        <!-- Status Bar -->
-        <div class="absolute bottom-10 left-12 flex items-center gap-4 opacity-40">
+
+        <div aria-hidden="true" class="absolute bottom-10 left-12 flex items-center gap-4 opacity-40">
             <div class="flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                 <span class="text-[10px] text-slate-400 font-mono tracking-widest uppercase">System Operational</span>
@@ -270,7 +323,11 @@ const handleLogin = async () => {
     </div>
 
     <!-- Right Section: Compact Login Panel -->
-    <div class="w-full lg:w-[500px] flex flex-col bg-white relative shadow-2xl z-20">
+    <div
+        class="w-full lg:w-[420px] xl:w-[460px] flex flex-col bg-white relative shadow-2xl z-20"
+        @focusin="pauseSlideTimer('form-focus')"
+        @focusout="resumeSlideTimer('form-focus')"
+    >
         <!-- Top accent -->
         <div class="h-1 w-full bg-blue-600"></div>
 
@@ -283,14 +340,14 @@ const handleLogin = async () => {
             <p class="text-xs text-slate-500 tracking-wide uppercase">{{ loginSubtitle }}</p>
         </div>
 
-        <div class="flex-1 flex flex-col justify-center px-10">
-            <div class="mb-10">
+        <div class="flex-1 flex flex-col justify-center px-6 lg:px-7 xl:px-10 py-6 xl:py-0">
+            <div class="mb-6 xl:mb-10">
                 <h2 class="text-2xl font-bold text-slate-900 tracking-tight">欢迎回来</h2>
                 <p class="text-slate-400 text-xs mt-1">请输入您的凭据以访问控制台</p>
             </div>
 
             <!-- Tabs -->
-            <div class="flex space-x-8 border-b border-slate-100 mb-8">
+            <div class="flex space-x-6 xl:space-x-8 border-b border-slate-100 mb-5 xl:mb-8">
                 <button 
                     v-for="tab in [{id:'sso', name:'SSO 登录'}, {id:'password', name:'本地账号'}, {id:'apikey', name:'API Key'}].filter(t => t.id !== 'sso' || (ssoEnabled && showSsoFromBranding))" 
                     :key="tab.id"
@@ -303,7 +360,7 @@ const handleLogin = async () => {
                 </button>
             </div>
 
-            <form @submit.prevent="handleLogin" class="space-y-6">
+            <form @submit.prevent="handleLogin" class="space-y-4 xl:space-y-6">
                 <div class="space-y-4">
                     <div v-if="activeTab === 'password' || activeTab === 'sso'" class="space-y-4 animate-fade-slide-up">
                         <div class="space-y-1.5">
@@ -360,7 +417,7 @@ const handleLogin = async () => {
                 </button>
             </form>
 
-            <div class="mt-12 pt-8 border-t border-slate-50 text-center">
+            <div class="mt-8 pt-5 xl:mt-12 xl:pt-8 border-t border-slate-50 text-center">
                 <p class="text-[10px] text-slate-300 tracking-[0.3em] font-light uppercase">
                     Authorized Personnel Only
                 </p>
