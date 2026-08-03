@@ -8,6 +8,7 @@ import json
 import re
 import fnmatch
 from app.services.ai.tools.tool_compat import tool
+from app.services.ai.code_execution_service import run_shell_command_capture
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
 
 logger = logging.getLogger(__name__)
@@ -432,29 +433,15 @@ async def exec_command(command: str) -> str:
         if forbidden_reason:
             return f"安全拦截：{forbidden_reason}。该命令被禁止执行。"
 
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except:
-                pass
+        capture = await run_shell_command_capture(command, cwd=os.getcwd(), timeout_seconds=30.0)
+        if capture.timed_out:
             return f"错误：命令执行超时（最大限制 30 秒）。已强制终止命令进程。"
 
-        stdout_str = stdout.decode("utf-8", errors="ignore")
-        stderr_str = stderr.decode("utf-8", errors="ignore")
-        
-        max_output_len = 102400  # 100KB
-        truncated = False
-        if len(stdout_str) > max_output_len:
-            stdout_str = stdout_str[:max_output_len] + "\n...[部分输出已截断]..."
-            truncated = True
+        stdout_str = capture.stdout
+        stderr_str = capture.stderr
+        truncated = capture.truncated
+        if truncated:
+            stdout_str += "\n...[部分输出已截断]..."
             
         result = []
         if stdout_str:
@@ -463,9 +450,9 @@ async def exec_command(command: str) -> str:
             result.append(f"--- [stderr] ---\n{stderr_str}")
             
         if not result:
-            return f"命令执行成功，无任何控制台输出。ExitCode={proc.returncode}"
+            return f"命令执行成功，无任何控制台输出。ExitCode={capture.exit_code}"
             
-        return "\n".join(result) + (f"\nExitCode={proc.returncode}" if not truncated else "")
+        return "\n".join(result) + (f"\nExitCode={capture.exit_code}" if not truncated else "")
     except Exception as e:
         return f"命令执行异常: {str(e)}"
 

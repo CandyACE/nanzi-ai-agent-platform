@@ -101,6 +101,30 @@ def test_regular_user_cannot_access_other_workspace(tmp_path, monkeypatch):
     assert not is_path_allowed(other, user_info)
 
 
+def test_regular_user_cannot_escape_workspace_through_symlink(tmp_path, monkeypatch):
+    base = str(tmp_path / "data")
+    own_root = os.path.join(base, "agent_workspaces", "alice__1")
+    other_root = os.path.join(base, "agent_workspaces", "bob__2")
+    other_file = os.path.join(other_root, "secret.txt")
+    link = os.path.join(own_root, "linked-other")
+    os.makedirs(own_root, exist_ok=True)
+    os.makedirs(other_root, exist_ok=True)
+    with open(other_file, "w", encoding="utf-8") as handle:
+        handle.write("secret")
+    os.symlink(other_root, link, target_is_directory=True)
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: base)
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: base)
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: os.path.join(base, "agent_workspaces"),
+    )
+
+    user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
+    assert not is_path_allowed(os.path.join(link, "secret.txt"), user_info)
+
+
 def test_admin_can_access_full_data_tree(tmp_path, monkeypatch):
     base = str(tmp_path / "data")
     os.makedirs(base, exist_ok=True)

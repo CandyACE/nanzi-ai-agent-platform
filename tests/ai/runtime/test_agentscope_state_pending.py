@@ -283,3 +283,45 @@ async def test_confirmation_snapshot_resolves_stream_state_coroutine():
     )
 
     assert pending.snapshot.stream_state == {"tool_data": {"x": "stream-ready"}}
+
+
+@pytest.mark.asyncio
+async def test_confirmation_snapshot_resolves_shared_tool_call_coroutine_once():
+    from agentscope.message import ToolCallBlock
+
+    async def leaked_suggestions():
+        return []
+
+    leaked = leaked_suggestions()
+    tool_call = ToolCallBlock.model_construct(
+        id="call-shared-coroutine",
+        name="Bash",
+        input="{}",
+        suggested_rules=leaked,
+    )
+
+    class StateWithSharedToolCall:
+        def model_dump(self, mode):
+            assert mode == "python"
+            return {
+                "context": [
+                    {"tool_call": {"suggested_rules": leaked}},
+                ],
+            }
+
+    registry = PendingAgentScopeConfirmationRegistry()
+    pending = await registry.register(
+        kind="permission",
+        agent=SimpleNamespace(state=StateWithSharedToolCall()),
+        runner=SimpleNamespace(),
+        tools=[],
+        native_model=SimpleNamespace(),
+        tool_call=tool_call,
+        reply_id="reply-shared-coroutine",
+        trace_id="trace-shared-coroutine",
+        agent_name="GeneralAgent",
+    )
+
+    assert pending.snapshot.tool_call["suggested_rules"] == []
+    assert pending.snapshot.agent_state["context"][0]["tool_call"]["suggested_rules"] == []
+    assert tool_call.suggested_rules == []

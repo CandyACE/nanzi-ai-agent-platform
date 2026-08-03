@@ -3,11 +3,13 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
+import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue';
 import { renderMarkdownPreview } from '@/utils/markdown';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
-import { canWriteWorkspaceFile, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
+import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
 import { copyToClipboard } from '@/utils/clipboard';
+import { useCodeExecution } from '@/composables/chat/useCodeExecution';
 
 const pinned = defineModel<boolean>('pinned', { default: false });
 const canvasWidth = defineModel<number>('canvasWidth', { default: 520 });
@@ -20,6 +22,8 @@ const props = withDefaults(
       title: string;
       content: string;
       sourcePath?: string;
+      langName?: string;
+      runnable?: boolean;
       compareContent?: string;
       compareTitle?: string;
     } | null;
@@ -35,15 +39,32 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'analyze-diff', question: string): void;
+  (e: 'analyze-output', question: string): void;
   (e: 'content-saved', payload: { path: string; content: string }): void;
 }>();
 
 const { showToast } = useToast();
+const {
+  isRunning: isCodeRunning,
+  outputChunks: codeOutputChunks,
+  stdout: codeStdout,
+  stderr: codeStderr,
+  status: codeExecutionStatus,
+  errorMessage: codeExecutionError,
+  runExecution,
+  stopExecution,
+  resetExecution,
+} = useCodeExecution();
+const showCodeRunConfirm = ref(false);
+const codeExecutionTab = ref<'code' | 'output'>('code');
 const isFullscreen = ref(false);
 const copied = ref(false);
+const outputCopied = ref(false);
 const editorContent = ref('');
 const savedContent = ref('');
 const saving = ref(false);
+const effectiveSourcePath = ref('');
+const showSaveDialog = ref(false);
 const isMobile = ref(
   typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
 );
@@ -119,8 +140,8 @@ const downloadFile = () => {
 
 // 使用 hljs 进行代码渲染（带行号）
 const canSaveWorkspaceFile = computed(() => {
-  if (!props.data?.sourcePath) return false;
-  return canWriteWorkspaceFile(props.data.title);
+  if (!effectiveSourcePath.value) return false;
+  return canWriteWorkspaceFile(effectiveSourcePath.value);
 });
 
 const isCodeEditing = computed(() => {
@@ -378,7 +399,8 @@ const activeTab = ref<'preview' | 'code'>('preview');
 const isMarkdownFile = computed(() => {
   if (!props.data) return false;
   if (props.data.type !== 'code' && props.data.type !== 'html') return false;
-  return props.data.title.toLowerCase().endsWith('.md');
+  const title = props.data.title.toLowerCase();
+  return title.endsWith('.md') || title.includes('markdown');
 });
 
 const isMarkdownContent = computed(() => isMarkdownFile.value);
@@ -403,6 +425,103 @@ const isHtmlContent = computed(() => {
   return false;
 });
 
+const canSaveGeneratedContent = computed(() => {
+  if (!props.data || effectiveSourcePath.value) return false;
+  if (props.data.type !== 'code' && props.data.type !== 'html') return false;
+  return !!codeTextContent.value;
+});
+
+const generatedFilename = computed(() => {
+  const data = props.data;
+  if (!data) return 'generated-file.txt';
+  const type = isMarkdownContent.value ? 'markdown' : data.type;
+  return buildGeneratedWorkspaceFilename(data.title, {
+    language: data.langName,
+    type,
+  });
+});
+
+const isRunnableCode = computed(() =>
+  props.data?.type === 'code' &&
+  props.data.runnable === true &&
+  !isHtmlContent.value,
+);
+
+const requestCodeRun = () => {
+  if (!isRunnableCode.value || isCodeRunning.value) return;
+  showCodeRunConfirm.value = true;
+};
+
+const confirmCodeRun = async () => {
+  showCodeRunConfirm.value = false;
+  if (!props.data || !isRunnableCode.value) return;
+  codeExecutionTab.value = 'output';
+  await runExecution({
+    language: props.data.langName || 'python',
+    code: codeTextContent.value,
+    conversationId: props.conversationId,
+  });
+};
+
+const cancelCodeRun = () => {
+  showCodeRunConfirm.value = false;
+};
+
+const handleStopCodeRun = async () => {
+  await stopExecution();
+};
+
+const codeExecutionStatusLabel = computed(() => {
+  if (codeExecutionStatus.value === 'running') return '运行中';
+  if (codeExecutionStatus.value === 'finished') return '已结束';
+  if (codeExecutionStatus.value === 'stopped') return '已停止';
+  if (codeExecutionStatus.value === 'timeout') return '已超时';
+  if (codeExecutionStatus.value === 'error') return '执行失败';
+  return '';
+});
+
+const codeOutputText = computed(() => {
+  const sections = [`执行状态：${codeExecutionStatusLabel.value || '未开始'}`];
+  const stdoutText = codeStdout.value.map((item) => item.chunk).join('');
+  const stderrText = codeStderr.value.map((item) => item.chunk).join('');
+  if (stdoutText) sections.push(`[stdout]\n${stdoutText}`);
+  if (stderrText) sections.push(`[stderr]\n${stderrText}`);
+  if (codeExecutionError.value) sections.push(`[error]\n${codeExecutionError.value}`);
+  return sections.join('\n\n');
+});
+
+const hasCodeOutput = computed(() =>
+  codeOutputChunks.value.length > 0 || !!codeExecutionError.value,
+);
+
+const copyCodeOutput = async () => {
+  if (!hasCodeOutput.value) return;
+  const ok = await copyToClipboard(codeOutputText.value);
+  if (!ok) return;
+  outputCopied.value = true;
+  showToast('运行输出已复制', 'success');
+  setTimeout(() => {
+    outputCopied.value = false;
+  }, 2000);
+};
+
+const analyzeCodeOutput = () => {
+  if (!hasCodeOutput.value || !props.data) return;
+  const language = props.data.langName || '脚本';
+  const question = [
+    '请分析下面脚本的运行结果，判断是否存在错误、异常或潜在风险，并给出改进建议。',
+    `语言：${language}`,
+    `执行状态：${codeExecutionStatusLabel.value || '未知'}`,
+    '',
+    '脚本：',
+    `\`\`\`${language}\n${codeTextContent.value}\n\`\`\``,
+    '',
+    '运行输出：',
+    `\`\`\`text\n${codeOutputText.value}\n\`\`\``,
+  ].join('\n');
+  emit('analyze-output', question);
+};
+
 const renderedMarkdownContent = computed(() => {
   const content = canSaveWorkspaceFile.value
     ? editorContent.value
@@ -422,23 +541,74 @@ const syncEditorFromData = () => {
   const text = typeof raw === 'string' && !raw.startsWith('blob:') ? raw : '';
   editorContent.value = text;
   savedContent.value = text;
+  effectiveSourcePath.value = props.data?.sourcePath || '';
+  showSaveDialog.value = false;
+};
+
+const markContentSaved = (path: string, content: string) => {
+  effectiveSourcePath.value = path;
+  savedContent.value = content;
+  emit('content-saved', { path, content });
+  showToast('文件已保存', 'success');
 };
 
 const saveWorkspaceFile = async () => {
-  if (!props.data?.sourcePath || !canSaveWorkspaceFile.value || saving.value) return;
+  if (!effectiveSourcePath.value || !canSaveWorkspaceFile.value || saving.value) return;
   saving.value = true;
   try {
     await saveWorkspaceFileContent({
-      path: props.data.sourcePath,
+      path: effectiveSourcePath.value,
       content: editorContent.value,
       conversationId: resolveConversationId(),
     });
-    savedContent.value = editorContent.value;
-    emit('content-saved', { path: props.data.sourcePath, content: editorContent.value });
-    showToast('文件已保存', 'success');
+    markContentSaved(effectiveSourcePath.value, editorContent.value);
   } catch (err: any) {
     const errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || '保存失败';
     showToast(errMsg, 'error');
+  } finally {
+    saving.value = false;
+  }
+};
+
+const requestSaveToDirectory = () => {
+  if (!canSaveGeneratedContent.value || saving.value) return;
+  showSaveDialog.value = true;
+};
+
+const handleDirectorySave = async (payload: { parentPath: string; name: string }) => {
+  if (!canSaveGeneratedContent.value || saving.value) return;
+  const content = codeTextContent.value;
+  const parentPath = payload.parentPath.replace(/[\\/]+$/, '');
+  const fullPath = `${parentPath}/${payload.name}`;
+  saving.value = true;
+  try {
+    const response = await createWorkspaceEntry({
+      parentPath,
+      name: payload.name,
+      kind: 'file',
+      content,
+    });
+    const savedPath = response.data?.data?.path || fullPath;
+    markContentSaved(savedPath, content);
+    showSaveDialog.value = false;
+  } catch (err: any) {
+    if (err.response?.status === 409 && window.confirm('同名文件已存在，是否覆盖？')) {
+      try {
+        await saveWorkspaceFileContent({
+          path: fullPath,
+          content,
+          conversationId: resolveConversationId(),
+        });
+        markContentSaved(fullPath, content);
+        showSaveDialog.value = false;
+      } catch (overwriteError: any) {
+        const errMsg = overwriteError.response?.data?.detail || overwriteError.response?.data?.message || overwriteError.message || '保存失败';
+        showToast(errMsg, 'error');
+      }
+    } else if (err.response?.status !== 409) {
+      const errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || '保存失败';
+      showToast(errMsg, 'error');
+    }
   } finally {
     saving.value = false;
   }
@@ -488,6 +658,9 @@ const resolvedContent = computed(() => {
 // 4. Watchers & Lifecycles
 // ==========================================
 watch(() => props.data, () => {
+  showCodeRunConfirm.value = false;
+  codeExecutionTab.value = 'code';
+  resetExecution();
   resetTransform();
   syncEditorFromData();
   if (props.data?.type === 'csv') {
@@ -660,6 +833,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  void stopExecution();
   stopResize();
   mobileMq?.removeEventListener('change', syncMobile);
 });
@@ -737,34 +911,39 @@ const overlayBackdropClass = computed(() =>
       </div>
       <!-- Header -->
       <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center flex-shrink-0">
-        <div class="flex items-center space-x-2">
-          <span class="text-sm font-bold text-gray-800 dark:text-gray-200 truncate max-w-[200px] sm:max-w-[320px]">
-            {{ data?.title || '画布' }}
-          </span>
-          <span
-            class="px-1.5 py-0.5 text-[8px] rounded font-bold uppercase"
-            :class="
-              data?.type === 'html' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' :
-              data?.type === 'image' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' :
-              data?.type === 'pdf' ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400' :
-              data?.type === 'csv' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' :
-              data?.type === 'mermaid' ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' :
-              data?.type === 'compare' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' :
-              isMarkdownFile ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' :
-              'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
-            "
-          >
-            {{
-              data?.type === 'html' ? 'Application' :
-              isMarkdownFile ? 'Markdown' :
-              data?.type === 'image' ? 'Image' :
-              data?.type === 'pdf' ? 'PDF' :
-              data?.type === 'csv' ? 'CSV Table' :
-              data?.type === 'mermaid' ? 'Diagram' :
-              data?.type === 'compare' ? 'File Diff' :
-              'Code'
-            }}
-          </span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center space-x-2">
+            <span class="text-sm font-bold text-gray-800 dark:text-gray-200 truncate max-w-[200px] sm:max-w-[320px]">
+              {{ data?.title || '画布' }}
+            </span>
+            <span
+              class="px-1.5 py-0.5 text-[8px] rounded font-bold uppercase"
+              :class="
+                data?.type === 'html' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' :
+                data?.type === 'image' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' :
+                data?.type === 'pdf' ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400' :
+                data?.type === 'csv' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' :
+                data?.type === 'mermaid' ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' :
+                data?.type === 'compare' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' :
+                isMarkdownFile ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' :
+                'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+              "
+            >
+              {{
+                data?.type === 'html' ? 'Application' :
+                isMarkdownFile ? 'Markdown' :
+                data?.type === 'image' ? 'Image' :
+                data?.type === 'pdf' ? 'PDF' :
+                data?.type === 'csv' ? 'CSV Table' :
+                data?.type === 'mermaid' ? 'Diagram' :
+                data?.type === 'compare' ? 'File Diff' :
+                'Code'
+              }}
+            </span>
+          </div>
+          <div v-if="effectiveSourcePath" class="mt-1 truncate text-[10px] text-emerald-600 dark:text-emerald-400" :title="effectiveSourcePath">
+            已保存：<code class="font-mono">{{ effectiveSourcePath }}</code>
+          </div>
         </div>
         <div class="flex items-center space-x-2">
           <!-- AI Analyze Button (Only show in compare mode) -->
@@ -898,6 +1077,23 @@ const overlayBackdropClass = computed(() =>
 
       <!-- Content Area -->
       <div class="flex-1 overflow-auto p-4 custom-scrollbar bg-slate-50/50 dark:bg-gray-900/10">
+        <div
+          v-if="showCodeRunConfirm"
+          class="fixed inset-0 z-[320] flex items-center justify-center bg-black/30 p-4"
+          @click.self="cancelCodeRun"
+        >
+          <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl dark:bg-gray-800">
+            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">确认运行代码</h3>
+            <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+              这段 {{ data?.langName || '脚本' }} 将在当前会话工作区执行，最长 60 秒。是否继续？
+            </p>
+            <div class="mt-4 flex justify-end gap-2">
+              <button type="button" class="rounded-lg px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700" @click="cancelCodeRun">取消</button>
+              <button type="button" class="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary/90" @click="confirmCodeRun">确认运行</button>
+            </div>
+          </div>
+        </div>
+
         <!-- HTML Safe Sandbox Rendering / Code Switchable -->
         <template v-if="isHtmlContent">
           <!-- HTML Preview iframe -->
@@ -957,6 +1153,41 @@ const overlayBackdropClass = computed(() =>
 
         <!-- General Code Block (Not HTML) -->
         <template v-else-if="data?.type === 'code'">
+          <div v-if="data && data.runnable" class="mb-3 flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/20">
+            <div class="flex items-center gap-2 text-[11px] text-blue-700 dark:text-blue-300">
+              <span class="h-2 w-2 rounded-full" :class="isCodeRunning ? 'animate-pulse bg-amber-500' : 'bg-blue-500'" />
+              <span>{{ isCodeRunning ? '脚本正在执行，可实时查看输出' : (data.sourcePath ? '这是当前工作区的可执行脚本' : '这是当前 AI 生成的可执行脚本') }}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                v-if="!isCodeRunning"
+                type="button"
+                class="rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-blue-700"
+                @click="requestCodeRun"
+              >运行</button>
+              <button
+                v-else
+                type="button"
+                class="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-bold text-rose-600 transition hover:bg-rose-50 dark:border-rose-900/60 dark:bg-gray-800 dark:text-rose-300"
+                @click="handleStopCodeRun"
+              >停止运行</button>
+            </div>
+          </div>
+          <div v-if="isRunnableCode" class="mb-3 flex items-center gap-1 rounded-xl border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-900">
+            <button
+              type="button"
+              class="flex-1 rounded-lg px-3 py-1.5 text-[11px] font-bold transition"
+              :class="codeExecutionTab === 'code' ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100' : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+              @click="codeExecutionTab = 'code'"
+            >代码</button>
+            <button
+              type="button"
+              class="flex-1 rounded-lg px-3 py-1.5 text-[11px] font-bold transition"
+              :class="codeExecutionTab === 'output' ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100' : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+              @click="codeExecutionTab = 'output'"
+            >运行输出</button>
+          </div>
+          <template v-if="!isRunnableCode || codeExecutionTab === 'code'">
           <div v-if="canSaveWorkspaceFile" class="mb-2 flex justify-end">
             <button
               type="button"
@@ -987,6 +1218,41 @@ const overlayBackdropClass = computed(() =>
               </div>
               <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text py-4"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
             </template>
+          </div>
+
+          </template>
+
+          <div v-if="isRunnableCode && codeExecutionTab === 'output'" class="relative rounded-xl border border-gray-200 bg-gray-950 p-3 pt-12 text-xs text-gray-100 shadow-inner dark:border-gray-700">
+            <div class="absolute right-3 top-3 flex items-center gap-1.5">
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-700 bg-gray-900 text-gray-300 shadow-sm transition hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                :title="outputCopied ? '已复制' : '复制运行输出'"
+                aria-label="复制运行输出"
+                :disabled="!hasCodeOutput"
+                @click="copyCodeOutput"
+              >
+                <span>{{ outputCopied ? '✓' : '⧉' }}</span>
+              </button>
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-full border border-blue-500/60 bg-blue-600 text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                title="发送到 AI 分析"
+                aria-label="发送到 AI 分析"
+                :disabled="!hasCodeOutput"
+                @click="analyzeCodeOutput"
+              >
+                <span>✦</span>
+              </button>
+            </div>
+            <div class="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-gray-400">
+              <span>运行输出</span>
+              <span>{{ codeExecutionStatusLabel }}</span>
+            </div>
+            <pre v-if="codeStdout.length" class="whitespace-pre-wrap break-words text-emerald-300"><template v-for="(item, index) in codeStdout" :key="`stdout-${index}`">{{ item.chunk }}</template></pre>
+            <pre v-if="codeStderr.length" class="mt-2 whitespace-pre-wrap break-words text-rose-300"><template v-for="(item, index) in codeStderr" :key="`stderr-${index}`">{{ item.chunk }}</template></pre>
+            <p v-if="codeExecutionError" class="mt-2 whitespace-pre-wrap break-words text-amber-300">{{ codeExecutionError }}</p>
+            <p v-if="!codeOutputChunks.length && !codeExecutionError" class="text-gray-500">点击“运行”后，这里会显示实时输出。</p>
           </div>
         </template>
 
@@ -1226,8 +1492,28 @@ const overlayBackdropClass = computed(() =>
         </template>
       </div>
 
+      <WorkspaceDirectorySaveDialog
+        :visible="showSaveDialog"
+        :conversation-id="conversationId"
+        :default-filename="generatedFilename"
+        @close="showSaveDialog = false"
+        @save="handleDirectorySave"
+      />
+
       <!-- Action Footer -->
       <div class="p-3 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800/80 flex space-x-3 flex-shrink-0">
+        <button
+          v-if="canSaveGeneratedContent"
+          type="button"
+          @click="requestSaveToDirectory"
+          class="flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center space-x-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-900/30"
+          :disabled="saving"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
+          <span>{{ saving ? '保存中...' : '保存到目录' }}</span>
+        </button>
         <button
           @click="copyContent"
           class="flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center space-x-1.5"

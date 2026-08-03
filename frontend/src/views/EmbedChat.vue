@@ -1364,6 +1364,7 @@
       :conversation-id="conversationId"
       @close="closeCanvas"
       @analyze-diff="handleAnalyzeDiff"
+      @analyze-output="handleAnalyzeCodeOutput"
       @content-saved="handleWorkspaceContentSaved"
     />
     </div> <!-- Closing div for .flex-1.flex.flex-col -->
@@ -3893,6 +3894,13 @@ const handleAnalyzeDiff = async (question: string) => {
   userInput.value = question;
   await nextTick();
   sendMessage();
+};
+
+const handleAnalyzeCodeOutput = async (question: string) => {
+  canvasVisible.value = false;
+  userInput.value = question;
+  await nextTick();
+  chatInputRef.value?.focus();
 };
 
 const handlePreviewImageUrl = (url: string, filename: string) => {

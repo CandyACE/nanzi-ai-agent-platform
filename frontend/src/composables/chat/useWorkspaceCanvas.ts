@@ -3,6 +3,7 @@ import axios from "@/utils/axios";
 import {
   openWorkspaceFileInCanvas,
   isSameWorkspacePreviewPath,
+  resolveWorkspaceScriptLanguage,
   shouldAttachWorkspaceSourcePath,
 } from "@/utils/workspaceFilePreview";
 
@@ -13,6 +14,8 @@ export interface WorkspaceCanvasPayload {
   title: string;
   content: string;
   sourcePath?: string;
+  langName?: string;
+  runnable?: boolean;
   compareContent?: string;
   compareTitle?: string;
 }
@@ -143,11 +146,14 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
         } else {
           const content = await axios.get(resolvedUrl).then((response) => response.data);
           const filename = payload.title || filePath.split("/").pop() || "文件预览";
+          const scriptLanguage = resolveWorkspaceScriptLanguage(filename);
           canvasData.value = {
             type: payload.type,
             title: filename,
             content,
             sourcePath: shouldAttachWorkspaceSourcePath(filePath, filename) ? filePath : undefined,
+            langName: scriptLanguage || undefined,
+            runnable: !!scriptLanguage,
           };
         }
         canvasVisible.value = true;
@@ -164,7 +170,13 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
     }
 
     canvasData.value = options.normalizeDirectPayloadTitle
-      ? { type: payload.type, title: payload.title || "文件预览", content: payload.content }
+      ? {
+          type: payload.type,
+          title: payload.title || "文件预览",
+          content: payload.content,
+          langName: payload.langName,
+          runnable: payload.runnable,
+        }
       : payload;
     canvasVisible.value = true;
   };

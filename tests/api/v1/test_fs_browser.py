@@ -1,6 +1,7 @@
 import pytest
 import os
 import json
+import uuid
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.utils.fs_access import get_user_private_workspace_root, get_user_uploads_dir
@@ -244,6 +245,33 @@ async def test_create_file_in_workspace_root(db_session, valid_api_key):
         )
         assert resp.status_code == 200
         assert os.path.isfile(os.path.join(workspace_root, "root-note.md"))
+
+
+@pytest.mark.asyncio
+async def test_create_entry_rejects_symlink_target_outside_workspace(db_session, valid_api_key, tmp_path):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        me_resp = await client.get(
+            "/api/portal/auth/me",
+            headers={"X-API-Key": valid_api_key},
+        )
+        workspace_root = get_user_private_workspace_root(me_resp.json()["data"])
+        os.makedirs(workspace_root, exist_ok=True)
+
+        link_name = f"escaped-{uuid.uuid4().hex}.md"
+        link_path = os.path.join(workspace_root, link_name)
+        external_target = tmp_path / "outside-created.md"
+        os.symlink(external_target, link_path)
+        try:
+            resp = await client.post(
+                "/api/v1/chat/fs/create-entry",
+                json={"parent_path": workspace_root, "name": link_name, "kind": "file", "content": "blocked"},
+                headers={"X-API-Key": valid_api_key},
+            )
+            assert resp.status_code == 403
+            assert not external_target.exists()
+        finally:
+            if os.path.lexists(link_path):
+                os.unlink(link_path)
 
 
 @pytest.mark.asyncio

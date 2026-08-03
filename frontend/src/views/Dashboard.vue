@@ -401,7 +401,7 @@ const filteredMenuGroups = computed(() => {
           alt="Logo"
         />
         <transition name="fade">
-          <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center -translate-y-0.5">
+          <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center">
             <span class="text-[13px] font-semibold leading-tight">{{ branding.product_name }}</span>
             <component
               :is="repoUrl ? 'a' : 'span'"

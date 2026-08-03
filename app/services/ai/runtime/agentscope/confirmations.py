@@ -58,9 +58,29 @@ class PendingAgentScopeConfirmation:
         )
 
 
-async def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
+async def _serialize_tool_call(
+    tool_call: Any,
+    *,
+    awaitable_cache: dict[int, Any] | None = None,
+) -> dict[str, Any]:
     if hasattr(tool_call, "model_dump"):
-        serialized = await serialize_jsonable(tool_call, path="tool_call")
+        if hasattr(tool_call, "suggested_rules"):
+            suggested_rules = await resolve_awaitables(
+                getattr(tool_call, "suggested_rules"),
+                path="tool_call.suggested_rules",
+                awaitable_cache=awaitable_cache,
+            )
+            # Keep the live AgentScope object JSON-safe as it is also held by
+            # agent.state.context and may be persisted again after resume.
+            try:
+                tool_call.suggested_rules = suggested_rules or []
+            except Exception:
+                pass
+        serialized = await serialize_jsonable(
+            tool_call,
+            path="tool_call",
+            awaitable_cache=awaitable_cache,
+        )
         if isinstance(serialized, dict):
             return serialized
     return {
@@ -103,12 +123,24 @@ class PendingAgentScopeConfirmationRegistry:
         await self.prune()
         request_id = pending_agentscope_store.new_request_id()
         evidence_ledger = getattr(runner, "_evidence_ledger", None)
-        serialized_agent_state = await serialize_agent_state(agent.state)
-        serialized_tool_call = await _serialize_tool_call(tool_call)
-        serialized_stream_state = await serialize_jsonable(state or {}, path="stream_state")
+        awaitable_cache: dict[int, Any] = {}
+        serialized_tool_call = await _serialize_tool_call(
+            tool_call,
+            awaitable_cache=awaitable_cache,
+        )
+        serialized_agent_state = await serialize_agent_state(
+            agent.state,
+            awaitable_cache=awaitable_cache,
+        )
+        serialized_stream_state = await serialize_jsonable(
+            state or {},
+            path="stream_state",
+            awaitable_cache=awaitable_cache,
+        )
         serialized_runner_context = await serialize_jsonable(
             runner_context or {},
             path="runner_context",
+            awaitable_cache=awaitable_cache,
         )
         if not isinstance(serialized_stream_state, dict):
             serialized_stream_state = {"value": serialized_stream_state}
