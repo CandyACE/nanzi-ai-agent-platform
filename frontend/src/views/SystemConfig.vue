@@ -709,10 +709,10 @@ const getCategoryTip = (key: string) => {
     'embedchat_watermark_text': '当水印样式为【自定义文字 + 时间戳】时，在对话背景中平铺显示的自定义文本，末尾会自动追加时间戳。',
     'yovole_sso_enabled': '控制是否启用 Yovole SSO 统一登录。关闭后，登录页面的 SSO 登录将隐藏，且用户管理中的 SSO 同步按钮也将隐藏。',
     'audit_log_retention_days': '系统操作审计日志与智能体步骤级追踪 Trace 记录的物理保留天数。超出期限的整月历史分区会被自动 Drop 秒级清理以回收空间。',
-    'embed_api_url': '全局 Embedding 服务的 API 接口网关地址。在本地模式（metadata_provider = local）下，此参数将在【本地元数据搜索】与【经验案例本地向量检索】场景中用于文本特征向量的在线生成计算。',
-    'embed_api_key': '用于调用全局 Embedding 服务的身份验证 Key，请确保保密。',
-    'embed_model_name': '全局 Embedding 服务的模型名称（例如 text-embedding-3-small 或 text-embedding-ada-002）。',
-    'embed_dimensions': '全局 Embedding 模型输出的特征向量维度（例如 1024 或 1536）。需要与本地 Redis HNSW 向量索引创建时指定的维度完全一致。',
+    'embed_api_url': '全局 Embedding 服务的 API 接口网关地址。可从上方「从模型管理加载」快捷填入；在本地模式（metadata_provider = local）下用于本地元数据与经验案例向量计算，记忆摘要向量也使用此配置。',
+    'embed_api_key': '用于调用全局 Embedding 服务的身份验证 Key。从模型管理加载时无法自动填入（脱敏）；若所选模型已在模型管理配置密钥，此处可留空由运行时解析。',
+    'embed_model_name': '全局 Embedding 服务的模型名称。可从「从模型管理加载」填入 model_id（例如 bge-m3）。',
+    'embed_dimensions': '全局 Embedding 模型输出的特征向量维度（例如 1024 或 1536）。需与 Redis HNSW 索引维度一致；变更后请重建本地向量与记忆索引。',
     'knowledge_ragflow_api_url': '对接的 RAGFlow 语义检索平台后端 API 服务地址，用于常规智能体的知识库问答检索。',
     'knowledge_ragflow_api_key': '用于与 RAGFlow 知识库服务进行安全 API 调用的身份验证令牌（API Key）。',
     'knowledge_ragflow_dataset_ids': '当前系统关联绑定的默认知识库 ID（可多选），用于为智能体问答检索背景文档和常识参考。',
@@ -808,6 +808,44 @@ const testChatBiKb = async (item: ConfigItem) => {
 }
 
 const globalEmbedTesting = ref(false)
+const selectedEmbedModelId = ref('')
+const embeddingModelsForConfig = computed(() =>
+  models.value.filter((m) => m.type === 'embedding' && m.is_active)
+)
+
+const findConfigItemByKey = (key: string): ConfigItem | null => {
+  for (const list of Object.values(configGroups.value)) {
+    const item = list.find((x) => x.key === key)
+    if (item) return item
+  }
+  return null
+}
+
+const loadEmbedConfigFromModel = () => {
+  if (!canSave) return
+  const model = embeddingModelsForConfig.value.find((m) => m.id === selectedEmbedModelId.value)
+  if (!model) {
+    showToast('请先选择模型管理中的 Embedding 模型', 'info')
+    return
+  }
+  const urlItem = findConfigItemByKey('embed_api_url')
+  const nameItem = findConfigItemByKey('embed_model_name')
+  if (urlItem) {
+    urlItem.value = (model.api_base_url || '').trim()
+  }
+  if (nameItem) {
+    nameItem.value = model.model_id
+  }
+  if (model.has_api_key) {
+    showToast(
+      '已填入 API 地址与模型名。Key 因脱敏无法自动填入；模型管理已有 Key 时可留空，运行时会自动解析。请核对向量维度后保存。',
+      'success'
+    )
+  } else {
+    showToast('已填入 API 地址与模型名。请手动填写 API Key 与向量维度后保存。', 'success')
+  }
+}
+
 const testGlobalEmbed = async () => {
   globalEmbedTesting.value = true
   let url = ''
@@ -1118,7 +1156,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6 h-full flex flex-col">
+  <div class="h-full min-h-0 flex flex-col gap-6">
     <div class="flex justify-between items-center flex-shrink-0">
       <h1 class="text-2xl font-semibold text-gray-900">系统配置与诊断</h1>
       <!-- Tabs -->
@@ -1176,13 +1214,13 @@ onMounted(() => {
     </div>
 
     <!-- Content Area -->
-    <div class="flex-1 overflow-hidden">
+    <div class="flex-1 min-h-0 overflow-hidden">
 
-      <div v-if="activeTab === 'models'" class="h-full">
+      <div v-if="activeTab === 'models'" class="h-full min-h-0">
           <ModelRegistry />
       </div>
 
-      <div v-else-if="activeTab === 'tools'" class="h-full">
+      <div v-else-if="activeTab === 'tools'" class="h-full min-h-0">
           <ToolRegistry />
       </div>
 
@@ -1895,6 +1933,37 @@ onMounted(() => {
                                </div>
                           </div>
                           <div v-else-if="item.key === 'embed_api_url'">
+                              <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                                  <select
+                                    v-model="selectedEmbedModelId"
+                                    :disabled="isConfigItemDisabled(String(category), item) || embeddingModelsForConfig.length === 0"
+                                    class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:flex-1 sm:min-w-0 sm:text-sm border-gray-300 rounded-md bg-white p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                                    title="从模型管理选择已配置的 Embedding 模型"
+                                  >
+                                    <option value="" disabled>
+                                      {{ embeddingModelsForConfig.length === 0 ? '暂无可用 Embedding 模型（请先在模型管理添加）' : '从模型管理选择 Embedding…' }}
+                                    </option>
+                                    <option
+                                      v-for="m in embeddingModelsForConfig"
+                                      :key="m.id"
+                                      :value="m.id"
+                                    >
+                                      {{ m.name }} ({{ m.model_id }})
+                                    </option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    @click="loadEmbedConfigFromModel"
+                                    :disabled="isConfigItemDisabled(String(category), item) || !selectedEmbedModelId"
+                                    class="inline-flex shrink-0 items-center justify-center px-3 py-2 border border-indigo-200 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50"
+                                    title="将所选模型的 API 地址与模型名填入下方配置"
+                                  >
+                                    加载配置
+                                  </button>
+                              </div>
+                              <p class="mb-2 text-[11px] text-gray-500 leading-relaxed">
+                                快捷加载会填入 <strong>API 地址</strong>与<strong>模型名</strong>；Key 因脱敏无法自动填入（模型管理已有 Key 时可留空）；<strong>向量维度</strong>请自行核对后保存。
+                              </p>
                               <div class="flex items-center space-x-2">
                                   <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                                   <button

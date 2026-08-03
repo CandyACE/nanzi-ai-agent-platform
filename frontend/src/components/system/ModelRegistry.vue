@@ -468,7 +468,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="registry-scroll h-full overflow-y-auto pb-6 custom-scrollbar p-1">
+  <div class="registry-scroll h-full min-h-0 overflow-y-auto pb-6 p-1">
       <div class="bg-white shadow rounded-lg overflow-hidden">
          <div class="p-4 border-b border-gray-100 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <h3 class="text-lg font-medium text-gray-900">AI 模型注册表</h3>
@@ -532,7 +532,7 @@ onBeforeUnmount(() => {
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="m in filteredModels" :key="m.id" class="hover:bg-gray-50">
+                <tr v-for="m in filteredModels" :key="m.id" class="group hover:bg-gray-50">
                     <td class="px-6 py-4 min-w-[360px]">
                         <div class="model-cell">
                         <div class="text-sm font-semibold text-gray-900">{{ m.name }}</div>
@@ -592,7 +592,7 @@ onBeforeUnmount(() => {
                         </button>
                         <span v-else class="text-xs text-gray-400">—</span>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.4)]">
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white group-hover:bg-gray-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.4)]">
                         <div v-if="canSave" class="flex items-center justify-end space-x-2">
                             <button 
                                 @click="testModel(m)" 
@@ -678,12 +678,12 @@ onBeforeUnmount(() => {
                      </div>
                   </div>
                   <div>
-                     <label class="block text-sm font-medium text-gray-700">API Base URL (可选)</label>
+                     <label class="block text-sm font-medium text-gray-700">API Base URL</label>
                      <input v-model="modelForm.api_base_url" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="providerBaseUrlHint" />
                      <p class="provider-url-hint text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
                   </div>
                   <div>
-                     <label class="block text-sm font-medium text-gray-700">API Key (可选)</label>
+                     <label class="block text-sm font-medium text-gray-700">API Key</label>
                      <input v-model="modelForm.api_key" type="password" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="isEditingModel && modelForm.has_api_key ? '已配置，留空则保留原密钥' : '留空则使用系统默认密钥'" />
                   </div>
                   <div>
@@ -813,19 +813,21 @@ onBeforeUnmount(() => {
 <style scoped>
 .registry-scroll {
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
 }
 
-.custom-scrollbar::-webkit-scrollbar {
+.registry-scroll::-webkit-scrollbar {
   width: 6px;
 }
-.custom-scrollbar::-webkit-scrollbar-track {
+.registry-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
-.custom-scrollbar::-webkit-scrollbar-thumb {
+.registry-scroll::-webkit-scrollbar-thumb {
   background-color: rgba(156, 163, 175, 0.3);
   border-radius: 3px;
 }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+.registry-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.5);
 }
 

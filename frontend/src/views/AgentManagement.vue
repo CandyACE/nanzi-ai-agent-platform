@@ -2365,7 +2365,6 @@ const showCapabilityChips = (agent: AIAgent) =>
 
 const formatSkillCountLabel = (agent: AIAgent) => {
   if (!hasCapabilitySummary(agent)) return "—";
-  if (!agent.skills_custom) return "全部";
   return String(agent.skill_count ?? 0);
 };
 </script>
@@ -2786,7 +2785,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </span>
               <span
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-100"
-                :title="agent.skills_custom ? `已自定义 ${agent.skill_count ?? 0} 个技能` : '使用全部公共技能'"
+                :title="agent.skills_custom ? `已自定义 ${agent.skill_count ?? 0} 个技能` : `使用全部公共技能（${agent.skill_count ?? 0} 个，另含个人技能）`"
               >
                 <span class="text-amber-400 font-normal">技能</span>
                 <span class="tabular-nums">{{ formatSkillCountLabel(agent) }}</span>

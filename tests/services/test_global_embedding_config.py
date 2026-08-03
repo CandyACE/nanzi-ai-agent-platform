@@ -24,29 +24,45 @@ async def test_resolve_credentials_global_configured():
         assert model == "global-model-v1"
 
 @pytest.mark.asyncio
-async def test_resolve_credentials_global_fallback_memory():
-    # Test case: Global config is empty, fallback to memory config
+async def test_resolve_credentials_memory_path_uses_global():
+    # Memory callers (historically use_global=False) now also read system embed_*
     async def mock_config_get(key, default=None):
-        return None  # empty global configs
-
-    async def mock_memory_get(key, default=None):
         configs = {
-            "memory_embedding_base_url": "https://memory-embed.yovole.com/v1",
-            "memory_embedding_api_key": "memory-key",
-            "memory_embedding_model": "memory-model-v2"
+            "embed_api_url": "https://global-embed.yovole.com/v1",
+            "embed_api_key": "global-key",
+            "embed_model_name": "global-model-v1",
+            "llm_base_url": "https://should-not-use.example/v1",
+            "llm_api_key": "llm-key",
         }
         return configs.get(key, default)
 
-    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get), \
-         patch("app.services.ai.embedding_client.MemoryConfigService.get", side_effect=mock_memory_get):
+    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get):
+        url, key, model = await EmbeddingClient._resolve_credentials(use_global=False)
+        assert url == "https://global-embed.yovole.com/v1"
+        assert key == "global-key"
+        assert model == "global-model-v1"
+
+@pytest.mark.asyncio
+async def test_resolve_credentials_ignores_memory_embedding_keys():
+    # Even if memory_embedding_* exist, they must not be used
+    async def mock_config_get(key, default=None):
+        configs = {
+            "llm_base_url": "https://llm-base.yovole.com/v1",
+            "llm_api_key": "llm-key",
+            "embed_model_name": "fallback-global-model",
+        }
+        return configs.get(key, default)
+
+    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get):
+        # MemoryConfigService import was removed; ensure resolve still works via LLM fallback
         url, key, model = await EmbeddingClient._resolve_credentials(use_global=True)
-        assert url == "https://memory-embed.yovole.com/v1"
-        assert key == "memory-key"
-        assert model == "memory-model-v2"
+        assert url == "https://llm-base.yovole.com/v1"
+        assert key == "llm-key"
+        assert model == "fallback-global-model"
 
 @pytest.mark.asyncio
 async def test_resolve_credentials_global_fallback_llm():
-    # Test case: Global config and memory config are empty, fallback to LLM config
+    # Test case: Global URL/Key empty, fallback to LLM config
     async def mock_config_get(key, default=None):
         configs = {
             "llm_base_url": "https://llm-base.yovole.com/v1",
@@ -55,11 +71,7 @@ async def test_resolve_credentials_global_fallback_llm():
         }
         return configs.get(key, default)
 
-    async def mock_memory_get(key, default=None):
-        return None
-
-    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get), \
-         patch("app.services.ai.embedding_client.MemoryConfigService.get", side_effect=mock_memory_get):
+    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get):
         url, key, model = await EmbeddingClient._resolve_credentials(use_global=True)
         assert url == "https://llm-base.yovole.com/v1"
         assert key == "llm-key"
@@ -78,20 +90,15 @@ async def test_get_dimensions_global():
         assert dim == 512
 
 @pytest.mark.asyncio
-async def test_get_dimensions_global_fallback_memory():
-    # Test case: Global dimensions not configured, fallback to memory
+async def test_get_dimensions_memory_path_uses_global():
     async def mock_config_get(key, default=None):
+        if key == "embed_dimensions":
+            return "1024"
         return None
 
-    async def mock_memory_get_int(key, default=0):
-        if key == "memory_embedding_dimensions":
-            return 768
-        return default
-
-    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get), \
-         patch("app.services.ai.embedding_client.MemoryConfigService.get_int", side_effect=mock_memory_get_int):
-        dim = await EmbeddingClient.get_dimensions(use_global=True)
-        assert dim == 768
+    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get):
+        dim = await EmbeddingClient.get_dimensions(use_global=False)
+        assert dim == 1024
 
 @pytest.mark.asyncio
 async def test_get_dimensions_global_fallback_default():
@@ -99,11 +106,7 @@ async def test_get_dimensions_global_fallback_default():
     async def mock_config_get(key, default=None):
         return None
 
-    async def mock_memory_get_int(key, default=0):
-        return default
-
-    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get), \
-         patch("app.services.ai.embedding_client.MemoryConfigService.get_int", side_effect=mock_memory_get_int):
+    with patch("app.services.ai.embedding_client.ConfigService.get", side_effect=mock_config_get):
         dim = await EmbeddingClient.get_dimensions(use_global=True)
         assert dim == 1024
 
@@ -188,5 +191,3 @@ async def test_search_examples_top_k_resolution():
             authorized_dataset_ids=[1],
             top_k=8
         )
-
-

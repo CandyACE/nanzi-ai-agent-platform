@@ -172,7 +172,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto pb-6 custom-scrollbar p-1">
+  <div class="h-full min-h-0 overflow-y-auto pb-6 p-1 registry-scroll">
       <div class="bg-white shadow rounded-lg overflow-hidden">
          <div class="p-4 border-b border-gray-100 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <h3 class="text-lg font-medium text-gray-900">API 工具注册表</h3>
@@ -192,7 +192,14 @@ onMounted(() => {
                     <option value="active">启用</option>
                     <option value="inactive">停用</option>
                 </select>
-                <button v-if="hasToolFilters" type="button" class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary" @click="clearToolFilters">清空</button>
+                <button
+                    type="button"
+                    class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary"
+                    :class="{ invisible: !hasToolFilters }"
+                    :disabled="!hasToolFilters"
+                    :tabindex="hasToolFilters ? 0 : -1"
+                    @click="clearToolFilters"
+                >清空</button>
                 <button
                     v-if="canSave"
                     @click="openModal()"
@@ -332,7 +339,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 6px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(156, 163, 175, 0.3); border-radius: 3px; }
+.registry-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+}
+.registry-scroll::-webkit-scrollbar { width: 6px; }
+.registry-scroll::-webkit-scrollbar-track { background: transparent; }
+.registry-scroll::-webkit-scrollbar-thumb { background-color: rgba(156, 163, 175, 0.3); border-radius: 3px; }
 </style>

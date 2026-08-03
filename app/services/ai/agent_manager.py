@@ -261,6 +261,8 @@ class AgentManagerService:
         cls,
         version: Optional[AIAgentVersion],
         engine_config: Optional[Dict[str, Any]] = None,
+        *,
+        enabled_global_skill_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         """统计 tool / mcp / skills，以及显式绑定的数据集 / 知识库数量。"""
         knowledge_base_count = cls._count_bound_knowledge_bases(engine_config)
@@ -303,8 +305,15 @@ class AgentManagerService:
                 skills_raw = []
         if not isinstance(skills_raw, list):
             skills_raw = []
-        # skills_custom=False 表示使用全部公共 Skills，skill_count 置 None 由前端显示「全部」
-        skill_count = len([s for s in skills_raw if str(s).strip()]) if skills_custom else None
+        # skills_custom=False：使用全部公共技能，skill_count 为启用中的公共技能总数
+        if skills_custom:
+            skill_count = len([s for s in skills_raw if str(s).strip()])
+        else:
+            skill_count = (
+                int(enabled_global_skill_count)
+                if enabled_global_skill_count is not None
+                else 0
+            )
 
         return {
             "tool_count": tool_count,
@@ -543,17 +552,23 @@ class AgentManagerService:
         published_by_agent = await AgentManagerService._latest_published_versions_by_agent(
             session, local_ids
         )
+        from app.services.ai.skill_resolver import count_enabled_global_skills
+
+        enabled_global_skill_count = count_enabled_global_skills()
         for agent in visible_agents:
             engine_config = agent.engine_config if isinstance(agent.engine_config, dict) else None
             published_version = published_by_agent.get(agent.id)
             if (agent.engine_type or "LOCAL") != "LOCAL":
                 caps = AgentManagerService.summarize_version_capabilities(
-                    None, engine_config=engine_config
+                    None,
+                    engine_config=engine_config,
+                    enabled_global_skill_count=enabled_global_skill_count,
                 )
             else:
                 caps = AgentManagerService.summarize_version_capabilities(
                     published_version,
                     engine_config=engine_config,
+                    enabled_global_skill_count=enabled_global_skill_count,
                 )
             agent.tool_count = caps["tool_count"]
             agent.mcp_count = caps["mcp_count"]

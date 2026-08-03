@@ -128,6 +128,15 @@ def list_skill_metas(
     return list(merged.values())
 
 
+def count_enabled_global_skills() -> int:
+    """Count enabled platform (global) skills currently on disk."""
+    return sum(
+        1
+        for meta in list_skill_metas()
+        if meta.get("enabled", "true") != "false"
+    )
+
+
 def skill_filter_kwargs_from_config(agent_config: Any = None) -> Dict[str, Any]:
     """从 ChatConfig / dict 提取 skills 过滤参数。"""
     if agent_config is None:

@@ -131,16 +131,8 @@ async def test_connection(
                 test_key = await ConfigService.get("embed_api_key")
             if not test_model:
                 test_model = await ConfigService.get("embed_model_name", default="bge-m3")
-                
-            # 降级获取一：记忆库 Embedding 配置
-            if not test_url:
-                from app.services.memory_config_service import MemoryConfigService
-                test_url = await MemoryConfigService.get("memory_embedding_base_url")
-            if not test_key:
-                from app.services.memory_config_service import MemoryConfigService
-                test_key = await MemoryConfigService.get("memory_embedding_api_key")
-                
-            # 降级获取二：LLM 底座配置
+
+            # 降级：LLM 底座配置
             if not test_url:
                 test_url = await ConfigService.get("llm_base_url")
             if not test_key:
