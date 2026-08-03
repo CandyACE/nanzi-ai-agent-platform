@@ -2155,6 +2155,13 @@ const handleQuickQuestion = async (question: string, action: "send" | "fill" = "
   }
 };
 
+const handleAnalyzeCodeOutput = async (question: string) => {
+  canvasVisible.value = false;
+  userInput.value = question;
+  await nextTick();
+  chatInputRef.value?.focus();
+};
+
 const pendingGroundingAction = ref<Record<string, unknown> | null>(null);
 
 const handleGroundingAction = async (
@@ -4824,6 +4831,7 @@ onUnmounted(() => {
         :dock-side="canvasFromWorkspace ? 'left' : 'right'"
         :conversation-id="conversationId"
         @close="closeCanvas"
+        @analyze-output="handleAnalyzeCodeOutput"
       />
     </div>
 

@@ -59,8 +59,16 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'quick-question', question: string): void;
   (e: 'show-citation', payload: { id: string; anchor: HTMLElement }): void;
-  (e: 'open-canvas', payload: { type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare'; title: string; content: string }): void;
+  (e: 'open-canvas', payload: {
+    type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
+    title: string;
+    content: string;
+    langName?: string;
+    runnable?: boolean;
+  }): void;
 }>();
+
+const RUNNABLE_CODE_LANGUAGES = new Set(['python', 'python3', 'shell', 'sh', 'bash']);
 
 const localChartTypes = ref<Record<number, string>>({});
 
@@ -95,6 +103,7 @@ interface ContentSegment {
   title?: string;
   sqlPlan?: SqlPlanData;
   langName?: string;
+  runnable?: boolean;
 }
 
   /** 将 [ID:n] 转为可点击徽章（Markdown 渲染前保护，避免被解析器吞掉） */
@@ -414,7 +423,8 @@ const segments = computed<ContentSegment[]>(() => {
             type: 'canvas_code',
             content: codeContent,
             title: `${lang.toUpperCase()} 源代码`,
-            langName: lang
+            langName: lang,
+            runnable: RUNNABLE_CODE_LANGUAGES.has(lang),
           });
         } else {
           const langPrefix = match[10] || '';
@@ -565,10 +575,10 @@ const segments = computed<ContentSegment[]>(() => {
           </div>
         </div>
         <button
-          @click="emit('open-canvas', { type: 'code', title: segment.title || '', content: segment.content })"
+          @click="emit('open-canvas', { type: 'code', title: segment.title || '', content: segment.content, langName: segment.langName, runnable: segment.runnable })"
           class="px-3 py-1.5 text-xs font-bold text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 active:scale-95 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-all"
         >
-          查看代码
+          {{ segment.runnable ? '运行' : '查看代码' }}
         </button>
       </div>
 

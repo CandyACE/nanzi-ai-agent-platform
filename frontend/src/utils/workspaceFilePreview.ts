@@ -40,6 +40,13 @@ export function getWorkspaceFileExtension(name: string): string {
   return `.${parts.pop()!.toLowerCase()}`
 }
 
+export function resolveWorkspaceScriptLanguage(name: string): 'python' | 'shell' | null {
+  const ext = getWorkspaceFileExtension(name)
+  if (ext === '.py') return 'python'
+  if (ext === '.sh' || ext === '.bash') return 'shell'
+  return null
+}
+
 export function canPreviewWorkspaceFile(name: string): boolean {
   const ext = getWorkspaceFileExtension(name)
   if (!ext) return false
@@ -66,6 +73,45 @@ export function canWriteWorkspaceFile(name: string): boolean {
   return TEXT_EXTENSIONS.has(ext)
 }
 
+function sanitizeGeneratedFilenameBase(title: string): string {
+  const base = String(title || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()
+    ?.replace(/\.[^.]+$/, '')
+    .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+  return base || 'generated-file'
+}
+
+/** 为没有 sourcePath 的画布内容生成安全、可识别的默认文件名。 */
+export function buildGeneratedWorkspaceFilename(
+  title: string,
+  options?: { language?: string; type?: string },
+): string {
+  const existingExtension = getWorkspaceFileExtension(title)
+  if (existingExtension && TEXT_EXTENSIONS.has(existingExtension)) {
+    const filename = String(title || '').replace(/\\/g, '/').split('/').pop() || ''
+    return filename || `generated-file${existingExtension}`
+  }
+
+  const language = String(options?.language || '').toLowerCase()
+  const type = String(options?.type || '').toLowerCase()
+  let extension = '.txt'
+  if (language === 'python' || language === 'python3') extension = '.py'
+  else if (language === 'shell' || language === 'sh' || language === 'bash') extension = '.sh'
+  else if (type === 'html' || language === 'html' || /html|xml/i.test(title)) extension = '.html'
+  else if (type === 'markdown' || type === 'md' || /markdown|\.md$/i.test(title)) extension = '.md'
+  else if (language === 'javascript' || language === 'js') extension = '.js'
+  else if (language === 'typescript' || language === 'ts') extension = '.ts'
+  else if (language === 'sql') extension = '.sql'
+  else if (language === 'css') extension = '.css'
+  else if (language === 'json') extension = '.json'
+
+  return `${sanitizeGeneratedFilenameBase(title)}${extension}`
+}
+
 export function shouldAttachWorkspaceSourcePath(path: string, name: string): boolean {
   if (!canWriteWorkspaceFile(name)) return false
   const normalized = path.replace(/\\/g, '/')
@@ -73,11 +119,14 @@ export function shouldAttachWorkspaceSourcePath(path: string, name: string): boo
 }
 
 export function buildWorkspaceCanvasPayload(path: string, name: string) {
+  const scriptLanguage = resolveWorkspaceScriptLanguage(name)
   return {
     type: resolveWorkspaceCanvasType(name),
     title: name || '文件预览',
     content: `canvas://file?path=${encodeURIComponent(path)}`,
     sourcePath: shouldAttachWorkspaceSourcePath(path, name) ? path : undefined,
+    langName: scriptLanguage || undefined,
+    runnable: !!scriptLanguage,
   }
 }
 
@@ -193,11 +242,14 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
     }
 
     const resText = await axios.get(resolvedUrl).then((res) => res.data)
+    const scriptLanguage = resolveWorkspaceScriptLanguage(name)
     onOpen({
       type: payload.type,
       title: payload.title,
       content: resText,
       sourcePath: shouldAttachWorkspaceSourcePath(path, name) ? path : undefined,
+      langName: scriptLanguage || undefined,
+      runnable: !!scriptLanguage,
     })
   } catch (err: any) {
     console.error('加载工作空间文件失败:', err)

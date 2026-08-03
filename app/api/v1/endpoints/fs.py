@@ -312,7 +312,7 @@ async def list_files(
 TEXT_PREVIEW_EXTENSIONS = {
     ".txt", ".md", ".csv", ".json", ".sql", ".py", ".js", ".ts",
     ".sh", ".xml", ".html", ".css", ".yaml", ".yml", ".ini", ".conf",
-    ".log", ".env"
+    ".log", ".env", ".htm"
 }
 
 OFFICE_PREVIEW_EXTENSIONS = {
@@ -547,7 +547,11 @@ async def create_fs_entry(
 
     name = _validate_new_entry_basename(body.name)
     target = os.path.normpath(os.path.join(parent_writable, name))
-    if os.path.exists(target):
+    # Validate the final resolved target as well as the parent. This blocks a
+    # dangling or existing symlink inside the workspace from redirecting a
+    # create/write operation outside the user's private workspace.
+    assert_path_writable(os.path.realpath(target), user_info)
+    if os.path.lexists(target):
         raise HTTPException(status_code=409, detail="同名文件或目录已存在。")
 
     try:

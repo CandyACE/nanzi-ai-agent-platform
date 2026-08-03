@@ -151,7 +151,8 @@ def is_fs_virtual_root(path: str | None, base: str | None = None) -> bool:
 def normalize_fs_path(path: str, base: str | None = None) -> str | None:
     normalized = normalize_under_base(path, base or get_data_base_dir())
     if normalized:
-        return normalized
+        # Resolve symlink components before checking authorization boundaries.
+        return os.path.normpath(os.path.realpath(normalized))
 
     skills_root = get_platform_skills_root()
     if not skills_root:
@@ -163,14 +164,16 @@ def normalize_fs_path(path: str, base: str | None = None) -> str | None:
     elif raw_path == "/app/data/skills":
         data_skills = os.path.join(get_data_base_dir(), "skills")
         if os.path.isdir(data_skills):
-            return os.path.normpath(data_skills)
+            return os.path.normpath(os.path.realpath(data_skills))
 
-    candidate = os.path.abspath(raw_path)
+    candidate = os.path.realpath(os.path.abspath(raw_path))
     if candidate == skills_root or candidate.startswith(skills_root + os.sep):
         return os.path.normpath(candidate)
 
     if not os.path.isabs(raw_path):
-        joined = os.path.normpath(os.path.join(skills_root, raw_path.lstrip("./")))
+        joined = os.path.normpath(
+            os.path.realpath(os.path.join(skills_root, raw_path.lstrip("./")))
+        )
         if joined == skills_root or joined.startswith(skills_root + os.sep):
             return joined
     return None
