@@ -1,0 +1,160 @@
+<script setup lang="ts">
+import { computed } from 'vue';
+import MermaidRenderer from '@/components/MermaidRenderer.vue';
+import { renderMarkdownPreview } from '@/utils/markdown';
+import { mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
+import VChart from 'vue-echarts';
+import { use } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
+import {
+  BarChart,
+  FunnelChart,
+  GaugeChart,
+  HeatmapChart,
+  LineChart,
+  PieChart,
+  RadarChart,
+  ScatterChart,
+  TreemapChart,
+} from 'echarts/charts';
+import {
+  DataZoomComponent,
+  DatasetComponent,
+  GridComponent,
+  LegendComponent,
+  PolarComponent,
+  TitleComponent,
+  ToolboxComponent,
+  TooltipComponent,
+  VisualMapComponent,
+} from 'echarts/components';
+
+use([
+  CanvasRenderer,
+  PieChart,
+  BarChart,
+  LineChart,
+  ScatterChart,
+  GaugeChart,
+  RadarChart,
+  FunnelChart,
+  HeatmapChart,
+  TreemapChart,
+  TitleComponent,
+  TooltipComponent,
+  LegendComponent,
+  GridComponent,
+  DataZoomComponent,
+  DatasetComponent,
+  VisualMapComponent,
+  ToolboxComponent,
+  PolarComponent,
+]);
+
+type MarkdownSegment =
+  | { kind: 'markdown'; key: string; html: string }
+  | { kind: 'mermaid'; key: string; content: string }
+  | { kind: 'chart'; key: string; option: Record<string, any> };
+
+// Only explicit chart/echarts fences and valid ECharts options in json fences
+// become charts. Ordinary JSON code blocks remain ordinary Markdown code.
+const RICH_BLOCK_PATTERN =
+  /(?:<chart>([\s\S]*?)<\/chart>)|(?:```[ \t]*(chart|echarts|json)[ \t]*\r?\n([\s\S]*?)```)|(?:```[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)```)/gi;
+
+const renderParseError = (rawBlock: string, message: string) =>
+  renderMarkdownPreview(
+    `> ⚠️ **图表配置解析失败**\n> 原因：${message}\n\n${rawBlock}`,
+  );
+
+const parseSegments = (content: string): MarkdownSegment[] => {
+  const segments: MarkdownSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let segmentIndex = 0;
+
+  const appendMarkdown = (markdown: string) => {
+    if (!markdown) return;
+    segments.push({
+      kind: 'markdown',
+      key: `markdown-${segmentIndex++}`,
+      html: renderMarkdownPreview(markdown),
+    });
+  };
+
+  RICH_BLOCK_PATTERN.lastIndex = 0;
+  while ((match = RICH_BLOCK_PATTERN.exec(content)) !== null) {
+    appendMarkdown(content.slice(lastIndex, match.index));
+
+    const rawChartContent = match[1] ?? match[3];
+    const language = (match[2] || '').toLowerCase();
+    const mermaidContent = match[4];
+    const rawBlock = match[0];
+
+    if (mermaidContent !== undefined) {
+      segments.push({
+        kind: 'mermaid',
+        key: `mermaid-${segmentIndex++}`,
+        content: mermaidContent.trim(),
+      });
+    } else if (rawChartContent !== undefined) {
+      const parsed = parseChartOptions(rawChartContent.trim());
+      if (parsed.ok) {
+        segments.push({
+          kind: 'chart',
+          key: `chart-${segmentIndex++}`,
+          option: mergeChartDefaults(parsed.option),
+        });
+      } else if (language === 'json') {
+        // A normal JSON fence must not disappear when it is not an ECharts option.
+        appendMarkdown(rawBlock);
+      } else {
+        segments.push({
+          kind: 'markdown',
+          key: `chart-error-${segmentIndex++}`,
+          html: renderParseError(rawBlock, parsed.error.message),
+        });
+      }
+    }
+
+    lastIndex = RICH_BLOCK_PATTERN.lastIndex;
+  }
+
+  appendMarkdown(content.slice(lastIndex));
+  return segments;
+};
+
+const props = defineProps<{
+  content: string;
+}>();
+
+const segments = computed(() => parseSegments(props.content || ''));
+</script>
+
+<template>
+  <div class="canvas-markdown-renderer markdown-body">
+    <template v-for="segment in segments" :key="segment.key">
+      <div v-if="segment.kind === 'markdown'" v-html="segment.html" />
+      <MermaidRenderer
+        v-else-if="segment.kind === 'mermaid'"
+        :content="segment.content"
+        class="canvas-markdown-mermaid"
+      />
+      <div
+        v-else
+        class="canvas-markdown-chart my-4 w-full rounded-xl border border-gray-100 bg-white p-2 shadow-sm"
+      >
+        <VChart class="h-[360px] w-full" :option="segment.option" autoresize />
+      </div>
+    </template>
+  </div>
+</template>
+
+<style>
+.canvas-markdown-renderer .canvas-markdown-mermaid {
+  margin: 1rem 0;
+}
+
+.canvas-markdown-renderer .canvas-markdown-chart {
+  min-height: 360px;
+}
+</style>

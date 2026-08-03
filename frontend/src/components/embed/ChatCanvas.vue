@@ -3,8 +3,8 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
+import CanvasMarkdownRenderer from '@/components/embed/CanvasMarkdownRenderer.vue';
 import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue';
-import { renderMarkdownPreview } from '@/utils/markdown';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
 import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
@@ -521,14 +521,6 @@ const analyzeCodeOutput = () => {
   ].join('\n');
   emit('analyze-output', question);
 };
-
-const renderedMarkdownContent = computed(() => {
-  const content = canSaveWorkspaceFile.value
-    ? editorContent.value
-    : (props.data?.content || '');
-  if (!content) return '';
-  return renderMarkdownPreview(content);
-});
 
 const resolveConversationId = () =>
   props.conversationId
@@ -1128,7 +1120,10 @@ const overlayBackdropClass = computed(() =>
         <!-- Markdown Render Block / Code Switchable -->
         <template v-else-if="isMarkdownContent">
           <!-- Markdown Preview html -->
-          <div v-if="activeTab === 'preview'" class="w-full h-full bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-100 dark:border-gray-850 shadow-inner select-text markdown-body" v-html="renderedMarkdownContent">
+          <div v-if="activeTab === 'preview'" class="w-full h-full overflow-y-auto bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-100 dark:border-gray-850 shadow-inner select-text">
+            <CanvasMarkdownRenderer
+              :content="canSaveWorkspaceFile ? editorContent : (props.data?.content || '')"
+            />
           </div>
           <!-- Markdown Source Code -->
           <div v-else class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text min-h-[320px]">
