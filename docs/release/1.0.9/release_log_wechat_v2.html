@@ -1,0 +1,378 @@
+<!--
+  微信公众号排版 HTML — 南孜 AI 智能体平台 v1.0.9
+  风格 v2：灰蓝编辑风（slate / blue-gray，少渐变、少彩虹色块）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图可在编辑器中自行上传替换
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#334155;line-height:1.85;letter-spacing:0.3px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
+
+  <!-- 标题区：实底灰蓝，无渐变光晕 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:#1e293b;border-radius:2px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#94a3b8;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">南孜开源智能体平台 v1.0.9</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#94a3b8;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">PostgreSQL 元数据库 · MCP 作用域 · 经验库 · 模型注册表</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#1e293b;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#1e293b;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习与打磨。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #1e293b;">
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#1e293b;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#334155;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 28px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#334155;line-height:1.95;">
+      v1.0.9 的首要能力，是<strong style="color:#1e293b;">支持 PostgreSQL 作为平台智能体元数据库（主库）</strong>。此前平台元数据（系统配置、角色权限、审计日志、智能体与版本等）主要落在 MySQL；本版通过 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">DATABASE_TYPE=postgresql</code> 与独立脚本目录 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">db-prod-pg/</code>，可与 MySQL 双引擎任选其一，互不混用。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#334155;line-height:1.95;">
+      在此之上，本版继续推进 <strong style="color:#1e293b;">MCP 个人作用域与工具可用性、案例集/经验库检索、模型注册表治理与运行时身份透明、知识库与 Embed 交互、危险 Shell 护栏与事实取证分级</strong>。远端已删除的 MCP 工具会标记不可用但仍保留可见；新增 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">search_qa_examples</code> / <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">get_myinfo</code>；记忆统一全局向量模型（默认 bge-m3 / 1024）；并修掉一批管理台抖动、发布权限与流式图表对账问题。
+    </p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.8;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      变更范围：<code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;color:#475569;">a9fc4fef</code>（不含）→
+      <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;color:#475569;">cb36b9cc</code>，
+      共 <strong style="color:#1e293b;">60</strong> 个提交 · 234 个文件 · 约 +19,562 行
+    </p>
+  </section>
+
+  <!-- ========== Key Features ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;color:#64748b;letter-spacing:2px;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">WHAT'S NEW</p>
+    <p style="margin:4px 0 18px 0;font-size:20px;font-weight:bold;color:#1e293b;line-height:1.35;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">主要更新</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #1e293b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">01 · PostgreSQL 作为平台智能体元数据库</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      这是本版最重要的基础设施能力：平台主库不再只能选 MySQL，智能体与系统元数据可完整运行在 PostgreSQL 上。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">双主库可选</strong>：通过 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">DATABASE_TYPE=mysql|postgresql</code> 切换；不配置时默认仍为 MySQL。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">元数据落库</strong>：系统配置、角色权限、审计日志、智能体/版本/工具与会话等平台元数据均可落在 PG。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">独立脚本链</strong>：新增 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">db-prod-pg/</code>（V0 当前态基线 + 后续增量），与 MySQL 的 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">db-prod/</code> 并行维护，互不改写、不可混跑同一实例。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">运行时方言</strong>：SQLAlchemy / APScheduler 与 upsert、分区维护等按主库类型分支；审计相关服务同步加固。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">安装运维</strong>：HOW_TO_INSTALL / Docker / env.example 补齐 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">POSTGRES_*</code>；MySQL / PG 的 apply-sql 均支持相对路径解析。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#ffffff;border:1px solid #e2e8f0;border-left:3px solid #64748b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">02 · MCP 作用域、可用性与管理体验</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      MCP 从「只能公共接入」走向更清晰的作用域与生命周期治理，减少禁用误同步、远端工具静默消失等问题。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">个人作用域</strong>：服务支持 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">global</code> / <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">personal</code> 与创建者隔离；完善重命名迁移与权限校验。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">显示名唯一</strong>：强制服务显示名全局唯一（大小写不敏感）；历史重名自动追加 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">legacy-*</code> 标记，避免工具标识冲突。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">远端可用性</strong>：远端已删除工具标记 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">is_available=false</code> 且保留可见；与「是否发布给智能体使用」解耦。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">管理台</strong>：展示服务绑定智能体；修复禁用后误同步与发布状态生效；美化工具测试台结果与启停加载态。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">探测与权限</strong>：优化 SSE/HTTP 探测与欢迎语文案；修复普通用户发布 MCP 工具权限；更新 Skills 官方市场链接。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #1e293b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">03 · 案例集 / 经验库与内置工具</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      让「已经验证过的问答与 SQL 口径」可被智能体主动检索复用，同时补齐本人资料一类高频意图。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">案例集通用化</strong>：案例集管理全面优化与重构，支持分类（general / knowledge / data_query）。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">search_qa_examples</strong>：新增内置工具检索经验库，参考同类指标的计算口径或表关联方式。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">get_myinfo</strong>：新增本人资料查询工具，并优先处理「我的信息」类意图，减少绕路调用。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#ffffff;border:1px solid #e2e8f0;border-left:3px solid #64748b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">04 · 模型注册表、运行时身份与向量模型</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      模型侧更强调「选得准、用得清、配得稳」：唯一性约束、限额字段、使用关系与本轮实际生效模型都可查。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">注册表治理</strong>：强化安全与供应商接入；完善解析、管理台筛选与高级设置交互。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">唯一性与限额</strong>：<code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">model_id</code> 全局唯一；支持可选 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">context_size</code> / <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">max_output_tokens</code>（空值保持供应商默认）。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">使用关系</strong>：完善模型被哪些智能体/能力引用的展示，并消除管理页抖动。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">运行时身份</strong>：支持查询本轮实际生效的运行时模型身份，便于排障与对账。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">全局 Embedding</strong>：记忆与系统配置统一使用全局向量模型；默认调整为 bge-m3、维度 1024。若旧记忆索引基于其他维度，升级后需按运维指引评估重建。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #1e293b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">05 · 知识库智能体与 EmbedChat 体验</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      面向知识库配置与嵌入式聊天，减少「看不懂工具步、等得慌、手机表格难读」这类体验摩擦。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">工具步</strong>：知识库工具步增加绑定引导；默认折叠 ChatBI；支持隐藏 AI 消息外框，界面更干净。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">调度占位</strong>：Embed 思考中显示调度占位（三点跳动 + 名称淡入上滑）；优化无边框消息样式；淡化思考时间轴竖线。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">移动端表格</strong>：Markdown 表格可自适应在「卡片 / 表格」间切换；多主题表格样式一并优化。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">技能计数</strong>：智能体卡片技能数展示启用公共技能总量，统计更符合实际可用能力。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#ffffff;border:1px solid #e2e8f0;border-left:3px solid #64748b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">06 · 安全、取证与 AI 契约</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      把「别误删、别乱编、图表别截断」写成可执行护栏，而不是事后补救。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">危险 Shell 护栏</strong>：拦截危险删除类 Shell 操作，降低误删风险。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">取证分级</strong>：全局事实取证风险提示按凭证重合度分级，让用户更清楚「依据有多扎实」。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">检索与路由</strong>：优化知识库检索触发，与单轮意图解耦，减少误触发；事实证据契约与路由冲突治理。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">图表契约</strong>：统一 ECharts 输出契约，修复 quick 括号截断；流式对账支持嵌套括号，避免半截图表。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px 16px 16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #1e293b;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">07 · 运维与体验加固</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">记忆索引</strong>：索引未就绪时提供快捷创建入口，减少卡在半配置状态。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">AI 润色权限</strong>：智能体版本编辑器 AI 润色不再依赖提示词工坊权限，降低协作门槛。
+    </p>
+  </section>
+
+  <section style="margin:0 0 28px 0;padding:16px 16px 16px 18px;background:#f1f5f9;border:1px solid #cbd5e1;border-left:3px solid #334155;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e293b;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">08 · 缺陷修复</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">MCP / 运维</strong>：普通用户发布 MCP 权限；禁用后误同步；MySQL/PG apply-sql 相对路径；规范 MCP 默认服务名。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">AI / ChatBI / 知识库</strong>：工具步校验与审计日志截断；知识库检索误触发；证据契约与路由冲突；ECharts/流式嵌套括号；打开已保存报告时关闭浏览器浮层。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#334155;">前端 / Embed</strong>：鼠标悬停滚动条抖动；模型管理页抖动；多智能体开关重复 Toast；模型表单多余「可选」文案；注册表高级设置与选择器交互。
+    </p>
+  </section>
+
+  <!-- ========== Breaking Changes ========== -->
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;color:#64748b;letter-spacing:2px;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">MIGRATION</p>
+    <p style="margin:4px 0 10px 0;font-size:20px;font-weight:bold;color:#1e293b;line-height:1.35;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">升级注意</p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#475569;line-height:1.85;">从 v1.0.8 升级至 v1.0.9 时，请特别关注以下变更：</p>
+  </section>
+  <section style="margin:0 0 28px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#1e293b;color:#f8fafc;font-weight:bold;border:1px solid #1e293b;text-align:left;width:28%;">项目</th>
+          <th style="padding:10px 8px;background:#1e293b;color:#f8fafc;font-weight:bold;border:1px solid #1e293b;text-align:left;">说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">PostgreSQL 主库</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">新增 DATABASE_TYPE=postgresql 与 POSTGRES_*；智能体元数据可落 PG。MySQL 与 PG 两套脚本链并行，不可混用同一库。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">MySQL 存量</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">继续使用 MySQL 时，须执行 db-prod/ 的 V105 ~ V111。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">PostgreSQL 新装</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">新环境执行 db-prod-pg/ 基线（V0 起）；已有 PG 环境执行对应增量（本版对齐能力见 V3 ~ V9）。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">MCP 作用域 / 命名</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">新增 scope / user_id；显示名全局唯一。历史重名会追加 legacy-*，请核对接绑定配置。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">MCP 可用性</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">远端已删除工具不再静默消失，而以不可用状态保留；发布态与可用性分离。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">model_id 唯一</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">强制全局唯一；存在重复时迁移会失败，须先手工清理。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">Embedding 默认</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">记忆默认改为 bge-m3 / 1024 维；旧维度索引可能需重建。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ========== Database Upgrades ========== -->
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;color:#64748b;letter-spacing:2px;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">DATABASE</p>
+    <p style="margin:4px 0 10px 0;font-size:20px;font-weight:bold;color:#1e293b;line-height:1.35;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">数据库增量</p>
+    <p style="margin:0 0 12px 0;font-size:14px;color:#475569;line-height:1.85;">
+      <strong style="color:#1e293b;">MySQL</strong> 存量升级执行 V105~V111（共 7 个）；
+      <strong style="color:#1e293b;">PostgreSQL</strong> 新装走 db-prod-pg/（V0 基线 + V3~V9 对齐本版能力）。勿对同一实例混跑两套目录。
+    </p>
+  </section>
+  <section style="margin:0 0 14px 0;overflow-x:auto;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#1e293b;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">MySQL（db-prod/）</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#f1f5f9;color:#1e293b;font-weight:bold;border:1px solid #cbd5e1;text-align:left;width:22%;">脚本</th>
+          <th style="padding:10px 8px;background:#f1f5f9;color:#1e293b;font-weight:bold;border:1px solid #cbd5e1;text-align:left;">内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">V105</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">MCP 增加 scope / user_id；注册 MCP 管理菜单权限。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">V106</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">案例表增加 category 分类列。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">V107</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">注册内置工具 search_qa_examples。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">V108</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">MCP 显示名全局唯一；历史重名追加 legacy-*。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">V109</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">MCP 工具缓存增加 is_available（远端是否仍存在）。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">V110</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">ai_models.model_id 全局唯一（重复须先清理）。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">V111</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">可选 context_size / max_output_tokens。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section style="margin:0 0 28px 0;overflow-x:auto;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#1e293b;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">PostgreSQL（db-prod-pg/）</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#f1f5f9;color:#1e293b;font-weight:bold;border:1px solid #cbd5e1;text-align:left;width:22%;">脚本</th>
+          <th style="padding:10px 8px;background:#f1f5f9;color:#1e293b;font-weight:bold;border:1px solid #cbd5e1;text-align:left;">内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;">V0</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;">平台当前态全量基线（智能体元数据等）。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#334155;font-weight:bold;background:#f8fafc;">V3 ~ V9</td>
+          <td style="padding:10px 8px;border:1px solid #e2e8f0;color:#475569;background:#f8fafc;">与 MySQL V105~V111 能力对齐：MCP 作用域/唯一性/可用性、案例分类、经验检索、model_id 唯一与 Token 限额等。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ========== Upgrade Guide ========== -->
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;color:#64748b;letter-spacing:2px;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">UPGRADE</p>
+    <p style="margin:4px 0 14px 0;font-size:20px;font-weight:bold;color:#1e293b;line-height:1.35;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">升级步骤</p>
+  </section>
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#0f172a;border-radius:2px;">
+    <p style="margin:0 0 8px 0;font-size:13px;color:#94a3b8;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;"># 继续 MySQL 主库</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#f8fafc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">git pull &amp;&amp; pip install -r requirements.txt</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#f8fafc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">./db-prod/apply-sql-native.sh   # V105~V111</p>
+    <p style="margin:0;font-size:13px;color:#f8fafc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">cd frontend &amp;&amp; npm i &amp;&amp; npm run build</p>
+  </section>
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#0f172a;border-radius:2px;">
+    <p style="margin:0 0 8px 0;font-size:13px;color:#94a3b8;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;"># 新装 / 切换 PostgreSQL 主库</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#f8fafc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">DATABASE_TYPE=postgresql   # 并配置 POSTGRES_*</p>
+    <p style="margin:0;font-size:13px;color:#f8fafc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">./db-prod-pg/apply-sql.sh</p>
+  </section>
+
+  <!-- ========== Test Checklist ========== -->
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;color:#64748b;letter-spacing:2px;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">CHECKLIST</p>
+    <p style="margin:4px 0 14px 0;font-size:20px;font-weight:bold;color:#1e293b;line-height:1.35;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">建议验收</p>
+  </section>
+  <section style="margin:0 0 28px 0;padding:4px 0 0 0;border-top:1px solid #e2e8f0;">
+    <p style="margin:12px 0 0 0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">PostgreSQL 主库</strong>：DATABASE_TYPE=postgresql 启动成功；登录、智能体 CRUD、会话与审计读写正常；勿与 MySQL 脚本混用</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">MCP 作用域</strong>：创建个人/公共服务；显示名冲突拒绝；绑定智能体展示；禁用后不再误同步</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">MCP 可用性</strong>：远端删除工具后标记不可用仍可见；发布态与可用性独立可测</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">经验库</strong>：案例分类；search_qa_examples 可检索；get_myinfo 优先本人资料</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">模型注册表</strong>：model_id 唯一；Token 限额可选；使用关系展示；本轮运行时模型身份可查</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">Embedding / 知识库</strong>：全局向量模型生效；记忆索引未就绪时可快捷创建；工具步引导与折叠</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">EmbedChat</strong>：调度占位动效；移动端表格自适应；无边框消息样式</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">安全 / 取证 / 图表</strong>：危险 Shell 删除拦截；取证风险分级；ECharts quick 嵌套括号不截断</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;border-bottom:1px solid #f1f5f9;">☐ <strong style="color:#1e293b;">缺陷回归</strong>：滚动条/管理页不抖动；MCP 发布权限；apply-sql 相对路径；重复 Toast 已消除</p>
+    <p style="margin:0;padding:10px 0;font-size:14px;color:#475569;line-height:1.7;">☐ <strong style="color:#1e293b;">回归测试</strong>：pytest 核心用例通过</p>
+  </section>
+
+  <!-- ========== Downloads ========== -->
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:11px;font-weight:bold;color:#64748b;letter-spacing:2px;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">DOWNLOADS</p>
+    <p style="margin:4px 0 14px 0;font-size:20px;font-weight:bold;color:#1e293b;line-height:1.35;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">获取方式</p>
+  </section>
+  <section style="margin:0 0 28px 0;padding:14px 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.8;">Source：nanzi-ai-agent-platform-1.0.9.zip / .tar.gz</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.8;">Docker：nanzi-ai-agent_1.0.9_linux-amd64_*.tar / arm64_*.tar</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.8;">
+      Releases：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.9" style="color:#1e293b;text-decoration:underline;">GitHub v1.0.9</a>
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      完整说明：仓库内 <code style="font-size:12px;background:#f1f5f9;padding:2px 5px;border-radius:2px;">docs/release/1.0.9/release_log.md</code>
+    </p>
+  </section>
+
+  <!-- 页脚 -->
+  <section style="margin:8px 0 0 0;padding:8px 0;text-align:center;">
+    <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">感谢参与 v1.0.9 发布的每一位贡献者</p>
+  </section>
+
+</section>
