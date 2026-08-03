@@ -56,6 +56,27 @@ def test_knowledge_base_ready_with_binding_and_search_tool():
     assert result.missing == ()
 
 
+def test_knowledge_base_binding_rejects_disabled_search_tool():
+    from app.services.ai.agent_readiness import has_knowledge_binding
+
+    assert has_knowledge_binding(
+        capabilities=["knowledge_base"],
+        engine_config={"dataset_ids": ["kb-1"]},
+        tools=[{"name": "search_knowledge_base", "enabled": False}],
+    ) is False
+
+
+def test_knowledge_base_binding_accepts_tool_config_item():
+    from app.schemas.agent import ToolConfigItem
+    from app.services.ai.agent_readiness import has_knowledge_binding
+
+    assert has_knowledge_binding(
+        capabilities=["knowledge_base"],
+        engine_config={"dataset_ids": ["kb-1"]},
+        tools=[ToolConfigItem(name="search_knowledge_base")],
+    ) is True
+
+
 def test_general_requires_a_published_version():
     result = evaluate_agent_readiness(
         agent_type="GENERAL",

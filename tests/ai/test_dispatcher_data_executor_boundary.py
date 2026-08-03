@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from app.schemas.agent import ChatConfig
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.executors.data_executor import DataQueryExecutor
+from app.services.ai.executors.assistant_executor import AssistantExecutor
 from app.services.ai.executors.knowledge_executor import KnowledgeExecutor
 from app.services.ai.intent_service import IntentType
 from app.services.ai.turn_classifier import TurnClassification, TurnType
@@ -159,3 +160,81 @@ async def test_dispatcher_allows_explicit_knowledge_context_to_preempt_data_agen
 
     assert isinstance(executor, KnowledgeExecutor)
     assert executor.turn_classification.turn_type == TurnType.KNOWLEDGE
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_dispatcher_does_not_route_unbound_general_agent_to_knowledge_executor():
+    """意图误判为知识库时，未绑定知识库能力的普通智能体仍走通用执行器。"""
+    config = ChatConfig(
+        agent_id="general-agent",
+        agent_name="主助手",
+        agent_version=None,
+        model_name="test-model",
+        temperature=0.0,
+        system_prompt="General",
+        tools=[],
+        capabilities=["general_chat"],
+        engine_config={"dataset_ids": ["user-permitted-dataset"]},
+        engine_type="LOCAL",
+    )
+    shared_turn = (
+        TurnClassification(
+            turn_type=TurnType.KNOWLEDGE,
+            reasoning="外部意图模型误判",
+            requires_knowledge_search=True,
+            intent=IntentType.KNOWLEDGE_BASE,
+        ),
+        None,
+        0.0,
+    )
+
+    executor = await AgentDispatcher.dispatch(
+        config,
+        user_query="测试一个外部模型的性能",
+        messages=[{"role": "user", "content": "测试一个外部模型的性能"}],
+        trace_id="trace-dispatch-unbound-knowledge",
+        trace_buffer=[],
+        shared_turn=shared_turn,
+    )
+
+    assert isinstance(executor, AssistantExecutor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_dispatcher_routes_only_fully_bound_knowledge_agent_to_knowledge_executor():
+    """知识库执行器需要能力、检索工具和数据集三项绑定同时存在。"""
+    config = ChatConfig(
+        agent_id="kb-agent",
+        agent_name="知识库助手",
+        agent_version=None,
+        model_name="test-model",
+        temperature=0.0,
+        system_prompt="Knowledge",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+        engine_config={"dataset_ids": ["kb-1"]},
+        engine_type="LOCAL",
+    )
+    shared_turn = (
+        TurnClassification(
+            turn_type=TurnType.KNOWLEDGE,
+            reasoning="明确的文档问题",
+            requires_knowledge_search=True,
+            intent=IntentType.KNOWLEDGE_BASE,
+        ),
+        None,
+        0.0,
+    )
+
+    executor = await AgentDispatcher.dispatch(
+        config,
+        user_query="操作流程是什么",
+        messages=[{"role": "user", "content": "操作流程是什么"}],
+        trace_id="trace-dispatch-bound-knowledge",
+        trace_buffer=[],
+        shared_turn=shared_turn,
+    )
+
+    assert isinstance(executor, KnowledgeExecutor)

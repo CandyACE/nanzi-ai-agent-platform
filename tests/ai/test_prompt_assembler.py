@@ -80,6 +80,44 @@ def test_platform_prompt_exposes_explicit_authority_and_safe_meta_contract():
     assert "不得把 SQL、代码或物理表名" in prompt
 
 
+def test_platform_prompt_guides_generic_capability_gap_recovery():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=["Bash", "Write"]),
+    )
+
+    assert "任务能力缺口与临时方案" in prompt
+    assert "优先使用当前已绑定的专用工具、Skill、MCP 和隐式工具" in prompt
+    assert "检查命令、解释器和依赖" in prompt
+    assert "优先使用已有依赖或标准库" in prompt
+    assert "安装软件包、浏览器、命令行工具或其他运行依赖" in prompt
+    assert "等待用户确认" in prompt
+    assert "当前会话工作区" in prompt
+
+
+def test_platform_prompt_degrades_without_execution_capability():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=[]),
+    )
+
+    assert "没有对应执行能力时，只能输出方案、代码或待执行文件" in prompt
+    assert "不得声称已经完成" in prompt
+    assert "不得通过提示词自行扩大工具权限" in prompt
+    assert "注册正式工具或 MCP" in prompt
+
+
+def test_platform_prompt_keeps_existing_sensitive_tool_confirmation():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=["Bash"]),
+    )
+
+    assert "## 任务能力缺口与临时方案" in prompt
+    assert "## 工具确认" in prompt
+    assert "不得声称已执行" in prompt
+
+
 def test_platform_prompt_prefers_mermaid_for_structural_diagrams_only():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,
@@ -139,7 +177,7 @@ def test_dynamic_builder_uses_the_canonical_core_prompt_once():
         agent_config=SimpleNamespace(tools=[]),
     )
 
-    assert prompt.count("[南孜智能体平台 · 全局守则]") == 1
+    assert prompt.count("[NanZi智能体平台 · 全局守则]") == 1
     assert prompt.count("## 权威与冲突") == 1
     assert prompt.endswith("Agent prompt")
 

@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS = frozenset({
     "web_search_baidu",
     "fetch_static_web_url",
+    # Knowledge retrieval is an explicit agent binding, not a platform-wide
+    # implicit tool. This prevents a misrouted general turn from gaining KB access.
+    "search_knowledge_base",
 })
 
 
@@ -132,10 +135,6 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
                 seen.add(name)
 
-        if not tools_include_named(tools, "search_knowledge_base"):
-            kb_tool = await ToolRegistry.get_runtime_tool("search_knowledge_base")
-            if kb_tool:
-                tools.append(kb_tool)
         return tools
 
     async def _auto_invoke_search_knowledge_base(

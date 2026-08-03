@@ -16,6 +16,7 @@ from app.services.ai.executors.assistant_executor import AssistantExecutor
 from app.services.ai.executors.knowledge_executor import KnowledgeExecutor
 from app.services.ai.executors.rag_executor import RAGExecutor
 from app.services.ai.executors.openclaw_executor import OpenClawExecutor
+from app.services.ai.agent_readiness import has_knowledge_binding
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +94,22 @@ class AgentDispatcher:
         knowledge_preempts_data = (
             classification.turn_type == TurnType.KNOWLEDGE
             and (
-                not can_do_data
-                or classification.knowledge_preemption_allowed
+                has_knowledge_binding(
+                    capabilities=agent_config.capabilities,
+                    engine_config=agent_config.engine_config,
+                    tools=agent_config.tools,
+                )
+                or (can_do_data and classification.knowledge_preemption_allowed)
             )
         )
+        if classification.turn_type == TurnType.KNOWLEDGE and not knowledge_preempts_data:
+            logger.info(
+                "[Dispatcher] knowledge route unavailable; fallback=Assistant "
+                "agent=%s capabilities=%s tools=%s",
+                agent_config.agent_name,
+                agent_config.capabilities or [],
+                [getattr(tool, "name", tool) for tool in agent_config.tools or []],
+            )
         if knowledge_preempts_data:
             logger.info(
                 "[Dispatcher] turn=%s executor=Knowledge skip_intent=%s agent=%s",

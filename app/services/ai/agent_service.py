@@ -14,6 +14,7 @@ from app.services.ai.context_manager import AgentContextManager
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.agent_readiness import has_knowledge_binding
 from app.services.ai.prompt_assembler import (
     PromptAssemblyInput,
     assemble_system_prompt,
@@ -1557,24 +1558,10 @@ class AgentService:
             agent_engine_config = agent_config.engine_config or {}
             agent_bound_dataset_ids = agent_engine_config.get("dataset_ids") or []
             
-            agent_has_knowledge_tool = False
-            if getattr(agent_config, "tools", None):
-                for t in agent_config.tools:
-                    name = ""
-                    if isinstance(t, str):
-                        name = t
-                    elif hasattr(t, "name"):
-                        name = getattr(t, "name")
-                    elif isinstance(t, dict) and "name" in t:
-                        name = t["name"]
-                    if name == "search_knowledge_base":
-                        agent_has_knowledge_tool = True
-                        break
-            
-            agent_has_knowledge_binding = (
-                "knowledge_base" in (agent_config.capabilities or [])
-                and bool(agent_bound_dataset_ids)
-                and agent_has_knowledge_tool
+            agent_has_knowledge_binding = has_knowledge_binding(
+                capabilities=agent_config.capabilities,
+                engine_config={"dataset_ids": agent_bound_dataset_ids},
+                tools=agent_config.tools,
             )
             turn_kwargs = {
                 "user_query": user_query,

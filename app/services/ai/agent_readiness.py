@@ -23,11 +23,37 @@ def _enabled_tool_names(tools: Iterable[Any] | None) -> set[str]:
             if entry.get("enabled", True) is False:
                 continue
             name = str(entry.get("name") or "").strip()
+        elif hasattr(entry, "name"):
+            if getattr(entry, "enabled", True) is False:
+                continue
+            name = str(getattr(entry, "name", "") or "").strip()
         else:
             name = str(entry or "").strip()
         if name:
             names.add(name)
     return names
+
+
+def has_knowledge_binding(
+    *,
+    capabilities: Iterable[str] | None,
+    engine_config: Mapping[str, Any] | None,
+    tools: Iterable[Any] | None,
+) -> bool:
+    """Return whether an agent is actually authorized and equipped for KB retrieval.
+
+    A dataset visible through user permissions is not enough to grant a general
+    agent knowledge-search authority. The capability, explicitly configured
+    search tool, and at least one bound dataset must all be present.
+    """
+    capability_set = {str(value).strip() for value in capabilities or []}
+    config = engine_config or {}
+    dataset_ids = [value for value in config.get("dataset_ids", []) or [] if value]
+    return (
+        "knowledge_base" in capability_set
+        and KNOWLEDGE_BASE_TOOL in _enabled_tool_names(tools)
+        and bool(dataset_ids)
+    )
 
 
 def evaluate_agent_readiness(

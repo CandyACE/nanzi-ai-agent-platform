@@ -12,7 +12,7 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.mark.asyncio
-async def test_resolve_knowledge_tools_excludes_external_web_search():
+async def test_resolve_knowledge_tools_does_not_implicitly_mount_knowledge_search():
     config = ChatConfig(
         agent_id="kb-agent",
         agent_name="知识库助手",
@@ -38,13 +38,13 @@ async def test_resolve_knowledge_tools_excludes_external_web_search():
 
         return runtime_tool_spec_from_legacy_tool(tool, source_type=kwargs.get("source_type", "system"))
 
+    get_runtime_tool = AsyncMock(return_value=mock_kb)
     with patch(
         "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_system_implicit_tools",
-        return_value=[mock_baidu, mock_fetch, mock_memory],
+        return_value=[mock_baidu, mock_fetch, mock_memory, mock_kb],
     ), patch(
         "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_runtime_tool",
-        new_callable=AsyncMock,
-        return_value=mock_kb,
+        get_runtime_tool,
     ), patch(
         "app.services.ai.runners.knowledge_agent_runner.runtime_tool_spec_from_legacy_tool",
         side_effect=_as_spec,
@@ -52,8 +52,9 @@ async def test_resolve_knowledge_tools_excludes_external_web_search():
         tools = await runner._resolve_knowledge_tools()
 
     names = {tool.name for tool in tools}
-    assert "search_knowledge_base" in names
+    assert "search_knowledge_base" not in names
     assert "memory_search" in names
     assert not names & KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS
+    get_runtime_tool.assert_not_awaited()
     memory_tool = next(tool for tool in tools if tool.name == "memory_search")
     assert memory_tool.evidence_types == frozenset({EvidenceType.CONVERSATION_MEMORY})
