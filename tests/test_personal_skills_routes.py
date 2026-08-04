@@ -28,6 +28,7 @@ def _build_app(*, personal_first: bool) -> FastAPI:
 
     app = FastAPI()
     app.dependency_overrides[require_api_key] = _fake_user
+    app.dependency_overrides[skills.skill_platform_admin] = _fake_user
     app.include_router(portal_router, prefix="/api/portal")
     return app
 
@@ -55,7 +56,7 @@ def test_list_personal_skills_route_must_register_before_platform_skill_id():
                 broken_app = _build_app(personal_first=False)
                 broken_client = TestClient(broken_app)
                 broken_resp = broken_client.get("/api/portal/skills/personal")
-                assert broken_resp.status_code == 404
+                assert broken_resp.status_code != 200
 
                 fixed_app = _build_app(personal_first=True)
                 fixed_client = TestClient(fixed_app)

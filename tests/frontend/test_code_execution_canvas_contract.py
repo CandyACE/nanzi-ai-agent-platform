@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -85,15 +86,21 @@ def test_run_output_exposes_copy_and_ai_analysis_floaters():
     assert "hasCodeOutput" in source
 
 
-def test_output_analysis_is_prefilled_into_existing_chat_input():
+def test_output_analysis_is_sent_after_prefilling_existing_chat_input():
     embed = _source("frontend/src/views/EmbedChat.vue")
     debug = _source("frontend/src/views/AgentDebug.vue")
 
     for source in (embed, debug):
         assert "@analyze-output=\"handleAnalyzeCodeOutput\"" in source
         assert "handleAnalyzeCodeOutput" in source
-        assert "userInput.value = question" in source
-        assert "chatInputRef.value?.focus()" in source
+        handler = re.search(
+            r"const handleAnalyzeCodeOutput = async \(question: string\) => \{([\s\S]*?)\n\};",
+            source,
+        )
+        assert handler, "missing code-output analysis handler"
+        assert "userInput.value = question" in handler.group(1)
+        assert "await nextTick()" in handler.group(1)
+        assert "sendMessage();" in handler.group(1)
 
 
 def test_workspace_canvas_preserves_script_metadata_when_normalizing_payload():

@@ -6,6 +6,7 @@ import SkillFileTree from '../components/SkillFileTree.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MarkdownIt from 'markdown-it'
 import { copyToClipboard } from '../utils/clipboard'
+import { useUser } from '../composables/useUser'
 
 interface Skill {
   id: string
@@ -15,6 +16,31 @@ interface Skill {
   scope?: 'global' | 'personal'
   modified_at?: number
   enabled?: string
+  publication_id?: string | null
+  publication_status?: 'UNPUBLISHED' | 'PENDING' | 'PUBLISHED' | 'REJECTED' | string
+  current_public_version?: number | null
+  pending_version?: number | null
+  last_review_comment?: string | null
+  platform_skill_id?: string | null
+}
+
+interface PublicationReviewItem {
+  publication_id: string
+  version_id: string
+  name: string
+  description: string
+  skill_id: string
+  platform_skill_id?: string | null
+  version_number?: number | null
+  version_status?: string
+  publication_status?: string
+  submitted_by?: number
+  submitted_at?: string
+  content_sha256?: string
+  file_count?: number
+  total_size?: number
+  skill_md_content?: string
+  file_tree?: FileNode[]
 }
 
 interface BoundAgent {
@@ -53,6 +79,8 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
+const { hasPermission } = useUser()
+const canManagePlatformSkills = computed(() => hasPermission('element:skills:admin'))
 
 const confirmState = ref({
   show: false,
@@ -64,7 +92,9 @@ const confirmState = ref({
 
 const skills = ref<Skill[]>([])
 const personalSkills = ref<Skill[]>([])
-const activeScope = ref<'global' | 'personal'>(props.personalOnly ? 'personal' : 'global')
+const initialWorkspaceTab = props.personalOnly || !canManagePlatformSkills.value ? 'personal' : 'global'
+const activeScope = ref<'global' | 'personal'>(initialWorkspaceTab)
+const activeWorkspaceTab = ref<'global' | 'personal' | 'review'>(initialWorkspaceTab)
 const loading = ref(false)
 const searchQuery = ref('')
 const viewMode = ref<'card' | 'list'>('card')
@@ -289,6 +319,13 @@ const importingSkill = ref(false)
 const importFile = ref<File | null>(null)
 const importDragActive = ref(false)
 
+// 个人技能发布与管理员审核
+const publicationQueue = ref<PublicationReviewItem[]>([])
+const activePublicationReview = ref<PublicationReviewItem | null>(null)
+const publicationReviewLoading = ref(false)
+const publicationReviewAction = ref(false)
+const publicationReviewComment = ref('')
+
 // 获取平台技能列表
 const fetchSkills = async () => {
   loading.value = true
@@ -310,10 +347,125 @@ const fetchPersonalSkills = async () => {
     const response = await axios.get('/api/portal/skills/personal')
     if (response.data && response.data.status === 'success') {
       personalSkills.value = (response.data.data || []).map((s: Skill) => ({ ...s, scope: 'personal' as const }))
+      await Promise.all(personalSkills.value.map(async (skill) => {
+        try {
+          const statusResponse = await axios.get(`/api/portal/skills/personal/${skill.id}/publication-status`)
+          Object.assign(skill, statusResponse.data?.data || {})
+        } catch (statusError) {
+          console.warn(`Failed to load publication status for ${skill.id}`, statusError)
+        }
+      }))
     }
   } catch (e: any) {
     console.warn('获取个人技能失败', e)
     showToast(e.response?.data?.detail || '获取个人技能列表失败', 'error')
+  }
+}
+
+const submitSkillPublication = async (skill: Skill) => {
+  const isResubmission = skill.publication_status === 'PUBLISHED' || skill.publication_status === 'REJECTED'
+  try {
+    const response = await axios.post(`/api/portal/skills/personal/${skill.id}/publication-requests`)
+    if (response.data?.status === 'success') {
+      Object.assign(skill, response.data.data || {})
+      skill.publication_status = response.data.data?.publication_status || 'PENDING'
+      showToast(isResubmission ? '新版本已提交管理员审核' : '已提交管理员审核', 'success')
+    }
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '提交平台技能审核失败', 'error')
+  }
+}
+
+const withdrawSkillPublication = (skill: Skill) => {
+  confirmState.value = {
+    show: true,
+    title: '撤销技能审核',
+    message: `确定撤销个人技能 [${skill.id}] 的平台发布审核吗？个人源文件和已发布的平台版本不会受到影响。`,
+    type: 'warning',
+    onConfirm: async () => {
+      try {
+        const response = await axios.post(`/api/portal/skills/personal/${skill.id}/publication-requests/withdraw`)
+        if (response.data?.status === 'success') {
+          Object.assign(skill, response.data.data || {})
+          showToast('已撤销技能发布审核', 'success')
+        }
+      } catch (e: any) {
+        showToast(e.response?.data?.detail || '撤销技能发布审核失败', 'error')
+      } finally {
+        confirmState.value.show = false
+      }
+    },
+  }
+}
+
+const fetchPublicationQueue = async (silent = false) => {
+  publicationReviewLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/skills/publication-requests')
+    publicationQueue.value = response.data?.data || []
+  } catch (e: any) {
+    if (!silent) {
+      showToast(e.response?.data?.detail || '获取技能发布审核队列失败', 'error')
+    }
+  } finally {
+    publicationReviewLoading.value = false
+  }
+}
+
+const openPublicationReview = async () => {
+  activeWorkspaceTab.value = 'review'
+  activeScope.value = 'global'
+  await fetchPublicationQueue()
+}
+
+const closePublicationReview = () => {
+  activeWorkspaceTab.value = 'global'
+  activeScope.value = 'global'
+}
+
+const openPublicationReviewDetail = async (versionId: string) => {
+  try {
+    const response = await axios.get(`/api/portal/skills/publication-requests/${versionId}`)
+    activePublicationReview.value = response.data?.data || null
+    publicationReviewComment.value = ''
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '获取审核详情失败', 'error')
+  }
+}
+
+const approvePublicationReview = async () => {
+  if (!activePublicationReview.value) return
+  publicationReviewAction.value = true
+  try {
+    await axios.post(`/api/portal/skills/publication-requests/${activePublicationReview.value.version_id}/approve`)
+    showToast('技能已审核通过并发布到平台技能库', 'success')
+    activePublicationReview.value = null
+    await Promise.all([fetchPublicationQueue(), fetchSkills(), fetchPersonalSkills()])
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '发布平台技能失败', 'error')
+  } finally {
+    publicationReviewAction.value = false
+  }
+}
+
+const rejectPublicationReview = async () => {
+  if (!activePublicationReview.value || !publicationReviewComment.value.trim()) {
+    showToast('请填写驳回原因', 'warning')
+    return
+  }
+  publicationReviewAction.value = true
+  try {
+    await axios.post(
+      `/api/portal/skills/publication-requests/${activePublicationReview.value.version_id}/reject`,
+      { comment: publicationReviewComment.value.trim() },
+    )
+    showToast('已驳回该技能发布申请', 'success')
+    activePublicationReview.value = null
+    await Promise.all([fetchPublicationQueue(), fetchPersonalSkills()])
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '驳回技能发布申请失败', 'error')
+  } finally {
+    publicationReviewAction.value = false
   }
 }
 
@@ -1163,13 +1315,15 @@ const submitImportSkill = async () => {
 }
 
 onMounted(() => {
-  if (!props.personalOnly) {
+  if (!props.personalOnly && canManagePlatformSkills.value) {
     fetchSkills()
     fetchSkillBindings()
+    fetchPublicationQueue(true)
   }
   fetchPersonalSkills().then(() => {
     const targetId = String(props.initialSkillId || '').trim()
     if (targetId && personalSkills.value.some((s) => s.id === targetId)) {
+      activeWorkspaceTab.value = 'personal'
       activeScope.value = 'personal'
       openSkillDetail(targetId)
     }
@@ -1187,6 +1341,7 @@ watch(
       await fetchPersonalSkills()
     }
     if (personalSkills.value.some((s) => s.id === targetId)) {
+      activeWorkspaceTab.value = 'personal'
       activeScope.value = 'personal'
       openSkillDetail(targetId)
     }
@@ -1229,7 +1384,7 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div v-if="activeWorkspaceTab !== 'review'" class="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div class="relative min-w-0 flex-1">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1371,31 +1526,111 @@ onUnmounted(() => {
     <!-- Scope Tab 切换 -->
     <div v-if="!personalOnly" class="flex items-center border-b border-gray-200">
       <button
+        v-if="canManagePlatformSkills"
         id="tab-global-skills"
-        @click="activeScope = 'global'"
+        @click="activeWorkspaceTab = 'global'; activeScope = 'global'"
         class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
-        :class="activeScope === 'global' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        :class="activeWorkspaceTab === 'global' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
         </svg>
         平台技能
-        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeScope === 'global' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'">{{ skills.length }}</span>
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'global' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'">{{ skills.length }}</span>
       </button>
       <button
         id="tab-personal-skills"
-        @click="activeScope = 'personal'"
+        @click="activeWorkspaceTab = 'personal'; activeScope = 'personal'"
         class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
-        :class="activeScope === 'personal' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        :class="activeWorkspaceTab === 'personal' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
         我的技能
-        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeScope === 'personal' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">{{ personalSkills.length }}</span>
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'personal' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">{{ personalSkills.length }}</span>
+      </button>
+      <button
+        v-if="canManagePlatformSkills"
+        id="tab-skill-publication-review"
+        type="button"
+        @click="openPublicationReview"
+        class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
+        :class="activeWorkspaceTab === 'review' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.5-2.5A8.5 8.5 0 1112 3.5a8.5 8.5 0 018.5 8.5z" />
+        </svg>
+        待审核
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'review' ? 'bg-indigo-100 text-indigo-700' : publicationQueue.length ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'">{{ publicationQueue.length }}</span>
       </button>
     </div>
 
+    <!-- 管理员发布审核面板 -->
+    <div v-if="activeWorkspaceTab === 'review' && !personalOnly && canManagePlatformSkills" class="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
+      <div class="mb-4 flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+        <div>
+          <h2 class="text-lg font-bold text-gray-900">发布审核</h2>
+          <p class="mt-1 text-xs text-gray-500">通过后会复制为平台技能，个人技能不会被删除或自动替换。</p>
+        </div>
+        <button type="button" class="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" @click="closePublicationReview">
+          返回平台技能
+        </button>
+      </div>
+
+      <div v-if="publicationReviewLoading" class="py-8 text-center text-sm text-gray-400">加载审核队列...</div>
+      <div v-else-if="publicationQueue.length === 0" class="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
+        当前没有待审核的个人技能发布申请
+      </div>
+      <div v-else class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+        <div class="space-y-2">
+          <button
+            v-for="item in publicationQueue"
+            :key="item.version_id"
+            type="button"
+            class="flex w-full items-start justify-between rounded-xl border px-3 py-3 text-left transition-colors"
+            :class="activePublicationReview?.version_id === item.version_id ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:border-indigo-200 hover:bg-gray-50'"
+            @click="openPublicationReviewDetail(item.version_id)"
+          >
+            <span class="min-w-0">
+              <span class="block truncate text-sm font-semibold text-gray-800">{{ item.name }}</span>
+              <span class="mt-1 block text-[11px] text-gray-500">个人技能 {{ item.skill_id }} · v{{ item.version_number }}</span>
+            </span>
+            <span class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">待审核</span>
+          </button>
+        </div>
+
+        <div v-if="activePublicationReview" class="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h3 class="truncate text-base font-bold text-gray-900">{{ activePublicationReview.name }}</h3>
+              <p class="mt-1 text-xs text-gray-500">{{ activePublicationReview.description || '暂无描述' }}</p>
+            </div>
+            <span class="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">平台候选 v{{ activePublicationReview.version_number }}</span>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2 text-[10px] text-gray-500">
+            <span class="rounded bg-white px-2 py-1">文件 {{ activePublicationReview.file_count || 0 }}</span>
+            <span class="rounded bg-white px-2 py-1">SHA256 {{ activePublicationReview.content_sha256?.slice(0, 12) }}</span>
+          </div>
+          <pre class="mt-3 max-h-48 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-100">{{ activePublicationReview.skill_md_content || '暂无 SKILL.md 内容' }}</pre>
+          <textarea
+            v-model="publicationReviewComment"
+            rows="3"
+            class="mt-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+            placeholder="驳回时填写原因；通过时可留空"
+          />
+          <div class="mt-3 flex justify-end gap-2">
+            <button type="button" class="rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50" :disabled="publicationReviewAction" @click="rejectPublicationReview">驳回</button>
+            <button type="button" class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="publicationReviewAction" @click="approvePublicationReview">通过并发布</button>
+          </div>
+        </div>
+        <div v-else class="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-gray-200 text-sm text-gray-400">
+          请选择左侧申请查看详情
+        </div>
+      </div>
+    </div>
+
+    <template v-if="activeWorkspaceTab !== 'review'">
     <!-- 技能列表网格 -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16">
       <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
@@ -1493,6 +1728,13 @@ onUnmounted(() => {
                   v-if="skill.enabled === 'false'"
                   class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500"
                 >已禁用</span>
+                <span
+                  v-if="skill.scope === 'personal' && skill.publication_status && skill.publication_status !== 'UNPUBLISHED'"
+                  class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
+                  :class="skill.publication_status === 'PUBLISHED' ? 'bg-blue-100 text-blue-700' : skill.publication_status === 'REJECTED' ? 'bg-red-100 text-red-700' : skill.publication_status === 'WITHDRAWN' ? 'bg-gray-100 text-gray-600' : 'bg-amber-100 text-amber-700'"
+                >
+                  {{ skill.publication_status === 'PUBLISHED' ? `平台版 v${skill.current_public_version || 1}` : skill.publication_status === 'PENDING' ? '审核中' : skill.publication_status === 'REJECTED' ? '已驳回' : skill.publication_status === 'WITHDRAWN' ? '已撤销' : '' }}
+                </span>
               </div>
               <p class="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-gray-400">
                 ID: {{ skill.id }}
@@ -1529,6 +1771,29 @@ onUnmounted(() => {
         <p class="mt-4 flex-1 text-sm leading-relaxed text-gray-500 line-clamp-3">
           {{ skill.description || '暂无描述' }}
         </p>
+
+        <div v-if="skill.scope === 'personal'" class="mt-3 flex items-center justify-between gap-2">
+          <span v-if="skill.last_review_comment" class="min-w-0 truncate text-[10px] text-red-500" :title="skill.last_review_comment">驳回：{{ skill.last_review_comment }}</span>
+          <span v-else class="text-[10px] text-gray-400">个人源文件始终保留</span>
+          <div class="flex shrink-0 items-center gap-1.5">
+            <button
+              v-if="skill.publication_status !== 'PENDING'"
+              type="button"
+              class="rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
+              @click.stop="submitSkillPublication(skill)"
+            >
+              {{ skill.publication_status === 'PUBLISHED' || skill.publication_status === 'REJECTED' ? '提交新版本' : '提交为平台技能' }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="rounded-lg border border-amber-200 px-2 py-1 text-[10px] font-semibold text-amber-700 transition-colors hover:bg-amber-50"
+              @click.stop="withdrawSkillPublication(skill)"
+            >
+              撤销审核
+            </button>
+          </div>
+        </div>
 
         <!-- 卡片底部路径信息 -->
         <div
@@ -1654,6 +1919,14 @@ onUnmounted(() => {
               </td>
               <td class="px-6 py-4 text-center whitespace-nowrap" @click.stop>
                 <div class="flex items-center justify-center space-x-2 whitespace-nowrap">
+                  <button
+                    v-if="skill.scope === 'personal' && skill.publication_status === 'PENDING'"
+                    type="button"
+                    @click="withdrawSkillPublication(skill)"
+                    class="rounded-lg border border-amber-200 px-2 py-1.5 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-50 whitespace-nowrap shrink-0"
+                  >
+                    撤销审核
+                  </button>
                   <button 
                     @click="openSkillDetail(skill.id)"
                     class="px-3 py-1.5 text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
@@ -1676,6 +1949,8 @@ onUnmounted(() => {
         </table>
       </div>
     </div>
+
+    </template>
 
     <!-- 「？」帮助介绍弹窗 Modal -->
     <div 

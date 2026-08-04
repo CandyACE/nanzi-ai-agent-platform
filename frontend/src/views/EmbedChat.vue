@@ -3900,7 +3900,7 @@ const handleAnalyzeCodeOutput = async (question: string) => {
   canvasVisible.value = false;
   userInput.value = question;
   await nextTick();
-  chatInputRef.value?.focus();
+  sendMessage();
 };
 
 const handlePreviewImageUrl = (url: string, filename: string) => {
@@ -3934,6 +3934,7 @@ const resolveFileUrl = (rawUrl: string): string => {
 
 const {
   canvasVisible,
+  canvasPinned,
   canvasFromWorkspace,
   canvasData,
   handleWorkspaceFilePreview,
@@ -3945,9 +3946,6 @@ const {
   resolveFileUrl,
   showToast,
 });
-
-// 画布钉住状态（钉住后侧边固定，不遮挡对话）
-const canvasPinned = ref(false);
 
 // Long-Term Memory States
 const activeLtmPreference = ref<any>(null);

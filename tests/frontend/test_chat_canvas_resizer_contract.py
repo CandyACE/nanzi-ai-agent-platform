@@ -31,6 +31,11 @@ def test_chat_canvas_resizer_contract():
     assert "pinned = !pinned" in content
 
     embed_chat = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
-    assert "canvasPinned" in embed_chat
-    assert 'v-model:pinned="canvasPinned"' in embed_chat
     assert "canvasPinnedWidthPx" in embed_chat
+
+    for chat_surface in (
+        embed_chat,
+        (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8"),
+    ):
+        assert "canvasPinned" in chat_surface
+        assert 'v-model:pinned="canvasPinned"' in chat_surface
