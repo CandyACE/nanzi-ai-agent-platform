@@ -803,9 +803,5 @@ class ToolRegistry:
             create_skills,
             list_available_skills,
             read_skill_instruction,
-            web_search_baidu_http,
-            web_search_bing_http,
-            web_search_baidu,
-            fetch_static_web_url,
             cls._portal_notification_tool,
         ]

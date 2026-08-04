@@ -283,13 +283,13 @@
   </section>
   <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
-      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">fetch_static_web_url</code> — 拉静态页内容（证据 PUBLIC_WEB）<br/>
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">fetch_static_web_url</code> — 拉静态页内容（证据 PUBLIC_WEB；版本「联网搜索」组显式配置）<br/>
       <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">web_search_baidu_http</code> — 百度 HTTP 轻量搜索（中文优先，无浏览器）<br/>
       <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">web_search_bing_http</code> — Bing HTTP 轻量搜索（英文/国际）<br/>
       <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">web_search_baidu</code> — 百度 Playwright 搜索（慢通道兜底）<br/>
       <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">system_http_request</code> — 受校验的 HTTP 请求（method/url/headers/body；URL 有安全校验）
     </p>
-    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>公网资料补充、调内部 HTTP API（无 MCP 时的轻量方案）。SSRF 等风险靠 URL 校验与权限收紧。</p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>公网资料补充、调内部 HTTP API（无 MCP 时的轻量方案）。联网搜索四件套需在智能体版本「联网搜索」分组显式勾选，不再系统隐式注入。SSRF 等风险靠 URL 校验与权限收紧。</p>
   </section>
   <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">

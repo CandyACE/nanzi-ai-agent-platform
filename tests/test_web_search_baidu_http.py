@@ -85,11 +85,13 @@ async def test_web_search_baidu_http_no_results():
 
 
 @pytest.mark.asyncio
-async def test_web_search_baidu_http_is_system_implicit():
+async def test_web_search_baidu_http_not_system_implicit():
     from app.services.ai.tools.registry import ToolRegistry
 
     names = {
         getattr(tool, "name", None) or getattr(tool, "__name__", "")
         for tool in ToolRegistry.get_system_implicit_tools()
     }
-    assert "web_search_baidu_http" in names
+    assert "web_search_baidu_http" not in names
+    assert "web_search_baidu" not in names
+    assert "fetch_static_web_url" not in names
