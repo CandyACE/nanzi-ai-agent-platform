@@ -6,7 +6,7 @@ Container deployment files for **NanZi AI Agent Platform**.
 
 | File | Purpose |
 | :--- | :--- |
-| `Dockerfile` | API image (Python 3.10-slim), includes frontend + backend build |
+| `Dockerfile` | API image (Python 3.11-slim), includes frontend + backend build |
 | `docker-compose.yml` | Full stack (API + Redis) |
 | `docker-compose.ai-agent.yml` | API only; connect to external DB/cache via env |
 | `build_linux_x86.sh` | Build for **x86_64** Linux (`linux/amd64`), requires version parameter |

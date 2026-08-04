@@ -20,7 +20,7 @@
 
 ### 前置要求
 
-- **Python**: 3.10+
+- **Python**: 3.11+
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: `redis/redis-stack:latest` (因系统需要使用 RediSearch 模块，必须使用 Redis Stack 镜像)

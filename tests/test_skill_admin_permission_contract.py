@@ -1,4 +1,8 @@
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,3 +37,23 @@ def test_publication_notifications_target_the_dedicated_element_permission():
 
     assert source.count('ResourcePermission.resource_type == "element"') == 2
     assert source.count('ResourcePermission.resource_id == "element:skills:admin"') == 2
+
+
+def test_skill_publication_service_parses_with_python311():
+    python311 = shutil.which("python3.11")
+    if not python311:
+        pytest.skip("python3.11 is not installed in this environment")
+
+    service_path = ROOT / "app/services/skill_publication_service.py"
+    result = subprocess.run(
+        [
+            python311,
+            "-c",
+            "from pathlib import Path; import sys; compile(Path(sys.argv[1]).read_text(), sys.argv[1], 'exec')",
+            str(service_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr

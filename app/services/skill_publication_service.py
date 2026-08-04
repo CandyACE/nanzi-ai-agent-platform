@@ -213,10 +213,12 @@ def _write_platform_metadata(
             for line in match.group(1).splitlines()
             if not line.lower().startswith(("platform_skill_id:", "publication_version:", "publication_id:"))
         ]
-        replacement = f"---\n{'\n'.join([*frontmatter, *metadata])}\n---\n"
+        frontmatter_text = "\n".join([*frontmatter, *metadata])
+        replacement = f"---\n{frontmatter_text}\n---\n"
         skill_md.write_text(replacement + content[match.end():], encoding="utf-8")
     else:
-        skill_md.write_text(f"---\n{'\n'.join(metadata)}\n---\n\n{content}", encoding="utf-8")
+        metadata_text = "\n".join(metadata)
+        skill_md.write_text(f"---\n{metadata_text}\n---\n\n{content}", encoding="utf-8")
 
 
 def materialize_snapshot(

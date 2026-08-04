@@ -6,7 +6,7 @@
 
 | 文件名 | 用途 |
 | :--- | :--- |
-| `Dockerfile` | API 服务的镜像构建定义 (基于 Python 3.10-slim)。包含前后端构建流程。 |
+| `Dockerfile` | API 服务的镜像构建定义 (基于 Python 3.11-slim)。包含前后端构建流程。 |
 | `docker-compose.yml` | **全栈启动配置**。包含 API 服务及其依赖组件 (Redis) 的编排。 |
 | `docker-compose.ai-agent.yml` | **独立启动配置**。仅包含 API 服务,需通过环境变量连接外部的数据库和缓存。 |
 | `build_linux_x86.sh` | 构建 **x86_64** 服务器镜像 (`linux/amd64`)，需传入版本号参数，Mac / Linux 均可执行。 |
