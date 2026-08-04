@@ -2158,7 +2158,7 @@ const handleAnalyzeCodeOutput = async (question: string) => {
   canvasVisible.value = false;
   userInput.value = question;
   await nextTick();
-  chatInputRef.value?.focus();
+  sendMessage();
 };
 
 const pendingGroundingAction = ref<Record<string, unknown> | null>(null);
