@@ -65,6 +65,33 @@ def test_knowledge_state_prompt_describes_prefetch_and_citation_boundary():
     assert "supplement_search_allowed: false" in prompt
 
 
+def test_successful_knowledge_retrieval_removes_false_unbound_tool_notice():
+    runner = _kb_runner(kb_config)
+    response = (
+        "⚠️ 当前会话未绑定知识库检索工具（search_knowledge_base），"
+        "我暂时无法直接检索相关文档内容。\n\n"
+        "根据文档，人事档案报表需要先打开对应模块。[ID:1]"
+    )
+
+    sanitized = runner._sanitize_knowledge_tool_binding_notice(
+        response,
+        retrieval_succeeded=True,
+    )
+
+    assert "未绑定知识库检索工具" not in sanitized
+    assert "根据文档，人事档案报表需要先打开对应模块。[ID:1]" in sanitized
+
+
+def test_unsuccessful_knowledge_retrieval_keeps_unbound_tool_notice():
+    runner = _kb_runner(kb_config)
+    response = "当前会话未绑定知识库检索工具（search_knowledge_base）。"
+
+    assert runner._sanitize_knowledge_tool_binding_notice(
+        response,
+        retrieval_succeeded=False,
+    ) == response
+
+
 @pytest.mark.asyncio
 async def test_hallucination_evaluator_success():
     """验证 HallucinationEvaluator 是否能正确请求大模型并解析幻觉判定 JSON。"""

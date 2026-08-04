@@ -53,6 +53,42 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         super().__init__(*args, **kwargs)
         self._valid_citation_ids: Set[str] = set()
         self._rag_empty = False
+        self._knowledge_retrieval_succeeded = False
+
+    @staticmethod
+    def _sanitize_knowledge_tool_binding_notice(
+        text: str,
+        *,
+        retrieval_succeeded: bool,
+    ) -> str:
+        """Remove a model-generated unbound-tool notice after cited retrieval succeeded."""
+        if not retrieval_succeeded or not text:
+            return text
+
+        lines = text.splitlines()
+        kept_lines = []
+        removed = False
+        for line in lines:
+            if (
+                "search_knowledge_base" in line
+                and any(marker in line for marker in ("未绑定", "没有绑定", "不可用"))
+            ):
+                removed = True
+                continue
+            kept_lines.append(line)
+
+        if not removed:
+            return text
+        return "\n".join(kept_lines).strip()
+
+    def _build_tool_observation(self, **kwargs: Any) -> Dict[str, Any]:
+        result = super()._build_tool_observation(**kwargs)
+        if (
+            kwargs.get("tool_name") == "search_knowledge_base"
+            and result.get("citation")
+        ):
+            self._knowledge_retrieval_succeeded = True
+        return result
 
     def _is_hallucinated_knowledge_reply(self, text: str) -> bool:
         text_clean = text.strip()
@@ -389,6 +425,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         )
         from app.services.config_service import ConfigService
 
+        self._knowledge_retrieval_succeeded = False
+
         if not await is_knowledge_base_enabled():
             yield {
                 "type": "error",
@@ -512,6 +550,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 citation_count=len(self._valid_citation_ids),
                 supplement_allowed=not prefetch_had_citations,
             )
+            self._knowledge_retrieval_succeeded = prefetch_had_citations
 
         self._rag_empty = False
         if knowledge_state_prompt:
@@ -633,6 +672,21 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                     chunk = dict(chunk)
                     chunk["content"] = content
                 chunks_buffer.append(chunk)
+
+            if self._knowledge_retrieval_succeeded:
+                sanitized_full_text = self._sanitize_knowledge_tool_binding_notice(
+                    full_text,
+                    retrieval_succeeded=True,
+                )
+                if sanitized_full_text != full_text:
+                    content_chunks = [
+                        chunk for chunk in chunks_buffer if "content" in chunk
+                    ]
+                    if content_chunks:
+                        content_chunks[0]["content"] = sanitized_full_text
+                        for chunk in content_chunks[1:]:
+                            chunk["content"] = ""
+                    full_text = sanitized_full_text
 
             if not grounding_enabled:
                 passed_guard = True

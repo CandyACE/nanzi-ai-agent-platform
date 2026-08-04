@@ -35,6 +35,8 @@ const currentSlide = ref(0)
 type PauseReason = 'visual-hover' | 'form-focus'
 const pauseReasons = reactive(new Set<PauseReason>())
 const reducedMotion = ref(false)
+const mouseLightX = ref(50)
+const mouseLightY = ref(50)
 const slides = [
     {
         key: 'c',
@@ -114,6 +116,26 @@ const setPauseReason = (reason: PauseReason, paused: boolean) => {
 
 const pauseSlideTimer = (reason: PauseReason = 'visual-hover') => setPauseReason(reason, true)
 const resumeSlideTimer = (reason: PauseReason = 'visual-hover') => setPauseReason(reason, false)
+
+const resetVisualLight = () => {
+    mouseLightX.value = 50
+    mouseLightY.value = 50
+}
+
+const handleVisualMouseMove = (event: MouseEvent) => {
+    if (reducedMotion.value) return
+    const panel = event.currentTarget as HTMLElement | null
+    if (!panel) return
+    const rect = panel.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    mouseLightX.value = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100))
+    mouseLightY.value = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100))
+}
+
+const handleVisualMouseLeave = () => {
+    resumeSlideTimer('visual-hover')
+    resetVisualLight()
+}
 
 const selectSlide = (index: number) => {
     if (index < 0 || index >= slides.length) return
@@ -229,7 +251,8 @@ const handleLogin = async () => {
         class="hidden lg:flex flex-1 relative overflow-hidden transition-all duration-1000"
         :class="slides[currentSlide]?.bg || ''"
         @mouseenter="pauseSlideTimer('visual-hover')"
-        @mouseleave="resumeSlideTimer('visual-hover')"
+        @mousemove="handleVisualMouseMove"
+        @mouseleave="handleVisualMouseLeave"
     >
         <div
             class="absolute top-10 left-10 xl:top-12 xl:left-12 z-30 flex items-center gap-3"
@@ -255,6 +278,11 @@ const handleLogin = async () => {
             aria-hidden="true"
             class="absolute inset-0 opacity-[0.04]"
             style="background-image: linear-gradient(#3b82f6 1px, transparent 1px), linear-gradient(90deg, #3b82f6 1px, transparent 1px); background-size: 60px 60px;"
+        ></div>
+        <div
+            aria-hidden="true"
+            class="pointer-events-none absolute z-0 h-[360px] w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[72px] transition-[left,top] duration-300 ease-out motion-reduce:transition-none"
+            :style="{ left: `${mouseLightX}%`, top: `${mouseLightY}%`, background: 'radial-gradient(circle, rgba(96, 165, 250, 0.24) 0%, rgba(34, 211, 238, 0.08) 42%, transparent 72%)' }"
         ></div>
 
         <div class="relative w-full h-full flex items-center justify-center">

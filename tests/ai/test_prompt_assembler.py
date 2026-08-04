@@ -6,6 +6,7 @@ from app.services.ai.prompt_assembler import (
     NANZI_PROMPT_CACHE_BOUNDARY,
     PromptAssemblyInput,
     assemble_system_prompt,
+    resolve_effective_prompt_tool_names,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
 
@@ -116,6 +117,51 @@ def test_platform_prompt_keeps_existing_sensitive_tool_confirmation():
     assert "## 任务能力缺口与临时方案" in prompt
     assert "## 工具确认" in prompt
     assert "不得声称已执行" in prompt
+
+
+def test_platform_prompt_inventory_uses_effective_runtime_tool_names():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=["search_knowledge_base", "memory_search"]),
+        runtime_tool_names={"memory_search"},
+    )
+
+    assert "## 本轮可用工具" in prompt
+    assert "- memory_search:" in prompt
+    assert "- search_knowledge_base:" not in prompt
+
+
+def test_platform_prompt_inventory_keeps_configured_knowledge_tool_for_knowledge_turn():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=["search_knowledge_base"]),
+        runtime_tool_names={"search_knowledge_base"},
+    )
+
+    assert "- search_knowledge_base:" in prompt
+
+
+def test_effective_prompt_tool_names_applies_turn_gate_and_enabled_flag():
+    config = SimpleNamespace(
+        agent_name="TestAgent",
+        tools=[
+            "search_knowledge_base",
+            {"name": "execute_sql_query", "enabled": False},
+        ],
+    )
+
+    general_names = resolve_effective_prompt_tool_names(
+        config,
+        allow_knowledge_search=False,
+    )
+    knowledge_names = resolve_effective_prompt_tool_names(
+        config,
+        allow_knowledge_search=True,
+    )
+
+    assert "search_knowledge_base" not in general_names
+    assert "search_knowledge_base" in knowledge_names
+    assert "execute_sql_query" not in general_names
 
 
 def test_platform_prompt_prefers_mermaid_for_structural_diagrams_only():

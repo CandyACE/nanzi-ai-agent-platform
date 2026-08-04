@@ -21,13 +21,14 @@ from app.services.permission_service import PermissionService
 
 
 @tool
-async def search_knowledge_base(query: str, dataset_ids: Optional[str] = None) -> str:
+async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str]] = None) -> str:
     """
     Search for documents, manuals, and regulations in the Knowledge Base (RAGFlow).
 
     Args:
         query: The search keywords or question.
         dataset_ids: (Optional) One or more RAGFlow dataset IDs (32-char hex each).
+            Accepts a plain string or a list of strings from structured tool calls.
             Preferred formats:
             - Single plain ID: 4525d66cec7111f0a3d00242ac120006
             - Multiple IDs (MUST use single-quoted Python list):

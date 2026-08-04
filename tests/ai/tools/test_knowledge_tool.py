@@ -2,6 +2,7 @@ import pytest
 import json
 from unittest.mock import AsyncMock, patch
 from app.services.ai.tools.knowledge_tool import search_knowledge_base, normalize_dataset_ids
+from app.services.ai.runtime.agentscope.tools import runtime_tool_spec_from_legacy_tool
 
 
 def _config_side_effect(key, default=None):
@@ -48,6 +49,26 @@ def test_normalize_dataset_ids_json_and_python_list_strings():
     assert normalize_dataset_ids(f'["{rid}"]') == [rid]
     assert normalize_dataset_ids(f"['{rid}']") == [rid]
     assert normalize_dataset_ids([rid]) == [rid]
+
+
+def test_search_knowledge_base_runtime_schema_accepts_dataset_id_arrays():
+    spec = runtime_tool_spec_from_legacy_tool(search_knowledge_base, source_type="system")
+    dataset_schema = spec.parameters_schema["properties"]["dataset_ids"]
+
+    assert {item.get("type") for item in dataset_schema["anyOf"]} == {"string", "null", "array"}
+    array_schema = next(item for item in dataset_schema["anyOf"] if item.get("type") == "array")
+    assert array_schema["items"] == {"type": "string"}
+
+
+@pytest.mark.asyncio
+async def test_search_knowledge_base_accepts_dataset_id_arrays_from_runtime():
+    rid = "4525d66cec7111f0a3d00242ac120006"
+    p_retrieve, p_config, p_alive, mock_retrieve = _patch_search(retrieve_return=[])
+    with p_retrieve, p_config, p_alive:
+        await search_knowledge_base.ainvoke({"query": "换电", "dataset_ids": [rid]})
+
+    args, _ = mock_retrieve.call_args
+    assert args[1] == [rid]
 
 
 @pytest.mark.asyncio

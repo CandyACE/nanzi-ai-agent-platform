@@ -103,3 +103,17 @@ def test_login_execution_slide_uses_a_dark_tech_palette():
     assert "bg: 'bg-[#0b1830]'" in source
     assert "light: false" in source
     assert "bg: 'bg-[#eff6ff]'" not in source
+
+
+def test_login_mouse_follow_effect_is_limited_to_a_smooth_background_light():
+    source = login_source()
+
+    assert "const mouseLightX = ref(50)" in source
+    assert "const mouseLightY = ref(50)" in source
+    assert "const handleVisualMouseMove = (event: MouseEvent)" in source
+    assert '@mousemove="handleVisualMouseMove"' in source
+    assert '@mouseleave="handleVisualMouseLeave"' in source
+    assert "transition-[left,top] duration-300 ease-out motion-reduce:transition-none" in source
+    assert "pointer-events-none" in source
+    assert ':style="{ left: `${mouseLightX}%`, top: `${mouseLightY}%`' in source
+    assert "radial-gradient(circle, rgba(96, 165, 250, 0.24)" in source

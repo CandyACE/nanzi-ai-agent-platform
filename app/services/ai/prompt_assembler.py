@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from collections.abc import Mapping
+from typing import Any, Iterable, List, Optional
 
 from app.services.ai.agent_prompts import AgentServicePrompts
 
@@ -33,6 +34,58 @@ class PromptAssemblyInput:
     cache_reorder_enabled: bool = False
     sub_agents_context: Optional[str] = None
     quick_suggestions_forbidden: bool = False
+    runtime_tool_names: Optional[Iterable[str]] = None
+
+
+def resolve_effective_prompt_tool_names(
+    agent_config: Any,
+    *,
+    allow_knowledge_search: bool,
+) -> set[str]:
+    """Build the tool inventory shown to the model for the current turn.
+
+    The executor may remove a configured tool for a turn-specific policy. The
+    prompt must use the same effective set, otherwise the model can call a name
+    that AgentScope did not register.
+    """
+    names: set[str] = set()
+    for item in getattr(agent_config, "tools", None) or []:
+        if isinstance(item, Mapping):
+            if item.get("enabled", True) is False:
+                continue
+            name = item.get("name")
+        elif isinstance(item, str):
+            name = item
+        else:
+            if getattr(item, "enabled", True) is False:
+                continue
+            name = getattr(item, "name", "")
+        normalized = str(name or "").strip()
+        if normalized:
+            names.add(normalized)
+
+    try:
+        from app.services.ai.tools.registry import ToolRegistry
+
+        names.update(
+            str(getattr(tool, "name", "") or "").strip()
+            for tool in ToolRegistry.get_system_implicit_tools()
+            if str(getattr(tool, "name", "") or "").strip()
+        )
+    except Exception:
+        pass
+
+    try:
+        from app.services.ai.skill_resolver import is_main_general_agent
+
+        if is_main_general_agent(agent_config):
+            names.add("sub_agent_call")
+    except Exception:
+        pass
+
+    if not allow_knowledge_search:
+        names.discard("search_knowledge_base")
+    return names
 
 
 def _prepend_block(current: str, block: Optional[str]) -> str:
@@ -97,6 +150,7 @@ def _platform_global_only(params: PromptAssemblyInput) -> str:
         None,
         agent_config=params.agent_config,
         quick_suggestions_forbidden=params.quick_suggestions_forbidden,
+        runtime_tool_names=params.runtime_tool_names,
     ).strip()
 
 
@@ -147,6 +201,7 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
                 stack_without_platform or None,
                 agent_config=params.agent_config,
                 quick_suggestions_forbidden=params.quick_suggestions_forbidden,
+                runtime_tool_names=params.runtime_tool_names,
             )
     else:
         full_text = stack_without_platform

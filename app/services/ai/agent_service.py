@@ -1627,6 +1627,20 @@ class AgentService:
                     runtime_model_info=runtime_model_info.public_dict(),
                 )
 
+            # Prompt inventory must match the tools that the selected executor
+            # will expose for this turn. The raw published config may contain
+            # search_knowledge_base, while AssistantAgentRunner deliberately
+            # hides it from unrelated GENERAL turns.
+            from app.services.ai.prompt_assembler import resolve_effective_prompt_tool_names
+
+            effective_prompt_tool_names = resolve_effective_prompt_tool_names(
+                agent_config,
+                allow_knowledge_search=(
+                    turn_classification.turn_type == TurnType.KNOWLEDGE
+                    or bool(turn_classification.requires_knowledge_search)
+                ),
+            )
+
             # 3. Load Memory Context
             ltm_profile, ltm_loaded_data, memory_recall_hint, preloaded_memories_text = await self._load_memory_context(
                 user_info=user_info,
@@ -1693,6 +1707,7 @@ class AgentService:
                     cache_reorder_enabled=cache_reorder_enabled,
                     sub_agents_context=sub_agents_context,
                     quick_suggestions_forbidden=self._should_forbid_quick_suggestions(user_info),
+                    runtime_tool_names=effective_prompt_tool_names,
                 )
             )
             agent_config.system_prompt = assembled_prompt.full_text

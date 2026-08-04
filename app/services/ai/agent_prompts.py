@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 class AgentServicePrompts:
@@ -227,11 +227,12 @@ class AgentServicePrompts:
         agent_config: Any = None,
         *,
         quick_suggestions_forbidden: bool = False,
+        runtime_tool_names: Optional[Iterable[str]] = None,
     ) -> str:
         """将平台全局守则置于 system_prompt 最前（在所有编排层 prepend 之后调用），并根据绑定的工具进行动态瘦身。"""
         # 获取所有可用工具的名称
-        tool_names = set()
-        if agent_config:
+        tool_names = {str(name).strip() for name in (runtime_tool_names or ()) if str(name).strip()}
+        if runtime_tool_names is None and agent_config:
             if getattr(agent_config, "tools", None):
                 for t in agent_config.tools:
                     if isinstance(t, str):
