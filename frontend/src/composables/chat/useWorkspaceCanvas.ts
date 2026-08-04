@@ -32,6 +32,7 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
   const canvasFromWorkspace = ref(false);
   const workspaceCanvasPreviewPath = ref<string | null>(null);
   const canvasData = ref<WorkspaceCanvasPayload | null>(null);
+  const canvasPinned = ref(false);
   const activeBlobUrl = ref("");
 
   const revokeActiveBlobUrl = () => {
@@ -47,6 +48,11 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
   const closeCanvas = () => {
     canvasVisible.value = false;
     revokeActiveBlobUrl();
+  };
+
+  const showCanvas = () => {
+    canvasPinned.value = true;
+    canvasVisible.value = true;
   };
 
   watch(canvasVisible, (visible) => {
@@ -78,7 +84,7 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
       onOpen: (data) => {
         workspaceCanvasPreviewPath.value = payload.path;
         canvasData.value = data as WorkspaceCanvasPayload;
-        canvasVisible.value = true;
+        showCanvas();
       },
     });
   };
@@ -101,7 +107,7 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
           compareContent: rightContent,
           compareTitle: rightPath.split("/").pop() || "对比文件",
         };
-        canvasVisible.value = true;
+        showCanvas();
       } catch (error: any) {
         console.error("加载对比文件失败:", error);
         let message = "加载对比文件失败";
@@ -156,7 +162,7 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
             runnable: !!scriptLanguage,
           };
         }
-        canvasVisible.value = true;
+        showCanvas();
       } catch (error: any) {
         console.error("加载本地文件失败:", error);
         let message = "加载本地文件失败";
@@ -178,11 +184,12 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
           runnable: payload.runnable,
         }
       : payload;
-    canvasVisible.value = true;
+    showCanvas();
   };
 
   return {
     canvasVisible,
+    canvasPinned,
     canvasFromWorkspace,
     canvasData,
     handleWorkspaceFilePreview,

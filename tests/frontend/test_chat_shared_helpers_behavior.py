@@ -80,14 +80,22 @@ const canvas = api.useWorkspaceCanvas({
   normalizeDirectPayloadTitle: true
 });
 await canvas.handleWorkspaceFilePreview({ path: '/workspace/a.md', name: 'a.md' });
-const firstOpen = { visible: canvas.canvasVisible.value, title: canvas.canvasData.value.title };
+const firstOpen = {
+  visible: canvas.canvasVisible.value,
+  title: canvas.canvasData.value.title,
+  pinned: canvas.canvasPinned.value
+};
+canvas.canvasPinned.value = false;
+const manuallyUnpinned = canvas.canvasPinned.value;
 await canvas.handleWorkspaceFilePreview({ path: '/workspace/a.md', name: 'a.md' });
 const toggledClosed = canvas.canvasVisible.value;
 await canvas.handleOpenCanvas({ type: 'html', title: '', content: '<p>x</p>', sourcePath: '/workspace/a.md' });
 return {
   firstOpen,
+  manuallyUnpinned,
   toggledClosed,
-  direct: canvas.canvasData.value
+  direct: canvas.canvasData.value,
+  reopenedPinned: canvas.canvasPinned.value
 };
 """,
         """
@@ -113,9 +121,11 @@ const requireModule = id => {
 """,
     )
 
-    assert result["firstOpen"] == {"visible": True, "title": "a.md"}
+    assert result["firstOpen"] == {"visible": True, "title": "a.md", "pinned": True}
+    assert result["manuallyUnpinned"] is False
     assert result["toggledClosed"] is False
     assert result["direct"] == {"type": "html", "title": "文件预览", "content": "<p>x</p>"}
+    assert result["reopenedPinned"] is True
 
 
 def test_saved_report_shared_helpers_keep_parameter_and_error_behavior():

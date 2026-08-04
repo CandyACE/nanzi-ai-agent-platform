@@ -1813,6 +1813,7 @@ const resolveFileUrl = (url: string): string => {
 
 const {
   canvasVisible,
+  canvasPinned,
   canvasFromWorkspace,
   canvasData,
   handleWorkspaceFilePreview,
@@ -2032,8 +2033,6 @@ const showQuotaStatusInChat = async () => {
   await nextTick();
   scrollToBottom(true);
 };
-
-const canvasPinned = ref(false);
 
 const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   const normalizedCmd = normalizeAgentSwitchCommand(cmd, agents.value);
