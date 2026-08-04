@@ -12,6 +12,66 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.mark.asyncio
+async def test_resolve_knowledge_tools_keeps_explicit_web_tools():
+    config = ChatConfig(
+        agent_id="kb-agent",
+        agent_name="知识库助手",
+        model_name="test",
+        temperature=0.0,
+        system_prompt="kb",
+        tools=["web_search_baidu", "fetch_static_web_url"],
+        capabilities=["knowledge_base"],
+    )
+    runner = KnowledgeAgentRunner(config=config, trace_id="t-explicit-web", trace_buffer=[])
+    explicit_baidu = MagicMock()
+    explicit_baidu.name = "web_search_baidu"
+    explicit_fetch = MagicMock()
+    explicit_fetch.name = "fetch_static_web_url"
+
+    with patch(
+        "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_runtime_tools",
+        AsyncMock(return_value=[explicit_baidu, explicit_fetch]),
+    ) as get_runtime_tools, patch(
+        "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_system_implicit_tools",
+        return_value=[],
+    ):
+        tools = await runner._resolve_knowledge_tools()
+
+    get_runtime_tools.assert_awaited_once_with(["web_search_baidu", "fetch_static_web_url"])
+    assert {tool.name for tool in tools} == {
+        "web_search_baidu",
+        "fetch_static_web_url",
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_knowledge_tools_keeps_explicit_search_tool():
+    config = ChatConfig(
+        agent_id="kb-agent",
+        agent_name="知识库助手",
+        model_name="test",
+        temperature=0.0,
+        system_prompt="kb",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+    )
+    runner = KnowledgeAgentRunner(config=config, trace_id="t-explicit-kb", trace_buffer=[])
+    explicit_search = MagicMock(name="search_knowledge_base")
+
+    with patch(
+        "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_runtime_tools",
+        AsyncMock(return_value=[explicit_search]),
+    ) as get_runtime_tools, patch(
+        "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_system_implicit_tools",
+        return_value=[],
+    ):
+        tools = await runner._resolve_knowledge_tools()
+
+    get_runtime_tools.assert_awaited_once_with(["search_knowledge_base"])
+    assert tools == [explicit_search]
+
+
+@pytest.mark.asyncio
 async def test_resolve_knowledge_tools_does_not_implicitly_mount_knowledge_search():
     config = ChatConfig(
         agent_id="kb-agent",

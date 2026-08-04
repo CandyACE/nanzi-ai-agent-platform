@@ -42,7 +42,9 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
 
     def fake_agent(**kwargs):
         captured_agent_kwargs.update(kwargs)
-        return MagicMock(name="AgentInstance")
+        inst = MagicMock()
+        inst.name = "AgentInstance"
+        return inst
 
     monkeypatch.setattr(
         "app.services.ai.runners.assistant_agent_runner.get_local_workspace",
@@ -53,7 +55,7 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
         build_toolkit,
     )
     monkeypatch.setattr(
-        "app.services.ai.runners.assistant_agent_runner.Agent",
+        "agentscope.agent.Agent",
         fake_agent,
     )
     monkeypatch.setattr(
@@ -105,7 +107,7 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
 
 
 @pytest.mark.asyncio
-async def test_general_turn_does_not_expose_knowledge_search_tool(monkeypatch):
+async def test_general_turn_exposes_configured_knowledge_search_tool(monkeypatch):
     from app.schemas.agent import ChatConfig
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -162,7 +164,7 @@ async def test_general_turn_does_not_expose_knowledge_search_tool(monkeypatch):
 
     await runner._resolve_runtime_tools_from_config()
 
-    assert captured_tool_names == ["get_current_time"]
+    assert captured_tool_names == ["search_knowledge_base", "get_current_time"]
 
 
 @pytest.mark.asyncio
@@ -308,7 +310,7 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
         config=config,
         trace_id="trace-multiturn",
         trace_buffer=[],
-        user_info={"user_id": "u-multiturn"},
+        user_info={"user_id": "10001"},
         conversation_id="c-multiturn",
     )
 

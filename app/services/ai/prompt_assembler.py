@@ -39,14 +39,12 @@ class PromptAssemblyInput:
 
 def resolve_effective_prompt_tool_names(
     agent_config: Any,
-    *,
-    allow_knowledge_search: bool,
 ) -> set[str]:
     """Build the tool inventory shown to the model for the current turn.
 
-    The executor may remove a configured tool for a turn-specific policy. The
-    prompt must use the same effective set, otherwise the model can call a name
-    that AgentScope did not register.
+    The published tool configuration is the source of truth. Disabled tools
+    are excluded so the model cannot call a name that AgentScope did not
+    register.
     """
     names: set[str] = set()
     for item in getattr(agent_config, "tools", None) or []:
@@ -83,8 +81,6 @@ def resolve_effective_prompt_tool_names(
     except Exception:
         pass
 
-    if not allow_knowledge_search:
-        names.discard("search_knowledge_base")
     return names
 
 

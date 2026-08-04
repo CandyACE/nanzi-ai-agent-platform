@@ -41,7 +41,8 @@ KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS = frozenset({
     "web_search_baidu",
     "fetch_static_web_url",
     # Knowledge retrieval is an explicit agent binding, not a platform-wide
-    # implicit tool. This prevents a misrouted general turn from gaining KB access.
+    # implicit tool. Explicit entries from config.tools are loaded above and
+    # are not removed by this implicit-tool exclusion.
     "search_knowledge_base",
 })
 

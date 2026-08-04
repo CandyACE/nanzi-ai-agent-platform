@@ -141,7 +141,7 @@ def test_platform_prompt_inventory_keeps_configured_knowledge_tool_for_knowledge
     assert "- search_knowledge_base:" in prompt
 
 
-def test_effective_prompt_tool_names_applies_turn_gate_and_enabled_flag():
+def test_effective_prompt_tool_names_uses_configured_tools_and_enabled_flag():
     config = SimpleNamespace(
         agent_name="TestAgent",
         tools=[
@@ -150,18 +150,10 @@ def test_effective_prompt_tool_names_applies_turn_gate_and_enabled_flag():
         ],
     )
 
-    general_names = resolve_effective_prompt_tool_names(
-        config,
-        allow_knowledge_search=False,
-    )
-    knowledge_names = resolve_effective_prompt_tool_names(
-        config,
-        allow_knowledge_search=True,
-    )
+    names = resolve_effective_prompt_tool_names(config)
 
-    assert "search_knowledge_base" not in general_names
-    assert "search_knowledge_base" in knowledge_names
-    assert "execute_sql_query" not in general_names
+    assert "search_knowledge_base" in names
+    assert "execute_sql_query" not in names
 
 
 def test_platform_prompt_prefers_mermaid_for_structural_diagrams_only():
