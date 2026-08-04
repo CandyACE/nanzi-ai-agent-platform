@@ -10,9 +10,18 @@ import logging
 import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
+from app.core.orm import get_db_session
 from app.services.ai.skill_resolver import get_user_personal_skills_dir
+from app.services.skill_publication_service import (
+    PublicationConflictError,
+    PublicationNotFoundError,
+    list_my_publication_summaries,
+    submit_personal_skill,
+    withdraw_personal_skill_publication,
+)
 
 # 复用平台技能中的辅助函数
 from app.api.portal.endpoints.skills import (
@@ -411,6 +420,83 @@ async def delete_personal_skill(
     except Exception as e:
         logger.error("[PersonalSkills] Failed to delete skill %s: %s", skill_id, e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# 提交为平台技能
+# ---------------------------------------------------------------------------
+
+@router.post("/{skill_id}/publication-requests", summary="提交个人技能为平台技能")
+async def submit_personal_skill_publication(
+    skill_id: str,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await submit_personal_skill(session, user=user, skill_id=skill_id)
+        return {"status": "success", "data": data}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="个人技能不存在或缺少 SKILL.md")
+    except PublicationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("[PersonalSkills] Failed to submit publication for %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail="提交平台技能审核失败")
+
+
+@router.post("/{skill_id}/publication-requests/withdraw", summary="撤销个人技能发布审核")
+async def withdraw_personal_skill_publication_request(
+    skill_id: str,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await withdraw_personal_skill_publication(session, user=user, skill_id=skill_id)
+        return {"status": "success", "data": data}
+    except PublicationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PublicationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("[PersonalSkills] Failed to withdraw publication for %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail="撤销平台技能审核失败")
+
+
+@router.get("/{skill_id}/publication-status", summary="获取个人技能发布状态")
+async def get_personal_skill_publication_status(
+    skill_id: str,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        try:
+            user_id = int(user.get("user_id") or user.get("id"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="用户身份无效")
+        summaries = await list_my_publication_summaries(
+            session,
+            user_id=user_id,
+            skill_ids=[skill_id],
+        )
+        data = summaries.get(
+            skill_id,
+            {
+                "skill_id": skill_id,
+                "publication_status": "UNPUBLISHED",
+                "current_public_version": None,
+                "pending_version": None,
+            },
+        )
+        return {"status": "success", "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("[PersonalSkills] Failed to fetch publication status for %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail="获取技能发布状态失败")
 
 
 # ---------------------------------------------------------------------------

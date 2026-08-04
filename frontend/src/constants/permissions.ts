@@ -45,7 +45,9 @@ export const MENU_TREE = [
     {
         id: 'menu:skills_management',
         label: '技能工作台',
-        children: []
+        children: [
+            { id: 'element:skills:admin', label: '管理平台技能与审核' }
+        ]
     },
     {
         id: 'menu:mcp_management',

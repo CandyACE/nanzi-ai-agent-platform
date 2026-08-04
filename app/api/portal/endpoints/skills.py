@@ -14,13 +14,23 @@ from app.core.config import settings
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
 from app.services.ai.agent_manager import AgentManagerService
+from app.services.skill_publication_service import (
+    PublicationConflictError,
+    PublicationNotFoundError,
+    approve_publication,
+    get_publication_version,
+    list_pending_publications,
+    reject_publication,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+skill_platform_admin = require_permission("element", "element:skills:admin")
+skill_publication_reviewer = skill_platform_admin
 
 @router.get("/stats", summary="获取技能调用统计数据")
 async def get_skills_stats(
-    user_info: dict = Depends(require_api_key)
+    user_info: dict = Depends(skill_platform_admin)
 ):
     from app.services.ai.skills_stats_service import skills_stats_service
     return await skills_stats_service.get_stats()
@@ -28,7 +38,7 @@ async def get_skills_stats(
 
 @router.get("/bindings", summary="获取公共技能显式绑定的智能体")
 async def get_skill_bindings(
-    user_info: dict = Depends(require_api_key),
+    user_info: dict = Depends(skill_platform_admin),
     session: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -52,6 +62,11 @@ class FileEditRequest(BaseModel):
 class SkillAssetCreateRequest(BaseModel):
     path: str
     type: Literal["file", "folder"]
+
+
+class RejectPublicationRequest(BaseModel):
+    comment: str
+
 
 EDITABLE_TEXT_EXTENSIONS = {
     ".md", ".py", ".js", ".ts", ".json", ".txt", ".yaml", ".yml",
@@ -201,12 +216,12 @@ def get_file_tree(dir_path: str, base_path: str) -> list:
 
 @router.get("", response_model=Dict[str, Any])
 async def list_skills(
-    user: Dict = Depends(require_api_key),
+    user: Dict = Depends(skill_platform_admin),
 ):
     """
     扫描技能物理目录，解析 SKILL.md 返回技能列表。
-    仅校验 API Key（已登录）；不按 menu:skills_management 或用户角色过滤条目。
-    技能管理能力由菜单权限与 POST/PUT/DELETE 等写接口单独控制。
+    平台技能列表也受 element:skills:admin 保护，避免没有平台技能管理权限的用户
+    通过直接调用 API 读取平台技能目录。
     """
     skills_list = []
     if not os.path.exists(settings.SKILLS_DIR):
@@ -226,10 +241,80 @@ async def list_skills(
         
     return {"status": "success", "data": skills_list}
 
+
+@router.get("/publication-requests", summary="列出待审核的平台技能发布申请")
+async def list_skill_publication_requests(
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    return {"status": "success", "data": await list_pending_publications(session)}
+
+
+@router.get("/publication-requests/{version_id}", summary="查看平台技能发布申请")
+async def get_skill_publication_request(
+    version_id: str,
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await get_publication_version(session, version_id=version_id, include_snapshot=True)
+        snapshot_path = data.get("snapshot_path")
+        if snapshot_path and os.path.isdir(snapshot_path):
+            data["file_tree"] = get_file_tree(snapshot_path, snapshot_path)
+            skill_md_path = os.path.join(snapshot_path, "SKILL.md")
+            if os.path.exists(skill_md_path):
+                with open(skill_md_path, "r", encoding="utf-8") as handle:
+                    data["skill_md_content"] = handle.read()
+        return {"status": "success", "data": data}
+    except PublicationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/publication-requests/{version_id}/approve", summary="通过并发布平台技能")
+async def approve_skill_publication_request(
+    version_id: str,
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await approve_publication(session, version_id=version_id, reviewer=user)
+        return {"status": "success", "data": data}
+    except PublicationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PublicationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/publication-requests/{version_id}/reject", summary="驳回平台技能发布申请")
+async def reject_skill_publication_request(
+    version_id: str,
+    req: RejectPublicationRequest,
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    if not req.comment.strip():
+        raise HTTPException(status_code=422, detail="驳回原因不能为空")
+    try:
+        data = await reject_publication(
+            session,
+            version_id=version_id,
+            reviewer=user,
+            comment=req.comment,
+        )
+        return {"status": "success", "data": data}
+    except PublicationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PublicationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
 @router.get("/{skill_id}/preview", response_model=Dict[str, Any])
 async def preview_skill_md(
     skill_id: str,
-    user: Dict = Depends(require_api_key),
+    user: Dict = Depends(skill_platform_admin),
 ):
     """
     只读预览 SKILL.md，供聊天页技能抽屉使用；仅需 API Key，不要求技能管理菜单权限。
@@ -264,7 +349,7 @@ async def preview_skill_md(
 @router.post("", response_model=Dict[str, Any])
 async def create_skill(
     req: SkillCreateRequest,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     在线新建技能目录并初始化默认 SKILL.md 模版
@@ -299,7 +384,7 @@ async def create_skill(
 @router.get("/{skill_id}", response_model=Dict[str, Any])
 async def get_skill_detail(
     skill_id: str,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     获取指定技能的详情，包括 SKILL.md 文本和物理目录树
@@ -338,7 +423,7 @@ async def get_skill_detail(
 async def get_skill_file_content(
     skill_id: str,
     path: str,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     在线读取指定技能目录下的文本文件内容 (如脚本文件)
@@ -367,7 +452,7 @@ async def get_skill_file_content(
 async def edit_skill_file(
     skill_id: str,
     req: FileEditRequest,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     编辑修改指定技能目录下的文本文件内容 (如 SKILL.md 或脚本)
@@ -401,7 +486,7 @@ async def edit_skill_file(
 async def create_skill_asset(
     skill_id: str,
     req: SkillAssetCreateRequest,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """在技能目录内显式创建空文本文件或文件夹。"""
     try:
@@ -430,7 +515,7 @@ async def upload_skill_file(
     skill_id: str,
     folder: Optional[str] = Form(None),
     file: UploadFile = File(...),
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     上传物理文件（如 Python 辅助脚本）到指定的技能子目录下，单文件上限 10MB
@@ -461,7 +546,7 @@ async def upload_skill_file(
 async def delete_skill_file(
     skill_id: str,
     path: str,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     删除技能文件夹下的单个指定文件或子文件夹
@@ -490,7 +575,7 @@ async def delete_skill_file(
 @router.delete("/{skill_id}", response_model=Dict[str, Any])
 async def delete_entire_skill(
     skill_id: str,
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     彻底注销并递归清空删除技能根目录
@@ -582,7 +667,7 @@ async def upload_skill_archive(
     skill_id: str,
     folder: Optional[str] = Form(None),
     file: UploadFile = File(...),
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     上传 zip/tar 压缩包并解压到指定技能的子目录下，单文件上限 20MB
@@ -610,7 +695,7 @@ async def upload_skill_archive(
 async def import_skill_package(
     file: UploadFile = File(...),
     overwrite: bool = Form(False),
-    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+    user: Dict = Depends(skill_platform_admin)
 ):
     """
     上传压缩包导入为新技能，解压至技能目录。解包后必须包含 SKILL.md。
@@ -686,7 +771,7 @@ async def import_skill_package(
 async def toggle_skill(
     skill_id: str,
     enabled: bool,
-    user: dict = Depends(require_permission("menu", "menu:skills_management")),
+    user: dict = Depends(skill_platform_admin),
 ):
     try:
         skill_dir = validate_secure_skill_path(skill_id)
