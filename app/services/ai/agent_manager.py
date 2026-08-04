@@ -1095,6 +1095,12 @@ class AgentManagerService:
         agent.onboarding_step = "COMPLETE"
         
         await session.commit()
+
+        # Published versions are the source of truth for the next turn. Clear
+        # runtime tool-definition caches as well as the router metadata cache
+        # so DB-backed MCP/API tools cannot remain stale after publication.
+        from app.services.ai.tools.registry import ToolRegistry
+        ToolRegistry.clear_db_tool_cache()
         
         # Invalidate Router Cache
         from app.services.ai.router_service import router_service

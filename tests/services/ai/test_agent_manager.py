@@ -387,13 +387,17 @@ async def test_publish_version_logic(mock_session, mock_user_admin):
     version = AIAgentVersion(id="v_new", agent_id="a1", tools=[])
     mock_session.get.side_effect = [agent, version]
     
-    await AgentManagerService.publish_version(mock_session, "a1", "v_new", mock_user_admin)
+    with patch(
+        "app.services.ai.tools.registry.ToolRegistry.clear_db_tool_cache"
+    ) as mock_clear_tool_cache:
+        await AgentManagerService.publish_version(mock_session, "a1", "v_new", mock_user_admin)
     
     # Check Updates
     # 1. Archive old
     # 2. Publish new
     assert mock_session.execute.call_count == 2
     mock_session.commit.assert_called_once()
+    mock_clear_tool_cache.assert_called_once()
 
 
 @pytest.mark.asyncio
