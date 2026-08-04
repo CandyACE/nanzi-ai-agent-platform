@@ -216,12 +216,12 @@ def get_file_tree(dir_path: str, base_path: str) -> list:
 
 @router.get("", response_model=Dict[str, Any])
 async def list_skills(
-    user: Dict = Depends(skill_platform_admin),
+    user: Dict = Depends(require_api_key),
 ):
     """
     扫描技能物理目录，解析 SKILL.md 返回技能列表。
-    平台技能列表也受 element:skills:admin 保护，避免没有平台技能管理权限的用户
-    通过直接调用 API 读取平台技能目录。
+    平台技能目录可供登录用户查询和使用；创建、编辑、删除等管理操作
+    仍由 element:skills:admin 单独保护。
     """
     skills_list = []
     if not os.path.exists(settings.SKILLS_DIR):
