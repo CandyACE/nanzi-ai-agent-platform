@@ -22,10 +22,71 @@
     </p>
   </section>
 
+  <!-- ========== 基础概念 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">00｜先搞清楚：工具到底是什么</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#115e59;line-height:1.5;">智能体平台 = 大脑 + 手眼 + 记忆 + 编排安全层</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.9;">大模型本身擅长理解语言、拆解任务和生成计划，但它不能天然读取业务数据库、查看工作区文件、调用公司 API，也不能凭空记住用户上周的偏好。工具就是把模型的“意图”连接到真实系统的可执行接口。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead><tr><th style="padding:8px 6px;border:1px solid #d1d5db;background:#334155;color:#f8fafc;text-align:left;">组成</th><th style="padding:8px 6px;border:1px solid #d1d5db;background:#334155;color:#f8fafc;text-align:left;">它负责什么</th><th style="padding:8px 6px;border:1px solid #d1d5db;background:#334155;color:#f8fafc;text-align:left;">NanZi 中的例子</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#0f3d3e;">大脑：LLM</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">理解问题、规划步骤、选择工具、组织最终回答</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">AgentScope 中的模型调用</td></tr>
+        <tr><td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;font-weight:bold;color:#0f3d3e;">手眼：Tools</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">读取、查询、写入、执行、通知，让模型能够观察和行动</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">execute_sql_query</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">read_file</code>、MCP</td></tr>
+        <tr><td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#0f3d3e;">记忆：Redis / Markdown / 知识库</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">保存偏好、历史摘要、文档和经验，供后续检索</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">memory_search</code>、RAGFlow、Redis Stack</td></tr>
+        <tr><td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;font-weight:bold;color:#0f3d3e;">神经系统：编排与安全</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">控制工具装载、权限、审批、重试、证据和结果回传</td><td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">AgentScope Toolkit、ReAct、Grounding、SQL Gate</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#111827;border-radius:8px;overflow:hidden;">
+    <p style="margin:0 0 7px 0;font-size:13px;color:#a7f3d0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">用户问题 → LLM 规划 → 选择工具 → 权限/审批预检 → 工具执行 → 结果与证据 → LLM 组织回答</p>
+    <p style="margin:0;font-size:12px;color:#cbd5e1;line-height:1.75;">例如“查询本月华东 PUE”：模型不会直接猜答案，而是先找可访问数据集，再取 Schema，必要时参考问答经验，最后执行只读 SQL，并把查询结果作为回答依据。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:210px;padding:64px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜智能体平台架构图</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请替换为 16:9 高清架构图：LLM 大脑、Tools 手眼、Redis/Markdown/知识库记忆、AgentScope 编排与安全层</p>
+    </section>
+    <p style="margin:7px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1｜智能体平台架构：LLM 负责思考，工具负责行动，记忆负责长期信息，编排层负责安全与闭环</p>
+  </section>
+
   <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
     <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
-      <strong>运行时原理（先记）</strong>：业务工具 → <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">RuntimeToolSpec</code> → AgentScope <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">Toolkit</code> → ReAct 调用。未在智能体版本勾选的工具，模型没有入口。勾选后还要过 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">permission_scope</code>（read/ask/dangerous）、审批模式、用户级 forbidden 黑名单。部分工具成功调用会写入 Grounding 证据类型（内部数据/知识/网页/文件/记忆/运行时）。
+      <strong>运行时原理（先记）</strong>：业务工具 → <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">RuntimeToolSpec</code> → AgentScope <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">Toolkit</code> → ReAct 调用。静态工具未在智能体版本勾选，模型通常没有入口；隐式运行时工具则可能由系统按场景注入。工具进入调用链后还要过 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">permission_scope</code>（read/ask/dangerous）、审批模式、用户级 forbidden 黑名单。部分工具成功调用会写入 Grounding 证据类型（内部数据/知识/网页/文件/记忆/运行时）。
     </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">先分清三类工具来源</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.6;">
+      <thead><tr><th style="padding:7px 6px;border:1px solid #d1d5db;background:#334155;color:#f8fafc;text-align:left;">来源</th><th style="padding:7px 6px;border:1px solid #d1d5db;background:#334155;color:#f8fafc;text-align:left;">例子</th><th style="padding:7px 6px;border:1px solid #d1d5db;background:#334155;color:#f8fafc;text-align:left;">什么时候出现</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;">静态注册工具</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">execute_sql_query</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">read_file</code></td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;">代码注册后，按智能体版本配置挂载</td></tr>
+        <tr><td style="padding:7px 6px;border:1px solid #d1d5db;background:#f9fafb;font-weight:bold;">隐式运行时工具</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#f9fafb;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">get_current_model</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">get_current_time</code></td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#f9fafb;">由运行时、时间锚点或工具提示策略按场景注入</td></tr>
+        <tr><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;">动态工具</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;">已发布 MCP、Generic API</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;">控制台配置、同步并发布后进入 Toolkit</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#64748b;line-height:1.7;">所以“工具总数”不能只看 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">registry.py</code>：静态注册、隐式运行时和数据库动态工具的装载条件不同。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">权限边界速查</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.6;">
+      <thead><tr><th style="padding:7px 6px;border:1px solid #d1d5db;background:#475569;color:#ffffff;text-align:left;">层级</th><th style="padding:7px 6px;border:1px solid #d1d5db;background:#475569;color:#ffffff;text-align:left;">含义</th><th style="padding:7px 6px;border:1px solid #d1d5db;background:#475569;color:#ffffff;text-align:left;">典型工具</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#166534;">read</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;">读取或检索，通常不改变外部状态</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">get_dataset_schema</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">search_knowledge_base</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">read_file</code></td></tr>
+        <tr><td style="padding:7px 6px;border:1px solid #d1d5db;background:#f9fafb;font-weight:bold;color:#92400e;">ask</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#f9fafb;">可能写入、发送或生成交付物，通常需要用户确认</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#f9fafb;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">write_file</code>、文档写入、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">jira_create_issue</code></td></tr>
+        <tr><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#b91c1c;">dangerous</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;">高影响外部执行，还要叠加审批、黑名单和领域安全校验</td><td style="padding:7px 6px;border:1px solid #d1d5db;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">exec_command</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">manage_process</code></td></tr>
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#64748b;line-height:1.7;">这不是单一开关：工具白名单决定“能不能看见”，权限级别决定“能否调用”，审批决定“是否放行”，SQL Gate、路径校验和 SSRF 校验负责领域内的最后一道防线。</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -55,6 +116,18 @@
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>执行器拦截成功调用 → SSE <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">context_update</code> → 前端改状态。适合「边问数边控大屏」。</p>
   </section>
 
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">list_accessible_datasets</code> · 列出当前用户可访问的数据集</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>返回数据集的轻量目录（ID、名称、备注、状态），不返回表结构和指标定义。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>用户问「我有哪些数据集」「能查哪些数据」时先列目录；确定数据集后，仍要调用 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> 获取字段。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">search_qa_examples</code> · 检索已审核的问答经验</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>按问题或关键词检索历史优质问答，返回相似问题、数据集和参考 SQL，默认最多返回 5 条。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>面对「本月 PUE 同比」「区域签单趋势」等重复分析时，先找相似案例，再结合真实 Schema 生成 SQL；经验案例只能作参考，不能替代权限和 SQL 安全校验。</p>
+  </section>
+
   <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;">
     <p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;"><strong>就绪提醒：</strong>CHATBI 类型至少要启用 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> 与/或 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">execute_sql_query</code>，否则发布/委派门禁不过。</p>
   </section>
@@ -71,6 +144,12 @@
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>在 RAGFlow 知识库检索文档/手册/制度，返回片段供回答与引用。</p>
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>SOP、制度问答、说明书检索。Knowledge 专家就绪必须挂此工具并绑定 dataset_ids。</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>按显式 dataset_ids 或智能体配置/默认库解析范围，并过权限。特征关闭时返回禁用错误。Knowledge Runner 还会在 ReAct <em>前</em>自动预检索。证据 INTERNAL_KNOWLEDGE；空召回也可记账（「未找到」）。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#cffafe;padding:1px 5px;border-radius:3px;">list_accessible_knowledge_bases</code> · 列出当前用户可访问的知识库</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>返回知识库目录信息，不返回文档正文，具体检索仍由 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">search_knowledge_base</code> 完成。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>用户问「我能检索哪些文档库」时先列可访问范围，再选择知识库检索；不能根据目录信息臆造文档内容。</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -130,33 +209,42 @@
 
   <!-- ========== 工作区 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b91c1c;padding-left:12px;line-height:1.4;">06｜工作区文件与命令（沙箱隔离）</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b91c1c;padding-left:12px;line-height:1.4;">06｜工作区文件与受控命令（多层安全边界）</p>
   </section>
 
   <section style="margin:0 0 10px 0;">
-    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">路径校验落在用户私有工作区（docs/uploads/sessions/sandbox），防目录穿越。与 AgentScope 内置别名对应：Read/Write/Bash/Grep/Glob 等。</p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">这里要区分两类路径边界：普通文件工具主要限制在安全 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">data</code> 目录、<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">/app/data</code> 或配置的 Skills 目录；Excel/Word 工具则进一步限制在当前用户附件、用户文档目录和会话工作目录。两者都防目录穿越，但不是同一套路径规则。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">与 AgentScope 的语义别名对应：<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">read_file</code>≈Read、<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">write_file</code>≈Write、<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">exec_command</code>≈Bash、<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">search_text</code>≈Grep；这不是把宿主机全部文件和命令开放给模型。</p>
   </section>
 
   <section style="margin:0 0 10px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
-      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">read_file</code> — 读文件（offset/limit/tail）；证据 USER_FILE<br/>
-      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">write_file</code> — 写文件（通常 ask）<br/>
-      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">search_text</code> — 工作区内文本检索（类 grep）
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">read_file</code> — 读文件（offset/limit/tail，单次默认最多 256KB）；证据 USER_FILE<br/>
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">write_file</code> — 完整覆盖写入文件（通常 ask，父目录不存在时自动创建）<br/>
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">search_text</code> — 受控文本检索（支持正则、file_glob、上下文行和结果数量限制）
     </p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>改配置草稿、读上传附件、在会话产物里搜关键字。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>改配置草稿、读上传附件、在会话产物里搜关键字。目录不能直接用 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">read_file</code> 读取，应使用 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">directory_tree_navigator</code>。</p>
   </section>
 
   <section style="margin:0 0 10px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
     <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#b91c1c;"><code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">exec_command</code> · Shell</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">执行命令前过危险命令黑名单；用户级 forbidden_commands 可再拦。证据 RUNTIME_STATE。场景：受控脚本、格式转换——生产务必配审批 + 黑名单。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">执行目录是服务当前工作目录，不等于文件工具的 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">data</code> 路径范围。命令默认最多运行 30 秒，标准输出和错误输出可能被截断；执行前还会经过删除操作的 ask/deny 策略、危险命令黑名单，以及用户级 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">forbidden_commands</code>。证据 RUNTIME_STATE。生产环境仍应叠加审批、容器和操作系统权限。</p>
   </section>
 
   <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
       <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">list_process</code> — 列进程<br/>
-      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">manage_process</code> — 启停等（保护平台自身 PID）
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">manage_process</code> — 查看或终止指定 PID，仅支持 list / kill（保护平台自身 PID）
     </p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>助手拉起的后台任务管理；误杀防护内置。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>查看 CPU/内存占用和进程状态，或终止明确指定的非核心进程；它不是通用的服务启停工具。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#9a3412;line-height:1.5;">几个典型调用（示意参数）</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">read_file(path="data/uploads/app.log", tail=true, limit=8192)</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">search_text(pattern="ERROR|Traceback", path="data/logs", file_glob="*.log", context_lines=2)</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">exec_command(command="df -h")</p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#7f1d1d;line-height:1.8;"><strong>注意：</strong>示例中的命令只用于说明参数形态；删除、写入、终止进程等操作必须明确目标，并按平台审批策略执行。</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -201,9 +289,16 @@
     </p>
     <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>公网资料补充、调内部 HTTP API（无 MCP 时的轻量方案）。SSRF 等风险靠 URL 校验与权限收紧。</p>
   </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">get_current_model</code> — 查询当前实际生效的模型身份和调用阶段，不返回凭据或服务地址<br/>
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">get_myinfo</code> — 读取当前登录用户本人资料、部门、角色与权限，不接受 userid 参数
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>回答「当前用的是什么模型」「我的角色/权限是什么」时，应读运行时上下文或当前用户，不让模型根据自我描述猜测，也不能读取其他用户信息。</p>
+  </section>
   <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
-    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#075985;"><code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">get_current_time</code></p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">取当前时间（默认 Asia/Shanghai）。系统隐式工具；证据 RUNTIME_STATE。场景：写「今天/本周」类相对时间 SQL 或文案前校准时钟。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#075985;"><code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">get_current_time</code> / <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">resolve_relative_dates</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">取当前时间或把「上周」「近 7 天」解析成具体日期。系统隐式工具；证据 RUNTIME_STATE。已有时间锚点时优先复用，避免在同一轮重复取时。</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -261,9 +356,37 @@
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">名形如 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">server_name:remote_tool</code>，来自 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">McpToolCache</code> 且 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">is_published=True</code>。智能体版本勾选后加载。只读/写倾向可从命名启发式推断，影响 Grounding 外部工具凭证。详见第 06 篇。</p>
   </section>
 
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">MCP 的完整链路：不是“连上 Server 就能用”</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">① 控制台登记并启用 MCP Server；② 执行 sync，从远端发现工具、参数 Schema 和只读标注；③ 工具写入 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">McpToolCache</code>，初始通常不是已发布状态；④ 管理员选择工具执行 publish；⑤ 在智能体版本中勾选；⑥ 运行时检查 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">is_published</code> 与 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">is_available</code> 后，才把它装入 Toolkit。</p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#475569;line-height:1.8;"><strong>名称要注意：</strong>平台缓存名可以是 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">server_name:remote_tool</code>，但为了符合模型 Function Calling 的命名限制，模型侧通常看到的是经过清洗并带哈希的 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">mcp_...</code> 别名；真正执行时仍转发到远端原始工具名。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#3730a3;line-height:1.5;">MCP 示例：把工单系统接成 Agent 工具</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">登记 Server：jira<br />同步发现：search_issues、get_issue、create_issue<br />发布只读工具：jira:search_issues、jira:get_issue<br />智能体版本勾选：jira:search_issues<br />用户提问：查一下项目 OPS 最近一周未关闭的缺陷<br />模型调用：mcp_jira_search_issues_xxxxx<br />运行时转发：server=jira，remote_tool=search_issues，arguments={jql: ...}</p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#475569;line-height:1.8;">如果远端工具被删除或同步后变为不可用，平台会把缓存工具标记为不可用，并避免继续把它作为正常工具提供给模型。</p>
+  </section>
+
   <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">Generic API（SysApiTool）</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">控制台配置 HTTP 接口 Schema → 运行时变成工具，无需改 Python。适合「公司内部一个 REST 就能当 Agent 手脚」。工厂：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">GenericApiToolFactory</code>。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">Generic API 的工作方式：用 Schema 动态生成参数</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">配置记录包含工具名、描述、HTTP 方法、URL 模板、headers 和参数 Schema。运行时由 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">GenericApiToolFactory</code> 动态生成 Pydantic 参数模型：URL 中的 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">{order_id}</code> 会做路径替换，GET 的其余参数作为 query，POST/PUT/PATCH/DELETE 默认作为 JSON body 发送，返回 JSON 或文本结果。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#166534;line-height:1.5;">Generic API 示例：查询订单状态</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">name: get_order_status<br />description: 查询订单当前状态<br />method: GET<br />url_template: https://api.example.com/orders/{order_id}<br />parameter_schema: {"properties":{"order_id":{"type":"string","description":"订单号"}},"required":["order_id"]}</p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#475569;line-height:1.8;">用户说“查询订单 20260804001”时，模型只需要调用 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">get_order_status(order_id="20260804001")</code>。平台负责参数校验、HTTP 调用和结果回传；生产环境要特别管理 headers 中的凭据，并限制 URL、方法、超时和返回体大小。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#9a3412;line-height:1.5;">MCP 还是 Generic API？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>已有标准化工具协议、需要工具发现和双向会话：</strong>选 MCP。<br/><strong>只有一个稳定 REST 接口、希望控制台快速配置：</strong>选 Generic API。<br/><strong>需要深度接入平台权限、数据库门禁、Grounding 或复杂业务事务：</strong>写平台内置工具，不要把所有逻辑塞进一个通用 HTTP 配置。</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -277,6 +400,36 @@
     <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>由易到难：</strong>① MCP / Generic API → ② Skill 约束调用方式 → ③ 在 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">tools/</code> 用平台 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">@tool</code> 写函数并 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">ToolRegistry.register</code>（Docstring 会进模型可见描述）。</p>
   </section>
 
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.5;">如何写一个新工具：从函数到可用能力</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">① 先定义边界：这是 read、ask 还是 dangerous；② 设计少而清晰的参数，并在 Docstring 写清用途、参数和限制；③ 读取当前用户/Agent 上下文，做权限和业务校验；④ 调用真实 Service，不在工具里直接拼接无约束的数据库或外部请求；⑤ 返回结构化结果和明确错误；⑥ 注册、配置权限与证据类型；⑦ 用单元测试、审批测试和真实 API 调用完成验收。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:8px;overflow:hidden;">
+    <p style="margin:0 0 7px 0;font-size:12px;color:#a7f3d0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 伪代码：查询当前用户有权限查看的工单</p>
+    <pre style="margin:0;padding:12px 14px;background:#111827;border-radius:6px;white-space:pre-wrap;word-break:break-word;overflow-x:auto;font-size:11px;line-height:1.75;color:#e5e7eb;font-family:Menlo,Monaco,Consolas,monospace;"><code style="font-family:inherit;color:inherit;">@tool
+async def lookup_ticket(ticket_id: str) -&gt; str:
+    """查询当前用户有权限查看的工单。"""
+    ctx = get_current_agent_context()
+    if not ctx or not ctx.user_id:
+        return "无法识别当前用户"
+    if not await can_read_ticket(ctx.user_id, ticket_id):
+        return "无权访问该工单"
+
+    ticket = await ticket_service.get(ticket_id)
+    return json.dumps({"status": "success", "ticket": ticket}, ensure_ascii=False)
+
+# 注册到运行时；仅注册还不等于所有智能体都能使用
+ToolRegistry.register("lookup_ticket", lookup_ticket)
+TOOL_EVIDENCE_TYPES["lookup_ticket"] = {EvidenceType.INTERNAL_KNOWLEDGE}</code></pre>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#cbd5e1;line-height:1.7;">说明：<code style="background:#1f2937;padding:1px 4px;border-radius:3px;">@tool</code> 负责从函数签名生成参数 Schema，<code style="background:#1f2937;padding:1px 4px;border-radius:3px;">ToolRegistry.register</code> 负责运行时注册；还需要导入该模块、配置智能体工具白名单，并由运行时推断或明确设置 <code style="background:#1f2937;padding:1px 4px;border-radius:3px;">permission_scope</code>。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#166534;line-height:1.5;">上线前的最小测试清单</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">□ 正常参数能返回结构化结果　□ 缺少用户上下文会拒绝　□ 越权资源会拒绝　□ 写/危险操作会触发 ask 或 deny　□ 外部服务超时和异常有可读错误　□ 证据类型与返回内容匹配　□ API 层能看到真实工具调用和最终结果</p>
+  </section>
+
   <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
       □ 版本只勾真正需要的工具（能力面白名单）<br/>
@@ -287,12 +440,23 @@
     </p>
   </section>
 
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.5;">三个可以照着理解的调用闭环</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>问数：</strong><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">list_accessible_datasets</code>（不知道有哪些数据集时）→ <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> → 可选的 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">search_qa_examples</code> → <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">execute_sql_query</code> → 返回结果和证据。</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>知识问答：</strong><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">list_accessible_knowledge_bases</code>（需要选择知识库时）→ <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">search_knowledge_base</code> → 基于返回片段回答并保留引用；没有召回时应明确说“未找到依据”。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>定时任务：</strong><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">create_recurring_task</code> → <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">get_my_tasks</code> 确认任务 ID → 按需要 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">run_task_manually</code>、<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">pause_task</code> 或 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">cancel_task</code>。</p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
 
   <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告 · 06</p>
     <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>MCP 在 NanZi 里怎么用</strong></p>
     <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">登记 Server → sync → publish → 挂到智能体；SSE/HTTP 双模式与排障。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fafafa;border:1px solid #e5e7eb;border-radius:8px;">
+    <p style="margin:0;font-size:12px;color:#6b7280;line-height:1.75;">版本提示：本文按当前代码中的静态注册表、隐式运行时工具和动态工具装载逻辑整理；工具名称、参数与权限可能随版本变化，发布前请以当前 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">registry.py</code>、工具实现和智能体配置为准。</p>
   </section>
 
   <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
