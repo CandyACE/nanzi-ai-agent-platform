@@ -36,17 +36,6 @@ from app.services.ai.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# 知识库智能体不挂载外网检索类隐式工具，避免 ReAct 误选百度/静态抓取替代 search_knowledge_base。
-KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS = frozenset({
-    "web_search_baidu",
-    "fetch_static_web_url",
-    # Knowledge retrieval is an explicit agent binding, not a platform-wide
-    # implicit tool. Explicit entries from config.tools are loaded above and
-    # are not removed by this implicit-tool exclusion.
-    "search_knowledge_base",
-})
-
-
 class KnowledgeAgentRunner(AssistantAgentRunner):
     """知识库问答 Runner：自动检索 + AgentScope ReAct，可扩展挂载业务工具。"""
 
@@ -166,7 +155,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             seen = {spec.name for spec in tools}
             for tool in system_tools:
                 name = str(getattr(tool, "name", "") or "")
-                if not name or name in KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS or name in seen:
+                if not name or name in seen:
                     continue
                 spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
                 tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))

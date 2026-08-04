@@ -3,10 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.schemas.agent import ChatConfig
 from app.services.ai.grounding.models import EvidenceType
-from app.services.ai.runners.knowledge_agent_runner import (
-    KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS,
-    KnowledgeAgentRunner,
-)
+from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -72,7 +69,7 @@ async def test_resolve_knowledge_tools_keeps_explicit_search_tool():
 
 
 @pytest.mark.asyncio
-async def test_resolve_knowledge_tools_does_not_implicitly_mount_knowledge_search():
+async def test_resolve_knowledge_tools_keeps_all_implicit_tools():
     config = ChatConfig(
         agent_id="kb-agent",
         agent_name="知识库助手",
@@ -112,9 +109,10 @@ async def test_resolve_knowledge_tools_does_not_implicitly_mount_knowledge_searc
         tools = await runner._resolve_knowledge_tools()
 
     names = {tool.name for tool in tools}
-    assert "search_knowledge_base" not in names
+    assert "search_knowledge_base" in names
+    assert "web_search_baidu" in names
+    assert "fetch_static_web_url" in names
     assert "memory_search" in names
-    assert not names & KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS
     get_runtime_tool.assert_not_awaited()
     memory_tool = next(tool for tool in tools if tool.name == "memory_search")
     assert memory_tool.evidence_types == frozenset({EvidenceType.CONVERSATION_MEMORY})
