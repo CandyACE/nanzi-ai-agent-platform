@@ -1,0 +1,423 @@
+<!--
+  微信公众号排版 HTML — DeepSeek-V4-Flash-0731 部署实战（简洁工程风）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式；全部内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.4px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <section style="margin:0 0 24px 0;padding:26px 16px;background:#111827;border:1px solid #334155;border-radius:4px;text-align:center;box-shadow:none;">
+    <p style="margin:0 0 8px 0;font-size:13px;color:#93c5fd;line-height:1.5;letter-spacing:1px;">模型部署实战 · H800 4 卡</p>
+    <p style="margin:0 0 10px 0;font-size:21px;font-weight:bold;color:#ffffff;line-height:1.55;letter-spacing:0.5px;">升级还是不升级？</p>
+    <p style="margin:0 0 10px 0;font-size:18px;font-weight:bold;color:#99f6e4;line-height:1.55;">DeepSeek-V4-Flash-0731 到底强在哪</p>
+    <p style="margin:0;font-size:14px;color:#cbd5e1;line-height:1.7;">H800 4 卡实测部署 · SGLang · Marlin · EAGLE</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;">
+    <section style="box-sizing:border-box;min-height:150px;padding:42px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:4px;text-align:center;">
+      <p style="margin:0 0 5px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜部署主题图</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议替换为 16:9 高清封面：四张 H800、SGLang 与 MoE 推理</p>
+    </section>
+    <p style="margin:7px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1｜本文部署主题图：四卡 H800、SGLang 与 MoE 推理</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#f8fafc;border:1px solid #64748b;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f3d3e;line-height:1.5;">先说结论</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.9;">
+      这篇文章不讨论“理论上能不能跑”，而是记录一套已经在 <strong>4 张 H800</strong> 上验证过的部署方案：使用 ModelScope 的 <strong>DeepSeek-V4-Flash-0731</strong> 权重，SGLang <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">v0.5.16</code>，上下文限制为 <strong>64K</strong>，MoE 后端选择 <strong>Marlin</strong>，并启用 <strong>EAGLE</strong> 推测解码。它的目标是稳定、经济、实用，而不是盲目追求 1M 上下文或实验室峰值吞吐。
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#f8fafc;border-left:4px solid #94a3b8;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.9;">
+      <strong>本文的权重和推测解码要分清：</strong>部署对象是 <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">DeepSeek-V4-Flash-0731</code>；本文实测使用的是 <strong>EAGLE</strong> 参数，不启用 DSpark 推测解码。两条路径的启动参数与验证条件不能混写，具体要以实际权重和 SGLang 版本为准。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">01｜为什么要升级到 0731？</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.9;"><strong>先看版本背景：</strong>0731 是 DeepSeek 发布的 DeepSeek-V4-Flash 正式开源版本，官方模型卡明确说明它取代了此前的 Flash Preview，并重点增强 Agent 能力。对部署者来说，这次升级不是简单换一个目录名，而是从预览权重切换到正式版本。官方模型卡同时给出了 DSpark 推测解码路径；本文为了对应已经在 H800 4 卡上验证成功的脚本，仍采用 EAGLE，二者不在同一条启动命令里混用。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      如果只是普通问答，旧版 V4-Flash Preview 可能已经够用。但当模型被放进代码助手、自动化流程或企业 Agent 里，真正决定体验的往往不是“会不会聊天”，而是能不能稳定地拆任务、调用工具、修改代码，并把复杂任务做完。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      DeepSeek 官方把 0731 定义为 V4-Flash 的正式新版本，重点增强了 Agent、代码和工具使用能力。换句话说，这次升级的理由不是模型名字变了，而是它更适合作为一个“干活的模型”。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #64748b;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">官方公开对比：不仅超过 Preview，Agent / Coding 能力也明显提升</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f766e;color:#f8fafc;text-align:left;">测试项目</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f766e;color:#f8fafc;text-align:right;">Preview</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f766e;color:#f8fafc;text-align:right;">0731</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f766e;color:#f8fafc;text-align:right;">变化</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">Terminal Bench 2.1</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">61.8</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#0f766e;">82.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+20.9</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">NL2Repo</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">39.4</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#0f766e;">54.2</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+14.8</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">Cybergym</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">38.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#0f766e;">76.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+38.0</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">DeepSWE</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">7.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#0f766e;">54.4</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+47.1</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">Toolathlon-Verified</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">49.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#0f766e;">70.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+20.6</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">DSBench-FullStack</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">37.0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#0f766e;">68.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+31.7</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#475569;line-height:1.7;">说明：以上为官方模型卡公布的 0731 与 V4-Flash Preview 对比，部分 Agent 测试使用了特定 Harness、推理等级和采样参数；它们说明升级方向，不等同于你这台机器的吞吐实测。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">更有意思的是：0731 还超过了 V4-Pro Preview</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:left;">测试项目</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">0731</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">V4-Pro Preview</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">领先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;">Terminal Bench 2.1</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;color:#334155;">82.7</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">72.1</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;color:#0f766e;">+10.6</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;">NL2Repo</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;font-weight:bold;color:#334155;">54.2</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">38.5</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;color:#0f766e;">+15.7</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;">Cybergym</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;color:#334155;">76.7</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">52.7</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;color:#0f766e;">+24.0</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;">DeepSWE</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;font-weight:bold;color:#334155;">54.4</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">12.8</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;color:#0f766e;">+41.6</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;">Toolathlon-Verified</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;color:#334155;">70.3</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">55.9</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;color:#0f766e;">+14.4</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;">DSBench-FullStack</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;font-weight:bold;color:#334155;">68.7</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">41.8</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;color:#0f766e;">+26.9</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;">DSBench-Hard</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;color:#334155;">59.6</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">31.1</td>
+          <td style="padding:8px 6px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;color:#0f766e;">+28.5</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#475569;line-height:1.7;">这不是“参数更多所以必然更强”的故事：0731 的激活参数仍然更小，但在官方列出的 Agent、代码和工具任务中整体领先 V4-Pro Preview。DSBench 两项为官方说明的内部测试集。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border-left:4px solid #0f766e;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#0f3d3e;line-height:1.9;"><strong>升级判断：</strong>0731 不只是超过上一代 Preview，在官方公开的多项 Agent / Coding 测试中也超过了 V4-Pro Preview；普通聊天看不出全部差距，代码修改、工具调用、自动化执行和复杂 Agent 任务，才是它价值最集中的地方。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">02｜硬件和部署目标：不是追求最大，而是追求可用</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">本次部署环境是 4 张 H800，采用 TP4。上下文长度没有追求官方宣传的极限，而是设置为 64K。这是一个很现实的工程取舍：上下文越长，KV Cache 和调度压力越大，实际并发能力也越容易下降。</p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">如果业务主要是代码问答、工具调用、企业知识查询和中等长度文档处理，64K 已经能覆盖大量场景。先把稳定服务跑起来，再根据真实流量决定是否扩上下文，比一开始就把显存全部押在 1M 上更稳妥。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">为什么是 64K：它不是理论上限，而是经济平衡点</p>
+    <p style="margin:0 0 9px 0;font-size:14px;color:#374151;line-height:1.85;">模型权重是相对固定的成本，KV Cache 则会随着请求长度和并发数增长。其他条件相同时，128K 的单请求缓存压力大致是 64K 的两倍，256K 大致是四倍；DeepSeek-V4 的压缩注意力会改变精确比例，但不会改变这个方向。</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:8px 7px;border:1px solid #cbd5e1;background:#0f766e;color:#f8fafc;text-align:left;">上下文窗口</th>
+          <th style="padding:8px 7px;border:1px solid #cbd5e1;background:#0f766e;color:#f8fafc;text-align:left;">相对 64K 的缓存压力</th>
+          <th style="padding:8px 7px;border:1px solid #cbd5e1;background:#0f766e;color:#f8fafc;text-align:left;">适合的判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;color:#334155;">64K</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">1 倍</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">代码 Agent、工具调用、日常长对话</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;color:#334155;">128K</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">约 2 倍</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">单任务更长，但并发余量下降</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;color:#334155;">256K</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">约 4 倍</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">需要明确的长上下文业务</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;color:#334155;">1M</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">约 16 倍</td>
+          <td style="padding:8px 7px;border:1px solid #cbd5e1;background:#ffffff;">专门的长上下文集群与缓存方案</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>对 Code Agent 来说，关键不是把整个仓库一次性塞进上下文。</strong>更合理的路径是先感知目录和语言结构，再检索、筛选最相关的文件，执行修改后根据测试结果继续迭代。64K 足够覆盖系统提示词、任务描述、关键源码、工具输出和多轮历史，同时为 Marlin、EAGLE、CUDA Graph、NCCL 和 KV Cache 留出余量。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#1e293b;border-radius:4px;">
+    <p style="margin:0 0 7px 0;font-size:12px;color:#64748b;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;"># 本文实测组合</p>
+    <p style="margin:0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">H800 × 4&nbsp;&nbsp;·&nbsp;&nbsp;TP4&nbsp;&nbsp;·&nbsp;&nbsp;64K context<br/>SGLang v0.5.16&nbsp;&nbsp;·&nbsp;&nbsp;Marlin MoE&nbsp;&nbsp;·&nbsp;&nbsp;EAGLE</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">03｜已经验证的 SGLang 启动方案</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">下面是本次实际验证过的启动思路。为了方便阅读，展示版去掉了原脚本中重复的容器名称参数，但核心配置保持一致。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:150px;padding:42px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:4px;text-align:center;">
+      <p style="margin:0 0 5px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜部署链路图</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议替换为 16:9 高清示意图：请求、Docker、SGLang 与四卡 GPU</p>
+    </section>
+    <p style="margin:7px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 2｜从请求进入、容器与 SGLang 推理，到四卡 GPU 返回 API 响应</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:4px;overflow:hidden;">
+    <p style="margin:0;font-size:11px;color:#cbd5e1;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">sudo modprobe nvidia-peermem
+
+sudo docker run --gpus all \
+  --network host \
+  --name DeepSeek-V4-Flash \
+  --shm-size=32g --ipc=host -d \
+  --privileged \
+  -v /modelshare_readonly/deepseek-ai/DeepSeek-V4-Flash-0731/:/deepseek-ai/DeepSeek-V4-Flash/ \
+  -v /dev/infiniband:/dev/infiniband \
+  -e CUDA_VISIBLE_DEVICES=0,1,2,3 \
+  -e NCCL_IB_HCA="mlx5_0:1,mlx5_2:1,mlx5_3:1,mlx5_5:1" \
+  -e GLOO_SOCKET_IFNAME=bond0 \
+  -e NCCL_SOCKET_IFNAME=bond0 \
+  -e NCCL_DEBUG=INFO \
+  lmsysorg/sglang:v0.5.16 \
+  python3 -m sglang.launch_server \
+  --trust-remote-code \
+  --model-path /deepseek-ai/DeepSeek-V4-Flash \
+  --tp 4 \
+  --served-model-name DeepSeek-V4-Flash \
+  --tool-call-parser deepseekv4 \
+  --reasoning-parser deepseek-v4 \
+  --context-length 65536 \
+  --host 0.0.0.0 --port 40000 \
+  --moe-runner-backend marlin \
+  --speculative-algorithm EAGLE \
+  --speculative-num-steps 3 \
+  --speculative-eagle-topk 1 \
+  --speculative-num-draft-tokens 4 \
+  --mem-fraction-static 0.88</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">这条命令里最容易看错的三件事</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>第一，容器内路径不是版本名。</strong>宿主机挂载的是 0731 目录，但容器内统一映射成 <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">/deepseek-ai/DeepSeek-V4-Flash</code>，这是路径别名，不代表回退到了旧版模型。</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>第二，API 模型名由 served-model-name 决定。</strong>客户端请求中应填写 <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">DeepSeek-V4-Flash</code>，而不是随意填写宿主机目录名。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>第三，本文使用 EAGLE，不是 DSpark。</strong>这两条推测解码路径的权重与参数不能混写；部署时必须以实际模型权重和 SGLang 版本为准。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">04｜为什么选择 Marlin，而不是看起来更快的后端</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">MoE 后端的第一关不是峰值算力，而是显存预算。模型权重只是显存的一部分，运行时还要为 MoE workspace、KV Cache、CUDA Graph、NCCL 通信以及 EAGLE 的草稿和验证过程预留空间。</p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">Marlin 走的是 Hopper 上更适合原始 FP4 专家权重的 W4A16 路径：权重保持低比特存储，计算时融合反量化和矩阵乘法，避免把大量专家权重完整展开成更高精度格式。它未必在所有负载下都是最快的，但更容易把模型、KV Cache 和推测解码同时放进 H800 4 卡。</p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">相反，DeepGEMM、FlashInfer、CUTLASS 等路径通常面向特定 FP8、MXFP4 或更新的融合 kernel。它们可能有更高的理论性能，但也可能在初始化时申请更大的 workspace，或者要求不同的 checkpoint 格式。对当前这套显存预算来说，“启动不了”比“理论上更快”更需要优先解决。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">常见 MoE Runner 横向比较</p>
+    <table style="width:100%;border-collapse:collapse;font-size:11px;line-height:1.55;table-layout:fixed;">
+      <thead>
+        <tr>
+          <th style="width:25%;padding:8px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:left;">后端</th>
+          <th style="width:34%;padding:8px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:left;">主要定位</th>
+          <th style="width:41%;padding:8px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:left;">H800 4 卡本方案的影响</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;font-weight:bold;color:#0f3d3e;">marlin</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">Hopper W4A16 / FP4 MoE</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f3d3e;">显存友好；适配当前原始 0731 权重，本文实测可启动</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;">auto</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">自动选择可用后端</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">不保证选到显存最省的路径；版本升级后选择结果也可能变化</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;font-weight:bold;">deep_gemm</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">高性能 FP8 / GEMM 路径</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">更依赖 FP8 权重和运行时 workspace；当前组合切换后显存压力更大</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;">triton / triton_kernel</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">通用或 SGLang Triton fallback</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">兼容性较宽，但专用 FP4 优化和显存效率通常不如 Marlin</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;font-weight:bold;">flashinfer_mxfp4</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">FlashInfer MXFP4 MoE</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">依赖 checkpoint、FlashInfer 版本和架构；不应与当前可启动方案直接等价</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;">flashinfer_trtllm</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">FlashInfer / TRT-LLM 融合 MoE</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">高性能取向，但可能预分配更大的 workspace，容易挤压 KV 和 EAGLE 余量</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;font-weight:bold;">flashinfer_trtllm_routed</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">带 routed MoE 的 TRT-LLM 路径</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">更依赖特定量化格式和路由实现；不是当前权重的首选验证路径</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;">flashinfer_cutlass / cutlass</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">CUTLASS 融合矩阵乘路径</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">适合部分 FP4 / NVFP4 或更新硬件路径；格式和 workspace 约束更明显</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;font-weight:bold;">flashinfer_cutedsl</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">CuteDSL MoE kernel</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f8fafc;">版本、架构和量化路径耦合较强，需单独做端到端验证</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;font-weight:bold;">aiter / humming</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">其他平台或实验性实现</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">不作为 H800 4 卡这套稳定生产基线</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#64748b;line-height:1.7;">注意：SGLang 的“可选后端”列表不等于“当前模型、当前权重、当前 GPU 都适用”。最终判断必须以权重格式、SGLang 版本和本机端到端启动结果为准。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border-left:4px solid #cbd5e1;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.9;"><strong>工程判断：</strong>如果更换后端后 OOM，不能只看 <code style="background:#e5e7eb;padding:1px 4px;border-radius:3px;">nvidia-smi</code> 还有多少空闲显存。失败点可能发生在权重重排、MoE workspace 预分配、CUDA Graph 捕获或 EAGLE 初始化阶段。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">后端选择的实际优先级</p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">第一优先：权重格式匹配；第二优先：能否在显存预算内完成初始化；第三优先：稳定性；最后才是峰值 tokens/s。你的 Marlin 方案正是按照这个顺序做出的选择。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">05｜启动后要验证什么</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.9;">服务启动成功只是第一关。建议按下面顺序验证，避免把“进程活着”误认为“模型可用”。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">① 普通对话：确认模型名、中文输出和流式响应。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">② 思考模式：确认 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">reasoning_content</code> 与最终答案能正确分离。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">③ 工具调用：确认 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">tool_calls</code> 的函数名和参数 JSON 正常。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">④ 长上下文：从 8K、32K 逐步增加到 64K，不要一上来用极限请求压垮 KV Cache。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">⑤ 性能记录：至少记录首 token 延迟、输出速度、并发数、显存占用和 EAGLE 接受情况。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">建议的 API 最小验证</p>
+    <p style="margin:0;font-size:13px;color:#334155;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;">curl http://127.0.0.1:40000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"DeepSeek-V4-Flash","messages":[{"role":"user","content":"请用三句话介绍你自己。"}]}'</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">高阶验证：用 EvalScope 评测在线 API</p>
+    <p style="margin:0 0 9px 0;font-size:14px;color:#374151;line-height:1.85;">最小 curl 只能证明“接口能返回”，不能说明模型在数学、知识和指令遵循上的整体表现。可以在独立的评测环境安装 EvalScope，通过 OpenAI 兼容接口评测当前已经启动的服务：</p>
+    <p style="margin:0 0 9px 0;font-size:12px;color:#334155;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">pip install evalscope<br /><br />evalscope eval &#92;<br />&nbsp;&nbsp;--model DeepSeek-V4-Flash &#92;<br />&nbsp;&nbsp;--api-url http://127.0.0.1:40000/v1 &#92;<br />&nbsp;&nbsp;--api-key EMPTY &#92;<br />&nbsp;&nbsp;--eval-type openai_api &#92;<br />&nbsp;&nbsp;--datasets gsm8k arc ifeval &#92;<br />&nbsp;&nbsp;--limit 20 &#92;<br />&nbsp;&nbsp;--generation-config '{"temperature":0.6,"max_tokens":2048}'</p>
+    <p style="margin:0 0 7px 0;font-size:13px;color:#334155;line-height:1.8;"><strong>怎么读结果：</strong><code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">gsm8k</code> 看数学推理，<code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">arc</code> 看基础知识，<code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">ifeval</code> 看指令遵循。命令中的 <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">--limit 20</code> 是先跑小样本确认评测链路；正式对比时去掉它，或者固定同一批数据、采样参数和重复次数。</p>
+    <p style="margin:0;font-size:13px;color:#334155;line-height:1.8;"><strong>注意：</strong>EvalScope 评测的是服务 API 的输出结果，不等同于 H800 的吞吐压测。吞吐、首 token 延迟、并发和显存仍应单独记录；如果评测环境不在推理机上，把 <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">127.0.0.1</code> 换成推理机地址，并确认 40000 端口可访问。</p>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#64748b;line-height:1.7;">命令格式参考：<a href="https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html" style="color:#334155;text-decoration:none;word-break:break-all;">EvalScope 快速上手：在线模型 API 评测</a></p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">06｜最后总结：这次升级值得吗？</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">如果你的场景只是普通闲聊，0731 的升级收益未必值得立刻更换全部基础设施；但如果你要做代码 Agent、工具调用、自动化执行或复杂任务编排，0731 的升级方向就非常明确。</p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">在硬件侧，H800 4 卡并不适合无限堆上下文和所有高性能后端。本文这套 64K + Marlin + EAGLE 的组合，牺牲了一部分极限能力，换来更现实的显存余量和服务稳定性。</p>
+    <p style="margin:0;font-size:16px;font-weight:bold;color:#0f3d3e;line-height:1.9;">模型升级解决“能力够不够”的问题；Marlin、64K 上下文和显存预算，解决“服务能不能长期跑”的问题。</p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">参考资料</p>
+    <p style="margin:0 0 5px 0;font-size:13px;color:#475569;line-height:1.8;">模型：<a href="https://modelscope.cn/models/deepseek-ai/DeepSeek-V4-Flash-0731" style="color:#0f766e;text-decoration:none;word-break:break-all;">ModelScope / deepseek-ai/DeepSeek-V4-Flash-0731</a></p>
+    <p style="margin:0 0 5px 0;font-size:13px;color:#475569;line-height:1.8;">官方模型卡：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731" style="color:#0f766e;text-decoration:none;word-break:break-all;">DeepSeek-V4-Flash-0731</a></p>
+    <p style="margin:0;font-size:13px;color:#475569;line-height:1.8;">SGLang：<a href="https://docs.sglang.io/cookbook/autoregressive/DeepSeek/DeepSeek-V4" style="color:#0f766e;text-decoration:none;word-break:break-all;">DeepSeek-V4 Cookbook</a></p>
+  </section>
+
+  <section style="margin:24px 0 0 0;text-align:center;">
+    <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.7;">本文基于 H800 4 卡实际验证脚本整理，具体吞吐与延迟请以你的业务流量和压测结果为准。</p>
+  </section>
+
+</section>
