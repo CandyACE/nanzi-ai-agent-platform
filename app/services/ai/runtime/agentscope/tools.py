@@ -71,6 +71,8 @@ READ_ONLY_TOOL_NAMES = {
     "web_renderer_and_snapshot",
     "code_syntax_linter",
     "fetch_static_web_url",
+    "web_search_baidu_http",
+    "web_search_bing_http",
     "web_search_baidu",
     "system_http_request",
     "sub_agent_call",

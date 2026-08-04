@@ -277,163 +277,372 @@ async def fetch_static_web_url(url: str) -> str:
         return f"静态抓取失败，建议尝试使用慢通道 'web_renderer_and_snapshot' 工具。错误: {str(err)}"
 
 
+_BAIDU_SEARCH_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def _baidu_search_url(query: str) -> str:
+    import urllib.parse
+
+    return f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}"
+
+
+def _parse_baidu_serp_html(html_content: str, max_results: int) -> List[Dict[str, Any]]:
+    soup = BeautifulSoup(html_content, "html.parser")
+    content_left = soup.find(id="content_left")
+    if not content_left:
+        return []
+
+    results = content_left.find_all(
+        class_=lambda x: x and ("result" in x or "c-container" in x)
+    )
+    parsed_results: List[Dict[str, Any]] = []
+    for res in results:
+        if len(parsed_results) >= max_results:
+            break
+
+        title_el = res.find("h3", class_="t")
+        if not title_el:
+            title_el = res.find(class_=lambda x: x and "title" in x)
+
+        a_tag = title_el.find("a") if title_el else res.find("a")
+        if not a_tag:
+            continue
+
+        title_text = a_tag.get_text().strip()
+        link = a_tag.get("href", "").strip()
+
+        abstract_el = res.find(class_=lambda x: x and "abstract" in x)
+        if not abstract_el:
+            abstract_el = res.find(class_=lambda x: x and "c-span-last" in x)
+
+        abstract_text = abstract_el.get_text().strip() if abstract_el else "无简短摘要描述。"
+        abstract_text = abstract_text.replace("\xa0", " ")
+
+        if title_text and link:
+            parsed_results.append(
+                {
+                    "title": title_text,
+                    "link": link,
+                    "abstract": abstract_text,
+                }
+            )
+    return parsed_results
+
+
+async def _extract_content_from_baidu_link(baidu_link: str) -> Optional[dict]:
+    try:
+        import httpx
+        from app.services.ai.tools.system_tools import validate_url
+
+        headers = {"User-Agent": _BAIDU_SEARCH_USER_AGENT}
+        async with httpx.AsyncClient(timeout=6.0, trust_env=False) as client:
+            response = await client.get(baidu_link, headers=headers, follow_redirects=True)
+            real_url = str(response.url)
+            validate_url(real_url)
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            for script_or_style in soup(["script", "style", "header", "footer", "nav", "iframe"]):
+                script_or_style.extract()
+
+            text_lines = [line.strip() for line in soup.get_text().splitlines() if line.strip()]
+            cleaned_text = "\n".join(text_lines)
+
+            if len(cleaned_text) > 600:
+                cleaned_text = cleaned_text[:600] + "\n...(余下网页正文已省略)"
+
+            return {
+                "real_url": real_url,
+                "content": cleaned_text,
+            }
+    except Exception as err:
+        logger.warning("[web_search_baidu] Failed to extract from %s: %s", baidu_link, err)
+        return None
+
+
+async def _enrich_baidu_results_with_top_content(
+    parsed_results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    import asyncio
+
+    if not parsed_results:
+        return parsed_results
+
+    extraction_tasks = [
+        _extract_content_from_baidu_link(item["link"]) for item in parsed_results[:2]
+    ]
+    extraction_results = await asyncio.gather(*extraction_tasks)
+    for idx, ext_res in enumerate(extraction_results):
+        if ext_res:
+            parsed_results[idx]["real_url"] = ext_res["real_url"]
+            parsed_results[idx]["extracted_content"] = ext_res["content"]
+    return parsed_results
+
+
+def _format_baidu_search_markdown(
+    query: str,
+    parsed_results: List[Dict[str, Any]],
+    *,
+    title_prefix: str,
+) -> str:
+    md_lines = [f"### 🔍 {title_prefix} (关于: '{query}')\n"]
+    for idx, item in enumerate(parsed_results, 1):
+        display_link = item.get("real_url") or item["link"]
+        md_lines.append(f"{idx}. **[{item['title']}]({display_link})**")
+        md_lines.append(f"   > 📝 摘要: {item['abstract']}\n")
+
+    extracted_sections = []
+    for idx, item in enumerate(parsed_results[:2], 1):
+        if item.get("extracted_content"):
+            extracted_sections.append(
+                f"#### 📄 网页 {idx}: {item['title']}\n"
+                f"* **真实源链接**: {item['real_url']}\n"
+                f"* **网页提炼正文 (前600字)**:\n"
+                f"```text\n"
+                f"{item['extracted_content']}\n"
+                f"```"
+            )
+
+    if extracted_sections:
+        md_lines.append("\n---\n")
+        md_lines.append("### 📄 自动提取的网页全文提炼 (Top-2 网页深度正文)\n")
+        md_lines.extend(extracted_sections)
+
+    return "\n".join(md_lines)
+
+
 async def web_search_baidu_raw(query: str, max_results: int = 3) -> List[Dict[str, Any]]:
     """
     通过模拟浏览器访问百度，在互联网上实时检索关于特定问题、最新事实，返回结构化的网页结果列表。
     """
-    import urllib.parse
-    from bs4 import BeautifulSoup
-    
-    encoded_query = urllib.parse.quote(query)
-    search_url = f"https://www.baidu.com/s?wd={encoded_query}"
-    
+    search_url = _baidu_search_url(query)
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
             )
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 800},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent=_BAIDU_SEARCH_USER_AGENT,
             )
             page = await context.new_page()
             await page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
             try:
                 await page.wait_for_selector("#content_left", timeout=8000)
             except Exception as select_err:
-                logger.warning(f"Timeout waiting for #content_left: {select_err}")
-            
+                logger.warning("Timeout waiting for #content_left: %s", select_err)
+
             html_content = await page.content()
             await browser.close()
     except Exception as e:
-        logger.error(f"[web_search_baidu_raw] Playwright error: {e}")
+        logger.error("[web_search_baidu_raw] Playwright error: %s", e)
         return []
 
-    soup = BeautifulSoup(html_content, "html.parser")
-    content_left = soup.find(id="content_left")
-    if not content_left:
+    parsed_results = _parse_baidu_serp_html(html_content, max_results)
+    return await _enrich_baidu_results_with_top_content(parsed_results)
+
+
+async def web_search_baidu_http_raw(
+    query: str,
+    max_results: int = 3,
+    *,
+    deep_fetch: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    使用 httpx 直接抓取百度结果页 HTML（无 Playwright），返回结构化结果。
+    """
+    import httpx
+
+    search_url = _baidu_search_url(query)
+    headers = {
+        "User-Agent": _BAIDU_SEARCH_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False, follow_redirects=True) as client:
+            response = await client.get(search_url, headers=headers)
+            response.raise_for_status()
+            html_content = response.text
+    except Exception as e:
+        logger.error("[web_search_baidu_http_raw] httpx error: %s", e)
         return []
-        
-    results = content_left.find_all(class_=lambda x: x and ('result' in x or 'c-container' in x))
-    parsed_results = []
-    for res in results:
-        if len(parsed_results) >= max_results:
-            break
-            
-        title_el = res.find("h3", class_="t")
-        if not title_el:
-            title_el = res.find(class_=lambda x: x and 'title' in x)
-            
-        a_tag = title_el.find("a") if title_el else res.find("a")
-        if not a_tag:
-            continue
-            
-        title_text = a_tag.get_text().strip()
-        link = a_tag.get("href", "").strip()
-        
-        abstract_el = res.find(class_=lambda x: x and 'abstract' in x)
-        if not abstract_el:
-            abstract_el = res.find(class_=lambda x: x and 'c-span-last' in x)
-        
-        abstract_text = abstract_el.get_text().strip() if abstract_el else "无简短摘要描述。"
-        abstract_text = abstract_text.replace("\xa0", " ")
-        
-        if title_text and link:
-            parsed_results.append({
-                "title": title_text,
-                "link": link,
-                "abstract": abstract_text
-            })
 
-    async def _extract_content_from_baidu_link(baidu_link: str) -> Optional[dict]:
-        try:
-            import httpx
-            from bs4 import BeautifulSoup
-            from app.services.ai.tools.system_tools import validate_url
-            
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            async with httpx.AsyncClient(timeout=6.0, trust_env=False) as client:
-                response = await client.get(baidu_link, headers=headers, follow_redirects=True)
-                real_url = str(response.url)
-                validate_url(real_url)
-                
-                soup = BeautifulSoup(response.text, "html.parser")
-                for script_or_style in soup(["script", "style", "header", "footer", "nav", "iframe"]):
-                    script_or_style.extract()
-                    
-                text_lines = [line.strip() for line in soup.get_text().splitlines() if line.strip()]
-                cleaned_text = "\n".join(text_lines)
-                
-                if len(cleaned_text) > 600:
-                    cleaned_text = cleaned_text[:600] + "\n...(余下网页正文已省略)"
-                    
-                return {
-                    "real_url": real_url,
-                    "content": cleaned_text
-                }
-        except Exception as err:
-            logger.warning(f"[web_search_baidu_raw] Failed to extract from {baidu_link}: {err}")
-            return None
-    # 对 Top-2 的加密跳转链接发起高并发内容提取
-    import asyncio
-    extraction_tasks = []
-    for item in parsed_results[:2]:
-        extraction_tasks.append(_extract_content_from_baidu_link(item["link"]))
-
-    extraction_results = []
-    if extraction_tasks:
-        extraction_results = await asyncio.gather(*extraction_tasks)
-
-    for idx, ext_res in enumerate(extraction_results):
-        if ext_res:
-            parsed_results[idx]["real_url"] = ext_res["real_url"]
-            parsed_results[idx]["extracted_content"] = ext_res["content"]
-
+    parsed_results = _parse_baidu_serp_html(html_content, max_results)
+    if deep_fetch:
+        return await _enrich_baidu_results_with_top_content(parsed_results)
     return parsed_results
+
+
+@tool
+async def web_search_baidu_http(
+    query: str,
+    max_results: int = 6,
+    deep_fetch: bool = False,
+) -> str:
+    """
+    轻量百度联网搜索（httpx 直接抓取结果页，无需启动浏览器）。
+    适合优先使用：延迟通常明显低于 Playwright 版 web_search_baidu。
+    英文/国际资讯可改用 web_search_bing_http。
+    若本工具无结果或疑似被反爬拦截，再改用较慢的 web_search_baidu。
+    需要阅读某个结果正文时，可对真实 URL 调用 fetch_static_web_url。
+
+    Args:
+        query: 检索关键词（例如 '南孜智能体 智能运营'）。
+        max_results: 返回的最多结果条数，默认 6 条。
+        deep_fetch: 是否并发抓取 Top-2 结果页正文（默认 False，更快）。
+    """
+    try:
+        parsed_results = await web_search_baidu_http_raw(
+            query,
+            max_results=max_results,
+            deep_fetch=deep_fetch,
+        )
+        if not parsed_results:
+            return (
+                "未能检索到任何相关结果，请尝试简化或更换关键词；"
+                "若仍失败可改用较慢的 Playwright 工具 web_search_baidu。"
+            )
+        return _format_baidu_search_markdown(
+            query,
+            parsed_results,
+            title_prefix="百度 HTTP 搜索结果",
+        )
+    except Exception as e:
+        return f"百度 HTTP 网页检索异常失败: {str(e)}"
 
 
 @tool
 async def web_search_baidu(query: str, max_results: int = 6) -> str:
     """
-    通过模拟浏览器访问百度，在互联网上实时检索关于特定问题、技术报错、实时新闻或南孜智能体相关资讯等最新信息。
-    不需要任何商业 API Key，完全自主可控。输入查询词，返回包含标题、核心摘要及百度来源链接的精美 Markdown 结果列表。
-    
+    通过 Playwright 无头浏览器访问百度做联网检索（较慢，适合 HTTP 轻量通道失败时的兜底）。
+    优先尝试更快的 web_search_baidu_http；本工具会渲染结果页并对 Top-2 链接自动抽取正文。
+    不需要商业 API Key。
+
     Args:
-        query: 检索关键词 (例如 '南孜智能体 智能运营')。
+        query: 检索关键词（例如 '南孜智能体 智能运营'）。
         max_results: 返回的最多结果条数，默认 6 条。
     """
     try:
         parsed_results = await web_search_baidu_raw(query, max_results=max_results)
         if not parsed_results:
             return "未能检索到任何相关结果，请尝试简化或更换关键词。"
-            
-        md_lines = [f"### 🔍 百度搜索结果 (关于: '{query}')\n"]
-        for idx, item in enumerate(parsed_results, 1):
-            display_link = item.get("real_url") or item["link"]
-            md_lines.append(f"{idx}. **[{item['title']}]({display_link})**")
-            md_lines.append(f"   > 📝 摘要: {item['abstract']}\n")
-
-        extracted_sections = []
-        for idx, item in enumerate(parsed_results[:2], 1):
-            if item.get("extracted_content"):
-                extracted_sections.append(
-                    f"#### 📄 网页 {idx}: {item['title']}\n"
-                    f"* **真实源链接**: {item['real_url']}\n"
-                    f"* **网页提炼正文 (前600字)**:\n"
-                    f"```text\n"
-                    f"{item['extracted_content']}\n"
-                    f"```"
-                )
-
-        if extracted_sections:
-            md_lines.append("\n---\n")
-            md_lines.append("### 📄 自动提取的网页全文提炼 (Top-2 网页深度正文)\n")
-            md_lines.extend(extracted_sections)
-            
-        return "\n".join(md_lines)
-        
+        return _format_baidu_search_markdown(
+            query,
+            parsed_results,
+            title_prefix="百度搜索结果",
+        )
     except Exception as e:
         return f"百度网页检索异常失败: {str(e)}"
+
+
+def _parse_bing_serp_html(html_content: str, max_results: int) -> List[Dict[str, Any]]:
+    soup = BeautifulSoup(html_content, "html.parser")
+    blocks = soup.select("li.b_algo")
+    parsed_results: List[Dict[str, Any]] = []
+    for block in blocks:
+        if len(parsed_results) >= max_results:
+            break
+        a_tag = block.select_one("h2 a")
+        if not a_tag:
+            continue
+        title_text = a_tag.get_text().strip()
+        link = (a_tag.get("href") or "").strip()
+        if not title_text or not link:
+            continue
+        if link.startswith("/"):
+            link = f"https://www.bing.com{link}"
+
+        snippet_el = (
+            block.select_one("p.b_algoSlug")
+            or block.select_one("p.b_lineclamp2")
+            or block.select_one("div.b_caption p")
+        )
+        abstract_text = (
+            snippet_el.get_text().strip().replace("\xa0", " ")
+            if snippet_el
+            else "无简短摘要描述。"
+        )
+        parsed_results.append(
+            {
+                "title": title_text,
+                "link": link,
+                "abstract": abstract_text,
+            }
+        )
+    return parsed_results
+
+
+async def web_search_bing_http_raw(
+    query: str,
+    max_results: int = 3,
+    *,
+    deep_fetch: bool = False,
+) -> List[Dict[str, Any]]:
+    """使用 httpx 抓取 Bing 结果页 HTML（无 Playwright）。"""
+    import urllib.parse
+    import httpx
+
+    search_url = (
+        "https://www.bing.com/search?"
+        f"q={urllib.parse.quote(query)}&setlang=zh-hans&mkt=zh-CN"
+    )
+    headers = {
+        "User-Agent": _BAIDU_SEARCH_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False, follow_redirects=True) as client:
+            response = await client.get(search_url, headers=headers)
+            response.raise_for_status()
+            html_content = response.text
+    except Exception as e:
+        logger.error("[web_search_bing_http_raw] httpx error: %s", e)
+        return []
+
+    parsed_results = _parse_bing_serp_html(html_content, max_results)
+    if deep_fetch:
+        return await _enrich_baidu_results_with_top_content(parsed_results)
+    return parsed_results
+
+
+@tool
+async def web_search_bing_http(
+    query: str,
+    max_results: int = 6,
+    deep_fetch: bool = False,
+) -> str:
+    """
+    轻量 Bing 联网搜索（httpx 直接抓取结果页，无需浏览器）。
+    适合英文、国际资讯与技术资料；中文日常检索优先用更快的 web_search_baidu_http。
+    无结果时可改试 web_search_baidu_http / web_search_baidu。
+    需要阅读某个结果正文时，可对真实 URL 调用 fetch_static_web_url。
+
+    Args:
+        query: 检索关键词（例如 'AgentScope ReAct tooling'）。
+        max_results: 返回的最多结果条数，默认 6 条。
+        deep_fetch: 是否并发抓取 Top-2 结果页正文（默认 False，更快）。
+    """
+    try:
+        parsed_results = await web_search_bing_http_raw(
+            query,
+            max_results=max_results,
+            deep_fetch=deep_fetch,
+        )
+        if not parsed_results:
+            return (
+                "未能检索到任何相关结果，请尝试简化或更换关键词；"
+                "中文检索可改用 web_search_baidu_http，或较慢的 web_search_baidu。"
+            )
+        return _format_baidu_search_markdown(
+            query,
+            parsed_results,
+            title_prefix="Bing HTTP 搜索结果",
+        )
+    except Exception as e:
+        return f"Bing HTTP 网页检索异常失败: {str(e)}"
