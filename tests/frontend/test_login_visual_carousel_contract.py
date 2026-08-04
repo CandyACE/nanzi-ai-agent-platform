@@ -83,3 +83,23 @@ def test_login_large_desktop_keeps_the_primary_title_on_one_line():
 
     assert "lg:w-[420px] xl:w-[460px]" in source
     assert "max-w-4xl xl:max-w-[1100px]" in source
+
+
+def test_login_visual_content_does_not_move_with_mouse():
+    source = login_source()
+
+    assert "window.addEventListener('mousemove', handleMouseMove)" not in source
+    assert "const mouseX = ref(0)" not in source
+    assert "const mouseY = ref(0)" not in source
+    assert ':style="{ transform: `translate(${mouseX}px, ${mouseY}px)` }"' not in source
+
+
+def test_login_execution_slide_uses_a_dark_tech_palette():
+    source = login_source()
+
+    assert "gradient: 'from-blue-500/30 via-blue-950/60 to-[#0b1830]'" in source
+    assert "accent: 'text-blue-300'" in source
+    assert "glow: 'bg-cyan-400/10'" in source
+    assert "bg: 'bg-[#0b1830]'" in source
+    assert "light: false" in source
+    assert "bg: 'bg-[#eff6ff]'" not in source

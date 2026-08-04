@@ -54,11 +54,11 @@ const slides = [
         subtitle: 'Natural language into executable outcomes',
         desc: '轻盈、可信、企业友好。把产品能力放进真实工作流的入口。',
         features: ['ChatBI', 'Knowledge', 'MCP'],
-        gradient: 'from-blue-600/20 via-blue-100/10 to-[#dbeafe]',
-        accent: 'text-blue-600',
-        glow: 'bg-cyan-400/20',
-        bg: 'bg-[#eff6ff]',
-        light: true,
+        gradient: 'from-blue-500/30 via-blue-950/60 to-[#0b1830]',
+        accent: 'text-blue-300',
+        glow: 'bg-cyan-400/10',
+        bg: 'bg-[#0b1830]',
+        light: false,
     },
     {
         key: 'a',
@@ -134,14 +134,6 @@ watch(activeTab, () => {
     error.value = ''
 })
 
-// Interaction logic
-const mouseX = ref(0)
-const mouseY = ref(0)
-const handleMouseMove = (e: MouseEvent) => {
-    mouseX.value = (e.clientX / window.innerWidth - 0.5) * 15
-    mouseY.value = (e.clientY / window.innerHeight - 0.5) * 15
-}
-
 const fetchPublicConfig = async () => {
     try {
         const response = await axios.get('/api/portal/auth/config/public')
@@ -157,7 +149,6 @@ const fetchPublicConfig = async () => {
 }
 
 onMounted(async () => { 
-    window.addEventListener('mousemove', handleMouseMove)
     currentSlide.value = getInitialSlide()
     motionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
     reducedMotion.value = motionMediaQuery.matches
@@ -176,7 +167,6 @@ watch(() => branding.value.hide_login_sso, (hide) => {
     }
 })
 onUnmounted(() => { 
-    window.removeEventListener('mousemove', handleMouseMove)
     clearSlideTimer()
     motionMediaQuery?.removeEventListener?.('change', handleMotionPreferenceChange)
 })
@@ -275,7 +265,7 @@ const handleLogin = async () => {
                 :class="currentSlide === index ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8 pointer-events-none'"
                 :aria-hidden="currentSlide !== index"
             >
-                <div class="relative z-10 max-w-4xl xl:max-w-[1100px]" :style="{ transform: `translate(${mouseX}px, ${mouseY}px)` }">
+                <div class="relative z-10 max-w-4xl xl:max-w-[1100px]">
                     <h1 class="text-5xl xl:text-7xl font-bold tracking-tighter mb-4 drop-shadow-2xl" :class="slide.light ? 'text-slate-900' : 'text-white'">
                         {{ slide.title }}
                     </h1>
