@@ -2175,6 +2175,7 @@ import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome";
 import {
   personalResourceFallbackItems,
+  personalResourcePlaceholderItems,
   type PersonalResourceTab,
 } from "@/constants/personalResources";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
@@ -2832,11 +2833,16 @@ const config = reactive({
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 const showPersonalResources = ref(false);
 const personalResourcesTab = ref<PersonalResourceTab>("memory");
-const { payload: workbenchHome, load: loadWorkbenchHome } = useWorkbenchHome();
+const {
+  payload: workbenchHome,
+  load: loadWorkbenchHome,
+  error: workbenchHomeError,
+} = useWorkbenchHome();
 const welcomePersonalResources = computed(() => {
   const items = workbenchHome.value?.personal_resources;
   if (Array.isArray(items) && items.length) return items;
-  return personalResourceFallbackItems();
+  if (workbenchHomeError.value) return personalResourceFallbackItems();
+  return personalResourcePlaceholderItems();
 });
 
 const openPersonalResources = (tab: string) => {
