@@ -292,6 +292,7 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     # 1. Create Server
     payload = {
         "server_name": unique_name,
+        "remark": "用于联调的测试 MCP",
         "sse_url": f"http://localhost:8000/sse/{uuid.uuid4().hex[:4]}",
         "auth_headers": '{"Authorization": "Bearer test"}',
         "enabled_status": 1
@@ -303,6 +304,7 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     data = resp.json()
     server_id = data["id"]
     assert data["server_name"] == unique_name
+    assert data.get("remark") == "用于联调的测试 MCP"
     assert data["published_tool_count"] == 0
 
     # 2. List Servers
@@ -312,10 +314,12 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     assert len(servers) >= 1
     found = next((s for s in servers if s["id"] == server_id), None)
     assert found is not None
+    assert found.get("remark") == "用于联调的测试 MCP"
 
     # 3. Update Server
     update_payload = {
         "server_name": f"Updated {unique_name}",
+        "remark": "更新后的备注",
         "sse_url": payload["sse_url"] + "_v2",
         "auth_headers": '{}',
         "enabled_status": 0
@@ -324,6 +328,7 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     assert resp.status_code == 200
     updated_data = resp.json()
     assert updated_data["server_name"] == f"Updated {unique_name}"
+    assert updated_data.get("remark") == "更新后的备注"
 
     # 4. Delete Server
     resp = await client.delete(f"/api/portal/mcp/servers/{server_id}", headers=headers)

@@ -52,6 +52,7 @@ async def list_published_mcp_tools(
             "name": t.tool_name,
             "description": t.tool_description,
             "server_name": t.server.server_name if t.server else "Unknown",
+            "server_remark": (t.server.remark if t.server else None) or None,
             "scope": t.server.scope if (t.server and t.server.scope) else "global",
             "parameter_schema": json.loads(t.parameter_schema or "{}")
         } for t in tools

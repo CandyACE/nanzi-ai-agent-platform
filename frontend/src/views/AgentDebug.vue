@@ -2259,8 +2259,8 @@ const loadMetadataDatasetSessionScope = async () => {
 
 const mountMcpToolToSession = async (
   toolsInput:
-    | Array<{ id: string; name: string; description?: string; server_name?: string; scope?: string }>
-    | { id: string; name: string; description?: string; server_name?: string; scope?: string },
+    | Array<{ id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }>
+    | { id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string },
 ) => {
   if (!conversationId.value) {
     showToast("请先开始会话", "error");
@@ -2272,6 +2272,7 @@ const mountMcpToolToSession = async (
       name: String(tool?.name || "").trim(),
       description: tool?.description || "",
       server_name: tool?.server_name || "",
+      server_remark: tool?.server_remark || "",
       scope: tool?.scope || "global",
     }))
     .filter((tool) => tool.id && tool.name);

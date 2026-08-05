@@ -18,6 +18,7 @@ type ResourceScopeChip = {
 
 type McpOptionGroup = {
   serverName: string;
+  serverRemark?: string;
   tools: any[];
 };
 
@@ -109,6 +110,7 @@ const groupMcpOptions = (options: any[]): McpOptionGroup[] => {
   return Array.from(map.entries())
     .map(([serverName, tools]) => ({
       serverName,
+      serverRemark: String(tools.find((t) => t?.server_remark)?.server_remark || "").trim() || undefined,
       tools: tools.slice().sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""), "zh-CN")),
     }))
     .sort((a, b) => a.serverName.localeCompare(b.serverName, "zh-CN"));
@@ -354,8 +356,17 @@ const skillsForActiveScope = computed(() => {
                     >
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                     </svg>
-                    <span class="text-xs font-semibold text-gray-800 dark:text-gray-100 truncate" :title="mcpGroup.serverName">
-                      {{ mcpGroup.serverName }}
+                    <span class="min-w-0 flex-1">
+                      <span
+                        class="text-xs font-semibold text-gray-800 dark:text-gray-100 truncate block"
+                        :title="mcpGroup.serverRemark ? `${mcpGroup.serverName} · ${mcpGroup.serverRemark}` : mcpGroup.serverName"
+                      >
+                        {{ mcpGroup.serverName }}
+                      </span>
+                      <span
+                        v-if="mcpGroup.serverRemark"
+                        class="text-[10px] text-gray-400 truncate block leading-snug mt-0.5"
+                      >{{ mcpGroup.serverRemark }}</span>
                     </span>
                     <span class="shrink-0 text-[10px] text-gray-400 font-medium">({{ mcpGroup.tools.length }})</span>
                   </button>

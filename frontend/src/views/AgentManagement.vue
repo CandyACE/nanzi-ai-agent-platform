@@ -853,6 +853,7 @@ const filteredGroupedMcpTools = computed(() => {
     const filtered = tools.filter((tool) =>
       tool.name.toLowerCase().includes(q) ||
       (tool.description || '').toLowerCase().includes(q) ||
+      (tool.server_remark || '').toLowerCase().includes(q) ||
       serverName.toLowerCase().includes(q)
     );
     if (filtered.length > 0) result[serverName] = filtered;

@@ -1337,40 +1337,41 @@ defineExpose({
                                     </template>
                                 </div>
 
-                                <!-- Desktop flyout: Skills（顶对齐左侧加号菜单） -->
+                                <!-- Desktop flyout: 与左侧加号菜单上下对齐，内部列表滚动 -->
                                 <div
                                   v-if="showSkillCascade && !isMobileViewport"
-                                  class="absolute z-[60] left-full top-0 ml-1.5"
+                                  class="absolute z-[60] left-full top-0 bottom-0 ml-1.5 flex flex-col"
                                   @click.stop
                                 >
                                   <SkillCascadeMenu
                                     ref="skillCascadeRef"
+                                    fill-height
                                     :agent-id="agentId"
                                     :attached-skill-ids="attachedSkillIds"
                                     @select="mountSkillFromCascade"
                                   />
                                 </div>
 
-                                <!-- Desktop flyout: MCP（顶对齐左侧加号菜单） -->
                                 <div
                                   v-if="showMcpCascade && !isMobileViewport"
-                                  class="absolute z-[60] left-full top-0 ml-1.5"
+                                  class="absolute z-[60] left-full top-0 bottom-0 ml-1.5 flex flex-col"
                                   @click.stop
                                 >
                                   <McpCascadeMenu
                                     ref="mcpCascadeRef"
+                                    fill-height
                                     :attached-tool-names="attachedMcpToolNames"
                                     @select="mountMcpFromCascade"
                                   />
                                 </div>
 
-                                <!-- Desktop flyout: Experts（顶对齐左侧加号菜单） -->
                                 <div
                                   v-if="showExpertCascade && !isMobileViewport"
-                                  class="absolute z-[60] left-full top-0 ml-1.5"
+                                  class="absolute z-[60] left-full top-0 bottom-0 ml-1.5 flex flex-col"
                                   @click.stop
                                 >
                                   <ExpertCascadeMenu
+                                    fill-height
                                     :routing-mode="routingMode"
                                     :expert-agent-id="expertAgentId"
                                     :allowed-agents="allowedAgents"

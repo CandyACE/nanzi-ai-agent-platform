@@ -23,8 +23,10 @@ def test_mcp_cascade_menu_exists_and_lists_portal_tools():
     assert "personalTools" in MCP_MENU
     assert "scope === 'personal'" in MCP_MENU or 'scope || \'\').toLowerCase() === \'personal\'' in MCP_MENU
     assert "mcpToolDisplayName" in MCP_MENU
-    assert "min(48vh,22rem)" in MCP_MENU
-    assert "left-full top-0" in CHAT_INPUT
+    assert "fillHeight" in MCP_MENU
+    assert "flex-1 min-h-0" in MCP_MENU
+    assert "left-full top-0 bottom-0" in CHAT_INPUT
+    assert "fill-height" in CHAT_INPUT
 
 
 def test_chat_input_has_mcp_center_entry():

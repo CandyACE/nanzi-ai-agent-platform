@@ -1,7 +1,8 @@
+"""前端契约：MCP 服务显示名称固定前缀 + 用户后缀。"""
+
 from pathlib import Path
 
 import pytest
-
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -10,19 +11,19 @@ REGISTRY = ROOT / "frontend/src/components/system/McpServerRegistry.vue"
 NAME_HELPER = ROOT / "frontend/src/utils/mcpServerName.ts"
 
 
-def test_mcp_default_name_uses_scope_prefix_and_actual_host_name():
-    registry_source = REGISTRY.read_text()
-    helper_source = NAME_HELPER.read_text()
-
-    assert "buildDefaultMcpServerName" in registry_source
-    assert "mcp-public-" in helper_source
-    assert "mcp-private-" in helper_source
-    assert "userInfo.value?.user_name" in registry_source
-    assert "url.hostname" in registry_source
+def test_mcp_name_helper_builds_visible_user_prefix():
+    helper_source = NAME_HELPER.read_text(encoding="utf-8")
+    assert "buildMcpServerNamePrefix" in helper_source
+    assert "composeMcpServerName" in helper_source
+    assert "stripMcpServerNamePrefix" in helper_source
+    assert "mcp-private-${userPart}-" in helper_source
+    assert "mcp-public-${userPart}-" in helper_source
 
 
-def test_mcp_default_name_is_only_applied_when_name_is_empty():
-    registry_source = REGISTRY.read_text()
-
-    assert "if (!newServer.value.server_name)" in registry_source
-    assert "newServer.value.server_name = buildDefaultMcpServerName" in registry_source
+def test_mcp_registry_shows_fixed_prefix_and_suffix_input():
+    registry_source = REGISTRY.read_text(encoding="utf-8")
+    assert "namePrefix" in registry_source
+    assert "serverNameSuffix" in registry_source
+    assert "composeMcpServerName" in registry_source
+    assert "{{ namePrefix }}" in registry_source
+    assert "请填写服务名称后缀" in registry_source

@@ -877,17 +877,26 @@ const externalCreationMissingFields = computed(() => {
               <div v-else v-for="(tools, serverName) in currentScopeGroupedMcpTools" :key="serverName" class="rounded-lg border border-indigo-100 overflow-hidden">
                 <div class="flex items-center justify-between py-2 px-3 bg-indigo-50/60 border-b border-indigo-100/50">
                   <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
-                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
-                    <span class="text-[10px] font-bold text-indigo-700 uppercase truncate">{{ serverName }}</span>
+                    <span class="min-w-0 flex-1">
+                      <span
+                        class="text-[10px] font-bold text-indigo-700 uppercase truncate block"
+                        :title="tools[0]?.server_remark ? `${serverName} · ${tools[0].server_remark}` : String(serverName)"
+                      >{{ serverName }}</span>
+                      <span
+                        v-if="tools[0]?.server_remark"
+                        class="text-[10px] text-indigo-400/90 font-normal normal-case truncate block leading-snug mt-0.5"
+                      >{{ tools[0].server_remark }}</span>
+                    </span>
                     <span v-if="tools[0]?.scope === 'personal'" class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 flex-shrink-0">
                       个人
                     </span>
                     <span v-else class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 flex-shrink-0">
                       平台
                     </span>
-                    <span class="text-[10px] text-indigo-400">({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
+                    <span class="text-[10px] text-indigo-400 shrink-0">({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
                   </button>
                   <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0">
                     {{ isAllMcpSelected(serverName, tools) ? '取消全选' : '一键全选' }}

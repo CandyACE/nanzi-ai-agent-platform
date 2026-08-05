@@ -9,11 +9,13 @@ export interface McpToolItem {
   name: string
   description?: string
   server_name?: string
+  server_remark?: string
   scope?: 'global' | 'personal' | string
 }
 
 export interface McpToolGroup {
   serverName: string
+  serverRemark?: string
   tools: McpToolItem[]
 }
 
@@ -23,8 +25,10 @@ const props = withDefaults(
     attachedToolNames?: string[]
     compact?: boolean
     fullWidth?: boolean
+    /** 桌面侧栏浮层：高度铺满左侧加号菜单，上下对齐 */
+    fillHeight?: boolean
   }>(),
-  { attachedToolNames: () => [], compact: false, fullWidth: false },
+  { attachedToolNames: () => [], compact: false, fullWidth: false, fillHeight: false },
 )
 
 const emit = defineEmits<{
@@ -58,7 +62,8 @@ const filteredTools = computed(() => {
       t.name?.toLowerCase().includes(query) ||
       t.id?.toLowerCase().includes(query) ||
       t.description?.toLowerCase().includes(query) ||
-      t.server_name?.toLowerCase().includes(query),
+      t.server_name?.toLowerCase().includes(query) ||
+      t.server_remark?.toLowerCase().includes(query),
   )
 })
 
@@ -72,6 +77,7 @@ const groupedTools = computed((): McpToolGroup[] => {
   return Array.from(map.entries())
     .map(([serverName, tools]) => ({
       serverName,
+      serverRemark: String(tools.find((t) => t.server_remark)?.server_remark || '').trim() || undefined,
       tools: tools.slice().sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
     }))
     .sort((a, b) => a.serverName.localeCompare(b.serverName, 'zh-CN'))
@@ -116,6 +122,7 @@ const loadTools = async () => {
       name: String(t.name || ''),
       description: String(t.description || ''),
       server_name: String(t.server_name || 'Unknown'),
+      server_remark: String(t.server_remark || '').trim(),
       scope: String(t.scope || 'global'),
     })).filter((t: McpToolItem) => t.id && t.name && String(t.scope || '').toLowerCase() === 'personal')
     loadedOnce.value = true
@@ -181,9 +188,11 @@ void loadTools()
     class="flex flex-col bg-white dark:bg-gray-800 overflow-hidden border border-gray-200 dark:border-gray-700"
     :class="fullWidth
       ? 'w-full max-h-[min(65vh,28rem)] rounded-none border-x-0 border-b-0 shadow-none'
-      : compact
-        ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
-        : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
+      : fillHeight
+        ? 'h-full w-[min(28rem,calc(100vw-1.5rem))] max-h-none rounded-xl shadow-xl'
+        : compact
+          ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
+          : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
     role="menu"
     aria-label="MCP 工具"
   >
@@ -208,8 +217,11 @@ void loadTools()
       </p>
     </div>
 
-    <!-- 列表自带 max-h，避免 flex basis-0 在贴底浮层里被压成 0 高度 -->
-    <div class="overflow-y-auto overscroll-y-contain px-2 pb-1 custom-scrollbar min-h-[10rem] max-h-[min(48vh,22rem)]">
+    <!-- fillHeight 时由父级定高，列表 flex-1 滚动；否则用固定 max-h -->
+    <div
+      class="overflow-y-auto overscroll-y-contain px-2 pb-1 custom-scrollbar"
+      :class="fillHeight ? 'flex-1 min-h-0' : 'min-h-[10rem] max-h-[min(48vh,22rem)]'"
+    >
       <div v-if="isLoading" class="flex flex-col items-center justify-center py-12 opacity-50">
         <div class="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         <span class="text-xs font-medium text-gray-400 mt-2">加载中...</span>
@@ -267,8 +279,17 @@ void loadTools()
             >
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
-            <span class="text-xs font-semibold text-gray-800 dark:text-gray-100 truncate" :title="group.serverName">
-              {{ group.serverName }}
+            <span class="min-w-0 flex-1">
+              <span
+                class="text-xs font-semibold text-gray-800 dark:text-gray-100 truncate block"
+                :title="group.serverRemark ? `${group.serverName} · ${group.serverRemark}` : group.serverName"
+              >
+                {{ group.serverName }}
+              </span>
+              <span
+                v-if="group.serverRemark"
+                class="text-[10px] text-gray-400 truncate block leading-snug mt-0.5"
+              >{{ group.serverRemark }}</span>
             </span>
             <span class="shrink-0 text-[10px] text-gray-400 font-medium">
               ({{ group.tools.length }})

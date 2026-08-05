@@ -24,8 +24,10 @@ const props = withDefaults(
     compact?: boolean
     /** 移动端底部抽屉内铺满宽度 */
     fullWidth?: boolean
+    /** 桌面侧栏浮层：高度铺满左侧加号菜单，上下对齐 */
+    fillHeight?: boolean
   }>(),
-  { attachedSkillIds: () => [], agentId: null, compact: false, fullWidth: false },
+  { attachedSkillIds: () => [], agentId: null, compact: false, fullWidth: false, fillHeight: false },
 )
 
 const emit = defineEmits<{
@@ -168,9 +170,11 @@ void loadSkillsList()
     class="flex flex-col bg-white dark:bg-gray-800 overflow-hidden border border-gray-200 dark:border-gray-700"
     :class="fullWidth
       ? 'w-full max-h-[min(65vh,28rem)] rounded-none border-x-0 border-b-0 shadow-none'
-      : compact
-        ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
-        : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
+      : fillHeight
+        ? 'h-full w-[min(28rem,calc(100vw-1.5rem))] max-h-none rounded-xl shadow-xl'
+        : compact
+          ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
+          : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
     role="menu"
     aria-label="技能中心"
   >
@@ -224,8 +228,11 @@ void loadSkillsList()
       </p>
     </div>
 
-    <!-- 列表自带 max-h，避免 flex basis-0 在贴底浮层里被压成 0 高度 -->
-    <div class="overflow-y-auto overscroll-y-contain px-2 pb-1 custom-scrollbar min-h-[10rem] max-h-[min(48vh,22rem)]">
+    <!-- fillHeight 时由父级定高，列表 flex-1 滚动；否则用固定 max-h -->
+    <div
+      class="overflow-y-auto overscroll-y-contain px-2 pb-1 custom-scrollbar"
+      :class="fillHeight ? 'flex-1 min-h-0' : 'min-h-[10rem] max-h-[min(48vh,22rem)]'"
+    >
       <div v-if="isLoadingSkillsList" class="flex flex-col items-center justify-center py-12 opacity-50">
         <div class="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         <span class="text-xs font-medium text-gray-400 mt-2">加载中...</span>

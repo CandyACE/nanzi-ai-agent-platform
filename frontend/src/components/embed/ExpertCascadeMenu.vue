@@ -8,6 +8,8 @@ withDefaults(
     compact?: boolean
     /** 移动端底部抽屉内铺满宽度 */
     fullWidth?: boolean
+    /** 桌面侧栏浮层：高度铺满左侧加号菜单，上下对齐 */
+    fillHeight?: boolean
   }>(),
   {
     routingMode: 'auto',
@@ -16,6 +18,7 @@ withDefaults(
     isLoadingAgents: false,
     compact: false,
     fullWidth: false,
+    fillHeight: false,
   },
 )
 
@@ -34,9 +37,11 @@ const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
     class="flex flex-col overflow-hidden bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl"
     :class="fullWidth
       ? 'w-full max-h-[min(65vh,28rem)] rounded-none border-x-0 border-b-0 shadow-none'
-      : compact
-        ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
-        : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
+      : fillHeight
+        ? 'h-full w-[min(28rem,calc(100vw-1.5rem))] max-h-none rounded-xl shadow-xl'
+        : compact
+          ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
+          : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
     role="menu"
     aria-label="专家中心"
   >
@@ -60,8 +65,11 @@ const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
       </div>
     </div>
 
-    <!-- 列表自带 max-h，避免 flex basis-0 在贴底浮层里被压成 0 高度 -->
-    <div class="overflow-y-auto custom-scrollbar p-2 space-y-0.5 bg-white dark:bg-gray-800 min-h-[10rem] max-h-[min(48vh,22rem)]">
+    <!-- fillHeight 时由父级定高，列表 flex-1 滚动；否则用固定 max-h -->
+    <div
+      class="overflow-y-auto custom-scrollbar p-2 space-y-0.5 bg-white dark:bg-gray-800"
+      :class="fillHeight ? 'flex-1 min-h-0' : 'min-h-[10rem] max-h-[min(48vh,22rem)]'"
+    >
       <div v-if="isLoadingAgents && allowedAgents.length === 0" class="flex flex-col items-center justify-center py-12 opacity-50">
         <svg class="w-7 h-7 animate-spin text-primary mb-2" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />

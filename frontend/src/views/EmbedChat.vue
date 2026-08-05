@@ -3162,7 +3162,7 @@ const filteredResourceOptions = (type: string) => {
   const query = (resourceOptionSearch[type] || '').trim().toLowerCase();
   return (resourceOptions[type] || []).filter((item: any) =>
     !query
-    || `${item.name || ''} ${item.id || ''} ${item.description || ''} ${item.server_name || ''}`.toLowerCase().includes(query),
+    || `${item.name || ''} ${item.id || ''} ${item.description || ''} ${item.server_name || ''} ${item.server_remark || ''}`.toLowerCase().includes(query),
   );
 };
 
@@ -3191,6 +3191,7 @@ const buildModalDraftOptionItem = (option: any) => ({
   ...(option.dataset_name ? { dataset_name: option.dataset_name } : {}),
   ...(option.scope ? { scope: option.scope } : {}),
   ...(option.server_name ? { server_name: option.server_name } : {}),
+  ...(option.server_remark ? { server_remark: option.server_remark } : {}),
   ...(option.description ? { description: option.description } : {}),
 });
 
@@ -3282,6 +3283,7 @@ const loadResourceOptions = async () => {
           name: String(item.name || ''),
           description: item.description || '',
           server_name: item.server_name || '',
+          server_remark: item.server_remark || '',
           scope: item.scope || 'global',
         }))
         .filter((item: any) => item.id && item.name && String(item.scope || '').toLowerCase() === 'personal');
@@ -3365,6 +3367,7 @@ const buildPersistableScope = (source: typeof resourceScope.value) => {
       ...(item.scope ? { scope: item.scope } : {}),
       ...(item.description ? { description: item.description } : {}),
       ...(item.server_name ? { server_name: item.server_name } : {}),
+      ...(item.server_remark ? { server_remark: item.server_remark } : {}),
     }));
   return {
     project_name: (source.project_name || '').trim(),
@@ -3387,7 +3390,7 @@ const persistResourceScope = async (scope: ReturnType<typeof buildPersistableSco
   return saved;
 };
 
-const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: string; description?: string; server_name?: string; scope?: string }> | { id: string; name: string; description?: string; server_name?: string; scope?: string }) => {
+const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }> | { id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }) => {
   if (!conversationId.value) {
     showToast('请先开始会话', 'error');
     return;
@@ -3398,6 +3401,7 @@ const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: strin
       name: String(tool?.name || '').trim(),
       description: tool?.description || '',
       server_name: tool?.server_name || '',
+      server_remark: tool?.server_remark || '',
       scope: tool?.scope || 'global',
     }))
     .filter((tool) => tool.id && tool.name);
