@@ -89,7 +89,7 @@
           :items="payload.running_items"
           @open-item="openItem"
         />
-        <div class="grid items-start gap-4 xl:grid-cols-2">
+        <div class="grid items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
           <WorkbenchResume
             :items="payload.resume_items"
             @open-item="openItem"
@@ -99,6 +99,11 @@
             :items="payload.latest_results"
             @open-item="openItem"
             @view-all="openReports"
+          />
+          <WorkbenchTasks
+            :items="payload.recent_tasks"
+            @open-item="openItem"
+            @view-all="openMyTasks"
           />
         </div>
         <WorkbenchNextScheduled
@@ -124,7 +129,7 @@
           :items="payload.running_items"
           @open-item="openItem"
         />
-        <div class="grid items-start gap-4 xl:grid-cols-2">
+        <div class="grid items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
           <WorkbenchResume
             :items="payload.resume_items"
             @open-item="openItem"
@@ -134,6 +139,11 @@
             :items="payload.latest_results"
             @open-item="openItem"
             @view-all="openReports"
+          />
+          <WorkbenchTasks
+            :items="payload.recent_tasks"
+            @open-item="openItem"
+            @view-all="openMyTasks"
           />
         </div>
         <WorkbenchNextScheduled
@@ -204,6 +214,7 @@ import { useRouter } from "vue-router"
 import WorkbenchAttention from "@/components/workbench/WorkbenchAttention.vue"
 import WorkbenchResults from "@/components/workbench/WorkbenchResults.vue"
 import WorkbenchResume from "@/components/workbench/WorkbenchResume.vue"
+import WorkbenchTasks from "@/components/workbench/WorkbenchTasks.vue"
 import WorkbenchAgents from "@/components/workbench/WorkbenchAgents.vue"
 import WorkbenchScenarios from "@/components/workbench/WorkbenchScenarios.vue"
 import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextScheduled.vue"
@@ -258,10 +269,10 @@ const summaryPrimary = computed(() => {
 const summarySecondary = computed(() => {
   if (!payload.value) return ""
   if (activeMode.value) {
-    return `进行中 ${payload.value.running_items.length} · 最新结果 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length}`
+    return `进行中 ${payload.value.running_items.length} · 最新结果 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length} · 任务 ${payload.value.recent_tasks.length}`
   }
   if (quietMode.value) {
-    return `最近产出 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length}`
+    return `最近产出 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length} · 任务 ${payload.value.recent_tasks.length}`
   }
   return `推荐场景 ${payload.value.recommended_scenarios.length} · 可用助手 ${payload.value.favorite_agents.length}`
 })
@@ -289,12 +300,19 @@ const summaryToneClass = computed(() => {
 
 function openItem(item: WorkbenchItem) {
   const target = item.target || {}
-  if (item.action === "open_task_log" || item.action === "open_task") {
+  if (
+    item.action === "open_task_log" ||
+    item.action === "open_task" ||
+    item.action === "open_task_run"
+  ) {
     router.push({
-      path: "/dashboard/tasks",
+      path: "/dashboard/personal",
       query: {
-        task_id: target.task_id,
-        ...(target.run_id != null ? { run_id: target.run_id } : {}),
+        tab: "tasks",
+        view: item.action === "open_task_run" ? "history" : "tasks",
+        ...(target.task_id != null ? { task_id: String(target.task_id) } : {}),
+        ...(target.run_id != null ? { run_id: String(target.run_id) } : {}),
+        ...(target.trace_id ? { trace_id: String(target.trace_id) } : {}),
       },
     })
   } else if (item.action === "open_digest") {
@@ -339,7 +357,11 @@ function openScenario(scenario: WorkbenchScenario) {
 }
 
 function openTasks() {
-  router.push({ path: "/dashboard/tasks" })
+  router.push({ path: "/dashboard/personal", query: { tab: "tasks" } })
+}
+
+function openMyTasks() {
+  router.push({ path: "/dashboard/personal", query: { tab: "tasks", view: "history" } })
 }
 
 function openReports() {

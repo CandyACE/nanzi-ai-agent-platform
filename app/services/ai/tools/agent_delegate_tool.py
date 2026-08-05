@@ -381,12 +381,15 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         return repeat_error
 
     # [CR Fix] 继承主上下文已生效的知识库 ID，并与子智能体引擎自身配置的 IDs 合并
+    from app.services.ai.knowledge_utils import merge_dataset_id_sources
+    target_agent_dataset_ids = merge_dataset_id_sources(
+        (target_config.engine_config or {}).get("dataset_ids")
+    )
     effective_dataset_ids = list(set(main_ctx.dataset_ids or []))
-    if target_config.engine_config and target_config.engine_config.get("dataset_ids"):
-        from app.services.ai.knowledge_utils import merge_dataset_id_sources
+    if target_agent_dataset_ids:
         effective_dataset_ids = merge_dataset_id_sources(
             effective_dataset_ids,
-            target_config.engine_config.get("dataset_ids")
+            target_agent_dataset_ids,
         )
 
     sub_engine_config = dict(target_config.engine_config or {})
@@ -400,6 +403,7 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         agent_name=target_config.agent_name,
         dataset_ids=effective_dataset_ids,
         knowledge_dataset_ids=list(main_ctx.knowledge_dataset_ids or []),
+        agent_dataset_ids=target_agent_dataset_ids,
         require_explicit_dataset=False,
         engine_type=target_config.engine_type or "LOCAL",
         engine_config=sub_engine_config,

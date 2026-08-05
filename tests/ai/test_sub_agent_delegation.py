@@ -361,6 +361,7 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         assert current_ctx is not None
         assert set(current_ctx.dataset_ids) == {ID_MAIN_KB, ID_SUB_KB}
         assert current_ctx.knowledge_dataset_ids == [ID_FRONTEND_KB]
+        assert current_ctx.agent_dataset_ids == [ID_SUB_KB]
         assert set(current_ctx.engine_config.get("dataset_ids")) == {ID_MAIN_KB, ID_SUB_KB}
         assert current_ctx.delegation_depth == 1
         assert current_ctx.grounding_evidence_ledger is shared_ledger

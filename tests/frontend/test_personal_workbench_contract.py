@@ -35,13 +35,20 @@ def test_workbench_page_has_three_dynamic_states_without_zero_dashboard():
     assert "今日运行正常" in page
     assert "summaryPrimary" in page
     assert "bannerMessage" in page
-    assert "xl:grid-cols-2" in page
-    assert "items-start" in page
+    assert "lg:grid-cols-2" in page
+    assert "xl:grid-cols-3" in page
+    assert "items-stretch" in page
     assert "有 ${payload.value.resume_items.length} 项工作可以继续" in page
     assert "最近没有新的产出" in page
     assert "WorkbenchAttention" in page
     assert "WorkbenchResults" in page
     assert "WorkbenchResume" in page
+    assert "WorkbenchTasks" in page
+    assert "recent_tasks" in page
+    assert "openMyTasks" in page
+    assert 'tab: "tasks"' in page
+    assert 'view: "history"' in page
+    assert "open_task_run" in page
     assert "WorkbenchAgents" in page
     assert "WorkbenchScenarios" in page
     assert "WorkbenchNextScheduled" in page
@@ -91,6 +98,7 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     attention = _read("frontend/src/components/workbench/WorkbenchAttention.vue")
     results = _read("frontend/src/components/workbench/WorkbenchResults.vue")
     resume = _read("frontend/src/components/workbench/WorkbenchResume.vue")
+    tasks = _read("frontend/src/components/workbench/WorkbenchTasks.vue")
     agents = _read("frontend/src/components/workbench/WorkbenchAgents.vue")
     scenarios = _read("frontend/src/components/workbench/WorkbenchScenarios.vue")
     running = _read("frontend/src/components/workbench/WorkbenchRunning.vue")
@@ -103,7 +111,24 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     assert "WorkbenchItemMeta" in results
     assert "还没有生成过分析结果" in results
     assert "创建第一份报表" in results
+    assert "更多产出会出现在这里" in results
+    assert "flex h-full flex-col" in results
+    assert "slotCount = 4" in results
     assert "去找个助手聊聊" in resume
+    assert "更多会话会出现在这里" in resume
+    assert "flex h-full flex-col" in resume
+    assert "slotCount = 4" in resume
+    assert "最近任务" in tasks
+    assert "执行记录" in tasks
+    assert "更多执行记录会出现在这里" in tasks
+    assert "暂无任务执行记录" in tasks
+    assert "formatWorkbenchDurationMs" in tasks
+    assert "耗时" in tasks
+    assert "WorkbenchItemMeta" not in tasks
+    assert "不展示截断摘要" in tasks
+    assert "去创建定时任务" in tasks
+    assert "tone=\"amber\"" in tasks
+    assert "slotCount = 4" in tasks
     assert "最近使用的助手" in agents
     assert "开始对话" in agents
     assert "open-agent" in agents
@@ -111,8 +136,12 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     assert "open-scenario" in scenarios
     assert "agentsAvailable" in scenarios
     assert "formatWorkbenchRelativeTime" in display
+    assert "formatWorkbenchDurationMs" in display
     assert "workbenchActionLabel" in display
     assert "workbenchKindLabel" in display
+    assert 'open_task_run' in display
+    assert 'scheduled: "活跃"' in display
+    assert 'stopped: "已暂停"' in display
     assert "WorkbenchMobileViewAll" in results
     assert "进行中" in running
     assert "来源：正在生成的报表" in running
@@ -120,7 +149,6 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     assert "source" in running
     assert "agentscope_pending" not in running
     assert "open-item" in running
-
 
 def test_workbench_personal_resource_cards_link_to_personal_tabs():
     page = _read("frontend/src/views/PersonalWorkbench.vue")

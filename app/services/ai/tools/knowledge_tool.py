@@ -67,13 +67,28 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
         user_name = (ctx.user_dimensions or {}).get("user_name")
         async with AsyncSessionLocal() as session:
             perm = PermissionService(session)
-            before = list(target_datasets)
-            target_datasets = await perm.filter_knowledge_dataset_ids(
+            agent_granted_ids = set(ctx.agent_dataset_ids or [])
+            restricted_datasets = [
+                dataset_id
+                for dataset_id in target_datasets
+                if dataset_id not in agent_granted_ids
+            ]
+            allowed_restricted = await perm.filter_knowledge_dataset_ids(
                 int(ctx.user_id),
                 user_name,
-                target_datasets,
+                restricted_datasets,
             )
-            denied = [d for d in before if d not in target_datasets]
+            allowed_restricted_set = set(allowed_restricted)
+            denied = [
+                dataset_id
+                for dataset_id in restricted_datasets
+                if dataset_id not in allowed_restricted_set
+            ]
+            target_datasets = [
+                dataset_id
+                for dataset_id in target_datasets
+                if dataset_id in agent_granted_ids or dataset_id in allowed_restricted_set
+            ]
             if denied:
                 logger.warning(
                     "[KnowledgeTool] Removed datasets without permission: %s",

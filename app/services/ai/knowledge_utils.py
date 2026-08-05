@@ -378,9 +378,11 @@ def merge_request_knowledge_dataset_ids(
     request_ids: Optional[List[str]],
     messages: Optional[List[Dict[str, Any]]] = None,
 ) -> List[str]:
-    """合并 API 结构化字段与消息附件中的知识库 ID。"""
+    """解析用户知识库范围：显式请求优先并严格覆盖历史附件。"""
+    explicit_ids = merge_dataset_id_sources(request_ids)
+    if explicit_ids:
+        return explicit_ids
     return merge_dataset_id_sources(
-        request_ids,
         collect_knowledge_dataset_ids_from_messages(messages or []),
     )
 
@@ -390,11 +392,16 @@ def resolve_bound_dataset_ids(
     explicit_tool_ids: Any = None,
     query: str = "",
 ) -> List[str]:
-    """合并工具参数、请求级/智能体 dataset、消息提示中的 ID（不含系统默认）。"""
+    """按显式工具参数、用户范围、智能体默认范围、用户权限范围解析 ID。"""
     ctx = get_current_agent_context()
+    explicit_ids = normalize_dataset_ids(explicit_tool_ids)
+    if explicit_ids:
+        return explicit_ids
+    if ctx and ctx.knowledge_dataset_ids:
+        return list(ctx.knowledge_dataset_ids)
+    if ctx and ctx.agent_dataset_ids:
+        return list(ctx.agent_dataset_ids)
     return merge_dataset_id_sources(
-        explicit_tool_ids,
-        ctx.knowledge_dataset_ids if ctx else None,
         ctx.dataset_ids if ctx else None,
         extract_dataset_ids_from_message(query),
     )

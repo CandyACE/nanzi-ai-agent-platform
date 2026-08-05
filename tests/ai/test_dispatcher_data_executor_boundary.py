@@ -164,6 +164,45 @@ async def test_dispatcher_allows_explicit_knowledge_context_to_preempt_data_agen
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
+async def test_dispatcher_allows_explicit_knowledge_context_without_agent_dataset_binding():
+    """知识库智能体未配置默认数据集时，用户显式选择仍可进入知识库执行器。"""
+    config = ChatConfig(
+        agent_id="knowledge-agent",
+        agent_name="知识库助手",
+        model_name="test-model",
+        temperature=0.0,
+        system_prompt="Knowledge",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+        engine_type="LOCAL",
+        engine_config={},
+    )
+    shared_turn = (
+        TurnClassification(
+            turn_type=TurnType.KNOWLEDGE,
+            reasoning="用户显式选择了知识库上下文",
+            requires_knowledge_search=True,
+            knowledge_preemption_allowed=True,
+            intent=IntentType.KNOWLEDGE_BASE,
+        ),
+        None,
+        0.0,
+    )
+
+    executor = await AgentDispatcher.dispatch(
+        config,
+        user_query="按这个知识库回答",
+        messages=[{"role": "user", "content": "按这个知识库回答"}],
+        trace_id="trace-dispatch-explicit-unbound-knowledge",
+        trace_buffer=[],
+        shared_turn=shared_turn,
+    )
+
+    assert isinstance(executor, KnowledgeExecutor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
 async def test_dispatcher_does_not_route_unbound_general_agent_to_knowledge_executor():
     """意图误判为知识库时，未绑定知识库能力的普通智能体仍走通用执行器。"""
     config = ChatConfig(

@@ -30,6 +30,12 @@ def test_workbench_is_a_default_entry_without_menu_permission():
     assert "{ name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', activeNames: ['PersonalWorkbench'] }" in dashboard
     assert "perm?: string" in dashboard
     assert "if (!perm) return true" in dashboard
+    # 系统配置在移动端侧栏可见（不再 desktopOnly）
+    assert (
+        "{ name: '系统配置', to: '/dashboard/system', icon: 'system', "
+        "perm: 'menu:system:config', activeNames: ['System'] }"
+    ) in dashboard
+    assert "perm: 'menu:system:config', desktopOnly: true" not in dashboard
 
 
 def test_no_permission_page_refetches_me_before_giving_up():

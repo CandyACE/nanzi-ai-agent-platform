@@ -132,7 +132,7 @@ def test_items_are_deduplicated_sorted_and_capped():
 
     payload = _payload(report_items=report_items)
 
-    assert len(payload["latest_results"]) == 6
+    assert len(payload["latest_results"]) == 4
     assert len(
         [item for item in payload["latest_results"] if item["business_key"] == "report-run:shared"]
     ) == 1
@@ -317,7 +317,7 @@ def test_next_scheduled_item_exposes_next_run_at():
                 "title": "库存巡检",
                 "subtitle": "定时任务",
                 "occurred_at": "2026-07-18T08:00:00",
-                "status": "active",
+                "status": "scheduled",
                 "severity": "info",
                 "action": "open_task",
                 "target": {"task_id": 1},
@@ -341,6 +341,50 @@ def test_next_scheduled_item_exposes_next_run_at():
     assert payload["next_scheduled_item"]["title"] == "库存巡检"
     assert payload["next_scheduled_item"]["next_run_at"] == "2026-07-18T20:00:00"
     assert payload["next_scheduled_item"]["action"] == "open_task"
+    # 最近任务列来自执行历史，与任务配置列表解耦
+    assert payload["recent_tasks"] == []
+
+
+def test_recent_tasks_come_from_execution_history_not_task_list():
+    payload = _payload(
+        task_items=[
+            {
+                "id": "task:1",
+                "business_key": "task:1:status:1",
+                "type": "scheduled_task",
+                "title": "库存巡检",
+                "subtitle": "定时任务 · 已启用",
+                "occurred_at": "2026-07-18T08:00:00",
+                "status": "scheduled",
+                "action": "open_task",
+                "target": {"task_id": 1},
+                "needs_attention": False,
+                "next_run_at": "2026-07-18T20:00:00",
+            }
+        ],
+        recent_task_run_items=[
+            {
+                "id": f"task-run:{index}",
+                "business_key": f"task-run:{index}",
+                "type": "task_run",
+                "title": f"执行 {index}",
+                "subtitle": "完成巡检",
+                "occurred_at": f"2026-07-18T09:{index:02d}:00",
+                "status": "success",
+                "severity": "info",
+                "action": "open_task_run",
+                "target": {"task_id": 1, "run_id": index},
+            }
+            for index in range(6)
+        ],
+    )
+
+    assert len(payload["recent_tasks"]) == 4
+    assert payload["recent_tasks"][0]["action"] == "open_task_run"
+    assert payload["recent_tasks"][0]["occurred_at"] > payload["recent_tasks"][-1]["occurred_at"]
+    assert payload["mode"] == "quiet"
+    assert payload["next_scheduled_item"]["title"] == "库存巡检"
+
 
 def test_unactionable_notification_does_not_create_dead_attention_card():
     payload = _payload(
@@ -364,13 +408,128 @@ def test_unactionable_notification_does_not_create_dead_attention_card():
 
 
 @pytest.mark.asyncio
-async def test_tasks_are_hidden_when_task_center_is_not_authorized():
+async def test_load_tasks_available_without_task_center_menu():
+    """个人中心「我的任务」不依赖 menu:task_center，工作台同样按归属加载。"""
     from app.services.workbench_home_service import _load_tasks
 
+    class _Scalars:
+        def all(self):
+            return [
+                SimpleNamespace(
+                    id=9,
+                    name="日报",
+                    status=1,
+                    last_run_id=3,
+                    last_run_at=datetime(2026, 7, 18, 8, 0),
+                    updated_at=datetime(2026, 7, 18, 9, 0),
+                    created_at=datetime(2026, 7, 17, 9, 0),
+                    next_run_at=datetime(2026, 7, 18, 20, 0),
+                )
+            ]
+
+    class _Result:
+        def scalars(self):
+            return _Scalars()
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result())
+
     items = await _load_tasks(
-        AsyncMock(),
+        db,
         7,
         {"role": "user", "permissions": {"menus": ["menu:ai_chat"]}},
     )
 
-    assert items == []
+    assert len(items) == 1
+    assert items[0]["title"] == "日报"
+    assert items[0]["action"] == "open_task"
+    assert items[0]["status"] == "scheduled"
+    assert items[0]["subtitle"] == "定时任务 · 已启用"
+    assert items[0]["next_run_at"] == "2026-07-18T20:00:00"
+
+
+def test_task_run_maps_to_workbench_item():
+    from app.services.workbench_home_service import _task_run_to_workbench_item
+
+    item = _task_run_to_workbench_item(
+        {
+            "id": 88,
+            "trace_id": "trace-xyz",
+            "query": "生成日报",
+            "summary": "已完成",
+            "status": "success",
+            "execution_time_ms": 29000,
+            "created_at": datetime(2026, 8, 5, 10, 0, 0),
+            "task_id": 7,
+            "task_name": "PUE日报",
+            "agent_name": "巡检助手",
+        }
+    )
+
+    assert item["id"] == "task-run:88"
+    assert item["title"] == "PUE日报"
+    assert item["subtitle"] == "巡检助手"
+    assert item["execution_time_ms"] == 29000.0
+    assert item["status"] == "success"
+    assert item["action"] == "open_task_run"
+    assert item["target"] == {"task_id": 7, "run_id": 88, "trace_id": "trace-xyz"}
+
+
+def test_task_run_omits_query_summary_from_subtitle():
+    from app.services.workbench_home_service import _task_run_to_workbench_item
+
+    item = _task_run_to_workbench_item(
+        {
+            "id": 9,
+            "query": "【🌐 TaskCenter 自动化全局执行规则】1. 无人值守模式：本次为后台自动触发",
+            "summary": "## 报告\n\n" + ("很长内容" * 40),
+            "status": "success",
+            "execution_time_ms": 1250,
+            "created_at": datetime(2026, 8, 5, 10, 0, 0),
+            "task_id": 1,
+            "task_name": "数据查询测试",
+            "agent_name": "主助手(Main)",
+        }
+    )
+
+    assert item["title"] == "数据查询测试"
+    assert item["subtitle"] == "主助手(Main)"
+    assert "TaskCenter" not in item["subtitle"]
+    assert "很长内容" not in item["subtitle"]
+    assert item["execution_time_ms"] == 1250.0
+
+
+@pytest.mark.asyncio
+async def test_load_recent_task_runs_uses_execution_history(monkeypatch):
+    from app.services import workbench_home_service as svc
+
+    async def fake_list(db, **kwargs):
+        assert kwargs.get("owner_user_id") == 7
+        assert kwargs.get("is_admin") is False
+        assert kwargs.get("page_size") == 8
+        return [
+            {
+                "id": 3,
+                "trace_id": "t-1",
+                "query": "跑一下",
+                "summary": "ok",
+                "status": "success",
+                "created_at": datetime(2026, 8, 5, 12, 0, 0),
+                "task_id": 9,
+                "task_name": "周报",
+                "agent_name": "助手",
+            }
+        ], 1
+
+    monkeypatch.setattr(
+        "app.services.task_center_service.TaskCenterService.list_execution_history",
+        fake_list,
+    )
+    items = await svc._load_recent_task_runs(
+        AsyncMock(),
+        7,
+        {"role": "user"},
+    )
+    assert len(items) == 1
+    assert items[0]["title"] == "周报"
+    assert items[0]["action"] == "open_task_run"

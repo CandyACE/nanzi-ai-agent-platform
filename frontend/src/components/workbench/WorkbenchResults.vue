@@ -1,5 +1,5 @@
 <template>
-  <section class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
+  <section class="flex h-full flex-col rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
     <WorkbenchSectionHeader
       eyebrow="最新结果"
       title="最近产出"
@@ -7,7 +7,7 @@
       view-all-label="查看全部结果"
       @view-all="$emit('view-all')"
     />
-    <div v-if="items.length" class="grid gap-2.5">
+    <div v-if="items.length" class="flex min-h-0 flex-1 flex-col gap-2.5">
       <button
         v-for="item in items"
         :key="item.id"
@@ -30,10 +30,16 @@
           <span class="shrink-0 text-xs font-medium text-violet-600">{{ actionLabel(item) }}</span>
         </div>
       </button>
+      <div
+        v-if="items.length < slotCount"
+        class="flex flex-1 items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50/40 px-4 py-4 text-center"
+      >
+        <p class="text-xs text-gray-400">更多产出会出现在这里</p>
+      </div>
     </div>
     <div
       v-else
-      class="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-4 py-6 text-center"
+      class="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-4 py-6 text-center"
     >
       <p class="text-sm font-medium text-gray-700">还没有生成过分析结果</p>
       <p class="mt-1 text-xs text-gray-500">创建一份报表后，最近产出会显示在这里</p>
@@ -59,6 +65,9 @@ import { workbenchActionLabel } from "@/utils/workbenchDisplay"
 import WorkbenchItemMeta from "./WorkbenchItemMeta.vue"
 import WorkbenchMobileViewAll from "./WorkbenchMobileViewAll.vue"
 import WorkbenchSectionHeader from "./WorkbenchSectionHeader.vue"
+
+/** 与最近会话并排时对齐的展示槽位数 */
+const slotCount = 4
 
 defineProps<{ items: WorkbenchItem[] }>()
 defineEmits<{

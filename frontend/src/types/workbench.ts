@@ -8,6 +8,7 @@ export interface WorkbenchTarget {
   conversation_id?: string
   agent_id?: string
   scenario_id?: string
+  trace_id?: string
 }
 
 export interface WorkbenchItem {
@@ -20,6 +21,7 @@ export interface WorkbenchItem {
   next_run_at?: string
   status?: string
   severity?: string
+  execution_time_ms?: number | null
   action: string
   source?: string
   target: WorkbenchTarget
@@ -59,6 +61,7 @@ export interface WorkbenchHomePayload {
   attention: WorkbenchItem[]
   latest_results: WorkbenchItem[]
   resume_items: WorkbenchItem[]
+  recent_tasks: WorkbenchItem[]
   favorite_agents: WorkbenchAgent[]
   recommended_scenarios: WorkbenchScenario[]
   running_items: WorkbenchItem[]

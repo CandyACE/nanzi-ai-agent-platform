@@ -74,7 +74,10 @@ async def lifespan(app: FastAPI):
     # local 元数据模式：启动时后台 ensure 索引 + 全量同步（不 DROP）
     import asyncio
     from app.services.ai.local_vector_rebuild import maybe_rebuild_local_vectors_on_startup
+    from app.services.ai.memory_index_service import maybe_ensure_memory_index_on_startup
     asyncio.create_task(maybe_rebuild_local_vectors_on_startup())
+    # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）
+    asyncio.create_task(maybe_ensure_memory_index_on_startup())
 
     yield
     # Shutdown

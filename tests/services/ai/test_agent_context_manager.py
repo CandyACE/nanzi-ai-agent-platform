@@ -118,7 +118,7 @@ async def test_setup_context_keeps_authorized_attachment_paths():
 
 @pytest.mark.asyncio
 async def test_setup_context_fallback_user_permissions():
-    # 测试前端未传，普通用户：智能体已有绑定时，只使用智能体绑定知识库，用户权限只做后续过滤
+    # 未显式选择时，智能体绑定知识库作为公开默认范围，不扩展到用户全部可访问知识库
     config = ChatConfig(
         agent_id="test-agent",
         agent_name="Test Agent",
@@ -152,6 +152,7 @@ async def test_setup_context_fallback_user_permissions():
     assert ctx is not None
     # 不再扩展到用户全部可访问知识库，避免场景 Agent 被放大检索范围
     assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1}
+    assert ctx.agent_dataset_ids == [ID_AGENT_BOUND_1]
     assert ctx.knowledge_dataset_ids == []
     assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1}
 
@@ -185,6 +186,62 @@ async def test_setup_context_uses_user_permissions_when_agent_has_no_bound_datas
     ctx = get_current_agent_context()
     assert ctx is not None
     assert set(ctx.dataset_ids) == {ID_USER_PERM_1, ID_USER_PERM_2}
+    assert ctx.agent_dataset_ids == []
+
+
+@pytest.mark.asyncio
+async def test_setup_context_user_selection_strictly_overrides_agent_dataset():
+    config = ChatConfig(
+        agent_id="test-agent",
+        agent_name="Test Agent",
+        model_name="DeepSeek",
+        temperature=0.7,
+        system_prompt="prompt",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+        engine_config={"dataset_ids": [ID_AGENT_BOUND_1]},
+    )
+
+    await AgentContextManager.setup_context(
+        config=config,
+        knowledge_dataset_ids=[ID_USER_CHECKED_1],
+        user_info={"user_id": 100, "user_name": "test_user", "role": "user"},
+    )
+
+    ctx = get_current_agent_context()
+    assert ctx is not None
+    assert ctx.dataset_ids == [ID_USER_CHECKED_1]
+    assert ctx.knowledge_dataset_ids == [ID_USER_CHECKED_1]
+    assert ctx.agent_dataset_ids == [ID_AGENT_BOUND_1]
+
+
+@pytest.mark.asyncio
+async def test_setup_context_preserves_agent_grant_across_reinitialization():
+    config = ChatConfig(
+        agent_id="test-agent",
+        agent_name="Test Agent",
+        model_name="DeepSeek",
+        temperature=0.7,
+        system_prompt="prompt",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+        engine_config={"dataset_ids": [ID_AGENT_BOUND_1]},
+    )
+
+    await AgentContextManager.setup_context(
+        config=config,
+        knowledge_dataset_ids=[ID_USER_CHECKED_1],
+        user_info={"user_id": 100, "user_name": "test_user", "role": "user"},
+    )
+    await AgentContextManager.setup_context(
+        config=config,
+        knowledge_dataset_ids=[ID_USER_CHECKED_1],
+        user_info={"user_id": 100, "user_name": "test_user", "role": "user"},
+    )
+
+    ctx = get_current_agent_context()
+    assert ctx is not None
+    assert ctx.agent_dataset_ids == [ID_AGENT_BOUND_1]
 
 @pytest.mark.asyncio
 async def test_setup_context_admin_user():

@@ -129,6 +129,18 @@ def test_collect_knowledge_dataset_ids_inherits_from_earlier_turn():
     assert merge_request_knowledge_dataset_ids(None, messages) == [rid]
 
 
+def test_explicit_request_knowledge_dataset_ids_do_not_merge_history():
+    current_rid = "11111111111111111111111111111111"
+    history_rid = "22222222222222222222222222222222"
+    messages = [
+        {"role": "user", "content": "旧问题", "files": [{"type": "knowledge_base", "url": history_rid}]},
+        {"role": "assistant", "content": "旧回答"},
+        {"role": "user", "content": "本次问题"},
+    ]
+
+    assert merge_request_knowledge_dataset_ids([current_rid], messages) == [current_rid]
+
+
 def test_current_turn_knowledge_ids_do_not_treat_earlier_attachment_as_explicit():
     rid = "4525d66cec7111f0a3d00242ac120006"
     messages = [

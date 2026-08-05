@@ -336,7 +336,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { name: '用户管理', to: '/dashboard/users', icon: 'users', perm: 'menu:system:users', activeNames: ['Users'] },
       { name: '角色管理', to: '/dashboard/roles', icon: 'roles', perm: 'menu:system:roles', activeNames: ['Roles'] },
-      { name: '系统配置', to: '/dashboard/system', icon: 'system', perm: 'menu:system:config', desktopOnly: true, activeNames: ['System'] }
+      { name: '系统配置', to: '/dashboard/system', icon: 'system', perm: 'menu:system:config', activeNames: ['System'] }
     ]
   }
 ];

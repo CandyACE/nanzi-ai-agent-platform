@@ -1,5 +1,7 @@
 import pytest
 import asyncio
+import logging
+import os
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core import database, redis
@@ -10,6 +12,22 @@ from app.utils.encryption import get_api_key_manager
 from unittest.mock import AsyncMock, patch
 
 # event_loop fixture removed to let pytest-asyncio handle it automatically
+
+logger = logging.getLogger(__name__)
+
+
+def _should_flush_redis_for_tests() -> bool:
+    """仅当显式开启时才 FLUSHDB，避免误清本机/共享 Redis 里的记忆索引等数据。
+
+    CI 或隔离测试库可设：TEST_REDIS_FLUSH=1
+    """
+    return str(os.environ.get("TEST_REDIS_FLUSH", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
 
 @pytest.fixture(scope="function", autouse=True)
 async def init_infrastructure(request):
@@ -24,10 +42,17 @@ async def init_infrastructure(request):
     await database.init_db()
     await redis.init_redis()
     
-    # Clean Redis to prevent cache pollution across tests
+    # 默认不再 FLUSHDB：开发者本机 Redis 常与业务共用，flush 会删掉记忆索引等。
+    # 需要隔离环境时可 export TEST_REDIS_FLUSH=1
     r = await redis.get_redis()
     if r:
-        await r.flushdb()
+        if _should_flush_redis_for_tests():
+            await r.flushdb()
+        else:
+            logger.warning(
+                "Skip Redis FLUSHDB (set TEST_REDIS_FLUSH=1 to enable). "
+                "Shared Redis data such as memory indexes will be preserved."
+            )
 
     # Seed a default model for tests that need LLM
     from app.models.ai_model import AIModel

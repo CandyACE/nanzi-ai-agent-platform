@@ -4,7 +4,12 @@ from typing import Optional, List, Dict, Any
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.router_service import router_service, RouterService
-from app.core.context import set_debug_context, set_agent_context, AgentContext
+from app.core.context import (
+    get_current_agent_context,
+    set_debug_context,
+    set_agent_context,
+    AgentContext,
+)
 from app.schemas.agent import ChatConfig
 from app.services.ai.agent_prompts import ContextManagerPrompts
 
@@ -195,6 +200,7 @@ class AgentContextManager:
         api_key: Optional[str] = None,
         conversation_id: Optional[str] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
+        agent_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
         authorized_attachment_paths: Optional[List[str]] = None,
         current_turn_attachment_paths: Optional[List[str]] = None,
@@ -258,34 +264,51 @@ class AgentContextManager:
         from app.services.ai.knowledge_utils import merge_dataset_id_sources
 
         engine_config = config.engine_config or {}
+        if config.agent_dataset_ids is None:
+            config.agent_dataset_ids = merge_dataset_id_sources(engine_config.get("dataset_ids"))
         request_dataset_ids = merge_dataset_id_sources(knowledge_dataset_ids)
+        previous_context = get_current_agent_context()
+        previous_agent_dataset_ids = (
+            previous_context.agent_dataset_ids
+            if previous_context and previous_context.agent_id == config.agent_id
+            else None
+        )
+        configured_agent_dataset_ids = merge_dataset_id_sources(
+            agent_dataset_ids
+            if agent_dataset_ids is not None
+            else (
+                previous_agent_dataset_ids
+                if previous_agent_dataset_ids is not None
+                else config.agent_dataset_ids
+            )
+        )
         if request_dataset_ids:
+            # 用户显式选择是硬范围，不能被智能体默认知识库扩展。
             effective_dataset_ids = request_dataset_ids
+        elif configured_agent_dataset_ids:
+            # 智能体绑定知识库对该智能体用户默认开放，作为无显式选择时的范围。
+            effective_dataset_ids = configured_agent_dataset_ids
         else:
-            agent_dataset_ids = merge_dataset_id_sources(engine_config.get("dataset_ids"))
-            if agent_dataset_ids:
-                effective_dataset_ids = agent_dataset_ids
-            else:
-                user_permitted_ids = []
-                if u_id_val is not None:
-                    from app.services.permission_service import PermissionService
-                    from app.models.knowledge import KnowledgeBaseMetadata
-                    from sqlalchemy.future import select
-                    async with AsyncSessionLocal() as session:
-                        permission_service = PermissionService(session)
-                        access = await permission_service.get_knowledge_base_access(
-                            user_id=u_id_val,
-                            user_name=user_dims.get("user_name"),
+            user_permitted_ids = []
+            if u_id_val is not None:
+                from app.services.permission_service import PermissionService
+                from app.models.knowledge import KnowledgeBaseMetadata
+                from sqlalchemy.future import select
+                async with AsyncSessionLocal() as session:
+                    permission_service = PermissionService(session)
+                    access = await permission_service.get_knowledge_base_access(
+                        user_id=u_id_val,
+                        user_name=user_dims.get("user_name"),
+                    )
+                    if access.get("is_admin"):
+                        stmt = select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
+                            KnowledgeBaseMetadata.status != "deleted"
                         )
-                        if access.get("is_admin"):
-                            stmt = select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
-                                KnowledgeBaseMetadata.status != "deleted"
-                            )
-                            rows = (await session.execute(stmt)).scalars().all()
-                            user_permitted_ids = [row for row in rows if row]
-                        else:
-                            user_permitted_ids = list(access.get("accessible_ids") or [])
-                effective_dataset_ids = merge_dataset_id_sources(user_permitted_ids)
+                        rows = (await session.execute(stmt)).scalars().all()
+                        user_permitted_ids = [row for row in rows if row]
+                    else:
+                        user_permitted_ids = list(access.get("accessible_ids") or [])
+            effective_dataset_ids = merge_dataset_id_sources(user_permitted_ids)
 
         # Sync effective_dataset_ids back to config's engine_config to support context re-generation
         if config.engine_config is None:
@@ -298,6 +321,7 @@ class AgentContextManager:
             agent_name=config.agent_name,
             dataset_ids=effective_dataset_ids,
             knowledge_dataset_ids=request_dataset_ids,
+            agent_dataset_ids=configured_agent_dataset_ids,
             metadata_dataset_ids=list(metadata_dataset_ids or []),
             require_explicit_dataset=require_explicit_dataset,
             engine_type=config.engine_type,

@@ -34,6 +34,9 @@ def test_task_center_history_tab_available_including_personal_only():
     assert 'mainViewTab = \'history\'' in text or 'mainViewTab = "history"' in text
     assert "border-b border-gray-200" in text
     assert "bg-gray-100/80 p-0.5" not in text
+    # 工作台可深链到执行记录 Tab
+    assert "route.query.view" in text
+    assert "'history'" in text
 
 
 def test_backend_execution_history_scopes_non_admin():

@@ -1267,7 +1267,7 @@ onMounted(() => {
             />
         </div>
 
-        <div v-else-if="activeTab === 'mcp'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">
+        <div v-else-if="activeTab === 'mcp'" class="px-3 pb-4 sm:px-6 sm:pb-6 min-h-[28rem]">
             <McpManagement personal-only />
         </div>
 

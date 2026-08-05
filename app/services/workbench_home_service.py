@@ -206,14 +206,17 @@ def build_workbench_payload(
     source_status: Mapping[str, str],
     running_items: Sequence[Dict[str, Any]] = (),
     personal_resources: Sequence[Mapping[str, Any]] = (),
+    recent_task_run_items: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
     attention = normalize_notifications(notifications)
     attention.extend(item for item in task_items if item.get("needs_attention"))
     attention = _sort_limit(attention, limit=5, severity_first=True)
-    latest_results = _sort_limit(report_items, limit=6)
+    latest_results = _sort_limit(report_items, limit=4)
     resume_items = _sort_limit(_dedupe_conversations(conversation_items), limit=4)
+    # 最近任务列：执行历史，不是任务配置列表
+    recent_tasks = _sort_limit(recent_task_run_items, limit=4)
     running = _sort_limit(running_items, limit=8)
-    has_history = bool(attention or latest_results or resume_items or running)
+    has_history = bool(attention or latest_results or resume_items or recent_tasks or running)
     mode = "active" if attention else ("quiet" if has_history else "new_user")
 
     return {
@@ -221,6 +224,7 @@ def build_workbench_payload(
         "attention": attention,
         "latest_results": latest_results,
         "resume_items": resume_items,
+        "recent_tasks": recent_tasks,
         "favorite_agents": list(agent_items[:6]),
         "recommended_scenarios": [
             item for item in scenario_items if item.get("available", True)
@@ -263,11 +267,10 @@ async def _load_tasks(
     user_id: int,
     user: Mapping[str, Any],
 ) -> List[Dict[str, Any]]:
+    """加载当前用户归属的定时任务（不依赖 menu:task_center，对齐个人中心「我的任务」）。"""
     from app.models.task import AgentScheduledTask
 
-    menus = (user.get("permissions") or {}).get("menus") or []
-    if user.get("role") != "admin" and "menu:task_center" not in menus:
-        return []
+    _ = user  # 保留签名兼容调用方
 
     result = await db.execute(
         select(AgentScheduledTask)
@@ -277,16 +280,27 @@ async def _load_tasks(
     )
     items: List[Dict[str, Any]] = []
     for row in result.scalars().all():
-        is_failed = int(row.status or 0) == 2
+        row_status = int(row.status or 0)
+        is_failed = row_status == 2
+        is_active = row_status == 1
+        if is_failed:
+            status_key = "failed"
+            subtitle = "定时任务执行异常"
+        elif is_active:
+            status_key = "scheduled"  # 调度已启用，非“正在跑”
+            subtitle = "定时任务 · 已启用"
+        else:
+            status_key = "stopped"
+            subtitle = "定时任务 · 已暂停"
         items.append(
             {
                 "id": f"task:{row.id}",
                 "business_key": f"task:{row.id}:status:{row.status}",
                 "type": "task_failure" if is_failed else "scheduled_task",
                 "title": row.name,
-                "subtitle": "定时任务执行异常" if is_failed else "定时任务",
+                "subtitle": subtitle,
                 "occurred_at": (row.last_run_at or row.updated_at or row.created_at).isoformat(),
-                "status": "failed" if is_failed else "active",
+                "status": status_key,
                 "severity": "critical" if is_failed else "info",
                 "action": "open_task_log" if is_failed else "open_task",
                 "target": {"task_id": row.id, "run_id": row.last_run_id},
@@ -295,6 +309,90 @@ async def _load_tasks(
             }
         )
     return items
+
+
+def _normalize_task_run_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"success", "completed", "ok"}:
+        return "success"
+    if value in {"running", "in_progress", "processing"}:
+        return "running"
+    if value in {"pending", "awaiting_permission", "awaiting_external_execution"}:
+        return "pending"
+    if value in {"failed", "error", "rejected", "denied", "no_tool_execution"}:
+        return "failed"
+    return value or "success"
+
+
+def _compact_workbench_text(raw: Any, *, limit: int = 48) -> str:
+    """工作台卡片短文案：去掉换行/Markdown 噪声并截断。"""
+    import re
+
+    text = str(raw or "")
+    text = text.replace("\r", "\n")
+    text = re.sub(r"[`*_#>|]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _task_run_to_workbench_item(row: Mapping[str, Any]) -> Dict[str, Any]:
+    status = _normalize_task_run_status(row.get("status"))
+    created_at = row.get("created_at")
+    if hasattr(created_at, "isoformat"):
+        occurred_at = created_at.isoformat()
+    else:
+        occurred_at = str(created_at or "")
+    task_name = _compact_workbench_text(row.get("task_name"), limit=36) or "任务执行"
+    agent_name = _compact_workbench_text(row.get("agent_name"), limit=28)
+    duration_raw = row.get("execution_time_ms")
+    try:
+        duration_ms = float(duration_raw) if duration_raw is not None else None
+    except (TypeError, ValueError):
+        duration_ms = None
+    return {
+        "id": f"task-run:{row.get('id')}",
+        "business_key": f"task-run:{row.get('id')}",
+        "type": "task_run",
+        "title": task_name,
+        # 仅助手名；不塞 query/summary（自动化提示词前缀雷同，截断无信息量）
+        "subtitle": agent_name,
+        "occurred_at": occurred_at,
+        "status": status,
+        "severity": "critical" if status == "failed" else "info",
+        "execution_time_ms": duration_ms,
+        "action": "open_task_run",
+        "target": {
+            key: value
+            for key, value in {
+                "task_id": row.get("task_id"),
+                "run_id": row.get("id"),
+                "trace_id": row.get("trace_id"),
+            }.items()
+            if value is not None
+        },
+    }
+
+
+async def _load_recent_task_runs(
+    db: AsyncSession,
+    user_id: int,
+    user: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """加载当前用户最近的定时任务执行历史（工作台「最近任务」列）。"""
+    from app.services.task_center_service import TaskCenterService
+
+    _ = user
+    rows, _total = await TaskCenterService.list_execution_history(
+        db,
+        page=1,
+        page_size=8,
+        owner_user_id=user_id,
+        # 工作台只展示「我的」执行记录
+        is_admin=False,
+    )
+    return [_task_run_to_workbench_item(row) for row in rows]
 
 
 async def _load_portal_activity(
@@ -598,6 +696,9 @@ class WorkbenchHomeService:
             "notifications", lambda: _load_notifications(db, user_id)
         )
         tasks, task_status = await _safe_load("tasks", lambda: _load_tasks(db, user_id, user))
+        task_runs, task_run_status = await _safe_load(
+            "task_runs", lambda: _load_recent_task_runs(db, user_id, user)
+        )
         portal, portal_status = await _safe_load(
             "reports",
             lambda: _load_portal_activity(db, user_id, role_ids, current_time),
@@ -616,10 +717,18 @@ class WorkbenchHomeService:
         reports = portal.get("reports", [])
         conversations = portal.get("conversations", [])
 
+        # 任务来源：配置列表失败态 + 执行历史；任一失败则标 error
+        combined_task_status = (
+            "error"
+            if "error" in {task_status, task_run_status}
+            else ("ok" if task_status == "ok" or task_run_status == "ok" else "empty")
+        )
+
         return build_workbench_payload(
             now=current_time,
             notifications=notifications,
             task_items=tasks,
+            recent_task_run_items=task_runs if isinstance(task_runs, list) else [],
             report_items=reports,
             conversation_items=conversations,
             agent_items=agents,
@@ -628,7 +737,7 @@ class WorkbenchHomeService:
             personal_resources=personal_resources,
             source_status={
                 "notifications": notification_status,
-                "tasks": task_status,
+                "tasks": combined_task_status,
                 "reports": portal_status if reports else ("error" if portal_status == "error" else "empty"),
                 "conversations": portal_status if conversations else ("error" if portal_status == "error" else "empty"),
                 "agents": agent_status,

@@ -1168,65 +1168,76 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-full min-h-0 flex flex-col gap-6">
-    <div class="flex justify-between items-center flex-shrink-0">
-      <h1 class="text-2xl font-semibold text-gray-900">系统配置与诊断</h1>
-      <!-- Tabs -->
-      <div class="bg-gray-100 p-1 rounded-lg flex space-x-1">
-         <button
-           @click="activeTab = 'models'"
-           class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-           :class="activeTab === 'models' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
-         >
-           <SparklesIcon class="w-4 h-4 mr-2" />
-           模型管理
-         </button>
-         <button
-           @click="activeTab = 'tools'"
-           class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-           :class="activeTab === 'tools' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
-         >
-           <WrenchScrewdriverIcon class="w-4 h-4 mr-2" />
-           工具管理
-         </button>
-         <button
-           @click="activeTab = 'configs'"
-           class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-           :class="activeTab === 'configs' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
-         >
-           <Cog6ToothIcon class="w-4 h-4 mr-2" />
-           参数配置
-         </button>
-         <button
-           @click="activeTab = 'branding'"
-           class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-           :class="activeTab === 'branding' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
-         >
-           <PaintBrushIcon class="w-4 h-4 mr-2" />
-           品牌个性化
-         </button>
-         <button
-           @click="activeTab = 'diagnostics'"
-           class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-           :class="activeTab === 'diagnostics' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
-         >
-           <CpuChipIcon class="w-4 h-4 mr-2" />
-           系统诊断
-         </button>
-         <button
-            v-if="userInfo?.role === 'admin'"
-            @click="activeTab = 'logs'"
-            class="px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center"
-            :class="activeTab === 'logs' ? 'bg-white shadow text-primary' : 'text-gray-500 hover:text-gray-700'"
+  <div class="flex h-full min-h-0 flex-col gap-4 sm:gap-6">
+    <div class="flex flex-shrink-0 flex-col gap-3">
+      <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">系统配置与诊断</h1>
+      <!-- Tabs：窄屏横向滚动，避免文字被挤成竖排 -->
+      <div
+        class="-mx-1 overflow-x-auto px-1"
+        style="-webkit-overflow-scrolling: touch;"
+      >
+        <div class="inline-flex min-w-full gap-1 rounded-lg bg-gray-100 p-1 sm:min-w-0">
+          <button
+            type="button"
+            @click="activeTab = 'models'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'models' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
           >
-            <CircleStackIcon class="w-4 h-4 mr-2" />
+            <SparklesIcon class="mr-1.5 h-4 w-4 shrink-0" />
+            模型管理
+          </button>
+          <button
+            type="button"
+            @click="activeTab = 'tools'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'tools' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
+          >
+            <WrenchScrewdriverIcon class="mr-1.5 h-4 w-4 shrink-0" />
+            工具管理
+          </button>
+          <button
+            type="button"
+            @click="activeTab = 'configs'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'configs' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
+          >
+            <Cog6ToothIcon class="mr-1.5 h-4 w-4 shrink-0" />
+            参数配置
+          </button>
+          <button
+            type="button"
+            @click="activeTab = 'branding'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'branding' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
+          >
+            <PaintBrushIcon class="mr-1.5 h-4 w-4 shrink-0" />
+            品牌个性化
+          </button>
+          <button
+            type="button"
+            @click="activeTab = 'diagnostics'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'diagnostics' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
+          >
+            <CpuChipIcon class="mr-1.5 h-4 w-4 shrink-0" />
+            系统诊断
+          </button>
+          <button
+            v-if="userInfo?.role === 'admin'"
+            type="button"
+            @click="activeTab = 'logs'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'logs' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
+          >
+            <CircleStackIcon class="mr-1.5 h-4 w-4 shrink-0" />
             日志管理
           </button>
+        </div>
       </div>
     </div>
 
     <!-- Content Area -->
-    <div class="flex-1 min-h-0 overflow-hidden">
+    <div class="min-h-0 flex-1 overflow-hidden">
 
       <div v-if="activeTab === 'models'" class="h-full min-h-0">
           <ModelRegistry />

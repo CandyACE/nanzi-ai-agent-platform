@@ -124,6 +124,35 @@ async def test_search_knowledge_base_context_ids():
 
 
 @pytest.mark.asyncio
+async def test_search_knowledge_base_keeps_agent_granted_dataset_without_user_permission():
+    """智能体绑定的数据集对智能体用户公开，不应被普通用户权限再次删掉。"""
+    from app.core.context import AgentContext, set_agent_context
+
+    agent_dataset = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    p_retrieve, p_config, p_alive, mock_retrieve = _patch_search(retrieve_return=[])
+    with p_retrieve, p_config, p_alive, patch(
+        "app.services.permission_service.PermissionService.get_knowledge_base_access",
+        new_callable=AsyncMock,
+        return_value={"is_admin": False, "accessible_ids": set()},
+    ):
+        set_agent_context(
+            AgentContext(
+                agent_id="kb",
+                agent_name="knowledge-base",
+                dataset_ids=[agent_dataset],
+                agent_dataset_ids=[agent_dataset],
+                user_id=100,
+                is_admin=False,
+            )
+        )
+
+        await search_knowledge_base.ainvoke({"query": "hi"})
+
+    args, _ = mock_retrieve.call_args
+    assert args[1] == [agent_dataset]
+
+
+@pytest.mark.asyncio
 async def test_search_knowledge_base_parameter_priority():
     """测试参数（阈值、权重、top_k）的优先级逻辑"""
     from app.core.context import AgentContext, set_agent_context

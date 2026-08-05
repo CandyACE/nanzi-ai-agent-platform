@@ -135,6 +135,7 @@ class ChatConfig(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None
+    agent_dataset_ids: Optional[List[str]] = None
 
 class AgentExecutionStep(BaseModel):
     step_number: int

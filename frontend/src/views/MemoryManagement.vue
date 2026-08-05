@@ -788,6 +788,10 @@ onMounted(async () => {
         </span>
         <span class="text-gray-600 text-xs sm:text-sm">{{ indexStatusLabel }}</span>
         <span
+          v-if="!indexStatus.available"
+          class="text-[11px] text-amber-700/80"
+        >常见原因：Redis 重启后索引丢失（文档 TTL 不会删索引）。启动会自动尝试重建，也可点右侧按钮。</span>
+        <span
           v-if="indexStatus.index_name"
           class="text-gray-400 font-mono text-[11px] sm:text-xs break-all"
           :title="indexStatus.index_name"

@@ -53,8 +53,22 @@ export function workbenchStatusLabel(status?: string | null): string {
     pending: "待处理",
     success: "成功",
     completed: "已完成",
+    scheduled: "活跃",
+    stopped: "已暂停",
   }
   return map[status] || ""
+}
+
+/** 执行耗时：对齐任务中心「x分x秒」展示 */
+export function formatWorkbenchDurationMs(ms?: number | null): string {
+  if (ms == null || Number.isNaN(Number(ms))) return ""
+  const totalMs = Math.max(0, Math.round(Number(ms)))
+  if (totalMs < 1000) return totalMs === 0 ? "0秒" : `${(totalMs / 1000).toFixed(1)}秒`
+  const totalSec = Math.floor(totalMs / 1000)
+  const minutes = Math.floor(totalSec / 60)
+  const seconds = totalSec % 60
+  if (minutes <= 0) return `${seconds}秒`
+  return `${minutes}分${seconds}秒`
 }
 
 export type WorkbenchKind = "task" | "digest" | "report" | "conversation" | "notification" | "other"
@@ -68,7 +82,8 @@ export function resolveWorkbenchKind(item: {
   if (
     type.includes("task") ||
     action === "open_task" ||
-    action === "open_task_log"
+    action === "open_task_log" ||
+    action === "open_task_run"
   ) {
     return "task"
   }
@@ -129,6 +144,7 @@ export function workbenchActionLabel(item: {
 }): string {
   const action = String(item.action || "")
   if (action === "open_task_log") return "查看日志"
+  if (action === "open_task_run") return "查看记录"
   if (action === "open_task") return "查看任务"
   if (action === "open_digest") return "打开简报"
   if (action === "open_report") return "打开报表"

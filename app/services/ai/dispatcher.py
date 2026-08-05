@@ -99,7 +99,18 @@ class AgentDispatcher:
                     engine_config=agent_config.engine_config,
                     tools=agent_config.tools,
                 )
-                or (can_do_data and classification.knowledge_preemption_allowed)
+                or (
+                    classification.knowledge_preemption_allowed
+                    and (
+                        can_do_data
+                        or (
+                            "knowledge_base" in (agent_config.capabilities or [])
+                            and "search_knowledge_base" in {
+                                getattr(tool, "name", tool) for tool in agent_config.tools or []
+                            }
+                        )
+                    )
+                )
             )
         )
         if classification.turn_type == TurnType.KNOWLEDGE and not knowledge_preempts_data:

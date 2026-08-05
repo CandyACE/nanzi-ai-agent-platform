@@ -1510,6 +1510,9 @@ class AgentService:
                 knowledge_dataset_ids,
                 messages,
             )
+            configured_agent_dataset_ids = list(
+                (agent_config.engine_config or {}).get("dataset_ids") or []
+            )
             # 会话范围/历史附件只代表“可复用”，不能单独触发本轮知识检索。
             # 当前轮显式附件才是本轮的 knowledge evidence。
             current_turn_knowledge_dataset_ids = (
@@ -1524,6 +1527,7 @@ class AgentService:
                 api_key=api_key,
                 conversation_id=conversation_id,
                 knowledge_dataset_ids=request_knowledge_dataset_ids,
+                agent_dataset_ids=configured_agent_dataset_ids,
                 metadata_dataset_ids=metadata_dataset_ids,
                 authorized_attachment_paths=self._authorized_attachment_paths(messages),
                 current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
@@ -1626,6 +1630,7 @@ class AgentService:
                     api_key=api_key,
                     conversation_id=conversation_id,
                     knowledge_dataset_ids=request_knowledge_dataset_ids,
+                    agent_dataset_ids=configured_agent_dataset_ids,
                     metadata_dataset_ids=metadata_dataset_ids,
                     authorized_attachment_paths=self._authorized_attachment_paths(messages),
                     current_turn_attachment_paths=self._current_turn_attachment_paths(messages),

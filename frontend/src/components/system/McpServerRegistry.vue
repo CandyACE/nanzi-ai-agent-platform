@@ -33,6 +33,7 @@ import {
   SparklesIcon,
   ShoppingBagIcon,
   ClipboardDocumentIcon,
+  ChevronLeftIcon,
 } from '@heroicons/vue/24/outline'
 
 const props = withDefaults(defineProps<{
@@ -606,6 +607,14 @@ const selectServer = (server: any) => {
   })
 }
 
+/** 移动端从工具详情返回服务列表 */
+const clearSelectedServer = () => {
+  selectedServer.value = null
+  selectedServerUsage.value = null
+  tools.value = []
+  selectedToolIds.value = new Set()
+}
+
 const togglePublish = async (tool: any) => {
   if (!canManageTool(tool)) return
   try {
@@ -627,66 +636,69 @@ onMounted(fetchServers)
 </script>
 
 <template>
-  <div class="flex h-full gap-6">
-    <!-- Left: Server List -->
-    <div class="w-1/3 flex flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+  <div class="flex h-full min-h-[28rem] flex-col gap-3 lg:min-h-0 lg:flex-row lg:gap-6">
+    <!-- Left: Server List — 移动端选中服务后隐藏，避免左右挤成一条 -->
+    <div
+      class="flex w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:w-1/3"
+      :class="selectedServer ? 'hidden lg:flex' : 'flex'"
+    >
       <!-- Market Guide (High Contrast with Dynamic Scope Theme) -->
       <div 
-        class="p-4 text-white border-b border-white/10 transition-colors duration-300"
+        class="border-b border-white/10 p-3 text-white transition-colors duration-300 sm:p-4"
         :class="props.scope === 'personal' ? 'bg-slate-950' : 'bg-slate-900'"
       >
-        <div class="flex items-start justify-between">
-          <div class="flex-1">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
             <h4 
-              class="text-sm font-black flex items-center transition-colors duration-300"
+              class="flex items-center text-sm font-black transition-colors duration-300"
               :class="props.scope === 'personal' ? 'text-emerald-400' : 'text-indigo-400'"
             >
-              <ShoppingBagIcon class="w-4 h-4 mr-1.5" />
+              <ShoppingBagIcon class="mr-1.5 h-4 w-4 shrink-0" />
               探索 MCP 市场
             </h4>
-            <p class="text-[10px] text-slate-400 mt-1 leading-relaxed">
-              {{ props.scope === 'personal' ? '去魔搭(ModelScope)寻找并接入属于您的私有扩展' : '去魔搭(ModelScope)寻找更多公共好用的工具集' }}
+            <p class="mt-1 text-[10px] leading-relaxed text-slate-400 sm:line-clamp-none">
+              {{ props.scope === 'personal' ? '去魔搭寻找并接入私有扩展' : '去魔搭寻找更多公共工具集' }}
             </p>
             <div class="mt-2">
               <a 
                 href="https://modelscope.cn/mcp" 
                 target="_blank" 
-                class="inline-flex items-center text-[10px] font-bold text-white px-2 py-1 rounded transition-all duration-200 shadow-sm"
+                class="inline-flex items-center rounded px-2 py-1 text-[10px] font-bold text-white shadow-sm transition-all duration-200"
                 :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'"
               >
                 立即前往市场
-                <MagnifyingGlassIcon class="w-3 h-3 ml-1" />
+                <MagnifyingGlassIcon class="ml-1 h-3 w-3" />
               </a>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
-        <div class="flex items-center space-x-2">
-          <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider">
-            {{ props.scope === 'personal' ? '已连接服务 (我的私有)' : '已连接服务 (平台公共)' }}
+      <div class="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/80 p-3 sm:p-4">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-500 sm:text-xs">
+            {{ props.scope === 'personal' ? '已连接服务' : '已连接服务 (平台)' }}
           </h3>
-          <span v-if="props.scope === 'global' && !canSave" class="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60 font-normal">
+          <span v-if="props.scope === 'global' && !canSave" class="rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[10px] font-normal text-amber-600">
             管理员可编辑
           </span>
         </div>
         <button 
           v-if="canSave" 
           @click="resetWizard(); showAddModal = true" 
-          class="px-3 py-1.5 text-white rounded-md transition-all flex items-center text-[11px] font-bold shadow-sm"
+          class="flex shrink-0 items-center rounded-md px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all sm:px-3"
           :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
         >
-          <PlusIcon class="w-3.5 h-3.5 mr-1" />
-          添加服务
+          <PlusIcon class="mr-1 h-3.5 w-3.5" />
+          添加
         </button>
       </div>
 
-      <div class="flex-1 overflow-y-auto custom-scrollbar">
+      <div class="custom-scrollbar max-h-[min(52vh,28rem)] flex-1 overflow-y-auto lg:max-h-none">
         <div v-if="loading" class="p-8 text-center">
-          <ArrowPathIcon class="w-6 h-6 animate-spin mx-auto text-gray-300" />
+          <ArrowPathIcon class="mx-auto h-6 w-6 animate-spin text-gray-300" />
         </div>
-        <div v-else-if="servers.length === 0" class="p-8 text-center text-gray-400 text-sm italic">
+        <div v-else-if="servers.length === 0" class="p-8 text-center text-sm italic text-gray-400">
           暂无配置 MCP 服务
         </div>
         <div v-else class="divide-y divide-gray-50">
@@ -694,15 +706,15 @@ onMounted(fetchServers)
             v-for="server in servers" 
             :key="server.id"
             @click="selectServer(server)"
-            class="p-4 cursor-pointer transition-all hover:bg-blue-50/30"
-            :class="selectedServer?.id === server.id ? 'bg-blue-50 border-l-4 border-primary' : 'border-l-4 border-transparent'"
+            class="cursor-pointer p-3 transition-all hover:bg-blue-50/30 sm:p-4"
+            :class="selectedServer?.id === server.id ? 'border-l-4 border-primary bg-blue-50' : 'border-l-4 border-transparent'"
           >
-            <div class="flex justify-between items-start mb-1 gap-2">
+            <div class="mb-1.5 flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
-                <span class="text-sm font-bold text-gray-900 truncate block">{{ server.server_name }}</span>
-                <p v-if="server.remark" class="text-[11px] text-gray-500 mt-0.5 line-clamp-2 leading-snug">{{ server.remark }}</p>
+                <span class="block truncate text-sm font-bold text-gray-900">{{ server.server_name }}</span>
+                <p v-if="server.remark" class="mt-0.5 line-clamp-2 text-[11px] leading-snug text-gray-500">{{ server.remark }}</p>
               </div>
-              <div class="flex items-center gap-2 shrink-0" @click.stop>
+              <div class="flex shrink-0 items-center gap-2" @click.stop>
                 <span
                   class="text-[10px] font-semibold"
                   :class="server.enabled_status === 1 ? 'text-emerald-600' : 'text-gray-400'"
@@ -716,144 +728,157 @@ onMounted(fetchServers)
                   :aria-label="`${server.server_name}${server.enabled_status === 1 ? '禁用' : '启用'}`"
                   @update:model-value="handleServerStatusChange(server, $event)"
                 />
-                <div v-if="canSave" class="flex space-x-1">
-                  <button @click="openEditModal(server)" class="p-1 text-gray-400 hover:text-blue-500 transition-colors" title="编辑配置">
-                    <PencilSquareIcon class="w-4 h-4" />
+              </div>
+            </div>
+            <div class="mb-2 flex items-center truncate font-mono text-[10px] text-gray-400">
+              <LinkIcon class="mr-1 h-3 w-3 shrink-0" />
+              <span class="truncate">{{ server.sse_url }}</span>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+                {{ server.tool_count }} 工具 /
+                <span v-if="server.enabled_status === 1" class="font-bold text-green-600">{{ server.published_tool_count }} 已发布</span>
+                <span v-else class="font-bold text-gray-400">服务已禁用</span>
+                <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
+              </span>
+              <div class="flex items-center gap-1">
+                <span class="mr-1 hidden text-[9px] italic text-gray-400 sm:inline" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
+                <div v-if="canSave" class="flex space-x-0.5" @click.stop>
+                  <button type="button" @click="openEditModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-blue-500" title="编辑配置">
+                    <PencilSquareIcon class="h-4 w-4" />
                   </button>
-                  <button @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="p-1 text-gray-400 hover:text-primary transition-colors">
-                    <CloudArrowDownIcon class="w-4 h-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
+                  <button type="button" @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-primary">
+                    <CloudArrowDownIcon class="h-4 w-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
                   </button>
-                  <button @click="confirmDeleteServer(server)" class="p-1 text-gray-400 hover:text-red-500 transition-colors">
-                    <TrashIcon class="w-4 h-4" />
+                  <button type="button" @click="confirmDeleteServer(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-red-500">
+                    <TrashIcon class="h-4 w-4" />
                   </button>
                 </div>
               </div>
-            </div>
-            <div class="flex items-center text-[10px] text-gray-400 font-mono truncate mb-2">
-              <LinkIcon class="w-3 h-3 mr-1" />
-              {{ server.sse_url }}
-            </div>
-            <div class="flex justify-between items-center">
-              <span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-                {{ server.tool_count }} 工具 /
-                <span v-if="server.enabled_status === 1" class="text-green-600 font-bold">{{ server.published_tool_count }} 已发布</span>
-                <span v-else class="text-gray-400 font-bold">服务已禁用</span>
-                <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
-              </span>
-              <span class="text-[9px] text-gray-400 italic" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Right: Tool List -->
-    <div class="flex-1 flex flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-      <div v-if="!selectedServer" class="flex-1 flex flex-col items-center justify-center text-gray-400">
-        <SparklesIcon class="w-12 h-12 mb-4 opacity-20" />
+    <!-- Right: Tool List — 移动端仅在选中服务后展示 -->
+    <div
+      class="flex min-h-[22rem] flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
+      :class="selectedServer ? 'flex' : 'hidden lg:flex'"
+    >
+      <div v-if="!selectedServer" class="flex flex-1 flex-col items-center justify-center text-gray-400">
+        <SparklesIcon class="mb-4 h-12 w-12 opacity-20" />
         <p class="text-sm">请在左侧选择一个 MCP 服务查看工具</p>
       </div>
       
       <template v-else>
-        <div class="p-4 border-b border-gray-200 bg-slate-50 flex justify-between items-center">
-          <div class="flex items-center">
+        <div class="flex flex-col gap-3 border-b border-gray-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+          <div class="flex min-w-0 items-start gap-2">
+            <button
+              type="button"
+              class="-ml-1 mt-0.5 rounded-md p-1.5 text-gray-500 hover:bg-white hover:text-gray-800 lg:hidden"
+              aria-label="返回服务列表"
+              @click="clearSelectedServer"
+            >
+              <ChevronLeftIcon class="h-5 w-5" />
+            </button>
             <input 
               v-if="canSave"
               type="checkbox" 
               :checked="isAllSelected" 
               :disabled="!canManageSelectedTools"
               @change="toggleSelectAll"
-              class="w-4 h-4 text-primary border-gray-400 rounded focus:ring-primary mr-3" 
+              class="mr-1 mt-1 h-4 w-4 rounded border-gray-400 text-primary focus:ring-primary sm:mr-2" 
             />
-            <div>
-              <h3 class="text-sm font-bold text-slate-800">{{ selectedServer.server_name }} 工具</h3>
-              <p class="text-[10px] text-amber-600 mt-0.5" v-if="!isSelectedServerEnabled">服务已禁用，工具暂不可测试、发布或下线</p>
-              <p class="text-[10px] text-slate-500 mt-0.5" v-else-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
-              <p class="text-[10px] text-primary font-black mt-0.5" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
-              <div v-if="selectedServerUsage" class="flex items-center gap-2 mt-1 text-[10px]">
+            <div class="min-w-0">
+              <h3 class="truncate text-sm font-bold text-slate-800">{{ selectedServer.server_name }} 工具</h3>
+              <p class="mt-0.5 text-[10px] text-amber-600" v-if="!isSelectedServerEnabled">服务已禁用，工具暂不可测试、发布或下线</p>
+              <p class="mt-0.5 text-[10px] text-slate-500" v-else-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
+              <p class="mt-0.5 text-[10px] font-black text-primary" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
+              <div v-if="selectedServerUsage" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
                 <span class="text-slate-500">绑定 {{ selectedServerUsage.bound_agent_count }} 个智能体</span>
                 <span class="text-emerald-600">生效 {{ selectedServerUsage.active_agent_count }} 个</span>
                 <span class="text-slate-400">{{ selectedServerUsage.bound_version_count }} 个版本配置</span>
               </div>
-              <span v-else-if="usageLoading[selectedServer.id]" class="text-[10px] text-slate-400 mt-1">正在统计使用情况...</span>
+              <span v-else-if="usageLoading[selectedServer.id]" class="mt-1 text-[10px] text-slate-400">正在统计使用情况...</span>
             </div>
           </div>
           
-          <div class="flex items-center space-x-3">
-            <div v-if="canSave && selectedToolIds.size > 0" class="flex items-center space-x-2 animate-fade-in bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
-              <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="text-[10px] font-bold bg-green-600 text-white px-3 py-1 rounded shadow-sm hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">批量发布</button>
-              <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="text-[10px] font-bold bg-slate-600 text-white px-3 py-1 rounded shadow-sm hover:bg-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">批量下线</button>
+          <div class="flex flex-wrap items-center gap-2 pl-8 sm:pl-0 lg:pl-0">
+            <div v-if="canSave && selectedToolIds.size > 0" class="flex items-center space-x-2 rounded-lg border border-gray-200 bg-white p-1 shadow-sm animate-fade-in">
+              <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="rounded bg-green-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50">批量发布</button>
+              <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="rounded bg-slate-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">批量下线</button>
             </div>
-            <button v-if="canSave" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="text-[11px] font-bold text-primary flex items-center hover:underline bg-white px-2 py-1 rounded border border-gray-200">
-              <ArrowPathIcon class="w-3.5 h-3.5 mr-1" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
+            <button v-if="canSave" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-primary hover:underline">
+              <ArrowPathIcon class="mr-1 h-3.5 w-3.5" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
               刷新
             </button>
           </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+        <div class="custom-scrollbar flex-1 overflow-y-auto p-3 sm:p-4">
           <div v-if="toolsLoading" class="p-12 text-center">
-            <ArrowPathIcon class="w-8 h-8 animate-spin mx-auto text-gray-200" />
+            <ArrowPathIcon class="mx-auto h-8 w-8 animate-spin text-gray-200" />
           </div>
           <div v-else-if="tools.length === 0" class="p-12 text-center">
-            <p class="text-gray-400 text-sm">该服务下暂无同步到的工具，请点击同步按钮。</p>
+            <p class="text-sm text-gray-400">该服务下暂无同步到的工具，请点击同步按钮。</p>
           </div>
-          <div v-else class="grid grid-cols-1 gap-4">
+          <div v-else class="grid grid-cols-1 gap-3 sm:gap-4">
             <div 
               v-for="tool in tools" 
               :key="tool.id" 
               @click="canManageTool(tool) && toggleSelectTool(tool.id)"
-              class="p-4 rounded-lg border flex justify-between items-start group transition-all"
+              class="group flex flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-start sm:justify-between sm:p-4"
               :class="[
                 canManageTool(tool) ? 'cursor-pointer' : 'cursor-default',
                 selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
               ]"
             >
-              <div class="flex items-start flex-1 min-w-0 pr-4">
+              <div class="flex min-w-0 flex-1 items-start pr-0 sm:pr-4">
                 <input 
                   v-if="canSave"
                   type="checkbox" 
                   :checked="selectedToolIds.has(tool.id)" 
                   :disabled="!canManageTool(tool)"
                   @click.stop="toggleSelectTool(tool.id)"
-                  class="w-3.5 h-3.5 mt-1 text-primary border-gray-300 rounded focus:ring-primary mr-3" 
+                  class="mr-3 mt-1 h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary" 
                 />
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center space-x-2 mb-1">
-                    <span class="text-sm font-bold text-gray-900">{{ tool.tool_name }}</span>
-                    <span v-if="tool.usage_count > 0" class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-blue-100 text-blue-700" title="被智能体引用次数">
-                      <LinkIcon class="w-3 h-3 mr-0.5" />{{ tool.usage_count }}
+                <div class="min-w-0 flex-1">
+                  <div class="mb-1 flex flex-wrap items-center gap-1.5">
+                    <span class="text-sm font-bold text-gray-900 break-all">{{ tool.tool_name }}</span>
+                    <span v-if="tool.usage_count > 0" class="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-medium text-blue-700" title="被智能体引用次数">
+                      <LinkIcon class="mr-0.5 h-3 w-3" />{{ tool.usage_count }}
                     </span>
-                    <span v-if="!isSelectedServerEnabled" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">服务已禁用</span>
-                    <span v-else-if="tool.is_available === false" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">远端已删除</span>
-                    <span v-else-if="tool.is_published" class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">已发布</span>
-                    <span v-else class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-400 border border-gray-200 uppercase tracking-tighter">待发布</span>
+                    <span v-if="!isSelectedServerEnabled" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">服务已禁用</span>
+                    <span v-else-if="tool.is_available === false" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">远端已删除</span>
+                    <span v-else-if="tool.is_published" class="rounded border border-green-100 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-green-600">已发布</span>
+                    <span v-else class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-gray-400">待发布</span>
                   </div>
-                  <p class="text-xs text-gray-500 line-clamp-2 leading-relaxed italic">
+                  <p class="line-clamp-2 text-xs italic leading-relaxed text-gray-500">
                     {{ tool.tool_description || '暂无描述' }}
                   </p>
                   <div class="mt-2 flex flex-wrap gap-1" v-if="tool.parameter_schema">
-                    <code class="text-[9px] bg-white px-1 border rounded text-gray-400" v-for="(_, p) in JSON.parse(tool.parameter_schema).properties" :key="p">{{ p }}</code>
+                    <code class="rounded border bg-white px-1 text-[9px] text-gray-400" v-for="(_, p) in JSON.parse(tool.parameter_schema).properties" :key="p">{{ p }}</code>
                   </div>
                 </div>
               </div>
-              <div v-if="canSave" class="flex flex-col items-end space-y-2">
+              <div v-if="canSave" class="flex shrink-0 flex-row items-center justify-end gap-2 sm:flex-col sm:items-end sm:space-y-0 sm:gap-2">
                 <button 
                   @click.stop="openTester(tool)"
                   :disabled="!canManageTool(tool)"
-                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm bg-white text-indigo-600 hover:bg-indigo-50 border-indigo-100 opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  class="flex items-center rounded-md border border-indigo-100 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-600 shadow-sm transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                   title="在线测试"
                 >
-                  <BeakerIcon class="w-3.5 h-3.5 mr-1.5" />
+                  <BeakerIcon class="mr-1.5 h-3.5 w-3.5" />
                   测试
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
                   :disabled="!canManageTool(tool)"
-                  class="flex items-center text-[11px] font-bold transition-colors px-3 py-1.5 rounded-md border shadow-sm opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  :class="tool.is_published ? 'bg-white text-gray-600 hover:text-red-600' : 'bg-primary text-white hover:bg-primary-dark'"
+                  class="flex items-center rounded-md border px-3 py-1.5 text-[11px] font-bold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
+                  :class="tool.is_published ? 'border-gray-200 bg-white text-gray-600 hover:text-red-600' : 'border-transparent bg-primary text-white hover:bg-primary-dark'"
                 >
-                  <component :is="tool.is_published ? EyeSlashIcon : EyeIcon" class="w-3.5 h-3.5 mr-1.5" />
+                  <component :is="tool.is_published ? EyeSlashIcon : EyeIcon" class="mr-1.5 h-3.5 w-3.5" />
                   {{ tool.is_published ? '下线' : '发布' }}
                 </button>
               </div>
@@ -872,10 +897,10 @@ onMounted(fetchServers)
     />
 
     <!-- Add Server Modal (Connection Wizard) -->
-    <div v-if="showAddModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
+    <div v-if="showAddModal" class="fixed inset-0 z-[60] flex items-end justify-center bg-gray-900/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div class="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl animate-fade-in-up sm:rounded-xl">
         <!-- Wizard Header -->
-        <div class="p-6 border-b border-gray-100 bg-gray-50/50">
+        <div class="shrink-0 border-b border-gray-100 bg-gray-50/50 p-4 sm:p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-bold text-gray-900">
               {{ wizardStep === 1 ? (isEditing ? '编辑配置' : '第一步：建立连接') : '第二步：确认工具并命名' }}
@@ -895,7 +920,7 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Step 1: Input -->
-        <div v-if="wizardStep === 1" class="p-6 space-y-5">
+        <div v-if="wizardStep === 1" class="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
           <div
             v-if="!isEditing"
             class="flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5"
@@ -1002,7 +1027,7 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Step 2: Preview -->
-        <div v-else class="p-6 space-y-5">
+        <div v-else class="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
           <div>
             <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">服务显示名称</label>
             <div class="flex items-stretch rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-primary/40">
@@ -1050,19 +1075,19 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Footer -->
-        <div class="p-6 bg-gray-50 flex justify-between items-center">
-          <button @click="showAddModal = false" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 font-medium">取消</button>
+        <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <button @click="showAddModal = false" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">取消</button>
           
-          <div class="flex space-x-3">
-            <button v-if="wizardStep === 2" @click="wizardStep = 1" class="px-4 py-2 text-sm text-primary font-medium hover:underline">返回修改</button>
+          <div class="flex flex-col gap-2 sm:flex-row sm:space-x-3 sm:gap-0">
+            <button v-if="wizardStep === 2" @click="wizardStep = 1" class="px-4 py-2 text-sm font-medium text-primary hover:underline">返回修改</button>
             
             <button 
               v-if="wizardStep === 1 && connectionInputTab === 'json' && !isEditing"
               @click="applyMcpJsonPaste({ connect: true })" 
               :disabled="verifying"
-              class="px-6 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-600/20 transition-all disabled:opacity-50 flex items-center"
+              class="flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:opacity-50 sm:px-6 sm:py-2"
             >
-              <ArrowPathIcon v-if="verifying" class="w-4 h-4 mr-2 animate-spin" />
+              <ArrowPathIcon v-if="verifying" class="mr-2 h-4 w-4 animate-spin" />
               {{ verifying ? '正在连接并发现工具...' : '解析并连接发现工具' }}
             </button>
 
@@ -1070,16 +1095,16 @@ onMounted(fetchServers)
               v-else-if="wizardStep === 1"
               @click="handleVerify" 
               :disabled="verifying"
-              class="px-6 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark font-bold shadow-lg shadow-primary/20 transition-all disabled:opacity-50 flex items-center"
+              class="flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary-dark disabled:opacity-50 sm:px-6 sm:py-2"
             >
-              <ArrowPathIcon v-if="verifying" class="w-4 h-4 mr-2 animate-spin" />
+              <ArrowPathIcon v-if="verifying" class="mr-2 h-4 w-4 animate-spin" />
               {{ verifying ? '正在尝试建立连接...' : '连接并发现工具' }}
             </button>
             
             <button 
               v-else
               @click="addServer" 
-              class="px-6 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow-lg shadow-green-600/20 transition-all active:scale-95"
+              class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 sm:px-6 sm:py-2"
             >
               {{ isEditing ? '保存修改' : '确认并完成添加' }}
             </button>

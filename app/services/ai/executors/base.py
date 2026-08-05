@@ -125,6 +125,7 @@ class BaseExecutor(ABC):
             agent_name=self.config.agent_name,
             dataset_ids=agent_dataset_ids,
             knowledge_dataset_ids=[],
+            agent_dataset_ids=agent_dataset_ids,
             require_explicit_dataset=False,
             engine_type=self.config.engine_type or "LOCAL",
             engine_config=engine_config,

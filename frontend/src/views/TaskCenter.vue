@@ -818,6 +818,9 @@ const metricValue = (value: number | undefined) => Number(value || 0)
 
 onMounted(async () => {
   await Promise.all([fetchTasks(true), fetchAgents()])
+  if (String(route.query.view || '') === 'history' && showHistoryTab.value) {
+    mainViewTab.value = 'history'
+  }
   if (route.query.task_id) {
     const target = tasks.value.find(task => String(task.id) === String(route.query.task_id))
     if (target) openLogs(target)

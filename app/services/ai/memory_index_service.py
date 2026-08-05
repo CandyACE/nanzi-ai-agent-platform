@@ -663,3 +663,28 @@ class MemoryIndexService:
     async def rebuild_index() -> Dict[str, Any]:
         await MemoryIndexService.ensure_index()
         return {"status": "success", "message": "索引已检查/创建（已有 HASH 文档会自动纳入 PREFIX 索引）"}
+
+
+async def maybe_ensure_memory_index_on_startup() -> None:
+    """启动时若记忆服务开启则 ensure 会话摘要索引（不 DROP）。
+
+    Redis Stack 索引不会因文档 TTL 消失，但进程/容器重建且无持久化时索引会丢；
+    设计上应在启动自动 FT.CREATE，与手动「检查/创建索引」同源。
+    """
+    try:
+        enabled = await MemoryConfigService.get_bool("memory_service_enabled", False)
+    except Exception as e:
+        logger.warning("[startup] Failed to read memory_service_enabled; skip memory index ensure: %s", e)
+        return
+    if not enabled:
+        logger.info("[startup] memory_service_enabled=false; skip memory index ensure")
+        return
+    try:
+        ok = await MemoryIndexService.ensure_index()
+        idx = await MemoryIndexService.index_name()
+        if ok:
+            logger.info("[startup] Memory index ready: %s", idx)
+        else:
+            logger.warning("[startup] Memory index ensure failed: %s", idx)
+    except Exception as e:
+        logger.warning("[startup] Memory index ensure error: %s", e)
