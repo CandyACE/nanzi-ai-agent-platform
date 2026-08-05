@@ -91,6 +91,7 @@ class ConversationResourceScopeRequest(BaseModel):
     datasets: List[Dict[str, Any]] = Field(default_factory=list)
     knowledge_bases: List[Dict[str, Any]] = Field(default_factory=list)
     skills: List[Dict[str, Any]] = Field(default_factory=list)
+    mcp_tools: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 async def _normalize_conversation_resource_scope(
@@ -104,7 +105,8 @@ async def _normalize_conversation_resource_scope(
     from app.core.config import settings
     from app.services.ai.skill_resolver import get_user_personal_skills_dir
     from app.api.portal.endpoints.skills import parse_skill_metadata
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select
+    from sqlalchemy.orm import joinedload
 
     user_id = user_info.get("user_id") or user_info.get("id")
     is_admin = user_info.get("role") == "admin"
@@ -219,11 +221,65 @@ async def _normalize_conversation_resource_scope(
         if skill:
             normalized_skills.append(skill)
 
+    from app.models.mcp import McpServer, McpToolCache
+
+    mcp_personal_cond = and_(
+        McpServer.scope == "personal",
+        McpServer.user_id == int(user_id) if user_id is not None else -1,
+    )
+    # 会话动态挂载仅允许个人已发布 MCP；平台 MCP 走智能体版本配置
+    mcp_stmt = (
+        select(McpToolCache)
+        .join(McpToolCache.server)
+        .options(joinedload(McpToolCache.server))
+        .where(
+            McpToolCache.is_published == True,  # noqa: E712
+            McpToolCache.is_available == True,  # noqa: E712
+            mcp_personal_cond if user_id is not None else False,
+        )
+    )
+    mcp_rows = list((await db.execute(mcp_stmt)).scalars().unique().all())
+    mcp_by_token: Dict[str, Dict[str, Any]] = {}
+    for row in mcp_rows:
+        server = row.server
+        snapshot = {
+            "id": str(row.id),
+            "name": str(row.tool_name or ""),
+            "description": str(row.tool_description or ""),
+            "server_name": str(getattr(server, "server_name", None) or "Unknown"),
+            "scope": str(getattr(server, "scope", None) or "global"),
+        }
+        if not snapshot["name"]:
+            continue
+        for token in (snapshot["id"], snapshot["name"]):
+            if token.strip():
+                mcp_by_token[token.strip().casefold()] = snapshot
+
+    normalized_mcp_tools: list[Dict[str, Any]] = []
+    seen_mcp_names: set[str] = set()
+    for item in raw_scope.get("mcp_tools", []) or []:
+        if not isinstance(item, dict):
+            continue
+        matched = None
+        for key in ("id", "name"):
+            token = str(item.get(key) or "").strip().casefold()
+            if token and token in mcp_by_token:
+                matched = mcp_by_token[token]
+                break
+        if not matched:
+            continue
+        name = matched["name"]
+        if name in seen_mcp_names:
+            continue
+        seen_mcp_names.add(name)
+        normalized_mcp_tools.append(matched)
+
     return {
         "project_name": str(raw_scope.get("project_name") or "").strip()[:100],
         "datasets": [item for raw in raw_scope.get("datasets", []) or [] if (item := normalize_dataset(raw))],
         "knowledge_bases": [item for raw in raw_scope.get("knowledge_bases", []) or [] if (item := normalize_kb(raw))],
         "skills": normalized_skills,
+        "mcp_tools": normalized_mcp_tools,
     }
 
 class ChatCompletionResponse(BaseModel):
@@ -745,13 +801,22 @@ async def create_chat_completion(
         raise HTTPException(status_code=400, detail="Messages list cannot be empty")
 
     # 会话资源范围以服务端 Redis 为准，客户端只用于立即刷新 UI，不能伪造范围。
-    conversation_scope = {"project_name": "", "datasets": [], "knowledge_bases": [], "skills": []}
+    conversation_scope = {
+        "project_name": "",
+        "datasets": [],
+        "knowledge_bases": [],
+        "skills": [],
+        "mcp_tools": [],
+    }
     if completion_request.conversation_id:
         conversation_scope = await ConversationResourceService.get(
             user_info.get("user_id") or user_info.get("id"),
             completion_request.conversation_id,
         )
-    if any(conversation_scope.get(key) for key in ("datasets", "knowledge_bases", "skills")):
+    if any(
+        conversation_scope.get(key)
+        for key in ("datasets", "knowledge_bases", "skills", "mcp_tools")
+    ):
         effective_debug_options["resource_scope"] = conversation_scope
     scoped_kb_ids = [str(item.get("id")) for item in conversation_scope.get("knowledge_bases", []) if item.get("id")]
     effective_knowledge_dataset_ids = scoped_kb_ids or completion_request.knowledge_dataset_ids

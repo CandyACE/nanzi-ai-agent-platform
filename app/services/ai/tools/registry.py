@@ -29,7 +29,7 @@ from app.services.ai.tools.system_executive_tools import (
 )
 from app.services.ai.tools.advanced_auxiliary_tools import (
     sqlite_scratchpad, directory_tree_navigator, web_renderer_and_snapshot, code_syntax_linter,
-    fetch_static_web_url, web_search_baidu
+    fetch_static_web_url, web_search_baidu, web_search_baidu_http, web_search_bing_http
 )
 from app.services.ai.tools.memory_ltm_tools import (
     update_user_preference, fetch_user_long_term_memory, delete_user_preference
@@ -92,6 +92,8 @@ TOOL_EVIDENCE_TYPES = {
     "jira_get_projects": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
     "fetch_static_web_url": frozenset({EvidenceType.PUBLIC_WEB}),
     "web_search_baidu": frozenset({EvidenceType.PUBLIC_WEB}),
+    "web_search_baidu_http": frozenset({EvidenceType.PUBLIC_WEB}),
+    "web_search_bing_http": frozenset({EvidenceType.PUBLIC_WEB}),
     "system_http_request": frozenset({EvidenceType.PUBLIC_WEB}),
     "get_current_time": frozenset({EvidenceType.RUNTIME_STATE}),
     "get_current_model": frozenset({EvidenceType.RUNTIME_STATE}),
@@ -271,6 +273,8 @@ class ToolRegistry:
         "code_syntax_linter": code_syntax_linter,
         "fetch_static_web_url": fetch_static_web_url,
         "web_search_baidu": web_search_baidu,
+        "web_search_baidu_http": web_search_baidu_http,
+        "web_search_bing_http": web_search_bing_http,
         # Register Memory LTM Tools
         "update_user_preference": update_user_preference,
         "fetch_user_long_term_memory": fetch_user_long_term_memory,
@@ -799,7 +803,5 @@ class ToolRegistry:
             create_skills,
             list_available_skills,
             read_skill_instruction,
-            web_search_baidu,
-            fetch_static_web_url,
             cls._portal_notification_tool,
         ]

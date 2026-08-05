@@ -6,7 +6,13 @@ import { useUser } from '@/composables/useUser'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 import Switch from '../Switch.vue'
 import McpToolTester from './McpToolTester.vue'
-import { buildDefaultMcpServerName } from '@/utils/mcpServerName'
+import {
+  buildDefaultMcpServerName,
+  buildMcpServerNamePrefix,
+  composeMcpServerName,
+  normalizeMcpServerNameSuffix,
+  stripMcpServerNamePrefix,
+} from '@/utils/mcpServerName'
 import { 
   PlusIcon,
   BeakerIcon,
@@ -36,6 +42,32 @@ const canSave = computed(() => {
   if (props.scope === 'personal') return true
   return userInfo.value?.role === 'admin'
 })
+
+const namePrefix = computed(() =>
+  buildMcpServerNamePrefix(props.scope, userInfo.value?.user_name),
+)
+
+/** 用户只填后缀；保存时与固定前缀拼接 */
+const serverNameSuffix = ref('')
+
+const syncFullServerName = () => {
+  newServer.value.server_name = composeMcpServerName(
+    props.scope,
+    userInfo.value?.user_name,
+    serverNameSuffix.value,
+  )
+}
+
+watch(serverNameSuffix, () => {
+  syncFullServerName()
+})
+
+watch(
+  () => [props.scope, userInfo.value?.user_name] as const,
+  () => {
+    syncFullServerName()
+  },
+)
 
 const getApiErrorMessage = (error: any, fallback: string) => {
   const responseData = error?.response?.data
@@ -170,6 +202,7 @@ const removeHeaderPair = (index: number) => {
 
 const newServer = ref({
   server_name: '',
+  remark: '',
   sse_url: '',
   auth_headers: '{}',
   enabled_status: 1
@@ -226,7 +259,8 @@ const resetWizard = () => {
   wizardStep.value = 1
   verifying.value = false
   discoveredTools.value = []
-  newServer.value = { server_name: '', sse_url: '', auth_headers: '{}', enabled_status: 1 }
+  newServer.value = { server_name: '', remark: '', sse_url: '', auth_headers: '{}', enabled_status: 1 }
+  serverNameSuffix.value = ''
   headerPairs.value = [{ key: '', value: '' }]
   headerMode.value = 'simple'
 }
@@ -235,12 +269,19 @@ const openEditModal = (server: any) => {
   isEditing.value = true
   editingId.value = server.id
   wizardStep.value = 1
+  serverNameSuffix.value = stripMcpServerNamePrefix(
+    server.server_name,
+    props.scope,
+    userInfo.value?.user_name,
+  )
   newServer.value = {
     server_name: server.server_name,
+    remark: server.remark || '',
     sse_url: server.sse_url,
     auth_headers: server.auth_headers || '{}',
     enabled_status: server.enabled_status
   }
+  syncFullServerName()
   syncJsonToPairs()
   showAddModal.value = true
 }
@@ -255,6 +296,7 @@ const toggleServerStatus = async (server: any, enabled: boolean) => {
   try {
     const response = await axios.put(`/api/portal/mcp/servers/${server.id}`, {
       server_name: server.server_name,
+      remark: server.remark || '',
       sse_url: server.sse_url,
       auth_headers: server.auth_headers || '{}',
       enabled_status: nextStatus,
@@ -350,28 +392,34 @@ const handleVerify = async () => {
     const res = await axios.post('/api/portal/mcp/verify', newServer.value)
     discoveredTools.value = res.data.tools
     wizardStep.value = 2
-    if (!newServer.value.server_name) {
+    if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
         try {
             const url = new URL(newServer.value.sse_url)
-            const baseName = buildDefaultMcpServerName(
-              props.scope,
-              userInfo.value?.user_name,
-              url.hostname,
-            )
-            let candidateName = baseName
+            let suffix = normalizeMcpServerNameSuffix(url.hostname) || 'server'
+            let candidate = composeMcpServerName(props.scope, userInfo.value?.user_name, suffix)
             let counter = 1
-            while (servers.value.some((s: any) => s.server_name === candidateName)) {
+            while (servers.value.some((s: any) => s.server_name === candidate && s.id !== editingId.value)) {
                 counter++
-                candidateName = `${baseName}-${counter}`
+                candidate = composeMcpServerName(
+                  props.scope,
+                  userInfo.value?.user_name,
+                  `${suffix}-${counter}`,
+                )
             }
-            newServer.value.server_name = candidateName
-        } catch {
-            newServer.value.server_name = buildDefaultMcpServerName(
+            serverNameSuffix.value = stripMcpServerNamePrefix(
+              candidate,
               props.scope,
               userInfo.value?.user_name,
-              '',
             )
+        } catch {
+            serverNameSuffix.value = normalizeMcpServerNameSuffix(
+              buildDefaultMcpServerName(props.scope, userInfo.value?.user_name, 'server').replace(
+                namePrefix.value,
+                '',
+              ),
+            ) || 'server'
         }
+        syncFullServerName()
     }
     showToast('连接成功，已发现工具', 'success')
   } catch (e: any) {
@@ -382,6 +430,11 @@ const handleVerify = async () => {
 }
 
 const addServer = async () => {
+  syncFullServerName()
+  if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
+    showToast('请填写服务名称后缀', 'warning')
+    return
+  }
   if (!newServer.value.server_name || !newServer.value.sse_url) {
     showToast('请填写完整信息', 'warning')
     return
@@ -592,7 +645,10 @@ onMounted(fetchServers)
             :class="selectedServer?.id === server.id ? 'bg-blue-50 border-l-4 border-primary' : 'border-l-4 border-transparent'"
           >
             <div class="flex justify-between items-start mb-1 gap-2">
-              <span class="text-sm font-bold text-gray-900 truncate">{{ server.server_name }}</span>
+              <div class="min-w-0 flex-1">
+                <span class="text-sm font-bold text-gray-900 truncate block">{{ server.server_name }}</span>
+                <p v-if="server.remark" class="text-[11px] text-gray-500 mt-0.5 line-clamp-2 leading-snug">{{ server.remark }}</p>
+              </div>
               <div class="flex items-center gap-2 shrink-0" @click.stop>
                 <span
                   class="text-[10px] font-semibold"
@@ -842,7 +898,37 @@ onMounted(fetchServers)
         <div v-else class="p-6 space-y-5">
           <div>
             <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">服务显示名称</label>
-            <input v-model="newServer.server_name" placeholder="起个好记的名字" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none" />
+            <div class="flex items-stretch rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-primary/40">
+              <span
+                class="shrink-0 px-2.5 py-2 text-sm font-mono bg-gray-100 text-gray-500 border-r border-gray-200 select-all"
+                :title="namePrefix"
+              >{{ namePrefix }}</span>
+              <input
+                v-model="serverNameSuffix"
+                type="text"
+                placeholder="自定义后缀，如 hcp"
+                class="flex-1 min-w-0 px-3 py-2 text-sm font-mono outline-none"
+                @keydown.stop
+              />
+            </div>
+            <p class="mt-1.5 text-[10px] text-gray-400 leading-relaxed">
+              完整名称：
+              <span class="font-mono text-gray-600">{{ newServer.server_name || `${namePrefix}…` }}</span>
+            </p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+              备注
+              <span class="ml-1 font-normal text-gray-400 normal-case tracking-normal">选填</span>
+            </label>
+            <textarea
+              v-model="newServer.remark"
+              rows="2"
+              maxlength="500"
+              placeholder="简要说明该 MCP 的用途，便于在挂载与列表中识别"
+              class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none resize-none"
+            />
           </div>
           
           <div>

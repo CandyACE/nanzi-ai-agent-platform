@@ -2,7 +2,14 @@
 import { ref } from 'vue'
 import McpServerRegistry from '../components/system/McpServerRegistry.vue'
 
-const activeScope = ref<'global' | 'personal'>('global')
+const props = withDefaults(defineProps<{
+  /** 仅展示「我的 MCP」，用于个人中心（无需 menu:mcp_management） */
+  personalOnly?: boolean
+}>(), {
+  personalOnly: false,
+})
+
+const activeScope = ref<'global' | 'personal'>(props.personalOnly ? 'personal' : 'global')
 </script>
 
 <template>
@@ -10,18 +17,36 @@ const activeScope = ref<'global' | 'personal'>('global')
     <!-- Header 标题栏：参考 Skills 工作台标题样式 -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 flex-shrink-0">
       <div class="flex items-center space-x-3">
-        <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-gray-900 dark:text-white">MCP 工具集</h1>
-        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+        <h1
+          class="font-bold tracking-tight text-gray-900 dark:text-white"
+          :class="personalOnly ? 'text-xl' : 'text-xl sm:text-2xl'"
+        >
+          {{ personalOnly ? '我的 MCP' : 'MCP 工具集' }}
+        </h1>
+        <span
+          v-if="!personalOnly"
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+        >
           Model Context Protocol
+        </span>
+        <span
+          v-else
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+        >
+          个人私有
         </span>
       </div>
       <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-        接入并管理外部 MCP SSE 服务端，自动识别工具集并无缝绑定至智能体生态
+        {{
+          personalOnly
+            ? '登记并管理仅对自己可见的 MCP 服务与工具，可在对话中挂载使用'
+            : '接入并管理外部 MCP SSE 服务端，自动识别工具集并无缝绑定至智能体生态'
+        }}
       </p>
     </div>
 
-    <!-- Scope Tab 切换：参考 Skills 工作台的设计（平台 MCP / 我的 MCP） -->
-    <div class="flex items-center border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+    <!-- Scope Tab：个人中心模式下隐藏平台/个人切换 -->
+    <div v-if="!personalOnly" class="flex items-center border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
       <button
         id="tab-global-mcp"
         type="button"

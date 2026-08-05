@@ -135,9 +135,11 @@
         v-if="resourceScope.project_name || resourceScopeCount > 0"
         :project-name="resourceScope.project_name"
         :resource-count="resourceScopeCount"
-        :mounted-resources="mountedResourceLabels"
+        :dataset-count="resourceScope.datasets.length"
+        :knowledge-base-count="resourceScope.knowledge_bases.length"
+        :skill-count="resourceScope.skills.length"
+        :mcp-count="resourceScope.mcp_tools.length"
         @manage="openResourceScopeModal"
-        @remove="removeMountedResource"
       />
 
       <!-- Main Chat Area -->
@@ -1302,6 +1304,7 @@
         :available-models="availableModels"
         :active-ltm-preference="activeLtmPreference"
         :agent-id="effectiveEmbedChatAgentId"
+        :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
         :routing-mode="config.routingMode"
         :expert-agent-id="config.expertAgentId"
         :is-loading-agents="isLoadingAgents"
@@ -1323,6 +1326,7 @@
         @select-knowledge-base="openKnowledgePortal"
         @select-local-fs="showWorkspaceDrawer = true"
         @select-memory="openMemorySelector"
+        @select-mcp-tool="mountMcpToolToSession"
         @system-command="handleSystemCommand"
         @ignore-ltm="handleIgnoreLtm"
         @dismiss-ltm="activeLtmPreference = null"
@@ -1340,6 +1344,9 @@
       :saving="resourceScopeSaving"
       :option-search="resourceOptionSearch"
       :selected-count="modalSelectedCount"
+      :option-total-count="modalOptionTotalCount"
+      :skill-scope-selected-count="modalSkillScopeSelectedCount"
+      :skill-scope-total-count="modalSkillScopeTotalCount"
       :orphan-selections="modalOrphanSelections"
       :selected-chips="modalSelectedChips"
       :sorted-options="sortedModalResourceOptions"
@@ -1352,6 +1359,7 @@
       @update:active-tab="resourceScopeActiveTab = $event"
       @remove-draft="removeModalDraftResource"
       @toggle-option="toggleModalResourceOption"
+      @toggle-group="toggleModalResourceGroup"
     />
 
     <ChatCanvas
@@ -2967,24 +2975,25 @@ const onModeChange = (mode: string) => {
 };
 const conversationId = ref("");
 const showResourceScopeModal = ref(false);
-const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
+const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[], mcp_tools: [] as any[] });
 const {
   activeMetadataDatasetIds,
   syncActiveMetadataDatasetsFromInput,
   toggleMetadataDatasetActive,
 } = useDatasetMount();
-const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '' });
+const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
 const resourceOptionsLoading = ref(false);
 const resourceOptionsLoaded = ref(false);
-const resourceOptionSearch = reactive<Record<string, string>>({ datasets: '', knowledge_bases: '', skills: '' });
-const resourceOptions = reactive<Record<string, any[]>>({ datasets: [], knowledge_bases: [], skills: [] });
-type ResourceScopeGroupKey = 'datasets' | 'knowledge_bases' | 'skills';
+const resourceOptionSearch = reactive<Record<string, string>>({ datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
+const resourceOptions = reactive<Record<string, any[]>>({ datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] });
+type ResourceScopeGroupKey = 'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools';
 
 const emptyResourceScopeState = () => ({
   project_name: '',
   datasets: [] as any[],
   knowledge_bases: [] as any[],
   skills: [] as any[],
+  mcp_tools: [] as any[],
 });
 
 const resourceOptionGroups: { key: ResourceScopeGroupKey; label: string; shortLabel?: string; hint: string }[] = [
@@ -3006,11 +3015,17 @@ const resourceOptionGroups: { key: ResourceScopeGroupKey; label: string; shortLa
     shortLabel: '技能',
     hint: '不选则仍可按问题自动匹配技能；选中后仅加载已挂载技能。',
   },
+  {
+    key: 'mcp_tools',
+    label: '我的 MCP',
+    shortLabel: 'MCP',
+    hint: '仅可选择个人已发布 MCP；平台公共 MCP 请在智能体版本中配置。选中后与版本 tools 叠加注入本会话。',
+  },
 ];
 const resourceScopeModalDraft = ref(emptyResourceScopeState());
 const resourceScopeSaving = ref(false);
 const resourceScopeActiveTab = ref<ResourceScopeGroupKey>('datasets');
-const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length);
+const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length + resourceScope.value.mcp_tools.length);
 const projectSessionHasDatasetScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.datasets.length > 0);
 const projectSessionHasKnowledgeScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.knowledge_bases.length > 0);
 const sessionMountedMetadataDatasetIds = computed(() =>
@@ -3053,12 +3068,6 @@ const resourceScopeEntriesMatch = (left: any, right: any) => {
   return true;
 };
 
-const mountedResourceLabels = computed(() => [
-  ...resourceScope.value.datasets.map((item: any, index: number) => ({ key: resourceScopeEntryKey('datasets', item, index), icon: '📊', label: item.name || item.id, type: 'datasets', id: item.id, scope: item.scope })),
-  ...resourceScope.value.knowledge_bases.map((item: any, index: number) => ({ key: resourceScopeEntryKey('knowledge_bases', item, index), icon: '📚', label: item.name || item.id, type: 'knowledge_bases', id: item.id, scope: item.scope })),
-  ...resourceScope.value.skills.map((item: any, index: number) => ({ key: resourceScopeEntryKey('skills', item, index), icon: '🧩', label: item.name || item.id, type: 'skills', id: item.id, scope: item.scope })),
-]);
-
 const resourceEntryMatchesOption = (entry: any, option: any) => {
   if (entry?.scope && option?.scope && String(entry.scope) !== String(option.scope)) return false;
   const eid = String(entry?.id ?? '').trim();
@@ -3093,6 +3102,7 @@ const syncResourceScopeDraftStrings = (scope: typeof resourceScope.value) => {
   resourceScopeDraft.datasets = scope.datasets.map((item: any) => item.name || item.id).join(',');
   resourceScopeDraft.knowledge_bases = scope.knowledge_bases.map((item: any) => item.name || item.id).join(',');
   resourceScopeDraft.skills = scope.skills.map((item: any) => item.name || item.id).join(',');
+  resourceScopeDraft.mcp_tools = (scope.mcp_tools || []).map((item: any) => item.name || item.id).join(',');
 };
 
 const cloneResourceScope = (scope: typeof resourceScope.value) => ({
@@ -3100,6 +3110,7 @@ const cloneResourceScope = (scope: typeof resourceScope.value) => ({
   datasets: scope.datasets.map((item: any) => ({ ...item })),
   knowledge_bases: scope.knowledge_bases.map((item: any) => ({ ...item })),
   skills: scope.skills.map((item: any) => ({ ...item })),
+  mcp_tools: (scope.mcp_tools || []).map((item: any) => ({ ...item })),
 });
 
 const modalDraftSelections = (type: ResourceScopeGroupKey) => resourceScopeModalDraft.value[type] || [];
@@ -3116,6 +3127,20 @@ const modalResourceOrphanCount = computed(() =>
 );
 
 const modalSelectedCount = (type: ResourceScopeGroupKey) => modalDraftSelections(type).length;
+
+const modalOptionTotalCount = (type: ResourceScopeGroupKey) => (resourceOptions[type] || []).length;
+
+const isPersonalSkillItem = (item: any) => String(item?.scope || '').toLowerCase() === 'personal';
+
+const modalSkillScopeSelectedCount = (scope: 'global' | 'personal') =>
+  modalDraftSelections('skills').filter((item: any) =>
+    scope === 'personal' ? isPersonalSkillItem(item) : !isPersonalSkillItem(item),
+  ).length;
+
+const modalSkillScopeTotalCount = (scope: 'global' | 'personal') =>
+  (resourceOptions.skills || []).filter((item: any) =>
+    scope === 'personal' ? isPersonalSkillItem(item) : !isPersonalSkillItem(item),
+  ).length;
 
 const modalSelectedChips = (type: ResourceScopeGroupKey) => {
   const orphans = new Set(modalOrphanSelections(type));
@@ -3135,11 +3160,22 @@ const resourceOptionAccent = (index: number) => ['bg-teal-500', 'bg-lime-500', '
 
 const filteredResourceOptions = (type: string) => {
   const query = (resourceOptionSearch[type] || '').trim().toLowerCase();
-  return (resourceOptions[type] || []).filter((item: any) => !query || `${item.name || ''} ${item.id || ''} ${item.description || ''}`.toLowerCase().includes(query));
+  return (resourceOptions[type] || []).filter((item: any) =>
+    !query
+    || `${item.name || ''} ${item.id || ''} ${item.description || ''} ${item.server_name || ''} ${item.server_remark || ''}`.toLowerCase().includes(query),
+  );
 };
 
 const sortedModalResourceOptions = (type: ResourceScopeGroupKey) => {
   const options = filteredResourceOptions(type);
+  // MCP 按服务分组展示，组内按名称排序即可，不再把已选顶到列表最前
+  if (type === 'mcp_tools') {
+    return options.slice().sort((a: any, b: any) => {
+      const serverCmp = String(a.server_name || '').localeCompare(String(b.server_name || ''), 'zh-CN');
+      if (serverCmp !== 0) return serverCmp;
+      return String(a.name || a.id || '').localeCompare(String(b.name || b.id || ''), 'zh-CN');
+    });
+  }
   const selected: any[] = [];
   const rest: any[] = [];
   for (const option of options) {
@@ -3149,19 +3185,37 @@ const sortedModalResourceOptions = (type: ResourceScopeGroupKey) => {
   return [...selected, ...rest];
 };
 
+const buildModalDraftOptionItem = (option: any) => ({
+  id: option.id,
+  name: option.name || option.id,
+  ...(option.dataset_name ? { dataset_name: option.dataset_name } : {}),
+  ...(option.scope ? { scope: option.scope } : {}),
+  ...(option.server_name ? { server_name: option.server_name } : {}),
+  ...(option.server_remark ? { server_remark: option.server_remark } : {}),
+  ...(option.description ? { description: option.description } : {}),
+});
+
 const toggleModalResourceOption = (type: ResourceScopeGroupKey, option: any) => {
   const selected = resourceModalOptionSelected(type, option);
   const items = selected
     ? modalDraftSelections(type).filter((item) => !resourceEntryMatchesOption(item, option))
     : [
         ...modalDraftSelections(type),
-        {
-          id: option.id,
-          name: option.name || option.id,
-          ...(option.dataset_name ? { dataset_name: option.dataset_name } : {}),
-          ...(option.scope ? { scope: option.scope } : {}),
-        },
+        buildModalDraftOptionItem(option),
       ];
+  resourceScopeModalDraft.value = { ...resourceScopeModalDraft.value, [type]: items };
+};
+
+const toggleModalResourceGroup = (type: ResourceScopeGroupKey, options: any[], selectAll: boolean) => {
+  let items = [...modalDraftSelections(type)];
+  for (const option of options || []) {
+    const isSelected = items.some((item) => resourceEntryMatchesOption(item, option));
+    if (selectAll && !isSelected) {
+      items.push(buildModalDraftOptionItem(option));
+    } else if (!selectAll && isSelected) {
+      items = items.filter((item) => !resourceEntryMatchesOption(item, option));
+    }
+  }
   resourceScopeModalDraft.value = { ...resourceScopeModalDraft.value, [type]: items };
 };
 
@@ -3183,11 +3237,12 @@ const syncResourceScopeActiveTabForDraft = () => {
 const loadResourceOptions = async () => {
   resourceOptionsLoading.value = true;
   try {
-    const [datasets, knowledge, globalSkills, personalSkills] = await Promise.allSettled([
+    const [datasets, knowledge, globalSkills, personalSkills, mcpTools] = await Promise.allSettled([
       axios.get('/api/portal/metadata/datasets/accessible'),
       axios.get('/api/portal/ragflow/datasets', { params: { page: 1, page_size: 100, include_missing: false } }),
       axios.get('/api/portal/skills'),
       axios.get('/api/portal/skills/personal'),
+      axios.get('/api/portal/tools/mcp'),
     ]);
     if (datasets.status === 'fulfilled') {
       const raw = datasets.value.data;
@@ -3218,6 +3273,22 @@ const loadResourceOptions = async () => {
       if (result.status === 'fulfilled') resourceOptions.skills.push(...(result.value.data?.data || [])
         .filter((item: any) => item.enabled === undefined || item.enabled === true || item.enabled === 'true' || item.enabled === 1 || item.enabled === '1')
         .map((item: any) => ({ id: String(item.id), name: item.name, description: item.description, scope })));
+    }
+    if (mcpTools.status === 'fulfilled') {
+      const raw = mcpTools.value.data;
+      const list = Array.isArray(raw) ? raw : (raw?.data || []);
+      resourceOptions.mcp_tools = list
+        .map((item: any) => ({
+          id: String(item.id || ''),
+          name: String(item.name || ''),
+          description: item.description || '',
+          server_name: item.server_name || '',
+          server_remark: item.server_remark || '',
+          scope: item.scope || 'global',
+        }))
+        .filter((item: any) => item.id && item.name && String(item.scope || '').toLowerCase() === 'personal');
+    } else {
+      resourceOptions.mcp_tools = [];
     }
     for (const group of resourceOptionGroups) {
       const options = resourceOptions[group.key] || [];
@@ -3277,7 +3348,11 @@ const loadResourceScope = async () => {
   try {
     const res = await axios.get(`/api/v1/chat/conversation/${encodeURIComponent(requestedId)}/resource-scope`, { headers: embedAuthHeaders() });
     if (requestId !== resourceScopeLoadSequence || conversationId.value !== requestedId) return;
-    resourceScope.value = res.data?.data || emptyResourceScopeState();
+    resourceScope.value = {
+      ...emptyResourceScopeState(),
+      ...(res.data?.data || {}),
+      mcp_tools: Array.isArray(res.data?.data?.mcp_tools) ? res.data.data.mcp_tools : [],
+    };
     syncResourceScopeDraftStrings(resourceScope.value);
   } catch (error) { console.warn('[ResourceScope] load failed', error); }
 };
@@ -3290,12 +3365,16 @@ const buildPersistableScope = (source: typeof resourceScope.value) => {
       name: item.name || String(item.id).trim(),
       ...(item.dataset_name ? { dataset_name: item.dataset_name } : {}),
       ...(item.scope ? { scope: item.scope } : {}),
+      ...(item.description ? { description: item.description } : {}),
+      ...(item.server_name ? { server_name: item.server_name } : {}),
+      ...(item.server_remark ? { server_remark: item.server_remark } : {}),
     }));
   return {
     project_name: (source.project_name || '').trim(),
     datasets: normalizeItems(source.datasets),
     knowledge_bases: normalizeItems(source.knowledge_bases),
     skills: normalizeItems(source.skills),
+    mcp_tools: normalizeItems(source.mcp_tools || []),
   };
 };
 
@@ -3309,6 +3388,50 @@ const persistResourceScope = async (scope: ReturnType<typeof buildPersistableSco
   resourceScope.value = saved;
   syncResourceScopeDraftStrings(saved);
   return saved;
+};
+
+const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }> | { id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }) => {
+  if (!conversationId.value) {
+    showToast('请先开始会话', 'error');
+    return;
+  }
+  const tools = (Array.isArray(toolsInput) ? toolsInput : [toolsInput])
+    .map((tool) => ({
+      id: String(tool?.id || '').trim(),
+      name: String(tool?.name || '').trim(),
+      description: tool?.description || '',
+      server_name: tool?.server_name || '',
+      server_remark: tool?.server_remark || '',
+      scope: tool?.scope || 'global',
+    }))
+    .filter((tool) => tool.id && tool.name);
+  if (!tools.length) return;
+
+  const existing = resourceScope.value.mcp_tools || [];
+  const existingNames = new Set(existing.map((item: any) => String(item.name || '').trim()).filter(Boolean));
+  const existingIds = new Set(existing.map((item: any) => String(item.id || '').trim()).filter(Boolean));
+  const toAdd = tools.filter((tool) => !existingNames.has(tool.name) && !existingIds.has(tool.id));
+  if (!toAdd.length) {
+    showToast(tools.length === 1 ? '该 MCP 工具已挂载到本会话' : '所选 MCP 工具均已挂载到本会话', 'info');
+    return;
+  }
+
+  const nextScope = {
+    ...resourceScope.value,
+    mcp_tools: [...existing, ...toAdd],
+  };
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(nextScope));
+    showToast(
+      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0].name}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
+      'success',
+    );
+  } catch (error) {
+    showToast('挂载 MCP 工具失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
 };
 
 const pinMetadataDatasetToSession = async (datasetId: string) => {
@@ -3384,20 +3507,6 @@ const saveResourceScope = async () => {
   }
 };
 
-const removeMountedResource = async (item: any) => {
-  const resourceType = item.type as ResourceScopeGroupKey;
-  const nextItems = resourceScope.value[resourceType].filter((entry: any) => !resourceScopeEntriesMatch(entry, item));
-  resourceScope.value = { ...resourceScope.value, [resourceType]: nextItems };
-  resourceScopeSaving.value = true;
-  try {
-    await persistResourceScope(buildPersistableScope(resourceScope.value));
-    showToast('已移除挂载资源', 'success');
-  } catch (error) {
-    showToast('移除失败', 'error');
-  } finally {
-    resourceScopeSaving.value = false;
-  }
-};
 let requestedConversationId = "";
 let resourceScopeLoadSequence = 0;
 
@@ -3441,7 +3550,7 @@ const generateNewConversation = () => {
   resourceScopeLoadSequence += 1;
   conversationId.value = createConversationId();
   resourceScope.value = emptyResourceScopeState();
-  Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '' });
+  Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
   localStorage.setItem("yovole_embed_conv_id", conversationId.value);
   updateActiveConversationOnServer(conversationId.value);
   loadResourceScope();

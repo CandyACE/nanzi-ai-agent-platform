@@ -31,6 +31,12 @@ class McpServerBase(BaseModel):
     auth_headers: Optional[str] = "{}"
     enabled_status: Optional[int] = 1
     scope: Optional[str] = "global"
+    remark: Optional[str] = Field(default=None, max_length=500)
+
+
+def _normalized_remark(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    return text[:500] if text else None
 
 class McpServerResponse(McpServerBase):
     id: str
@@ -299,6 +305,7 @@ async def create_mcp_server(
     server_id = str(uuid.uuid4())
     server_data = data.model_dump()
     server_data["server_name"] = server_name
+    server_data["remark"] = _normalized_remark(data.remark)
     server_data["scope"] = target_scope
     server_data["user_id"] = user_id
     
@@ -363,6 +370,9 @@ async def update_mcp_server(
     server.sse_url = data.sse_url
     server.auth_headers = data.auth_headers
     server.enabled_status = data.enabled_status
+    # 启用/禁用等局部更新可能不传 remark，避免误清空
+    if "remark" in data.model_fields_set:
+        server.remark = _normalized_remark(data.remark)
     await db.commit()
     _clear_runtime_tool_cache()
     

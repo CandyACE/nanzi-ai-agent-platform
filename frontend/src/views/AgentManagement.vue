@@ -516,6 +516,11 @@ const availableTools = [
     isSystem: true,
   },
   {
+    name: "web_renderer_and_snapshot",
+    description: "基于 Playwright 的网页渲染与视觉截图，配合 Vision 看懂网页",
+    isSystem: true,
+  },
+  {
     name: "search_knowledge_base",
     description: "搜索知识库 (RAGFlow)。dataset_ids 用纯 ID、逗号分隔或单引号列表 ['id1','id2']，勿用 [\"id\"]",
     isSystem: true,
@@ -596,13 +601,28 @@ const availableTools = [
     isSystem: true,
   },
   {
-    name: "web_renderer_and_snapshot",
-    description: "基于 Playwright 的网页渲染与视觉截图，配合 Vision 看懂网页",
+    name: "code_syntax_linter",
+    description: "Python AST 静态语法与合规性 Lint 检查，提前拦截语法错误",
     isSystem: true,
   },
   {
-    name: "code_syntax_linter",
-    description: "Python AST 静态语法与合规性 Lint 检查，提前拦截语法错误",
+    name: "web_search_baidu_http",
+    description: "百度 HTTP 轻量联网搜索（优先，无需浏览器）",
+    isSystem: true,
+  },
+  {
+    name: "web_search_bing_http",
+    description: "Bing HTTP 轻量联网搜索（英文/国际资讯）",
+    isSystem: true,
+  },
+  {
+    name: "web_search_baidu",
+    description: "百度 Playwright 联网搜索（慢通道兜底，可自动抽取 Top-2 正文）",
+    isSystem: true,
+  },
+  {
+    name: "fetch_static_web_url",
+    description: "快速拉取静态网页正文（已知 URL 深读）",
     isSystem: true,
   },
 ];
@@ -833,6 +853,7 @@ const filteredGroupedMcpTools = computed(() => {
     const filtered = tools.filter((tool) =>
       tool.name.toLowerCase().includes(q) ||
       (tool.description || '').toLowerCase().includes(q) ||
+      (tool.server_remark || '').toLowerCase().includes(q) ||
       serverName.toLowerCase().includes(q)
     );
     if (filtered.length > 0) result[serverName] = filtered;
@@ -1013,13 +1034,14 @@ const allAvailableTools = computed(() => {
   return combined;
 });
 
-type ToolGroupKey = 'chatbi' | 'knowledge' | 'system' | 'office' | 'notification' | 'memory' | 'other';
+type ToolGroupKey = 'chatbi' | 'knowledge' | 'web' | 'system' | 'office' | 'notification' | 'memory' | 'other';
 type ToolGroup = { label: string; icon: string; tools: any[] };
 
 const groupedTools = computed(() => {
   const groups: Record<ToolGroupKey, ToolGroup> = {
     chatbi: { label: 'ChatBI 数据分析', icon: '📊', tools: [] },
     knowledge: { label: '知识库检索 (RAG)', icon: '📖', tools: [] },
+    web: { label: '联网搜索', icon: '🌐', tools: [] },
     system: { label: '系统自治工具', icon: '💻', tools: [] },
     office: { label: '办公协作', icon: '💼', tools: [] },
     notification: { label: '消息通知', icon: '💬', tools: [] },
@@ -1037,6 +1059,14 @@ const groupedTools = computed(() => {
     } else if (name.includes('knowledge') || name.includes('rag') || name.includes('kb_') || name.includes('document')) {
       groups.knowledge.tools.push(tool);
     } else if (
+      name.includes('web_search') ||
+      name.includes('static_web') ||
+      name === 'fetch_static_web_url' ||
+      name.includes('http_request') ||
+      name.includes('web_renderer')
+    ) {
+      groups.web.tools.push(tool);
+    } else if (
       name.includes('local_file') ||
       name.includes('system_command') ||
       name.includes('system_process') ||
@@ -1046,12 +1076,8 @@ const groupedTools = computed(() => {
       name.includes('exec_command') ||
       name.includes('list_process') ||
       name.includes('manage_process') ||
-      name.includes('http_request') ||
-      name.includes('static_web') ||
-      name.includes('web_search') ||
       name.includes('scratchpad') ||
       name.includes('navigator') ||
-      name.includes('web_renderer') ||
       name.includes('linter') ||
       name.startsWith('search_') ||
       name.startsWith('read_') ||

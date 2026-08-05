@@ -1348,6 +1348,13 @@ class AgentService:
                 yield {"content": AgentServicePrompts.NO_AGENT_CONFIG}
                 return
 
+            from app.services.ai.session_mcp_tools import apply_session_mcp_tools_to_agent_config
+
+            apply_session_mcp_tools_to_agent_config(
+                agent_config,
+                (debug_options or {}).get("resource_scope"),
+            )
+
             runtime_model_info = await resolve_runtime_model_info(
                 config=agent_config,
                 debug_options=debug_options,

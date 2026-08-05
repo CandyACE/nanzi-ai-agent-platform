@@ -24,8 +24,10 @@ const props = withDefaults(
     compact?: boolean
     /** 移动端底部抽屉内铺满宽度 */
     fullWidth?: boolean
+    /** 桌面侧栏浮层：高度铺满左侧加号菜单，上下对齐 */
+    fillHeight?: boolean
   }>(),
-  { attachedSkillIds: () => [], agentId: null, compact: false, fullWidth: false },
+  { attachedSkillIds: () => [], agentId: null, compact: false, fullWidth: false, fillHeight: false },
 )
 
 const emit = defineEmits<{
@@ -167,17 +169,19 @@ void loadSkillsList()
   <div
     class="flex flex-col bg-white dark:bg-gray-800 overflow-hidden border border-gray-200 dark:border-gray-700"
     :class="fullWidth
-      ? 'w-full max-h-[min(70vh,28rem)] rounded-none border-x-0 border-b-0 shadow-none'
-      : compact
-        ? 'w-[min(20rem,calc(100vw-1.5rem))] max-h-[min(60vh,24rem)] rounded-xl shadow-xl'
-        : 'w-80 max-h-[min(60vh,24rem)] rounded-xl shadow-xl'"
+      ? 'w-full max-h-[min(65vh,28rem)] rounded-none border-x-0 border-b-0 shadow-none'
+      : fillHeight
+        ? 'h-full w-[min(28rem,calc(100vw-1.5rem))] max-h-none rounded-xl shadow-xl'
+        : compact
+          ? 'w-[min(26rem,calc(100vw-1.25rem))] max-h-[min(58vh,28rem)] rounded-xl shadow-xl'
+          : 'w-[min(28rem,calc(100vw-1.5rem))] max-h-[min(60vh,30rem)] rounded-xl shadow-xl'"
     role="menu"
     aria-label="技能中心"
   >
-    <div class="p-2.5 pb-1.5 shrink-0 space-y-2">
+    <div class="p-3 pb-2 shrink-0 space-y-2.5">
       <div class="relative">
-        <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-          <svg class="h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </span>
@@ -185,7 +189,7 @@ void loadSkillsList()
           v-model="skillSearchQuery"
           type="search"
           placeholder="搜索技能"
-          class="w-full pl-8 pr-3 py-1.5 bg-gray-100 dark:bg-gray-900/80 border-0 rounded-lg focus:ring-2 focus:ring-primary/40 focus:outline-none text-xs text-gray-800 dark:text-gray-100 placeholder:text-gray-400"
+          class="w-full pl-9 pr-3 py-2 bg-gray-100 dark:bg-gray-900/80 border-0 rounded-lg focus:ring-2 focus:ring-primary/40 focus:outline-none text-sm text-gray-800 dark:text-gray-100 placeholder:text-gray-400"
           @click.stop
           @keydown.stop
         />
@@ -194,25 +198,25 @@ void loadSkillsList()
       <div class="flex items-center gap-1 rounded-lg bg-gray-50 dark:bg-gray-900/50 p-0.5">
         <button
           type="button"
-          class="flex-1 py-1 text-center text-[11px] font-semibold rounded-md transition-colors"
+          class="flex-1 py-1.5 text-center text-xs font-semibold rounded-md transition-colors"
           :class="activeScope === 'global'
             ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
             : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
           @click.stop="activeScope = 'global'"
         >
           平台
-          <span class="ml-0.5 text-[9px] font-normal text-gray-400">{{ skillsList.length }}</span>
+          <span class="ml-0.5 text-[10px] font-normal text-gray-400">{{ skillsList.length }}</span>
         </button>
         <button
           type="button"
-          class="flex-1 py-1 text-center text-[11px] font-semibold rounded-md transition-colors"
+          class="flex-1 py-1.5 text-center text-xs font-semibold rounded-md transition-colors"
           :class="activeScope === 'personal'
             ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-300 shadow-sm'
             : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
           @click.stop="activeScope = 'personal'"
         >
           我的
-          <span class="ml-0.5 text-[9px] font-normal text-gray-400">{{ personalSkillsList.length }}</span>
+          <span class="ml-0.5 text-[10px] font-normal text-gray-400">{{ personalSkillsList.length }}</span>
         </button>
       </div>
 
@@ -224,15 +228,19 @@ void loadSkillsList()
       </p>
     </div>
 
-    <div class="flex-1 min-h-0 max-h-64 overflow-y-auto overscroll-y-contain px-1.5 pb-1 custom-scrollbar">
-      <div v-if="isLoadingSkillsList" class="flex flex-col items-center justify-center py-8 opacity-50">
+    <!-- fillHeight 时由父级定高，列表 flex-1 滚动；否则用固定 max-h -->
+    <div
+      class="overflow-y-auto overscroll-y-contain px-2 pb-1 custom-scrollbar"
+      :class="fillHeight ? 'flex-1 min-h-0' : 'min-h-[10rem] max-h-[min(48vh,22rem)]'"
+    >
+      <div v-if="isLoadingSkillsList" class="flex flex-col items-center justify-center py-12 opacity-50">
         <div class="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        <span class="text-[10px] font-medium text-gray-400 mt-2">加载中...</span>
+        <span class="text-xs font-medium text-gray-400 mt-2">加载中...</span>
       </div>
 
-      <div v-else-if="filteredSkillsList.length === 0" class="text-center py-8 px-3">
-        <p class="text-xs text-gray-400 font-medium">未发现可用技能</p>
-        <p class="text-[10px] text-gray-400/80 mt-1.5 leading-relaxed">
+      <div v-else-if="filteredSkillsList.length === 0" class="text-center py-12 px-4">
+        <p class="text-sm text-gray-400 font-medium">未发现可用技能</p>
+        <p class="text-xs text-gray-400/80 mt-2 leading-relaxed">
           <template v-if="skillsCustom && activeScope === 'global'">
             可切换到「我的」查看个人技能
           </template>
@@ -284,7 +292,7 @@ void loadSkillsList()
               class="shrink-0 text-[9px] text-gray-400 font-medium"
             >已挂载</span>
           </div>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 truncate leading-snug">
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 line-clamp-2 leading-snug">
             {{ skill.description || '暂无描述' }}
           </p>
         </div>
@@ -292,7 +300,7 @@ void loadSkillsList()
     </div>
 
     <!-- 桌面端保留「管理技能」；移动端底部抽屉不展示 -->
-    <div v-if="!fullWidth" class="shrink-0 border-t border-gray-100 dark:border-gray-700/80 py-1">
+    <div v-if="!fullWidth" class="shrink-0 border-t border-gray-100 dark:border-gray-700/80 py-1 bg-white dark:bg-gray-800">
       <a
         href="/dashboard/personal?tab=skills"
         target="_blank"

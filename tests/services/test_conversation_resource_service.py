@@ -20,11 +20,13 @@ async def test_replace_keeps_only_explicit_project_resources():
                 "datasets": [{"id": "sales_ds", "name": "销售数据"}, {"name": "无 ID"}],
                 "knowledge_bases": [{"id": "kb-1"}],
                 "skills": [{"id": "skill-1"}],
+                "mcp_tools": [{"id": "mcp-1", "name": "mcp_demo"}],
             },
         )
 
     assert scope["project_name"] == "销售分析"
     assert [item["id"] for item in scope["datasets"]] == ["sales_ds"]
+    assert [item["id"] for item in scope["mcp_tools"]] == ["mcp-1"]
     redis.set.assert_awaited_once()
 
 

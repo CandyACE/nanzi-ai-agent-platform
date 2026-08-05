@@ -8,6 +8,7 @@ class McpServer(Base):
 
     id = Column(String(36), primary_key=True)
     server_name = Column(String(100), nullable=False)
+    remark = Column(String(500), nullable=True)
     sse_url = Column(Text, nullable=False)
     auth_headers = Column(Text, nullable=True)  # JSON string
     enabled_status = Column(Integer, default=0) # 0: Offline/Disabled, 1: Online/Enabled

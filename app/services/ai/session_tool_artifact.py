@@ -144,7 +144,13 @@ def artifact_candidate_score(
     }.get(source_type, 25)
     if tool_name == "sub_agent_call":
         base = max(base, 32 if permission_scope == "read" else 28)
-    if tool_name in {"system_http_request", "fetch_static_web_url", "web_search_baidu"}:
+    if tool_name in {
+        "system_http_request",
+        "fetch_static_web_url",
+        "web_search_baidu",
+        "web_search_baidu_http",
+        "web_search_bing_http",
+    }:
         base = max(base, 42)
     if tool_name in {"read_file", "excel_document_read", "word_document_read"}:
         base = max(base, 36)

@@ -11,6 +11,7 @@ from app.core.redis import get_redis
 class ConversationResourceService:
     KEY_PREFIX = "conversation"
     SUFFIX = "resource_scope_v1"
+    _LIST_KEYS = ("datasets", "knowledge_bases", "skills", "mcp_tools")
 
     @classmethod
     def _key(cls, user_id: Any, conversation_id: str) -> str:
@@ -18,7 +19,13 @@ class ConversationResourceService:
 
     @classmethod
     def _empty_scope(cls) -> Dict[str, Any]:
-        return {"project_name": "", "datasets": [], "knowledge_bases": [], "skills": []}
+        return {
+            "project_name": "",
+            "datasets": [],
+            "knowledge_bases": [],
+            "skills": [],
+            "mcp_tools": [],
+        }
 
     @classmethod
     def _decode_scope(cls, raw: Any) -> Dict[str, Any]:
@@ -33,7 +40,7 @@ class ConversationResourceService:
         result: Dict[str, Any] = {"project_name": str(value.get("project_name") or "").strip()}
         result.update({
             key: [item for item in value.get(key, []) if isinstance(item, dict)]
-            for key in ("datasets", "knowledge_bases", "skills")
+            for key in cls._LIST_KEYS
         })
         return result
 
@@ -106,7 +113,7 @@ class ConversationResourceService:
         normalized: Dict[str, Any] = {"project_name": str(scope.get("project_name") or "").strip()[:100]}
         normalized.update({
             key: [item for item in scope.get(key, []) if isinstance(item, dict) and item.get("id")]
-            for key in ("datasets", "knowledge_bases", "skills")
+            for key in cls._LIST_KEYS
         })
         try:
             redis = await get_redis()
