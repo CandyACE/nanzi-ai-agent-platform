@@ -1,0 +1,50 @@
+"""Contract: Embed「我的资源」弹层壳与懒加载 Tab。"""
+
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.no_infrastructure
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _source(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_personal_resources_modal_shell_and_tabs():
+    modal = _source("frontend/src/components/embed/PersonalResourcesModal.vue")
+    assert "我的资源" in modal
+    assert "defineAsyncComponent" in modal
+    assert "PersonalMemoryPanel" in modal
+    assert "PersonalTokenUsage" in modal
+    assert "DataPortalHome" in modal
+    assert "SkillsManagement" in modal
+    assert "McpManagement" in modal
+    assert "TaskCenter" in modal
+    assert "update:visible" in modal
+    assert "activeTab" in modal
+    # Embed 弹层须传 delegate-navigation；PersonalCenter 仅传 embedded
+    assert "delegate-navigation" in modal or "delegateNavigation" in modal
+
+
+def test_welcome_dashboard_renders_personal_resources_before_capabilities():
+    dashboard = _source("frontend/src/components/embed/WelcomeDashboard.vue")
+    assert "WorkbenchPersonalResources" in dashboard
+    assert "open-personal-resources" in dashboard
+    resources_pos = dashboard.find("open-personal-resources")
+    caps_pos = dashboard.find("grid-cols-1 sm:grid-cols-3")
+    assert resources_pos != -1 and caps_pos != -1
+    assert resources_pos < caps_pos
+
+
+def test_embed_chat_wires_workbench_home_and_personal_resources_modal():
+    embed = _source("frontend/src/views/EmbedChat.vue")
+    assert "PersonalResourcesModal" in embed
+    assert "useWorkbenchHome" in embed or "/api/portal/workbench/home" in embed
+    assert "personalResourceFallbackItems" in embed
+    assert "open-personal-resources" in embed or "openPersonalResources" in embed
+    assert "filterEmbedWelcomePersonalResources" in embed
+    constants = _source("frontend/src/constants/personalResources.ts")
+    assert '"memory"' in constants and '"data"' in constants
+    assert "EMBED_WELCOME_HIDDEN_RESOURCE_KEYS" in constants

@@ -49,9 +49,27 @@ const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
 const props = withDefaults(defineProps<{
   /** 个人中心嵌入：管理自己的任务，不依赖 menu:task_center / element:task:manage */
   personalOnly?: boolean
+  /**
+   * Embed「我的资源」弹层传入（:embedded）：导航改 emit，不跳转 dashboard。
+   * 与 DataPortalHome 的 delegateNavigation 同义；个人中心勿传（仅 personal-only）。
+   */
+  embedded?: boolean
+  /** 优先于 route.query.view */
+  initialView?: 'tasks' | 'history'
+  /** 优先于 route.query.task_id */
+  initialTaskId?: string | number
 }>(), {
   personalOnly: false,
+  embedded: false,
 })
+
+const emit = defineEmits<{
+  (e: 'open-report', payload: {
+    report_id: string
+    run_id?: string
+    detail_tab: 'runs' | 'subscription'
+  }): void
+}>()
 
 const router = useRouter()
 const route = useRoute()
@@ -277,6 +295,7 @@ const fetchPersonalNotificationConfigs = async () => {
   }
 }
 const openPersonalNotificationSettings = () => {
+  if (props.embedded) return
   router.push({ path: '/dashboard/personal', query: { tab: 'notifications' } })
 }
 const promptExamples = [
@@ -644,13 +663,23 @@ const openSavedReportTask = async (
   task: AgentTask,
   detailTab: 'runs' | 'subscription' = 'runs',
 ) => {
+  const reportId = String(task.report_id || '')
+  const runId = detailTab === 'runs' && task.last_run_id ? String(task.last_run_id) : undefined
+  if (props.embedded) {
+    emit('open-report', {
+      report_id: reportId,
+      ...(runId ? { run_id: runId } : {}),
+      detail_tab: detailTab,
+    })
+    return
+  }
   const query: Record<string, string> = {
     dataset_portal: '1',
-    report_id: String(task.report_id || ''),
+    report_id: reportId,
     report_detail_tab: detailTab,
   }
-  if (detailTab === 'runs' && task.last_run_id) {
-    query.run_id = String(task.last_run_id)
+  if (runId) {
+    query.run_id = runId
   }
   await router.push({ path: '/dashboard/chat', query })
 }
@@ -818,11 +847,13 @@ const metricValue = (value: number | undefined) => Number(value || 0)
 
 onMounted(async () => {
   await Promise.all([fetchTasks(true), fetchAgents()])
-  if (String(route.query.view || '') === 'history' && showHistoryTab.value) {
+  const view = props.initialView || String(route.query.view || '')
+  if (view === 'history' && showHistoryTab.value) {
     mainViewTab.value = 'history'
   }
-  if (route.query.task_id) {
-    const target = tasks.value.find(task => String(task.id) === String(route.query.task_id))
+  const taskId = props.initialTaskId ?? route.query.task_id
+  if (taskId) {
+    const target = tasks.value.find(task => String(task.id) === String(taskId))
     if (target) openLogs(target)
   }
 })
@@ -1756,7 +1787,12 @@ onMounted(async () => {
               </p>
               <p v-if="unavailableExternalChannels.length" class="text-[10px] text-amber-600 leading-relaxed">
                 {{ unavailableExternalChannels.join('、') }} 尚未在个人中心配置或未启用，已禁止勾选。
-                <button type="button" class="ml-1 font-black text-blue-600 underline underline-offset-2 hover:text-blue-700" @click="openPersonalNotificationSettings">
+                <button
+                  v-if="!embedded"
+                  type="button"
+                  class="ml-1 font-black text-blue-600 underline underline-offset-2 hover:text-blue-700"
+                  @click="openPersonalNotificationSettings"
+                >
                   去个人中心配置消息通知
                 </button>
               </p>

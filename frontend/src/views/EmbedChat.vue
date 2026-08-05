@@ -267,8 +267,10 @@
         :welcome-message="config.welcomeMessage"
         :slash-commands="effectiveSlashCommands"
         :welcome-cards="welcomeCards"
+        :personal-resources="welcomePersonalResources"
         @quick-question="handleQuickQuestion"
         @open-data-portal="openPortalDrawer"
+        @open-personal-resources="openPersonalResources"
         @select-knowledge-base="openKnowledgePortal"
         @open-workspace="showWorkspaceDrawer = true"
       />
@@ -1668,6 +1670,13 @@
       @save-settings="saveRoutingSettings"
       @reset-session="resetSession"
     />
+    <PersonalResourcesModal
+      v-model:visible="showPersonalResources"
+      v-model:active-tab="personalResourcesTab"
+      @open-report="handlePersonalResourceOpenReport"
+      @open-conversation="handlePersonalResourceOpenConversation"
+      @open-question="handlePersonalResourceOpenQuestion"
+    />
     <SavedReportEditorModal
       :visible="showSaveReportModal"
       :form="saveReportForm"
@@ -1727,7 +1736,7 @@
                系统简介
             </h4>
             <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
-              🚀 欢迎使用<b>南孜·智能体平台</b>。本系统是一个集成多模型能力的 🤖 AI 助手，旨在通过自然语言交互，帮助您高效完成<b>通用咨询问答</b>、📊 数据查询分析、📚 私有文档检索及 ⚙️ 复杂业务流程处理。
+              🚀 欢迎使用<b>本智能体平台</b>。本系统是一个集成多模型能力的 🤖 AI 助手，旨在通过自然语言交互，帮助您高效完成<b>通用咨询问答</b>、📊 数据查询分析、📚 私有文档检索及 ⚙️ 复杂业务流程处理。
             </p>
           </section>
 
@@ -2160,8 +2169,16 @@ import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
+import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
+import { useWorkbenchHome } from "@/composables/useWorkbenchHome";
+import {
+  personalResourceFallbackItems,
+  personalResourcePlaceholderItems,
+  filterEmbedWelcomePersonalResources,
+  type PersonalResourceTab,
+} from "@/constants/personalResources";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
 import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
@@ -2596,7 +2613,7 @@ watch(workspaceKeepOpenOnSelect, (val) => {
 const workspacePinned = ref(
   typeof window !== "undefined" &&
     !window.matchMedia("(max-width: 639px)").matches &&
-    readStoredBoolean("embed_workspace_pinned", false),
+    readStoredBoolean("embed_workspace_pinned", true),
 );
 watch(workspacePinned, (val) => {
   localStorage.setItem("embed_workspace_pinned", val ? "1" : "0");
@@ -2815,6 +2832,53 @@ const config = reactive({
   hideMessageBorder: false,
 });
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
+const showPersonalResources = ref(false);
+const personalResourcesTab = ref<PersonalResourceTab>("tokens");
+const {
+  payload: workbenchHome,
+  load: loadWorkbenchHome,
+  error: workbenchHomeError,
+} = useWorkbenchHome();
+const welcomePersonalResources = computed(() => {
+  const items = workbenchHome.value?.personal_resources;
+  const source = Array.isArray(items) && items.length
+    ? items
+    : workbenchHomeError.value
+      ? personalResourceFallbackItems()
+      : personalResourcePlaceholderItems();
+  return filterEmbedWelcomePersonalResources(source);
+});
+
+const openPersonalResources = (tab: string) => {
+  personalResourcesTab.value = (tab as PersonalResourceTab) || "tokens";
+  showPersonalResources.value = true;
+};
+
+const handlePersonalResourceOpenReport = (payload: any) => {
+  showPersonalResources.value = false;
+  openSavedReportFromHost({
+    report_id: payload?.report_id,
+    run_id: payload?.run_id,
+    detail_tab: payload?.detail_tab,
+  });
+};
+
+const handlePersonalResourceOpenConversation = (payload: any) => {
+  showPersonalResources.value = false;
+  const conversationId =
+    typeof payload === "string" ? payload : payload?.conversation_id;
+  if (conversationId) {
+    handleHistoryClick({ conversation_id: conversationId });
+  }
+};
+
+const handlePersonalResourceOpenQuestion = (payload: {
+  query: string;
+  action: "send" | "fill";
+}) => {
+  showPersonalResources.value = false;
+  void handleQuickQuestion(payload?.query, payload?.action === "fill" ? "fill" : "send");
+};
 
 const loadWelcomeCards = async (agentId?: string) => {
   const id = String(agentId || '').trim();
@@ -3625,6 +3689,7 @@ watch(() => config.token, (newToken) => {
         fetchSlashCommands();
         // 刷新后专家选择会先从本地恢复，此时需要在 token 到位后再读取其欢迎卡片。
         void loadWelcomeCards(effectiveEmbedChatAgentId.value);
+        void loadWorkbenchHome();
     }
 }, { immediate: true });
 
@@ -4878,6 +4943,7 @@ const handlePostMessage = (event: MessageEvent) => {
         // Configure axios defaults immediately
         axios.defaults.headers.common["Authorization"] = `Bearer ${incomingToken}`;
         axios.defaults.headers.common["X-API-Key"] = incomingToken;
+        void loadWorkbenchHome();
         if (data.agent_id) {
           const agentId = String(data.agent_id);
           config.agentId = agentId;
@@ -5206,6 +5272,8 @@ const initChat = async () => {
       const greeting = displayName ? `您好，${displayName}！` : "您好！";
       config.welcomeMessage = `${greeting}我是你的智能体助手，很高兴为您服务。`;
     }
+    // 初始页「我的资源」统计：鉴权成功后拉取一次（失败时前端走 fallback）
+    void loadWorkbenchHome();
     // 4. Background tasks (non-blocking)
     Promise.all([fetchModels(), fetchAccountInfo(), fetchSlashCommands()]).catch(err => {
       console.warn("[Init] Non-critical background loading failed:", err.message);

@@ -40,7 +40,7 @@ const readStoredBoolean = (storageKey: string, defaultVal: boolean): boolean => 
 
 export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
   const showKnowledgePortal = ref(false);
-  const knowledgePinned = ref(!isMobileViewport() && readStoredBoolean("knowledge_portal_pinned", false));
+  const knowledgePinned = ref(!isMobileViewport() && readStoredBoolean("knowledge_portal_pinned", true));
   const knowledgeKeepOpenOnQuestion = ref(readStoredBoolean("knowledge_portal_keep_open", !isMobileViewport()));
 
   const datasets = ref<KnowledgeDataset[]>([]);

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useBranding } from '@/composables/useBranding';
+import WorkbenchPersonalResources from '@/components/workbench/WorkbenchPersonalResources.vue';
+import type { WorkbenchPersonalResource } from '@/types/workbench';
 
 const { branding } = useBranding();
 
@@ -8,6 +10,7 @@ const props = defineProps<{
   welcomeMessage: string;
   slashCommands: any[];
   welcomeCards?: Array<{ icon: string; title: string; subtitle: string; prompt: string }>;
+  personalResources?: WorkbenchPersonalResource[];
 }>();
 
 const emit = defineEmits<{
@@ -15,6 +18,7 @@ const emit = defineEmits<{
   (e: 'open-data-portal'): void;
   (e: 'select-knowledge-base'): void;
   (e: 'open-workspace'): void;
+  (e: 'open-personal-resources', tab: string): void;
 }>();
 
 type CapabilityAction = 'data-portal' | 'knowledge-base' | 'workspace';
@@ -90,9 +94,9 @@ const recommendedPrompts = computed(() => {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col items-center">
+  <div class="w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col items-center">
     <!-- Header Section -->
-    <div class="text-center mb-8 sm:mb-12 animate-fade-in-up">
+    <div class="text-center mb-8 sm:mb-12 animate-fade-in-up max-w-3xl w-full">
       <h1 class="text-3xl font-black text-gray-900 dark:text-gray-100 mb-3 tracking-tight">
         {{ greeting }}！
       </h1>
@@ -101,9 +105,19 @@ const recommendedPrompts = computed(() => {
       </p>
     </div>
 
+    <!-- 资源条单独放宽，避免 max-w-3xl 下 6 列被挤扁 -->
+    <div v-if="personalResources?.length" class="w-full max-w-3xl mb-8 sm:mb-10">
+      <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-3 px-1">我的资源</p>
+      <WorkbenchPersonalResources
+        compact
+        :items="personalResources"
+        @select="(item) => emit('open-personal-resources', item.tab)"
+      />
+    </div>
+
     <!-- Version-configured cards replace fixed capabilities only when enabled. -->
     <Transition name="welcome-card-set" mode="out-in">
-      <div :key="welcomeCardSetKey" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12 w-full">
+      <div :key="welcomeCardSetKey" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12 w-full max-w-3xl">
         <template v-if="welcomeCards?.length === 3">
           <button
             v-for="(card, index) in welcomeCards"
@@ -138,7 +152,7 @@ const recommendedPrompts = computed(() => {
     </Transition>
 
     <!-- Recommended Prompts (Actionable Grid) -->
-    <div class="w-full animate-fade-in-up delay-200" v-if="recommendedPrompts.length > 0">
+    <div class="w-full max-w-3xl animate-fade-in-up delay-200" v-if="recommendedPrompts.length > 0">
       <div class="flex items-center space-x-2 mb-4 px-1">
         <span class="h-px flex-1 bg-gray-100 dark:bg-gray-800"></span>
         <span class="text-[10px] font-black text-gray-300 uppercase tracking-widest">您可以试着问我</span>

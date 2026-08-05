@@ -33,3 +33,14 @@ def test_portal_drawers_resizer_contract():
     assert "cursor-col-resize" in workspace_content
     assert "@mousedown=\"startResize\"" in workspace_content
     assert "drawerPanelStyle" in workspace_content
+
+
+def test_embed_capability_panels_default_pinned_on_desktop():
+    """桌面端未写偏好时，查数/知识/工作空间抽屉默认钉住。"""
+    dataset = (ROOT / "frontend/src/composables/useDatasetPortal.ts").read_text(encoding="utf-8")
+    knowledge = (ROOT / "frontend/src/composables/useKnowledgePortal.ts").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "readStoredBoolean(pinStorageKey, true)" in dataset
+    assert 'readStoredBoolean("knowledge_portal_pinned", true)' in knowledge
+    assert 'readStoredBoolean("embed_workspace_pinned", true)' in embed

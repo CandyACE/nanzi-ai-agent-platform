@@ -74,6 +74,7 @@
     <WorkbenchPersonalResources
       v-if="payload?.personal_resources?.length"
       :items="payload.personal_resources"
+      @select="openPersonalResource"
     />
 
     <div v-if="loading && !payload" class="space-y-3">
@@ -224,7 +225,12 @@ import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
 import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
-import type { WorkbenchAgent, WorkbenchItem, WorkbenchScenario } from "@/types/workbench"
+import type {
+  WorkbenchAgent,
+  WorkbenchItem,
+  WorkbenchPersonalResource,
+  WorkbenchScenario,
+} from "@/types/workbench"
 
 const router = useRouter()
 const { branding } = useBranding()
@@ -299,6 +305,10 @@ const summaryToneClass = computed(() => {
   if (quietMode.value) return "border-emerald-200 bg-emerald-50 text-emerald-800"
   return "border-blue-200 bg-blue-50 text-blue-800"
 })
+
+function openPersonalResource(item: WorkbenchPersonalResource) {
+  router.push({ path: "/dashboard/personal", query: { tab: item.tab } })
+}
 
 function openItem(item: WorkbenchItem) {
   const target = item.target || {}
