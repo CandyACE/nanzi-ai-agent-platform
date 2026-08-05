@@ -49,7 +49,10 @@ const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
 const props = withDefaults(defineProps<{
   /** 个人中心嵌入：管理自己的任务，不依赖 menu:task_center / element:task:manage */
   personalOnly?: boolean
-  /** Embed「我的资源」弹层：导航改 emit，不跳转 dashboard */
+  /**
+   * Embed「我的资源」弹层传入（:embedded）：导航改 emit，不跳转 dashboard。
+   * 与 DataPortalHome 的 delegateNavigation 同义；个人中心勿传（仅 personal-only）。
+   */
   embedded?: boolean
   /** 优先于 route.query.view */
   initialView?: 'tasks' | 'history'

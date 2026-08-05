@@ -1,4 +1,4 @@
-"""Contract: DataPortalHome / TaskCenter emit navigation when embedded in Embed「我的资源」."""
+"""Contract: DataPortalHome / TaskCenter emit navigation when Embed「我的资源」委托导航。"""
 
 from pathlib import Path
 
@@ -14,11 +14,24 @@ def _source(path: str) -> str:
 
 def test_data_portal_home_embedded_guards_dashboard_navigation():
     source = _source("frontend/src/views/DataPortalHome.vue")
+    # layout vs nav: PersonalCenter 仅传 embedded；Embed 弹层再传 delegate-navigation
     assert "embedded" in source
+    assert "delegateNavigation" in source
     assert 'emit("open-report"' in source or "emit('open-report'" in source
     assert 'emit("open-conversation"' in source or "emit('open-conversation'" in source
     assert 'emit("open-question"' in source or "emit('open-question'" in source
-    assert "if (!props.embedded)" in source or "if (props.embedded)" in source
+    assert "if (!props.delegateNavigation)" in source or "if (props.delegateNavigation)" in source
+    assert "if (props.embedded)" not in source  # 导航不得再绑 layout 的 embedded
+
+
+def test_personal_center_data_portal_keeps_router_with_layout_embedded_only():
+    center = _source("frontend/src/views/PersonalCenter.vue")
+    portal = _source("frontend/src/views/DataPortalHome.vue")
+    assert "DataPortalHome" in center
+    assert "embedded" in center
+    assert "delegate-navigation" not in center and "delegateNavigation" not in center
+    assert "delegateNavigation" in portal
+    assert 'path: "/dashboard/chat"' in portal
 
 
 def test_task_center_embedded_blocks_notifications_dashboard_push():
