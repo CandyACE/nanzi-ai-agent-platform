@@ -21,7 +21,7 @@ const displayValue = (item: WorkbenchPersonalResource) => {
       v-for="item in items"
       :key="item.key"
       type="button"
-      class="rounded-2xl border bg-white px-3.5 py-3 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50/40 dark:bg-gray-800/50 dark:border-gray-700 dark:hover:border-primary/40 dark:hover:bg-blue-900/10"
+      class="rounded-2xl border bg-white px-3.5 py-3 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50/40 dark:bg-gray-800/50 dark:hover:border-primary/40 dark:hover:bg-blue-900/10"
       :class="item.status === 'error' ? 'border-amber-200 dark:border-amber-700/60' : 'border-gray-100 dark:border-gray-700'"
       @click="emit('select', item)"
     >
