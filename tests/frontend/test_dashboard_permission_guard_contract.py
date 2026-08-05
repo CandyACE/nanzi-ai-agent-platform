@@ -16,6 +16,22 @@ def test_router_falls_back_to_first_allowed_menu_instead_of_no_permission():
     assert "如果访问首页没权限，尝试重定向到第一个有权限的菜单" not in source
 
 
+def test_workbench_is_a_default_entry_without_menu_permission():
+    router = Path("frontend/src/router/index.ts").read_text()
+    dashboard = Path("frontend/src/views/Dashboard.vue").read_text()
+    login = Path("frontend/src/views/Login.vue").read_text()
+
+    assert "name: 'PersonalWorkbench'" in router
+    assert "meta: { title: '我的工作台' }" in router
+    assert "to.name === 'PersonalWorkbench'" in router
+    assert "if (userData.role !== 'admin')" in login
+    assert "router.push('/dashboard/workbench')" in login
+    assert "router.push('/dashboard')" in login
+    assert "{ name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', activeNames: ['PersonalWorkbench'] }" in dashboard
+    assert "perm?: string" in dashboard
+    assert "if (!perm) return true" in dashboard
+
+
 def test_no_permission_page_refetches_me_before_giving_up():
     source = Path("frontend/src/views/NoPermission.vue").read_text()
 

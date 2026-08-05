@@ -4,12 +4,14 @@ import { computed, ref, onMounted, onUnmounted, watch } from "vue";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
 import { useBranding } from "../composables/useBranding";
+import { useAppTheme } from "../composables/useAppTheme";
 import { copyToClipboard } from "../utils/clipboard";
 import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 
 const router = useRouter();
 const route = useRoute();
 const { branding, loadBranding, applyDocumentTitle, resolveRepoUrl } = useBranding();
+const { theme, toggleTheme } = useAppTheme();
 const repoUrl = computed(() => resolveRepoUrl());
 const isCollapsed = ref(false);
 const showMobileSidebar = ref(false);
@@ -20,6 +22,7 @@ const appVersion = import.meta.env.VITE_APP_VERSION || "Dev Build";
 const dashboardContentSpacing = computed(() => {
   if (route.name === "AIChat") return "p-0";
   if (route.name === "PersonalCenter") return "px-3 sm:px-4";
+  if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-3 sm:pb-4 md:px-8 md:pt-4 md:pb-8";
   return "p-0 sm:p-4 md:p-8";
 });
 
@@ -63,6 +66,7 @@ const userInfo = ref({
   created_at: "",
   remark: "",
 });
+const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench');
 
 const fetchUserInfo = async () => {
   try {
@@ -250,7 +254,8 @@ onUnmounted(() => {
 });
 
 // 权限辅助函数
-const hasMenuPerm = (perm: string) => {
+const hasMenuPerm = (perm?: string) => {
+  if (!perm) return true;
   if (userInfo.value.role === 'admin') return true;
   const userMenus = (userInfo.value.permissions as any)?.menus || [];
   return userMenus.includes(perm);
@@ -260,7 +265,7 @@ interface MenuItem {
   name: string;
   to: string;
   icon: string;
-  perm: string;
+  perm?: string;
   desktopOnly?: boolean;
   activeNames?: string[];
 }
@@ -283,7 +288,7 @@ const menuGroups: MenuGroup[] = [
   {
     title: '智能助手',
     items: [
-      { name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', perm: 'menu:ai_chat', activeNames: ['PersonalWorkbench'] },
+      { name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', activeNames: ['PersonalWorkbench'] },
       { name: '智能助手', to: '/dashboard/chat', icon: 'chat', perm: 'menu:ai_chat' }
     ]
   },
@@ -384,6 +389,7 @@ const filteredMenuGroups = computed(() => {
     <aside
       class="bg-sidebar text-white shadow-xl flex flex-col z-30 transition-all duration-300 ease-in-out flex-shrink-0"
       :class="[
+        theme === 'light' ? '!bg-white !text-gray-700 border-r border-gray-200' : '',
         isMobile ? 'fixed inset-y-0 left-0 h-full' : 'relative',
         isMobile 
             ? (showMobileSidebar ? 'translate-x-0 w-[220px]' : '-translate-x-full w-[220px]') 
@@ -393,7 +399,10 @@ const filteredMenuGroups = computed(() => {
       <!-- Brand Header -->
       <div
         class="h-16 flex items-center bg-sidebar border-b border-gray-700 overflow-hidden whitespace-nowrap"
-        :class="isCollapsed ? 'justify-center px-0' : 'px-4'"
+        :class="[
+          isCollapsed ? 'justify-center px-0' : 'px-4',
+          theme === 'light' ? '!bg-white !border-gray-200' : '',
+        ]"
       >
         <img
           :src="branding.icon_url"
@@ -402,7 +411,10 @@ const filteredMenuGroups = computed(() => {
         />
         <transition name="fade">
           <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center">
-            <span class="text-[13px] font-semibold leading-tight">{{ branding.product_name }}</span>
+            <span
+              class="text-[13px] font-semibold leading-tight"
+              :class="theme === 'light' ? 'text-gray-900' : 'text-white'"
+            >{{ branding.product_name }}</span>
             <component
               :is="repoUrl ? 'a' : 'span'"
               :href="repoUrl || undefined"
@@ -437,8 +449,11 @@ const filteredMenuGroups = computed(() => {
           <button 
             v-if="!isCollapsed && group.title" 
             type="button"
-            class="py-2 flex items-center justify-between gap-2 text-left text-[10px] font-black text-gray-500 uppercase tracking-[0.15em] select-none hover:text-gray-300 transition-colors"
-            :class="isCollapsed ? 'w-full justify-center px-0 mx-0' : 'w-[calc(100%-1.5rem)] mx-3 px-3'"
+            class="py-2 flex items-center justify-between gap-2 text-left text-[10px] font-black text-gray-500 uppercase tracking-[0.15em] select-none transition-colors"
+            :class="[
+              isCollapsed ? 'w-full justify-center px-0 mx-0' : 'w-[calc(100%-1.5rem)] mx-3 px-3',
+              theme === 'light' ? 'hover:text-gray-900' : 'hover:text-gray-300',
+            ]"
             :aria-expanded="!isGroupCollapsed(group)"
             @click.stop="toggleMenuGroup(group)"
           >
@@ -453,7 +468,11 @@ const filteredMenuGroups = computed(() => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <div v-else-if="isCollapsed && group.title" class="h-px bg-gray-700/50 mx-4 my-2"></div>
+          <div
+            v-else-if="isCollapsed && group.title"
+            class="h-px mx-4 my-2"
+            :class="theme === 'light' ? 'bg-gray-200' : 'bg-gray-700/50'"
+          ></div>
 
           <!-- Group Items -->
           <transition name="menu-group">
@@ -465,8 +484,12 @@ const filteredMenuGroups = computed(() => {
                 class="group flex items-center py-2 text-sm font-medium transition-all duration-200 whitespace-nowrap"
                 :class="[
                   isItemActive(item)
-                    ? 'bg-primary text-white shadow-md'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white',
+                    ? theme === 'light'
+                      ? 'bg-blue-50 text-primary border border-blue-100 shadow-sm'
+                      : 'bg-primary text-white shadow-md'
+                    : theme === 'light'
+                      ? 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      : 'text-gray-300 hover:bg-gray-800 hover:text-white',
                   isCollapsed ? 'justify-center px-0 mx-0 rounded-none' : 'px-4 mx-3 rounded-xl',
                 ]"
               >
@@ -506,8 +529,11 @@ const filteredMenuGroups = computed(() => {
       <!-- User Profile (Clickable) -->
       <button
         @click="openUserInfo"
-        class="py-4 bg-sidebar border-t border-gray-700 flex items-center overflow-hidden whitespace-nowrap hover:bg-gray-800 transition-colors w-full text-left focus:outline-none focus:ring-2 focus:ring-primary"
-        :class="isCollapsed ? 'justify-center px-0' : 'px-4'"
+        class="py-4 border-t flex items-center overflow-hidden whitespace-nowrap transition-colors w-full text-left focus:outline-none focus:ring-2 focus:ring-primary"
+        :class="[
+          isCollapsed ? 'justify-center px-0' : 'px-4',
+          theme === 'light' ? 'bg-white border-gray-200 hover:bg-gray-50' : 'bg-sidebar border-gray-700 hover:bg-gray-800',
+        ]"
         title="查看个人信息"
       >
         <div
@@ -517,10 +543,10 @@ const filteredMenuGroups = computed(() => {
         </div>
         <transition name="fade">
           <div v-if="!isCollapsed" class="ml-3 flex-1">
-            <p class="text-sm font-medium text-white">
+            <p class="text-sm font-medium" :class="theme === 'light' ? 'text-gray-900' : 'text-white'">
               {{ userInfo.user_name || "Loading..." }}
             </p>
-            <p class="text-xs text-gray-400">
+            <p class="text-xs" :class="theme === 'light' ? 'text-gray-500' : 'text-gray-400'">
               {{ userInfo.role === "admin" ? "管理员" : "普通用户" }}
             </p>
           </div>
@@ -528,7 +554,8 @@ const filteredMenuGroups = computed(() => {
         <transition name="fade">
           <svg
             v-if="!isCollapsed"
-            class="h-4 w-4 text-gray-400"
+            class="h-4 w-4"
+            :class="theme === 'light' ? 'text-gray-400' : 'text-gray-400'"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -585,7 +612,7 @@ const filteredMenuGroups = computed(() => {
             <ol class="flex items-center space-x-2">
               <li>
                 <router-link 
-                  :to="isMobile ? '/dashboard/chat' : '/dashboard'"
+                  :to="homeRoute"
                   class="text-gray-400 hover:text-primary transition-colors"
                 >
                   <svg
@@ -625,12 +652,12 @@ const filteredMenuGroups = computed(() => {
 
           <!-- Mobile Title -->
           <div v-if="isMobile" class="flex-1 min-w-0 flex items-center">
-             <router-link to="/dashboard/chat" class="p-1 mr-1 text-gray-400 hover:text-primary transition-colors">
+             <router-link :to="homeRoute" class="p-1 mr-1 text-gray-400 hover:text-primary transition-colors">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
                 </svg>
              </router-link>
-             <h1 class="text-sm font-bold text-gray-900 truncate">
+            <h1 class="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">
                 {{ breadcrumbs[breadcrumbs.length - 1] || branding.product_name }}
              </h1>
           </div>
@@ -654,6 +681,22 @@ const filteredMenuGroups = computed(() => {
           </div>
           <div class="h-6 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
           <PortalNotificationBell />
+          <button
+            type="button"
+            aria-label="切换界面主题"
+            :title="theme === 'light' ? '当前亮色，切换到暗色' : '当前暗色，切换到亮色'"
+            class="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-primary"
+            :class="theme === 'light' ? 'text-amber-500' : 'text-gray-500'"
+            @click="toggleTheme"
+          >
+            <svg v-if="theme === 'light'" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" stroke-width="2" />
+              <path stroke-linecap="round" stroke-width="2" d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3l1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3l1.42-1.42" />
+            </svg>
+            <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.752 15.002A9.718 9.718 0 0112.582 21 9.75 9.75 0 0112 1.25c.906 0 1.79.124 2.632.355A7.501 7.501 0 0021.752 15.002z" />
+            </svg>
+          </button>
           <button
             @click="logout"
             class="flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 group flex-shrink-0 whitespace-nowrap"
