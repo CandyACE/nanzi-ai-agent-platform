@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onActivated } from 'vue'
 import axios from '../../utils/axios'
 import Modal from '../Modal.vue'
 import ConfirmModal from '../ConfirmModal.vue'
@@ -363,6 +363,16 @@ watch(memoryView, () => {
 })
 
 onMounted(() => {
+    loadCurrentMemoryView()
+})
+
+// keep-alive 首次挂载会同时触发 onMounted + onActivated，跳过第一次避免重复请求
+let activatedOnce = false
+onActivated(() => {
+    if (!activatedOnce) {
+        activatedOnce = true
+        return
+    }
     loadCurrentMemoryView()
 })
 </script>

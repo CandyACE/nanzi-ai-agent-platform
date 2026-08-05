@@ -603,11 +603,6 @@ onMounted(() => {
             </div>
         </div>
 
-        <!-- Memory Tab -->
-        <div v-else-if="activeTab === 'memory'">
-            <PersonalMemoryPanel />
-        </div>
-
         <!-- Token Usage Tab -->
         <div v-else-if="activeTab === 'tokens'">
             <PersonalTokenUsage />
@@ -637,6 +632,13 @@ onMounted(() => {
 
         <div v-else-if="activeTab === 'tasks'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">
             <TaskCenter personal-only />
+        </div>
+
+        <!-- Memory：keep-alive + v-if，离开 Tab 不销毁，保留 memoryView/筛选状态 -->
+        <div v-show="activeTab === 'memory'">
+            <keep-alive>
+                <PersonalMemoryPanel v-if="activeTab === 'memory'" />
+            </keep-alive>
         </div>
 
         </div>
