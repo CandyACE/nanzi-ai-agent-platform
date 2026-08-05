@@ -34,7 +34,7 @@
       </main>
     </div>
 
-    <nav class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-gray-100 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] shadow-lg backdrop-blur md:hidden dark:border-gray-800 dark:bg-gray-900/95">
+    <nav v-if="!embedded" class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-gray-100 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] shadow-lg backdrop-blur md:hidden dark:border-gray-800 dark:bg-gray-900/95">
       <button v-for="item in sections" :key="item.value" type="button" class="flex flex-col items-center gap-0.5 py-2 text-[11px]" :class="activeSection === item.value ? 'font-medium text-blue-600' : 'text-gray-400'" @click="setSection(item.value)"><span class="text-base">{{ item.icon }}</span>{{ item.mobileLabel }}</button>
     </nav>
   </div>
@@ -52,6 +52,11 @@ import type { DataPortalActivity, DataPortalReportFilter, DataPortalReportItem }
 
 type Section = "home" | "reports" | "scenes" | "catalog";
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+const emit = defineEmits<{
+  (e: "open-report", payload: { report_id: string | number; run_id?: string | number }): void;
+  (e: "open-conversation", payload: { conversation_id: string }): void;
+  (e: "open-question", payload: { query: string; action: "send" | "fill" }): void;
+}>();
 const route = useRoute();
 const router = useRouter();
 const sections: Array<{ value: Section; label: string; mobileLabel: string; icon: string }> = [
@@ -71,21 +76,45 @@ const pageSubtitle = computed(() => activeSection.value === "home" ? "先看今�
 
 const setSection = (section: Section) => {
   activeSection.value = section;
-  router.replace({ query: { ...route.query, section: section === "home" ? undefined : section } });
+  if (!props.embedded) {
+    router.replace({ query: { ...route.query, section: section === "home" ? undefined : section } });
+  }
 };
 const setReportFilter = (filter: DataPortalReportFilter) => {
   reportFilter.value = filter;
-  router.replace({ query: { ...route.query, filter: filter === "all" ? undefined : filter } });
+  if (!props.embedded) {
+    router.replace({ query: { ...route.query, filter: filter === "all" ? undefined : filter } });
+  }
 };
-const openReport = (report: DataPortalReportItem) => router.push({ path: "/dashboard/chat", query: { dataset_portal: "1", report_id: report.id } });
+const openReport = (report: DataPortalReportItem) => {
+  if (props.embedded) {
+    emit("open-report", { report_id: report.id });
+    return;
+  }
+  router.push({ path: "/dashboard/chat", query: { dataset_portal: "1", report_id: report.id } });
+};
 const openActivity = (activity: DataPortalActivity | Record<string, any>) => {
   if (activity.conversation_id) {
+    if (props.embedded) {
+      emit("open-conversation", { conversation_id: String(activity.conversation_id) });
+      return;
+    }
     router.push({ path: "/dashboard/chat", query: { conversation_id: activity.conversation_id } });
+    return;
+  }
+  if (props.embedded) {
+    emit("open-report", { report_id: activity.report_id, run_id: activity.run_id });
     return;
   }
   router.push({ path: "/dashboard/chat", query: { dataset_portal: "1", report_id: activity.report_id, run_id: activity.run_id } });
 };
-const openQuestion = (query: string, action: "send" | "fill") => router.push({ path: "/dashboard/chat", query: { portal_question: query, portal_action: action, source: "data_portal" } });
+const openQuestion = (query: string, action: "send" | "fill") => {
+  if (props.embedded) {
+    emit("open-question", { query, action });
+    return;
+  }
+  router.push({ path: "/dashboard/chat", query: { portal_question: query, portal_action: action, source: "data_portal" } });
+};
 
 watch(() => route.query.section, (value) => {
   if (sections.some((item) => item.value === value)) activeSection.value = value as Section;
