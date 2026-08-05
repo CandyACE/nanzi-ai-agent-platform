@@ -426,7 +426,7 @@ onActivated(() => {
                     title="清除全部会话摘要、每日摘要与聊天明细"
                     @click.stop="confirmClearAllSessionMemory"
                 >
-                    {{ clearingAllSessionMemory ? '清除中…' : '清除全部记忆' }}
+                    {{ clearingAllSessionMemory ? '清除中…' : '清空记忆' }}
                 </button>
             </div>
         </div>

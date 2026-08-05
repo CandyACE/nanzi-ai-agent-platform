@@ -12,6 +12,15 @@ export const PERSONAL_RESOURCE_DEFS = [
 
 export type PersonalResourceTab = (typeof PERSONAL_RESOURCE_DEFS)[number]["tab"]
 
+/** Embed 欢迎页资源条不展示：记忆有侧栏入口，数据门户有能力卡入口 */
+export const EMBED_WELCOME_HIDDEN_RESOURCE_KEYS = new Set(["memory", "data"])
+
+export function filterEmbedWelcomePersonalResources(
+  items: WorkbenchPersonalResource[],
+): WorkbenchPersonalResource[] {
+  return items.filter((item) => !EMBED_WELCOME_HIDDEN_RESOURCE_KEYS.has(item.key))
+}
+
 /** home 尚未返回：静默占位，避免误显示「暂时无法获取」 */
 export function personalResourcePlaceholderItems(): WorkbenchPersonalResource[] {
   return PERSONAL_RESOURCE_DEFS.map((spec) => ({

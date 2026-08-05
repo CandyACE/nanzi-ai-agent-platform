@@ -2176,6 +2176,7 @@ import { useWorkbenchHome } from "@/composables/useWorkbenchHome";
 import {
   personalResourceFallbackItems,
   personalResourcePlaceholderItems,
+  filterEmbedWelcomePersonalResources,
   type PersonalResourceTab,
 } from "@/constants/personalResources";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
@@ -2612,7 +2613,7 @@ watch(workspaceKeepOpenOnSelect, (val) => {
 const workspacePinned = ref(
   typeof window !== "undefined" &&
     !window.matchMedia("(max-width: 639px)").matches &&
-    readStoredBoolean("embed_workspace_pinned", false),
+    readStoredBoolean("embed_workspace_pinned", true),
 );
 watch(workspacePinned, (val) => {
   localStorage.setItem("embed_workspace_pinned", val ? "1" : "0");
@@ -2832,7 +2833,7 @@ const config = reactive({
 });
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 const showPersonalResources = ref(false);
-const personalResourcesTab = ref<PersonalResourceTab>("memory");
+const personalResourcesTab = ref<PersonalResourceTab>("tokens");
 const {
   payload: workbenchHome,
   load: loadWorkbenchHome,
@@ -2840,13 +2841,16 @@ const {
 } = useWorkbenchHome();
 const welcomePersonalResources = computed(() => {
   const items = workbenchHome.value?.personal_resources;
-  if (Array.isArray(items) && items.length) return items;
-  if (workbenchHomeError.value) return personalResourceFallbackItems();
-  return personalResourcePlaceholderItems();
+  const source = Array.isArray(items) && items.length
+    ? items
+    : workbenchHomeError.value
+      ? personalResourceFallbackItems()
+      : personalResourcePlaceholderItems();
+  return filterEmbedWelcomePersonalResources(source);
 });
 
 const openPersonalResources = (tab: string) => {
-  personalResourcesTab.value = (tab as PersonalResourceTab) || "memory";
+  personalResourcesTab.value = (tab as PersonalResourceTab) || "tokens";
   showPersonalResources.value = true;
 };
 

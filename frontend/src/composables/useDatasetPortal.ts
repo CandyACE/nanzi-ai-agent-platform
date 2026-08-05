@@ -94,8 +94,9 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
 
   const pinStorageKey = options.pinStorageKey || "dataset_portal_pinned";
 
+  /** 桌面端未写过偏好时默认钉住；显式存 "0" 则尊重用户取消钉住 */
   const readDesktopPortalPinned = () =>
-    localStorage.getItem(pinStorageKey) === "1";
+    readStoredBoolean(pinStorageKey, true);
 
   const portalPinned = ref(
     !isMobileViewport() && readDesktopPortalPinned(),

@@ -44,3 +44,7 @@ def test_embed_chat_wires_workbench_home_and_personal_resources_modal():
     assert "useWorkbenchHome" in embed or "/api/portal/workbench/home" in embed
     assert "personalResourceFallbackItems" in embed
     assert "open-personal-resources" in embed or "openPersonalResources" in embed
+    assert "filterEmbedWelcomePersonalResources" in embed
+    constants = _source("frontend/src/constants/personalResources.ts")
+    assert '"memory"' in constants and '"data"' in constants
+    assert "EMBED_WELCOME_HIDDEN_RESOURCE_KEYS" in constants
