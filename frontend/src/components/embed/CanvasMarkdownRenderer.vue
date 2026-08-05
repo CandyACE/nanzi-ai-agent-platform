@@ -8,6 +8,7 @@ import { use } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import {
   BarChart,
+  CandlestickChart,
   FunnelChart,
   GaugeChart,
   HeatmapChart,
@@ -40,6 +41,7 @@ use([
   FunnelChart,
   HeatmapChart,
   TreemapChart,
+  CandlestickChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,

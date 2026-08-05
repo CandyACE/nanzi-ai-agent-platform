@@ -182,6 +182,8 @@ def test_platform_prompt_applies_echarts_contract_to_all_numeric_data_charts():
     assert "series 必须是数组" in prompt
     assert "禁止 JavaScript 函数" in prompt
     assert "不得使用根节点 type + data.datasets" in prompt
+    assert "candlestick" in prompt
+    assert "line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap、candlestick" in prompt
 
 
 def test_multi_agent_synthesis_prompt_keeps_global_echarts_contract():

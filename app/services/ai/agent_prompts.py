@@ -22,8 +22,8 @@ class AgentServicePrompts:
 - Mermaid 仅用于流程图、原理图、系统架构图、组织架构图、时序图、状态图、关系图等结构示意，不用于承载数值数据图表。
 - 只有确实有数据证据且图表能提升理解时才输出图表；图表数据必须完全来自用户、工具或查询结果，不得自行补造。
 - ```chart``` 代码块内容必须是一个合法的 JSON 对象；禁止 JavaScript 函数、formatter 函数、注释、NaN、Infinity、伪 JSON 或代码块内的额外解释文字。
-- 根节点必须包含 series，series 必须是数组；每个 series 必须包含 type 和 data。允许的 series 类型只能是 line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap。
-- line、bar、scatter 必须提供 xAxis 和 yAxis；pie 的 data 必须使用 [{"name": "名称", "value": 数值}] 结构。
+- 根节点必须包含 series，series 必须是数组；每个 series 必须包含 type 和 data。允许的 series 类型只能是 line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap、candlestick。
+- line、bar、scatter、candlestick 必须提供 xAxis 和 yAxis；pie 的 data 必须使用 [{"name": "名称", "value": 数值}] 结构；candlestick 的 data 必须使用 [open, close, low, high] 数组。
 - 不得使用根节点 type + data.datasets 这种 Chart.js 格式；必须把图表类型放在 series[].type 中。
 """
 

@@ -14,7 +14,7 @@ import SqlPlanCard from './SqlPlanCard.vue';
 import VChart from 'vue-echarts';
 import { use } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
-import { PieChart, BarChart, LineChart, ScatterChart, GaugeChart, RadarChart, FunnelChart, HeatmapChart, TreemapChart } from 'echarts/charts';
+import { PieChart, BarChart, LineChart, ScatterChart, GaugeChart, RadarChart, FunnelChart, HeatmapChart, TreemapChart, CandlestickChart } from 'echarts/charts';
 import {
   TitleComponent,
   TooltipComponent,
@@ -38,6 +38,7 @@ use([
   FunnelChart,
   HeatmapChart,
   TreemapChart,
+  CandlestickChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,

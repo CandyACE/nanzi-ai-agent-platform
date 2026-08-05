@@ -387,7 +387,7 @@ def test_chatbi_synthesis_prompts_share_strict_echarts_output_contract():
         "series 必须是数组",
         "禁止 JavaScript 函数",
         "不得使用根节点 type + data.datasets",
-        "line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap",
+        "line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap、candlestick",
     )
     prompts = [
         DataQueryPrompts.synthesis_user_message("统计销售额", "【查询结果】{}"),

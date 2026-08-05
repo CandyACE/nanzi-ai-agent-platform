@@ -49,6 +49,14 @@ def test_chart_card_supports_table_view():
     assert "v-if=\"localChartTypes[idx] === 'table'\"" in source
 
 
+def test_message_renderer_registers_candlestick_chart():
+    source = _source("frontend/src/components/MessageRenderer.vue")
+    assert "CandlestickChart" in source
+    util = _source("frontend/src/utils/chartRenderer.ts")
+    assert '"candlestick"' in util
+    assert "supportedChartSeriesTypes" in util
+
+
 def test_message_renderer_only_classifies_chart_specific_fences():
     source = _source("frontend/src/components/MessageRenderer.vue")
 

@@ -29,7 +29,7 @@ const colors = [
   "#06b6d4",
 ];
 
-const cartesianSeriesTypes = new Set(["bar", "line", "scatter"]);
+const cartesianSeriesTypes = new Set(["bar", "line", "scatter", "candlestick"]);
 export const supportedChartSeriesTypes = new Set([
   "bar",
   "line",
@@ -40,6 +40,7 @@ export const supportedChartSeriesTypes = new Set([
   "funnel",
   "heatmap",
   "treemap",
+  "candlestick",
 ]);
 
 const axisLabelReadableColor = "#6b7280";

@@ -63,6 +63,36 @@ if (!unsupportedType.ok) {
   assert.equal(unsupportedType.error.code, "unsupported_series_type");
 }
 
+const candlestickMissingAxis = parseChartOptions(`
+{
+  series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }]
+}
+`);
+assert.equal(candlestickMissingAxis.ok, false);
+if (!candlestickMissingAxis.ok) {
+  assert.equal(candlestickMissingAxis.error.code, "invalid_option");
+}
+
+const candlestick = parseChartOptions(`
+{
+  xAxis: { type: "category", data: ["2026-08-01"] },
+  yAxis: { type: "value", scale: true },
+  series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }]
+}
+`);
+assert.equal(candlestick.ok, true);
+if (candlestick.ok) {
+  assert.equal(candlestick.option.series[0].type, "candlestick");
+}
+
+const candlestickDefaults = mergeChartDefaults({
+  xAxis: { type: "category", data: ["2026-08-01"] },
+  yAxis: { type: "value", scale: true },
+  series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }],
+});
+assert.equal("grid" in candlestickDefaults, true);
+assert.equal(candlestickDefaults.tooltip.trigger, "axis");
+
 const missingSeries = parseChartOptions(`
 {
   title: { text: "不是图表" }
