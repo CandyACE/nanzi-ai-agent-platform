@@ -162,11 +162,25 @@ def test_workbench_personal_resource_cards_link_to_personal_tabs():
     assert "WorkbenchPersonalResources" in page
     assert "personal_resources" in page
     assert "personal_resources" in types
-    assert 'path: "/dashboard/personal"' in cards
-    assert "query: { tab: item.tab }" in cards
+    assert 'path: "/dashboard/personal"' in page
+    assert "query: { tab: item.tab }" in page
     assert "formatTokenCompact" in cards
     for key in ("memory", "tokens", "data", "skills", "mcp", "tasks"):
         assert key in _read("app/services/workbench_home_service.py")
+
+
+def test_workbench_personal_resources_emits_select_instead_of_router():
+    source = _read("frontend/src/components/workbench/WorkbenchPersonalResources.vue")
+    assert 'emit("select"' in source or "emit('select'" in source
+    assert 'path: "/dashboard/personal"' not in source
+    assert "useRouter" not in source
+
+
+def test_personal_workbench_wires_resource_select_to_personal_center():
+    source = _read("frontend/src/views/PersonalWorkbench.vue")
+    assert "WorkbenchPersonalResources" in source
+    assert "@select=" in source
+    assert 'path: "/dashboard/personal"' in source
 
 
 def test_task_center_accepts_workbench_task_target():
