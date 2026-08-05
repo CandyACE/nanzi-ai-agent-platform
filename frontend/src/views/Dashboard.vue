@@ -98,10 +98,13 @@ const fetchUserInfo = async () => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
   loadBranding();
-  fetchUserInfo();
-  fetchOnlineUsers();
+  await fetchUserInfo();
+  // 在线人数仅管理员可见，普通用户不请求、不展示
+  if (userInfo.value.role === "admin") {
+    fetchOnlineUsers();
+  }
 });
 
 const fetchOnlineUsers = async () => {
@@ -117,7 +120,7 @@ const fetchOnlineUsers = async () => {
 };
 
 const openOnlineUsers = () => {
-  if (userInfo.value.role === 'admin') {
+  if (userInfo.value.role === "admin") {
     fetchOnlineUsers(); // Refresh
     showOnlineUsersDialog.value = true;
   }
@@ -664,22 +667,23 @@ const filteredMenuGroups = computed(() => {
         </div>
 
         <div class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 flex-nowrap">
-          <!-- Online Users Widget -->
-          <div 
-            @click="openOnlineUsers"
-            class="flex items-center px-2 sm:px-3 py-1 bg-green-50 border border-green-100/50 rounded-full transition-all shadow-sm flex-shrink-0 whitespace-nowrap" 
-            :class="userInfo.role === 'admin' ? 'cursor-pointer hover:bg-green-100/80 active:scale-95' : 'cursor-default'"
-            :title="userInfo.role === 'admin' ? '点击查看在线用户列表' : '当前实时在线人数'"
-          >
-            <span class="relative flex h-2 w-2 mr-1 sm:mr-2 flex-shrink-0">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-            </span>
-            <span class="text-[10px] sm:text-xs font-bold text-green-700 tracking-tight tabular-nums">
-              {{ onlineUserCount }} <span class="font-medium opacity-80 ml-0.5">在线</span>
-            </span>
-          </div>
-          <div class="h-6 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
+          <!-- Online Users Widget：仅管理员可见 -->
+          <template v-if="userInfo.role === 'admin'">
+            <div
+              class="online-users-widget flex items-center px-2 sm:px-3 py-1 bg-green-50 border border-green-100/50 rounded-full transition-all shadow-sm flex-shrink-0 whitespace-nowrap cursor-pointer hover:bg-green-100/80 active:scale-95"
+              title="点击查看在线用户列表"
+              @click="openOnlineUsers"
+            >
+              <span class="relative flex h-2 w-2 mr-1 sm:mr-2 flex-shrink-0">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              </span>
+              <span class="text-[10px] sm:text-xs font-bold text-green-700 tracking-tight tabular-nums">
+                {{ onlineUserCount }} <span class="font-medium opacity-80 ml-0.5">在线</span>
+              </span>
+            </div>
+            <div class="online-users-divider h-6 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
+          </template>
           <PortalNotificationBell />
           <button
             type="button"

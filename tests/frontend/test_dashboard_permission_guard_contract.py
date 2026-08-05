@@ -45,3 +45,14 @@ def test_no_permission_page_refetches_me_before_giving_up():
     assert "localStorage.setItem('user_info'" in source
     assert "PersonalWorkbench" in source
     assert "window.location.reload()" not in source
+
+
+def test_online_users_widget_hidden_for_non_admin():
+    """普通用户顶栏不展示在线人数与分隔线；仅管理员可见并拉取列表。"""
+    dashboard = Path("frontend/src/views/Dashboard.vue").read_text(encoding="utf-8")
+
+    assert 'v-if="userInfo.role === \'admin\'"' in dashboard
+    assert "online-users-widget" in dashboard
+    assert "online-users-divider" in dashboard
+    assert 'if (userInfo.value.role === "admin")' in dashboard
+    assert "fetchOnlineUsers()" in dashboard

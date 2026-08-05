@@ -255,7 +255,11 @@ onUnmounted(() => {
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 01-6 0" /></svg>
       <span v-if="unreadCount" class="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-4 text-center">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
     </button>
-    <div v-if="open" class="absolute right-0 mt-2 w-[22rem] max-w-[90vw] rounded-2xl bg-white border border-gray-100 shadow-2xl overflow-hidden z-50">
+    <!-- 移动端铃铛不在视口右缘，absolute+宽面板会向左溢出被裁切；窄屏改为贴视口左右边距的 fixed -->
+    <div
+      v-if="open"
+      class="notification-panel fixed left-3 right-3 top-[4.25rem] z-50 max-h-[min(28rem,calc(100dvh-5rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[22rem] sm:max-w-[min(22rem,calc(100vw-1.5rem))]"
+    >
       <div class="border-b border-gray-100">
         <div class="notification-header-main flex items-start justify-between gap-3 px-4 pb-2 pt-3">
           <div class="min-w-0"><h3 class="text-sm font-black text-gray-800">站内通知</h3><p class="mt-0.5 truncate text-[10px] text-gray-400">报表运行与系统消息</p></div>

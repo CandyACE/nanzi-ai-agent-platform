@@ -60,6 +60,15 @@ def test_notification_header_uses_two_rows_on_narrow_panels():
     assert "whitespace-nowrap" in bell
 
 
+def test_notification_panel_stays_in_viewport_on_mobile():
+    """窄屏下铃铛偏左，绝对定位宽面板会裁切左侧；需 fixed + 左右边距。"""
+    bell = (ROOT / "frontend/src/components/PortalNotificationBell.vue").read_text(encoding="utf-8")
+
+    assert "notification-panel fixed left-3 right-3" in bell
+    assert "sm:absolute sm:left-auto sm:right-0" in bell
+    assert "sm:w-[22rem]" in bell
+
+
 def test_saved_report_notification_uses_runtime_open_message_without_reinitializing_chat():
     chat = (ROOT / "frontend/src/views/Chat.vue").read_text(encoding="utf-8")
     embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
