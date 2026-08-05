@@ -13,6 +13,10 @@ import {
   normalizeMcpServerNameSuffix,
   stripMcpServerNamePrefix,
 } from '@/utils/mcpServerName'
+import {
+  parseMcpServersPaste,
+  suggestMcpNameSuffixFromKey,
+} from '@/utils/parseMcpServersPaste'
 import { 
   PlusIcon,
   BeakerIcon,
@@ -27,7 +31,8 @@ import {
   CloudArrowDownIcon,
   MagnifyingGlassIcon,
   SparklesIcon,
-  ShoppingBagIcon
+  ShoppingBagIcon,
+  ClipboardDocumentIcon,
 } from '@heroicons/vue/24/outline'
 
 const props = withDefaults(defineProps<{
@@ -49,6 +54,10 @@ const namePrefix = computed(() =>
 
 /** 用户只填后缀；保存时与固定前缀拼接 */
 const serverNameSuffix = ref('')
+/** 第一步录入方式：手动 / JSON 粘贴 */
+const connectionInputTab = ref<'manual' | 'json'>('manual')
+const mcpJsonPaste = ref('')
+const mcpJsonPasteHint = ref('')
 
 const syncFullServerName = () => {
   newServer.value.server_name = composeMcpServerName(
@@ -261,6 +270,9 @@ const resetWizard = () => {
   discoveredTools.value = []
   newServer.value = { server_name: '', remark: '', sse_url: '', auth_headers: '{}', enabled_status: 1 }
   serverNameSuffix.value = ''
+  connectionInputTab.value = 'manual'
+  mcpJsonPaste.value = ''
+  mcpJsonPasteHint.value = ''
   headerPairs.value = [{ key: '', value: '' }]
   headerMode.value = 'simple'
 }
@@ -381,9 +393,50 @@ const cancelStatusConfirm = () => {
   statusConfirmUsage.value = null
 }
 
+const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
+  const result = parseMcpServersPaste(mcpJsonPaste.value)
+  if (!result.ok) {
+    mcpJsonPasteHint.value = result.error
+    showToast(result.error, 'warning')
+    return false
+  }
+  const entry = result.entries[0]
+  newServer.value.sse_url = entry.url
+
+  const headerEntries = Object.entries(entry.headers || {})
+  if (headerEntries.length) {
+    headerMode.value = 'simple'
+    headerPairs.value = headerEntries.map(([key, value]) => ({ key, value }))
+    newServer.value.auth_headers = JSON.stringify(Object.fromEntries(headerEntries), null, 2)
+  } else {
+    headerPairs.value = [{ key: '', value: '' }]
+    newServer.value.auth_headers = '{}'
+  }
+
+  const suggested = suggestMcpNameSuffixFromKey(entry.key)
+  if (suggested) {
+    serverNameSuffix.value = suggested
+    syncFullServerName()
+  }
+
+  if (entry.key) {
+    newServer.value.remark = `来自配置：${entry.key}${entry.type ? `（${entry.type}）` : ''}`
+  }
+
+  mcpJsonPasteHint.value = result.warning
+    || `已解析「${entry.key}」→ ${entry.url}`
+
+  if (options?.connect) {
+    void handleVerify()
+  } else {
+    showToast(`已从 JSON 解析：${entry.key}`, 'success')
+  }
+  return true
+}
+
 const handleVerify = async () => {
   if (!newServer.value.sse_url) {
-    showToast('请输入 SSE 握手地址', 'warning')
+    showToast(connectionInputTab.value === 'json' ? '请先粘贴并解析有效的 MCP JSON' : '请输入服务地址', 'warning')
     return
   }
   
@@ -833,65 +886,119 @@ onMounted(fetchServers)
             </div>
           </div>
           <p class="text-xs text-gray-500">
-            {{ wizardStep === 1 ? '输入外部 MCP SSE 服务端地址，系统将尝试探测其支持的工具。' : `探测成功！共发现 ${discoveredTools.length} 个工具。请检查列表并为该服务命名。` }}
+            {{ wizardStep === 1
+              ? (connectionInputTab === 'json'
+                ? '粘贴 mcpServers JSON，解析后将自动连接并发现工具。'
+                : '手动填写服务地址与鉴权，然后连接并发现工具。')
+              : `探测成功！共发现 ${discoveredTools.length} 个工具。请检查列表并为该服务命名。` }}
           </p>
         </div>
 
         <!-- Wizard Step 1: Input -->
         <div v-if="wizardStep === 1" class="p-6 space-y-5">
-          <div>
-            <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 flex items-center">
-              <LinkIcon class="w-3 h-3 mr-1" /> SSE 握手地址
-            </label>
-            <input v-model="newServer.sse_url" placeholder="https://..." class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono" />
-            <p class="text-[10px] text-gray-400 mt-1">支持标准的 MCP SSE URL，例如来自 mcpmarket.cn 的代理地址。</p>
+          <div
+            v-if="!isEditing"
+            class="flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5"
+          >
+            <button
+              type="button"
+              class="flex-1 py-1.5 text-center text-xs font-semibold rounded-md transition-colors"
+              :class="connectionInputTab === 'manual'
+                ? 'bg-white shadow-sm text-gray-900'
+                : 'text-gray-500 hover:text-gray-700'"
+              @click="connectionInputTab = 'manual'"
+            >
+              手动填写
+            </button>
+            <button
+              type="button"
+              class="flex-1 py-1.5 text-center text-xs font-semibold rounded-md transition-colors flex items-center justify-center gap-1"
+              :class="connectionInputTab === 'json'
+                ? 'bg-white shadow-sm text-indigo-700'
+                : 'text-gray-500 hover:text-gray-700'"
+              @click="connectionInputTab = 'json'"
+            >
+              <ClipboardDocumentIcon class="w-3.5 h-3.5" />
+              JSON 粘贴
+            </button>
           </div>
-          
-          <!-- Dynamic Headers Editor -->
-          <div>
-            <div class="flex justify-between items-center mb-2">
-              <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider">身份认证 (可选)</label>
-              <button @click="toggleHeaderMode" class="text-[10px] text-primary font-bold flex items-center hover:underline">
-                <component :is="headerMode === 'simple' ? CodeBracketIcon : ListBulletIcon" class="w-3 h-3 mr-1" />
-                切换到{{ headerMode === 'simple' ? '高级 JSON' : '可视化列表' }}
-              </button>
-            </div>
 
-            <div v-if="headerMode === 'simple'" class="space-y-3">
-              <p class="text-[10px] text-gray-400 leading-relaxed">
-                如果服务需要令牌或 API Key，请添加下方项。
-                <span class="text-primary cursor-pointer hover:underline" @click="headerPairs[0] = {key: 'Authorization', value: 'Bearer '}">[常用推荐：Authorization]</span>
-              </p>
-              
-              <div class="space-y-2 bg-gray-50 p-3 rounded-lg border border-gray-100 max-h-[150px] overflow-y-auto custom-scrollbar">
-                <div v-for="(pair, index) in headerPairs" :key="index" class="flex gap-2">
-                  <div class="flex-1">
-                    <input 
-                      v-model="pair.key" 
-                      placeholder="名称 (如 Authorization)" 
-                      class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
-                    />
-                  </div>
-                  <div class="flex-1">
-                    <input 
-                      v-model="pair.value" 
-                      :placeholder="pair.key === 'Authorization' ? 'Bearer sk-...' : '内容 (Value)'" 
-                      class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
-                    />
-                  </div>
-                  <button @click="removeHeaderPair(index)" class="p-1.5 text-gray-400 hover:text-red-500">
-                    <TrashIcon class="w-4 h-4" />
-                  </button>
-                </div>
-                <button @click="addHeaderPair" class="mt-2 text-[10px] font-bold text-primary flex items-center hover:underline">
-                  <PlusIcon class="w-3 h-3 mr-1" /> 继续添加
+          <!-- JSON 粘贴 Tab -->
+          <div v-if="connectionInputTab === 'json' && !isEditing" class="space-y-3">
+            <p class="text-[11px] text-gray-500 leading-relaxed">
+              支持 Cursor / Claude Desktop 的
+              <code class="px-1 bg-gray-100 rounded text-[10px]">mcpServers</code>
+              配置（含 streamable_http）。点击下方按钮将解析并直接连接发现工具。
+            </p>
+            <textarea
+              v-model="mcpJsonPaste"
+              rows="8"
+              placeholder='{ "mcpServers": { "mcp-trends-hub": { "type": "streamable_http", "url": "https://..." } } }'
+              class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-50 text-gray-800"
+              @keydown.stop
+            />
+            <p v-if="mcpJsonPasteHint" class="text-[10px] text-indigo-700 leading-snug">{{ mcpJsonPasteHint }}</p>
+            <p v-if="newServer.sse_url" class="text-[10px] text-gray-500 font-mono truncate" :title="newServer.sse_url">
+              当前地址：{{ newServer.sse_url }}
+            </p>
+          </div>
+
+          <!-- 手动填写 Tab（编辑时强制手动） -->
+          <template v-else>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 flex items-center">
+                <LinkIcon class="w-3 h-3 mr-1" /> 服务地址（SSE / HTTP）
+              </label>
+              <input v-model="newServer.sse_url" placeholder="https://..." class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono" />
+              <p class="text-[10px] text-gray-400 mt-1">支持 MCP SSE 与 streamable HTTP（如 ModelScope）；连接时自动探测协议。</p>
+            </div>
+          
+            <!-- Dynamic Headers Editor -->
+            <div>
+              <div class="flex justify-between items-center mb-2">
+                <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider">身份认证 (可选)</label>
+                <button @click="toggleHeaderMode" class="text-[10px] text-primary font-bold flex items-center hover:underline">
+                  <component :is="headerMode === 'simple' ? CodeBracketIcon : ListBulletIcon" class="w-3 h-3 mr-1" />
+                  切换到{{ headerMode === 'simple' ? '高级 JSON' : '可视化列表' }}
                 </button>
               </div>
+
+              <div v-if="headerMode === 'simple'" class="space-y-3">
+                <p class="text-[10px] text-gray-400 leading-relaxed">
+                  如果服务需要令牌或 API Key，请添加下方项。
+                  <span class="text-primary cursor-pointer hover:underline" @click="headerPairs[0] = {key: 'Authorization', value: 'Bearer '}">[常用推荐：Authorization]</span>
+                </p>
+              
+                <div class="space-y-2 bg-gray-50 p-3 rounded-lg border border-gray-100 max-h-[150px] overflow-y-auto custom-scrollbar">
+                  <div v-for="(pair, index) in headerPairs" :key="index" class="flex gap-2">
+                    <div class="flex-1">
+                      <input 
+                        v-model="pair.key" 
+                        placeholder="名称 (如 Authorization)" 
+                        class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
+                      />
+                    </div>
+                    <div class="flex-1">
+                      <input 
+                        v-model="pair.value" 
+                        :placeholder="pair.key === 'Authorization' ? 'Bearer sk-...' : '内容 (Value)'" 
+                        class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
+                      />
+                    </div>
+                    <button @click="removeHeaderPair(index)" class="p-1.5 text-gray-400 hover:text-red-500">
+                      <TrashIcon class="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button @click="addHeaderPair" class="mt-2 text-[10px] font-bold text-primary flex items-center hover:underline">
+                    <PlusIcon class="w-3 h-3 mr-1" /> 继续添加
+                  </button>
+                </div>
+              </div>
+              <div v-else>
+                <textarea v-model="newServer.auth_headers" rows="4" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-900 text-green-400" placeholder='{}'></textarea>
+              </div>
             </div>
-            <div v-else>
-              <textarea v-model="newServer.auth_headers" rows="4" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-900 text-green-400" placeholder='{}'></textarea>
-            </div>
-          </div>
+          </template>
         </div>
 
         <!-- Wizard Step 2: Preview -->
@@ -950,7 +1057,17 @@ onMounted(fetchServers)
             <button v-if="wizardStep === 2" @click="wizardStep = 1" class="px-4 py-2 text-sm text-primary font-medium hover:underline">返回修改</button>
             
             <button 
-              v-if="wizardStep === 1"
+              v-if="wizardStep === 1 && connectionInputTab === 'json' && !isEditing"
+              @click="applyMcpJsonPaste({ connect: true })" 
+              :disabled="verifying"
+              class="px-6 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-600/20 transition-all disabled:opacity-50 flex items-center"
+            >
+              <ArrowPathIcon v-if="verifying" class="w-4 h-4 mr-2 animate-spin" />
+              {{ verifying ? '正在连接并发现工具...' : '解析并连接发现工具' }}
+            </button>
+
+            <button 
+              v-else-if="wizardStep === 1"
               @click="handleVerify" 
               :disabled="verifying"
               class="px-6 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark font-bold shadow-lg shadow-primary/20 transition-all disabled:opacity-50 flex items-center"

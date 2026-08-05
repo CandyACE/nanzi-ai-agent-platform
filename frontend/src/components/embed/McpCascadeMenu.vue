@@ -125,6 +125,10 @@ const loadTools = async () => {
       server_remark: String(t.server_remark || '').trim(),
       scope: String(t.scope || 'global'),
     })).filter((t: McpToolItem) => t.id && t.name && String(t.scope || '').toLowerCase() === 'personal')
+    // 加号菜单默认折叠分组，展开后再选工具
+    collapsedGroups.value = new Set(
+      toolsList.value.map((t) => String(t.server_name || '未命名服务').trim() || '未命名服务'),
+    )
     loadedOnce.value = true
   } catch (err) {
     console.error('加载 MCP 工具列表失败:', err)
