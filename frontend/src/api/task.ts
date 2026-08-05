@@ -52,6 +52,24 @@ export interface TaskLog {
   created_at: string
 }
 
+export interface TaskExecutionHistoryItem {
+  id: number
+  trace_id: string
+  query?: string
+  summary?: string
+  status: string
+  execution_time_ms?: number
+  created_at: string
+  conversation_id?: string
+  username?: string
+  task_id?: number | null
+  task_name?: string | null
+  agent_id?: string | null
+  agent_name?: string | null
+  user_id?: number | null
+  creator_name?: string | null
+}
+
 export const taskApi = {
   list: () => axios.get<StandardResponse<AgentTask[]>>('/api/v1/tasks/'),
   get: (id: number) => axios.get<StandardResponse<AgentTask>>(`/api/v1/tasks/${id}`),
@@ -61,6 +79,19 @@ export const taskApi = {
   run: (id: number) => axios.post<StandardResponse<any>>(`/api/v1/tasks/${id}/run`),
   logs: (id: number, params: { page?: number, page_size?: number }) => 
     axios.get<StandardResponse<ListResponse<TaskLog>>>(`/api/v1/tasks/${id}/logs`, { params }),
+  executionHistory: (params: {
+    page?: number
+    page_size?: number
+    status?: string
+    task_id?: number
+    q?: string
+    start_at?: string
+    end_at?: string
+  }) =>
+    axios.get<StandardResponse<ListResponse<TaskExecutionHistoryItem>>>(
+      '/api/v1/tasks/execution-history',
+      { params },
+    ),
   listReportSubscriptions: () => axios.get<StandardResponse<AgentTask[]>>('/api/v1/tasks/report-subscriptions'),
   updateReportSubscriptionStatus: (id: number, active: boolean) => axios.patch(`/api/v1/tasks/report-subscriptions/${id}/status`, { active }),
   runReportSubscription: (id: number) => axios.post(`/api/v1/tasks/report-subscriptions/${id}/run`),

@@ -59,3 +59,25 @@ class TaskLogResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskExecutionHistoryItem(BaseModel):
+    """管理员全局执行记录：history 行 + 关联定时任务上下文。"""
+
+    id: int
+    trace_id: str
+    query: Optional[str] = None
+    summary: Optional[str] = None
+    status: str
+    execution_time_ms: Optional[float] = None
+    created_at: datetime
+    conversation_id: Optional[str] = None
+    username: Optional[str] = None
+    task_id: Optional[int] = None
+    task_name: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    user_id: Optional[int] = None
+    creator_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)

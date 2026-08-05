@@ -1,17 +1,61 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 
 from app.core.orm import get_db_session
 from app.core.dependencies import require_api_key
-from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse, TaskLogResponse
+from app.schemas.task import (
+    TaskCreate,
+    TaskUpdate,
+    TaskResponse,
+    TaskLogResponse,
+    TaskExecutionHistoryItem,
+)
 from app.services.task_center_service import TaskCenterService
 from app.schemas.response import StandardResponse, ListResponse
 from app.models.saved_report import PortalSavedReport, PortalSavedReportRun, PortalSavedReportSubscription
 from app.models.user import User
+from app.services.resource_scope_normalizer import (
+    has_any_resource,
+    normalize_resource_scope_for_user,
+)
 
 router = APIRouter()
+
+
+async def _task_owner_info(db: AsyncSession, owner_user_id: Any) -> Dict[str, Any]:
+    """任务按所有者身份执行，资源范围也必须按所有者的授权目录校验。"""
+    owner = (await db.execute(select(User).where(User.id == owner_user_id))).scalar_one_or_none()
+    if owner is None:
+        raise HTTPException(status_code=404, detail="任务所有者不存在")
+    return {
+        "user_id": owner.id,
+        "user_name": owner.user_name,
+        "real_name": owner.real_name,
+        "role": owner.role,
+    }
+
+
+async def _sanitize_task_config(
+    db: AsyncSession,
+    owner_info: Dict[str, Any],
+    config: Any,
+) -> Any:
+    """收敛 config.resource_scope，丢弃所有者无权访问的数据集 / 知识库 / 技能 / MCP。"""
+    if not isinstance(config, dict) or "resource_scope" not in config:
+        return config
+    sanitized = dict(config)
+    normalized = await normalize_resource_scope_for_user(
+        db, owner_info, sanitized.get("resource_scope") or {}
+    )
+    if has_any_resource(normalized) or normalized.get("project_name"):
+        sanitized["resource_scope"] = normalized
+    else:
+        sanitized.pop("resource_scope", None)
+    return sanitized
+
 
 @router.post("/", response_model=StandardResponse[TaskResponse])
 async def create_task(
@@ -23,8 +67,10 @@ async def create_task(
     Create a new scheduled task.
     """
     user_id = user_info.get("user_id")
+    owner_info = await _task_owner_info(db, user_id)
+    config = await _sanitize_task_config(db, owner_info, task_in.config)
     task = await TaskCenterService.create_task(
-        db, user_id, task_in.name, task_in.agent_id, task_in.cron_expr, task_in.prompt, source="web", config=task_in.config
+        db, user_id, task_in.name, task_in.agent_id, task_in.cron_expr, task_in.prompt, source="web", config=config
     )
     return StandardResponse(data=TaskResponse.from_orm(task))
 
@@ -144,6 +190,47 @@ async def delete_report_subscription(subscription_id: int, user_info=Depends(req
     await db.flush()
     return StandardResponse(data={"success": True})
 
+
+@router.get(
+    "/execution-history",
+    response_model=StandardResponse[ListResponse[TaskExecutionHistoryItem]],
+    summary="任务执行记录（管理员看全部，普通用户仅看自己的）",
+)
+async def list_execution_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="执行状态，如 success / failed"),
+    task_id: Optional[int] = Query(None, description="限定某个定时任务"),
+    q: Optional[str] = Query(None, description="关键词：任务名/创建人/摘要/Trace"),
+    start_at: Optional[datetime] = Query(None, description="开始时间（含）"),
+    end_at: Optional[datetime] = Query(None, description="结束时间（含）"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    is_admin = user_info.get("role") == "admin"
+    owner_user_id = user_info.get("user_id") or user_info.get("id")
+    items, total = await TaskCenterService.list_execution_history(
+        db,
+        page=page,
+        page_size=page_size,
+        status=status,
+        task_id=task_id,
+        q=q,
+        start_at=start_at,
+        end_at=end_at,
+        owner_user_id=None if is_admin else owner_user_id,
+        is_admin=is_admin,
+    )
+    return StandardResponse(
+        data=ListResponse(
+            items=[TaskExecutionHistoryItem.model_validate(item) for item in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
 @router.get("/{task_id}", response_model=StandardResponse[TaskResponse])
 async def get_task(
     task_id: int,
@@ -180,8 +267,13 @@ async def update_task(
     # print(f"DEBUG: task.user_id={task.user_id} ({type(task.user_id)}), user_info.user_id={user_info.get('user_id')} ({type(user_info.get('user_id'))})")
     if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Permission denied")
-        
-    updated = await TaskCenterService.update_task(db, task_id, task_in.model_dump(exclude_unset=True))
+
+    payload = task_in.model_dump(exclude_unset=True)
+    if "config" in payload:
+        owner_info = await _task_owner_info(db, task.user_id)
+        payload["config"] = await _sanitize_task_config(db, owner_info, payload["config"])
+
+    updated = await TaskCenterService.update_task(db, task_id, payload)
     return StandardResponse(data=TaskResponse.from_orm(updated))
 
 @router.delete("/{task_id}", response_model=StandardResponse[Dict[str, bool]])
