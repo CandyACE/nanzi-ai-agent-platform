@@ -19,6 +19,8 @@ export interface ChartTableData {
   rows: Array<Array<string | number | null>>;
 }
 
+export type ChartViewMode = "line" | "bar" | "pie" | "candlestick" | "table";
+
 const colors = [
   "#6366f1",
   "#10b981",
@@ -42,6 +44,17 @@ export const supportedChartSeriesTypes = new Set([
   "treemap",
   "candlestick",
 ]);
+
+const simpleSwitchableSeriesTypes = new Set(["bar", "line", "scatter"]);
+const specializedSeriesTypes = new Set(["gauge", "radar", "funnel", "heatmap", "treemap"]);
+const chartViewModeOrder: ChartViewMode[] = ["candlestick", "line", "bar", "pie", "table"];
+const chartViewModeLabels: Record<ChartViewMode, string> = {
+  candlestick: "K线",
+  line: "折线",
+  bar: "柱状",
+  pie: "饼图",
+  table: "表格",
+};
 
 const axisLabelReadableColor = "#6b7280";
 const axisNameReadableColor = "#374151";
@@ -298,7 +311,15 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
   }
 
   if (shouldUseCartesianDefaults) {
-    merged.grid = { ...defaults.grid, ...(options.grid || {}) };
+    // K 线+成交量等常用 grid 数组；不可对数组做 object spread，否则会变成 {0,1,left,...} 导致空白图
+    if (Array.isArray(options.grid)) {
+      merged.grid = options.grid.map((item: any) => ({
+        ...defaults.grid,
+        ...(item && typeof item === "object" && !Array.isArray(item) ? item : {}),
+      }));
+    } else {
+      merged.grid = { ...defaults.grid, ...(options.grid || {}) };
+    }
     merged.xAxis = mergeAxisDefaults(defaults.xAxis, options.xAxis);
     merged.yAxis = mergeAxisDefaults(defaults.yAxis, options.yAxis);
   }
@@ -308,6 +329,126 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
   }
 
   return merged;
+}
+
+function isOhlcPoint(point: any): boolean {
+  return (
+    Array.isArray(point) &&
+    point.length >= 4 &&
+    point.slice(0, 4).every((value) => typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+function seriesHasOhlcData(series: any): boolean {
+  return normalizeSeriesData(series).some((point) => isOhlcPoint(point));
+}
+
+function orderChartViewModes(modes: Iterable<ChartViewMode>): ChartViewMode[] {
+  const selected = new Set(modes);
+  return chartViewModeOrder.filter((mode) => selected.has(mode));
+}
+
+/** 按数据形态决定消息卡片可用的切换视图（K 线+成交量等复杂图会收窄选项） */
+export function getAvailableChartViewModes(options: Record<string, any>): ChartViewMode[] {
+  const series = Array.isArray(options?.series) ? options.series : [];
+  if (series.length === 0) return ["table"];
+
+  const types = series.map((item) => String(item?.type || ""));
+  const uniqueTypes = new Set(types);
+  const hasCandlestick = types.includes("candlestick") || series.some((item) => seriesHasOhlcData(item));
+  const hasSpecialized = types.some((type) => specializedSeriesTypes.has(type));
+
+  if (hasCandlestick) {
+    if (series.length > 1 || uniqueTypes.size > 1) {
+      return orderChartViewModes(["candlestick", "table"]);
+    }
+    return orderChartViewModes(["candlestick", "line", "bar", "table"]);
+  }
+
+  if (hasSpecialized) {
+    return ["table"];
+  }
+
+  if (types.every((type) => simpleSwitchableSeriesTypes.has(type) || type === "pie")) {
+    return orderChartViewModes(["line", "bar", "pie", "table"]);
+  }
+
+  if (uniqueTypes.size > 1) {
+    return ["table"];
+  }
+
+  return orderChartViewModes(["line", "bar", "pie", "table"]);
+}
+
+export function resolveActiveChartViewMode(
+  options: Record<string, any>,
+  override?: string | null,
+): ChartViewMode {
+  const available = getAvailableChartViewModes(options);
+  if (override && available.includes(override as ChartViewMode)) {
+    return override as ChartViewMode;
+  }
+
+  const series = Array.isArray(options?.series) ? options.series : [];
+  const firstType = String(series[0]?.type || "");
+  if (firstType === "candlestick" || series.some((item) => seriesHasOhlcData(item))) {
+    return available.includes("candlestick") ? "candlestick" : available[0];
+  }
+  if (firstType === "pie" && available.includes("pie")) return "pie";
+  if (firstType === "bar" && available.includes("bar")) return "bar";
+  if ((firstType === "line" || firstType === "scatter") && available.includes("line")) return "line";
+  return available.find((mode) => mode !== "table") || available[0] || "table";
+}
+
+export function getChartViewModeLabel(mode: ChartViewMode): string {
+  return chartViewModeLabels[mode] || mode;
+}
+
+/** 将图表配置切换到指定视图；candlestick 保持原始 series（含成交量等伴生序列） */
+export function applyChartViewMode(
+  options: Record<string, any>,
+  mode: ChartViewMode,
+): Record<string, any> {
+  const option = JSON.parse(JSON.stringify(options || {}));
+  if (mode === "table" || mode === "candlestick") {
+    return option;
+  }
+
+  const series = Array.isArray(option.series) ? option.series : [];
+  if (mode === "pie") {
+    delete option.xAxis;
+    delete option.yAxis;
+    option.series = series.map((item: any, index: number) => ({
+      ...item,
+      type: "pie",
+      data: normalizeSeriesData(item).map((point: any, pointIndex: number) => {
+        if (isOhlcPoint(point)) {
+          return { name: String(pointIndex + 1), value: point[1] };
+        }
+        if (point && typeof point === "object" && !Array.isArray(point)) {
+          return {
+            name: point.name != null ? String(point.name) : String(pointIndex + 1),
+            value: datumValue(point),
+          };
+        }
+        return {
+          name: inferDimensionValue(series, pointIndex) || String(pointIndex + 1),
+          value: datumValue(point),
+        };
+      }),
+      name: item?.name || `系列 ${index + 1}`,
+    }));
+    return option;
+  }
+
+  option.series = series.map((item: any) => {
+    const next = { ...item, type: mode };
+    if (String(item?.type || "") === "candlestick" || seriesHasOhlcData(item)) {
+      next.data = normalizeSeriesData(item).map((point: any) => (isOhlcPoint(point) ? point[1] : datumValue(point)));
+    }
+    return next;
+  });
+  return option;
 }
 
 export function buildChartTableRows(options: Record<string, any>): ChartTableData {

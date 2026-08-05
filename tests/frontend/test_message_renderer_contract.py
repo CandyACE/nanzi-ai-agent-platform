@@ -43,10 +43,24 @@ def test_chart_card_supports_table_view():
     source = _source("frontend/src/components/MessageRenderer.vue")
 
     assert "buildChartTableRows" in source
-    assert "localChartTypes[idx] = 'table'" in source
-    assert "title=\"切换为表格视图\"" in source
+    assert "getAvailableChartViewModes" in source
+    assert "applyChartViewMode" in source
+    assert "getChartViewModeLabel" in source
+    assert "title=\"切换为表格视图\"" in source or "切换为表格视图" in source
     assert "表格" in source
-    assert "v-if=\"localChartTypes[idx] === 'table'\"" in source
+    assert "getActiveChartMode(segment, idx) === 'table'" in source
+
+
+def test_message_renderer_chart_switcher_adapts_to_candlestick():
+    source = _source("frontend/src/components/MessageRenderer.vue")
+    util = _source("frontend/src/utils/chartRenderer.ts")
+
+    assert "CandlestickChart" in source
+    assert "getAvailableChartViewModes" in source
+    assert "K线" in util
+    assert 'return orderChartViewModes(["candlestick", "table"])' in util or '["candlestick", "table"]' in util
+    assert "getAvailableChartViewModes" in util
+    assert "applyChartViewMode" in util
 
 
 def test_message_renderer_registers_candlestick_chart():
