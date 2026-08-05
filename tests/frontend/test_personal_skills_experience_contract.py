@@ -56,6 +56,8 @@ def test_skill_cascade_empty_state_points_to_personal_center():
     assert "/dashboard/personal?tab=skills" in text
     assert "SkillCascadeMenu" in CHAT_INPUT.read_text(encoding="utf-8") or "skill-cascade" in CHAT_INPUT.read_text(encoding="utf-8").lower()
     assert "SkillCascadeMenu" in CHAT_INPUT.read_text(encoding="utf-8")
+    assert "min(28rem" in text
+    assert "max-h-[min(48vh,22rem)]" in text or "min(48vh,22rem)" in text
 
 
 def test_create_skills_emits_machine_marker():

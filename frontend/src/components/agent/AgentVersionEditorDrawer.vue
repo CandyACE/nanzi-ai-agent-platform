@@ -5,6 +5,7 @@ import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
+import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
 
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
@@ -906,9 +907,11 @@ const externalCreationMissingFields = computed(() => {
                       </svg>
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="text-[11px] font-bold font-mono text-gray-800">
-                        <span v-if="tool.name.includes(':')" class="text-gray-400 text-[9px] font-sans font-normal">{{ tool.name.split(':')[0] }}:</span>
-                        {{ tool.name.includes(':') ? tool.name.split(':')[1] : tool.name }}
+                      <div
+                        class="text-[11px] font-bold font-mono text-gray-800 truncate"
+                        :title="tool.name"
+                      >
+                        {{ mcpToolDisplayName(tool.name, serverName) }}
                       </div>
                       <div class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">{{ tool.description }}</div>
                     </div>

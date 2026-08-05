@@ -4,6 +4,8 @@ import MentionList from "@/components/agent/MentionList.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import SkillCascadeMenu from "@/components/embed/SkillCascadeMenu.vue";
 import type { SkillItem } from "@/components/embed/SkillCascadeMenu.vue";
+import McpCascadeMenu from "@/components/embed/McpCascadeMenu.vue";
+import type { McpToolItem } from "@/components/embed/McpCascadeMenu.vue";
 import ExpertCascadeMenu from "@/components/embed/ExpertCascadeMenu.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
@@ -52,6 +54,8 @@ const props = defineProps<{
   activeLtmPreference?: any;
   /** 当前会话有效智能体 ID，用于过滤平台技能列表 */
   agentId?: string | null;
+  /** 会话已挂载的 MCP 工具名 */
+  attachedMcpToolNames?: string[];
   /** 路由模式：auto | expert */
   routingMode?: string;
   /** 专家模式下选中的智能体 ID */
@@ -84,6 +88,7 @@ const emit = defineEmits<{
   (e: 'select-knowledge-base'): void;
   (e: 'select-local-fs'): void;
   (e: 'select-memory'): void;
+  (e: 'select-mcp-tool', tools: McpToolItem[]): void;
   (e: 'ignore-ltm'): void;
   (e: 'dismiss-ltm'): void;
 }>();
@@ -626,8 +631,10 @@ onUnmounted(() => {
 });
 const showPlusMenu = ref(false);
 const showSkillCascade = ref(false);
+const showMcpCascade = ref(false);
 const showExpertCascade = ref(false);
 const skillCascadeRef = ref<InstanceType<typeof SkillCascadeMenu> | null>(null);
+const mcpCascadeRef = ref<InstanceType<typeof McpCascadeMenu> | null>(null);
 const showExpertSelector = ref(false);
 const expertSelectorRef = ref<HTMLElement | null>(null);
 const expertMenuPosition = reactive({
@@ -736,6 +743,7 @@ const selectExpertAgent = (agentId: string) => {
 
 const openSkillCascade = () => {
   showExpertCascade.value = false;
+  showMcpCascade.value = false;
   showSkillCascade.value = true;
   if (isMobileViewport.value) {
     showPlusMenu.value = false;
@@ -745,9 +753,22 @@ const openSkillCascade = () => {
   });
 };
 
+const openMcpCascade = () => {
+  showExpertCascade.value = false;
+  showSkillCascade.value = false;
+  showMcpCascade.value = true;
+  if (isMobileViewport.value) {
+    showPlusMenu.value = false;
+  }
+  nextTick(() => {
+    mcpCascadeRef.value?.resetSearch?.();
+  });
+};
+
 const openExpertCascade = () => {
   if (props.lockExpertAgent) return;
   showSkillCascade.value = false;
+  showMcpCascade.value = false;
   showExpertCascade.value = true;
   if (isMobileViewport.value) {
     showPlusMenu.value = false;
@@ -759,14 +780,19 @@ const closeSkillCascade = () => {
   showSkillCascade.value = false;
 };
 
+const closeMcpCascade = () => {
+  showMcpCascade.value = false;
+};
+
 const closeExpertCascade = () => {
   showExpertCascade.value = false;
 };
 
-/** 桌面端：悬停到加号菜单的非级联项时，收起技能/专家飞出层 */
+/** 桌面端：悬停到加号菜单的非级联项时，收起技能/MCP/专家飞出层 */
 const closePlusCascadesOnHover = () => {
   if (isMobileViewport.value) return;
   showSkillCascade.value = false;
+  showMcpCascade.value = false;
   showExpertCascade.value = false;
 };
 
@@ -790,6 +816,17 @@ const mountSkillFromCascade = (skill: SkillItem) => {
     },
   });
   showSkillCascade.value = false;
+  showMcpCascade.value = false;
+  showExpertCascade.value = false;
+  showPlusMenu.value = false;
+};
+
+const mountMcpFromCascade = (tools: McpToolItem[]) => {
+  const list = Array.isArray(tools) ? tools.filter((t) => t?.id && t?.name) : [];
+  if (!list.length) return;
+  emit("select-mcp-tool", list);
+  showMcpCascade.value = false;
+  showSkillCascade.value = false;
   showExpertCascade.value = false;
   showPlusMenu.value = false;
 };
@@ -797,6 +834,7 @@ const mountSkillFromCascade = (skill: SkillItem) => {
 const triggerFileInput = () => {
   showPlusMenu.value = false;
   showSkillCascade.value = false;
+  showMcpCascade.value = false;
   showExpertCascade.value = false;
   fileInputRef.value?.click();
 };
@@ -804,6 +842,7 @@ const triggerFileInput = () => {
 watch(showPlusMenu, (open) => {
   if (!open && !isMobileViewport.value) {
     showSkillCascade.value = false;
+    showMcpCascade.value = false;
     showExpertCascade.value = false;
   }
 });
@@ -1190,7 +1229,7 @@ defineExpose({
                                     <!-- Browse Workspace -->
                                     <button
                                       @mouseenter="closePlusCascadesOnHover"
-                                      @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-local-fs');"
+                                      @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('select-local-fs');"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
                                         <span class="text-lg">💻</span>
@@ -1210,7 +1249,7 @@ defineExpose({
                                     <!-- Memory Records (moved up) -->
                                     <button
                                       @mouseenter="closePlusCascadesOnHover"
-                                      @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-memory');"
+                                      @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('select-memory');"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
                                         <span class="text-lg">🧠</span>
@@ -1230,6 +1269,25 @@ defineExpose({
                                         <div class="flex items-center space-x-3">
                                             <span class="text-lg">⚙️</span>
                                             <span class="font-medium text-left">技能中心</span>
+                                        </div>
+                                        <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                                        </svg>
+                                    </button>
+
+                                    <!-- MCP cascade -->
+                                    <button
+                                      type="button"
+                                      class="w-full flex items-center justify-between px-3 py-2 text-sm transition-all duration-150"
+                                      :class="showMcpCascade
+                                        ? 'bg-gray-100 dark:bg-gray-700/80 text-gray-900 dark:text-gray-100'
+                                        : 'text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary'"
+                                      @mouseenter="!isMobileViewport && openMcpCascade()"
+                                      @click.stop="openMcpCascade"
+                                    >
+                                        <div class="flex items-center space-x-3">
+                                            <span class="text-lg">🔌</span>
+                                            <span class="font-medium text-left">MCP 工具</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
@@ -1261,7 +1319,7 @@ defineExpose({
                                         <button
                                           type="button"
                                           @mouseenter="closePlusCascadesOnHover"
-                                          @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('system-command', '/new');"
+                                          @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/new');"
                                           class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                         >
                                             <span class="text-lg">💬</span>
@@ -1270,7 +1328,7 @@ defineExpose({
                                         <button
                                           type="button"
                                           @mouseenter="closePlusCascadesOnHover"
-                                          @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('system-command', '/history');"
+                                          @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/history');"
                                           class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                         >
                                             <span class="text-lg">🕒</span>
@@ -1279,7 +1337,7 @@ defineExpose({
                                     </template>
                                 </div>
 
-                                <!-- Desktop flyout: Skills -->
+                                <!-- Desktop flyout: Skills（顶对齐左侧加号菜单） -->
                                 <div
                                   v-if="showSkillCascade && !isMobileViewport"
                                   class="absolute z-[60] left-full top-0 ml-1.5"
@@ -1293,7 +1351,20 @@ defineExpose({
                                   />
                                 </div>
 
-                                <!-- Desktop flyout: Experts -->
+                                <!-- Desktop flyout: MCP（顶对齐左侧加号菜单） -->
+                                <div
+                                  v-if="showMcpCascade && !isMobileViewport"
+                                  class="absolute z-[60] left-full top-0 ml-1.5"
+                                  @click.stop
+                                >
+                                  <McpCascadeMenu
+                                    ref="mcpCascadeRef"
+                                    :attached-tool-names="attachedMcpToolNames"
+                                    @select="mountMcpFromCascade"
+                                  />
+                                </div>
+
+                                <!-- Desktop flyout: Experts（顶对齐左侧加号菜单） -->
                                 <div
                                   v-if="showExpertCascade && !isMobileViewport"
                                   class="absolute z-[60] left-full top-0 ml-1.5"
@@ -1330,13 +1401,13 @@ defineExpose({
                         >
                           <div class="absolute inset-0 bg-black/40" />
                           <div
-                            class="absolute inset-x-0 bottom-0 overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                            class="absolute inset-x-0 bottom-0 flex flex-col max-h-[min(80vh,36rem)] overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
                             @click.stop
                           >
                             <div class="shrink-0 flex justify-center pt-2 pb-1" aria-hidden="true">
                               <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
                             </div>
-                            <div class="flex items-center justify-between px-3 pb-1">
+                            <div class="flex items-center justify-between px-3 pb-1 shrink-0">
                               <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">技能中心</span>
                               <button
                                 type="button"
@@ -1346,13 +1417,61 @@ defineExpose({
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
                               </button>
                             </div>
-                            <SkillCascadeMenu
-                              ref="skillCascadeRef"
-                              full-width
-                              :agent-id="agentId"
-                              :attached-skill-ids="attachedSkillIds"
-                              @select="mountSkillFromCascade"
-                            />
+                            <div class="min-h-0 flex-1 overflow-hidden">
+                              <SkillCascadeMenu
+                                ref="skillCascadeRef"
+                                full-width
+                                :agent-id="agentId"
+                                :attached-skill-ids="attachedSkillIds"
+                                @select="mountSkillFromCascade"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </transition>
+                    </Teleport>
+
+                    <!-- Mobile drawer: MCP -->
+                    <Teleport to="body">
+                      <transition
+                        enter-active-class="transition ease-out duration-200"
+                        enter-from-class="opacity-0"
+                        enter-to-class="opacity-100"
+                        leave-active-class="transition ease-in duration-150"
+                        leave-from-class="opacity-100"
+                        leave-to-class="opacity-0"
+                      >
+                        <div
+                          v-if="showMcpCascade && isMobileViewport"
+                          class="fixed inset-0 z-[1200]"
+                          @click="closeMcpCascade"
+                        >
+                          <div class="absolute inset-0 bg-black/40" />
+                          <div
+                            class="absolute inset-x-0 bottom-0 flex flex-col max-h-[min(80vh,36rem)] overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                            @click.stop
+                          >
+                            <div class="shrink-0 flex justify-center pt-2 pb-1" aria-hidden="true">
+                              <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                            </div>
+                            <div class="flex items-center justify-between px-3 pb-1 shrink-0">
+                              <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">MCP 工具</span>
+                              <button
+                                type="button"
+                                class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 p-1"
+                                @click="closeMcpCascade"
+                              >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
+                            <div class="min-h-0 flex-1 overflow-hidden">
+                              <McpCascadeMenu
+                                ref="mcpCascadeRef"
+                                full-width
+                                :attached-tool-names="attachedMcpToolNames"
+                                @select="mountMcpFromCascade"
+                              />
+                            </div>
                           </div>
                         </div>
                       </transition>

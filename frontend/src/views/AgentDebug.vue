@@ -2257,6 +2257,57 @@ const loadMetadataDatasetSessionScope = async () => {
   }
 };
 
+const mountMcpToolToSession = async (
+  toolsInput:
+    | Array<{ id: string; name: string; description?: string; server_name?: string; scope?: string }>
+    | { id: string; name: string; description?: string; server_name?: string; scope?: string },
+) => {
+  if (!conversationId.value) {
+    showToast("请先开始会话", "error");
+    return;
+  }
+  const tools = (Array.isArray(toolsInput) ? toolsInput : [toolsInput])
+    .map((tool) => ({
+      id: String(tool?.id || "").trim(),
+      name: String(tool?.name || "").trim(),
+      description: tool?.description || "",
+      server_name: tool?.server_name || "",
+      scope: tool?.scope || "global",
+    }))
+    .filter((tool) => tool.id && tool.name);
+  if (!tools.length) return;
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      { headers: debugAuthHeaders() },
+    );
+    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
+    const existing = scope.mcp_tools || [];
+    const existingNames = new Set(existing.map((item: any) => String(item.name || "").trim()).filter(Boolean));
+    const existingIds = new Set(existing.map((item: any) => String(item.id || "").trim()).filter(Boolean));
+    const toAdd = tools.filter((tool) => !existingNames.has(tool.name) && !existingIds.has(tool.id));
+    if (!toAdd.length) {
+      showToast(tools.length === 1 ? "该 MCP 工具已挂载到本会话" : "所选 MCP 工具均已挂载到本会话", "info");
+      return;
+    }
+    await axios.put(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      {
+        ...scope,
+        mcp_tools: [...existing, ...toAdd],
+      },
+      { headers: debugAuthHeaders() },
+    );
+    showToast(
+      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0].name}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
+      "success",
+    );
+  } catch (error) {
+    console.warn("Failed to mount MCP tool to session", error);
+    showToast("挂载 MCP 工具失败", "error");
+  }
+};
+
 const pinMetadataDatasetToSession = async (datasetId: string) => {
   if (!conversationId.value) {
     showToast("请先开始会话", "error");
@@ -2269,7 +2320,7 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
       { headers: debugAuthHeaders() },
     );
-    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [] };
+    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
     if ((scope.datasets || []).some((item: any) => String(item.id || "").trim() === id)) {
       showToast("该数据集已设为本会话默认", "info");
       return;
@@ -2308,7 +2359,7 @@ const unpinMetadataDatasetFromSession = async (datasetId: string) => {
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
       { headers: debugAuthHeaders() },
     );
-    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [] };
+    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
     const nextDatasets = (scope.datasets || []).filter((item: any) => String(item.id || "").trim() !== id);
     const saved = await axios.put(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
@@ -4817,6 +4868,7 @@ onUnmounted(() => {
           @select-knowledge-base="openKnowledgePortal"
           @select-local-fs="showWorkspaceDrawer = true"
           @select-memory="openMemorySelector"
+          @select-mcp-tool="mountMcpToolToSession"
           @system-command="handleSystemCommand"
         >
         </ChatInput>
