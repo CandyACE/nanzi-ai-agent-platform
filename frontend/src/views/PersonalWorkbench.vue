@@ -17,18 +17,19 @@
         <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900">我的工作台</h1>
         <button
           type="button"
-          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="loading"
           :aria-busy="refreshing || loading"
-          :title="refreshing || loading ? '刷新中' : '刷新'"
+          :aria-label="refreshing || loading ? '刷新中' : '刷新工作台'"
           @click="refresh"
         >
           <svg
-            class="h-4 w-4"
+            class="h-3.5 w-3.5"
             :class="{ 'animate-spin': refreshing || loading }"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
+            aria-hidden="true"
           >
             <path
               stroke-linecap="round"
@@ -37,6 +38,7 @@
               d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
             />
           </svg>
+          <span>{{ refreshing || loading ? '刷新中' : '刷新' }}</span>
         </button>
       </div>
       <p class="mt-0.5 truncate text-sm text-gray-500">

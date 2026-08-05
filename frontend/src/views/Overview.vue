@@ -15,12 +15,14 @@
     <header>
       <div class="flex items-center justify-between gap-3">
         <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900">
-          {{ userInfo?.role === "admin" ? "系统概览" : "我的工作台" }}
+          {{ userInfo?.role === "admin" ? "系统概览" : "我的概览" }}
         </h1>
-        <div class="flex shrink-0 items-center gap-2">
+        <div class="overview-toolbar flex shrink-0 items-center gap-1">
+          <label class="sr-only" for="overview-period">统计周期</label>
           <select
+            id="overview-period"
             v-model="period"
-            class="rounded-lg border border-gray-300 bg-white py-1.5 pl-2.5 pr-8 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="overview-period-select cursor-pointer appearance-none rounded-lg border-0 bg-transparent py-1.5 pl-2.5 pr-7 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
             @change="onPeriodChange"
           >
             <option value="today">今日</option>
@@ -29,17 +31,19 @@
           </select>
           <button
             type="button"
-            class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 shadow-sm transition-all hover:bg-gray-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            class="overview-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="loading"
-            :title="loading ? '正在刷新...' : '刷新数据'"
+            :aria-busy="loading"
+            :aria-label="loading ? '刷新中' : '刷新概览数据'"
             @click="refreshData"
           >
             <svg
-              class="h-4 w-4"
+              class="h-3.5 w-3.5"
               :class="{ 'animate-spin': loading }"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              aria-hidden="true"
             >
               <path
                 stroke-linecap="round"
@@ -48,6 +52,7 @@
                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
               />
             </svg>
+            <span>{{ loading ? '刷新中' : '刷新' }}</span>
           </button>
         </div>
       </div>
@@ -516,3 +521,12 @@ onMounted(async () => {
   await refreshData();
 });
 </script>
+
+<style scoped>
+.overview-period-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  background-position: right 0.35rem center;
+  background-repeat: no-repeat;
+  background-size: 0.9rem;
+}
+</style>

@@ -38,6 +38,10 @@ def test_workbench_page_has_three_dynamic_states_without_zero_dashboard():
     assert "lg:grid-cols-2" in page
     assert "xl:grid-cols-3" in page
     assert "items-stretch" in page
+    assert "workbench-refresh-btn" in page
+    assert "hover:bg-blue-50 hover:text-blue-600" in page
+    assert "h-9 w-9" not in page.split("workbench-refresh-btn", 1)[1].split("</button>", 1)[0]
+    assert ">刷新<" in page or "'刷新'" in page
     assert "有 ${payload.value.resume_items.length} 项工作可以继续" in page
     assert "最近没有新的产出" in page
     assert "WorkbenchAttention" in page

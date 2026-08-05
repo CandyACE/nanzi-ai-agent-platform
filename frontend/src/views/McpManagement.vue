@@ -17,8 +17,8 @@ const activeScope = ref<'global' | 'personal'>(props.personalOnly ? 'personal' :
     class="flex flex-col space-y-4"
     :class="personalOnly ? 'min-h-0' : 'h-full overflow-hidden'"
   >
-    <!-- Header 标题栏：参考 Skills 工作台标题样式 -->
-    <div class="flex flex-shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <!-- Header：标题 + 徽章一行，说明另起一行，避免右栏 max-width 把末尾「生态」挤断 -->
+    <div class="flex flex-shrink-0 flex-col gap-1">
       <div class="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
         <h1
           class="font-bold tracking-tight text-gray-900 dark:text-white"
@@ -39,7 +39,7 @@ const activeScope = ref<'global' | 'personal'>(props.personalOnly ? 'personal' :
           个人私有
         </span>
       </div>
-      <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400 sm:max-w-md sm:text-right sm:text-sm">
+      <p class="mcp-page-desc text-xs leading-relaxed text-gray-500 dark:text-gray-400 sm:text-sm">
         {{
           personalOnly
             ? '登记并管理仅对自己可见的 MCP，可在对话中挂载使用'

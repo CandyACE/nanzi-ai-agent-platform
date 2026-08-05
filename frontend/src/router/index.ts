@@ -50,7 +50,7 @@ const router = createRouter({
           path: '',
           name: 'Overview',
           component: Overview,
-          meta: { perm: 'menu:dashboard' }
+          meta: { title: '概览', perm: 'menu:dashboard' }
         },
         {
           path: 'users',
