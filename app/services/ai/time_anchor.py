@@ -16,8 +16,20 @@ TIME_RANGE_GATE_PREFIX = "[TIME_RANGE_GATE]"
 
 @lru_cache(maxsize=1)
 def get_default_timezone() -> str:
-    """Return host IANA timezone for ChatBI time anchors (cached after first resolve)."""
-    tz_env = (os.environ.get("TZ") or "").strip()
+    """Return business timezone for ChatBI anchors.
+
+    Preference: platform timezone cache → TZ/PLATFORM_TIMEZONE env → host → Asia/Shanghai.
+    """
+    try:
+        from app.services.platform_timezone import get_cached_platform_timezone
+
+        cached = get_cached_platform_timezone()
+        if cached:
+            return cached
+    except Exception:
+        pass
+
+    tz_env = (os.environ.get("PLATFORM_TIMEZONE") or os.environ.get("TZ") or "").strip()
     if tz_env:
         candidate = tz_env.lstrip(":")
         if candidate:
@@ -37,7 +49,7 @@ def get_default_timezone() -> str:
     if from_localtime:
         return from_localtime
 
-    return "UTC"
+    return "Asia/Shanghai"
 
 
 def _timezone_from_localtime_link() -> str | None:

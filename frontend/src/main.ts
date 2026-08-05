@@ -74,3 +74,18 @@ app.directive('has-perm', {
 })
 
 app.mount('#app')
+
+// 拉取平台时区（公开配置），供任务中心等展示对齐业务时区
+void import('@/utils/axios')
+  .then(({ default: api }) => api.get('/api/portal/auth/config/public'))
+  .then((response) => {
+    const tz = response.data?.data?.platform_timezone
+    if (tz) {
+      return import('@/utils/platformTimezone').then(({ setPlatformTimezone }) => {
+        setPlatformTimezone(tz)
+      })
+    }
+  })
+  .catch(() => {
+    /* ignore bootstrap failures */
+  })

@@ -22,6 +22,7 @@ from app.models.saved_report import (
     PortalSavedReportRun,
     PortalSavedReportSubscription,
 )
+from app.services.platform_timezone import get_cached_platform_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -770,7 +771,14 @@ class TaskSchedulerService:
             'default': SQLAlchemyJobStore(url=db_url, tablename='ai_agent_scheduler_jobs')
         }
         from pytz import timezone
-        tz = timezone('Asia/Shanghai')
+        from app.services.platform_timezone import get_cached_platform_timezone, refresh_platform_timezone
+
+        try:
+            await refresh_platform_timezone()
+        except Exception as exc:
+            logger.warning("Failed to refresh platform timezone before scheduler start: %s", exc)
+
+        tz = timezone(get_cached_platform_timezone())
 
         self._scheduler = AsyncIOScheduler(jobstores=job_stores, timezone=tz)
         self._scheduler.start()
@@ -802,7 +810,11 @@ class TaskSchedulerService:
         await self.reschedule_third_party_user_sync()
 
         now = datetime.now(tz)
-        logger.info(f"🚀 Agent Task Scheduler started (Fixed Serialization). Current Scheduler Time: {now}")
+        logger.info(
+            "🚀 Agent Task Scheduler started (tz=%s). Current Scheduler Time: %s",
+            get_cached_platform_timezone(),
+            now,
+        )
         await self.reload_tasks()
         await self.reload_saved_report_subscriptions()
 
@@ -812,6 +824,17 @@ class TaskSchedulerService:
                 self._scheduler.shutdown()
             self._scheduler = None
             logger.info("🛑 Agent Task Scheduler stopped.")
+
+    async def apply_platform_timezone_change(self) -> None:
+        """Reboot scheduler so Cron jobs pick up the new platform timezone."""
+        if not self._scheduler:
+            return
+        logger.info(
+            "♻️ Reloading scheduler after platform timezone change → %s",
+            get_cached_platform_timezone(),
+        )
+        await self.stop()
+        await self.start()
 
     async def reload_tasks(self):
         async with AsyncSessionLocal() as session:
@@ -841,7 +864,10 @@ class TaskSchedulerService:
         if subscription.status == "active":
             self._scheduler.add_job(
                 _saved_report_subscription_wrapper,
-                CronTrigger.from_crontab(subscription.cron_expr, timezone=subscription.timezone or "Asia/Shanghai"),
+                CronTrigger.from_crontab(
+                    subscription.cron_expr,
+                    timezone=subscription.timezone or get_cached_platform_timezone(),
+                ),
                 id=job_id, args=[subscription.id], replace_existing=True, misfire_grace_time=3600,
             )
 
@@ -873,7 +899,10 @@ class TaskSchedulerService:
             # Use top-level wrapper function
             self._scheduler.add_job(
                 _scheduled_task_wrapper,
-                CronTrigger.from_crontab(task.cron_expr),
+                CronTrigger.from_crontab(
+                    task.cron_expr,
+                    timezone=get_cached_platform_timezone(),
+                ),
                 id=job_id,
                 args=[task.id],
                 replace_existing=True,
@@ -914,7 +943,7 @@ class TaskSchedulerService:
         from pytz import timezone
         from app.services.user_sync_service import UserSyncService
 
-        tz = timezone("Asia/Shanghai")
+        tz = timezone(get_cached_platform_timezone())
         job_id = "system_third_party_user_sync"
 
         if self._scheduler.get_job(job_id):

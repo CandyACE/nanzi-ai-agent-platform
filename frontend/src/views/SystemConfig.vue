@@ -260,7 +260,7 @@ interface ConfigItem {
 const configGroups = ref<{ [category: string]: ConfigItem[] }>({})
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
-  const order = ['agent', 'metadata', 'data_api', 'knowledge', 'general', 'other']
+  const order = ['general', 'agent', 'metadata', 'data_api', 'knowledge', 'other']
   const keys = Object.keys(configGroups.value)
   return keys.sort((a, b) => {
     const idxA = order.indexOf(a)
@@ -671,6 +671,7 @@ const getCategoryTip = (key: string) => {
 * 如果用户提问多为口语化日常表达、长句描述，或包含大量同义词（如“查找”与“搜索”），调高该值（如 0.7 ~ 0.85）。`,
     'ragflow_metadata_top_k': '检索数据库表/字段描述时，最大召回的候选文档数量。值越大，召回的内容越多，但会增加 Token 消耗。',
     'sql_execution_mode': '控制生成的 SQL 查询的执行位置。remote 表示通过安全的远程微服务沙箱执行，local 表示直连本地配置好的数据源连接池执行。',
+    'platform_timezone': '平台业务时区（IANA）。用于定时任务、当前时间锚点与前端时间展示。默认 Asia/Shanghai。修改后会刷新缓存并尝试重载调度器。外部数据库服务器时区不受此项控制。',
     'chatbi_sample_knowledge_base': 'ChatBI 经验库在 RAGFlow 中自动创建和同步对应的知识库 ID（由系统自动校验与测试连接生成，不可手动修改）。',
     'chatbi_sample_top_k': '检索用户提问时召回的最相似问答案例（Few-shot）最大限制条数。值越大参考条数越多，但会占据更多的 Prompt 上下文。',
     'chatbi_sample_similarity_threshold': `【匹配相似度阈值 (chatbi_sample_similarity_threshold)】
@@ -899,6 +900,17 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'embed_model_name',
       'embed_dimensions'
     ]
+    list.sort((a, b) => {
+      const idxA = order.indexOf(a.key)
+      const idxB = order.indexOf(b.key)
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB
+      if (idxA !== -1) return -1
+      if (idxB !== -1) return 1
+      return a.key.localeCompare(b.key)
+    })
+  }
+  if (category === 'general') {
+    const order = ['platform_timezone']
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
       const idxB = order.indexOf(b.key)
@@ -1795,6 +1807,25 @@ onMounted(() => {
                                 <option value="remote">remote (走远程执行服务)</option>
                                 <option value="local">local (本地数据源直连执行)</option>
                              </select>
+                          </div>
+                          <div v-else-if="item.key === 'platform_timezone'">
+                             <select
+                               v-model="item.value"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                             >
+                                <option value="Asia/Shanghai">Asia/Shanghai（中国标准时间，推荐）</option>
+                                <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
+                                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                                <option value="Asia/Singapore">Asia/Singapore</option>
+                                <option value="UTC">UTC</option>
+                                <option value="America/Los_Angeles">America/Los_Angeles</option>
+                                <option value="America/New_York">America/New_York</option>
+                                <option value="Europe/London">Europe/London</option>
+                             </select>
+                             <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                               影响定时任务 Cron「每天 08:00」的解释与下次运行时间，以及平台时间展示。无法修改外部 MySQL 服务器时区时，仍以本项 + 应用容器 TZ 为准。
+                             </p>
                           </div>
                           <div v-else-if="item.is_secret" class="relative">
                              <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />

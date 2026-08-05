@@ -306,11 +306,20 @@ async def get_public_config(
     获取不需要登录即可访问的系统配置（如是否启用 SSO）
     """
     from app.services.config_service import ConfigService
+    from app.services.platform_timezone import (
+        DEFAULT_PLATFORM_TIMEZONE,
+        PLATFORM_TIMEZONE_CONFIG_KEY,
+        get_platform_timezone,
+    )
+
     sso_enabled = await ConfigService.get("yovole_sso_enabled") == "true"
+    platform_timezone = await get_platform_timezone()
     return {
         "status": "success",
         "data": {
-            "yovole_sso_enabled": sso_enabled
+            "yovole_sso_enabled": sso_enabled,
+            "platform_timezone": platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
+            PLATFORM_TIMEZONE_CONFIG_KEY: platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
         }
     }
 

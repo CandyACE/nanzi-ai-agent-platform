@@ -27,8 +27,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+ENV PLATFORM_TIMEZONE=Asia/Shanghai
 
-# 系统依赖：Oracle(libaio)、SQL Server(unixODBC + msodbcsql18)
+# 系统依赖：Oracle(libaio)、SQL Server(unixODBC + msodbcsql18)、时区数据
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -43,7 +45,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     jq \
     unzip \
+    tzdata \
     netcat-openbsd \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
     && (apt-get install -y --no-install-recommends libaio1 \
         || apt-get install -y --no-install-recommends libaio1t64) \
     && ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 2>/dev/null || true \
