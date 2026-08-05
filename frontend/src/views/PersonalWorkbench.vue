@@ -69,6 +69,11 @@
       {{ bannerMessage }}
     </div>
 
+    <WorkbenchPersonalResources
+      v-if="payload?.personal_resources?.length"
+      :items="payload.personal_resources"
+    />
+
     <div v-if="loading && !payload" class="space-y-3">
       <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-100" />
     </div>
@@ -203,6 +208,7 @@ import WorkbenchAgents from "@/components/workbench/WorkbenchAgents.vue"
 import WorkbenchScenarios from "@/components/workbench/WorkbenchScenarios.vue"
 import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextScheduled.vue"
 import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
+import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
 import type { WorkbenchAgent, WorkbenchItem, WorkbenchScenario } from "@/types/workbench"

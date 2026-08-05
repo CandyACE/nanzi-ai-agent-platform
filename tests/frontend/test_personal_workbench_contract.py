@@ -48,6 +48,8 @@ def test_workbench_page_has_three_dynamic_states_without_zero_dashboard():
     assert "WorkbenchRunning" in page
     assert "payload.running_items" in page
     assert "running_items" in page
+    assert "WorkbenchPersonalResources" in page
+    assert "personal_resources" in page
     assert "next_scheduled_item" in page
     assert "待处理 0" not in page
     assert "最新结果 0" not in page
@@ -68,6 +70,9 @@ def test_workbench_route_navigation_and_actions_are_closed():
     assert "path: 'workbench'" in router
     assert "name: 'PersonalWorkbench'" in router
     assert "我的工作台" in dashboard
+    assert 'if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-3 sm:pb-4 md:px-8 md:pt-4 md:pb-8"' in dashboard
+    assert "const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench')" in dashboard
+    assert ':to="homeRoute"' in dashboard
     assert "router.push('/dashboard/workbench')" in login
     for action in (
         "open_task_log",
@@ -115,6 +120,21 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     assert "source" in running
     assert "agentscope_pending" not in running
     assert "open-item" in running
+
+
+def test_workbench_personal_resource_cards_link_to_personal_tabs():
+    page = _read("frontend/src/views/PersonalWorkbench.vue")
+    cards = _read("frontend/src/components/workbench/WorkbenchPersonalResources.vue")
+    types = _read("frontend/src/types/workbench.ts")
+
+    assert "WorkbenchPersonalResources" in page
+    assert "personal_resources" in page
+    assert "personal_resources" in types
+    assert 'path: "/dashboard/personal"' in cards
+    assert "query: { tab: item.tab }" in cards
+    assert "formatTokenCompact" in cards
+    for key in ("memory", "tokens", "data", "skills", "mcp", "tasks"):
+        assert key in _read("app/services/workbench_home_service.py")
 
 
 def test_task_center_accepts_workbench_task_target():

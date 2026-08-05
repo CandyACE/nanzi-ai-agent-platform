@@ -129,12 +129,13 @@ import NotificationConfigs from '../components/personal/NotificationConfigs.vue'
 import DataPortalHome from './DataPortalHome.vue'
 import SkillsManagement from './SkillsManagement.vue'
 import McpManagement from './McpManagement.vue'
+import TaskCenter from './TaskCenter.vue'
 import { useRoute, useRouter } from 'vue-router'
 
-type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp'
+type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'tasks'
 const route = useRoute()
 const router = useRouter()
-const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp']
+const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
 const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
 const skillsInitialId = computed(() => String(route.query.skill_id || '').trim())
 const permissionsSubTab = ref<'list' | 'about'>('list')
@@ -661,6 +662,17 @@ onMounted(() => {
                 >
                     我的 MCP
                 </button>
+                <button
+                    @click="activeTab = 'tasks'"
+                    :class="[
+                        activeTab === 'tasks'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+                        'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
+                    ]"
+                >
+                    我的任务
+                </button>
                 <button 
                     @click="activeTab = 'notifications'"
                     :class="[
@@ -675,7 +687,7 @@ onMounted(() => {
             </nav>
         </div>
 
-        <div :class="(activeTab === 'data' || activeTab === 'skills' || activeTab === 'mcp') ? 'pt-4 sm:pt-5' : 'px-4 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6'">
+        <div :class="(activeTab === 'data' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'tasks') ? 'pt-4 sm:pt-5' : 'px-4 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6'">
         <!-- Info Tab -->
         <div v-if="activeTab === 'info'">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
@@ -1257,6 +1269,10 @@ onMounted(() => {
 
         <div v-else-if="activeTab === 'mcp'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">
             <McpManagement personal-only />
+        </div>
+
+        <div v-else-if="activeTab === 'tasks'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">
+            <TaskCenter personal-only />
         </div>
 
         </div>

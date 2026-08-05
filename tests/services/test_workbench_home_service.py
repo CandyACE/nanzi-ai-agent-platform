@@ -153,7 +153,51 @@ def test_source_status_is_completed_for_all_sources():
     }
 
 
-def test_running_items_are_sorted_capped_and_keep_source_metadata():
+def test_personal_resources_are_normalized_into_payload():
+    payload = _payload(
+        personal_resources=[
+            {
+                "key": "tokens",
+                "label": "我的 Token",
+                "value": 12345,
+                "unit": "本月",
+                "tab": "tokens",
+                "status": "ok",
+            },
+            {
+                "key": "skills",
+                "label": "我的技能",
+                "value": 0,
+                "unit": "个",
+                "tab": "skills",
+                "status": "empty",
+            },
+        ]
+    )
+
+    assert [item["key"] for item in payload["personal_resources"]] == [
+        "memory",
+        "tokens",
+        "data",
+        "skills",
+        "mcp",
+        "tasks",
+    ]
+    tokens = next(item for item in payload["personal_resources"] if item["key"] == "tokens")
+    assert tokens["value"] == 12345
+    assert tokens["unit"] == "本月"
+    assert tokens["tab"] == "tokens"
+    skills = next(item for item in payload["personal_resources"] if item["key"] == "skills")
+    assert skills["status"] == "empty"
+
+
+def test_personal_resources_default_to_empty_shell_when_missing():
+    payload = _payload()
+    assert len(payload["personal_resources"]) == 6
+    assert payload["personal_resources"][0]["key"] == "memory"
+    assert payload["personal_resources"][-1]["key"] == "tasks"
+    assert all(item["tab"] for item in payload["personal_resources"])
+
     payload = _payload(
         running_items=[
             {

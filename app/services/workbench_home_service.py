@@ -5,7 +5,7 @@ import inspect
 import logging
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -20,6 +20,15 @@ SOURCE_NAMES = (
     "agents",
     "scenarios",
     "running",
+)
+
+PERSONAL_RESOURCE_DEFS = (
+    {"key": "memory", "label": "我的记忆", "unit": "条", "tab": "memory"},
+    {"key": "tokens", "label": "我的 Token", "unit": "本月", "tab": "tokens"},
+    {"key": "data", "label": "我的数据门户", "unit": "份报表", "tab": "data"},
+    {"key": "skills", "label": "我的技能", "unit": "个", "tab": "skills"},
+    {"key": "mcp", "label": "我的 MCP", "unit": "个服务", "tab": "mcp"},
+    {"key": "tasks", "label": "我的任务", "unit": "个", "tab": "tasks"},
 )
 
 SEVERITY_ORDER = {"critical": 3, "warning": 2, "info": 1}
@@ -153,6 +162,38 @@ def _complete_source_status(source_status: Mapping[str, str]) -> Dict[str, str]:
     return {name: str(source_status.get(name) or "empty") for name in SOURCE_NAMES}
 
 
+def _normalize_personal_resources(
+    personal_resources: Sequence[Mapping[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
+    by_key = {
+        str(item.get("key")): dict(item)
+        for item in (personal_resources or [])
+        if isinstance(item, Mapping) and item.get("key")
+    }
+    normalized: List[Dict[str, Any]] = []
+    for spec in PERSONAL_RESOURCE_DEFS:
+        raw = by_key.get(spec["key"], {})
+        value = raw.get("value")
+        try:
+            numeric = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            numeric = 0
+        status = str(raw.get("status") or ("ok" if numeric > 0 else "empty"))
+        if status not in {"ok", "empty", "error"}:
+            status = "empty"
+        normalized.append(
+            {
+                "key": spec["key"],
+                "label": str(raw.get("label") or spec["label"]),
+                "value": numeric,
+                "unit": str(raw.get("unit") or spec["unit"]),
+                "tab": str(raw.get("tab") or spec["tab"]),
+                "status": status,
+            }
+        )
+    return normalized
+
+
 def build_workbench_payload(
     *,
     now: datetime,
@@ -164,6 +205,7 @@ def build_workbench_payload(
     scenario_items: Sequence[Dict[str, Any]],
     source_status: Mapping[str, str],
     running_items: Sequence[Dict[str, Any]] = (),
+    personal_resources: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
     attention = normalize_notifications(notifications)
     attention.extend(item for item in task_items if item.get("needs_attention"))
@@ -185,6 +227,7 @@ def build_workbench_payload(
         ][:4],
         "running_items": running,
         "next_scheduled_item": _next_scheduled(task_items),
+        "personal_resources": _normalize_personal_resources(personal_resources),
         "source_status": _complete_source_status(source_status),
         "generated_at": now.isoformat(),
     }
@@ -385,6 +428,161 @@ def _load_scenarios(user: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return sorted(items, key=lambda item: bool(item["recommended"]), reverse=True)
 
 
+def _resource_card(
+    key: str,
+    *,
+    value: int,
+    status: str | None = None,
+    unit: str | None = None,
+) -> Dict[str, Any]:
+    spec = next(item for item in PERSONAL_RESOURCE_DEFS if item["key"] == key)
+    numeric = max(0, int(value or 0))
+    return {
+        "key": key,
+        "label": spec["label"],
+        "value": numeric,
+        "unit": unit or spec["unit"],
+        "tab": spec["tab"],
+        "status": status or ("ok" if numeric > 0 else "empty"),
+    }
+
+
+async def _count_memory_items(user_id: int) -> int:
+    from app.services.ai.daily_summary_service import DailySummaryService
+    from app.services.ai.memory_index_service import MemoryIndexService
+    from app.services.ai.memory_service import ltm_service
+
+    uid = str(user_id)
+    sessions = await MemoryIndexService.list_summaries(uid, limit=200)
+    dailies = await DailySummaryService.list_daily_summaries(uid, limit=200)
+    ltm = await ltm_service.fetch_memory(uid)
+    preferences = len(ltm) if isinstance(ltm, Mapping) else 0
+    return len(sessions or []) + len(dailies or []) + max(0, preferences)
+
+
+async def _count_month_tokens(db: AsyncSession, user: Mapping[str, Any], now: datetime) -> int:
+    from app.models.audit import AgentExecutionHistory
+
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    username = str(user.get("user_name") or "")
+    stmt = select(func.coalesce(func.sum(AgentExecutionHistory.total_tokens), 0)).where(
+        AgentExecutionHistory.created_at >= month_start,
+        AgentExecutionHistory.created_at <= now,
+        AgentExecutionHistory.username == username,
+    )
+    value = (await db.execute(stmt)).scalar()
+    return int(value or 0)
+
+
+async def _count_data_portal_reports(
+    db: AsyncSession,
+    user_id: int,
+    role_ids: Sequence[int],
+) -> int:
+    from app.models.saved_report import PortalSavedReport, PortalSavedReportShare
+
+    visible_conditions = [PortalSavedReport.owner_user_id == user_id]
+    visible_conditions.append(
+        PortalSavedReport.shares.any(
+            (PortalSavedReportShare.target_type == "user")
+            & (PortalSavedReportShare.target_id == user_id)
+        )
+    )
+    if role_ids:
+        visible_conditions.append(
+            PortalSavedReport.shares.any(
+                (PortalSavedReportShare.target_type == "role")
+                & (PortalSavedReportShare.target_id.in_([int(v) for v in role_ids]))
+            )
+        )
+    stmt = select(func.count()).select_from(PortalSavedReport).where(
+        or_(*visible_conditions),
+        PortalSavedReport.status == "active",
+    )
+    return int((await db.execute(stmt)).scalar() or 0)
+
+
+def _count_personal_skills(user: Mapping[str, Any]) -> int:
+    import os
+
+    from app.services.ai.skill_resolver import get_user_personal_skills_dir
+
+    skills_dir = get_user_personal_skills_dir(dict(user))
+    if not skills_dir or not os.path.isdir(skills_dir):
+        return 0
+    return sum(
+        1
+        for name in os.listdir(skills_dir)
+        if not name.startswith(".") and os.path.isdir(os.path.join(skills_dir, name))
+    )
+
+
+async def _count_personal_mcp(db: AsyncSession, user_id: int) -> int:
+    from app.models.mcp import McpServer
+
+    stmt = select(func.count()).select_from(McpServer).where(
+        McpServer.scope == "personal",
+        McpServer.user_id == user_id,
+    )
+    return int((await db.execute(stmt)).scalar() or 0)
+
+
+async def _count_personal_tasks(db: AsyncSession, user_id: int) -> int:
+    from app.models.saved_report import PortalSavedReportSubscription
+    from app.models.task import AgentScheduledTask
+
+    agent_count = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(AgentScheduledTask).where(
+                    AgentScheduledTask.user_id == user_id
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    report_count = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(PortalSavedReportSubscription).where(
+                    PortalSavedReportSubscription.user_id == user_id
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    return agent_count + report_count
+
+
+async def _load_personal_resources(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    role_ids: Sequence[int],
+    user: Mapping[str, Any],
+    now: datetime,
+) -> List[Dict[str, Any]]:
+    cards: Dict[str, Dict[str, Any]] = {}
+
+    async def _put(key: str, loader):
+        try:
+            value = loader()
+            if inspect.isawaitable(value):
+                value = await value
+            cards[key] = _resource_card(key, value=int(value or 0))
+        except Exception:
+            logger.warning("Workbench personal resource %s failed", key, exc_info=True)
+            cards[key] = _resource_card(key, value=0, status="error")
+
+    await _put("memory", lambda: _count_memory_items(user_id))
+    await _put("tokens", lambda: _count_month_tokens(db, user, now))
+    await _put("data", lambda: _count_data_portal_reports(db, user_id, role_ids))
+    await _put("skills", lambda: _count_personal_skills(user))
+    await _put("mcp", lambda: _count_personal_mcp(db, user_id))
+    await _put("tasks", lambda: _count_personal_tasks(db, user_id))
+    return _normalize_personal_resources([cards[spec["key"]] for spec in PERSONAL_RESOURCE_DEFS])
+
+
 class WorkbenchHomeService:
     @staticmethod
     async def build(
@@ -407,6 +605,13 @@ class WorkbenchHomeService:
         running_items, running_status = await _load_running_items(db, user_id)
         agents, agent_status = await _safe_load("agents", lambda: _load_agents(db, user))
         scenarios, scenario_status = await _safe_load("scenarios", lambda: _load_scenarios(user))
+        personal_resources = await _load_personal_resources(
+            db,
+            user_id=user_id,
+            role_ids=role_ids,
+            user=user,
+            now=current_time,
+        )
         portal = portal if isinstance(portal, dict) else {}
         reports = portal.get("reports", [])
         conversations = portal.get("conversations", [])
@@ -420,6 +625,7 @@ class WorkbenchHomeService:
             agent_items=agents,
             scenario_items=scenarios,
             running_items=running_items,
+            personal_resources=personal_resources,
             source_status={
                 "notifications": notification_status,
                 "tasks": task_status,

@@ -15,21 +15,35 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
 
+const props = withDefaults(defineProps<{
+  /** 个人中心嵌入：管理自己的任务，不依赖 menu:task_center / element:task:manage */
+  personalOnly?: boolean
+}>(), {
+  personalOnly: false,
+})
+
 const router = useRouter()
 const route = useRoute()
 
 // Auth & Permission
 const cachedUser = localStorage.getItem('user_info')
 const userInfo = ref(cachedUser ? JSON.parse(cachedUser) : null)
+const isTaskOwner = (task: AgentTask) =>
+  String(task.user_id) === String(userInfo.value?.user_id)
 const canManage = computed(() => {
+  if (props.personalOnly) return true
   if (!userInfo.value) return false
   if (userInfo.value.role === 'admin') return true
   const userElements = userInfo.value.permissions?.elements || []
   return userElements.includes('element:task:manage')
 })
-const canManageTask = (task: AgentTask) => task.task_type === 'saved_report'
-  ? String(task.user_id) === String(userInfo.value?.user_id)
-  : canManage.value
+const canManageTask = (task: AgentTask) => {
+  if (task.task_type === 'saved_report') return isTaskOwner(task)
+  if (props.personalOnly) {
+    return isTaskOwner(task) || userInfo.value?.role === 'admin'
+  }
+  return canManage.value
+}
 
 // View & Filter States
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('task_center_view_mode') as 'grid' | 'list') || 'grid')
@@ -276,14 +290,21 @@ const cronDescription = computed(() => {
 })
 
 // Filtered Tasks
+const scopedTasks = computed(() => {
+  if (props.personalOnly) {
+    return tasks.value.filter((task) => isTaskOwner(task))
+  }
+  return tasks.value
+})
+
 const taskTypeCounts = computed(() => ({
-  all: tasks.value.length,
-  agent: tasks.value.filter(task => task.task_type !== 'saved_report').length,
-  saved_report: tasks.value.filter(task => task.task_type === 'saved_report').length,
+  all: scopedTasks.value.length,
+  agent: scopedTasks.value.filter(task => task.task_type !== 'saved_report').length,
+  saved_report: scopedTasks.value.filter(task => task.task_type === 'saved_report').length,
 }))
 
 const filteredTasks = computed(() => {
-  let result = [...tasks.value]
+  let result = [...scopedTasks.value]
   if (taskTypeFilter.value === 'agent') {
     result = result.filter(task => task.task_type !== 'saved_report')
   } else if (taskTypeFilter.value === 'saved_report') {
@@ -633,8 +654,20 @@ onMounted(async () => {
     <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
-        <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">任务调度台</h1>
+        <h1
+          class="font-bold text-gray-900"
+          :class="personalOnly ? 'text-xl' : 'text-xl sm:text-2xl'"
+        >
+          {{ personalOnly ? '我的任务' : '任务调度台' }}
+        </h1>
+        <span
+          v-if="personalOnly"
+          class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"
+        >
+          个人私有
+        </span>
         <button
+          v-if="!personalOnly"
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
           title="设计规范"

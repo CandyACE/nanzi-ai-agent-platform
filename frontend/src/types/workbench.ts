@@ -45,6 +45,15 @@ export interface WorkbenchScenario {
   target: WorkbenchTarget
 }
 
+export interface WorkbenchPersonalResource {
+  key: string
+  label: string
+  value: number
+  unit: string
+  tab: string
+  status: WorkbenchSourceState
+}
+
 export interface WorkbenchHomePayload {
   mode: WorkbenchMode
   attention: WorkbenchItem[]
@@ -54,6 +63,7 @@ export interface WorkbenchHomePayload {
   recommended_scenarios: WorkbenchScenario[]
   running_items: WorkbenchItem[]
   next_scheduled_item: WorkbenchItem | null
+  personal_resources: WorkbenchPersonalResource[]
   source_status: Record<string, WorkbenchSourceState>
   generated_at: string
 }
