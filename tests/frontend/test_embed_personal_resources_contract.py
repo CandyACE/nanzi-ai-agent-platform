@@ -26,3 +26,21 @@ def test_personal_resources_modal_shell_and_tabs():
     assert "activeTab" in modal
     # Embed 弹层须传 delegate-navigation；PersonalCenter 仅传 embedded
     assert "delegate-navigation" in modal or "delegateNavigation" in modal
+
+
+def test_welcome_dashboard_renders_personal_resources_before_capabilities():
+    dashboard = _source("frontend/src/components/embed/WelcomeDashboard.vue")
+    assert "WorkbenchPersonalResources" in dashboard
+    assert "open-personal-resources" in dashboard
+    resources_pos = dashboard.find("open-personal-resources")
+    caps_pos = dashboard.find("grid-cols-1 sm:grid-cols-3")
+    assert resources_pos != -1 and caps_pos != -1
+    assert resources_pos < caps_pos
+
+
+def test_embed_chat_wires_workbench_home_and_personal_resources_modal():
+    embed = _source("frontend/src/views/EmbedChat.vue")
+    assert "PersonalResourcesModal" in embed
+    assert "useWorkbenchHome" in embed or "/api/portal/workbench/home" in embed
+    assert "personalResourceFallbackItems" in embed
+    assert "open-personal-resources" in embed or "openPersonalResources" in embed

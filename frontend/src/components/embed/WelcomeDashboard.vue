@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useBranding } from '@/composables/useBranding';
+import WorkbenchPersonalResources from '@/components/workbench/WorkbenchPersonalResources.vue';
+import type { WorkbenchPersonalResource } from '@/types/workbench';
 
 const { branding } = useBranding();
 
@@ -8,6 +10,7 @@ const props = defineProps<{
   welcomeMessage: string;
   slashCommands: any[];
   welcomeCards?: Array<{ icon: string; title: string; subtitle: string; prompt: string }>;
+  personalResources?: WorkbenchPersonalResource[];
 }>();
 
 const emit = defineEmits<{
@@ -15,6 +18,7 @@ const emit = defineEmits<{
   (e: 'open-data-portal'): void;
   (e: 'select-knowledge-base'): void;
   (e: 'open-workspace'): void;
+  (e: 'open-personal-resources', tab: string): void;
 }>();
 
 type CapabilityAction = 'data-portal' | 'knowledge-base' | 'workspace';
@@ -99,6 +103,14 @@ const recommendedPrompts = computed(() => {
       <p class="text-gray-500 dark:text-gray-400 text-sm max-w-md mx-auto leading-relaxed">
         {{ welcomeMessage || ('我是您的' + (branding.default_agent_name || 'NanZi · AI') + '，准备好帮您处理任何任务了。') }}
       </p>
+    </div>
+
+    <div v-if="personalResources?.length" class="w-full mb-8 sm:mb-10">
+      <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-3 px-1">我的资源</p>
+      <WorkbenchPersonalResources
+        :items="personalResources"
+        @select="(item) => emit('open-personal-resources', item.tab)"
+      />
     </div>
 
     <!-- Version-configured cards replace fixed capabilities only when enabled. -->
