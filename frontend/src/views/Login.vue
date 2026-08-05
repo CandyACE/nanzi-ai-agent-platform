@@ -161,6 +161,11 @@ const fetchPublicConfig = async () => {
         const response = await axios.get('/api/portal/auth/config/public')
         if (response.data?.status === 'success') {
             ssoEnabled.value = response.data.data?.yovole_sso_enabled === true
+            const tz = response.data.data?.platform_timezone
+            if (tz) {
+                const { setPlatformTimezone } = await import('@/utils/platformTimezone')
+                setPlatformTimezone(tz)
+            }
             if (ssoEnabled.value && !branding.value.hide_login_sso) {
                 activeTab.value = 'sso'
             }

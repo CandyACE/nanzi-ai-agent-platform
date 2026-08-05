@@ -57,6 +57,16 @@ async def lifespan(app: FastAPI):
     from app.core.http_client import GlobalHttpClient
     await GlobalHttpClient.get_client()
     
+    # Platform timezone cache (before scheduler)
+    try:
+        from app.services.platform_timezone import refresh_platform_timezone
+        from app.services.ai.time_anchor import get_default_timezone
+
+        await refresh_platform_timezone()
+        get_default_timezone.cache_clear()
+    except Exception as exc:
+        logging.warning("Failed to refresh platform timezone on startup: %s", exc)
+
     # Start Task Scheduler
     from app.services.ai.scheduler_service import scheduler_service
     await scheduler_service.start()

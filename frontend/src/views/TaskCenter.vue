@@ -13,6 +13,7 @@ import {
   PauseCircleIcon
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
+import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
 
 const router = useRouter()
 const route = useRoute()
@@ -556,12 +557,12 @@ const toggleSessionStep = async (turn: any) => {
 
 const formatDate = (d: string | undefined) => {
   if (!d) return '从未执行'
-  return new Date(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return formatInPlatformTimezoneCompact(d)
 }
 
 const formatNextRunCompact = (d: string | undefined) => {
   if (!d) return '暂无计划'
-  return new Date(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+  return formatInPlatformTimezoneCompact(d)
 }
 
 const formatTaskSchedule = (cron: string) => {

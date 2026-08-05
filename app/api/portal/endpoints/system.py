@@ -564,6 +564,34 @@ async def update_system_configs(
         updates = [item.model_dump() for item in request.updates]
         # Pass the username to the service for audit logging
         await ConfigService.bulk_update(updates, changed_by=user.get("user_name", "admin"))
+
+        touched_keys = {str(item.get("key") or "") for item in updates}
+        if "platform_timezone" in touched_keys:
+            from app.services.platform_timezone import (
+                PLATFORM_TIMEZONE_CONFIG_KEY,
+                refresh_platform_timezone,
+                validate_timezone_name,
+            )
+            from app.services.ai.scheduler_service import scheduler_service
+            from app.services.ai.time_anchor import get_default_timezone
+
+            # Re-validate persisted value and refresh caches
+            raw = await ConfigService.get(PLATFORM_TIMEZONE_CONFIG_KEY, "Asia/Shanghai")
+            validated = validate_timezone_name(raw)
+            if validated != raw:
+                await ConfigService.update_config_value(
+                    PLATFORM_TIMEZONE_CONFIG_KEY,
+                    validated,
+                    changed_by=user.get("user_name", "admin"),
+                    change_reason="Normalize invalid platform_timezone",
+                )
+            await refresh_platform_timezone()
+            get_default_timezone.cache_clear()
+            try:
+                await scheduler_service.apply_platform_timezone_change()
+            except Exception as sched_exc:
+                logging.warning(f"Scheduler reload after timezone change failed: {sched_exc}")
+
         return {"status": "success", "message": "Configurations updated successfully."}
     except Exception as e:
         logging.error(f"Failed to update configs: {e}")
