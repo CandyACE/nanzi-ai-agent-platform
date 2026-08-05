@@ -19,6 +19,7 @@ SOURCE_NAMES = (
     "conversations",
     "agents",
     "scenarios",
+    "running",
 )
 
 SEVERITY_ORDER = {"critical": 3, "warning": 2, "info": 1}
@@ -122,6 +123,27 @@ def _sort_limit(
     return sorted(_dedupe(items), key=key, reverse=True)[:limit]
 
 
+def _dedupe_conversations(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep the newest workbench row for each conversation target."""
+    latest: Dict[str, Dict[str, Any]] = {}
+    without_target: List[Dict[str, Any]] = []
+    for item in items:
+        target = item.get("target") or {}
+        conversation_id = target.get("conversation_id") or item.get("conversation_id")
+        if not conversation_id:
+            without_target.append(dict(item))
+            continue
+
+        key = str(conversation_id)
+        current = latest.get(key)
+        occurred_at = str(item.get("occurred_at") or "")
+        current_occurred_at = str((current or {}).get("occurred_at") or "")
+        if current is None or occurred_at > current_occurred_at:
+            latest[key] = dict(item)
+
+    return [*without_target, *latest.values()]
+
+
 def _next_scheduled(task_items: Sequence[Dict[str, Any]]) -> Dict[str, Any] | None:
     scheduled = [item for item in task_items if item.get("next_run_at")]
     return min(scheduled, key=lambda item: str(item.get("next_run_at"))) if scheduled else None
@@ -141,13 +163,15 @@ def build_workbench_payload(
     agent_items: Sequence[Dict[str, Any]],
     scenario_items: Sequence[Dict[str, Any]],
     source_status: Mapping[str, str],
+    running_items: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
     attention = normalize_notifications(notifications)
     attention.extend(item for item in task_items if item.get("needs_attention"))
     attention = _sort_limit(attention, limit=5, severity_first=True)
     latest_results = _sort_limit(report_items, limit=6)
-    resume_items = _sort_limit(conversation_items, limit=4)
-    has_history = bool(attention or latest_results or resume_items)
+    resume_items = _sort_limit(_dedupe_conversations(conversation_items), limit=4)
+    running = _sort_limit(running_items, limit=8)
+    has_history = bool(attention or latest_results or resume_items or running)
     mode = "active" if attention else ("quiet" if has_history else "new_user")
 
     return {
@@ -159,6 +183,7 @@ def build_workbench_payload(
         "recommended_scenarios": [
             item for item in scenario_items if item.get("available", True)
         ][:4],
+        "running_items": running,
         "next_scheduled_item": _next_scheduled(task_items),
         "source_status": _complete_source_status(source_status),
         "generated_at": now.isoformat(),
@@ -262,6 +287,54 @@ async def _load_portal_activity(
     return {"reports": reports, "conversations": conversations}
 
 
+async def _load_saved_report_running_items(
+    db: AsyncSession,
+    user_id: int,
+) -> List[Dict[str, Any]]:
+    from app.models.saved_report import PortalSavedReport, PortalSavedReportRun
+
+    result = await db.execute(
+        select(PortalSavedReportRun, PortalSavedReport.title)
+        .join(PortalSavedReport, PortalSavedReport.id == PortalSavedReportRun.report_id)
+        .where(
+            PortalSavedReportRun.user_id == user_id,
+            PortalSavedReportRun.status == "running",
+        )
+        .order_by(desc(PortalSavedReportRun.started_at))
+        .limit(10)
+    )
+    items: List[Dict[str, Any]] = []
+    for run, title in result.all():
+        started_at = run.started_at or run.finished_at
+        items.append(
+            {
+                "id": f"saved-report-run:{run.id}",
+                "business_key": f"saved-report-run:{run.id}",
+                "type": "saved_report_run",
+                "title": str(title or "未命名报表"),
+                "subtitle": "正在生成报表",
+                "occurred_at": started_at.isoformat() if started_at else "",
+                "status": "running",
+                "severity": "info",
+                "action": "open_report",
+                "source": "saved_report_run",
+                "target": {"report_id": str(run.report_id), "run_id": int(run.id)},
+            }
+        )
+    return items
+
+
+async def _load_running_items(
+    db: AsyncSession,
+    user_id: int,
+) -> tuple[List[Dict[str, Any]], str]:
+    report_items, report_status = await _safe_load(
+        "saved_report_runs",
+        lambda: _load_saved_report_running_items(db, user_id),
+    )
+    return list(report_items or []), report_status
+
+
 async def _load_agents(db: AsyncSession, user: Mapping[str, Any]) -> List[Dict[str, Any]]:
     from app.services.ai.agent_manager import AgentManagerService
 
@@ -331,6 +404,7 @@ class WorkbenchHomeService:
             "reports",
             lambda: _load_portal_activity(db, user_id, role_ids, current_time),
         )
+        running_items, running_status = await _load_running_items(db, user_id)
         agents, agent_status = await _safe_load("agents", lambda: _load_agents(db, user))
         scenarios, scenario_status = await _safe_load("scenarios", lambda: _load_scenarios(user))
         portal = portal if isinstance(portal, dict) else {}
@@ -345,6 +419,7 @@ class WorkbenchHomeService:
             conversation_items=conversations,
             agent_items=agents,
             scenario_items=scenarios,
+            running_items=running_items,
             source_status={
                 "notifications": notification_status,
                 "tasks": task_status,
@@ -352,5 +427,6 @@ class WorkbenchHomeService:
                 "conversations": portal_status if conversations else ("error" if portal_status == "error" else "empty"),
                 "agents": agent_status,
                 "scenarios": scenario_status,
+                "running": running_status,
             },
         )

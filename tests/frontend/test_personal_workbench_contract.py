@@ -36,12 +36,18 @@ def test_workbench_page_has_three_dynamic_states_without_zero_dashboard():
     assert "summaryPrimary" in page
     assert "bannerMessage" in page
     assert "xl:grid-cols-2" in page
+    assert "items-start" in page
+    assert "有 ${payload.value.resume_items.length} 项工作可以继续" in page
+    assert "最近没有新的产出" in page
     assert "WorkbenchAttention" in page
     assert "WorkbenchResults" in page
     assert "WorkbenchResume" in page
     assert "WorkbenchAgents" in page
     assert "WorkbenchScenarios" in page
     assert "WorkbenchNextScheduled" in page
+    assert "WorkbenchRunning" in page
+    assert "payload.running_items" in page
+    assert "running_items" in page
     assert "next_scheduled_item" in page
     assert "待处理 0" not in page
     assert "最新结果 0" not in page
@@ -82,13 +88,16 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     resume = _read("frontend/src/components/workbench/WorkbenchResume.vue")
     agents = _read("frontend/src/components/workbench/WorkbenchAgents.vue")
     scenarios = _read("frontend/src/components/workbench/WorkbenchScenarios.vue")
+    running = _read("frontend/src/components/workbench/WorkbenchRunning.vue")
     display = _read("frontend/src/utils/workbenchDisplay.ts")
 
     assert "open-item" in attention
     assert "view-all" in attention
+    assert "来源：未读站内通知" in attention
     assert "border-l-red-500" in attention
     assert "WorkbenchItemMeta" in results
-    assert "去数据门户看看" in results
+    assert "还没有生成过分析结果" in results
+    assert "创建第一份报表" in results
     assert "去找个助手聊聊" in resume
     assert "最近使用的助手" in agents
     assert "开始对话" in agents
@@ -100,6 +109,12 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     assert "workbenchActionLabel" in display
     assert "workbenchKindLabel" in display
     assert "WorkbenchMobileViewAll" in results
+    assert "进行中" in running
+    assert "来源：正在生成的报表" in running
+    assert "animate-pulse" in running
+    assert "source" in running
+    assert "agentscope_pending" not in running
+    assert "open-item" in running
 
 
 def test_task_center_accepts_workbench_task_target():

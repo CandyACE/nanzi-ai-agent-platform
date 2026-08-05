@@ -10,6 +10,9 @@
       view-all-label="查看全部任务"
       @view-all="$emit('view-all')"
     />
+    <p class="-mt-1 mb-3 text-xs text-gray-400">
+      来源：未读站内通知 + 失败定时任务
+    </p>
     <div class="space-y-2">
       <button
         v-for="item in sortedItems"

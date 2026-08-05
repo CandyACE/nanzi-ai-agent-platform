@@ -21,6 +21,7 @@ export interface WorkbenchItem {
   status?: string
   severity?: string
   action: string
+  source?: string
   target: WorkbenchTarget
 }
 
@@ -51,6 +52,7 @@ export interface WorkbenchHomePayload {
   resume_items: WorkbenchItem[]
   favorite_agents: WorkbenchAgent[]
   recommended_scenarios: WorkbenchScenario[]
+  running_items: WorkbenchItem[]
   next_scheduled_item: WorkbenchItem | null
   source_status: Record<string, WorkbenchSourceState>
   generated_at: string
