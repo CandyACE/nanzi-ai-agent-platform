@@ -49,6 +49,8 @@ export function workbenchStatusLabel(status?: string | null): string {
     failed: "失败",
     unread: "未读",
     active: "进行中",
+    running: "运行中",
+    pending: "待处理",
     success: "成功",
     completed: "已完成",
   }

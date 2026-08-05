@@ -19,6 +19,7 @@ def _payload(**overrides):
         "conversation_items": [],
         "agent_items": [],
         "scenario_items": [],
+        "running_items": [],
         "source_status": {},
     }
     values.update(overrides)
@@ -61,6 +62,34 @@ def test_quiet_mode_keeps_resumable_work_without_zero_cards():
     assert payload["mode"] == "quiet"
     assert payload["attention"] == []
     assert payload["resume_items"][0]["target"]["conversation_id"] == "c1"
+
+
+def test_resume_items_are_deduplicated_by_conversation_target():
+    payload = _payload(
+        conversation_items=[
+            {
+                "id": "turn-old",
+                "business_key": "conversation:turn-old",
+                "type": "conversation",
+                "title": "费用趋势",
+                "occurred_at": "2026-07-18T09:00:00",
+                "action": "open_conversation",
+                "target": {"conversation_id": "c1"},
+            },
+            {
+                "id": "turn-new",
+                "business_key": "conversation:turn-new",
+                "type": "conversation",
+                "title": "费用趋势（继续）",
+                "occurred_at": "2026-07-18T10:00:00",
+                "action": "open_conversation",
+                "target": {"conversation_id": "c1"},
+            },
+        ]
+    )
+
+    assert len(payload["resume_items"]) == 1
+    assert payload["resume_items"][0]["id"] == "turn-new"
 
 
 def test_new_user_mode_uses_available_scenarios():
@@ -120,7 +149,113 @@ def test_source_status_is_completed_for_all_sources():
         "conversations": "empty",
         "agents": "empty",
         "scenarios": "empty",
+        "running": "empty",
     }
+
+
+def test_personal_resources_are_normalized_into_payload():
+    payload = _payload(
+        personal_resources=[
+            {
+                "key": "tokens",
+                "label": "我的 Token",
+                "value": 12345,
+                "unit": "本月",
+                "tab": "tokens",
+                "status": "ok",
+            },
+            {
+                "key": "skills",
+                "label": "我的技能",
+                "value": 0,
+                "unit": "个",
+                "tab": "skills",
+                "status": "empty",
+            },
+        ]
+    )
+
+    assert [item["key"] for item in payload["personal_resources"]] == [
+        "memory",
+        "tokens",
+        "data",
+        "skills",
+        "mcp",
+        "tasks",
+    ]
+    tokens = next(item for item in payload["personal_resources"] if item["key"] == "tokens")
+    assert tokens["value"] == 12345
+    assert tokens["unit"] == "本月"
+    assert tokens["tab"] == "tokens"
+    skills = next(item for item in payload["personal_resources"] if item["key"] == "skills")
+    assert skills["status"] == "empty"
+
+
+def test_personal_resources_default_to_empty_shell_when_missing():
+    payload = _payload()
+    assert len(payload["personal_resources"]) == 6
+    assert payload["personal_resources"][0]["key"] == "memory"
+    assert payload["personal_resources"][-1]["key"] == "tasks"
+    assert all(item["tab"] for item in payload["personal_resources"])
+
+    payload = _payload(
+        running_items=[
+            {
+                "id": "run:1",
+                "business_key": "saved-report-run:1",
+                "type": "saved_report_run",
+                "title": "经营日报",
+                "subtitle": "正在生成报表",
+                "occurred_at": "2026-07-18T10:20:00",
+                "status": "running",
+                "severity": "info",
+                "action": "open_report",
+                "source": "saved_report_run",
+                "target": {"report_id": "report-1", "run_id": 1},
+            },
+            {
+                "id": "run:2",
+                "business_key": "saved-report-run:2",
+                "type": "saved_report_run",
+                "title": "库存日报",
+                "subtitle": "正在生成报表",
+                "occurred_at": "2026-07-18T10:10:00",
+                "status": "running",
+                "severity": "info",
+                "action": "open_report",
+                "source": "saved_report_run",
+                "target": {"report_id": "report-2", "run_id": 2},
+            },
+        ]
+    )
+
+    assert [item["id"] for item in payload["running_items"]] == ["run:1", "run:2"]
+    assert payload["running_items"][0]["source"] == "saved_report_run"
+    assert payload["running_items"][0]["target"]["run_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_running_loader_uses_persistent_saved_report_runs():
+    from app.services import workbench_home_service as svc
+
+    run = SimpleNamespace(
+        id=31,
+        report_id="report-7",
+        user_id=7,
+        started_at=datetime(2026, 7, 18, 10, 20),
+        finished_at=None,
+        status="running",
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(all=lambda: [(run, "经营日报")]))
+
+    report_items = await svc._load_saved_report_running_items(db, 7)
+
+    assert report_items[0]["source"] == "saved_report_run"
+    assert report_items[0]["target"] == {"report_id": "report-7", "run_id": 31}
+    report_items, source_status = await svc._load_running_items(db, 7)
+    assert report_items[0]["source"] == "saved_report_run"
+    assert source_status == "ok"
 
 
 def test_saved_report_notification_uses_report_run_target():

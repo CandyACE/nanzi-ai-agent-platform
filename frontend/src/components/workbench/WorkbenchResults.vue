@@ -35,13 +35,14 @@
       v-else
       class="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-4 py-6 text-center"
     >
-      <p class="text-sm text-gray-500">暂无最新报表或简报</p>
+      <p class="text-sm font-medium text-gray-700">还没有生成过分析结果</p>
+      <p class="mt-1 text-xs text-gray-500">创建一份报表后，最近产出会显示在这里</p>
       <button
         type="button"
         class="mt-3 text-xs font-medium text-violet-600 hover:text-violet-700"
         @click="$emit('view-all')"
       >
-        去数据门户看看
+        创建第一份报表
       </button>
     </div>
     <WorkbenchMobileViewAll

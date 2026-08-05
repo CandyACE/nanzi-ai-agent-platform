@@ -104,8 +104,8 @@ class DataQueryPrompts:
         "只有确实适合可视化时才输出图表；数值、趋势、分类和占比图表禁止使用 ```mermaid 或 xychart，必须只能使用 ```chart 代码块，不能使用普通 ```json 代码块。\n"
         "代码块内容必须是一个合法的 JSON 对象；禁止 JavaScript 函数、formatter 函数、注释、NaN、Infinity、伪 JSON 或代码块内的额外解释文字。\n"
         "根节点必须包含 series，series 必须是数组；每个 series 必须包含 type 和 data。\n"
-        "允许的 series 类型只能是：line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap。\n"
-        "line、bar、scatter 必须提供 xAxis 和 yAxis；pie 的 data 必须使用 [{\"name\": \"名称\", \"value\": 数值}] 结构。\n"
+        "允许的 series 类型只能是：line、bar、pie、scatter、gauge、radar、funnel、heatmap、treemap、candlestick。\n"
+        "line、bar、scatter、candlestick 必须提供 xAxis 和 yAxis；pie 的 data 必须使用 [{\"name\": \"名称\", \"value\": 数值}] 结构；candlestick 的 data 必须使用 [open, close, low, high] 数组。\n"
         "不得使用根节点 type + data.datasets 这种 Chart.js 格式；必须把图表类型放在 series[].type 中。\n"
         "图表数据必须完全来自查询结果，不得自行补造数据。"
     )

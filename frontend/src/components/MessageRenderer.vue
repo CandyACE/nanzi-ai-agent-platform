@@ -4,7 +4,7 @@ import { normalizeGeneratedFileHref } from '@/utils/generatedFileUrl';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
 import { parseQuickButtons, postProcessQuickButtonHtml } from '@/utils/quickButtons';
-import { buildChartTableRows, mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
+import { applyChartViewMode, buildChartTableRows, getAvailableChartViewModes, getChartViewModeLabel, mergeChartDefaults, parseChartOptions, resolveActiveChartViewMode, type ChartViewMode } from '@/utils/chartRenderer';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
 import { copyToClipboard } from '@/utils/clipboard';
 import MermaidRenderer from './MermaidRenderer.vue';
@@ -14,7 +14,7 @@ import SqlPlanCard from './SqlPlanCard.vue';
 import VChart from 'vue-echarts';
 import { use } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
-import { PieChart, BarChart, LineChart, ScatterChart, GaugeChart, RadarChart, FunnelChart, HeatmapChart, TreemapChart } from 'echarts/charts';
+import { PieChart, BarChart, LineChart, ScatterChart, GaugeChart, RadarChart, FunnelChart, HeatmapChart, TreemapChart, CandlestickChart } from 'echarts/charts';
 import {
   TitleComponent,
   TooltipComponent,
@@ -38,6 +38,7 @@ use([
   FunnelChart,
   HeatmapChart,
   TreemapChart,
+  CandlestickChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -73,28 +74,23 @@ const RUNNABLE_CODE_LANGUAGES = new Set(['python', 'python3', 'shell', 'sh', 'ba
 const localChartTypes = ref<Record<number, string>>({});
 
 const getChartOption = (segment: ContentSegment, idx: number) => {
-  const option = JSON.parse(JSON.stringify(segment.chartData || {}));
-  const overriddenType = localChartTypes.value[idx];
-  if (overriddenType) {
-    if (option.series) {
-      if (Array.isArray(option.series)) {
-        option.series = option.series.map((s: any) => ({ ...s, type: overriddenType }));
-      } else if (typeof option.series === 'object') {
-        option.series = { ...option.series, type: overriddenType };
-      }
-    }
-    if (overriddenType === 'pie') {
-      delete option.xAxis;
-      delete option.yAxis;
-    } else {
-      if (!option.xAxis && segment.chartData?.xAxis) option.xAxis = segment.chartData.xAxis;
-      if (!option.yAxis && segment.chartData?.yAxis) option.yAxis = segment.chartData.yAxis;
-    }
-  }
-  return option;
+  const mode = resolveActiveChartViewMode(segment.chartData || {}, localChartTypes.value[idx]);
+  if (mode === 'table') return segment.chartData || {};
+  return applyChartViewMode(segment.chartData || {}, mode);
 };
 
 const getChartTable = (segment: ContentSegment) => buildChartTableRows(segment.chartData || {});
+const getChartModes = (segment: ContentSegment): ChartViewMode[] =>
+  getAvailableChartViewModes(segment.chartData || {});
+const getActiveChartMode = (segment: ContentSegment, idx: number): ChartViewMode =>
+  resolveActiveChartViewMode(segment.chartData || {}, localChartTypes.value[idx]);
+const chartModeTitle: Record<ChartViewMode, string> = {
+  candlestick: '切换为K线图',
+  line: '切换为折线图',
+  bar: '切换为柱状图',
+  pie: '切换为饼图',
+  table: '切换为表格视图',
+};
 
 interface ContentSegment {
   type: 'text' | 'chart' | 'mermaid' | 'thought' | 'analysis' | 'clarification' | 'sql_plan' | 'canvas_html' | 'canvas_code';
@@ -473,39 +469,17 @@ const segments = computed<ContentSegment[]>(() => {
         <!-- Chart type switcher buttons overlay -->
         <div class="absolute top-2 right-2 flex items-center space-x-1 bg-white/90 dark:bg-gray-800/90 shadow-sm border border-gray-100 dark:border-gray-700 rounded-lg p-1 z-10 opacity-0 group-hover/chart:opacity-100 transition-opacity">
           <button
-            @click="localChartTypes[idx] = 'line'"
+            v-for="mode in getChartModes(segment)"
+            :key="mode"
+            @click="localChartTypes[idx] = mode"
             class="px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-[10px] font-bold transition-colors"
-            :class="localChartTypes[idx] === 'line' || (!localChartTypes[idx] && segment.chartData?.series?.[0]?.type === 'line') ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400'"
-            title="切换为折线图"
+            :class="getActiveChartMode(segment, idx) === mode ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400'"
+            :title="chartModeTitle[mode]"
           >
-            折线
-          </button>
-          <button
-            @click="localChartTypes[idx] = 'bar'"
-            class="px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-[10px] font-bold transition-colors"
-            :class="localChartTypes[idx] === 'bar' || (!localChartTypes[idx] && segment.chartData?.series?.[0]?.type === 'bar') ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400'"
-            title="切换为柱状图"
-          >
-            柱状
-          </button>
-          <button
-            @click="localChartTypes[idx] = 'pie'"
-            class="px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-[10px] font-bold transition-colors"
-            :class="localChartTypes[idx] === 'pie' || (!localChartTypes[idx] && segment.chartData?.series?.[0]?.type === 'pie') ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400'"
-            title="切换为饼图"
-          >
-            饼图
-          </button>
-          <button
-            @click="localChartTypes[idx] = 'table'"
-            class="px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-[10px] font-bold transition-colors"
-            :class="localChartTypes[idx] === 'table' ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-400'"
-            title="切换为表格视图"
-          >
-            表格
+            {{ getChartViewModeLabel(mode) }}
           </button>
         </div>
-        <div v-if="localChartTypes[idx] === 'table'" class="h-full overflow-auto pt-10 px-1 pb-1 custom-scrollbar">
+        <div v-if="getActiveChartMode(segment, idx) === 'table'" class="h-full overflow-auto pt-10 px-1 pb-1 custom-scrollbar">
           <table
             v-if="getChartTable(segment).columns.length"
             class="min-w-full border-separate border-spacing-0 text-xs text-gray-700 dark:text-gray-200"

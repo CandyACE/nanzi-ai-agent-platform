@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { taskApi, type AgentTask, type TaskLog } from '../api/task'
+import { taskApi, type AgentTask, type TaskLog, type TaskExecutionHistoryItem } from '../api/task'
 import { agentApi, type AIAgent } from '../api/agent'
 import Modal from '../components/Modal.vue'
 import Toast from '../components/Toast.vue'
@@ -14,6 +14,44 @@ import {
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
+import TaskPromptComposer, {
+  type TaskApprovalMode,
+  type TaskResourceScope,
+} from '@/components/task/TaskPromptComposer.vue'
+
+const emptyResourceScope = (): TaskResourceScope => ({
+  project_name: '',
+  datasets: [],
+  knowledge_bases: [],
+  skills: [],
+  mcp_tools: [],
+})
+
+const taskModel = ref('')
+const taskApprovalMode = ref<TaskApprovalMode>('allow')
+const taskResourceScope = ref<TaskResourceScope>(emptyResourceScope())
+
+const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
+  const cfg = config && typeof config === 'object' ? config : {}
+  taskModel.value = String(cfg.model || cfg.model_id || '')
+  const mode = String(cfg.approval_mode || 'allow').toLowerCase()
+  taskApprovalMode.value = mode === 'ask' || mode === 'deny' || mode === 'allow' ? mode : 'allow'
+  const scope = cfg.resource_scope && typeof cfg.resource_scope === 'object' ? cfg.resource_scope : {}
+  taskResourceScope.value = {
+    project_name: String(scope.project_name || ''),
+    datasets: Array.isArray(scope.datasets) ? scope.datasets : [],
+    knowledge_bases: Array.isArray(scope.knowledge_bases) ? scope.knowledge_bases : [],
+    skills: Array.isArray(scope.skills) ? scope.skills : [],
+    mcp_tools: Array.isArray(scope.mcp_tools) ? scope.mcp_tools : [],
+  }
+}
+
+const props = withDefaults(defineProps<{
+  /** 个人中心嵌入：管理自己的任务，不依赖 menu:task_center / element:task:manage */
+  personalOnly?: boolean
+}>(), {
+  personalOnly: false,
+})
 
 const router = useRouter()
 const route = useRoute()
@@ -21,15 +59,24 @@ const route = useRoute()
 // Auth & Permission
 const cachedUser = localStorage.getItem('user_info')
 const userInfo = ref(cachedUser ? JSON.parse(cachedUser) : null)
+const isTaskOwner = (task: AgentTask) =>
+  String(task.user_id) === String(userInfo.value?.user_id)
 const canManage = computed(() => {
+  if (props.personalOnly) return true
   if (!userInfo.value) return false
   if (userInfo.value.role === 'admin') return true
   const userElements = userInfo.value.permissions?.elements || []
   return userElements.includes('element:task:manage')
 })
-const canManageTask = (task: AgentTask) => task.task_type === 'saved_report'
-  ? String(task.user_id) === String(userInfo.value?.user_id)
-  : canManage.value
+const canManageTask = (task: AgentTask) => {
+  if (task.task_type === 'saved_report') return isTaskOwner(task)
+  if (props.personalOnly) {
+    return isTaskOwner(task) || userInfo.value?.role === 'admin'
+  }
+  return canManage.value
+}
+const showHistoryTab = computed(() => true)
+const mainViewTab = ref<'tasks' | 'history'>('tasks')
 
 // View & Filter States
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('task_center_view_mode') as 'grid' | 'list') || 'grid')
@@ -41,6 +88,109 @@ const taskTypeTabs = [
   { value: 'agent' as const, label: '智能体任务' },
   { value: 'saved_report' as const, label: '报表订阅' },
 ]
+
+// 执行记录（管理员看全部，普通用户仅看自己的）
+const historyItems = ref<TaskExecutionHistoryItem[]>([])
+const historyLoading = ref(false)
+const historyPage = ref(1)
+const historyTotal = ref(0)
+const historyQ = ref('')
+const historyStatus = ref('')
+const historyTaskId = ref('')
+const historyStartAt = ref('')
+const historyEndAt = ref('')
+const historyExpandedIds = ref<Set<number>>(new Set())
+const historyHasMore = computed(() => historyItems.value.length < historyTotal.value)
+const agentTasksForFilter = computed(() =>
+  tasks.value.filter((task) => task.task_type !== 'saved_report' && task.source !== 'saved_report'),
+)
+
+let historyFilterTimer: number | undefined
+const toApiDateTime = (value: string, endOfDay = false) => {
+  const raw = String(value || '').trim()
+  if (!raw) return undefined
+  // datetime-local → 本地时间补秒，交给后端解析
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    return `${raw}:${endOfDay ? '59' : '00'}`
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return endOfDay ? `${raw}T23:59:59` : `${raw}T00:00:00`
+  }
+  return raw
+}
+
+const fetchExecutionHistory = async (reset = true) => {
+  if (!showHistoryTab.value) return
+  if (reset) {
+    historyPage.value = 1
+    historyItems.value = []
+  }
+  historyLoading.value = true
+  try {
+    const res = await taskApi.executionHistory({
+      page: historyPage.value,
+      page_size: 20,
+      status: historyStatus.value || undefined,
+      task_id: historyTaskId.value ? Number(historyTaskId.value) : undefined,
+      q: historyQ.value.trim() || undefined,
+      start_at: toApiDateTime(historyStartAt.value),
+      end_at: toApiDateTime(historyEndAt.value, true),
+    })
+    const payload = res.data.data
+    const items = payload?.items || []
+    historyItems.value = reset ? items : [...historyItems.value, ...items]
+    historyTotal.value = Number(payload?.total || 0)
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '获取执行记录失败', 'error')
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const loadMoreHistory = () => {
+  if (historyLoading.value || !historyHasMore.value) return
+  historyPage.value += 1
+  void fetchExecutionHistory(false)
+}
+
+const scheduleHistoryReload = () => {
+  if (historyFilterTimer !== undefined) window.clearTimeout(historyFilterTimer)
+  historyFilterTimer = window.setTimeout(() => {
+    historyFilterTimer = undefined
+    void fetchExecutionHistory(true)
+  }, 300)
+}
+
+const toggleHistoryExpand = (id: number) => {
+  const next = new Set(historyExpandedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  historyExpandedIds.value = next
+}
+
+const openTaskLogsFromHistory = (item: TaskExecutionHistoryItem) => {
+  if (!item.task_id) {
+    showToast('关联任务已删除，无法打开任务日志', 'error')
+    return
+  }
+  const task = tasks.value.find((t) => t.id === item.task_id)
+  if (task) {
+    openLogs(task)
+    return
+  }
+  showToast('任务不在当前列表中，请先刷新任务列表', 'error')
+}
+
+watch(mainViewTab, (tab) => {
+  if (tab === 'history') void fetchExecutionHistory(true)
+})
+
+watch(
+  [historyQ, historyStatus, historyTaskId, historyStartAt, historyEndAt],
+  () => {
+    if (mainViewTab.value === 'history') scheduleHistoryReload()
+  },
+)
 
 watch(viewMode, (newMode) => {
   localStorage.setItem('task_center_view_mode', newMode)
@@ -173,6 +323,7 @@ onMounted(() => {
   document.addEventListener('click', handleAgentDropdownOutsideClick)
 })
 onUnmounted(() => {
+  if (historyFilterTimer !== undefined) window.clearTimeout(historyFilterTimer)
   window.removeEventListener('resize', () => windowWidth.value = window.innerWidth)
   document.removeEventListener('click', handleAgentDropdownOutsideClick)
 })
@@ -276,14 +427,21 @@ const cronDescription = computed(() => {
 })
 
 // Filtered Tasks
+const scopedTasks = computed(() => {
+  if (props.personalOnly) {
+    return tasks.value.filter((task) => isTaskOwner(task))
+  }
+  return tasks.value
+})
+
 const taskTypeCounts = computed(() => ({
-  all: tasks.value.length,
-  agent: tasks.value.filter(task => task.task_type !== 'saved_report').length,
-  saved_report: tasks.value.filter(task => task.task_type === 'saved_report').length,
+  all: scopedTasks.value.length,
+  agent: scopedTasks.value.filter(task => task.task_type !== 'saved_report').length,
+  saved_report: scopedTasks.value.filter(task => task.task_type === 'saved_report').length,
 }))
 
 const filteredTasks = computed(() => {
-  let result = [...tasks.value]
+  let result = [...scopedTasks.value]
   if (taskTypeFilter.value === 'agent') {
     result = result.filter(task => task.task_type !== 'saved_report')
   } else if (taskTypeFilter.value === 'saved_report') {
@@ -332,6 +490,7 @@ const fetchAgents = async () => {
 const openCreateModal = async () => {
   editingTask.value = { name: '', agent_id: agents.value[0]?.id || '', cron_expr: '0 8 * * *', prompt: '', status: 1 }
   notificationChannels.value = ['portal']
+  hydrateExecutionOptions({})
   showAgentDropdown.value = false
   cronMode.value = 'daily'
   cronConfig.value = { time: '08:00', weekday: 1, day: 1, intervalValue: 30, intervalUnit: 'minutes' }
@@ -349,6 +508,7 @@ const openEditModal = async (task: AgentTask) => {
   notificationChannels.value = Array.isArray(cfg.notification_channels)
     ? cfg.notification_channels.map((c: string) => String(c))
     : []
+  hydrateExecutionOptions(cfg)
   showAgentDropdown.value = false
   parseCronToUI(task.cron_expr || '')
   showEditModal.value = true
@@ -367,6 +527,31 @@ const saveTask = async () => {
       baseConfig.notification_channels = [...notificationChannels.value]
     } else {
       delete baseConfig.notification_channels
+    }
+    baseConfig.approval_mode = taskApprovalMode.value
+    if (taskModel.value) baseConfig.model = taskModel.value
+    else {
+      delete baseConfig.model
+      delete baseConfig.model_id
+    }
+    const scope = taskResourceScope.value || emptyResourceScope()
+    const hasScope = Boolean(
+      (scope.datasets || []).length ||
+      (scope.knowledge_bases || []).length ||
+      (scope.skills || []).length ||
+      (scope.mcp_tools || []).length ||
+      scope.project_name,
+    )
+    if (hasScope) {
+      baseConfig.resource_scope = {
+        project_name: scope.project_name || '',
+        datasets: scope.datasets || [],
+        knowledge_bases: scope.knowledge_bases || [],
+        skills: scope.skills || [],
+        mcp_tools: scope.mcp_tools || [],
+      }
+    } else {
+      delete baseConfig.resource_scope
     }
     const payload = { ...editingTask.value, config: baseConfig }
     if (editingTask.value.id) {
@@ -560,6 +745,18 @@ const formatDate = (d: string | undefined) => {
   return formatInPlatformTimezoneCompact(d)
 }
 
+/** 耗时：毫秒 →「x分x秒」；不足 1 秒显示「x秒」或「不足1秒」 */
+const formatDurationMs = (ms: number | null | undefined) => {
+  if (ms == null || Number.isNaN(Number(ms))) return '—'
+  const totalMs = Math.max(0, Math.round(Number(ms)))
+  if (totalMs < 1000) return totalMs === 0 ? '0秒' : `${(totalMs / 1000).toFixed(1)}秒`
+  const totalSec = Math.floor(totalMs / 1000)
+  const minutes = Math.floor(totalSec / 60)
+  const seconds = totalSec % 60
+  if (minutes <= 0) return `${seconds}秒`
+  return `${minutes}分${seconds}秒`
+}
+
 const formatNextRunCompact = (d: string | undefined) => {
   if (!d) return '暂无计划'
   return formatInPlatformTimezoneCompact(d)
@@ -633,8 +830,20 @@ onMounted(async () => {
     <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
-        <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">任务调度台</h1>
+        <h1
+          class="font-bold text-gray-900"
+          :class="personalOnly ? 'text-xl' : 'text-xl sm:text-2xl'"
+        >
+          {{ personalOnly ? '我的任务' : '任务调度台' }}
+        </h1>
+        <span
+          v-if="personalOnly"
+          class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"
+        >
+          个人私有
+        </span>
         <button
+          v-if="!personalOnly"
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
           title="设计规范"
@@ -646,7 +855,7 @@ onMounted(async () => {
         </button>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
+      <div v-if="mainViewTab === 'tasks'" class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
         <div class="relative w-full sm:w-56 lg:w-64">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -724,28 +933,221 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 类型 Tab：全宽底边 -->
+    <!-- 主 Tab：管理员为「任务列表 | 执行记录」；否则直接显示类型筛选 -->
     <div class="border-b border-gray-200 -mt-1">
       <div class="flex gap-1 overflow-x-auto -mb-px" style="-webkit-overflow-scrolling: touch;">
-        <button
-          v-for="tab in taskTypeTabs"
-          :key="tab.value"
-          type="button"
-          class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-          :class="taskTypeFilter === tab.value ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-          @click="taskTypeFilter = tab.value"
-        >
-          <span>{{ tab.label }}</span>
-          <span
-            class="min-w-5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-center"
-            :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
+        <template v-if="showHistoryTab">
+          <button
+            type="button"
+            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+            :class="mainViewTab === 'tasks' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mainViewTab = 'tasks'"
+          >任务列表</button>
+          <button
+            type="button"
+            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+            :class="mainViewTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mainViewTab = 'history'"
+          >执行记录</button>
+        </template>
+        <template v-else>
+          <button
+            v-for="tab in taskTypeTabs"
+            :key="tab.value"
+            type="button"
+            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+            :class="taskTypeFilter === tab.value ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="taskTypeFilter = tab.value"
           >
-            {{ taskTypeCounts[tab.value] }}
-          </span>
-        </button>
+            <span>{{ tab.label }}</span>
+            <span
+              class="min-w-5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-center"
+              :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
+            >
+              {{ taskTypeCounts[tab.value] }}
+            </span>
+          </button>
+        </template>
       </div>
     </div>
 
+    <!-- 任务列表下的类型二级筛选（仅管理员主 Tab 模式下需要） -->
+    <div
+      v-if="showHistoryTab && mainViewTab === 'tasks'"
+      class="flex gap-1.5 overflow-x-auto -mt-1 pt-2"
+      style="-webkit-overflow-scrolling: touch;"
+    >
+      <button
+        v-for="tab in taskTypeTabs"
+        :key="'sub-' + tab.value"
+        type="button"
+        class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap"
+        :class="taskTypeFilter === tab.value
+          ? 'border-blue-200 bg-blue-50 text-blue-700'
+          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-700'"
+        @click="taskTypeFilter = tab.value"
+      >
+        <span>{{ tab.label }}</span>
+        <span
+          class="min-w-4 rounded-full px-1 text-[10px]"
+          :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
+        >{{ taskTypeCounts[tab.value] }}</span>
+      </button>
+    </div>
+
+    <!-- 管理员全局执行记录 -->
+    <div v-if="mainViewTab === 'history' && showHistoryTab" class="space-y-4">
+      <div class="flex flex-col gap-2.5 rounded-xl border border-gray-200 bg-white p-3 shadow-sm lg:flex-row lg:flex-wrap lg:items-center">
+        <div class="relative min-w-0 flex-1 lg:max-w-xs">
+          <input
+            v-model="historyQ"
+            type="search"
+            placeholder="搜索任务名 / 创建人 / 摘要 / Trace..."
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
+        </div>
+        <select
+          v-model="historyStatus"
+          class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary"
+        >
+          <option value="">状态：全部</option>
+          <option value="success">成功</option>
+          <option value="failed">失败</option>
+          <option value="awaiting_permission">待确认</option>
+          <option value="awaiting_external_execution">待外部执行</option>
+          <option value="no_tool_execution">未调用工具</option>
+          <option value="denied">已拒绝</option>
+        </select>
+        <select
+          v-model="historyTaskId"
+          class="max-w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary lg:max-w-xs"
+        >
+          <option value="">任务：全部</option>
+          <option v-for="task in agentTasksForFilter" :key="task.id" :value="task.id">
+            {{ task.name }}
+          </option>
+        </select>
+        <input
+          v-model="historyStartAt"
+          type="datetime-local"
+          class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary"
+          title="开始时间"
+        />
+        <input
+          v-model="historyEndAt"
+          type="datetime-local"
+          class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary"
+          title="结束时间"
+        />
+        <button
+          type="button"
+          class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          @click="fetchExecutionHistory(true)"
+        >
+          <svg class="h-4 w-4" :class="historyLoading ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          刷新
+        </button>
+        <span class="text-xs text-gray-400 lg:ml-auto">共 {{ historyTotal }} 条</span>
+      </div>
+
+      <div v-if="historyLoading && historyItems.length === 0" class="flex flex-col items-center justify-center py-20">
+        <div class="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+        <p class="text-sm text-gray-400">正在拉取全局执行记录...</p>
+      </div>
+      <div
+        v-else-if="!historyItems.length"
+        class="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-20 text-center text-gray-400"
+      >
+        暂无匹配的执行记录
+      </div>
+      <div v-else class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[960px] table-fixed border-collapse text-left">
+            <thead class="bg-gray-50/80">
+              <tr>
+                <th class="w-[16%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">任务</th>
+                <th class="w-[10%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">创建人</th>
+                <th class="w-[12%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">Agent</th>
+                <th class="w-[8%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">状态</th>
+                <th class="w-[12%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">时间</th>
+                <th class="w-[7%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">耗时</th>
+                <th class="w-[10%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">Trace</th>
+                <th class="w-[17%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">摘要</th>
+                <th class="w-[8%] px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="item in historyItems"
+                :key="item.id"
+                class="border-t border-gray-100 align-top hover:bg-gray-50/60"
+              >
+                <td class="px-4 py-3">
+                  <p class="truncate text-sm font-semibold text-gray-900" :title="item.task_name || ''">
+                    {{ item.task_name || '已删除任务' }}
+                  </p>
+                  <p v-if="item.task_id" class="mt-0.5 text-[10px] text-gray-400">#{{ item.task_id }}</p>
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-600">{{ item.creator_name || item.username || '—' }}</td>
+                <td class="px-4 py-3 text-xs text-gray-600 truncate" :title="item.agent_name || ''">{{ item.agent_name || item.agent_id || '—' }}</td>
+                <td class="px-4 py-3">
+                  <span class="rounded-full px-2 py-0.5 text-[9px] font-black" :class="logStatusMeta(item.status).class">
+                    {{ logStatusMeta(item.status).label }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-[11px] text-gray-500">{{ formatDate(item.created_at) }}</td>
+                <td class="px-4 py-3 text-[11px] text-gray-500 whitespace-nowrap" :title="item.execution_time_ms != null ? `${Math.round(item.execution_time_ms)}ms` : ''">
+                  {{ formatDurationMs(item.execution_time_ms) }}
+                </td>
+                <td class="px-4 py-3">
+                  <button
+                    type="button"
+                    class="font-mono text-[10px] text-primary hover:underline"
+                    @click="viewTrace(item.trace_id)"
+                  >{{ item.trace_id.split('-')[0] }}…</button>
+                </td>
+                <td class="px-4 py-3">
+                  <button
+                    type="button"
+                    class="w-full text-left text-xs text-gray-600"
+                    @click="toggleHistoryExpand(item.id)"
+                  >
+                    <span :class="historyExpandedIds.has(item.id) ? '' : 'line-clamp-2'">
+                      {{ item.summary || item.query || '—' }}
+                    </span>
+                  </button>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="flex flex-col gap-1">
+                    <button type="button" class="text-[10px] font-bold text-primary hover:underline" @click="viewTrace(item.trace_id)">Trace</button>
+                    <button
+                      type="button"
+                      class="text-[10px] font-bold text-gray-500 hover:text-primary hover:underline disabled:opacity-40"
+                      :disabled="!item.task_id"
+                      @click="openTaskLogsFromHistory(item)"
+                    >任务日志</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="historyHasMore" class="flex justify-center border-t border-gray-100 py-3">
+          <button
+            type="button"
+            class="rounded-lg bg-gray-100 px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-200 disabled:opacity-50"
+            :disabled="historyLoading"
+            @click="loadMoreHistory"
+          >
+            {{ historyLoading ? '加载中…' : '加载更多' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <template v-if="mainViewTab === 'tasks'">
     <!-- Loading State -->
     <div v-if="loading" class="py-20 text-center">
       <div class="animate-spin h-10 w-10 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
@@ -996,6 +1398,7 @@ onMounted(async () => {
         </tbody>
       </table>
     </div>
+    </template>
 
     <!-- Design Specs Modal -->
     <Modal 
@@ -1121,7 +1524,7 @@ onMounted(async () => {
       v-if="showEditModal" 
       :title="editingTask.id ? '编辑定时任务' : '新建定时任务'" 
       @close="showEditModal = false" 
-      size="max-w-lg"
+      size="max-w-2xl"
       class="transition-all"
       :class="isMobile ? 'inset-0 !m-0 !max-w-none !rounded-none h-full' : ''"
     >
@@ -1311,7 +1714,17 @@ onMounted(async () => {
                 @click="showPromptHelpModal = true"
               >?</button>
             </div>
-            <textarea v-model="editingTask.prompt" rows="4" placeholder="例如：帮我查一下华东一号机房昨天的 PUE 峰值..." class="w-full px-3 py-2 border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm"></textarea>
+            <TaskPromptComposer
+              :prompt="String(editingTask.prompt || '')"
+              :model="taskModel"
+              :approval-mode="taskApprovalMode"
+              :resource-scope="taskResourceScope"
+              :agent-id="editingTask.agent_id"
+              @update:prompt="editingTask.prompt = $event"
+              @update:model="taskModel = $event"
+              @update:approval-mode="taskApprovalMode = $event"
+              @update:resource-scope="taskResourceScope = $event"
+            />
           </div>
 
           <div>
@@ -1486,7 +1899,7 @@ onMounted(async () => {
 
               <!-- Footer Actions -->
               <div class="flex justify-between items-center pt-2 border-t border-gray-50">
-                <span class="text-[9px] text-gray-300 font-medium">时长: {{ log.execution_time_ms.toFixed(0) }}ms</span>
+                <span class="text-[9px] text-gray-300 font-medium" :title="`${Math.round(log.execution_time_ms)}ms`">时长: {{ formatDurationMs(log.execution_time_ms) }}</span>
                 <button @click="viewTrace(log.trace_id)" class="text-[10px] text-primary font-black flex items-center hover:underline uppercase tracking-widest">
                   完整链路 (Trace)
                   <svg class="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7-7 7" /></svg>

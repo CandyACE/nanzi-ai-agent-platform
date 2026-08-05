@@ -2,9 +2,11 @@
 import ToastContainer from './components/ToastContainer.vue'
 import { onMounted } from 'vue'
 import { loadBranding } from './composables/useBranding'
+import { initializeTheme } from './composables/useAppTheme'
 
 onMounted(() => {
   loadBranding()
+  initializeTheme()
 })
 </script>
 

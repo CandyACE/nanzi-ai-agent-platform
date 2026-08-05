@@ -36,12 +36,20 @@ def test_workbench_page_has_three_dynamic_states_without_zero_dashboard():
     assert "summaryPrimary" in page
     assert "bannerMessage" in page
     assert "xl:grid-cols-2" in page
+    assert "items-start" in page
+    assert "有 ${payload.value.resume_items.length} 项工作可以继续" in page
+    assert "最近没有新的产出" in page
     assert "WorkbenchAttention" in page
     assert "WorkbenchResults" in page
     assert "WorkbenchResume" in page
     assert "WorkbenchAgents" in page
     assert "WorkbenchScenarios" in page
     assert "WorkbenchNextScheduled" in page
+    assert "WorkbenchRunning" in page
+    assert "payload.running_items" in page
+    assert "running_items" in page
+    assert "WorkbenchPersonalResources" in page
+    assert "personal_resources" in page
     assert "next_scheduled_item" in page
     assert "待处理 0" not in page
     assert "最新结果 0" not in page
@@ -62,6 +70,9 @@ def test_workbench_route_navigation_and_actions_are_closed():
     assert "path: 'workbench'" in router
     assert "name: 'PersonalWorkbench'" in router
     assert "我的工作台" in dashboard
+    assert 'if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-3 sm:pb-4 md:px-8 md:pt-4 md:pb-8"' in dashboard
+    assert "const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench')" in dashboard
+    assert ':to="homeRoute"' in dashboard
     assert "router.push('/dashboard/workbench')" in login
     for action in (
         "open_task_log",
@@ -82,13 +93,16 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     resume = _read("frontend/src/components/workbench/WorkbenchResume.vue")
     agents = _read("frontend/src/components/workbench/WorkbenchAgents.vue")
     scenarios = _read("frontend/src/components/workbench/WorkbenchScenarios.vue")
+    running = _read("frontend/src/components/workbench/WorkbenchRunning.vue")
     display = _read("frontend/src/utils/workbenchDisplay.ts")
 
     assert "open-item" in attention
     assert "view-all" in attention
+    assert "来源：未读站内通知" in attention
     assert "border-l-red-500" in attention
     assert "WorkbenchItemMeta" in results
-    assert "去数据门户看看" in results
+    assert "还没有生成过分析结果" in results
+    assert "创建第一份报表" in results
     assert "去找个助手聊聊" in resume
     assert "最近使用的助手" in agents
     assert "开始对话" in agents
@@ -100,6 +114,27 @@ def test_workbench_components_emit_actions_and_show_empty_guidance():
     assert "workbenchActionLabel" in display
     assert "workbenchKindLabel" in display
     assert "WorkbenchMobileViewAll" in results
+    assert "进行中" in running
+    assert "来源：正在生成的报表" in running
+    assert "animate-pulse" in running
+    assert "source" in running
+    assert "agentscope_pending" not in running
+    assert "open-item" in running
+
+
+def test_workbench_personal_resource_cards_link_to_personal_tabs():
+    page = _read("frontend/src/views/PersonalWorkbench.vue")
+    cards = _read("frontend/src/components/workbench/WorkbenchPersonalResources.vue")
+    types = _read("frontend/src/types/workbench.ts")
+
+    assert "WorkbenchPersonalResources" in page
+    assert "personal_resources" in page
+    assert "personal_resources" in types
+    assert 'path: "/dashboard/personal"' in cards
+    assert "query: { tab: item.tab }" in cards
+    assert "formatTokenCompact" in cards
+    for key in ("memory", "tokens", "data", "skills", "mcp", "tasks"):
+        assert key in _read("app/services/workbench_home_service.py")
 
 
 def test_task_center_accepts_workbench_task_target():

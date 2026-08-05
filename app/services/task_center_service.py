@@ -168,3 +168,167 @@ class TaskCenterService:
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
         result = await db.execute(stmt)
         return result.scalars().all(), total
+
+    @staticmethod
+    async def list_execution_history(
+        db: AsyncSession,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        status: Optional[str] = None,
+        task_id: Optional[int] = None,
+        q: Optional[str] = None,
+        start_at: Optional[datetime] = None,
+        end_at: Optional[datetime] = None,
+        owner_user_id: Optional[int] = None,
+        is_admin: bool = False,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """聚合定时任务会话前缀下的执行记录。
+
+        管理员可看全部；普通用户仅看自己创建的任务。非管理员不会用宽泛的
+        ``task_conv_%`` 扫描，避免越权看到他人已删任务残留。
+        """
+        from app.models.user import User
+        from app.models.agent import AIAgent
+
+        task_stmt = (
+            select(AgentScheduledTask, User.real_name, User.user_name, AIAgent.display_name)
+            .outerjoin(User, AgentScheduledTask.user_id == User.id)
+            .outerjoin(AIAgent, AgentScheduledTask.agent_id == AIAgent.id)
+        )
+        if not is_admin:
+            if owner_user_id is None:
+                return [], 0
+            task_stmt = task_stmt.where(AgentScheduledTask.user_id == int(owner_user_id))
+        if task_id is not None:
+            task_stmt = task_stmt.where(AgentScheduledTask.id == task_id)
+        task_rows = (await db.execute(task_stmt)).all()
+
+        task_meta_by_id: Dict[int, Dict[str, Any]] = {}
+        exact_conv_to_task: Dict[str, int] = {}
+        prefix_to_task: Dict[str, int] = {}
+        for task_obj, real_name, user_name, agent_name in task_rows:
+            meta = {
+                "task_id": task_obj.id,
+                "task_name": task_obj.name,
+                "agent_id": task_obj.agent_id,
+                "agent_name": agent_name or task_obj.agent_id or "Unknown Agent",
+                "user_id": task_obj.user_id,
+                "creator_name": real_name or user_name or f"User:{task_obj.user_id}",
+                "conversation_id": task_obj.conversation_id,
+            }
+            task_meta_by_id[task_obj.id] = meta
+            if task_obj.conversation_id:
+                exact_conv_to_task[task_obj.conversation_id] = task_obj.id
+                prefix_to_task[_task_run_conversation_prefix(task_obj.conversation_id)] = task_obj.id
+
+        keyword = (q or "").strip()
+        keyword_matched_task_ids: set[int] = set()
+        if keyword:
+            lowered = keyword.casefold()
+            for tid, meta in task_meta_by_id.items():
+                blob = " ".join(
+                    str(meta.get(key) or "")
+                    for key in ("task_name", "creator_name", "agent_name", "agent_id")
+                ).casefold()
+                if lowered in blob:
+                    keyword_matched_task_ids.add(tid)
+
+        conv_filters = []
+        if task_id is not None:
+            if task_id not in task_meta_by_id:
+                return [], 0
+            meta = task_meta_by_id[task_id]
+            prefix = _task_run_conversation_prefix(meta["conversation_id"] or "")
+            conv_filters.append(AgentExecutionHistory.conversation_id == meta["conversation_id"])
+            if prefix:
+                conv_filters.append(AgentExecutionHistory.conversation_id.like(f"{prefix}_run_%"))
+        elif is_admin:
+            # 管理员：宽泛前缀，已删任务残留也可看到
+            conv_filters.append(AgentExecutionHistory.conversation_id.like("task_conv_%"))
+        else:
+            # 普通用户：只扫自己仍存在的任务会话
+            if not task_meta_by_id:
+                return [], 0
+            for meta in task_meta_by_id.values():
+                conv_filters.append(
+                    AgentExecutionHistory.conversation_id == meta["conversation_id"]
+                )
+                prefix = _task_run_conversation_prefix(meta["conversation_id"] or "")
+                if prefix:
+                    conv_filters.append(
+                        AgentExecutionHistory.conversation_id.like(f"{prefix}_run_%")
+                    )
+
+        stmt = select(AgentExecutionHistory).where(or_(*conv_filters))
+        if status:
+            stmt = stmt.where(AgentExecutionHistory.status == status)
+        if start_at is not None:
+            stmt = stmt.where(AgentExecutionHistory.created_at >= start_at)
+        if end_at is not None:
+            stmt = stmt.where(AgentExecutionHistory.created_at <= end_at)
+        if keyword:
+            like = f"%{keyword}%"
+            history_text_match = or_(
+                AgentExecutionHistory.query.like(like),
+                AgentExecutionHistory.summary.like(like),
+                AgentExecutionHistory.trace_id.like(like),
+                AgentExecutionHistory.username.like(like),
+            )
+            if keyword_matched_task_ids:
+                matched_conv_filters = []
+                for tid in keyword_matched_task_ids:
+                    meta = task_meta_by_id[tid]
+                    matched_conv_filters.append(
+                        AgentExecutionHistory.conversation_id == meta["conversation_id"]
+                    )
+                    prefix = _task_run_conversation_prefix(meta["conversation_id"] or "")
+                    if prefix:
+                        matched_conv_filters.append(
+                            AgentExecutionHistory.conversation_id.like(f"{prefix}_run_%")
+                        )
+                stmt = stmt.where(or_(history_text_match, *matched_conv_filters))
+            else:
+                stmt = stmt.where(history_text_match)
+
+        stmt = stmt.order_by(desc(AgentExecutionHistory.created_at))
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = (await db.execute(count_stmt)).scalar() or 0
+        rows = (
+            await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+        ).scalars().all()
+
+        def resolve_task(conversation_id: Optional[str]) -> Optional[Dict[str, Any]]:
+            if not conversation_id:
+                return None
+            tid = exact_conv_to_task.get(conversation_id)
+            if tid is not None:
+                return task_meta_by_id.get(tid)
+            for prefix, mapped_tid in prefix_to_task.items():
+                if conversation_id.startswith(f"{prefix}_run_"):
+                    return task_meta_by_id.get(mapped_tid)
+            return None
+
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            meta = resolve_task(row.conversation_id) or {}
+            items.append(
+                {
+                    "id": row.id,
+                    "trace_id": row.trace_id,
+                    "query": row.query,
+                    "summary": row.summary,
+                    "status": row.status or "success",
+                    "execution_time_ms": row.execution_time_ms,
+                    "created_at": row.created_at,
+                    "conversation_id": row.conversation_id,
+                    "username": row.username,
+                    "task_id": meta.get("task_id"),
+                    "task_name": meta.get("task_name"),
+                    "agent_id": meta.get("agent_id") or row.agent_id,
+                    "agent_name": meta.get("agent_name"),
+                    "user_id": meta.get("user_id"),
+                    "creator_name": meta.get("creator_name"),
+                }
+            )
+        return items, total

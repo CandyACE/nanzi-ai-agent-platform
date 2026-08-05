@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  applyChartViewMode,
   buildChartTableRows,
   createSseLineParser,
+  getAvailableChartViewModes,
   mergeChartDefaults,
   parseChartOptions,
+  resolveActiveChartViewMode,
 } from "../src/utils/chartRenderer.ts";
 
 const parsed = parseChartOptions(`
@@ -62,6 +65,124 @@ assert.equal(unsupportedType.ok, false);
 if (!unsupportedType.ok) {
   assert.equal(unsupportedType.error.code, "unsupported_series_type");
 }
+
+const candlestickMissingAxis = parseChartOptions(`
+{
+  series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }]
+}
+`);
+assert.equal(candlestickMissingAxis.ok, false);
+if (!candlestickMissingAxis.ok) {
+  assert.equal(candlestickMissingAxis.error.code, "invalid_option");
+}
+
+const candlestick = parseChartOptions(`
+{
+  xAxis: { type: "category", data: ["2026-08-01"] },
+  yAxis: { type: "value", scale: true },
+  series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }]
+}
+`);
+assert.equal(candlestick.ok, true);
+if (candlestick.ok) {
+  assert.equal(candlestick.option.series[0].type, "candlestick");
+}
+
+const candlestickDefaults = mergeChartDefaults({
+  xAxis: { type: "category", data: ["2026-08-01"] },
+  yAxis: { type: "value", scale: true },
+  series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }],
+});
+assert.equal("grid" in candlestickDefaults, true);
+assert.equal(candlestickDefaults.tooltip.trigger, "axis");
+
+const dualGridStock = mergeChartDefaults({
+  grid: [
+    { left: "10%", right: "8%", height: "50%" },
+    { left: "10%", right: "8%", top: "68%", height: "16%" },
+  ],
+  xAxis: [
+    { type: "category", data: ["08-01", "08-02"], gridIndex: 0 },
+    { type: "category", data: ["08-01", "08-02"], gridIndex: 1 },
+  ],
+  yAxis: [
+    { type: "value", scale: true, gridIndex: 0 },
+    { type: "value", gridIndex: 1 },
+  ],
+  series: [
+    { type: "candlestick", data: [[20, 34, 10, 38], [40, 35, 30, 50]], xAxisIndex: 0, yAxisIndex: 0 },
+    { type: "bar", data: [120, 90], xAxisIndex: 1, yAxisIndex: 1 },
+  ],
+});
+assert.equal(Array.isArray(dualGridStock.grid), true);
+assert.equal(dualGridStock.grid.length, 2);
+assert.equal(dualGridStock.grid[0].height, "50%");
+assert.equal(dualGridStock.grid[1].top, "68%");
+assert.equal(dualGridStock.grid[0].containLabel, true);
+assert.equal(Array.isArray(dualGridStock.xAxis), true);
+assert.equal(Array.isArray(dualGridStock.yAxis), true);
+
+assert.deepEqual(
+  getAvailableChartViewModes({
+    series: [{ type: "bar", data: [1, 2] }],
+  }),
+  ["line", "bar", "pie", "table"],
+);
+
+assert.deepEqual(
+  getAvailableChartViewModes({
+    series: [
+      { type: "candlestick", data: [[20, 34, 10, 38]] },
+      { type: "bar", data: [100] },
+    ],
+  }),
+  ["candlestick", "table"],
+);
+
+assert.deepEqual(
+  getAvailableChartViewModes({
+    series: [{ type: "candlestick", data: [[20, 34, 10, 38], [40, 35, 30, 50]] }],
+  }),
+  ["candlestick", "line", "bar", "table"],
+);
+
+assert.deepEqual(
+  getAvailableChartViewModes({
+    series: [{ type: "radar", data: [{ value: [1, 2] }] }],
+  }),
+  ["table"],
+);
+
+assert.equal(
+  resolveActiveChartViewMode(
+    { series: [{ type: "candlestick", data: [[1, 2, 0, 3]] }, { type: "bar", data: [1] }] },
+    "line",
+  ),
+  "candlestick",
+);
+
+const klineToClose = applyChartViewMode(
+  {
+    xAxis: { data: ["A"] },
+    yAxis: {},
+    series: [{ type: "candlestick", data: [[20, 34, 10, 38]] }],
+  },
+  "line",
+);
+assert.equal(klineToClose.series[0].type, "line");
+assert.deepEqual(klineToClose.series[0].data, [34]);
+
+const restoreK = applyChartViewMode(
+  {
+    series: [
+      { type: "candlestick", data: [[20, 34, 10, 38]] },
+      { type: "bar", data: [9] },
+    ],
+  },
+  "candlestick",
+);
+assert.equal(restoreK.series[0].type, "candlestick");
+assert.equal(restoreK.series[1].type, "bar");
 
 const missingSeries = parseChartOptions(`
 {

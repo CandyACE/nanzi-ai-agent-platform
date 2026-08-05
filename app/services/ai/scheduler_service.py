@@ -50,8 +50,10 @@ TASK_METRIC_DEFAULTS = {
 }
 
 
-def _task_permission_options() -> Dict[str, Any]:
-    return {"approval_mode": "allow"}
+def _task_permission_options(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from app.services.task_execution_options import permission_options_from_task_config
+
+    return permission_options_from_task_config(config)
 
 
 def _now_iso() -> str:
@@ -378,12 +380,25 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False):
 
             # Add structured prefix with @AgentName for forced routing.
             from app.services.task_notification_channels import channels_from_task_config
+            from app.services.task_execution_options import (
+                debug_options_from_task_config,
+                knowledge_dataset_ids_from_scope,
+                metadata_dataset_ids_from_scope,
+                permission_options_from_task_config,
+                resource_scope_from_task_config,
+            )
+
+            task_config = _task_config(task)
+            resource_scope = resource_scope_from_task_config(task_config)
+            debug_options = debug_options_from_task_config(task_config)
+            knowledge_ids = knowledge_dataset_ids_from_scope(resource_scope)
+            metadata_ids = metadata_dataset_ids_from_scope(resource_scope)
 
             full_prompt = _build_scheduled_task_prompt(
                 task_id,
                 agent_display_name,
                 task.prompt,
-                notification_channels=channels_from_task_config(_task_config(task)),
+                notification_channels=channels_from_task_config(task_config),
             )
             run_conversation_id = _new_task_run_conversation_id(task.conversation_id)
 
@@ -404,7 +419,10 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False):
                 conversation_id=run_conversation_id,
                 user_info=user_info,
                 enable_multi_agent=True,
-                permission_options=_task_permission_options(),
+                debug_options=debug_options,
+                permission_options=permission_options_from_task_config(task_config),
+                knowledge_dataset_ids=knowledge_ids or None,
+                metadata_dataset_ids=metadata_ids or None,
             )
             
             trace_id = result.get('trace_id')
@@ -428,7 +446,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False):
                         await _send_task_failure_alert(task.user_id, task, trace_id=trace_id, error=error, metrics=metrics)
                 return
 
-            notification_channels = channels_from_task_config(_task_config(task))
+            notification_channels = channels_from_task_config(task_config)
             if notification_channels:
                 from app.services.task_notification_delivery import ensure_task_notification_deliveries
 

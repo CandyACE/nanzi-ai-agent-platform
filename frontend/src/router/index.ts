@@ -110,7 +110,7 @@ const router = createRouter({
           path: 'workbench',
           name: 'PersonalWorkbench',
           component: () => import('../views/PersonalWorkbench.vue'),
-          meta: { perm: 'menu:ai_chat', title: '我的工作台' }
+          meta: { title: '我的工作台' }
         },
         {
           path: 'personal',
@@ -254,9 +254,10 @@ router.beforeEach((to: any, _from: any, next: any) => {
       }
 
       const userMenus = userInfo.permissions?.menus || []
+      const isPublicWorkbench = to.name === 'PersonalWorkbench'
       
       // 1. 本地会话没有任何菜单权限 → 无权限页（「尝试刷新」会重新拉取 /me）
-      if (userMenus.length === 0) {
+      if (userMenus.length === 0 && !isPublicWorkbench) {
         next({ name: 'NoPermission' })
         return
       }

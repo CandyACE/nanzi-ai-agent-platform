@@ -69,6 +69,11 @@
       {{ bannerMessage }}
     </div>
 
+    <WorkbenchPersonalResources
+      v-if="payload?.personal_resources?.length"
+      :items="payload.personal_resources"
+    />
+
     <div v-if="loading && !payload" class="space-y-3">
       <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-100" />
     </div>
@@ -80,7 +85,11 @@
           @open-item="openItem"
           @view-all="openTasks"
         />
-        <div class="grid gap-4 xl:grid-cols-2">
+        <WorkbenchRunning
+          :items="payload.running_items"
+          @open-item="openItem"
+        />
+        <div class="grid items-start gap-4 xl:grid-cols-2">
           <WorkbenchResume
             :items="payload.resume_items"
             @open-item="openItem"
@@ -106,12 +115,16 @@
 
       <template v-else-if="quietMode">
         <div class="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3.5">
-          <p class="text-sm font-medium text-emerald-800">今日运行正常</p>
+          <p class="text-sm font-medium text-emerald-800">{{ quietPrimary }}</p>
           <p class="mt-0.5 text-xs text-emerald-700/80">
-            暂无失败任务和待确认事项。{{ summarySecondary }}，可以从下方继续。
+            暂无失败任务和待确认事项。{{ quietDescription }}{{ summarySecondary }}，可以从下方继续。
           </p>
         </div>
-        <div class="grid gap-4 xl:grid-cols-2">
+        <WorkbenchRunning
+          :items="payload.running_items"
+          @open-item="openItem"
+        />
+        <div class="grid items-start gap-4 xl:grid-cols-2">
           <WorkbenchResume
             :items="payload.resume_items"
             @open-item="openItem"
@@ -194,6 +207,8 @@ import WorkbenchResume from "@/components/workbench/WorkbenchResume.vue"
 import WorkbenchAgents from "@/components/workbench/WorkbenchAgents.vue"
 import WorkbenchScenarios from "@/components/workbench/WorkbenchScenarios.vue"
 import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextScheduled.vue"
+import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
+import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
 import type { WorkbenchAgent, WorkbenchItem, WorkbenchScenario } from "@/types/workbench"
@@ -211,6 +226,7 @@ const sourceLabels: Record<string, string> = {
   conversations: "会话",
   agents: "助手",
   scenarios: "场景",
+  running: "运行态",
 }
 const failedSources = computed(() =>
   Object.entries(payload.value?.source_status || {})
@@ -230,19 +246,39 @@ const bannerMessage = computed(() => {
 const summaryPrimary = computed(() => {
   if (!payload.value) return ""
   if (activeMode.value) return `待处理 ${payload.value.attention.length}`
-  if (quietMode.value) return "今日运行正常"
+  if (quietMode.value) {
+    if (payload.value.running_items.length) return `进行中 ${payload.value.running_items.length}`
+    if (payload.value.resume_items.length) return `可继续 ${payload.value.resume_items.length}`
+    if (payload.value.latest_results.length) return `最近产出 ${payload.value.latest_results.length}`
+    return "今日运行正常"
+  }
   return "开始第一项工作"
 })
 
 const summarySecondary = computed(() => {
   if (!payload.value) return ""
   if (activeMode.value) {
-    return `最新结果 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length}`
+    return `进行中 ${payload.value.running_items.length} · 最新结果 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length}`
   }
   if (quietMode.value) {
-    return `可继续 ${payload.value.resume_items.length} · 最新结果 ${payload.value.latest_results.length}`
+    return `最近产出 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length}`
   }
   return `推荐场景 ${payload.value.recommended_scenarios.length} · 可用助手 ${payload.value.favorite_agents.length}`
+})
+
+const quietPrimary = computed(() => {
+  if (!payload.value) return "今日运行正常"
+  if (payload.value.running_items.length) return `有 ${payload.value.running_items.length} 项工作进行中`
+  if (payload.value.resume_items.length) return `有 ${payload.value.resume_items.length} 项工作可以继续`
+  if (payload.value.latest_results.length) return `最近有 ${payload.value.latest_results.length} 项产出`
+  return "今日运行正常"
+})
+
+const quietDescription = computed(() => {
+  if (!payload.value) return ""
+  if (payload.value.running_items.length) return "当前工作仍在处理中。"
+  if (payload.value.resume_items.length) return "最近没有新的产出。"
+  return "暂无进行中的工作。"
 })
 
 const summaryToneClass = computed(() => {
