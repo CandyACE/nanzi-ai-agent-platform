@@ -4687,7 +4687,7 @@ onUnmounted(() => {
                 >
                   <span class="inline-flex items-center gap-1.5">
                     <span aria-hidden="true" class="text-slate-400">💭</span>
-                    <span>本次会话已启用模型推理</span>
+                    <span>本次会话已启用模型思考推理</span>
                   </span>
                   <span class="inline-flex items-center gap-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
                     <span v-if="msg.isThinking">进行中</span>

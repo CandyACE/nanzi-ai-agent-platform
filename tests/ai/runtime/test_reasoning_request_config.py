@@ -199,6 +199,52 @@ async def test_get_llm_async_applies_request_reasoning_override_to_auxiliary_cal
 
 
 @pytest.mark.asyncio
+async def test_get_llm_async_ignores_session_reasoning_override_when_requested(monkeypatch):
+    from app.core.llm import client
+
+    async def fake_config_get(key):
+        return {
+            "llm_model_name": "thinking-model",
+            "llm_api_key": "system-key",
+            "llm_base_url": "https://system.example/v1",
+        }.get(key)
+
+    async def fake_lookup(model):
+        return SimpleNamespace(
+            model_id=model,
+            api_key=None,
+            api_base_url=None,
+            provider="openai",
+            thinking_enable=True,
+            thinking_only=False,
+            allow_disable_thinking=True,
+            reasoning_effort="low",
+            supported_reasoning_efforts=["low", "high"],
+        )
+
+    captured = {}
+
+    def fake_get_chat_model(**kwargs):
+        captured.update(kwargs)
+        return "handle"
+
+    monkeypatch.setattr(client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
+    monkeypatch.setattr(client, "_lookup_ai_model_record", fake_lookup)
+    monkeypatch.setattr(client, "get_debug_option", lambda key, default=None: {
+        "thinking_enable": False,
+        "reasoning_effort": "high",
+    }.get(key, default))
+    monkeypatch.setattr(client.LLMFactory, "get_chat_model", staticmethod(fake_get_chat_model))
+
+    assert await client.get_llm_async(
+        streaming=False,
+        ignore_session_reasoning_overrides=True,
+    ) == "handle"
+    assert captured["thinking_enable"] is True
+    assert captured["reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
 async def test_configured_llm_passes_reasoning_configuration_to_shared_factory(monkeypatch):
     from app.services.ai import config as config_module
 

@@ -181,7 +181,7 @@ def test_reasoning_panel_uses_model_inference_label():
         panel_start = source.index("reasoning-content-panel")
         panel_end = source.index("<!-- Main Content", panel_start)
         panel = source[panel_start:panel_end]
-        assert "本次会话已启用模型推理" in panel
+        assert "本次会话已启用模型思考推理" in panel
         assert "思考过程" not in panel
 
 

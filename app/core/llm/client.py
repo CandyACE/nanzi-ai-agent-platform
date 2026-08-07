@@ -172,6 +172,9 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
     2. ai_models table lookup if model name matches
     3. system_configs / environment fallback
     """
+    ignore_session_reasoning_overrides = bool(
+        kwargs.pop("ignore_session_reasoning_overrides", False)
+    )
     db_model_name = await ConfigServiceProxy.get("llm_model_name")
     model = kwargs.get("model") or db_model_name or settings.LLM_MODEL_NAME or "default-model"
 
@@ -212,12 +215,20 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
                 "thinking_enable": (
                     thinking_enable
                     if thinking_enable is not None
-                    else get_debug_option("thinking_enable", UNSET)
+                    else (
+                        UNSET
+                        if ignore_session_reasoning_overrides
+                        else get_debug_option("thinking_enable", UNSET)
+                    )
                 ),
                 "reasoning_effort": (
                     reasoning_effort
                     if reasoning_effort is not None
-                    else get_debug_option("reasoning_effort", UNSET)
+                    else (
+                        UNSET
+                        if ignore_session_reasoning_overrides
+                        else get_debug_option("reasoning_effort", UNSET)
+                    )
                 ),
             },
         )

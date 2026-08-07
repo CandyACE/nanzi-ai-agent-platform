@@ -150,6 +150,8 @@ async def test_route_query_high_confidence(mock_agents_metadata):
         assert result.turn_labels == []
         assert result.relation_to_previous == "unknown"
         assert result.user_action_type == "unknown"
+        assert mock_identify.call_args.kwargs["ignore_session_reasoning_overrides"] is True
+        assert mock_get_llm.call_args.kwargs["ignore_session_reasoning_overrides"] is True
 
 
 @pytest.mark.asyncio
