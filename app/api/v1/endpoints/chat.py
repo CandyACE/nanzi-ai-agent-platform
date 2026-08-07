@@ -477,6 +477,7 @@ async def get_conversation_history(
                 fallback_history.append({
                     "role": "assistant",
                     "content": r.summary,
+                    "reasoning_content": r.reasoning_content,
                     "timestamp": r.created_at.isoformat() if r.created_at else None,
                     "agent_name": agent_name,
                     "agent_display_name": agent_display_name,

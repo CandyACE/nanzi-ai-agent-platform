@@ -70,6 +70,32 @@ graph TD
 
 ---
 
+### 2.3 代码画布执行 (Code Canvas)
+
+代码画布提供独立于聊天接口的短代码执行流，适合用户确认后的 Python / Shell 工作区操作：
+
+```http
+POST /api/v1/chat/code-executions/stream
+Authorization: Bearer <api-key>
+Content-Type: application/json
+```
+
+```json
+{
+  "language": "python",
+  "code": "print('hello')",
+  "conversation_id": "conversation-id"
+}
+```
+
+响应为 SSE，包含状态、stdout、stderr 和完成结果。需要提前结束时调用：
+
+```http
+POST /api/v1/chat/code-executions/{execution_id}/stop
+```
+
+停止请求需带同一 `conversation_id`。当前默认单次超时 60 秒、输出上限 100 KB，执行在用户私有工作区内完成。语言别名、状态值、路径安全和工作区文件规则见 [代码画布与工作区执行指南](code_canvas_and_workspace_guide.md)。
+
 ## 3. 系统智能体 (System Agents)
 
 平台初始化时内置了以下核心智能体，覆盖了主要业务场景：

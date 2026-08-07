@@ -7,7 +7,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 APPROVAL_MODE_KEY = "approval_mode"
 MODEL_KEY = "model"
 RESOURCE_SCOPE_KEY = "resource_scope"
+THINKING_ENABLE_KEY = "thinking_enable"
+REASONING_EFFORT_KEY = "reasoning_effort"
 VALID_APPROVAL_MODES = frozenset({"ask", "allow", "deny"})
+VALID_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
 DEFAULT_APPROVAL_MODE = "allow"
 
 
@@ -23,6 +26,16 @@ def normalize_model_id(raw: Any) -> Optional[str]:
         return None
     value = str(raw).strip()
     return value or None
+
+
+def normalize_thinking_enable(raw: Any) -> Optional[bool]:
+    """只接受任务 UI 写入的布尔覆盖值，不把字符串隐式转换成布尔值。"""
+    return raw if isinstance(raw, bool) else None
+
+
+def normalize_reasoning_effort(raw: Any) -> Optional[str]:
+    value = str(raw or "").strip().lower()
+    return value if value in VALID_REASONING_EFFORTS else None
 
 
 def _normalize_scope_items(raw: Any) -> List[Dict[str, Any]]:
@@ -106,6 +119,12 @@ def debug_options_from_task_config(config: Optional[Mapping[str, Any]]) -> Dict[
     model_id = model_from_task_config(cfg)
     if model_id:
         options["model"] = model_id
+    thinking_enable = normalize_thinking_enable(cfg.get(THINKING_ENABLE_KEY))
+    if THINKING_ENABLE_KEY in cfg and thinking_enable is not None:
+        options[THINKING_ENABLE_KEY] = thinking_enable
+    reasoning_effort = normalize_reasoning_effort(cfg.get(REASONING_EFFORT_KEY))
+    if reasoning_effort and thinking_enable is not False:
+        options[REASONING_EFFORT_KEY] = reasoning_effort
     return options
 
 

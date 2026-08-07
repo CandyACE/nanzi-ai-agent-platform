@@ -21,6 +21,10 @@ from app.services.resource_scope_normalizer import (
     has_any_resource,
     normalize_resource_scope_for_user,
 )
+from app.services.task_execution_options import (
+    normalize_reasoning_effort,
+    normalize_thinking_enable,
+)
 
 router = APIRouter()
 
@@ -43,10 +47,26 @@ async def _sanitize_task_config(
     owner_info: Dict[str, Any],
     config: Any,
 ) -> Any:
-    """收敛 config.resource_scope，丢弃所有者无权访问的数据集 / 知识库 / 技能 / MCP。"""
-    if not isinstance(config, dict) or "resource_scope" not in config:
+    """收敛资源范围，并只保留合法的任务级模型思考覆盖值。"""
+    if not isinstance(config, dict):
         return config
     sanitized = dict(config)
+    if "thinking_enable" in sanitized:
+        thinking_enable = normalize_thinking_enable(sanitized.get("thinking_enable"))
+        if thinking_enable is None:
+            sanitized.pop("thinking_enable", None)
+        else:
+            sanitized["thinking_enable"] = thinking_enable
+            if thinking_enable is False:
+                sanitized.pop("reasoning_effort", None)
+    if "reasoning_effort" in sanitized:
+        reasoning_effort = normalize_reasoning_effort(sanitized.get("reasoning_effort"))
+        if reasoning_effort is None:
+            sanitized.pop("reasoning_effort", None)
+        else:
+            sanitized["reasoning_effort"] = reasoning_effort
+    if "resource_scope" not in sanitized:
+        return sanitized
     normalized = await normalize_resource_scope_for_user(
         db, owner_info, sanitized.get("resource_scope") or {}
     )

@@ -928,6 +928,34 @@
                 :disabled="isProcessing"
                 @action="(action) => handleGroundingAction(msg.groundingBlocked, action)"
               />
+              <!-- Model reasoning is rendered separately from the final answer. -->
+              <div
+                v-if="msg.reasoningContent"
+                class="reasoning-content-panel mb-3 overflow-hidden rounded-r-xl border-l-4 border-slate-200 bg-slate-50/75 text-sm dark:border-slate-600 dark:bg-slate-800/40"
+              >
+                <button
+                  type="button"
+                  class="flex w-full items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 text-left text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100/70 dark:border-slate-700/70 dark:text-slate-300 dark:hover:bg-slate-700/30"
+                  :aria-expanded="msg.isReasoningExpanded === true"
+                  @click="msg.isReasoningExpanded = !msg.isReasoningExpanded"
+                >
+                  <span class="inline-flex items-center gap-1.5">
+                    <span aria-hidden="true" class="text-slate-400">💭</span>
+                    <span>本次会话已启用模型思考推理</span>
+                  </span>
+                  <span class="inline-flex items-center gap-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
+                    <span v-if="msg.isThinking">进行中</span>
+                    <span class="text-sm transition-transform" :class="msg.isReasoningExpanded === true ? 'rotate-180' : ''" aria-hidden="true">⌄</span>
+                  </span>
+                </button>
+                <div v-show="msg.isReasoningExpanded === true" class="max-h-[min(360px,45vh)] overflow-y-auto px-3 py-2 text-slate-600 dark:text-slate-300">
+                  <MessageRenderer
+                    :content="msg.reasoningContent"
+                    :theme="config.markdownTheme"
+                    @open-canvas="handleOpenCanvas"
+                  />
+                </div>
+              </div>
               <!-- Main Content -->
               <div v-if="msg.content && !msg.groundingBlocked" class="relative group/content mt-2">
                 <!-- Floating Copy Button (Moved here to avoid overlap) -->
@@ -1304,6 +1332,8 @@
         :approval-mode="config.approvalMode"
         :selected-model="config.overrideModel"
         :available-models="availableModels"
+        :thinking-enable-override="thinkingEnableOverride"
+        :reasoning-effort-override="reasoningEffortOverride"
         :active-ltm-preference="activeLtmPreference"
         :agent-id="effectiveEmbedChatAgentId"
         :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
@@ -1312,7 +1342,9 @@
         :is-loading-agents="isLoadingAgents"
         :lock-expert-agent="isUrlAgentPinned"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
-        @update:selected-model="(model) => { config.overrideModel = model; saveRoutingSettings(); }"
+        @update:selected-model="handleEmbedModelSelection"
+        @update:thinking-enable-override="thinkingEnableOverride = $event"
+        @update:reasoning-effort-override="reasoningEffortOverride = $event"
         @send="sendMessage"
         @stop="stopGeneration"
         @toggle-shortcuts="toggleShortcuts"
@@ -1805,7 +1837,7 @@
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_chat'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                        <svg v-else @click="copyToClipboard('帮我写一个关于机房节能降耗的宣传文案。', 'help_chat')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                        <svg v-else @click="copyToClipboard('帮我写一个关于机房节能降耗的宣传文案。', 'help_chat')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                       </div>
                     </div>
                   </div>
@@ -1834,7 +1866,7 @@
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_bi'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                        <svg v-else @click="copyToClipboard('查询上海区域所有机房的剩余机柜数', 'help_bi')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                        <svg v-else @click="copyToClipboard('查询上海区域所有机房的剩余机柜数', 'help_bi')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                       </div>
                     </div>
                   </div>
@@ -1863,7 +1895,7 @@
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_kb'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                        <svg v-else @click="copyToClipboard('本周的 CS 和 ops 工单有哪些？', 'help_kb')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                        <svg v-else @click="copyToClipboard('本周的 CS 和 ops 工单有哪些？', 'help_kb')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                       </div>
                     </div>
                   </div>
@@ -1892,7 +1924,7 @@
                       </button>
                       <div class="transition-all duration-300">
                         <svg v-if="copiedId === 'help_task'" class="w-3.5 h-3.5 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                        <svg v-else @click="copyToClipboard('查询最近 1 小时的网络延迟报警，并写一封邮件告知运维团队。', 'help_task')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                        <svg v-else @click="copyToClipboard('查询最近 1 小时的网络延迟报警，并写一封邮件告知运维团队。', 'help_task')" class="w-3 h-3 text-gray-400 opacity-0 group-hover/item:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                       </div>
                     </div>
                   </div>
@@ -1924,7 +1956,7 @@
                     </button>
                     <div class="transition-all duration-300">
                       <svg v-if="copiedId === 'help_scenario_fault'" class="w-4 h-4 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                      <svg v-else @click="copyToClipboard('查看 B7 机房最近的所有高压报警，并给出可能的根本原因分析。', 'help_scenario_fault')" class="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover/scenario:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                      <svg v-else @click="copyToClipboard('查看 B7 机房最近的所有高压报警，并给出可能的根本原因分析。', 'help_scenario_fault')" class="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover/scenario:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                     </div>
                  </div>
                </div>
@@ -1945,7 +1977,7 @@
                     </button>
                     <div class="transition-all duration-300">
                       <svg v-if="copiedId === 'help_scenario_inspect'" class="w-4 h-4 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                      <svg v-else @click="copyToClipboard('统计各机房昨天的监控指标数据量，并进行分析。', 'help_scenario_inspect')" class="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover/scenario:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                      <svg v-else @click="copyToClipboard('统计各机房昨天的监控指标数据量，并进行分析。', 'help_scenario_inspect')" class="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover/scenario:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                     </div>
                  </div>
                </div>
@@ -1966,7 +1998,7 @@
                     </button>
                     <div class="transition-all duration-300">
                       <svg v-if="copiedId === 'help_scenario_audit'" class="w-4 h-4 text-emerald-500 scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                      <svg v-else @click="copyToClipboard('查找 2024 年 Q4 季度的所有变更审批记录，汇总为表格。', 'help_scenario_audit')" class="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover/scenario:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                      <svg v-else @click="copyToClipboard('查找 2024 年 Q4 季度的所有变更审批记录，汇总为表格。', 'help_scenario_audit')" class="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover/scenario:opacity-100 cursor-copy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                     </div>
                  </div>
                </div>
@@ -2194,7 +2226,7 @@ import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
-import { modelApi, type AIModel } from "@/api/model";
+import { modelApi, type AIModel, type ReasoningEffort } from "@/api/model";
 import {
   filterLogsForTurn,
   countHiddenLogs,
@@ -2348,6 +2380,8 @@ interface Message {
   trace_id?: string;
   role: "user" | "agent" | "system";
   content: string;
+  reasoningContent?: string;
+  isReasoningExpanded?: boolean;
   files?: ChatFile[];
   logs?: LogEntry[];
   citations?: any[];
@@ -2832,6 +2866,8 @@ const config = reactive({
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: false,
 });
+const thinkingEnableOverride = ref<boolean | null>(null);
+const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 const showPersonalResources = ref(false);
 const personalResourcesTab = ref<PersonalResourceTab>("tokens");
@@ -3007,6 +3043,16 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+};
+const handleEmbedModelSelection = (model: string) => {
+    config.overrideModel = model;
+    thinkingEnableOverride.value = null;
+    reasoningEffortOverride.value = null;
+    saveRoutingSettings();
+};
+const resetEmbedThinkingOverrides = () => {
+    thinkingEnableOverride.value = null;
+    reasoningEffortOverride.value = null;
 };
 const switchToAuto = () => {
     if (isUrlAgentPinned.value) {
@@ -3612,6 +3658,7 @@ const generateNewConversation = () => {
   // 工作台等入口通过 INIT_CONFIG 写入的 resume id，新会话时必须清掉，
   // 否则随后 initChat() 会再次强制切回旧会话并重载历史。
   requestedConversationId = "";
+  resetEmbedThinkingOverrides();
   resourceScopeLoadSequence += 1;
   conversationId.value = createConversationId();
   resourceScope.value = emptyResourceScopeState();
@@ -3949,6 +3996,7 @@ const handleHistoryClick = (item: any) => {
     }
 
     // Switch to this conversation
+    resetEmbedThinkingOverrides();
     conversationId.value = item.conversation_id;
     localStorage.setItem("yovole_embed_conv_id", item.conversation_id);
     updateActiveConversationOnServer(item.conversation_id);
@@ -5406,6 +5454,7 @@ const fetchConversationHistory = async (isLoadMore = false) => {
                   trace_id: item.trace_id,
                   role: 'agent',
                   content: item.summary,
+                  reasoningContent: item.reasoning_content ?? undefined,
                   logs: [],
                   isThinking: false,
                   feedback: null,
@@ -6577,6 +6626,12 @@ const sendMessage = async () => {
         approval_mode: config.approvalMode || "ask",
       },
     };
+    if (thinkingEnableOverride.value !== null) {
+      (body.debug_options as Record<string, unknown>).thinking_enable = thinkingEnableOverride.value;
+    }
+    if (reasoningEffortOverride.value !== null) {
+      (body.debug_options as Record<string, unknown>).reasoning_effort = reasoningEffortOverride.value;
+    }
     if (knowledgeDatasetIds.length > 0) {
       body.knowledge_dataset_ids = knowledgeDatasetIds;
     }
@@ -7692,7 +7747,7 @@ onUnmounted(() => {
   right: 6px;
   width: 24px;
   height: 24px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z'/%3E%3C/svg%3E");
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;

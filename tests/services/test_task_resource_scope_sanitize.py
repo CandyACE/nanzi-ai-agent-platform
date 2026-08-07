@@ -95,6 +95,27 @@ async def test_sanitize_skips_config_without_scope():
 
 
 @pytest.mark.asyncio
+async def test_sanitize_normalizes_task_reasoning_overrides():
+    db = AsyncMock()
+    owner = {"user_id": 7, "user_name": "alice", "role": "user"}
+
+    sanitized = await tasks_endpoint._sanitize_task_config(
+        db,
+        owner,
+        {
+            "thinking_enable": False,
+            "reasoning_effort": "high",
+            "untrusted": {"nested": True},
+        },
+    )
+
+    assert sanitized == {
+        "thinking_enable": False,
+        "untrusted": {"nested": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_task_persists_sanitized_config():
     db = AsyncMock()
     created = MagicMock()

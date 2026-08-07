@@ -18,6 +18,7 @@ import TaskPromptComposer, {
   type TaskApprovalMode,
   type TaskResourceScope,
 } from '@/components/task/TaskPromptComposer.vue'
+import type { ReasoningEffort } from '@/api/model'
 
 const emptyResourceScope = (): TaskResourceScope => ({
   project_name: '',
@@ -30,10 +31,26 @@ const emptyResourceScope = (): TaskResourceScope => ({
 const taskModel = ref('')
 const taskApprovalMode = ref<TaskApprovalMode>('allow')
 const taskResourceScope = ref<TaskResourceScope>(emptyResourceScope())
+const taskThinkingEnableOverride = ref<boolean | null>(null)
+const taskReasoningEffortOverride = ref<ReasoningEffort | null>(null)
+
+const REASONING_EFFORT_VALUES = new Set<ReasoningEffort>([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+])
 
 const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
   const cfg = config && typeof config === 'object' ? config : {}
   taskModel.value = String(cfg.model || cfg.model_id || '')
+  taskThinkingEnableOverride.value = typeof cfg.thinking_enable === 'boolean' ? cfg.thinking_enable : null
+  taskReasoningEffortOverride.value = REASONING_EFFORT_VALUES.has(cfg.reasoning_effort)
+    ? cfg.reasoning_effort
+    : null
+  if (taskThinkingEnableOverride.value === false) taskReasoningEffortOverride.value = null
   const mode = String(cfg.approval_mode || 'allow').toLowerCase()
   taskApprovalMode.value = mode === 'ask' || mode === 'deny' || mode === 'allow' ? mode : 'allow'
   const scope = cfg.resource_scope && typeof cfg.resource_scope === 'object' ? cfg.resource_scope : {}
@@ -44,6 +61,12 @@ const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
     skills: Array.isArray(scope.skills) ? scope.skills : [],
     mcp_tools: Array.isArray(scope.mcp_tools) ? scope.mcp_tools : [],
   }
+}
+
+const handleTaskModelSelection = (model: string) => {
+  taskModel.value = model
+  taskThinkingEnableOverride.value = null
+  taskReasoningEffortOverride.value = null
 }
 
 const props = withDefaults(defineProps<{
@@ -552,6 +575,16 @@ const saveTask = async () => {
     else {
       delete baseConfig.model
       delete baseConfig.model_id
+    }
+    if (taskThinkingEnableOverride.value !== null) {
+      baseConfig.thinking_enable = taskThinkingEnableOverride.value
+    } else {
+      delete baseConfig.thinking_enable
+    }
+    if (taskReasoningEffortOverride.value !== null && taskThinkingEnableOverride.value !== false) {
+      baseConfig.reasoning_effort = taskReasoningEffortOverride.value
+    } else {
+      delete baseConfig.reasoning_effort
     }
     const scope = taskResourceScope.value || emptyResourceScope()
     const hasScope = Boolean(
@@ -1753,11 +1786,15 @@ onMounted(async () => {
               :model="taskModel"
               :approval-mode="taskApprovalMode"
               :resource-scope="taskResourceScope"
+              :thinking-enable-override="taskThinkingEnableOverride"
+              :reasoning-effort-override="taskReasoningEffortOverride"
               :agent-id="editingTask.agent_id"
               @update:prompt="editingTask.prompt = $event"
-              @update:model="taskModel = $event"
+              @update:model="handleTaskModelSelection"
               @update:approval-mode="taskApprovalMode = $event"
               @update:resource-scope="taskResourceScope = $event"
+              @update:thinking-enable-override="taskThinkingEnableOverride = $event"
+              @update:reasoning-effort-override="taskReasoningEffortOverride = $event"
             />
           </div>
 

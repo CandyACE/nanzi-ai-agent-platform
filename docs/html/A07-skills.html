@@ -85,6 +85,14 @@
   <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>边界：</strong>Skill 不能替代 RBAC、SQL Gate、工作区隔离、工具审批。它约束「怎么做」，不扩大「能碰什么」。</p></section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">06｜个人 Skill 发布与审核</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">状态流转</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">个人 Skill 在自己的目录中创建、编辑和测试后，可通过 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">/api/portal/skills/personal/{skill_id}/submit</code> 提交审核；管理员在待审核列表中处理，通过后生成独立的平台 Skill 版本，撤回则回到个人侧继续修改。发布审核需要 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">element:skills:admin</code>，普通用户不应直接写平台目录。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">发布只是把内容纳入平台治理，不会自动扩大已有 Agent 版本的 Skill 白名单；仍需在对应版本中选择并验证。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
   <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
     <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>消息通知</strong></p>

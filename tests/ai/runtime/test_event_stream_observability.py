@@ -71,6 +71,21 @@ async def test_observability_maps_reply_and_thinking_blocks():
 
 
 @pytest.mark.asyncio
+async def test_map_standard_agentscope_event_emits_reasoning_content_delta():
+    state = new_native_stream_state()
+    event = SimpleNamespace(type="THINKING_BLOCK_DELTA", delta="先分析")
+
+    chunks = []
+    async for chunk in map_standard_agentscope_event(event, state=state):
+        chunks.append(chunk)
+
+    assert chunks == [
+        {"type": "thinking", "status": "continuing"},
+        {"type": "reasoning_content", "content": "先分析"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_custom_state_updated_emits_context_update():
     state = new_native_stream_state()
     event = SimpleNamespace(

@@ -115,3 +115,33 @@ async def test_intent_service_returns_unknown_when_llm_missing():
 
     assert result.intent == IntentType.UNKNOWN
     assert result.confidence == 0.0
+
+
+@pytest.mark.asyncio
+async def test_intent_service_rebuilds_cached_llm_without_session_reasoning_overrides():
+    service = IntentService()
+    service._llm = object()
+    fresh_llm = object()
+    chat_client = _mock_chat_client(
+        '{"intent":"GENERAL","confidence":0.8,"reasoning":"闲聊","entities":[]}'
+    )
+
+    with patch(
+        "app.core.llm.client.get_llm_async",
+        new_callable=AsyncMock,
+        return_value=fresh_llm,
+    ) as mock_get_llm, patch(
+        "app.services.ai.intent_service.chat_client_from_handle",
+        return_value=chat_client,
+    ) as mock_chat_factory:
+        result = await service.identify_intent(
+            "你好",
+            ignore_session_reasoning_overrides=True,
+        )
+
+    assert result.intent == IntentType.GENERAL
+    mock_get_llm.assert_awaited_once_with(
+        streaming=False,
+        ignore_session_reasoning_overrides=True,
+    )
+    mock_chat_factory.assert_called_once_with(fresh_llm)

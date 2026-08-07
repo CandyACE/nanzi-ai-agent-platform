@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue';
 import axios from 'axios';
-import { SparklesIcon, ClipboardDocumentIcon, CheckBadgeIcon, XMarkIcon } from '@heroicons/vue/24/outline';
+import { SparklesIcon, DocumentDuplicateIcon, CheckBadgeIcon, XMarkIcon } from '@heroicons/vue/24/outline';
 import ConfirmModal from './ConfirmModal.vue';
 import { copyToClipboard as copyText } from '../utils/clipboard';
 
@@ -239,7 +239,7 @@ onUnmounted(() => {
                     class="p-1.5 bg-white shadow-sm border border-gray-200 rounded-lg text-gray-400 hover:text-indigo-600 transition-all"
                     title="复制此版本"
                   >
-                    <ClipboardDocumentIcon class="w-4 h-4" />
+                    <DocumentDuplicateIcon class="w-4 h-4" />
                   </button>
                 </div>
                 <pre class="w-full h-full p-6 text-xs text-gray-700 font-mono overflow-y-auto whitespace-pre-wrap">{{

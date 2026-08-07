@@ -966,6 +966,7 @@ class IntentService:
         user_input: str,
         llm=None,
         history: Optional[List[Dict[str, str]]] = None,
+        ignore_session_reasoning_overrides: bool = False,
     ) -> IntentResponse:
         """
         Analyzes user input and returns a structured IntentResponse.
@@ -976,10 +977,16 @@ class IntentService:
         if llm:
             active_llm = llm
         else:
-            if self._llm is None:
+            if self._llm is None or ignore_session_reasoning_overrides:
                 from app.core.llm.client import get_llm_async
-                self._llm = await get_llm_async(streaming=False)
-            active_llm = self._llm
+                active_llm = await get_llm_async(
+                    streaming=False,
+                    ignore_session_reasoning_overrides=ignore_session_reasoning_overrides,
+                )
+                if not ignore_session_reasoning_overrides:
+                    self._llm = active_llm
+            else:
+                active_llm = self._llm
         
         if not active_llm:
             import logging

@@ -268,6 +268,7 @@ const continueChatFromTrace = () => {
             finalizeConversationInBackground(previousId);
         }
         conversationId.value = targetId;
+        resetDebugThinkingOverrides();
         localStorage.setItem("agent_debug_conv_id", targetId);
         messages.value = [];
         loadSessionHistory(targetId);
@@ -278,7 +279,7 @@ const continueChatFromTrace = () => {
 };
 
 
-import { modelApi, type AIModel } from "../api/model";
+import { modelApi, type AIModel, type ReasoningEffort } from "../api/model";
 
 import ConfirmModal from "@/components/ConfirmModal.vue";
 
@@ -505,6 +506,7 @@ const generateNewConversation = (isManual = false) => {
     finalizeConversationInBackground(previousId);
   }
   conversationId.value = createConversationId();
+  resetDebugThinkingOverrides();
   debugConfig.enableGrounding = false;
   localStorage.setItem("agent_debug_conv_id", conversationId.value);
   if (isManual) {
@@ -529,7 +531,11 @@ const loadSessionHistory = async (id: string) => {
           const prev = rawMessages[i-1];
           const curr = rawMessages[i];
           // Simple deduplication check
-          if (curr.role === prev.role && curr.content === prev.content) {
+          if (
+            curr.role === prev.role &&
+            curr.content === prev.content &&
+            curr.reasoning_content === prev.reasoning_content
+          ) {
             continue; // Skip duplicate
           }
           validMessages.push(curr);
@@ -542,6 +548,7 @@ const loadSessionHistory = async (id: string) => {
           trace_id: m.trace_id,
           role: m.role === "assistant" ? "agent" : m.role,
           content: m.content as string,
+          reasoningContent: m.reasoning_content || undefined,
           logs: [],
           isThinking: false,
           isHistory: true, // Mark as history
@@ -1209,6 +1216,8 @@ interface Message {
   id: number;
   role: "user" | "agent" | "system";
   content: string;
+  reasoningContent?: string;
+  isReasoningExpanded?: boolean;
   files?: ChatFile[];
   rawContent?: string; // Store original markdown for copying
   logs?: LogEntry[];
@@ -1248,6 +1257,8 @@ const showLogicFlowModal = ref(false);
 const isConfigPanelFloating = ref(false);
 const debugConfig = reactive({
   model: "", // Empty means default
+  thinkingEnableOverride: null as boolean | null,
+  reasoningEffortOverride: null as ReasoningEffort | null,
   approvalMode: "ask" as "ask" | "allow" | "deny",
   temperature: 0.0,
   dryRun: false, // SQL Review Mode
@@ -1258,6 +1269,16 @@ const debugConfig = reactive({
   systemPromptOverride: "", // Prompt Engineering
   injectedContext: [] as { key: string; value: string }[], // Manual Context Injection
 });
+
+const handleDebugModelSelection = (model: string) => {
+  debugConfig.model = model;
+  debugConfig.thinkingEnableOverride = null;
+  debugConfig.reasoningEffortOverride = null;
+};
+const resetDebugThinkingOverrides = () => {
+  debugConfig.thinkingEnableOverride = null;
+  debugConfig.reasoningEffortOverride = null;
+};
 
 
 
@@ -1279,6 +1300,7 @@ const loadCurrentPrompt = async () => {
       if (res.data.model_name) debugConfig.model = res.data.model_name;
       if (res.data.temperature !== undefined)
         debugConfig.temperature = res.data.temperature;
+      resetDebugThinkingOverrides();
     }
   } catch (e) {
     console.error("Failed to load agent config", e);
@@ -2900,6 +2922,12 @@ const sendMessage = async () => {
       knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
     };
     if (debugConfig.model) debugOptions.model = debugConfig.model;
+    if (debugConfig.thinkingEnableOverride !== null) {
+      debugOptions.thinking_enable = debugConfig.thinkingEnableOverride;
+    }
+    if (debugConfig.reasoningEffortOverride !== null) {
+      debugOptions.reasoning_effort = debugConfig.reasoningEffortOverride;
+    }
     if (debugConfig.temperature > 0)
       debugOptions.temperature = debugConfig.temperature;
 
@@ -4271,7 +4299,7 @@ onUnmounted(() => {
 
               <!-- Agent Message Bubble (Unified Card Style) -->
               <div
-                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || msg.content || (msg.citations && msg.citations.length > 0)"
+                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || msg.content || msg.reasoningContent || msg.isThinking || (msg.citations && msg.citations.length > 0)"
                 class="bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-900/20 dark:to-gray-800 rounded-2xl rounded-tl-none border border-gray-200 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 shadow-sm p-4 overflow-hidden"
               >
               <!-- Logs (Collapsible Thought Accordion) -->
@@ -4646,6 +4674,34 @@ onUnmounted(() => {
                 @action="(action) => handleGroundingAction(msg.groundingBlocked, action)"
               />
 
+              <!-- Model reasoning is rendered separately from the final answer. -->
+              <div
+                v-if="msg.reasoningContent"
+                class="reasoning-content-panel mb-3 overflow-hidden rounded-r-xl border-l-4 border-slate-200 bg-slate-50/75 text-sm dark:border-slate-600 dark:bg-slate-800/40"
+              >
+                <button
+                  type="button"
+                  class="flex w-full items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 text-left text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100/70 dark:border-slate-700/70 dark:text-slate-300 dark:hover:bg-slate-700/30"
+                  :aria-expanded="msg.isReasoningExpanded === true"
+                  @click="msg.isReasoningExpanded = !msg.isReasoningExpanded"
+                >
+                  <span class="inline-flex items-center gap-1.5">
+                    <span aria-hidden="true" class="text-slate-400">💭</span>
+                    <span>本次会话已启用模型思考推理</span>
+                  </span>
+                  <span class="inline-flex items-center gap-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
+                    <span v-if="msg.isThinking">进行中</span>
+                    <span class="text-sm transition-transform" :class="msg.isReasoningExpanded === true ? 'rotate-180' : ''" aria-hidden="true">⌄</span>
+                  </span>
+                </button>
+                <div v-show="msg.isReasoningExpanded === true" class="max-h-[min(360px,45vh)] overflow-y-auto px-3 py-2 text-slate-600 dark:text-slate-300">
+                  <MessageRenderer
+                    :content="msg.reasoningContent"
+                    @open-canvas="handleOpenCanvas"
+                  />
+                </div>
+              </div>
+
               <!-- Main Content -->
               <div
                 v-if="msg.content && !msg.groundingBlocked"
@@ -4855,8 +4911,12 @@ onUnmounted(() => {
           :approval-mode="debugConfig.approvalMode"
           :selected-model="debugConfig.model"
           :available-models="availableModels"
+          :thinking-enable-override="debugConfig.thinkingEnableOverride"
+          :reasoning-effort-override="debugConfig.reasoningEffortOverride"
           @update:approval-mode="debugConfig.approvalMode = $event"
-          @update:selected-model="debugConfig.model = $event"
+          @update:selected-model="handleDebugModelSelection"
+          @update:thinking-enable-override="debugConfig.thinkingEnableOverride = $event"
+          @update:reasoning-effort-override="debugConfig.reasoningEffortOverride = $event"
           @send="sendMessage"
           @stop="stopGeneration"
           @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
@@ -5444,7 +5504,7 @@ onUnmounted(() => {
   right: 6px;
   width: 24px;
   height: 24px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z'/%3E%3C/svg%3E");
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;

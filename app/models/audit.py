@@ -43,6 +43,7 @@ class AgentExecutionHistory(Base):
     username = Column(String(64), nullable=True, comment='用户名')
     query = Column(Text, nullable=True, comment='用户提问')
     summary = Column(Text, nullable=True, comment='AI 响应/总结')
+    reasoning_content = Column(Text, nullable=True, comment='模型推理过程')
     prompt_tokens = Column(Integer, default=0, comment='输入 Token 消耗数')
     completion_tokens = Column(Integer, default=0, comment='输出 Token 消耗数')
     total_tokens = Column(Integer, default=0, comment='总 Token 消耗数')

@@ -108,6 +108,112 @@ async def test_model_management_persists_optional_token_limits(
 
 
 @pytest.mark.asyncio
+async def test_model_management_defaults_thinking_configuration(
+    client: AsyncClient,
+    admin_headers,
+):
+    response = await client.post(
+        "/api/portal/models",
+        json={
+            "name": "Default Thinking Config",
+            "model_id": f"thinking-default-{uuid.uuid4().hex}",
+            "provider": "openai",
+            "type": "llm",
+            "api_key": "sk-thinking-default",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["thinking_enable"] is False
+    assert data["thinking_only"] is False
+    assert data["allow_disable_thinking"] is True
+    assert data["reasoning_effort"] is None
+    assert data["supported_reasoning_efforts"] == ["none", "minimal", "low", "medium", "high", "xhigh"]
+
+
+@pytest.mark.asyncio
+async def test_model_management_persists_thinking_configuration(
+    client: AsyncClient,
+    admin_headers,
+):
+    payload = {
+        "name": "Thinking Config",
+        "model_id": f"thinking-round-trip-{uuid.uuid4().hex}",
+        "provider": "openai",
+        "type": "llm",
+        "api_key": "sk-thinking-round-trip",
+        "thinking_enable": True,
+        "thinking_only": True,
+        "allow_disable_thinking": False,
+        "reasoning_effort": "high",
+        "supported_reasoning_efforts": ["none", "minimal", "low", "medium", "high", "xhigh"],
+    }
+
+    created = await client.post(
+        "/api/portal/models",
+        json=payload,
+        headers=admin_headers,
+    )
+    assert created.status_code == 200
+    model_id = created.json()["id"]
+    for field in (
+        "thinking_enable",
+        "thinking_only",
+        "allow_disable_thinking",
+        "reasoning_effort",
+        "supported_reasoning_efforts",
+    ):
+        assert created.json()[field] == payload[field]
+
+    updated = await client.put(
+        f"/api/portal/models/{model_id}",
+        json={"reasoning_effort": "xhigh"},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["reasoning_effort"] == "xhigh"
+    assert updated.json()["supported_reasoning_efforts"] == payload["supported_reasoning_efforts"]
+    assert updated.json()["thinking_enable"] is True
+    assert updated.json()["thinking_only"] is True
+    assert updated.json()["allow_disable_thinking"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "thinking_config",
+    [
+        {"reasoning_effort": "unsupported"},
+        {"supported_reasoning_efforts": []},
+        {
+            "reasoning_effort": "high",
+            "supported_reasoning_efforts": ["low"],
+        },
+    ],
+)
+async def test_model_management_rejects_invalid_thinking_configuration(
+    client: AsyncClient,
+    admin_headers,
+    thinking_config: dict,
+):
+    response = await client.post(
+        "/api/portal/models",
+        json={
+            "name": "Invalid Thinking Config",
+            "model_id": f"thinking-invalid-{uuid.uuid4().hex}",
+            "provider": "openai",
+            "type": "llm",
+            "api_key": "sk-thinking-invalid",
+            **thinking_config,
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_model_id_must_be_globally_unique_on_create(client: AsyncClient, admin_headers):
     model_id = f"unique-create-{uuid.uuid4().hex}"
     payload = {

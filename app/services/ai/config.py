@@ -7,6 +7,8 @@ from app.core.llm.client import get_llm
 from app.services.config_service import ConfigService
 from app.utils.model_credentials import decrypt_model_api_key
 from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
+from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
+from app.core.context import get_debug_option
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,11 @@ class RuntimeModelInfo:
     context_size: Optional[int] = None
     max_output_tokens: Optional[int] = None
     provider: Optional[str] = None
+    thinking_enable: bool = False
+    reasoning_effort: str | None = None
+    thinking_only: bool = False
+    allow_disable_thinking: bool = True
+    supported_reasoning_efforts: tuple[str, ...] = ()
 
     def public_dict(self) -> Dict[str, object]:
         return {
@@ -63,8 +70,6 @@ async def resolve_runtime_model_info(
     def get_val(key: str, default: str) -> str:
         return llm_config.get(key, {}).get("value") or default
 
-    from app.core.context import get_debug_option
-
     explicit_debug_model = (debug_options or {}).get("model")
     debug_model = explicit_debug_model or get_debug_option("model")
     if model_override:
@@ -95,6 +100,22 @@ async def resolve_runtime_model_info(
         )
 
     if registered is not None:
+        reasoning_overrides = {
+            key: (
+                (debug_options or {}).get(key)
+                if key in (debug_options or {})
+                else get_debug_option(key, UNSET)
+            )
+            for key in ("thinking_enable", "reasoning_effort")
+        }
+        reasoning_defaults = resolve_reasoning_settings(
+            thinking_enable=bool(getattr(registered, "thinking_enable", False)),
+            reasoning_effort=getattr(registered, "reasoning_effort", None),
+            thinking_only=bool(getattr(registered, "thinking_only", False)),
+            allow_disable_thinking=bool(getattr(registered, "allow_disable_thinking", True)),
+            supported_reasoning_efforts=getattr(registered, "supported_reasoning_efforts", None),
+            overrides=reasoning_overrides,
+        )
         return RuntimeModelInfo(
             configured_model=configured_model,
             effective_model_id=str(getattr(registered, "model_id", None) or configured_model),
@@ -107,6 +128,14 @@ async def resolve_runtime_model_info(
             context_size=getattr(registered, "context_size", None),
             max_output_tokens=getattr(registered, "max_output_tokens", None),
             provider=getattr(registered, "provider", None),
+            thinking_enable=reasoning_defaults.thinking_enable,
+            reasoning_effort=reasoning_defaults.reasoning_effort,
+            thinking_only=bool(getattr(registered, "thinking_only", False)),
+            allow_disable_thinking=bool(getattr(registered, "allow_disable_thinking", True)),
+            supported_reasoning_efforts=tuple(
+                str(item)
+                for item in (getattr(registered, "supported_reasoning_efforts", None) or [])
+            ),
         )
 
     return RuntimeModelInfo(
@@ -191,6 +220,8 @@ class AgentConfigProvider:
             llm_kwargs["context_size"] = runtime_model_info.context_size
         if runtime_model_info.max_output_tokens is not None:
             llm_kwargs["max_output_tokens"] = runtime_model_info.max_output_tokens
+        llm_kwargs["thinking_enable"] = runtime_model_info.thinking_enable
+        llm_kwargs["reasoning_effort"] = runtime_model_info.reasoning_effort
 
         return get_llm(**llm_kwargs)
 

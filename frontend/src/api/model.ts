@@ -1,5 +1,7 @@
 import axios from '@/utils/axios'
 
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
 export interface AIModel {
   id: string
   name: string
@@ -9,6 +11,11 @@ export interface AIModel {
   api_base_url?: string
   context_size?: number | null
   max_output_tokens?: number | null
+  thinking_enable: boolean
+  thinking_only: boolean
+  allow_disable_thinking: boolean
+  reasoning_effort: ReasoningEffort | null
+  supported_reasoning_efforts: ReasoningEffort[]
   has_api_key?: boolean
   is_active: boolean
   created_at: string
@@ -23,6 +30,11 @@ export interface AIModelCreate {
   api_base_url?: string
   context_size?: number | null
   max_output_tokens?: number | null
+  thinking_enable?: boolean
+  thinking_only?: boolean
+  allow_disable_thinking?: boolean
+  reasoning_effort?: ReasoningEffort | null
+  supported_reasoning_efforts?: ReasoningEffort[]
   api_key?: string
   is_active?: boolean
 }
@@ -35,6 +47,11 @@ export interface AIModelUpdate {
   api_base_url?: string
   context_size?: number | null
   max_output_tokens?: number | null
+  thinking_enable?: boolean
+  thinking_only?: boolean
+  allow_disable_thinking?: boolean
+  reasoning_effort?: ReasoningEffort | null
+  supported_reasoning_efforts?: ReasoningEffort[]
   api_key?: string
   is_active?: boolean
 }

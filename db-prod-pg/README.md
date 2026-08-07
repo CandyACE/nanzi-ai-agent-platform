@@ -73,16 +73,16 @@ Target database:               # 必填
 
 ## 二、后续升级：只执行单个 SQL
 
-当环境已经完成 V0 到 V2，只新增了 V3 时，不需要再次指定全量文件，可以只执行
-V3：
+当环境已经完成某个版本，只新增了下一个版本时，不需要再次指定全量文件，可以只执行
+尚未执行的版本。例如环境已完成 V0～V13 时，可只执行 V14：
 
 ```bash
 cd /Users/chenxiaolong/workspace/nanzi-ai-agent-platform
 ./db-prod-pg/apply-sql.sh \
-  db-prod-pg/V3-add_mcp_scope_and_user_id.sql
+  db-prod-pg/V14-add_platform_timezone_config.sql
 ```
 
-脚本会重新确认连接目标，但只会把这个文件交给导入器。它不会因为文件名是 V3 就
+脚本会重新确认连接目标，但只会把这个文件交给导入器。它不会因为文件名是 V14 就
 自动判断数据库当前版本，也不会扫描并执行其他版本。
 
 ## 三、后续升级：一次指定多个 SQL
@@ -160,7 +160,7 @@ cd /Users/chenxiaolong/workspace/nanzi-ai-agent-platform
 - V1 冲突时更新配置元数据，不覆盖已有配置值；
 - V2 会把记忆 Embedding 模型和维度重新写为 `bge-m3` / `1024`，因此重跑可能覆盖
   这两个配置的人工修改；
-- V3、V4、V5 的结构和种子语句按 PostgreSQL 幂等方式编写。
+- V3、V4、V5 的结构和种子语句按 PostgreSQL 幂等方式编写；V6～V14 分别覆盖 MCP 唯一性/可用性、模型约束、Skill 发布、MCP 备注和平台时区配置，重复执行语义以各版本文件为准。
 
 这意味着“幂等”表示重复执行不会重复建表、重复插入同一条种子或因已存在对象而失败，
 不等于所有 SQL 都会保留人工修改过的配置值。
@@ -168,7 +168,7 @@ cd /Users/chenxiaolong/workspace/nanzi-ai-agent-platform
 ## 六、版本文件维护规则
 
 - `V0-baseline.sql` 是新 PostgreSQL 环境的当前状态基线，不是 MySQL 逐文件翻译。
-- 后续 PostgreSQL 变更新增到本目录，使用新的最高版本号，例如 `V6-...sql`。
+- 后续 PostgreSQL 变更新增到本目录，使用新的最高版本号，例如 `V15-...sql`。
 - 不要把新的 PostgreSQL 迁移插入已经发布的旧版本号中。
 - 如果某个版本文件尚未在任何环境执行，可以直接修正该文件。
 - 如果某个版本文件已经在环境中执行，不要直接修改其历史语义；应新增下一个版本的

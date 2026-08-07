@@ -353,6 +353,9 @@ async def map_standard_agentscope_event(
     event_type = str(getattr(event, "type", ""))
     if event_type == "THINKING_BLOCK_DELTA":
         yield {"type": "thinking", "status": "continuing"}
+        delta = str(getattr(event, "delta", "") or "")
+        if delta:
+            yield {"type": "reasoning_content", "content": delta}
         return
 
     if event_type == "TOOL_CALL_START":

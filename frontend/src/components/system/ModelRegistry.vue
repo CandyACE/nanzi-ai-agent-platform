@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate } from '../../api/model'
+import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate, type ReasoningEffort } from '../../api/model'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
@@ -42,14 +42,29 @@ const showModelPicker = ref(false)
 const showAdvancedModelOptions = ref(false)
 const loadingDiscoveredModels = ref(false)
 const discoveredModels = ref<AIModelOption[]>([])
-const modelForm = ref<Partial<AIModelCreate> & { id?: string; has_api_key?: boolean }>({
+const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string; description: string }> = [
+  { value: 'none', label: '无（none）', description: '普通问答、摘要、改写' },
+  { value: 'minimal', label: '极简（minimal）', description: '简单判断、轻量分析' },
+  { value: 'low', label: '低（low）', description: '常规代码、一般分析' },
+  { value: 'medium', label: '中（medium）', description: '多步骤分析、复杂问答' },
+  { value: 'high', label: '高（high）', description: 'Debug、SQL、复杂分析、Agent' },
+  { value: 'xhigh', label: '极高（xhigh）', description: '极难 Coding Agent、长任务' },
+]
+const defaultSupportedReasoningEfforts: ReasoningEffort[] = reasoningEffortOptions.map((option) => option.value)
+type ModelForm = Partial<AIModelCreate> & Pick<Partial<AIModel>, 'id' | 'has_api_key'>
+const modelForm = ref<ModelForm>({
   name: '',
   model_id: '',
   provider: 'openai',
   type: 'llm',
   api_base_url: 'https://api.openai.com/v1',
   api_key: '',
-  is_active: true
+  is_active: true,
+  thinking_enable: false,
+  thinking_only: false,
+  allow_disable_thinking: true,
+  reasoning_effort: null,
+  supported_reasoning_efforts: [...defaultSupportedReasoningEfforts],
 })
 
 const modelIdConflict = computed(() => {
@@ -135,6 +150,65 @@ const formatTokenSize = (value?: number | null) => {
     if (value >= 1024 && value % 1024 === 0) return `${value / 1024}K`
     return String(value)
 }
+
+const normalizeThinkingConfiguration = (model: ModelForm): ModelForm => {
+    const configuredEfforts = Array.isArray(model.supported_reasoning_efforts)
+        ? model.supported_reasoning_efforts
+        : defaultSupportedReasoningEfforts
+    const supportedReasoningEfforts = reasoningEffortOptions
+        .map((option) => option.value)
+        .filter((effort) => configuredEfforts.includes(effort))
+    const reasoningEffort = reasoningEffortOptions.some((option) => option.value === model.reasoning_effort)
+        ? model.reasoning_effort
+        : null
+    return {
+        ...model,
+        thinking_enable: model.thinking_enable ?? false,
+        thinking_only: model.thinking_only ?? false,
+        allow_disable_thinking: model.allow_disable_thinking ?? true,
+        reasoning_effort: reasoningEffort,
+        supported_reasoning_efforts: supportedReasoningEfforts.length
+            ? supportedReasoningEfforts
+            : [...defaultSupportedReasoningEfforts],
+    }
+}
+
+const isReasoningEffortSupported = (effort: ReasoningEffort) =>
+    Boolean(modelForm.value.supported_reasoning_efforts?.includes(effort))
+
+const handleReasoningEffortChange = (effort: ReasoningEffort, event: Event) => {
+    const checked = (event.target as HTMLInputElement).checked
+    const current = modelForm.value.supported_reasoning_efforts || []
+    const next = checked
+        ? [...new Set([...current, effort])]
+        : current.filter((item) => item !== effort)
+    if (!next.length) {
+        showToast('至少保留一个支持的思考强度', 'warning')
+        return
+    }
+    modelForm.value.supported_reasoning_efforts = reasoningEffortOptions
+        .map((option) => option.value)
+        .filter((item) => next.includes(item))
+    if (
+        modelForm.value.reasoning_effort !== null
+        && !modelForm.value.supported_reasoning_efforts.includes(modelForm.value.reasoning_effort as ReasoningEffort)
+    ) {
+        modelForm.value.reasoning_effort = modelForm.value.supported_reasoning_efforts[0]
+    }
+}
+
+const hasConfiguredThinking = computed(() => {
+    const supported = modelForm.value.supported_reasoning_efforts || []
+    const hasNonDefaultSupported = supported.length !== defaultSupportedReasoningEfforts.length
+        || defaultSupportedReasoningEfforts.some((effort) => !supported.includes(effort))
+    return Boolean(
+        modelForm.value.thinking_enable
+        || modelForm.value.thinking_only
+        || modelForm.value.allow_disable_thinking === false
+        || modelForm.value.reasoning_effort !== null
+        || hasNonDefaultSupported
+    )
+})
 
 const providerBaseUrlHint = computed(() => {
     const provider = String(modelForm.value.provider || '')
@@ -346,28 +420,28 @@ const openModelModal = (model?: AIModel, isClone = false) => {
     if (model) {
         if (isClone) {
             isEditingModel.value = false
-            modelForm.value = { 
+            modelForm.value = normalizeThinkingConfiguration({
                 ...model, 
                 id: undefined, 
                 name: `${model.name} (Copy)`,
                 model_id: `${model.model_id}-copy`,
                 api_key: '' 
-            }
+            })
         } else {
             isEditingModel.value = true
-            modelForm.value = { ...model, api_key: '' }
+            modelForm.value = normalizeThinkingConfiguration({ ...model, api_key: '' })
         }
     } else {
         isEditingModel.value = false
-        modelForm.value = {
+        modelForm.value = normalizeThinkingConfiguration({
             name: '',
             model_id: '',
             provider: 'openai',
             type: 'llm',
             api_base_url: providerDefaultBaseUrls.openai,
             api_key: '',
-            is_active: true
-        }
+            is_active: true,
+        })
     }
     lastProvider.value = String(modelForm.value.provider || 'openai')
     showModelModal.value = true
@@ -394,6 +468,11 @@ const saveModel = async () => {
             api_base_url: modelForm.value.api_base_url,
             context_size: modelForm.value.context_size ?? null,
             max_output_tokens: modelForm.value.max_output_tokens ?? null,
+            thinking_enable: modelForm.value.thinking_enable,
+            thinking_only: modelForm.value.thinking_only,
+            allow_disable_thinking: modelForm.value.allow_disable_thinking,
+            reasoning_effort: modelForm.value.reasoning_effort,
+            supported_reasoning_efforts: modelForm.value.supported_reasoning_efforts,
             api_key: modelForm.value.api_key,
             is_active: modelForm.value.is_active,
         }
@@ -724,38 +803,111 @@ onBeforeUnmount(() => {
                      <input v-model="modelForm.name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="例如: GPT-4o 生产版" />
                      <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
                   </div>
-                  <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
-                      <span class="flex items-center gap-2">
-                          <svg class="w-4 h-4 transition-transform" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
-                          <span>高级设置</span>
-                      </span>
-                      <span class="text-xs text-gray-400" :class="{ invisible: !(modelForm.context_size || modelForm.max_output_tokens) }">已配置</span>
-                  </button>
-                  <div
-                      class="advanced-options-panel"
-                      :class="{ 'advanced-options-panel-open': showAdvancedModelOptions }"
-                      :inert="!showAdvancedModelOptions"
-                      :aria-hidden="!showAdvancedModelOptions"
-                  >
-                      <div class="advanced-options-panel-inner grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                          <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
-                          <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
-                          <div class="token-preset-row">
-                              <button v-for="size in contextSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.context_size === size ? 'token-preset-button-active' : ''" @click="modelForm.context_size = size">{{ formatTokenSize(size) }}</button>
+                  <template v-if="modelForm.type !== 'embedding'">
+                      <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
+                          <span class="flex items-center gap-2">
+                              <svg class="w-4 h-4 transition-transform" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                              <span>高级设置</span>
+                          </span>
+                          <span class="text-xs text-gray-400" :class="{ invisible: !(modelForm.context_size || modelForm.max_output_tokens || hasConfiguredThinking) }">已配置</span>
+                      </button>
+                      <div
+                          class="advanced-options-panel"
+                          :class="{ 'advanced-options-panel-open': showAdvancedModelOptions }"
+                          :inert="!showAdvancedModelOptions"
+                          :aria-hidden="!showAdvancedModelOptions"
+                      >
+                          <div class="advanced-options-panel-inner">
+                              <section class="thinking-mode-section">
+                                  <div class="advanced-section-heading">
+                                      <div>
+                                          <h4 class="advanced-section-title">思考模式</h4>
+                                          <p class="advanced-section-description">将该模型标记为思考模型，开启后显示相关配置。</p>
+                                      </div>
+                                      <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
+                                          <input v-model="modelForm.thinking_enable" type="checkbox" class="sr-only" />
+                                          <span class="thinking-mode-capsule-track">
+                                              <span class="thinking-mode-capsule-thumb"></span>
+                                          <span>{{ modelForm.thinking_enable ? '开启' : '关闭' }}</span>
+                                          </span>
+                                      </label>
+                                  </div>
+                                  <div v-if="modelForm.thinking_enable">
+                                      <div class="thinking-options-grid">
+                                          <label class="thinking-option-card">
+                                              <input v-model="modelForm.thinking_only" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                              <span>
+                                                  <span class="block text-sm font-medium text-gray-700">仅思考模式</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">模型只能以思考模式运行。</span>
+                                              </span>
+                                          </label>
+                                          <label class="thinking-option-card">
+                                              <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                              <span>
+                                                  <span class="block text-sm font-medium text-gray-700">允许关闭思考</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">允许用户关闭思考模式。</span>
+                                              </span>
+                                          </label>
+                                      </div>
+                                      <div class="default-reasoning-effort-row">
+                                          <div class="default-reasoning-effort-field">
+                                              <label class="block text-sm font-medium text-gray-700">默认思考强度</label>
+                                              <select v-model="modelForm.reasoning_effort" class="default-reasoning-effort-select mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
+                                                  <option :value="null">自动（使用请求层默认值）</option>
+                                                  <option v-for="option in reasoningEffortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                                              </select>
+                                              <p class="mt-1 text-xs text-gray-500">对应 AgentScope 的 reasoning_effort；自动时不传该参数。</p>
+                                          </div>
+                                      </div>
+                                      <div class="supported-reasoning-section">
+                                          <span class="block text-sm font-medium text-gray-700">支持的思考强度</span>
+                                          <div class="thinking-effort-options">
+                                              <label v-for="option in reasoningEffortOptions" :key="option.value" class="thinking-effort-option" :class="{ 'thinking-effort-option-selected': isReasoningEffortSupported(option.value) }">
+                                                  <input
+                                                      type="checkbox"
+                                                      class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                                                      :checked="isReasoningEffortSupported(option.value)"
+                                                      @change="handleReasoningEffortChange(option.value, $event)"
+                                                  />
+                                                  <span class="thinking-effort-label">
+                                                      <span>{{ option.label }}</span>
+                                                      <span class="thinking-effort-description">{{ option.description }}</span>
+                                                  </span>
+                                              </label>
+                                          </div>
+                                          <p class="mt-1 text-xs text-gray-500">至少保留一个强度；默认值为自动时不要求勾选自动。</p>
+                                      </div>
+                                  </div>
+                              </section>
+                              <section class="advanced-context-section">
+                                  <div class="advanced-section-heading">
+                                      <div>
+                                          <h4 class="advanced-section-title">上下文与输出</h4>
+                                          <p class="advanced-section-description">配置上下文窗口和单次请求的输出上限，留空使用供应商默认值。</p>
+                                      </div>
+                                  </div>
+                                  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
+                                          <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
+                                          <div class="token-preset-row">
+                                              <button v-for="size in contextSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.context_size === size ? 'token-preset-button-active' : ''" @click="modelForm.context_size = size">{{ formatTokenSize(size) }}</button>
+                                          </div>
+                                          <p class="text-xs text-gray-500 mt-1">用于上下文压缩；留空使用运行时默认值</p>
+                                      </div>
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700">输出上限（可选）</label>
+                                          <input v-model.number="modelForm.max_output_tokens" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
+                                          <div class="token-preset-row">
+                                              <button v-for="size in outputTokenPresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
+                                          </div>
+                                          <p class="text-xs text-gray-500 mt-1">发送为 API 的最大输出 token；留空使用供应商默认值</p>
+                                      </div>
+                                  </div>
+                              </section>
                           </div>
-                          <p class="text-xs text-gray-500 mt-1">用于上下文压缩；留空使用运行时默认值</p>
                       </div>
-                      <div>
-                          <label class="block text-sm font-medium text-gray-700">输出上限（可选）</label>
-                          <input v-model.number="modelForm.max_output_tokens" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
-                          <div class="token-preset-row">
-                              <button v-for="size in outputTokenPresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
-                          </div>
-                          <p class="text-xs text-gray-500 mt-1">发送为 API 的最大输出 token；留空使用供应商默认值</p>
-                      </div>
-                      </div>
-                  </div>
+                  </template>
                   <div class="flex items-center">
                       <input id="is_active" type="checkbox" v-model="modelForm.is_active" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
                       <label for="is_active" class="ml-2 block text-sm text-gray-900">启用此模型</label>
@@ -980,6 +1132,160 @@ onBeforeUnmount(() => {
   border-color: rgb(203 213 225);
   background: white;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.thinking-mode-section {
+  padding-bottom: 1rem;
+}
+
+.advanced-context-section {
+  border-top: 1px solid rgb(226 232 240);
+  padding-top: 1rem;
+}
+
+.advanced-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.advanced-section-title {
+  color: rgb(51 65 85);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.advanced-section-description {
+  margin-top: 0.25rem;
+  color: rgb(100 116 139);
+  font-size: 0.8125rem;
+}
+
+.thinking-mode-capsule {
+  display: inline-flex;
+  cursor: pointer;
+  align-items: center;
+}
+
+.thinking-mode-capsule-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 5.75rem;
+  min-height: 2rem;
+  border-radius: 9999px;
+  background: rgb(226 232 240);
+  padding: 0.25rem 0.45rem 0.25rem 2.15rem;
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: background-color 150ms, color 150ms;
+}
+
+.thinking-mode-capsule-thumb {
+  position: absolute;
+  left: 0.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: white;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+  transition: left 150ms;
+}
+
+.thinking-mode-capsule-on .thinking-mode-capsule-track {
+  background: rgb(37 99 235);
+  color: white;
+  justify-content: flex-start;
+  padding-right: 2.15rem;
+  padding-left: 0.45rem;
+}
+
+.thinking-mode-capsule-on .thinking-mode-capsule-thumb {
+  left: calc(100% - 1.75rem);
+}
+
+.thinking-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.default-reasoning-effort-row,
+.supported-reasoning-section {
+  border-top: 1px solid rgb(226 232 240);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.default-reasoning-effort-field {
+  max-width: 28rem;
+}
+
+.default-reasoning-effort-select {
+  min-height: 2.5rem;
+}
+
+.thinking-option-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.6rem;
+  padding: 0.7rem;
+}
+
+.thinking-effort-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+}
+
+.thinking-effort-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
+  min-height: 4.5rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.65rem;
+  background: white;
+  padding: 0.7rem;
+  color: rgb(51 65 85);
+  font-size: 0.875rem;
+  transition: border-color 150ms, background-color 150ms, box-shadow 150ms;
+}
+
+.thinking-effort-option:hover {
+  border-color: rgb(147 197 253);
+}
+
+.thinking-effort-option-selected {
+  border-color: rgb(96 165 250);
+  background: rgb(239 246 255);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.08);
+}
+
+.thinking-effort-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.thinking-effort-description {
+  color: rgb(100 116 139);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  .thinking-effort-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 .provider-menu-item:hover,

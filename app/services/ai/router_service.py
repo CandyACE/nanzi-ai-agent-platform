@@ -386,7 +386,10 @@ class RouterService:
         last_error: Optional[Exception] = None
         for attempt in range(2):
             try:
-                llm = await get_llm_async(temperature=0.0)  # Use deterministic output
+                llm = await get_llm_async(
+                    temperature=0.0,
+                    ignore_session_reasoning_overrides=True,
+                )  # Use deterministic output
                 chat_client = chat_client_from_handle(llm)
                 attempt_messages = messages
                 if attempt > 0:
@@ -457,7 +460,11 @@ class RouterService:
     ) -> Optional[IntentResponse]:
         """Resolve agent-independent semantic evidence without blocking route fallback."""
         try:
-            return await intent_service.identify_intent(user_input, history=history)
+            return await intent_service.identify_intent(
+                user_input,
+                history=history,
+                ignore_session_reasoning_overrides=True,
+            )
         except Exception as exc:  # noqa: BLE001 - routing must remain available on model failure
             logger.warning("Semantic evidence failed before routing: %s", exc)
             return None

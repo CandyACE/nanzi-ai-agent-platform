@@ -174,6 +174,7 @@ class AgentExecutionHistoryResponse(BaseModel):
     username: Optional[str] = None
     query: Optional[str] = None
     summary: Optional[str] = None
+    reasoning_content: Optional[str] = None
     status: str
     agent_version: Optional[str] = None
     model_id: Optional[str] = None

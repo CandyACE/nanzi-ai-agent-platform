@@ -23,6 +23,7 @@
 平台核心聚焦于以下能力矩阵：
 *   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持自动路由与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用已绑定工具；主助手支持 **Skill 自动扫描** 与权限挂起恢复；支持快捷指令、多模态附件与 Vision 识图。
 *   🧠 **长期记忆与跨会话回顾**：LTM 偏好注入 + 内置 `memory_search` 按需检索会话/每日摘要；记忆管理中心提供向量检索运维与数据治理。
+*   🧩 **代码画布与工作区执行**：支持 Python / Shell 代码的流式运行、停止、输出回传与私有工作区文件预览。
 *   🔌 **灵活的嵌入式 (Embed) 集成**：通过嵌入式 Chat SDK 快速集成至企业业务系统，对接现有鉴权体系，实现租户隔离与安全合规。
 *   📊 **原生企业级 ChatBI**：数据源与元数据管理、案例集 Few-Shot、SQL 自愈与 **sql_plan 结构化计划**；**我的数据门户**（`/dataset_portal`）个性化导航；支持直连物理 SQL 与黄金报表暂存。
 *   🤝 **开箱即用的主流生态集成**：对接 **RAGFlow** 托管智能体与知识库；集成 **OpenClaw🦞** 大模型安全网关，透传用户身份与数据集权限上下文。
@@ -110,6 +111,7 @@
 *   **主助手增强**：工具预检（按绑定工具相关度促发调用）、Skill 自动扫描、反业务数据幻觉 Guard（可一键切换 ChatBI）。
 *   **RAGFlow 托管 Agent**：对接 RAGFlow 在线托管智能体，复用其检索与流式对话能力。
 *   **OpenClaw🦞 安全网关**：通过 `AUTH_CONTEXT` 透传用户身份、频道及可访问数据集，保障租户隔离。
+*   **代码画布**：在用户确认的工作区内运行 Python / Shell，支持流式输出、超时、输出上限和停止控制。
 
 
 ### 2. 📊 智能数仓分析 (ChatBI & Self-Healing)
@@ -134,6 +136,7 @@
 
 ### 5. 🛠️ 企业级配套与安全审计 (Enterprise Toolkit & RBAC)
 *   **分布式任务中心**：APScheduler + Redis 调度，支持模拟智能体身份执行周期/单次任务。
+*   **平台时区配置**：系统调度和未单独指定时区的订阅按 `platform_timezone` 解释时间，默认 `Asia/Shanghai`。
 *   **精细化 RBAC**：用户、角色、菜单与元素级权限，读写操作隔离。
 *   **SSO 与脱敏**：SSO 登录可后台开关；审计日志自动脱敏密码、API Key 等敏感字段。
 *   **安全审计水印**：Embed 窗口背景水印（用户名+时间戳或自定义文案），防截屏外泄。
@@ -165,6 +168,7 @@
 | [PROMPT_LAYERS.md](architech/design/chat/PROMPT_LAYERS.md) | 提示词分层与注入 |
 | [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | 智能体路由设计 |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API 集成 |
+| [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | 代码画布、工作区文件与执行 API |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent 门控契约 |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md) | 自动化测试验收清单 |
 
@@ -228,7 +232,7 @@ cd ..
 ./db-prod-pg/apply-sql.sh
 ```
 
-该脚本会按 `V0`、`V1`、`V2` 的版本顺序执行 PostgreSQL 迁移，并在首次初始化后询问是否创建管理员。
+该脚本会按 `db-prod-pg/` 中当前存在的 `V0`～`V14` 版本顺序执行 PostgreSQL 迁移，并在首次初始化后询问是否创建管理员。以后新增迁移时，以该目录实际文件为准，不要把 PostgreSQL 迁移和 `db-prod/` 的 MySQL 迁移混用。
 PostgreSQL 不使用 MySQL 的 `INIT-USER-ADMIN.sql` 固定凭证；如需手动维护管理员，可执行：
 
 ```bash

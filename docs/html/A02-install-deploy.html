@@ -31,13 +31,13 @@
       上篇把架构与 AgentScope 运行时讲清楚了；这篇解决更土的问题：<strong>怎么把平台跑起来，以及二次开发该动哪里、不该动哪里。</strong>
     </p>
     <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
-      NanZi 不是免运维 SaaS。你要自备 MySQL、Redis Stack、LLM 网关；知识库 / 部分链路还常要 RAGFlow。读完应能：选对部署路径、完成「能登录 + 配好模型」、知道升级怎么跑增量 SQL、扩展时优先走 MCP/Skills 而不是一上来改 Runner。
+      NanZi 不是免运维 SaaS。你要自备 MySQL 或 PostgreSQL、Redis Stack、LLM 网关；知识库 / 部分链路还常要 RAGFlow。读完应能：选对部署路径、完成「能登录 + 配好模型」、知道升级怎么跑增量 SQL、扩展时优先走 MCP/Skills 而不是一上来改 Runner。
     </p>
   </section>
 
   <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
     <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
-      <strong>两条路径速记：</strong>生产 / 准生产优先 <strong>Docker 离线镜像包</strong>（可无本机装 Python/Node）；日常改代码优先 <strong>源码联调</strong>（venv + 前端构建）。无论哪条路，<strong>先初始化 MySQL</strong>，再拉服务。
+      <strong>两条路径速记：</strong>生产 / 准生产优先 <strong>Docker 离线镜像包</strong>（可无本机装 Python/Node）；日常改代码优先 <strong>源码联调</strong>（venv + 前端构建）。无论哪条路，先初始化选定的 <strong>MySQL 或 PostgreSQL 主库</strong>，再拉服务。
     </p>
   </section>
 
@@ -110,9 +110,9 @@
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
 
-  <!-- ========== 02 MySQL ========== -->
+  <!-- ========== 02 主库 ========== -->
   <section style="margin:0 0 14px 0;">
-    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜无论哪条路：先初始化 MySQL</p>
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜无论哪条路：先初始化主库</p>
   </section>
 
   <section style="margin:0 0 12px 0;">
@@ -135,6 +135,13 @@
     <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#075985;">升级时怎么做？</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
       拉新代码 / 换新镜像之后，对<strong>已有库</strong>再跑一次 <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">apply-sql-native.sh</code>（或 Python 版）。脚本会跳过已存在对象，把新的 <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">V*</code> 增量补上。发版说明（如 v1.0.7 Release Notes）会列出本版本新增脚本区间，升级前对照即可。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#5b21b6;">PostgreSQL 主库（二选一，不与 MySQL 混跑）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      PostgreSQL 使用独立目录 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">db-prod-pg/</code> 和 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">./db-prod-pg/apply-sql.sh</code>。当前迁移链为 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">V0</code>～<code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">V14</code>；升级时只执行尚未执行的版本，不能把 PostgreSQL 文件传给 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">db-prod/</code>。完整参数、幂等边界和失败恢复见 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">db-prod-pg/README.md</code>。
     </p>
   </section>
 

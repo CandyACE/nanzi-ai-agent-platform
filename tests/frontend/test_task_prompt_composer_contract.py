@@ -33,6 +33,17 @@ def test_task_prompt_composer_exposes_model_approval_and_resources():
     assert "mcpToolDisplayName" in text
     assert "=== 'personal'" in text or '=== "personal"' in text or "=== 'personal'" in text
     assert "仅可挂载个人已发布 MCP" in text
+    assert "thinkingEnableOverride" in text
+    assert "reasoningEffortOverride" in text
+    assert "思考强度" in text
+    assert "thinking_enable" in text
+    assert "reasoning_effort" in text
+    assert "openThinkingSettings" in text
+    assert "showThinkingPanel" in text
+    assert "仅思考" in text
+    assert "关闭本次任务思考" in text
+    assert "({{ option.value }})" not in text
+    assert "本次任务" in text
 
 
 def test_task_prompt_composer_panels_escape_modal_clipping():
@@ -74,6 +85,18 @@ def test_task_center_wires_prompt_composer_into_config():
     assert "resource_scope" in text
     assert "taskModel" in text
     assert "hydrateExecutionOptions" in text
+    assert "taskThinkingEnableOverride" in text
+    assert "taskReasoningEffortOverride" in text
+    assert "update:thinking-enable-override" in text
+    assert "update:reasoning-effort-override" in text
+
+
+def test_task_thinking_effort_options_are_expanded():
+    text = COMPOSER.read_text(encoding="utf-8")
+
+    assert "showReasoningEffortPanel" not in text
+    assert "跟随模型默认" in text
+    assert "v-for=\"option in supportedReasoningEfforts\"" in text
 
 
 def test_scheduler_reads_task_execution_options_from_config():

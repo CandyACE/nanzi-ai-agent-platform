@@ -13,7 +13,7 @@
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
   </section>
   <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">MCP（Model Context Protocol）让外部系统以标准协议暴露工具。NanZi 不把每个系统写死进核心：登记 Server → 校验连通 → sync 缓存 → <strong>发布</strong> → 智能体版本勾选 → 进 AgentScope Toolkit。本篇按真实 API 与代码路径拆开。</p></section>
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>代码入口：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">app/api/portal/endpoints/mcp.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp_client.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp_factory.py</code> · 表 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_mcp_servers</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_mcp_tool_cache</code>（V43）</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>代码入口：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">app/api/portal/endpoints/mcp.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp_client.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp_factory.py</code> · 表 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_mcp_servers</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_mcp_tool_cache</code>（迁移版本以 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">db-prod/</code> 或 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">db-prod-pg/</code> 当前文件为准）</p></section>
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
   <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜端到端流水线（先建立心智）</p></section>
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
@@ -76,6 +76,17 @@
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">对照表</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">连不通 → URL/网络/鉴权/SSE 是否被墙<br/>列表空 → 是否 sync、对端 tools/list<br/>对话无工具 → publish + 版本勾选 + Registry 全名一致<br/>调用超时 → 对端与平台 30s；空闲会话是否过期<br/>权限 → 配置菜单 element:system:config_save / menu:system:config</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">07｜当前管理边界：全局、个人与会话挂载</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;">Server scope</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">scope=global</code> 由管理员维护；<code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">scope=personal</code> 只属于创建者。个人 Server 不会因为列表可见就变成全员工具；只有发布、可用并被 Agent 版本勾选后，才进入对应运行时。Server 名称全局唯一，备注用于区分用途；同步失败或远端删除时保留记录并标记不可用，便于排查。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">快速登记与会话挂载</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">管理页支持粘贴标准 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">mcpServers</code> JSON，再确认名称、URL、请求头和作用域后保存。对话中选择个人 MCP 作为当前会话资源时，只影响本会话的工具挂载，不会修改全局 Agent 版本。敏感鉴权头不要写入公开文档或提交到仓库。</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>

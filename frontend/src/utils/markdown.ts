@@ -1,6 +1,18 @@
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+import katex from 'katex'
+import texmath from 'markdown-it-texmath'
 import 'highlight.js/styles/github.css' // Base styles
+import 'katex/dist/katex.min.css'
+
+const mathOptions = {
+  engine: katex,
+  delimiters: ['dollars', 'brackets'],
+  katexOptions: {
+    throwOnError: false,
+    strict: 'ignore' as const,
+  },
+}
 
 const md: MarkdownIt = new MarkdownIt({
   html: true,
@@ -8,6 +20,7 @@ const md: MarkdownIt = new MarkdownIt({
   typographer: true,
   highlight: null
 })
+md.use(texmath, mathOptions)
 
 // Override fence rule to prevent double wrapping
 md.renderer.rules.fence = function (tokens, idx, _options, _env, _self) {
@@ -135,6 +148,7 @@ const mdPreview = new MarkdownIt({
   breaks: true,
   highlight: null,
 })
+mdPreview.use(texmath, mathOptions)
 mdPreview.renderer.rules.fence = md.renderer.rules.fence!
 mdPreview.validateLink = md.validateLink
 

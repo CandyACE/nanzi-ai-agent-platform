@@ -11,7 +11,7 @@ import {
   PlayIcon,
   ArrowPathIcon,
   CheckBadgeIcon,
-  ClipboardDocumentIcon,
+  DocumentDuplicateIcon,
   EyeIcon,
   PencilSquareIcon,
   SparklesIcon,
@@ -1030,7 +1030,7 @@ watch(
                         <div class="flex justify-between items-center mb-1">
                           <span class="text-[10px] text-gray-400">变更前</span>
                           <div class="flex gap-1">
-                            <button type="button" @click="copyToClipboard(log.old_value)" class="p-1 text-gray-400 hover:text-primary"><ClipboardDocumentIcon class="w-3.5 h-3.5" /></button>
+                            <button type="button" @click="copyToClipboard(log.old_value)" class="p-1 text-gray-400 hover:text-primary"><DocumentDuplicateIcon class="w-3.5 h-3.5" /></button>
                             <button type="button" @click="restoreContent(log.old_value)" class="p-1 text-gray-400 hover:text-green-600"><ArrowUturnLeftIcon class="w-3.5 h-3.5" /></button>
                           </div>
                         </div>
@@ -1040,7 +1040,7 @@ watch(
                         <div class="flex justify-between items-center mb-1">
                           <span class="text-[10px] text-gray-400">变更后</span>
                           <div class="flex gap-1">
-                            <button type="button" @click="copyToClipboard(log.new_value)" class="p-1 text-gray-400 hover:text-primary"><ClipboardDocumentIcon class="w-3.5 h-3.5" /></button>
+                            <button type="button" @click="copyToClipboard(log.new_value)" class="p-1 text-gray-400 hover:text-primary"><DocumentDuplicateIcon class="w-3.5 h-3.5" /></button>
                             <button type="button" @click="restoreContent(log.new_value)" class="p-1 text-gray-400 hover:text-green-600"><ArrowUturnLeftIcon class="w-3.5 h-3.5" /></button>
                           </div>
                         </div>
@@ -1279,7 +1279,7 @@ watch(
                       <pre class="text-xs text-gray-800 whitespace-pre-wrap font-sans leading-relaxed">{{ streamedOutput }}</pre>
                       <div class="mt-2 flex justify-end">
                         <button type="button" @click="copyToClipboard(testResult.raw_output || streamedOutput)" class="text-[10px] text-gray-400 hover:text-primary flex items-center">
-                          <ClipboardDocumentIcon class="w-3.5 h-3.5 mr-1" />复制
+                          <DocumentDuplicateIcon class="w-3.5 h-3.5 mr-1" />复制
                         </button>
                       </div>
                     </div>
@@ -1519,7 +1519,7 @@ watch(
                       class="p-1.5 bg-white shadow-sm border border-gray-200 rounded-lg text-gray-400 hover:text-indigo-600 transition-all active:scale-90"
                       title="复制此版本"
                     >
-                      <ClipboardDocumentIcon class="w-4 h-4" />
+                      <DocumentDuplicateIcon class="w-4 h-4" />
                     </button>
                   </div>
                   <pre
