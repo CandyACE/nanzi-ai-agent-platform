@@ -1304,6 +1304,8 @@
         :approval-mode="config.approvalMode"
         :selected-model="config.overrideModel"
         :available-models="availableModels"
+        :thinking-enable-override="thinkingEnableOverride"
+        :reasoning-effort-override="reasoningEffortOverride"
         :active-ltm-preference="activeLtmPreference"
         :agent-id="effectiveEmbedChatAgentId"
         :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
@@ -1312,7 +1314,9 @@
         :is-loading-agents="isLoadingAgents"
         :lock-expert-agent="isUrlAgentPinned"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
-        @update:selected-model="(model) => { config.overrideModel = model; saveRoutingSettings(); }"
+        @update:selected-model="handleEmbedModelSelection"
+        @update:thinking-enable-override="thinkingEnableOverride = $event"
+        @update:reasoning-effort-override="reasoningEffortOverride = $event"
         @send="sendMessage"
         @stop="stopGeneration"
         @toggle-shortcuts="toggleShortcuts"
@@ -2194,7 +2198,7 @@ import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
-import { modelApi, type AIModel } from "@/api/model";
+import { modelApi, type AIModel, type ReasoningEffort } from "@/api/model";
 import {
   filterLogsForTurn,
   countHiddenLogs,
@@ -2832,6 +2836,8 @@ const config = reactive({
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: false,
 });
+const thinkingEnableOverride = ref<boolean | null>(null);
+const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 const showPersonalResources = ref(false);
 const personalResourcesTab = ref<PersonalResourceTab>("tokens");
@@ -3007,6 +3013,16 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+};
+const handleEmbedModelSelection = (model: string) => {
+    config.overrideModel = model;
+    thinkingEnableOverride.value = null;
+    reasoningEffortOverride.value = null;
+    saveRoutingSettings();
+};
+const resetEmbedThinkingOverrides = () => {
+    thinkingEnableOverride.value = null;
+    reasoningEffortOverride.value = null;
 };
 const switchToAuto = () => {
     if (isUrlAgentPinned.value) {
@@ -3612,6 +3628,7 @@ const generateNewConversation = () => {
   // 工作台等入口通过 INIT_CONFIG 写入的 resume id，新会话时必须清掉，
   // 否则随后 initChat() 会再次强制切回旧会话并重载历史。
   requestedConversationId = "";
+  resetEmbedThinkingOverrides();
   resourceScopeLoadSequence += 1;
   conversationId.value = createConversationId();
   resourceScope.value = emptyResourceScopeState();
@@ -3949,6 +3966,7 @@ const handleHistoryClick = (item: any) => {
     }
 
     // Switch to this conversation
+    resetEmbedThinkingOverrides();
     conversationId.value = item.conversation_id;
     localStorage.setItem("yovole_embed_conv_id", item.conversation_id);
     updateActiveConversationOnServer(item.conversation_id);
@@ -6577,6 +6595,12 @@ const sendMessage = async () => {
         approval_mode: config.approvalMode || "ask",
       },
     };
+    if (thinkingEnableOverride.value !== null) {
+      (body.debug_options as Record<string, unknown>).thinking_enable = thinkingEnableOverride.value;
+    }
+    if (reasoningEffortOverride.value !== null) {
+      (body.debug_options as Record<string, unknown>).reasoning_effort = reasoningEffortOverride.value;
+    }
     if (knowledgeDatasetIds.length > 0) {
       body.knowledge_dataset_ids = knowledgeDatasetIds;
     }

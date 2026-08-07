@@ -40,6 +40,39 @@ def test_resource_scope_and_dataset_ids_from_task_config():
     assert debug["resource_scope"]["mcp_tools"][0]["name"] == "search_x"
 
 
+def test_debug_options_from_task_config_includes_explicit_reasoning_overrides():
+    debug = debug_options_from_task_config(
+        {
+            "thinking_enable": False,
+            "reasoning_effort": "high",
+        }
+    )
+
+    assert debug["thinking_enable"] is False
+    assert "reasoning_effort" not in debug
+
+    enabled_debug = debug_options_from_task_config(
+        {
+            "thinking_enable": True,
+            "reasoning_effort": "high",
+        }
+    )
+    assert enabled_debug["thinking_enable"] is True
+    assert enabled_debug["reasoning_effort"] == "high"
+
+
+def test_debug_options_from_task_config_ignores_invalid_reasoning_overrides():
+    debug = debug_options_from_task_config(
+        {
+            "thinking_enable": "false",
+            "reasoning_effort": "turbo",
+        }
+    )
+
+    assert "thinking_enable" not in debug
+    assert "reasoning_effort" not in debug
+
+
 def test_merge_execution_options_into_config_clears_empty_scope():
     merged = merge_execution_options_into_config(
         {"notification_channels": ["portal"], "resource_scope": {"datasets": [{"id": "x", "name": "x"}]}},

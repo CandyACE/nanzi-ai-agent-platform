@@ -8,6 +8,9 @@ pytestmark = pytest.mark.no_infrastructure
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_API = ROOT / "frontend/src/api/model.ts"
 MODEL_REGISTRY = ROOT / "frontend/src/components/system/ModelRegistry.vue"
+CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
+EMBED_CHAT = ROOT / "frontend/src/views/EmbedChat.vue"
+AGENT_DEBUG = ROOT / "frontend/src/views/AgentDebug.vue"
 
 
 def test_model_api_declares_thinking_configuration():
@@ -97,3 +100,37 @@ def test_model_registry_groups_each_reasoning_effort_in_a_card():
     assert "thinking-effort-option-selected" in source
     assert ".thinking-effort-option" in source
     assert "grid-template-columns: repeat(3" in source
+
+
+def test_shared_chat_input_exposes_session_reasoning_submenu_contract():
+    source = CHAT_INPUT.read_text(encoding="utf-8")
+
+    assert "thinkingEnableOverride" in source
+    assert "reasoningEffortOverride" in source
+    assert "update:thinking-enable-override" in source
+    assert "update:reasoning-effort-override" in source
+    assert "思考强度" in source
+    assert "关闭思考" in source
+    assert "supported_reasoning_efforts" in source
+
+
+def test_embedchat_and_agentdebug_send_session_reasoning_overrides():
+    embed_source = EMBED_CHAT.read_text(encoding="utf-8")
+    debug_source = AGENT_DEBUG.read_text(encoding="utf-8")
+
+    for source in (embed_source, debug_source):
+        assert "thinking_enable" in source
+        assert "reasoning_effort" in source
+        assert "update:thinking-enable-override" in source
+        assert "update:reasoning-effort-override" in source
+        assert "reset" in source and "ThinkingOverrides" in source
+
+
+def test_chat_input_keeps_model_menu_compact_and_surfaces_current_thinking_mode():
+    source = CHAT_INPUT.read_text(encoding="utf-8")
+
+    assert "w-[min(560px" in source
+    assert "max-h-[min(448px" in source
+    assert "thinkingSummaryLabel" in source
+    assert "aria-pressed" in source
+    assert "overflow-y-auto" in source

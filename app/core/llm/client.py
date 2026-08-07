@@ -9,6 +9,8 @@ from app.services.ai.runtime.agentscope.models import (
     create_openai_chat_model,
 )
 from app.utils.model_credentials import decrypt_model_api_key
+from app.core.context import get_debug_option
+from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
 
 logger = logging.getLogger(__name__)
 
@@ -198,10 +200,29 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
             if max_output_tokens is not None
             else getattr(ai_model, "max_output_tokens", None)
         )
-        if thinking_enable is None:
-            thinking_enable = bool(getattr(ai_model, "thinking_enable", False))
-        if reasoning_effort is None:
-            reasoning_effort = getattr(ai_model, "reasoning_effort", None)
+        registered_thinking_enable = bool(getattr(ai_model, "thinking_enable", False))
+        registered_reasoning_effort = getattr(ai_model, "reasoning_effort", None)
+        reasoning_settings = resolve_reasoning_settings(
+            thinking_enable=registered_thinking_enable,
+            reasoning_effort=registered_reasoning_effort,
+            thinking_only=bool(getattr(ai_model, "thinking_only", False)),
+            allow_disable_thinking=bool(getattr(ai_model, "allow_disable_thinking", True)),
+            supported_reasoning_efforts=getattr(ai_model, "supported_reasoning_efforts", None),
+            overrides={
+                "thinking_enable": (
+                    thinking_enable
+                    if thinking_enable is not None
+                    else get_debug_option("thinking_enable", UNSET)
+                ),
+                "reasoning_effort": (
+                    reasoning_effort
+                    if reasoning_effort is not None
+                    else get_debug_option("reasoning_effort", UNSET)
+                ),
+            },
+        )
+        thinking_enable = reasoning_settings.thinking_enable
+        reasoning_effort = reasoning_settings.reasoning_effort
 
     if not api_key:
         api_key = await ConfigServiceProxy.get("llm_api_key") or settings.LLM_API_KEY

@@ -268,6 +268,7 @@ const continueChatFromTrace = () => {
             finalizeConversationInBackground(previousId);
         }
         conversationId.value = targetId;
+        resetDebugThinkingOverrides();
         localStorage.setItem("agent_debug_conv_id", targetId);
         messages.value = [];
         loadSessionHistory(targetId);
@@ -278,7 +279,7 @@ const continueChatFromTrace = () => {
 };
 
 
-import { modelApi, type AIModel } from "../api/model";
+import { modelApi, type AIModel, type ReasoningEffort } from "../api/model";
 
 import ConfirmModal from "@/components/ConfirmModal.vue";
 
@@ -505,6 +506,7 @@ const generateNewConversation = (isManual = false) => {
     finalizeConversationInBackground(previousId);
   }
   conversationId.value = createConversationId();
+  resetDebugThinkingOverrides();
   debugConfig.enableGrounding = false;
   localStorage.setItem("agent_debug_conv_id", conversationId.value);
   if (isManual) {
@@ -1248,6 +1250,8 @@ const showLogicFlowModal = ref(false);
 const isConfigPanelFloating = ref(false);
 const debugConfig = reactive({
   model: "", // Empty means default
+  thinkingEnableOverride: null as boolean | null,
+  reasoningEffortOverride: null as ReasoningEffort | null,
   approvalMode: "ask" as "ask" | "allow" | "deny",
   temperature: 0.0,
   dryRun: false, // SQL Review Mode
@@ -1258,6 +1262,16 @@ const debugConfig = reactive({
   systemPromptOverride: "", // Prompt Engineering
   injectedContext: [] as { key: string; value: string }[], // Manual Context Injection
 });
+
+const handleDebugModelSelection = (model: string) => {
+  debugConfig.model = model;
+  debugConfig.thinkingEnableOverride = null;
+  debugConfig.reasoningEffortOverride = null;
+};
+const resetDebugThinkingOverrides = () => {
+  debugConfig.thinkingEnableOverride = null;
+  debugConfig.reasoningEffortOverride = null;
+};
 
 
 
@@ -1279,6 +1293,7 @@ const loadCurrentPrompt = async () => {
       if (res.data.model_name) debugConfig.model = res.data.model_name;
       if (res.data.temperature !== undefined)
         debugConfig.temperature = res.data.temperature;
+      resetDebugThinkingOverrides();
     }
   } catch (e) {
     console.error("Failed to load agent config", e);
@@ -2900,6 +2915,12 @@ const sendMessage = async () => {
       knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
     };
     if (debugConfig.model) debugOptions.model = debugConfig.model;
+    if (debugConfig.thinkingEnableOverride !== null) {
+      debugOptions.thinking_enable = debugConfig.thinkingEnableOverride;
+    }
+    if (debugConfig.reasoningEffortOverride !== null) {
+      debugOptions.reasoning_effort = debugConfig.reasoningEffortOverride;
+    }
     if (debugConfig.temperature > 0)
       debugOptions.temperature = debugConfig.temperature;
 
@@ -4855,8 +4876,12 @@ onUnmounted(() => {
           :approval-mode="debugConfig.approvalMode"
           :selected-model="debugConfig.model"
           :available-models="availableModels"
+          :thinking-enable-override="debugConfig.thinkingEnableOverride"
+          :reasoning-effort-override="debugConfig.reasoningEffortOverride"
           @update:approval-mode="debugConfig.approvalMode = $event"
-          @update:selected-model="debugConfig.model = $event"
+          @update:selected-model="handleDebugModelSelection"
+          @update:thinking-enable-override="debugConfig.thinkingEnableOverride = $event"
+          @update:reasoning-effort-override="debugConfig.reasoningEffortOverride = $event"
           @send="sendMessage"
           @stop="stopGeneration"
           @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
