@@ -20,7 +20,7 @@
 | `thinking_only` | Boolean | `false` | 模型是否只能以思考模式运行 |
 | `allow_disable_thinking` | Boolean | `true` | 是否允许用户关闭思考 |
 | `default_reasoning_effort` | String | `auto` | 默认思考强度 |
-| `supported_reasoning_efforts` | Text，JSON 数组 | `["low", "medium", "high", "xhigh", "max"]` | 模型支持的思考强度集合 |
+| `supported_reasoning_efforts` | Text，JSON 数组 | `["low", "high", "max"]` | 模型支持的思考强度集合 |
 
 内部值与界面文案映射如下：
 
@@ -28,9 +28,7 @@
 | --- | --- |
 | `auto` | 自动（使用请求层默认值） |
 | `low` | 低 |
-| `medium` | 中 |
 | `high` | 高 |
-| `xhigh` | 超高 |
 | `max` | 极致 |
 
 字段只作为配置数据返回和保存。`thinking_only`、`allow_disable_thinking` 即使在当前阶段尚未被运行时消费，也应完整持久化。
@@ -39,12 +37,12 @@
 
 - SQLAlchemy `AIModel` 增加上述字段，并为旧记录提供与迁移默认值一致的 ORM 默认值。
 - `AIModelCreate`、`AIModelUpdate`、`AIModelResponse` 和前端 `AIModel` 类型同步增加字段。
-- `default_reasoning_effort` 只接受 `auto`、`low`、`medium`、`high`、`xhigh`、`max`。
-- `supported_reasoning_efforts` 只接受允许值列表，去重并保持固定展示顺序；空列表拒绝保存。
+- `default_reasoning_effort` 只接受 `auto`、`low`、`high`、`max`。
+- `supported_reasoning_efforts` 只接受 `low`、`high`、`max`，去重并保持固定展示顺序；空列表拒绝保存。
 - `default_reasoning_effort` 可以是特殊值 `auto`，也可以是 `supported_reasoning_efforts` 中的强度值；`auto` 不作为“支持的思考强度”复选项展示。
 - 非 LLM / 多模态模型也可以保存配置，但前端只在模型管理高级区域展示，不改变现有模型类型筛选行为。
 - 模型连接测试接口不消费这些字段，也不因其存在改变当前测试请求。
-- 旧模型记录通过迁移默认值自动获得 `thinking_enabled=false`、`thinking_only=false`、`allow_disable_thinking=true`、`default_reasoning_effort=auto` 和默认支持列表。
+- 旧模型记录通过迁移默认值自动获得 `thinking_enabled=false`、`thinking_only=false`、`allow_disable_thinking=true`、`default_reasoning_effort=auto` 和 `[low, high, max]` 支持列表。
 
 为兼容 MySQL 与 PostgreSQL，支持强类型枚举的单字段使用字符串列；支持强度集合使用 Text 存储 JSON 数组，避免两套数据库方言对 JSON 默认值的差异。
 
@@ -56,7 +54,7 @@
 2. 只有 `thinking_enabled=true` 时，才显示“仅思考模式”“允许关闭思考”“默认思考强度”“支持的思考强度”。
 3. 关闭“思考模式”只隐藏相关控件，不清空已配置值；再次打开时恢复原配置。
 4. 新建模型按设计默认值初始化；编辑和克隆模型使用接口返回值回显。
-5. “默认思考强度”使用单选下拉；“支持的思考强度”使用五个复选项，至少保留一个选项。
+5. “默认思考强度”使用单选下拉；“支持的思考强度”使用低、高、极致三个复选项，至少保留一个选项。
 6. 当默认强度对应的支持项被取消勾选时，前端应自动切换到当前列表中的第一个强度；若默认值为“自动”，则不受支持项勾选影响；保存前仍由后端再次校验。
 7. “仅思考模式”和“允许关闭思考”本阶段只保存配置，不在前端做互斥或运行时行为推断。
 
