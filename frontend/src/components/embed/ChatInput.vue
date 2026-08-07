@@ -518,13 +518,11 @@ const thinkingSummaryLabel = computed(() => {
 });
 
 const showThinkingPanel = ref(false);
-const showReasoningEffortPanel = ref(false);
 
 const selectModel = (model: ModelOption) => {
   emit('update:selectedModel', model.model_id);
   emit('update:thinking-enable-override', null);
   emit('update:reasoning-effort-override', null);
-  showReasoningEffortPanel.value = false;
   if (model.thinking_enable) {
     showThinkingPanel.value = true;
   } else {
@@ -538,7 +536,6 @@ const resetModelSelection = () => {
   emit('update:thinking-enable-override', null);
   emit('update:reasoning-effort-override', null);
   showThinkingPanel.value = false;
-  showReasoningEffortPanel.value = false;
   showModelDropdown.value = false;
 };
 
@@ -550,13 +547,11 @@ const toggleThinkingForSession = () => {
     emit('update:reasoning-effort-override', props.reasoningEffortOverride ?? null);
   } else {
     emit('update:reasoning-effort-override', null);
-    showReasoningEffortPanel.value = false;
   }
 };
 
 const selectReasoningEffort = (effort: ReasoningEffort | null) => {
   emit('update:reasoning-effort-override', effort);
-  showReasoningEffortPanel.value = false;
 };
 
 const isSelectedModelMultimodal = computed(() => {
@@ -707,10 +702,6 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
     }
     if (showNewConversationMenu.value) {
       showNewConversationMenu.value = false;
-      return;
-    }
-    if (showReasoningEffortPanel.value) {
-      showReasoningEffortPanel.value = false;
       return;
     }
     if (showThinkingPanel.value) {
@@ -1986,14 +1977,14 @@ defineExpose({
                                   <button
                                     v-if="canDisableThinking"
                                     type="button"
-                                    class="relative h-6 w-11 flex-shrink-0 rounded-full transition-colors"
+                                    class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
                                     :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
                                     @click="toggleThinkingForSession"
                                     :aria-pressed="thinkingEnabledForSession"
                                     aria-label="切换本次会话思考模式"
                                     :title="thinkingEnabledForSession ? '关闭本次会话思考' : '开启本次会话思考'"
                                   >
-                                    <span class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                                    <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
                                   </button>
                                   <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
                                     {{ selectedModelConfig.thinking_only ? '仅思考' : '已开启' }}
@@ -2001,19 +1992,8 @@ defineExpose({
                                 </div>
 
                                 <div v-if="thinkingEnabledForSession" class="relative">
-                                  <button
-                                    type="button"
-                                    class="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-left text-xs text-gray-700 shadow-sm transition-colors hover:border-primary/40 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                                    @click="showReasoningEffortPanel = !showReasoningEffortPanel"
-                                  >
-                                    <span>
-                                      <span class="block text-[10px] text-gray-400 dark:text-gray-500">思考强度</span>
-                                      <span class="font-semibold">{{ reasoningEffortLabel }}</span>
-                                    </span>
-                                    <svg class="h-3.5 w-3.5 text-gray-400 transition-transform" :class="{ 'rotate-90': showReasoningEffortPanel }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
-                                  </button>
-
-                                  <div v-if="showReasoningEffortPanel" class="mt-1 max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
+                                  <div class="mb-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">思考强度</div>
+                                  <div class="max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
                                     <button
                                       type="button"
                                       class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"

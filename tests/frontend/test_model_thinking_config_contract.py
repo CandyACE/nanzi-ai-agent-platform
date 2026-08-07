@@ -134,3 +134,18 @@ def test_chat_input_keeps_model_menu_compact_and_surfaces_current_thinking_mode(
     assert "thinkingSummaryLabel" in source
     assert "aria-pressed" in source
     assert "overflow-y-auto" in source
+
+
+def test_thinking_switch_thumb_stays_inside_the_switch_track():
+    source = CHAT_INPUT.read_text(encoding="utf-8")
+
+    assert source.count("left-0.5 top-0.5 h-5 w-5") >= 1
+    assert source.count("overflow-hidden") >= 2
+
+
+def test_thinking_effort_options_are_expanded_without_a_second_click():
+    source = CHAT_INPUT.read_text(encoding="utf-8")
+
+    assert "showReasoningEffortPanel" not in source
+    assert "跟随模型默认" in source
+    assert "v-for=\"option in supportedReasoningEfforts\"" in source

@@ -97,7 +97,6 @@ const optionLists = ref<Record<'datasets' | 'knowledge_bases' | 'skills' | 'mcp_
 })
 const optionSearch = ref('')
 const optionsLoading = ref(false)
-const showReasoningEffortPanel = ref(false)
 /** 技能面板：平台 / 个人，对齐 EmbedChat 技能中心 */
 const skillScopeTab = ref<'global' | 'personal'>('global')
 /** MCP 分组默认折叠，展开后再选工具 */
@@ -772,14 +771,14 @@ watch(
               <button
                 v-if="canDisableThinking"
                 type="button"
-                class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+                class="relative inline-flex h-6 w-11 shrink-0 overflow-hidden rounded-full p-0 transition-colors"
                 :class="thinkingEnabledForTask ? 'bg-primary' : 'bg-gray-300'"
                 :aria-pressed="thinkingEnabledForTask"
                 aria-label="切换本次任务思考模式"
                 :title="thinkingEnabledForTask ? '关闭本次任务思考' : '开启本次任务思考'"
                 @click="toggleThinkingForTask"
               >
-                <span class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForTask ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForTask ? 'translate-x-5' : 'translate-x-0.5'"></span>
               </button>
               <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700">
                 {{ selectedModelConfig.thinking_only ? '仅思考' : '已开启' }}
@@ -787,19 +786,8 @@ watch(
             </div>
 
             <div v-if="thinkingEnabledForTask">
-              <div class="mb-1 text-[10px] font-semibold text-gray-500">支持的思考强度</div>
-              <button
-                type="button"
-                class="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-left text-xs text-gray-700 shadow-sm transition-colors hover:border-primary/40"
-                @click="showReasoningEffortPanel = !showReasoningEffortPanel"
-              >
-                <span>
-                  <span class="block text-[10px] text-gray-400">默认思考强度</span>
-                  <span class="font-semibold">{{ reasoningEffortLabel }}</span>
-                </span>
-                <svg class="h-3.5 w-3.5 text-gray-400 transition-transform" :class="{ 'rotate-90': showReasoningEffortPanel }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
-              </button>
-              <div v-if="showReasoningEffortPanel" class="mt-1 max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1">
+              <div class="mb-1 text-[10px] font-semibold text-gray-500">思考强度</div>
+              <div class="max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1">
                 <button
                   type="button"
                   class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
