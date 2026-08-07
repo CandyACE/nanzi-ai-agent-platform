@@ -29,6 +29,12 @@ def test_chat_canvas_resizer_contract():
     # Verify pinning support
     assert "defineModel<boolean>('pinned'" in content
     assert "pinned = !pinned" in content
+    # 钉住优先于 overlay：工作区打开 auto-pin 后用 fixed，避免被工作区抽屉盖住
+    assert "if (pinned.value)" in content
+    assert "z-[145]" in content
+    assert "adjacentDockWidth" in content
+    assert "applyFillAvailableWidth" in content
+    assert "max-w-[28rem]" not in content.split("if (pinned.value)")[1].split("if (props.overlay)")[0]
 
     embed_chat = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     assert "canvasPinnedWidthPx" in embed_chat

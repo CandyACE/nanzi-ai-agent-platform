@@ -1371,6 +1371,7 @@
       :data="canvasData"
       :overlay="canvasFromWorkspace"
       :dock-side="canvasFromWorkspace ? 'left' : 'right'"
+      :adjacent-dock-width="canvasFromWorkspace && showWorkspaceDrawer && workspacePinned ? workspaceDrawerWidthReactive : 0"
       :conversation-id="conversationId"
       @close="closeCanvas"
       @analyze-diff="handleAnalyzeDiff"
@@ -4119,6 +4120,7 @@ const {
   getConversationId: () => conversationId.value,
   resolveFileUrl,
   showToast,
+  isMobile: () => isMobile.value,
 });
 
 // Long-Term Memory States

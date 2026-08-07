@@ -128,6 +128,53 @@ const requireModule = id => {
     assert result["reopenedPinned"] is True
 
 
+def test_workspace_canvas_mobile_keeps_workspace_and_skips_pin():
+    result = _run_typescript(
+        "frontend/src/composables/chat/useWorkspaceCanvas.ts",
+        """
+const canvas = api.useWorkspaceCanvas({
+  getConversationId: () => 'conv-1',
+  resolveFileUrl: value => value,
+  showToast: () => {},
+  isMobile: () => true
+});
+await canvas.handleWorkspaceFilePreview({ path: '/workspace/b.html', name: 'b.html' });
+return {
+  visible: canvas.canvasVisible.value,
+  pinned: canvas.canvasPinned.value,
+  fromWorkspace: canvas.canvasFromWorkspace.value
+};
+""",
+        """
+const ref = initial => {
+  let current = initial;
+  const target = { watchers: [] };
+  Object.defineProperty(target, 'value', {
+    get: () => current,
+    set: value => { current = value; target.watchers.forEach(watcher => watcher(value)); }
+  });
+  return target;
+};
+const requireModule = id => {
+  if (id === 'vue') return { ref, watch: (target, callback) => target.watchers.push(callback), onUnmounted: () => {} };
+  if (id === '@/utils/axios') return { default: { get: async () => ({ data: '' }) } };
+  if (id === '@/utils/workspaceFilePreview') return {
+    isSameWorkspacePreviewPath: (left, right) => left === right,
+    shouldAttachWorkspaceSourcePath: () => true,
+    openWorkspaceFileInCanvas: async options => options.onOpen({ type: 'html', title: options.name, content: '<p>x</p>' })
+  };
+  return require(id);
+};
+""",
+    )
+
+    assert result == {
+        "visible": True,
+        "pinned": False,
+        "fromWorkspace": True,
+    }
+
+
 def test_saved_report_shared_helpers_keep_parameter_and_error_behavior():
     result = _run_typescript(
         "frontend/src/composables/chat/useSavedReportWorkflow.ts",

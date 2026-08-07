@@ -25,6 +25,8 @@ export interface UseWorkspaceCanvasOptions {
   resolveFileUrl: (url: string) => string;
   showToast: (message: string, type?: "success" | "error" | "info") => void;
   normalizeDirectPayloadTitle?: boolean;
+  /** 窄屏：画布全屏置顶遮罩，不自动钉住侧栏（工作区可保持打开） */
+  isMobile?: () => boolean;
 }
 
 export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
@@ -51,7 +53,9 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
   };
 
   const showCanvas = () => {
-    canvasPinned.value = true;
+    const mobile = options.isMobile?.() ?? false;
+    // 桌面钉住侧栏并排；移动端全屏置顶（压过工作区 z-125），关画布后工作区仍在
+    canvasPinned.value = !mobile;
     canvasVisible.value = true;
   };
 

@@ -1825,6 +1825,7 @@ const {
   resolveFileUrl,
   showToast,
   normalizeDirectPayloadTitle: true,
+  isMobile: () => isMobile.value,
 });
 
 const isImageFile = isImageAttachment;
@@ -4881,6 +4882,7 @@ onUnmounted(() => {
         :data="canvasData"
         :overlay="canvasFromWorkspace"
         :dock-side="canvasFromWorkspace ? 'left' : 'right'"
+        :adjacent-dock-width="canvasFromWorkspace && showWorkspaceDrawer && workspacePinned ? 448 : 0"
         :conversation-id="conversationId"
         @close="closeCanvas"
         @analyze-output="handleAnalyzeCodeOutput"

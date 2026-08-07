@@ -32,8 +32,10 @@ const props = withDefaults(
     /** 叠放在父级聊天区域内，不挤压主布局 */
     overlay?: boolean;
     conversationId?: string | null;
+    /** 右侧已占用宽度（如钉住的工作区），左侧钉住时用于铺满剩余空间 */
+    adjacentDockWidth?: number;
   }>(),
-  { dockSide: 'right', overlay: false },
+  { dockSide: 'right', overlay: false, adjacentDockWidth: 0 },
 );
 
 const emit = defineEmits<{
@@ -745,6 +747,8 @@ const analyzeDiff = () => {
 const CANVAS_WIDTH_STORAGE_KEY = 'nanzi_canvas_preferred_width';
 const customWidth = ref<number | null>(null);
 const isResizing = ref(false);
+/** 本次打开期间是否手动拖过宽度；未拖过则左侧钉住时自动铺满剩余空间 */
+const widthManuallyAdjusted = ref(false);
 
 const loadCustomWidth = () => {
   if (typeof window === 'undefined') return;
@@ -758,8 +762,22 @@ const loadCustomWidth = () => {
   }
 };
 
+const applyFillAvailableWidth = () => {
+  if (typeof window === 'undefined') return;
+  if (!props.visible || !pinned.value || props.dockSide !== 'left' || isMobile.value) return;
+  if (widthManuallyAdjusted.value) return;
+  const adjacent = Math.max(0, Number(props.adjacentDockWidth) || 0);
+  // 右侧有钉住抽屉：铺满剩余；关闭后铺满整视口
+  const fill = adjacent > 0
+    ? Math.max(360, window.innerWidth - adjacent)
+    : Math.max(360, window.innerWidth);
+  customWidth.value = fill;
+  canvasWidth.value = fill;
+};
+
 const startResize = (e: MouseEvent) => {
-  if (isFullscreen.value || isMobile.value || props.overlay) return;
+  // overlay 未钉住时铺满容器，不可拖宽；钉住后按侧栏停靠可调宽
+  if (isFullscreen.value || isMobile.value || (props.overlay && !pinned.value)) return;
   e.preventDefault();
   isResizing.value = true;
   document.body.classList.add('select-none');
@@ -782,6 +800,7 @@ const handleResizing = (e: MouseEvent) => {
   const maxWidth = Math.max(minWidth, viewportWidth - 300);
   const clampedWidth = Math.min(maxWidth, Math.max(minWidth, newWidth));
 
+  widthManuallyAdjusted.value = true;
   customWidth.value = clampedWidth;
   canvasWidth.value = clampedWidth;
 };
@@ -799,14 +818,24 @@ const stopResize = () => {
 };
 
 const resetWidth = () => {
+  widthManuallyAdjusted.value = false;
   customWidth.value = null;
   canvasWidth.value = 520;
   localStorage.removeItem(CANVAS_WIDTH_STORAGE_KEY);
+  applyFillAvailableWidth();
 };
 
 const panelStyle = computed(() => {
-  if (isFullscreen.value || isMobile.value || props.overlay) {
+  // 钉住侧栏时应用自定义宽度；纯 overlay 铺满时不设宽
+  if (isFullscreen.value || isMobile.value || (props.overlay && !pinned.value)) {
     return {};
+  }
+  if (pinned.value) {
+    const width = customWidth.value ?? canvasWidth.value ?? 520;
+    return {
+      width: `${width}px`,
+      maxWidth: '100vw',
+    };
   }
   if (customWidth.value) {
     return {
@@ -822,31 +851,60 @@ onMounted(() => {
   mobileMq = window.matchMedia('(max-width: 639px)');
   syncMobile();
   mobileMq.addEventListener('change', syncMobile);
+  applyFillAvailableWidth();
+  window.addEventListener('resize', applyFillAvailableWidth);
 });
 
 onUnmounted(() => {
   void stopExecution();
   stopResize();
   mobileMq?.removeEventListener('change', syncMobile);
+  window.removeEventListener('resize', applyFillAvailableWidth);
 });
+
+watch(
+  () => [props.visible, pinned.value, props.dockSide, props.adjacentDockWidth, isMobile.value] as const,
+  ([visible], previous) => {
+    if (!visible) {
+      widthManuallyAdjusted.value = false;
+      return;
+    }
+    // 右侧抽屉开合导致可用宽度变化时，强制重新铺满
+    const prevAdjacent = previous?.[3];
+    if (prevAdjacent !== undefined && prevAdjacent !== props.adjacentDockWidth) {
+      widthManuallyAdjusted.value = false;
+    }
+    applyFillAvailableWidth();
+  },
+);
 
 const slideTransitionName = computed(() =>
   props.overlay || props.dockSide === 'left' ? 'slide-left' : 'slide',
 );
 
 const useBodyTeleport = computed(() =>
-  !pinned.value && (!props.overlay || isFullscreen.value || isMobile.value),
+  // 移动端始终 teleport 到 body，避免被工作区等抽屉盖住
+  isMobile.value || (!pinned.value && (!props.overlay || isFullscreen.value)),
 );
 
 const panelFrameClass = computed(() => {
-  if (isFullscreen.value || (props.overlay && isMobile.value)) {
+  // 移动端 / 全屏：铺满并压过工作区抽屉（z-125）
+  if (isFullscreen.value || isMobile.value) {
     return 'fixed inset-0 z-[260] w-full max-w-none pointer-events-auto border-0';
+  }
+  // 钉住优先：工作区打开也会 auto-pin；必须用 fixed 才能压过工作区抽屉的层叠上下文
+  if (pinned.value) {
+    if (props.dockSide === 'left') {
+      // 宽度由 panelStyle / applyFillAvailableWidth 控制，勿再限死 max-w-[28rem]
+      return 'fixed left-0 right-auto top-0 bottom-0 z-[145] border-r border-l-0';
+    }
+    return 'fixed right-0 left-0 sm:left-auto top-0 bottom-0 z-[145] border-l border-r-0';
   }
   if (props.overlay) {
     return 'absolute inset-0 z-[140] w-full max-w-none pointer-events-auto border-0';
   }
   if (props.dockSide === 'left') {
-    return 'fixed left-0 right-auto top-0 bottom-0 z-[140] w-full sm:w-[min(28rem,92%)] sm:max-w-[28rem] border-r border-l-0';
+    return 'fixed left-0 right-auto top-0 bottom-0 z-[140] border-r border-l-0';
   }
   return 'fixed right-0 left-0 sm:left-auto top-0 bottom-0 z-[140] w-full sm:w-[80%] sm:max-w-[520px] border-l border-r-0';
 });
@@ -882,7 +940,7 @@ const overlayBackdropClass = computed(() =>
 
       <!-- Resizer Handle Bar -->
       <div
-        v-if="!isFullscreen && !isMobile && !overlay"
+        v-if="!isFullscreen && !isMobile && (!overlay || pinned)"
         class="absolute top-0 bottom-0 z-50 flex items-center justify-center cursor-col-resize group select-none touch-none transition-colors"
         :class="[
           dockSide === 'left' ? '-right-1.5 w-3' : '-left-1.5 w-3',
