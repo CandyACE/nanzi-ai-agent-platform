@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate, type ReasoningEffort, type ReasoningEffortDefault } from '../../api/model'
+import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate, type ReasoningEffort } from '../../api/model'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
@@ -43,9 +43,12 @@ const showAdvancedModelOptions = ref(false)
 const loadingDiscoveredModels = ref(false)
 const discoveredModels = ref<AIModelOption[]>([])
 const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string; description: string }> = [
+  { value: 'none', label: '无（none）', description: '普通问答、摘要、改写' },
+  { value: 'minimal', label: '极简（minimal）', description: '简单判断、轻量分析' },
   { value: 'low', label: '低（low）', description: '常规代码、一般分析' },
+  { value: 'medium', label: '中（medium）', description: '多步骤分析、复杂问答' },
   { value: 'high', label: '高（high）', description: 'Debug、SQL、复杂分析、Agent' },
-  { value: 'max', label: '极致（max）', description: '极难 Coding Agent、长任务' },
+  { value: 'xhigh', label: '极高（xhigh）', description: '极难 Coding Agent、长任务' },
 ]
 const defaultSupportedReasoningEfforts: ReasoningEffort[] = reasoningEffortOptions.map((option) => option.value)
 type ModelForm = Partial<AIModelCreate> & Pick<Partial<AIModel>, 'id' | 'has_api_key'>
@@ -57,10 +60,10 @@ const modelForm = ref<ModelForm>({
   api_base_url: 'https://api.openai.com/v1',
   api_key: '',
   is_active: true,
-  thinking_enabled: false,
+  thinking_enable: false,
   thinking_only: false,
   allow_disable_thinking: true,
-  default_reasoning_effort: 'auto',
+  reasoning_effort: null,
   supported_reasoning_efforts: [...defaultSupportedReasoningEfforts],
 })
 
@@ -155,17 +158,15 @@ const normalizeThinkingConfiguration = (model: ModelForm): ModelForm => {
     const supportedReasoningEfforts = reasoningEffortOptions
         .map((option) => option.value)
         .filter((effort) => configuredEfforts.includes(effort))
-    const defaultReasoningEffort: ReasoningEffortDefault = model.default_reasoning_effort === 'low'
-        || model.default_reasoning_effort === 'high'
-        || model.default_reasoning_effort === 'max'
-        ? model.default_reasoning_effort
-        : 'auto'
+    const reasoningEffort = reasoningEffortOptions.some((option) => option.value === model.reasoning_effort)
+        ? model.reasoning_effort
+        : null
     return {
         ...model,
-        thinking_enabled: model.thinking_enabled ?? false,
+        thinking_enable: model.thinking_enable ?? false,
         thinking_only: model.thinking_only ?? false,
         allow_disable_thinking: model.allow_disable_thinking ?? true,
-        default_reasoning_effort: defaultReasoningEffort,
+        reasoning_effort: reasoningEffort,
         supported_reasoning_efforts: supportedReasoningEfforts.length
             ? supportedReasoningEfforts
             : [...defaultSupportedReasoningEfforts],
@@ -189,10 +190,10 @@ const handleReasoningEffortChange = (effort: ReasoningEffort, event: Event) => {
         .map((option) => option.value)
         .filter((item) => next.includes(item))
     if (
-        modelForm.value.default_reasoning_effort !== 'auto'
-        && !modelForm.value.supported_reasoning_efforts.includes(modelForm.value.default_reasoning_effort as ReasoningEffort)
+        modelForm.value.reasoning_effort !== null
+        && !modelForm.value.supported_reasoning_efforts.includes(modelForm.value.reasoning_effort as ReasoningEffort)
     ) {
-        modelForm.value.default_reasoning_effort = modelForm.value.supported_reasoning_efforts[0]
+        modelForm.value.reasoning_effort = modelForm.value.supported_reasoning_efforts[0]
     }
 }
 
@@ -201,10 +202,10 @@ const hasConfiguredThinking = computed(() => {
     const hasNonDefaultSupported = supported.length !== defaultSupportedReasoningEfforts.length
         || defaultSupportedReasoningEfforts.some((effort) => !supported.includes(effort))
     return Boolean(
-        modelForm.value.thinking_enabled
+        modelForm.value.thinking_enable
         || modelForm.value.thinking_only
         || modelForm.value.allow_disable_thinking === false
-        || modelForm.value.default_reasoning_effort !== 'auto'
+        || modelForm.value.reasoning_effort !== null
         || hasNonDefaultSupported
     )
 })
@@ -467,10 +468,10 @@ const saveModel = async () => {
             api_base_url: modelForm.value.api_base_url,
             context_size: modelForm.value.context_size ?? null,
             max_output_tokens: modelForm.value.max_output_tokens ?? null,
-            thinking_enabled: modelForm.value.thinking_enabled,
+            thinking_enable: modelForm.value.thinking_enable,
             thinking_only: modelForm.value.thinking_only,
             allow_disable_thinking: modelForm.value.allow_disable_thinking,
-            default_reasoning_effort: modelForm.value.default_reasoning_effort,
+            reasoning_effort: modelForm.value.reasoning_effort,
             supported_reasoning_efforts: modelForm.value.supported_reasoning_efforts,
             api_key: modelForm.value.api_key,
             is_active: modelForm.value.is_active,
@@ -823,40 +824,45 @@ onBeforeUnmount(() => {
                                           <h4 class="advanced-section-title">思考模式</h4>
                                           <p class="advanced-section-description">将该模型标记为思考模型，开启后显示相关配置。</p>
                                       </div>
-                                      <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enabled }">
-                                          <input v-model="modelForm.thinking_enabled" type="checkbox" class="sr-only" />
+                                      <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
+                                          <input v-model="modelForm.thinking_enable" type="checkbox" class="sr-only" />
                                           <span class="thinking-mode-capsule-track">
                                               <span class="thinking-mode-capsule-thumb"></span>
-                                              <span>{{ modelForm.thinking_enabled ? '开启' : '关闭' }}</span>
+                                          <span>{{ modelForm.thinking_enable ? '开启' : '关闭' }}</span>
                                           </span>
                                       </label>
                                   </div>
-                                  <div v-if="modelForm.thinking_enabled" class="thinking-options-grid">
-                                      <label class="thinking-option-card">
-                                          <input v-model="modelForm.thinking_only" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
-                                          <span>
-                                              <span class="block text-sm font-medium text-gray-700">仅思考模式</span>
-                                              <span class="mt-1 block text-xs text-gray-500">模型只能以思考模式运行。</span>
-                                          </span>
-                                      </label>
-                                      <label class="thinking-option-card">
-                                          <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
-                                          <span>
-                                              <span class="block text-sm font-medium text-gray-700">允许关闭思考</span>
-                                              <span class="mt-1 block text-xs text-gray-500">允许用户关闭思考模式。</span>
-                                          </span>
-                                      </label>
-                                      <div>
-                                          <label class="block text-sm font-medium text-gray-700">默认思考强度</label>
-                                          <select v-model="modelForm.default_reasoning_effort" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
-                                              <option value="auto">自动（使用请求层默认值）</option>
-                                              <option v-for="option in reasoningEffortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                                          </select>
+                                  <div v-if="modelForm.thinking_enable">
+                                      <div class="thinking-options-grid">
+                                          <label class="thinking-option-card">
+                                              <input v-model="modelForm.thinking_only" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                              <span>
+                                                  <span class="block text-sm font-medium text-gray-700">仅思考模式</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">模型只能以思考模式运行。</span>
+                                              </span>
+                                          </label>
+                                          <label class="thinking-option-card">
+                                              <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                              <span>
+                                                  <span class="block text-sm font-medium text-gray-700">允许关闭思考</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">允许用户关闭思考模式。</span>
+                                              </span>
+                                          </label>
                                       </div>
-                                      <div>
+                                      <div class="default-reasoning-effort-row">
+                                          <div class="default-reasoning-effort-field">
+                                              <label class="block text-sm font-medium text-gray-700">默认思考强度</label>
+                                              <select v-model="modelForm.reasoning_effort" class="default-reasoning-effort-select mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
+                                                  <option :value="null">自动（使用请求层默认值）</option>
+                                                  <option v-for="option in reasoningEffortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                                              </select>
+                                              <p class="mt-1 text-xs text-gray-500">对应 AgentScope 的 reasoning_effort；自动时不传该参数。</p>
+                                          </div>
+                                      </div>
+                                      <div class="supported-reasoning-section">
                                           <span class="block text-sm font-medium text-gray-700">支持的思考强度</span>
                                           <div class="thinking-effort-options">
-                                              <label v-for="option in reasoningEffortOptions" :key="option.value" class="thinking-effort-option">
+                                              <label v-for="option in reasoningEffortOptions" :key="option.value" class="thinking-effort-option" :class="{ 'thinking-effort-option-selected': isReasoningEffortSupported(option.value) }">
                                                   <input
                                                       type="checkbox"
                                                       class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
@@ -1207,6 +1213,21 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
 }
 
+.default-reasoning-effort-row,
+.supported-reasoning-section {
+  border-top: 1px solid rgb(226 232 240);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.default-reasoning-effort-field {
+  max-width: 28rem;
+}
+
+.default-reasoning-effort-select {
+  min-height: 2.5rem;
+}
+
 .thinking-option-card {
   display: flex;
   align-items: flex-start;
@@ -1217,18 +1238,35 @@ onBeforeUnmount(() => {
 }
 
 .thinking-effort-options {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
   margin-top: 0.65rem;
 }
 
 .thinking-effort-option {
-  display: inline-flex;
+  display: flex;
   align-items: flex-start;
   gap: 0.35rem;
+  min-width: 0;
+  min-height: 4.5rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.65rem;
+  background: white;
+  padding: 0.7rem;
   color: rgb(51 65 85);
   font-size: 0.875rem;
+  transition: border-color 150ms, background-color 150ms, box-shadow 150ms;
+}
+
+.thinking-effort-option:hover {
+  border-color: rgb(147 197 253);
+}
+
+.thinking-effort-option-selected {
+  border-color: rgb(96 165 250);
+  background: rgb(239 246 255);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.08);
 }
 
 .thinking-effort-label {
@@ -1242,6 +1280,12 @@ onBeforeUnmount(() => {
   color: rgb(100 116 139);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  .thinking-effort-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 .provider-menu-item:hover,

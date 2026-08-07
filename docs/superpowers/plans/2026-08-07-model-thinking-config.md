@@ -1,10 +1,12 @@
 # 模型思考模式配置 Implementation Plan
 
+> 状态：已完成。实现以 AgentScope 原生 `thinking_enable` / `reasoning_effort` 为准；本文早期步骤中的 `thinking_enabled` / `default_reasoning_effort` 仅代表迁移前方案，实际字段已由 V117/V16 迁移统一调整。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为模型管理高级设置增加思考模式配置的持久化、接口校验、表单编辑和测试，但不接入任何运行时请求逻辑。
+**Goal:** 为模型管理高级设置增加思考模式配置，并统一接入 AgentScope 原生 `thinking_enable` / `reasoning_effort` 参数。
 
-**Architecture:** `AIModel` 保存三个布尔开关、一个默认强度字符串和一个 JSON 数组字符串；Pydantic Schema 对外暴露为强类型列表并负责校验，Portal endpoint 在写库时序列化列表、读库时反序列化。Vue 模型管理表单在现有高级设置面板中增加开关和强度控件，思考模式关闭时仅隐藏相关控件而保留值。
+**Architecture:** `AIModel` 保存 `thinking_enable`、`thinking_only`、`allow_disable_thinking`、可空 `reasoning_effort` 和 JSON 数组字符串；Pydantic Schema 对外暴露 AgentScope 六档强度并负责校验。统一 LLM 工厂直接构造 `OpenAIChatModel.Parameters`，覆盖主 Agent、ChatBI 和辅助分析路径。Vue 表单在高级设置中使用独立强度卡片，关闭思考模式时仅隐藏相关控件而保留值。
 
 **Tech Stack:** Python 3.11、FastAPI、Pydantic 2、SQLAlchemy 2、MySQL/PostgreSQL 增量 SQL、Vue 3、TypeScript、pytest。
 
@@ -12,8 +14,8 @@
 
 ## 文件结构与职责
 
-- Create: `db-prod/V116-add_ai_model_thinking_config.sql` — MySQL 幂等迁移。
-- Create: `db-prod-pg/V15-add_ai_model_thinking_config.sql` — PostgreSQL 幂等迁移。
+- Create: `db-prod/V117-use_agentscope_reasoning_fields.sql` — MySQL 字段迁移。
+- Create: `db-prod-pg/V16-use_agentscope_reasoning_fields.sql` — PostgreSQL 字段迁移。
 - Modify: `app/models/ai_model.py` — 增加模型配置列。
 - Modify: `app/schemas/ai_model.py` — 增加强度常量、JSON 反序列化和请求校验。
 - Modify: `app/api/portal/endpoints/models.py` — 创建/更新时把强度列表序列化为数据库文本。
@@ -29,11 +31,11 @@
 
 - [ ] **Step 1: Add default and round-trip tests**
 
-新增两个异步测试：创建模型时不传思考字段，断言响应为 `thinking_enabled=False`、`thinking_only=False`、`allow_disable_thinking=True`、`default_reasoning_effort="auto"`、`supported_reasoning_efforts=["low", "high", "max"]`；第二个测试传入完整配置后，断言创建响应和更新响应保持相同列表顺序和值。
+新增两个异步测试：创建模型时不传思考字段，断言响应为 `thinking_enable=False`、`thinking_only=False`、`allow_disable_thinking=True`、`reasoning_effort=None` 和 AgentScope 六档支持列表；第二个测试传入完整配置后，断言创建响应和更新响应保持相同列表顺序和值。
 
 - [ ] **Step 2: Add validation tests**
 
-使用参数化请求覆盖三种 422 情况：`default_reasoning_effort="invalid"`、`supported_reasoning_efforts=[]`、默认强度为 `high` 但列表只有 `low`。请求仍使用现有 `admin_headers` fixture 和唯一 `model_id`。
+使用参数化请求覆盖三种 422 情况：`reasoning_effort="unsupported"`、`supported_reasoning_efforts=[]`、强度为 `high` 但列表只有 `low`。请求仍使用现有 `admin_headers` fixture 和唯一 `model_id`。
 
 - [ ] **Step 3: Run the new tests and verify they fail**
 
@@ -48,8 +50,8 @@ Expected: FAIL because the response schema、数据库模型和接口尚未包�
 ### Task 2: Add database migrations
 
 **Files:**
-- Create: `db-prod/V116-add_ai_model_thinking_config.sql`
-- Create: `db-prod-pg/V15-add_ai_model_thinking_config.sql`
+- Create: `db-prod/V117-use_agentscope_reasoning_fields.sql`
+- Create: `db-prod-pg/V16-use_agentscope_reasoning_fields.sql`
 
 - [ ] **Step 1: Add MySQL migration**
 
@@ -88,11 +90,11 @@ Expected: 迁移文件存在、只新增版本文件，空白检查通过；不�
 
 - [ ] **Step 1: Add ORM columns and schema constants**
 
-在 `AIModel` 增加五列；在 Schema 文件增加固定顺序常量 `REASONING_EFFORT_VALUES = ("low", "high", "max")`，以及允许默认值的 `REASONING_EFFORT_OPTIONS = ("auto", *REASONING_EFFORT_VALUES)`。
+在 `AIModel` 增加五列；在 Schema 文件增加固定顺序常量 `REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh")`，`reasoning_effort=None` 表示自动。
 
 - [ ] **Step 2: Add normalization and validation**
 
-Schema 对外字段类型为 `list[str]`。使用 `mode="before"` 的字段校验器把 ORM 中的 JSON 文本解析为列表；请求列表必须是非空字符串列表、只能包含 `low`、`high`、`max` 三种强度、去重后按固定顺序输出。默认值允许为 `auto`，或必须存在于支持列表中。无效输入抛出 Pydantic 422。
+Schema 对外字段类型为 `list[str]`。使用 `mode="before"` 的字段校验器把 ORM 中的 JSON 文本解析为列表；请求列表必须是非空字符串列表、只能包含 AgentScope 六档强度、去重后按固定顺序输出。非空 `reasoning_effort` 必须存在于支持列表中。无效输入抛出 Pydantic 422。
 
 - [ ] **Step 3: Extend create/update/response schemas**
 
@@ -133,7 +135,7 @@ Expected: 新增测试 PASS。
 
 - [ ] **Step 1: Extend TypeScript model types**
 
-增加 `ReasoningEffort = 'low' | 'high' | 'max'`，并在 `AIModel`、`AIModelCreate`、`AIModelUpdate` 中增加 `thinking_enabled`、`thinking_only`、`allow_disable_thinking`、`default_reasoning_effort` 和 `supported_reasoning_efforts`。
+增加 `ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'`，并在 `AIModel`、`AIModelCreate`、`AIModelUpdate` 中增加 `thinking_enable`、`thinking_only`、`allow_disable_thinking`、`reasoning_effort` 和 `supported_reasoning_efforts`。
 
 - [ ] **Step 2: Initialize defaults and constants**
 
@@ -141,7 +143,7 @@ Expected: 新增测试 PASS。
 
 - [ ] **Step 3: Preserve values when hidden**
 
-将“思考模式”开关绑定到 `modelForm.thinking_enabled`。相关参数区域使用 `v-if` 或现有可访问性折叠模式，仅控制显示，不在关闭时修改 `thinking_only`、`allow_disable_thinking`、默认强度和支持列表。
+将“思考模式”开关绑定到 `modelForm.thinking_enable`。相关参数区域使用 `v-if` 或现有可访问性折叠模式，仅控制显示，不在关闭时修改 `thinking_only`、`allow_disable_thinking`、思考强度和支持列表。
 
 ### Task 6: Implement the advanced-settings UI
 
@@ -154,7 +156,7 @@ Expected: 新增测试 PASS。
 
 - [ ] **Step 2: Add dependent controls**
 
-打开思考模式后显示“仅思考模式”“允许关闭思考”两个 checkbox，以及“默认思考强度”下拉和低/高/极致三个支持强度 checkbox。支持列表至少保留一个选项；取消当前默认强度时，自动切换到当前仍选中的第一个强度；默认值为 `auto` 时不需要选中 `auto`。
+打开思考模式后显示“仅思考模式”“允许关闭思考”两个 checkbox，以及 AgentScope 六档“默认思考强度”下拉和支持强度卡片。支持列表至少保留一个选项；取消当前默认强度时，自动切换到当前仍选中的第一个强度；默认值为 `NULL` 时不需要选中自动。
 
 - [ ] **Step 3: Update configured indicator and save payload**
 

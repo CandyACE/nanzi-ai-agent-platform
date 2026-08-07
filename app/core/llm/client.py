@@ -109,6 +109,8 @@ class LLMFactory:
         temperature: float | None = None,
         context_size: int | None = None,
         max_output_tokens: int | None = None,
+        thinking_enable: bool = False,
+        reasoning_effort: str | None = None,
     ) -> AgentScopeLLMHandle:
         final_api_key = api_key or (settings.LLM_API_KEY if settings.LLM_API_KEY else None)
         final_base_url = base_url or (settings.LLM_BASE_URL if settings.LLM_BASE_URL else None)
@@ -141,6 +143,8 @@ class LLMFactory:
                 streaming=streaming,
                 context_size=context_size,
                 max_output_tokens=max_output_tokens,
+                thinking_enable=thinking_enable,
+                reasoning_effort=reasoning_effort,
             )
         )
 
@@ -174,6 +178,8 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
     context_size = kwargs.get("context_size")
     max_output_tokens = kwargs.get("max_output_tokens")
     provider = kwargs.get("provider")
+    thinking_enable = kwargs.get("thinking_enable")
+    reasoning_effort = kwargs.get("reasoning_effort")
 
     lookup_result = _lookup_ai_model_record(model)
     ai_model = await lookup_result if inspect.isawaitable(lookup_result) else lookup_result
@@ -192,6 +198,10 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
             if max_output_tokens is not None
             else getattr(ai_model, "max_output_tokens", None)
         )
+        if thinking_enable is None:
+            thinking_enable = bool(getattr(ai_model, "thinking_enable", False))
+        if reasoning_effort is None:
+            reasoning_effort = getattr(ai_model, "reasoning_effort", None)
 
     if not api_key:
         api_key = await ConfigServiceProxy.get("llm_api_key") or settings.LLM_API_KEY
@@ -222,5 +232,9 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         factory_kwargs["context_size"] = context_size
     if max_output_tokens is not None:
         factory_kwargs["max_output_tokens"] = max_output_tokens
+    if thinking_enable is not None:
+        factory_kwargs["thinking_enable"] = thinking_enable
+    if reasoning_effort is not None:
+        factory_kwargs["reasoning_effort"] = reasoning_effort
 
     return LLMFactory.get_chat_model(**factory_kwargs)

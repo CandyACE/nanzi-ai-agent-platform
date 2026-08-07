@@ -16,11 +16,9 @@ ModelProvider = Literal[
     "other",
 ]
 ModelType = Literal["llm", "embedding", "multimodal"]
-ReasoningEffort = Literal["low", "high", "max"]
-ReasoningEffortDefault = Literal["auto", "low", "high", "max"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
-REASONING_EFFORT_VALUES = ("low", "high", "max")
-REASONING_EFFORT_OPTIONS = ("auto", *REASONING_EFFORT_VALUES)
+REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_SUPPORTED_REASONING_EFFORTS = list(REASONING_EFFORT_VALUES)
 
 
@@ -51,14 +49,14 @@ def normalize_supported_reasoning_efforts(value: Any) -> list[str]:
 
 
 def validate_reasoning_configuration(
-    default_reasoning_effort: str,
+    reasoning_effort: Optional[str],
     supported_reasoning_efforts: Any,
 ) -> list[str]:
     supported = normalize_supported_reasoning_efforts(supported_reasoning_efforts)
-    if default_reasoning_effort not in REASONING_EFFORT_OPTIONS:
-        raise ValueError("default_reasoning_effort must be auto, low, high, or max")
-    if default_reasoning_effort != "auto" and default_reasoning_effort not in supported:
-        raise ValueError("default_reasoning_effort must be included in supported_reasoning_efforts")
+    if reasoning_effort is not None and reasoning_effort not in REASONING_EFFORT_VALUES:
+        raise ValueError("reasoning_effort must be none, minimal, low, medium, high, or xhigh")
+    if reasoning_effort is not None and reasoning_effort not in supported:
+        raise ValueError("reasoning_effort must be included in supported_reasoning_efforts")
     return supported
 
 class AIModelBase(BaseModel):
@@ -79,10 +77,10 @@ class AIModelBase(BaseModel):
         le=10_000_000,
         description="Maximum output tokens per request",
     )
-    thinking_enabled: bool = False
+    thinking_enable: bool = False
     thinking_only: bool = False
     allow_disable_thinking: bool = True
-    default_reasoning_effort: ReasoningEffortDefault = "auto"
+    reasoning_effort: Optional[ReasoningEffort] = None
     supported_reasoning_efforts: list[ReasoningEffort] = Field(
         default_factory=lambda: list(DEFAULT_SUPPORTED_REASONING_EFFORTS)
     )
@@ -96,7 +94,7 @@ class AIModelBase(BaseModel):
     @model_validator(mode="after")
     def validate_reasoning_settings(self):
         validate_reasoning_configuration(
-            self.default_reasoning_effort,
+            self.reasoning_effort,
             self.supported_reasoning_efforts,
         )
         return self
@@ -117,10 +115,10 @@ class AIModelUpdate(BaseModel):
     api_base_url: Optional[str] = None
     context_size: Optional[int] = Field(default=None, gt=0, le=10_000_000)
     max_output_tokens: Optional[int] = Field(default=None, gt=0, le=10_000_000)
-    thinking_enabled: Optional[bool] = None
+    thinking_enable: Optional[bool] = None
     thinking_only: Optional[bool] = None
     allow_disable_thinking: Optional[bool] = None
-    default_reasoning_effort: Optional[ReasoningEffortDefault] = None
+    reasoning_effort: Optional[ReasoningEffort] = None
     supported_reasoning_efforts: Optional[list[ReasoningEffort]] = None
     api_key: Optional[str] = None
     is_active: Optional[bool] = None
@@ -141,9 +139,9 @@ class AIModelUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_partial_reasoning_settings(self):
-        if self.default_reasoning_effort is not None and self.supported_reasoning_efforts is not None:
+        if self.reasoning_effort is not None and self.supported_reasoning_efforts is not None:
             validate_reasoning_configuration(
-                self.default_reasoning_effort,
+                self.reasoning_effort,
                 self.supported_reasoning_efforts,
             )
         return self

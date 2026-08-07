@@ -24,24 +24,26 @@ def model_payload(**overrides):
     return payload
 
 
-def test_thinking_configuration_defaults_to_auto_and_three_supported_efforts():
+def test_thinking_configuration_defaults_to_agent_scope_values():
     model = AIModelCreate(**model_payload())
 
-    assert model.thinking_enabled is False
+    assert model.thinking_enable is False
     assert model.thinking_only is False
     assert model.allow_disable_thinking is True
-    assert model.default_reasoning_effort == "auto"
-    assert model.supported_reasoning_efforts == ["low", "high", "max"]
+    assert model.reasoning_effort is None
+    assert model.supported_reasoning_efforts == [
+        "none", "minimal", "low", "medium", "high", "xhigh",
+    ]
 
 
 def test_thinking_configuration_normalizes_effort_order_and_legacy_response_text():
     model = AIModelCreate(
         **model_payload(
-            default_reasoning_effort="max",
-            supported_reasoning_efforts=["max", "low"],
+            reasoning_effort="xhigh",
+            supported_reasoning_efforts=["xhigh", "low"],
         )
     )
-    assert model.supported_reasoning_efforts == ["low", "max"]
+    assert model.supported_reasoning_efforts == ["low", "xhigh"]
 
     now = datetime.now(timezone.utc)
     response = AIModelResponse.from_orm_custom(
@@ -54,28 +56,28 @@ def test_thinking_configuration_normalizes_effort_order_and_legacy_response_text
             api_base_url=None,
             context_size=None,
             max_output_tokens=None,
-            thinking_enabled=True,
+            thinking_enable=True,
             thinking_only=False,
             allow_disable_thinking=True,
-            default_reasoning_effort="max",
-            supported_reasoning_efforts='["max", "low"]',
+            reasoning_effort="xhigh",
+            supported_reasoning_efforts='["xhigh", "low"]',
             is_active=True,
             created_at=now,
             updated_at=now,
             api_key="encrypted-key",
         )
     )
-    assert response.supported_reasoning_efforts == ["low", "max"]
+    assert response.supported_reasoning_efforts == ["low", "xhigh"]
     assert response.has_api_key is True
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        model_payload(default_reasoning_effort="medium"),
+        model_payload(reasoning_effort="unsupported"),
         model_payload(supported_reasoning_efforts=[]),
-        model_payload(default_reasoning_effort="high", supported_reasoning_efforts=["low"]),
-        model_payload(supported_reasoning_efforts=["xhigh"]),
+        model_payload(reasoning_effort="high", supported_reasoning_efforts=["low"]),
+        model_payload(supported_reasoning_efforts=["unsupported"]),
     ],
 )
 def test_thinking_configuration_rejects_unsupported_values(payload):
@@ -86,28 +88,21 @@ def test_thinking_configuration_rejects_unsupported_values(payload):
 def test_thinking_update_validates_default_against_effective_supported_values():
     with pytest.raises(ValidationError):
         AIModelUpdate(
-            default_reasoning_effort="high",
+            reasoning_effort="high",
             supported_reasoning_efforts=["low"],
         )
 
 
-def test_thinking_migrations_define_the_same_three_efforts():
-    mysql = (ROOT / "db-prod/V116-add_ai_model_thinking_config.sql").read_text(
+def test_thinking_migrations_define_agent_scope_efforts():
+    mysql = (ROOT / "db-prod/V117-use_agentscope_reasoning_fields.sql").read_text(
         encoding="utf-8"
     )
-    postgres = (ROOT / "db-prod-pg/V15-add_ai_model_thinking_config.sql").read_text(
+    postgres = (ROOT / "db-prod-pg/V16-use_agentscope_reasoning_fields.sql").read_text(
         encoding="utf-8"
     )
 
     for migration in (mysql, postgres):
-        for column in (
-            "thinking_enabled",
-            "thinking_only",
-            "allow_disable_thinking",
-            "default_reasoning_effort",
-            "supported_reasoning_efforts",
-        ):
+        for column in ("thinking_enable", "reasoning_effort"):
             assert column in migration
-        assert '["low","high","max"]' in migration
-        assert "medium" not in migration
-        assert "xhigh" not in migration
+        for effort in ("none", "minimal", "low", "medium", "high", "xhigh"):
+            assert effort in migration

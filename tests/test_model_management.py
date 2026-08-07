@@ -126,11 +126,11 @@ async def test_model_management_defaults_thinking_configuration(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["thinking_enabled"] is False
+    assert data["thinking_enable"] is False
     assert data["thinking_only"] is False
     assert data["allow_disable_thinking"] is True
-    assert data["default_reasoning_effort"] == "auto"
-    assert data["supported_reasoning_efforts"] == ["low", "high", "max"]
+    assert data["reasoning_effort"] is None
+    assert data["supported_reasoning_efforts"] == ["none", "minimal", "low", "medium", "high", "xhigh"]
 
 
 @pytest.mark.asyncio
@@ -144,11 +144,11 @@ async def test_model_management_persists_thinking_configuration(
         "provider": "openai",
         "type": "llm",
         "api_key": "sk-thinking-round-trip",
-        "thinking_enabled": True,
+        "thinking_enable": True,
         "thinking_only": True,
         "allow_disable_thinking": False,
-        "default_reasoning_effort": "high",
-        "supported_reasoning_efforts": ["low", "high", "max"],
+        "reasoning_effort": "high",
+        "supported_reasoning_efforts": ["none", "minimal", "low", "medium", "high", "xhigh"],
     }
 
     created = await client.post(
@@ -159,23 +159,23 @@ async def test_model_management_persists_thinking_configuration(
     assert created.status_code == 200
     model_id = created.json()["id"]
     for field in (
-        "thinking_enabled",
+        "thinking_enable",
         "thinking_only",
         "allow_disable_thinking",
-        "default_reasoning_effort",
+        "reasoning_effort",
         "supported_reasoning_efforts",
     ):
         assert created.json()[field] == payload[field]
 
     updated = await client.put(
         f"/api/portal/models/{model_id}",
-        json={"default_reasoning_effort": "max"},
+        json={"reasoning_effort": "xhigh"},
         headers=admin_headers,
     )
     assert updated.status_code == 200
-    assert updated.json()["default_reasoning_effort"] == "max"
+    assert updated.json()["reasoning_effort"] == "xhigh"
     assert updated.json()["supported_reasoning_efforts"] == payload["supported_reasoning_efforts"]
-    assert updated.json()["thinking_enabled"] is True
+    assert updated.json()["thinking_enable"] is True
     assert updated.json()["thinking_only"] is True
     assert updated.json()["allow_disable_thinking"] is False
 
@@ -184,10 +184,10 @@ async def test_model_management_persists_thinking_configuration(
 @pytest.mark.parametrize(
     "thinking_config",
     [
-        {"default_reasoning_effort": "medium"},
+        {"reasoning_effort": "unsupported"},
         {"supported_reasoning_efforts": []},
         {
-            "default_reasoning_effort": "high",
+            "reasoning_effort": "high",
             "supported_reasoning_efforts": ["low"],
         },
     ],

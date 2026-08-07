@@ -207,24 +207,22 @@ async def update_model(
         raise HTTPException(status_code=404, detail="Model not found")
     
     update_data = model_in.model_dump(exclude_unset=True)
-    if "default_reasoning_effort" in update_data and update_data["default_reasoning_effort"] is None:
-        raise HTTPException(status_code=422, detail="default_reasoning_effort cannot be null")
     if "supported_reasoning_efforts" in update_data and update_data["supported_reasoning_efforts"] is None:
         raise HTTPException(status_code=422, detail="supported_reasoning_efforts cannot be null")
-    if "default_reasoning_effort" in update_data or "supported_reasoning_efforts" in update_data:
+    if "reasoning_effort" in update_data or "supported_reasoning_efforts" in update_data:
         current_supported = normalize_supported_reasoning_efforts(
             model.supported_reasoning_efforts
         )
-        effective_default = update_data.get(
-            "default_reasoning_effort",
-            model.default_reasoning_effort or "auto",
+        effective_reasoning_effort = update_data.get(
+            "reasoning_effort",
+            model.reasoning_effort,
         )
         effective_supported = update_data.get(
             "supported_reasoning_efforts",
             current_supported,
         )
         normalized_supported = validate_reasoning_configuration(
-            effective_default,
+            effective_reasoning_effort,
             effective_supported,
         )
         if "supported_reasoning_efforts" in update_data:

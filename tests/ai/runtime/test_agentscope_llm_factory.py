@@ -83,6 +83,26 @@ def test_create_openai_chat_model_applies_optional_context_and_output_limits():
     assert model.parameters.max_tokens == 65536
 
 
+def test_create_openai_chat_model_uses_agentscope_reasoning_parameters():
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="thinking-model",
+            thinking_enable=True,
+            reasoning_effort="xhigh",
+        )
+    )
+
+    assert model.parameters.thinking_enable is True
+    assert model.parameters.reasoning_effort == "xhigh"
+
+
 @pytest.mark.asyncio
 async def test_model_connection_test_passes_form_token_limits(monkeypatch):
     from app.api.portal.endpoints.models import _test_model_connection

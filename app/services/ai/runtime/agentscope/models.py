@@ -14,6 +14,8 @@ class AgentScopeModelConfig:
     context_size: int | None = None
     max_output_tokens: int | None = None
     provider: str | None = None
+    thinking_enable: bool = False
+    reasoning_effort: str | None = None
 
 
 def create_openai_chat_model(config: AgentScopeModelConfig):
@@ -31,6 +33,8 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
     parameters = OpenAIChatModel.Parameters(
         temperature=config.temperature,
         max_tokens=config.max_output_tokens,
+        thinking_enable=config.thinking_enable,
+        reasoning_effort=config.reasoning_effort,
     )
     model_kwargs = {
         "credential": OpenAICredential(

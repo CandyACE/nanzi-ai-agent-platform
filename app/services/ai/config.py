@@ -26,6 +26,8 @@ class RuntimeModelInfo:
     context_size: Optional[int] = None
     max_output_tokens: Optional[int] = None
     provider: Optional[str] = None
+    thinking_enable: bool = False
+    reasoning_effort: str | None = None
 
     def public_dict(self) -> Dict[str, object]:
         return {
@@ -107,6 +109,8 @@ async def resolve_runtime_model_info(
             context_size=getattr(registered, "context_size", None),
             max_output_tokens=getattr(registered, "max_output_tokens", None),
             provider=getattr(registered, "provider", None),
+            thinking_enable=bool(getattr(registered, "thinking_enable", False)),
+            reasoning_effort=getattr(registered, "reasoning_effort", None),
         )
 
     return RuntimeModelInfo(
@@ -191,6 +195,8 @@ class AgentConfigProvider:
             llm_kwargs["context_size"] = runtime_model_info.context_size
         if runtime_model_info.max_output_tokens is not None:
             llm_kwargs["max_output_tokens"] = runtime_model_info.max_output_tokens
+        llm_kwargs["thinking_enable"] = runtime_model_info.thinking_enable
+        llm_kwargs["reasoning_effort"] = runtime_model_info.reasoning_effort
 
         return get_llm(**llm_kwargs)
 

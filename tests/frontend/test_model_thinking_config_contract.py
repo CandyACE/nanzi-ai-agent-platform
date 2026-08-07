@@ -15,17 +15,15 @@ def test_model_api_declares_thinking_configuration():
 
     assert "export type ReasoningEffort" in source
     for field in (
-        "thinking_enabled",
+        "thinking_enable",
         "thinking_only",
         "allow_disable_thinking",
-        "default_reasoning_effort",
+        "reasoning_effort",
         "supported_reasoning_efforts",
     ):
         assert source.count(field) >= 3
-    for value in ("low", "high", "max"):
+    for value in ("none", "minimal", "low", "medium", "high", "xhigh"):
         assert value in source
-    assert "medium" not in source
-    assert "xhigh" not in source
 
 
 def test_model_registry_shows_dependent_thinking_controls():
@@ -36,10 +34,10 @@ def test_model_registry_shows_dependent_thinking_controls():
     assert "允许关闭思考" in source
     assert "默认思考强度" in source
     assert "支持的思考强度" in source
-    assert "thinking_enabled" in source
-    assert "v-if=\"modelForm.thinking_enabled\"" in source
+    assert "thinking_enable" in source
+    assert "v-if=\"modelForm.thinking_enable\"" in source
     assert "supported_reasoning_efforts" in source
-    assert "default_reasoning_effort" in source
+    assert "reasoning_effort" in source
     assert "thinking_only" in source
     assert "allow_disable_thinking" in source
 
@@ -48,9 +46,9 @@ def test_model_registry_preserves_hidden_values_and_sends_configuration():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
 
     assert "handleReasoningEffortChange" in source
-    assert "defaultReasoningEffort" in source or "default_reasoning_effort" in source
+    assert "reasoningEffort" in source or "reasoning_effort" in source
     assert "supportedReasoningEfforts" in source or "supported_reasoning_efforts" in source
-    assert "thinking_enabled: modelForm.value.thinking_enabled" in source
+    assert "thinking_enable: modelForm.value.thinking_enable" in source
     assert "thinking_only: modelForm.value.thinking_only" in source
     assert "allow_disable_thinking: modelForm.value.allow_disable_thinking" in source
 
@@ -81,3 +79,21 @@ def test_model_registry_explains_reasoning_effort_scenarios():
         "极难 Coding Agent、长任务",
     ):
         assert scenario in source
+
+
+def test_model_registry_gives_default_effort_its_own_full_width_section():
+    source = MODEL_REGISTRY.read_text(encoding="utf-8")
+    template = source[source.index("<template>"):]
+
+    assert "default-reasoning-effort-row" in template
+    assert "supported-reasoning-section" in template
+    assert template.index("default-reasoning-effort-row") < template.index("supported-reasoning-section")
+    assert "default-reasoning-effort-select" in source
+
+
+def test_model_registry_groups_each_reasoning_effort_in_a_card():
+    source = MODEL_REGISTRY.read_text(encoding="utf-8")
+
+    assert "thinking-effort-option-selected" in source
+    assert ".thinking-effort-option" in source
+    assert "grid-template-columns: repeat(3" in source
