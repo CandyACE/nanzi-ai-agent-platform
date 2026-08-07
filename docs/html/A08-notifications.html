@@ -67,7 +67,7 @@
   <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜黄金报表简报流水线</p></section>
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">触发</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">Job id <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">saved_report_subscription_{{id}}</code>，CronTrigger，时区默认 Asia/Shanghai，misfire_grace_time=3600。<strong>无</strong> Redis 任务锁（与用户 Task 不同）。命中 notify_on_success + 告警条件 hit 后走消化。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">Job id <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">saved_report_subscription_{{id}}</code>，CronTrigger，未单独指定时区时使用 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">platform_timezone</code>（默认 Asia/Shanghai），misfire_grace_time=3600。<strong>无</strong> Redis 任务锁（与用户 Task 不同）。命中 notify_on_success + 告警条件 hit 后走消化。</p>
   </section>
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">三步生成</p>

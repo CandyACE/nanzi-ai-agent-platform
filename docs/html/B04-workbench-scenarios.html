@@ -37,6 +37,10 @@
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">Chat / Embed 实际消费</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">Chat.vue 经 INIT_CONFIG 转发：conversation_id、agent_id、open_saved_report（report_id/run_id/…）、portal_question。<br/>Slash：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/dataset_portal</code>；V1 导航仍走 /dataset-menu*<br/>Embed 事件 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OPEN_DATA_PORTAL_FULL</code> → 宿主可去 /dashboard/personal?tab=data</p>
   </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">我的资源</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">工作台与 EmbedChat 共享个人资源入口：记忆、模型 Token、数据、Skills、MCP、任务。工作台接口 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;font-size:13px;">GET /api/portal/workbench/home</code> 返回 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;font-size:13px;">personal_resources</code> 摘要和状态；资源详情仍按各自页面权限加载，个人 MCP 只影响当前会话挂载。</p>
+  </section>
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
   <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜落地建议（第一季收束）</p></section>
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">

@@ -20,6 +20,7 @@
 The platform revolves around the following core capability matrix:
 *   💬 **Deep Interactive Dialogue**: High-performance streaming chat with auto-routing, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call bound tools; the main assistant supports **skill auto-scan** and permission suspend/resume; slash commands, multimodal attachments, and Vision Q&A.
 *   🧠 **Long-Term & Cross-Session Memory**: LTM preference injection plus on-demand **`memory_search`** over session/daily summaries; Memory Management Console for vector ops and governance.
+*   🧩 **Code Canvas & Workspace Execution**: Stream, stop, and inspect Python / Shell runs inside a private user workspace.
 *   🔌 **Flexible Embedded Integration**: Embed Chat SDK for enterprise portals with existing auth, tenant isolation, and compliance.
 *   📊 **Native Enterprise ChatBI**: Data sources, metadata sync, case-library Few-Shot, SQL self-healing, and optional **sql_plan** structured plans; **My Data Portal** via `/dataset_portal`; direct physical SQL and golden report stash.
 *   🤝 **Ecosystem Integration**: **RAGFlow** managed agents & knowledge bases; **OpenClaw🦞** LLM security gateway with user identity and dataset context passthrough.
@@ -105,6 +106,7 @@ The platform revolves around the following core capability matrix:
 *   **Main assistant extras**: Tool preflight (relevance-based nudge), skill auto-scan, anti–business-data hallucination guard with one-click ChatBI switch.
 *   **RAGFlow managed agents**: Connect to RAGFlow-hosted bots for retrieval and streaming dialogue.
 *   **OpenClaw🦞 gateway**: Passes `AUTH_CONTEXT` (identity, channel, accessible datasets) for tenant isolation.
+*   **Code Canvas**: User-confirmed Python / Shell execution with streaming output, timeout, output limits, and stop control.
 
 ### 2. 📊 Intelligent Warehouse Analysis (ChatBI & Self-Healing)
 *   **Text-to-SQL loop**: Metadata injection, schema gates, and layered SQL guards.
@@ -125,6 +127,7 @@ The platform revolves around the following core capability matrix:
 
 ### 5. 🛠️ Enterprise Security, Audit & Utilities
 *   **Task center**: APScheduler + Redis for periodic/one-off jobs under agent identities.
+*   **Platform timezone**: System jobs and subscriptions without an explicit timezone use `platform_timezone` (default `Asia/Shanghai`).
 *   **Granular RBAC**: User, role, menu, and element-level permissions.
 *   **SSO & masking**: Toggleable SSO; audit logs mask passwords and API keys.
 *   **Embed watermark**: Username + timestamp or custom overlay text against screenshot leaks.
@@ -156,6 +159,7 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [AGENT_ROUTING_DESIGN.
 | [PROMPT_LAYERS.md](architech/design/chat/PROMPT_LAYERS.md) | Prompt layering |
 | [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | Agent routing |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API integration |
+| [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | Code Canvas, workspace files, and execution API |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent gating contract |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md) | Test checklist |
 

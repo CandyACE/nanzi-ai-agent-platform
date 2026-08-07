@@ -28,15 +28,15 @@
 - `app/services/ai/runtime/agentscope/tools.py`
 - `app/services/ai/runtime/agentscope/event_stream.py`
 
-Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`；KnowledgeAgent 保留独立 NLI 反思，但通过同一服务生成最终消息内提示。会话必须显式传入布尔值 `debug_options.grounding_enabled=true` 才启用这些审核，默认关闭；关闭不影响 Runner 流式输出、常规工具调用、KnowledgeAgent 检索或 ChatBI SQL/Schema 安全门禁。
+Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`；KnowledgeAgent 保留独立 NLI 反思，但通过同一服务生成最终消息内提示。原始 API 会话只有显式传入布尔值 `debug_options.grounding_enabled=true` 才启用这些审核；EmbedChat 新会话默认发送 `true`，AgentDebug 默认发送 `false`，显式 `false` 始终关闭。关闭不影响 Runner 流式输出、常规工具调用、KnowledgeAgent 检索或 ChatBI SQL/Schema 安全门禁。
 
 ## 门控矩阵
 
 | Agent 类型 | 路由/意图门控 | 工具权限门控 | 外部执行挂起 | 数据/知识真实性门控 | SQL 安全门控 | 输出安全/反幻觉 | 中断恢复 | 当前契约状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ChatBI / DataQuery | 必须。外层只选 DataQuery，内部以 `DataQueryTurnClassifier` 为最终判定 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。schema、few-shot、结果复用、空结果、异常结果均需可观测 | 必须。只读 SQL、schema-before-sql、静态风险、重复 SQL、修复轮次、最终 guard | 会话可选，默认关闭。开启后最终文字超出成功数据结果时保留正文并追加风险提示 | 必须。pending snapshot 保存 data run state | 基本完整，需收口测试和少数边界顺序 |
-| General Assistant | 必须。使用会话级通用分类；GENERAL 路由提示若与用户明确的公网/运行状态意图冲突，以统一请求决策升级证据要求 | 必须。AgentScope runtime tool scope 统一处理；可选工具预检（`agent_tool_preflight_mode`） | 必须。支持 `external_execution_required` | 会话可选，默认关闭。开启后普通 GENERAL 直接流式；明确来源请求和旧查数 Guard 才进入事实审核 | 不适用 | 柔性。开启时保留正文并按证据匹配结果追加来源或风险提示，不再发送阻断卡片 | 必须。AgentScope pending 恢复后遵循本轮开关 | 基础完整，不等同 ChatBI 强门控 |
-| Knowledge Agent | 必须。知识库问答可优先于普通对话 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。dataset 范围、自动检索、空召回、引用约束 | 不适用 | 会话可选，默认关闭。开启后先反思重写；最终仍不一致时保留最后回答并追加风险提示 | 必须。AgentScope pending 恢复 | 基本完整，需明确 dataset 缺失与后续反幻觉测试关系 |
+| ChatBI / DataQuery | 必须。外层只选 DataQuery，内部以 `DataQueryTurnClassifier` 为最终判定 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。schema、few-shot、结果复用、空结果、异常结果均需可观测 | 必须。只读 SQL、schema-before-sql、静态风险、重复 SQL、修复轮次、最终 guard | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后最终文字超出成功数据结果时保留正文并追加风险提示 | 必须。pending snapshot 保存 data run state | 基本完整，需收口测试和少数边界顺序 |
+| General Assistant | 必须。使用会话级通用分类；GENERAL 路由提示若与用户明确的公网/运行状态意图冲突，以统一请求决策升级证据要求 | 必须。AgentScope runtime tool scope 统一处理；可选工具预检（`agent_tool_preflight_mode`） | 必须。支持 `external_execution_required` | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后普通 GENERAL 直接流式；明确来源请求和旧查数 Guard 才进入事实审核 | 不适用 | 柔性。开启时保留正文并按证据匹配结果追加来源或风险提示，不再发送阻断卡片 | 必须。AgentScope pending 恢复后遵循本轮开关 | 基础完整，不等同 ChatBI 强门控 |
+| Knowledge Agent | 必须。知识库问答可优先于普通对话 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。dataset 范围、自动检索、空召回、引用约束 | 不适用 | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后先反思重写；最终仍不一致时保留最后回答并追加风险提示 | 必须。AgentScope pending 恢复 | 基本完整，需明确 dataset 缺失与后续反幻觉测试关系 |
 | RAGFlow 外部引擎 | 弱。适配器内只做查询提取和日志 | 不适用。外部引擎不走本地 AgentScope 工具权限 | 不适用。当前无统一挂起恢复 | 依赖 RAGFlow 返回引用和错误 | 不适用 | 弱。无本地二次反幻觉审计 | 不适用 | 非统一门控路径，需明确为外部引擎自管或补统一适配 |
 | OpenClaw 外部引擎 | 弱。主要交给 OpenClaw 处理 | 不适用。外部引擎不走本地 AgentScope 工具权限 | 不适用。当前无统一挂起恢复 | 部分。透传用户可访问 dataset 给外部引擎 | 不适用 | 必须。输入和输出安全审计可配置 | 不适用 | 有安全审计，但非统一 AgentScope 门控 |
 

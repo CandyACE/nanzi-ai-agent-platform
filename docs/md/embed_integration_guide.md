@@ -147,7 +147,15 @@ sequenceDiagram
 
 ---
 
-## 4. 集成示例 (Host Side)
+## 4. 我的资源与宿主导航
+
+新版本 EmbedChat 在资源入口中提供“我的资源”视图，资源类型包括记忆、模型 Token、数据、Skills、MCP 和任务。资源卡片只展示当前用户可访问的状态与操作入口，不会把资源内容自动拼进模型上下文。
+
+宿主若需要在完整门户中承接操作，可使用 `GET /api/portal/workbench/home` 获取工作台摘要，并根据 `personal_resources` 和资源卡片状态跳转到对应页面。数据门户、任务中心等深链仍需由宿主完成权限校验；Embed 发出的 `OPEN_DATA_PORTAL_FULL` 可交给宿主跳转到 `/dashboard/personal?tab=data`。
+
+个人 MCP 的选择只挂载到当前会话；个人 Skill 的发布、审核和平台化另见 Skills 管理文档。Embed 的 `grounding_enabled` 默认开启，若宿主通过 API 显式传入 `false`，则以显式值为准。
+
+## 5. 集成示例 (Host Side)
 
 ```javascript
 /* 宿主系统逻辑示例 */
