@@ -28,7 +28,7 @@ const REASONING_EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string; d
   { value: 'low', label: '低', description: '常规代码、一般分析' },
   { value: 'medium', label: '中', description: '需要一定推理的任务' },
   { value: 'high', label: '高', description: 'Debug、SQL、复杂分析、Agent' },
-  { value: 'xhigh', label: '极致', description: '极难 Coding Agent、长任务' },
+  { value: 'xhigh', label: '极高', description: '极难 Coding Agent、长任务' },
 ]
 
 export interface TaskResourceScope {
@@ -137,17 +137,33 @@ const selectedReasoningEffort = computed(() => {
 })
 
 const reasoningEffortLabel = computed(() => {
-  const effort = props.reasoningEffortOverride ?? selectedModelConfig.value?.reasoning_effort ?? null
-  return REASONING_EFFORT_OPTIONS.find((option) => option.value === effort)?.label || '跟随模型默认'
+  if (props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined) {
+    return selectedModelConfig.value?.reasoning_effort
+      ? REASONING_EFFORT_OPTIONS.find((option) => option.value === selectedModelConfig.value?.reasoning_effort)?.label || '默认'
+      : '默认'
+  }
+  return REASONING_EFFORT_OPTIONS.find((option) => option.value === props.reasoningEffortOverride)?.label || '默认'
 })
 
 const thinkingSummaryLabel = computed(() => {
   if (!selectedModelConfig.value?.thinking_enable) return ''
-  if (!thinkingEnabledForTask.value) return '非思考'
-  return reasoningEffortLabel.value === '跟随模型默认'
-    ? '思考'
-    : `思考 · ${reasoningEffortLabel.value}`
+  if (!thinkingEnabledForTask.value) return '关'
+  if (props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined) {
+    return selectedModelConfig.value.reasoning_effort ? reasoningEffortLabel.value : '思考'
+  }
+  return reasoningEffortLabel.value
 })
+
+const isFollowingModelEffort = computed(
+  () => props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined,
+)
+
+const thinkingPanelSubtitle = computed(() => {
+  const name = selectedModelConfig.value?.name || selectedModelConfig.value?.model_id || '当前模型'
+  return `${name} · 本次任务`
+})
+
+const showThinkingPanel = ref(false)
 
 const approvalLabel = computed(
   () => APPROVAL_OPTIONS.find((item) => item.value === props.approvalMode)?.label || '自动批准',
@@ -389,6 +405,7 @@ const cancelPendingClose = () => {
 const closePanel = () => {
   cancelPendingClose()
   activePanel.value = null
+  showThinkingPanel.value = false
 }
 
 const scheduleClose = (event?: PointerEvent) => {
@@ -401,6 +418,7 @@ const scheduleClose = (event?: PointerEvent) => {
     const focused = document.activeElement
     if (focused && panelRef.value?.contains(focused)) return
     activePanel.value = null
+    showThinkingPanel.value = false
   }, CLOSE_DELAY_MS)
 }
 
@@ -409,6 +427,7 @@ const togglePanel = (panel: PanelKey) => {
   const next = activePanel.value === panel ? null : panel
   activePanel.value = next
   optionSearch.value = ''
+  showThinkingPanel.value = false
   if (next === 'skills') skillScopeTab.value = 'global'
   if (next === 'mcp_tools') {
     // 打开时按当前列表默认全部折叠，对齐 EmbedChat 加号菜单
@@ -422,12 +441,30 @@ const togglePanel = (panel: PanelKey) => {
 
 const selectModel = (modelId: string) => {
   emit('update:model', modelId)
+  emit('update:thinking-enable-override', null)
+  emit('update:reasoning-effort-override', null)
+  showThinkingPanel.value = false
   if (!modelId) closePanel()
 }
 
 const selectModelOption = (model: AIModel) => {
   emit('update:model', model.model_id)
-  if (!model.thinking_enable) closePanel()
+  emit('update:thinking-enable-override', null)
+  emit('update:reasoning-effort-override', null)
+  showThinkingPanel.value = false
+  // 点模型行仅选中；思考设置通过右侧「思考」按钮打开
+}
+
+const openThinkingSettings = (model: AIModel, event?: Event) => {
+  event?.stopPropagation()
+  event?.preventDefault()
+  emit('update:model', model.model_id)
+  if (props.model !== model.model_id) {
+    emit('update:thinking-enable-override', null)
+    emit('update:reasoning-effort-override', null)
+  }
+  activePanel.value = 'model'
+  showThinkingPanel.value = true
 }
 
 const toggleThinkingForTask = () => {
@@ -750,23 +787,29 @@ watch(
                 </span>
               </span>
               <span class="flex shrink-0 items-center gap-1">
-                <span v-if="item.thinking_enable" class="rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600">
-                  {{ model === item.model_id ? thinkingSummaryLabel : '思考' }}
-                </span>
                 <span v-if="model === item.model_id">✓</span>
-                <svg v-if="item.thinking_enable" class="h-3 w-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
+                <button
+                  v-if="item.thinking_enable"
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-100"
+                  title="调整本次任务思考"
+                  @click="openThinkingSettings(item, $event)"
+                >
+                  <span>{{ model === item.model_id ? (thinkingSummaryLabel || '思考') : '思考' }}</span>
+                  <svg class="h-3 w-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
+                </button>
               </span>
             </button>
           </div>
 
           <div
-            v-if="selectedModelConfig?.thinking_enable"
+            v-if="showThinkingPanel && selectedModelConfig?.thinking_enable"
             class="w-full shrink-0 border-t border-gray-100 bg-gray-50/70 p-3 sm:w-[240px] sm:border-l sm:border-t-0"
           >
-            <div class="mb-3 flex items-center justify-between">
+            <div class="mb-3 flex items-center justify-between gap-2">
               <div class="min-w-0">
                 <div class="text-xs font-bold text-gray-800">思考模式</div>
-                <div class="mt-0.5 truncate text-[10px] text-gray-500">当前任务设置</div>
+                <div class="mt-0.5 truncate text-[10px] text-gray-500">{{ thinkingPanelSubtitle }}</div>
               </div>
               <button
                 v-if="canDisableThinking"
@@ -791,25 +834,28 @@ watch(
                 <button
                   type="button"
                   class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
-                  :class="selectedReasoningEffort === null ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
+                  :class="isFollowingModelEffort ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
+                  title="不覆盖模型注册配置"
                   @click="selectReasoningEffort(null)"
                 >
-                  <span class="block">跟随模型默认</span>
-                  <span class="mt-0.5 block text-[10px] text-gray-400">不覆盖模型注册配置</span>
+                  <span class="flex items-center justify-between gap-2">
+                    <span>跟随模型默认</span>
+                    <span v-if="isFollowingModelEffort">✓</span>
+                  </span>
                 </button>
                 <button
                   v-for="option in supportedReasoningEfforts"
                   :key="option.value"
                   type="button"
                   class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
-                  :class="selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
+                  :class="!isFollowingModelEffort && selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
+                  :title="option.description"
                   @click="selectReasoningEffort(option.value)"
                 >
-                  <span class="flex items-center justify-between">
-                    <span>{{ option.label }} <span class="font-normal text-gray-400">({{ option.value }})</span></span>
-                    <span v-if="selectedReasoningEffort === option.value">✓</span>
+                  <span class="flex items-center justify-between gap-2">
+                    <span>{{ option.label }}</span>
+                    <span v-if="!isFollowingModelEffort && selectedReasoningEffort === option.value">✓</span>
                   </span>
-                  <span class="mt-0.5 block text-[10px] font-normal text-gray-400">{{ option.description }}</span>
                 </button>
                 <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-2 text-[10px] text-gray-400">模型未配置可选思考强度</div>
               </div>

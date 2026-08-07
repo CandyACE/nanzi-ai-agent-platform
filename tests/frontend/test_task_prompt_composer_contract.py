@@ -38,9 +38,12 @@ def test_task_prompt_composer_exposes_model_approval_and_resources():
     assert "思考强度" in text
     assert "thinking_enable" in text
     assert "reasoning_effort" in text
-    assert "思考 ·" in text
+    assert "openThinkingSettings" in text
+    assert "showThinkingPanel" in text
     assert "仅思考" in text
     assert "关闭本次任务思考" in text
+    assert "({{ option.value }})" not in text
+    assert "本次任务" in text
 
 
 def test_task_prompt_composer_panels_escape_modal_clipping():

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -149,3 +150,35 @@ def test_thinking_effort_options_are_expanded_without_a_second_click():
     assert "showReasoningEffortPanel" not in source
     assert "跟随模型默认" in source
     assert "v-for=\"option in supportedReasoningEfforts\"" in source
+
+
+def test_reasoning_panel_only_renders_after_reasoning_content_arrives():
+    for path in (EMBED_CHAT, AGENT_DEBUG):
+        source = path.read_text(encoding="utf-8")
+        match = re.search(
+            r'<div\s+v-if="([^"]+)"\s+class="reasoning-content-panel',
+            source,
+        )
+        assert match is not None
+        assert match.group(1) == "msg.reasoningContent"
+
+
+def test_reasoning_panel_is_collapsible_and_uses_light_quote_style():
+    for path in (EMBED_CHAT, AGENT_DEBUG):
+        source = path.read_text(encoding="utf-8")
+        assert "isReasoningExpanded?: boolean" in source
+        assert "@click=\"msg.isReasoningExpanded = !msg.isReasoningExpanded\"" in source
+        assert 'v-show="msg.isReasoningExpanded !== false"' in source
+        assert "bg-slate-50" in source
+        assert "border-l-4" in source
+        assert "border-slate-200" in source
+
+
+def test_reasoning_panel_uses_model_inference_label():
+    for path in (EMBED_CHAT, AGENT_DEBUG):
+        source = path.read_text(encoding="utf-8")
+        panel_start = source.index("reasoning-content-panel")
+        panel_end = source.index("<!-- Main Content", panel_start)
+        panel = source[panel_start:panel_end]
+        assert "本次会话已启用模型推理" in panel
+        assert "思考过程" not in panel

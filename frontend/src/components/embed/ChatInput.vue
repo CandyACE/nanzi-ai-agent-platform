@@ -53,7 +53,7 @@ const REASONING_EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string; d
   { value: "low", label: "低", description: "常规代码、一般分析" },
   { value: "medium", label: "中", description: "需要一定推理的任务" },
   { value: "high", label: "高", description: "Debug、SQL、复杂分析、Agent" },
-  { value: "xhigh", label: "极致", description: "极难 Coding Agent、长任务" },
+  { value: "xhigh", label: "极高", description: "极难 Coding Agent、长任务" },
 ];
 
 const props = defineProps<{
@@ -504,55 +504,108 @@ const selectedReasoningEffort = computed(() => {
 const reasoningEffortLabel = computed(() => {
   if (props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined) {
     return selectedModelConfig.value?.reasoning_effort
-      ? REASONING_EFFORT_OPTIONS.find((option) => option.value === selectedModelConfig.value?.reasoning_effort)?.label || "跟随模型默认"
-      : "跟随模型默认";
+      ? REASONING_EFFORT_OPTIONS.find((option) => option.value === selectedModelConfig.value?.reasoning_effort)?.label || "默认"
+      : "默认";
   }
-  return REASONING_EFFORT_OPTIONS.find((option) => option.value === props.reasoningEffortOverride)?.label || "跟随模型默认";
+  return REASONING_EFFORT_OPTIONS.find((option) => option.value === props.reasoningEffortOverride)?.label || "默认";
 });
 
+/** 触发器上的短徽章：优先短标签，避免挤掉模型名 */
 const thinkingSummaryLabel = computed(() => {
   if (!selectedModelConfig.value?.thinking_enable) return "";
-  if (!thinkingEnabledForSession.value) return "非思考";
-  const effort = reasoningEffortLabel.value;
-  return effort === "跟随模型默认" ? "思考" : `思考 · ${effort}`;
+  if (!thinkingEnabledForSession.value) return "关";
+  if (props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined) {
+    return selectedModelConfig.value.reasoning_effort
+      ? reasoningEffortLabel.value
+      : "思考";
+  }
+  return reasoningEffortLabel.value;
+});
+
+const thinkingPanelSubtitle = computed(() => {
+  const name = selectedModelConfig.value?.name || selectedModelConfig.value?.model_id || "当前模型";
+  return `${name} · 本次会话`;
+});
+
+const modelSearchQuery = ref("");
+const showModelSearch = computed(() => (props.availableModels?.length || 0) >= 6);
+const filteredAvailableModels = computed(() => {
+  const list = props.availableModels || [];
+  const q = modelSearchQuery.value.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter((model) => {
+    const name = (model.name || "").toLowerCase();
+    const id = (model.model_id || "").toLowerCase();
+    return name.includes(q) || id.includes(q);
+  });
 });
 
 const showThinkingPanel = ref(false);
 
+const closeModelMenu = () => {
+  showThinkingPanel.value = false;
+  showModelDropdown.value = false;
+  modelSearchQuery.value = "";
+};
+
+const backFromThinkingPanel = () => {
+  showThinkingPanel.value = false;
+};
+
+/** 点模型行：移动端进思考二级；桌面端选中即关菜单 */
 const selectModel = (model: ModelOption) => {
-  emit('update:selectedModel', model.model_id);
-  emit('update:thinking-enable-override', null);
-  emit('update:reasoning-effort-override', null);
-  if (model.thinking_enable) {
+  emit("update:selectedModel", model.model_id);
+  emit("update:thinking-enable-override", null);
+  emit("update:reasoning-effort-override", null);
+  if (isMobileViewport.value && model.thinking_enable) {
     showThinkingPanel.value = true;
-  } else {
-    showThinkingPanel.value = false;
-    showModelDropdown.value = false;
+    return;
   }
+  closeModelMenu();
+};
+
+/** 点思考标签 / 箭头：打开思考设置（桌面侧栏 / 移动二级） */
+const openThinkingSettings = (model: ModelOption, event?: Event) => {
+  event?.stopPropagation();
+  event?.preventDefault();
+  emit("update:selectedModel", model.model_id);
+  if (props.selectedModel !== model.model_id) {
+    emit("update:thinking-enable-override", null);
+    emit("update:reasoning-effort-override", null);
+  }
+  showModelDropdown.value = true;
+  showThinkingPanel.value = true;
+  if (isMobileViewport.value) nextTick(updateModelDropdownPosition);
 };
 
 const resetModelSelection = () => {
-  emit('update:selectedModel', '');
-  emit('update:thinking-enable-override', null);
-  emit('update:reasoning-effort-override', null);
-  showThinkingPanel.value = false;
-  showModelDropdown.value = false;
+  emit("update:selectedModel", "");
+  emit("update:thinking-enable-override", null);
+  emit("update:reasoning-effort-override", null);
+  closeModelMenu();
 };
 
 const toggleThinkingForSession = () => {
   if (!canDisableThinking.value) return;
   const nextEnabled = !thinkingEnabledForSession.value;
-  emit('update:thinking-enable-override', nextEnabled ? null : false);
+  emit("update:thinking-enable-override", nextEnabled ? null : false);
   if (nextEnabled) {
-    emit('update:reasoning-effort-override', props.reasoningEffortOverride ?? null);
+    emit("update:reasoning-effort-override", props.reasoningEffortOverride ?? null);
   } else {
-    emit('update:reasoning-effort-override', null);
+    emit("update:reasoning-effort-override", null);
   }
 };
 
 const selectReasoningEffort = (effort: ReasoningEffort | null) => {
-  emit('update:reasoning-effort-override', effort);
+  emit("update:reasoning-effort-override", effort);
+  // 选完强度即关闭，主路径更快
+  closeModelMenu();
 };
+
+/** 未覆盖时高亮「跟随模型默认」，而不是落到模型注册档位 */
+const isFollowingModelEffort = computed(
+  () => props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined,
+);
 
 const isSelectedModelMultimodal = computed(() => {
   if (!props.selectedModel || !props.availableModels) return false;
@@ -562,6 +615,38 @@ const isSelectedModelMultimodal = computed(() => {
 
 const showModelDropdown = ref(false);
 const modelDropdownRef = ref<HTMLElement | null>(null);
+const modelDropdownTriggerRef = ref<HTMLButtonElement | null>(null);
+const modelDropdownPosition = reactive({
+  bottom: 12,
+  left: 12,
+  width: 0,
+});
+
+const updateModelDropdownPosition = () => {
+  const el = modelDropdownTriggerRef.value;
+  if (!el || !isMobileViewport.value) return;
+  const rect = el.getBoundingClientRect();
+  const gutter = 12;
+  modelDropdownPosition.bottom = Math.max(gutter, window.innerHeight - rect.top + 8);
+  modelDropdownPosition.left = gutter;
+  modelDropdownPosition.width = Math.max(0, window.innerWidth - gutter * 2);
+};
+
+const toggleModelDropdown = () => {
+  if (props.isProcessing) return;
+  const willOpen = !showModelDropdown.value;
+  if (willOpen) {
+    // 每次打开先回模型列表；桌面不自动展开思考侧栏
+    showThinkingPanel.value = false;
+    modelSearchQuery.value = "";
+    updateModelDropdownPosition();
+  } else {
+    showThinkingPanel.value = false;
+    modelSearchQuery.value = "";
+  }
+  showModelDropdown.value = willOpen;
+  if (willOpen && isMobileViewport.value) nextTick(updateModelDropdownPosition);
+};
 
 const activeApprovalMode = computed(
   () => props.approvalMode || "ask",
@@ -659,7 +744,7 @@ const handleGlobalClick = (event: MouseEvent) => {
     }
   }
   if (showModelDropdown.value && modelDropdownRef.value && !modelDropdownRef.value.contains(event.target as Node)) {
-    showModelDropdown.value = false;
+    closeModelMenu();
   }
   // 新会话类型菜单：点击外部关闭（触发器 + Teleport 面板）
   if (showNewConversationMenu.value) {
@@ -716,6 +801,7 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
 
 const handleApprovalMenuLayout = () => {
   if (showApprovalMenu.value) updateApprovalMenuPosition();
+  if (showModelDropdown.value && isMobileViewport.value) updateModelDropdownPosition();
   if (showExpertSelector.value && !isMobileViewport.value) updateExpertMenuPosition();
   if (showNewConversationMenu.value) updateNewConversationMenuPosition();
   if (isDrawerExpanded.value && props.windowWidth >= 640) updateDesktopCommandDrawerPosition();
@@ -787,7 +873,17 @@ const expertCapsuleLabel = computed(() => {
   return isMobileViewport.value ? "自动" : "全能助手";
 });
 
-const approvalCapsuleLabel = computed(() => activeApprovalLabel.value);
+const approvalCapsuleLabel = computed(() => {
+  if (!isMobileViewport.value) return activeApprovalLabel.value;
+  switch (activeApprovalMode.value) {
+    case "allow":
+      return "自动";
+    case "deny":
+      return "拒绝";
+    default:
+      return "请求";
+  }
+});
 
 const inputPlaceholder = computed(() => {
   if (props.isProcessing) return "";
@@ -1283,11 +1379,11 @@ defineExpose({
 
             <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100'" :placeholder="inputPlaceholder"></textarea>
 
-            <div class="relative z-20 mt-1 flex min-h-9 flex-nowrap items-center gap-1 sm:gap-2">
+            <div class="relative z-20 mt-1 flex min-h-7 flex-nowrap items-center gap-0.5 sm:gap-1.5">
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
                 <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
-                    <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
-                        <svg class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
+                        <svg class="w-5 h-5 sm:w-4 sm:h-4 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
                         </svg>
                     </button>
@@ -1637,7 +1733,7 @@ defineExpose({
                       type="button"
                       :disabled="isProcessing"
                       :title="isExpertMode ? `当前专家：${expertCapsuleLabel}` : '全能助手（自动路由）'"
-                      class="flex h-8 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 max-w-[5.25rem] sm:max-w-[11rem]"
+                      class="flex h-8 sm:h-7 items-center gap-0.5 sm:gap-0.5 rounded-full px-1.5 sm:px-2 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 max-w-[5.25rem] sm:max-w-[11rem]"
                       :class="isExpertMode
                         ? 'bg-primary/10 text-primary hover:bg-primary/15 dark:bg-primary/20 dark:hover:bg-primary/25'
                         : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700/70'"
@@ -1753,7 +1849,7 @@ defineExpose({
                       type="button"
                       :disabled="isProcessing"
                       :title="`工具批准：${activeApprovalLabel}`"
-                      class="flex h-8 max-w-[9.5rem] sm:max-w-none items-center gap-1 sm:gap-1.5 rounded-full px-2 sm:px-3 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                      class="flex h-7 max-w-[4.75rem] sm:max-w-none items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                       :class="[
                         approvalTriggerToneClass,
                         showApprovalMenu && !isProcessing
@@ -1768,7 +1864,7 @@ defineExpose({
                     >
                         <svg
                           v-if="activeApprovalMode === 'ask'"
-                          class="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0 opacity-90"
+                          class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1778,7 +1874,7 @@ defineExpose({
                         </svg>
                         <svg
                           v-else-if="activeApprovalMode === 'allow'"
-                          class="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0 opacity-90"
+                          class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1788,7 +1884,7 @@ defineExpose({
                         </svg>
                         <svg
                           v-else
-                          class="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0 opacity-90"
+                          class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1800,7 +1896,7 @@ defineExpose({
                           class="truncate"
                           :class="activeApprovalMode === 'ask' ? 'text-gray-700 dark:text-gray-200' : ''"
                         >{{ approvalCapsuleLabel }}</span>
-                        <svg class="h-3.5 w-3.5 flex-shrink-0 opacity-70 transition-transform" :class="{ 'rotate-180': showApprovalMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="hidden sm:block h-3.5 w-3.5 flex-shrink-0 opacity-70 transition-transform" :class="{ 'rotate-180': showApprovalMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
                         </svg>
                     </button>
@@ -1908,15 +2004,16 @@ defineExpose({
                 <!-- Custom Model Dropdown Selector -->
                 <div ref="modelDropdownRef" class="relative flex-shrink min-w-0">
                     <button
+                      ref="modelDropdownTriggerRef"
                       :disabled="isProcessing"
-                      @click="showModelDropdown = !showModelDropdown"
-                      class="relative flex h-8 items-center gap-0.5 sm:gap-1.5 rounded-full px-2 sm:px-3 text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[104px] sm:max-w-[240px]"
-                      :title="selectedModel ? `覆盖模型: ${selectedModel}` : '使用智能体默认模型'"
+                      @click="toggleModelDropdown"
+                      class="relative flex h-7 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(46vw,10.5rem)] sm:max-w-[280px]"
+                      :title="selectedModel ? `覆盖模型: ${modelLabel}${thinkingSummaryLabel ? ` · ${thinkingSummaryLabel}` : ''}` : '使用智能体默认模型'"
                     >
-                        <span v-if="isSelectedModelMultimodal" class="pointer-events-none select-none text-[11px] text-purple-500">🖼️</span>
-                        <span class="pointer-events-none truncate flex-1 text-left">{{ modelLabel }}</span>
-                        <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-violet-50 px-1.5 py-1 text-[9px] font-semibold text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ thinkingSummaryLabel }}</span>
-                        <svg class="pointer-events-none h-3.5 w-3.5 flex-shrink-0 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': showModelDropdown }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <span v-if="isSelectedModelMultimodal" class="pointer-events-none hidden sm:inline select-none text-[11px] text-purple-500">🖼️</span>
+                        <span class="pointer-events-none truncate flex-1 min-w-0 text-left">{{ modelLabel }}</span>
+                        <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-violet-50 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ thinkingSummaryLabel }}</span>
+                        <svg class="pointer-events-none h-3 w-3 sm:h-3.5 sm:w-3.5 flex-shrink-0 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': showModelDropdown }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
                         </svg>
                     </button>
@@ -1925,10 +2022,37 @@ defineExpose({
                     <transition name="slide-up">
                         <div
                           v-show="showModelDropdown"
-                          class="absolute bottom-full mb-2 right-0 z-30 w-[min(560px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] overflow-hidden bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl origin-bottom-right"
+                          class="z-30 overflow-hidden bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl"
+                          :class="isMobileViewport
+                            ? 'fixed max-h-[min(70vh,420px)]'
+                            : (showThinkingPanel && selectedModelConfig?.thinking_enable
+                              ? 'absolute bottom-full mb-2 right-0 w-[min(560px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right'
+                              : 'absolute bottom-full mb-2 right-0 w-[min(300px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right')"
+                          :style="isMobileViewport ? {
+                            bottom: `${modelDropdownPosition.bottom}px`,
+                            left: `${modelDropdownPosition.left}px`,
+                            width: `${modelDropdownPosition.width}px`,
+                          } : undefined"
                         >
-                            <div class="flex h-full max-h-[min(448px,calc(100vh-96px))] flex-col sm:flex-row">
-                              <div class="min-w-0 flex-1 overflow-y-auto p-1.5 custom-scrollbar">
+                            <div :class="isMobileViewport
+                              ? 'flex max-h-[min(70vh,420px)] flex-col'
+                              : 'flex h-full min-h-0 max-h-[min(448px,calc(100vh-96px))] flex-row'"
+                            >
+                              <!-- 一级：模型列表（移动端进入思考设置后隐藏） -->
+                              <div
+                                v-show="!isMobileViewport || !showThinkingPanel"
+                                class="min-w-0 min-h-0 flex-1 flex flex-col"
+                              >
+                                <div v-if="showModelSearch" class="shrink-0 border-b border-gray-100 p-1.5 dark:border-gray-700">
+                                  <input
+                                    v-model="modelSearchQuery"
+                                    type="search"
+                                    placeholder="搜索模型…"
+                                    class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-primary/40 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                                    @click.stop
+                                  />
+                                </div>
+                                <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 custom-scrollbar touch-pan-y">
                                 <button
                                   @click="resetModelSelection"
                                   class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between"
@@ -1943,37 +2067,95 @@ defineExpose({
                                 </button>
 
                                 <button
-                                  v-for="model in (availableModels || [])"
+                                  v-for="model in filteredAvailableModels"
                                   :key="model.id || model.model_id"
-                                  @click="selectModel(model)"
+                                  type="button"
                                   class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between mt-0.5"
                                   :class="
                                     selectedModel === model.model_id
                                       ? 'bg-primary/5 text-primary font-bold'
                                       : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                                   "
+                                  @click="selectModel(model)"
                                 >
                                     <div class="flex items-center space-x-1.5 min-w-0 flex-1">
                                         <span v-if="model.type === 'multimodal'" class="text-[10px] text-purple-500 flex-shrink-0" title="多模态">🖼️</span>
                                         <span class="truncate">{{ model.name || model.model_id }}</span>
                                     </div>
-                                    <div class="ml-1 flex flex-shrink-0 items-center gap-1.5">
-                                      <span v-if="model.thinking_enable" class="rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ selectedModel === model.model_id ? thinkingSummaryLabel : '思考' }}</span>
+                                    <div class="ml-1 flex flex-shrink-0 items-center gap-1">
                                       <span v-if="selectedModel === model.model_id" class="text-[10px]">✓</span>
-                                      <svg v-if="model.thinking_enable" class="h-3 w-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
+                                      <button
+                                        v-if="model.thinking_enable"
+                                        type="button"
+                                        class="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-100 dark:bg-violet-950/50 dark:text-violet-300 dark:hover:bg-violet-900/50"
+                                        :title="isMobileViewport ? '思考设置' : '调整本次会话思考'"
+                                        @click="openThinkingSettings(model, $event)"
+                                      >
+                                        <span>{{ selectedModel === model.model_id ? (thinkingSummaryLabel || '思考') : '思考' }}</span>
+                                        <svg class="h-3 w-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
+                                      </button>
                                     </div>
                                 </button>
+                                <div v-if="filteredAvailableModels.length === 0" class="px-2.5 py-3 text-center text-[10px] text-gray-400">
+                                  无匹配模型
+                                </div>
+                                </div>
                               </div>
 
+                              <!-- 二级（移动）/ 侧栏（桌面）：思考设置 -->
                               <div
                                 v-if="showThinkingPanel && selectedModelConfig?.thinking_enable"
-                                class="w-full flex-shrink-0 border-t border-gray-100 bg-gray-50/70 p-3 dark:border-gray-700 dark:bg-gray-900/60 sm:w-[240px] sm:border-l sm:border-t-0"
+                                class="w-full flex-shrink-0 border-gray-100 bg-gray-50/70 p-3 dark:border-gray-700 dark:bg-gray-900/60 sm:w-[240px] sm:border-l sm:border-t-0"
+                                :class="isMobileViewport
+                                  ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y border-0'
+                                  : 'border-t sm:border-t-0'"
                               >
-                                <div class="mb-3 flex items-center justify-between">
+                                <div v-if="isMobileViewport" class="mb-3 flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                                    aria-label="返回模型列表"
+                                    title="返回模型列表"
+                                    @click="backFromThinkingPanel"
+                                  >
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+                                  </button>
+                                  <div class="min-w-0 flex-1">
+                                    <div class="text-[11px] font-bold text-gray-800 dark:text-gray-100">思考模式</div>
+                                    <div class="mt-0.5 truncate text-[10px] text-gray-500 dark:text-gray-400">{{ thinkingPanelSubtitle }}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    class="flex-shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/5"
+                                    @click="closeModelMenu"
+                                  >
+                                    完成
+                                  </button>
+                                </div>
+                                <div v-else class="mb-3 flex items-center justify-between gap-2">
                                   <div class="min-w-0">
                                     <div class="text-[11px] font-bold text-gray-800 dark:text-gray-100">思考模式</div>
-                                    <div class="mt-0.5 truncate text-[10px] text-gray-500 dark:text-gray-400">当前会话设置</div>
+                                    <div class="mt-0.5 truncate text-[10px] text-gray-500 dark:text-gray-400">{{ thinkingPanelSubtitle }}</div>
                                   </div>
+                                  <button
+                                    v-if="canDisableThinking"
+                                    type="button"
+                                    class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
+                                    :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
+                                    @click="toggleThinkingForSession"
+                                    :aria-pressed="thinkingEnabledForSession"
+                                    aria-label="切换本次会话思考模式"
+                                    :title="thinkingEnabledForSession ? '关闭本次会话思考' : '开启本次会话思考'"
+                                  >
+                                    <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                                  </button>
+                                  <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                    {{ selectedModelConfig.thinking_only ? '仅思考' : '已开启' }}
+                                  </span>
+                                </div>
+
+                                <div v-if="isMobileViewport" class="mb-3 flex items-center justify-between">
+                                  <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400">本次会话思考</div>
                                   <button
                                     v-if="canDisableThinking"
                                     type="button"
@@ -1993,29 +2175,32 @@ defineExpose({
 
                                 <div v-if="thinkingEnabledForSession" class="relative">
                                   <div class="mb-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">思考强度</div>
-                                  <div class="max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
+                                  <div class="max-h-[240px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
                                     <button
                                       type="button"
                                       class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                      :class="selectedReasoningEffort === null ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
+                                      :class="isFollowingModelEffort ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
+                                      title="不覆盖模型注册配置"
                                       @click="selectReasoningEffort(null)"
                                     >
-                                      <span class="block">跟随模型默认</span>
-                                      <span class="mt-0.5 block text-[10px] text-gray-400">不覆盖模型注册配置</span>
+                                      <span class="flex items-center justify-between gap-2">
+                                        <span>跟随模型默认</span>
+                                        <span v-if="isFollowingModelEffort">✓</span>
+                                      </span>
                                     </button>
                                     <button
                                       v-for="option in supportedReasoningEfforts"
                                       :key="option.value"
                                       type="button"
                                       class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                      :class="selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
+                                      :class="!isFollowingModelEffort && selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
+                                      :title="option.description"
                                       @click="selectReasoningEffort(option.value)"
                                     >
-                                      <span class="flex items-center justify-between">
-                                        <span>{{ option.label }} <span class="font-normal text-gray-400">({{ option.value }})</span></span>
-                                        <span v-if="selectedReasoningEffort === option.value">✓</span>
+                                      <span class="flex items-center justify-between gap-2">
+                                        <span>{{ option.label }}</span>
+                                        <span v-if="!isFollowingModelEffort && selectedReasoningEffort === option.value">✓</span>
                                       </span>
-                                      <span class="mt-0.5 block text-[10px] font-normal text-gray-400">{{ option.description }}</span>
                                     </button>
                                     <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-2 text-[10px] text-gray-400">模型未配置可选思考强度</div>
                                   </div>
