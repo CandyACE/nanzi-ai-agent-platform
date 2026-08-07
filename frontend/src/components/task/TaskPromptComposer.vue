@@ -115,13 +115,12 @@ const selectedModelConfig = computed(() => {
 
 const thinkingEnabledForTask = computed(() => {
   if (!selectedModelConfig.value?.thinking_enable) return false
-  return props.thinkingEnableOverride ?? true
+  return props.thinkingEnableOverride ?? Boolean(selectedModelConfig.value.thinking_only)
 })
 
-const canDisableThinking = computed(() => Boolean(
+const canToggleThinking = computed(() => Boolean(
   selectedModelConfig.value?.thinking_enable
-  && selectedModelConfig.value.allow_disable_thinking
-  && !selectedModelConfig.value.thinking_only,
+  && (!thinkingEnabledForTask.value || selectedModelConfig.value.allow_disable_thinking),
 ))
 
 const supportedReasoningEfforts = computed(() => {
@@ -468,9 +467,9 @@ const openThinkingSettings = (model: AIModel, event?: Event) => {
 }
 
 const toggleThinkingForTask = () => {
-  if (!canDisableThinking.value) return
+  if (!canToggleThinking.value) return
   const nextEnabled = !thinkingEnabledForTask.value
-  emit('update:thinking-enable-override', nextEnabled ? null : false)
+  emit('update:thinking-enable-override', nextEnabled)
   if (nextEnabled) return
   emit('update:reasoning-effort-override', null)
 }
@@ -812,7 +811,7 @@ watch(
                 <div class="mt-0.5 truncate text-[10px] text-gray-500">{{ thinkingPanelSubtitle }}</div>
               </div>
               <button
-                v-if="canDisableThinking"
+                v-if="canToggleThinking"
                 type="button"
                 class="relative inline-flex h-6 w-11 shrink-0 overflow-hidden rounded-full p-0 transition-colors"
                 :class="thinkingEnabledForTask ? 'bg-primary' : 'bg-gray-300'"
@@ -824,7 +823,7 @@ watch(
                 <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForTask ? 'translate-x-5' : 'translate-x-0.5'"></span>
               </button>
               <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700">
-                {{ selectedModelConfig.thinking_only ? '仅思考' : '已开启' }}
+                已开启
               </span>
             </div>
 
@@ -860,7 +859,7 @@ watch(
                 <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-2 text-[10px] text-gray-400">模型未配置可选思考强度</div>
               </div>
             </div>
-            <div v-else-if="canDisableThinking" class="mt-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
+            <div v-else-if="canToggleThinking" class="mt-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
               关闭思考后，本次任务将以非思考模式执行。
             </div>
           </div>

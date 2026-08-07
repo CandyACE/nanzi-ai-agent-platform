@@ -7,6 +7,53 @@ import pytest
 pytestmark = pytest.mark.no_infrastructure
 
 
+def test_reasoning_defaults_to_thinking_only_for_registered_model():
+    from app.services.ai.reasoning import resolve_reasoning_settings
+
+    assert resolve_reasoning_settings(
+        thinking_enable=True,
+        thinking_only=True,
+        reasoning_effort="high",
+    ).thinking_enable is True
+    assert resolve_reasoning_settings(
+        thinking_enable=True,
+        thinking_only=False,
+        reasoning_effort="high",
+    ).thinking_enable is False
+
+
+def test_explicit_session_thinking_override_ignores_thinking_only():
+    from app.services.ai.reasoning import resolve_reasoning_settings
+
+    assert resolve_reasoning_settings(
+        thinking_enable=True,
+        thinking_only=False,
+        reasoning_effort="high",
+        overrides={"thinking_enable": True},
+    ).thinking_enable is True
+    assert resolve_reasoning_settings(
+        thinking_enable=True,
+        thinking_only=True,
+        reasoning_effort="high",
+        allow_disable_thinking=True,
+        overrides={"thinking_enable": False},
+    ).thinking_enable is False
+
+
+def test_explicit_disable_only_requires_allow_disable_thinking():
+    from app.services.ai.reasoning import resolve_reasoning_settings
+
+    result = resolve_reasoning_settings(
+        thinking_enable=True,
+        thinking_only=True,
+        reasoning_effort="high",
+        allow_disable_thinking=False,
+        overrides={"thinking_enable": False},
+    )
+
+    assert result.thinking_enable is True
+
+
 @pytest.mark.parametrize(
     ("thinking_enable", "reasoning_effort"),
     [(False, None), (True, None), (True, "low"), (True, "xhigh")],
@@ -49,6 +96,7 @@ async def test_runtime_model_info_carries_registered_reasoning_configuration(mon
             max_output_tokens=None,
             provider="openai",
             thinking_enable=True,
+            thinking_only=True,
             reasoning_effort="xhigh",
         )),
     )
@@ -79,7 +127,7 @@ async def test_runtime_model_info_drops_invalid_registered_default_effort(monkey
             max_output_tokens=None,
             provider="openai",
             thinking_enable=True,
-            thinking_only=False,
+            thinking_only=True,
             allow_disable_thinking=False,
             reasoning_effort="xhigh",
             supported_reasoning_efforts=["low", "high"],
@@ -139,6 +187,7 @@ async def test_get_llm_async_reads_reasoning_configuration_from_registered_model
             api_base_url=None,
             provider="openai",
             thinking_enable=True,
+            thinking_only=True,
             reasoning_effort="xhigh",
         )
 
@@ -173,7 +222,7 @@ async def test_get_llm_async_applies_request_reasoning_override_to_auxiliary_cal
             api_base_url=None,
             provider="openai",
             thinking_enable=True,
-            thinking_only=False,
+            thinking_only=True,
             allow_disable_thinking=True,
             reasoning_effort="low",
             supported_reasoning_efforts=["low", "high"],
@@ -216,7 +265,7 @@ async def test_get_llm_async_ignores_session_reasoning_override_when_requested(m
             api_base_url=None,
             provider="openai",
             thinking_enable=True,
-            thinking_only=False,
+            thinking_only=True,
             allow_disable_thinking=True,
             reasoning_effort="low",
             supported_reasoning_efforts=["low", "high"],
@@ -265,6 +314,7 @@ async def test_configured_llm_passes_reasoning_configuration_to_shared_factory(m
                 max_output_tokens=None,
                 provider="openai",
                 thinking_enable=True,
+                thinking_only=True,
                 reasoning_effort="low",
             )
         ),
@@ -356,7 +406,7 @@ async def test_request_reasoning_override_ignores_unsupported_effort(monkeypatch
             max_output_tokens=None,
             provider="openai",
             thinking_enable=True,
-            thinking_only=False,
+            thinking_only=True,
             allow_disable_thinking=False,
             reasoning_effort=None,
             supported_reasoning_efforts=["low", "high"],

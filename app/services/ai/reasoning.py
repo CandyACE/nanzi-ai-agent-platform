@@ -42,24 +42,25 @@ def resolve_reasoning_settings(
     supported_reasoning_efforts: Any = None,
     overrides: Mapping[str, Any] | None = None,
 ) -> ReasoningSettings:
-    """Apply safe request-level reasoning overrides to registered defaults.
+    """Apply request-level overrides to a registered model's default reasoning state.
 
-    Invalid or unauthorized client values are ignored so a stale frontend cannot
-    change a model's registered capabilities or break an otherwise valid turn.
+    ``thinking_only`` is the registered default state, while ``thinking_enable``
+    is the model capability. Explicit session values may override the default;
+    disabling is additionally gated by ``allow_disable_thinking``.
     """
     supported = _supported_efforts(supported_reasoning_efforts)
-    effective_thinking = bool(thinking_enable)
+    effective_thinking = bool(thinking_enable and thinking_only)
     effective_effort = reasoning_effort
     options = overrides or {}
 
     requested_thinking = options.get("thinking_enable", UNSET)
     if isinstance(requested_thinking, bool):
         if requested_thinking:
-            if effective_thinking:
+            if thinking_enable:
                 effective_thinking = True
             else:
                 logger.warning("Ignoring thinking_enable=true for a non-thinking model")
-        elif effective_thinking and allow_disable_thinking and not thinking_only:
+        elif effective_thinking and allow_disable_thinking:
             effective_thinking = False
         elif effective_thinking:
             logger.warning("Ignoring unauthorized thinking disable request")

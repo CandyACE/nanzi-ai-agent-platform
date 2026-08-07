@@ -34,7 +34,8 @@ def test_model_registry_shows_dependent_thinking_controls():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
 
     assert "思考模式" in source
-    assert "仅思考模式" in source
+    assert "默认思考模式" in source
+    assert "模型默认以思考模式运行" in source
     assert "允许关闭思考" in source
     assert "默认思考强度" in source
     assert "支持的思考强度" in source
@@ -135,6 +136,23 @@ def test_chat_input_keeps_model_menu_compact_and_surfaces_current_thinking_mode(
     assert "thinkingSummaryLabel" in source
     assert "aria-pressed" in source
     assert "overflow-y-auto" in source
+
+
+def test_chat_input_uses_thinking_only_for_default_state_only():
+    source = CHAT_INPUT.read_text(encoding="utf-8")
+
+    assert "props.thinkingEnableOverride ?? Boolean(selectedModelConfig.value.thinking_only)" in source
+    assert "const canToggleThinking = computed" in source
+    assert "selectedModelConfig.value.allow_disable_thinking" in source
+    assert "&& !selectedModelConfig.value.thinking_only" not in source
+
+
+def test_task_prompt_composer_uses_thinking_only_for_default_state_only():
+    source = (ROOT / "frontend/src/components/task/TaskPromptComposer.vue").read_text(encoding="utf-8")
+
+    assert "props.thinkingEnableOverride ?? Boolean(selectedModelConfig.value.thinking_only)" in source
+    assert "const canToggleThinking = computed" in source
+    assert "&& !selectedModelConfig.value.thinking_only" not in source
 
 
 def test_thinking_switch_thumb_stays_inside_the_switch_track():

@@ -837,8 +837,8 @@ onBeforeUnmount(() => {
                                           <label class="thinking-option-card">
                                               <input v-model="modelForm.thinking_only" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
                                               <span>
-                                                  <span class="block text-sm font-medium text-gray-700">仅思考模式</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">模型只能以思考模式运行。</span>
+                                                  <span class="block text-sm font-medium text-gray-700">默认思考模式</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">模型默认以思考模式运行。</span>
                                               </span>
                                           </label>
                                           <label class="thinking-option-card">

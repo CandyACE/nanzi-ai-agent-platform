@@ -480,13 +480,12 @@ const selectedModelConfig = computed(() => {
 
 const thinkingEnabledForSession = computed(() => {
   if (!selectedModelConfig.value?.thinking_enable) return false;
-  return props.thinkingEnableOverride ?? true;
+  return props.thinkingEnableOverride ?? Boolean(selectedModelConfig.value.thinking_only);
 });
 
-const canDisableThinking = computed(() => Boolean(
+const canToggleThinking = computed(() => Boolean(
   selectedModelConfig.value?.thinking_enable
-  && selectedModelConfig.value.allow_disable_thinking
-  && !selectedModelConfig.value.thinking_only,
+  && (!thinkingEnabledForSession.value || selectedModelConfig.value.allow_disable_thinking),
 ));
 
 const supportedReasoningEfforts = computed(() => {
@@ -586,9 +585,9 @@ const resetModelSelection = () => {
 };
 
 const toggleThinkingForSession = () => {
-  if (!canDisableThinking.value) return;
+  if (!canToggleThinking.value) return;
   const nextEnabled = !thinkingEnabledForSession.value;
-  emit("update:thinking-enable-override", nextEnabled ? null : false);
+  emit("update:thinking-enable-override", nextEnabled);
   if (nextEnabled) {
     emit("update:reasoning-effort-override", props.reasoningEffortOverride ?? null);
   } else {
@@ -2138,7 +2137,7 @@ defineExpose({
                                     <div class="mt-0.5 truncate text-[10px] text-gray-500 dark:text-gray-400">{{ thinkingPanelSubtitle }}</div>
                                   </div>
                                   <button
-                                    v-if="canDisableThinking"
+                                    v-if="canToggleThinking"
                                     type="button"
                                     class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
                                     :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
@@ -2150,14 +2149,14 @@ defineExpose({
                                     <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
                                   </button>
                                   <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                    {{ selectedModelConfig.thinking_only ? '仅思考' : '已开启' }}
+                                    已开启
                                   </span>
                                 </div>
 
                                 <div v-if="isMobileViewport" class="mb-3 flex items-center justify-between">
                                   <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400">本次会话思考</div>
                                   <button
-                                    v-if="canDisableThinking"
+                                    v-if="canToggleThinking"
                                     type="button"
                                     class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
                                     :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
@@ -2169,7 +2168,7 @@ defineExpose({
                                     <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
                                   </button>
                                   <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                    {{ selectedModelConfig.thinking_only ? '仅思考' : '已开启' }}
+                                    已开启
                                   </span>
                                 </div>
 
@@ -2206,7 +2205,7 @@ defineExpose({
                                   </div>
                                 </div>
                                 <button
-                                  v-else-if="canDisableThinking"
+                                  v-else-if="canToggleThinking"
                                   type="button"
                                   class="mt-2 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-left text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
                                   @click="toggleThinkingForSession"
