@@ -32,7 +32,7 @@ import {
   MagnifyingGlassIcon,
   SparklesIcon,
   ShoppingBagIcon,
-  ClipboardDocumentIcon,
+  DocumentDuplicateIcon,
   ChevronLeftIcon,
 } from '@heroicons/vue/24/outline'
 
@@ -943,7 +943,7 @@ onMounted(fetchServers)
                 : 'text-gray-500 hover:text-gray-700'"
               @click="connectionInputTab = 'json'"
             >
-              <ClipboardDocumentIcon class="w-3.5 h-3.5" />
+              <DocumentDuplicateIcon class="w-3.5 h-3.5" />
               JSON 粘贴
             </button>
           </div>
