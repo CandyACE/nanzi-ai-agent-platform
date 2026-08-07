@@ -69,6 +69,27 @@ const requireModule = id => {
     assert "服务器本地目录：jobs" in result["directory"]
 
 
+def test_agentscope_stream_dispatcher_keeps_reasoning_separate_from_answer():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '回答', reasoningContent: '' };
+const consumed = api.dispatchAgentscopeStreamEvent(
+  msg,
+  { type: 'reasoning_content', content: '思考片段' },
+  () => {}
+);
+return { consumed, content: msg.content, reasoningContent: msg.reasoningContent };
+""",
+    )
+
+    assert result == {
+        "consumed": True,
+        "content": "回答",
+        "reasoningContent": "思考片段",
+    }
+
+
 def test_workspace_canvas_keeps_workspace_toggle_and_debug_title_normalization():
     result = _run_typescript(
         "frontend/src/composables/chat/useWorkspaceCanvas.ts",
