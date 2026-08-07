@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,16 @@ class AgentScopeModelConfig:
     reasoning_effort: str | None = None
 
 
+def _chat_template_kwargs(config: AgentScopeModelConfig) -> dict[str, Any] | None:
+    """Build provider-specific thinking controls for OpenAI-compatible APIs."""
+    if not config.thinking_enable:
+        return None
+    kwargs: dict[str, Any] = {"thinking": True}
+    if config.reasoning_effort is not None:
+        kwargs["reasoning_effort"] = config.reasoning_effort
+    return kwargs
+
+
 def create_openai_chat_model(config: AgentScopeModelConfig):
     if not config.api_key:
         raise ValueError(f"LLM API Key is missing for model '{config.model}'")
@@ -29,6 +40,25 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
         raise RuntimeError(
             "AgentScope OpenAI chat model dependencies are not available"
         ) from exc
+
+    chat_template_kwargs = _chat_template_kwargs(config)
+
+    class PlatformOpenAIChatModel(OpenAIChatModel):
+        """Keep native AgentScope parameters and inject template controls."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._chat_template_kwargs = dict(chat_template_kwargs or {})
+            super().__init__(*args, **kwargs)
+
+        async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+            if self._chat_template_kwargs:
+                extra_body = dict(kwargs.get("extra_body") or {})
+                extra_body.setdefault(
+                    "chat_template_kwargs",
+                    dict(self._chat_template_kwargs),
+                )
+                kwargs["extra_body"] = extra_body
+            return await super()._call_api(*args, **kwargs)
 
     parameters = OpenAIChatModel.Parameters(
         temperature=config.temperature,
@@ -64,6 +94,6 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
     if config.context_size is not None:
         model_kwargs["context_size"] = config.context_size
 
-    return OpenAIChatModel(
+    return PlatformOpenAIChatModel(
         **model_kwargs,
     )

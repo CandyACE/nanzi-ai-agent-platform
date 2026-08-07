@@ -104,6 +104,61 @@ def test_create_openai_chat_model_uses_agentscope_reasoning_parameters():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_enable", "reasoning_effort", "expected_template"),
+    [
+        (True, "high", {"thinking": True, "reasoning_effort": "high"}),
+        (True, None, {"thinking": True}),
+        (False, None, None),
+    ],
+)
+async def test_openai_chat_model_injects_chat_template_kwargs(
+    monkeypatch,
+    thinking_enable,
+    reasoning_effort,
+    expected_template,
+):
+    import openai
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="thinking-model",
+            streaming=False,
+            thinking_enable=thinking_enable,
+            reasoning_effort=reasoning_effort,
+        )
+    )
+
+    await model._call_api("thinking-model", messages=[])
+
+    assert captured.get("extra_body") == (
+        {"chat_template_kwargs": expected_template}
+        if expected_template is not None
+        else None
+    )
+    assert "chat_template_kwargs" not in captured
+
+
+@pytest.mark.asyncio
 async def test_model_connection_test_passes_form_token_limits(monkeypatch):
     from app.api.portal.endpoints.models import _test_model_connection
     from app.services.ai.runtime.agentscope import chat as chat_module

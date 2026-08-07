@@ -75,6 +75,7 @@ export interface AgentStreamLog {
 export interface AgentStreamMessage {
   trace_id?: string;
   content: string;
+  reasoningContent?: string;
   citations?: unknown[];
   logs?: AgentStreamLog[];
   isThinking?: boolean;
@@ -527,6 +528,13 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       if (data.phase === "end") msg.isThinking = false;
       if (data.status === "continuing") msg.isThinking = true;
       return true;
+    case "reasoning_content": {
+      const reasoningDelta = String(data.content || "");
+      if (reasoningDelta) {
+        msg.reasoningContent = `${msg.reasoningContent || ""}${reasoningDelta}`;
+      }
+      return true;
+    }
     default:
       return false;
   }
