@@ -168,7 +168,8 @@ def test_reasoning_panel_is_collapsible_and_uses_light_quote_style():
         source = path.read_text(encoding="utf-8")
         assert "isReasoningExpanded?: boolean" in source
         assert "@click=\"msg.isReasoningExpanded = !msg.isReasoningExpanded\"" in source
-        assert 'v-show="msg.isReasoningExpanded !== false"' in source
+        assert 'v-show="msg.isReasoningExpanded === true"' in source
+        assert ':aria-expanded="msg.isReasoningExpanded === true"' in source
         assert "bg-slate-50" in source
         assert "border-l-4" in source
         assert "border-slate-200" in source
@@ -182,3 +183,9 @@ def test_reasoning_panel_uses_model_inference_label():
         panel = source[panel_start:panel_end]
         assert "本次会话已启用模型推理" in panel
         assert "思考过程" not in panel
+
+
+def test_history_loaders_restore_reasoning_content_separately_from_answer():
+    assert "reasoningContent: item.reasoning_content ?? undefined" in EMBED_CHAT.read_text(encoding="utf-8")
+    agent_debug = AGENT_DEBUG.read_text(encoding="utf-8")
+    assert "reasoningContent: m.reasoning_content || undefined" in agent_debug

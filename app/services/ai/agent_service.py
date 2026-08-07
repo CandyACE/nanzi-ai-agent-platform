@@ -66,9 +66,28 @@ def _accumulate_stream_content(full: str, chunk: Dict[str, Any]) -> str:
     """合并 SSE chunk 到会话正文；retraction 表示用新正文整体替换。"""
     if chunk.get("type") == "retraction":
         return str(chunk.get("content") or "")
+    if chunk.get("type"):
+        return full
     if "content" in chunk:
         return full + str(chunk["content"])
     return full
+
+
+def _accumulate_reasoning_content(full: str, chunk: Dict[str, Any]) -> str:
+    """合并独立的模型推理 SSE 事件，不把推理混入可见正文。"""
+    if chunk.get("type") == "reasoning_content":
+        return full + str(chunk.get("content") or "")
+    return full
+
+
+def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。"""
+    allowed_keys = ("role", "content", "files")
+    return [
+        {key: message[key] for key in allowed_keys if key in message}
+        for message in history
+        if isinstance(message, dict)
+    ]
 
 
 def _trace_has_tool_call(trace_buffer: Optional[List[AgentExecutionStep]]) -> bool:
@@ -586,9 +605,12 @@ class AgentService:
                         except ValueError:
                             max_context = 20
 
-                        context_history = server_history[-max_context:] if server_history else []
+                        context_history = _history_messages_for_context(
+                            server_history[-max_context:] if server_history else []
+                        )
+                        context_full_history = _history_messages_for_context(server_history)
                         context_history = await self._maybe_compact_overflow(
-                            server_history, context_history
+                            context_full_history, context_history
                         )
                         messages = context_history + [user_msg]
                     else:
@@ -598,8 +620,13 @@ class AgentService:
                             max_context = int(max_context)
                         except ValueError:
                             max_context = 20
-                        window = server_history[-max_context:] if server_history else []
-                        messages = await self._maybe_compact_overflow(server_history, window)
+                        window = _history_messages_for_context(
+                            server_history[-max_context:] if server_history else []
+                        )
+                        messages = await self._maybe_compact_overflow(
+                            _history_messages_for_context(server_history),
+                            window,
+                        )
 
                 from app.utils.skill_metadata import enrich_messages_with_skill_meta
 
@@ -643,8 +670,11 @@ class AgentService:
                 )
                 try:
                     async for chunk in gen:
-                        if isinstance(chunk, dict) and "content" in chunk:
-                            full_response_content += chunk["content"]
+                        if isinstance(chunk, dict):
+                            full_response_content = _accumulate_stream_content(
+                                full_response_content,
+                                chunk,
+                            )
                         yield chunk
                 finally:
                     await gen.aclose()
@@ -1323,6 +1353,7 @@ class AgentService:
         """Internal turn runner; must be called inside conversation run lane when enabled."""
         agent_config = None
         full_response_content = ""
+        full_reasoning_content = ""
         execution_status = "success"
         has_data_output = False
         executor = None
@@ -1818,6 +1849,7 @@ class AgentService:
                     route_hints,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
             else:
@@ -1847,6 +1879,7 @@ class AgentService:
 
                 async for chunk in executor.execute(messages):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
 
@@ -1921,6 +1954,7 @@ class AgentService:
                     prompt_tokens=p_tokens,
                     completion_tokens=c_tokens,
                     has_data_output=has_data_output or None,
+                    reasoning_content=full_reasoning_content or None,
                 ))
 
         except Exception as e:
@@ -1943,7 +1977,8 @@ class AgentService:
                 await AuditManager.log_transaction(
                      trace_id, agent_config, user_query, full_response_content,
                      user_info, execution_status, duration, trace_buffer,
-                     conversation_id=conversation_id
+                     conversation_id=conversation_id,
+                     reasoning_content=full_reasoning_content or None,
                 )
 
             if (
@@ -2090,6 +2125,7 @@ class AgentService:
         }
 
         full_response_content = ""
+        full_reasoning_content = ""
         execution_status = "success" if confirmed else "rejected"
         start_time = asyncio.get_running_loop().time()
         conversation_id = runner.conversation_id or pending.snapshot.conversation_id
@@ -2106,6 +2142,7 @@ class AgentService:
                     confirmed=confirmed,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     if confirmed:
                         execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
@@ -2149,6 +2186,7 @@ class AgentService:
                 agent_name=handled_by,
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
+                reasoning_content=full_reasoning_content or None,
             ))
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
@@ -2162,6 +2200,7 @@ class AgentService:
             duration,
             trace_buffer,
             conversation_id=conversation_id,
+            reasoning_content=full_reasoning_content or None,
         ))
 
         if (
@@ -2334,6 +2373,7 @@ class AgentService:
         }
 
         full_response_content = ""
+        full_reasoning_content = ""
         execution_status = "success"
         start_time = asyncio.get_running_loop().time()
         conversation_id = runner.conversation_id or pending.snapshot.conversation_id
@@ -2350,6 +2390,7 @@ class AgentService:
                     execution_results=execution_results,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
         except ConversationRunBusyError:
@@ -2392,6 +2433,7 @@ class AgentService:
                 agent_name=handled_by,
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
+                reasoning_content=full_reasoning_content or None,
             ))
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
@@ -2405,6 +2447,7 @@ class AgentService:
             duration,
             trace_buffer,
             conversation_id=conversation_id,
+            reasoning_content=full_reasoning_content or None,
         ))
 
     async def _execute_multi_agent(

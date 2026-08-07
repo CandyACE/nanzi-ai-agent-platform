@@ -936,7 +936,7 @@
                 <button
                   type="button"
                   class="flex w-full items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 text-left text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100/70 dark:border-slate-700/70 dark:text-slate-300 dark:hover:bg-slate-700/30"
-                  :aria-expanded="msg.isReasoningExpanded !== false"
+                  :aria-expanded="msg.isReasoningExpanded === true"
                   @click="msg.isReasoningExpanded = !msg.isReasoningExpanded"
                 >
                   <span class="inline-flex items-center gap-1.5">
@@ -945,10 +945,10 @@
                   </span>
                   <span class="inline-flex items-center gap-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
                     <span v-if="msg.isThinking">进行中</span>
-                    <span class="text-sm transition-transform" :class="msg.isReasoningExpanded !== false ? 'rotate-180' : ''" aria-hidden="true">⌄</span>
+                    <span class="text-sm transition-transform" :class="msg.isReasoningExpanded === true ? 'rotate-180' : ''" aria-hidden="true">⌄</span>
                   </span>
                 </button>
-                <div v-show="msg.isReasoningExpanded !== false" class="max-h-[min(360px,45vh)] overflow-y-auto px-3 py-2 text-slate-600 dark:text-slate-300">
+                <div v-show="msg.isReasoningExpanded === true" class="max-h-[min(360px,45vh)] overflow-y-auto px-3 py-2 text-slate-600 dark:text-slate-300">
                   <MessageRenderer
                     :content="msg.reasoningContent"
                     :theme="config.markdownTheme"
@@ -5454,6 +5454,7 @@ const fetchConversationHistory = async (isLoadMore = false) => {
                   trace_id: item.trace_id,
                   role: 'agent',
                   content: item.summary,
+                  reasoningContent: item.reasoning_content ?? undefined,
                   logs: [],
                   isThinking: false,
                   feedback: null,

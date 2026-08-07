@@ -150,7 +150,7 @@ class MemoryService:
 
         return history
 
-    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, has_data_output: Optional[bool] = None):
+    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None):
         """
         Append a single message to the conversation history.
         Now supports trace_id, attachment files, and token usage values.
@@ -176,6 +176,8 @@ class MemoryService:
             message["files"] = files
         if agent_name:
             message["agent_name"] = agent_name
+        if reasoning_content:
+            message["reasoning_content"] = reasoning_content
         message["prompt_tokens"] = int(prompt_tokens or 0)
         message["completion_tokens"] = int(completion_tokens or 0)
         if has_data_output:

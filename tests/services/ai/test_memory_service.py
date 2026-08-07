@@ -55,23 +55,34 @@ async def test_memory_service_add_message(mock_redis):
         mock_get_redis.return_value = mock_redis
         
         await service.add_message("u1", "c1", "user", "Hello Redis")
+        await service.add_message(
+            "u1",
+            "c1",
+            "assistant",
+            "回答",
+            reasoning_content="模型推理",
+        )
         
         pipe = mock_redis._mock_pipe
         
         # 验证 Pipeline 内 RPUSH 被调用且参数正确
         assert pipe.rpush.called
-        args, _ = pipe.rpush.call_args
+        args, _ = pipe.rpush.call_args_list[0]
         key, val = args
         assert key == "conversation:u1:c1:history"
         msg_data = json.loads(val)
         assert msg_data["role"] == "user"
         assert msg_data["content"] == "Hello Redis"
+
+        _, assistant_val = pipe.rpush.call_args_list[1].args
+        assistant_data = json.loads(assistant_val)
+        assert assistant_data["reasoning_content"] == "模型推理"
         
         # 验证 LTRIM 和 EXPIRE 也在 Pipeline 中被调用
-        pipe.ltrim.assert_called_once()
-        pipe.expire.assert_called_once()
+        assert pipe.ltrim.call_count == 2
+        assert pipe.expire.call_count == 2
         # 验证 execute 被调用（提交 Pipeline）
-        pipe.execute.assert_called_once()
+        assert pipe.execute.call_count == 2
 
 @pytest.mark.asyncio
 async def test_memory_service_get_history(mock_redis):
