@@ -18,6 +18,15 @@ class AIModel(Base):
     api_key = Column(Text, nullable=True)
     context_size = Column(Integer, nullable=True)  # Model context window in tokens
     max_output_tokens = Column(Integer, nullable=True)  # Per-request output cap in tokens
+    thinking_enabled = Column(Boolean, nullable=False, default=False)
+    thinking_only = Column(Boolean, nullable=False, default=False)
+    allow_disable_thinking = Column(Boolean, nullable=False, default=True)
+    default_reasoning_effort = Column(String(32), nullable=False, default="auto")
+    supported_reasoning_efforts = Column(
+        Text,
+        nullable=True,
+        default='["low","high","max"]',
+    )
     
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)

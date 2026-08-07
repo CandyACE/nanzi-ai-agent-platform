@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
 from urllib.parse import urlparse, urlsplit, urlunsplit
@@ -17,6 +18,8 @@ from app.schemas.ai_model import (
     AIModelTestRequest,
     AIModelUpdate,
     AIModelResponse,
+    normalize_supported_reasoning_efforts,
+    validate_reasoning_configuration,
 )
 from app.utils.model_credentials import encrypt_model_api_key, decrypt_model_api_key
 from app.utils.model_providers import (
@@ -27,6 +30,14 @@ from app.utils.model_providers import (
 import uuid
 
 router = APIRouter()
+
+
+def _serialize_reasoning_efforts(value: list[str]) -> str:
+    return json.dumps(
+        normalize_supported_reasoning_efforts(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",
@@ -163,6 +174,9 @@ async def create_model(
     api_key = data.pop("api_key", None)
     if api_key is not None:
         data["api_key"] = encrypt_model_api_key(api_key)
+    data["supported_reasoning_efforts"] = _serialize_reasoning_efforts(
+        data["supported_reasoning_efforts"]
+    )
 
     new_model = AIModel(
         id=str(uuid.uuid4()),
@@ -193,6 +207,30 @@ async def update_model(
         raise HTTPException(status_code=404, detail="Model not found")
     
     update_data = model_in.model_dump(exclude_unset=True)
+    if "default_reasoning_effort" in update_data and update_data["default_reasoning_effort"] is None:
+        raise HTTPException(status_code=422, detail="default_reasoning_effort cannot be null")
+    if "supported_reasoning_efforts" in update_data and update_data["supported_reasoning_efforts"] is None:
+        raise HTTPException(status_code=422, detail="supported_reasoning_efforts cannot be null")
+    if "default_reasoning_effort" in update_data or "supported_reasoning_efforts" in update_data:
+        current_supported = normalize_supported_reasoning_efforts(
+            model.supported_reasoning_efforts
+        )
+        effective_default = update_data.get(
+            "default_reasoning_effort",
+            model.default_reasoning_effort or "auto",
+        )
+        effective_supported = update_data.get(
+            "supported_reasoning_efforts",
+            current_supported,
+        )
+        normalized_supported = validate_reasoning_configuration(
+            effective_default,
+            effective_supported,
+        )
+        if "supported_reasoning_efforts" in update_data:
+            update_data["supported_reasoning_efforts"] = _serialize_reasoning_efforts(
+                normalized_supported
+            )
     if "model_id" in update_data:
         await _ensure_model_id_available(db, update_data["model_id"], exclude_id=model_id)
     if "provider" in update_data:
