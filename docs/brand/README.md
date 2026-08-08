@@ -19,6 +19,7 @@
 | `nanzi-n-icon.png` | 512×512 位图预览 | 从主 SVG 导出，不作为编辑源 |
 | `nanzi-n-icon-favicon-512.png` | 项目默认 favicon 的 512×512 位图源 | 从 favicon SVG 导出，供 `frontend/public/favicon.png` 使用 |
 | `nanzi-n-icon-favicon.png` | 32×32 favicon 预览 | 从 favicon SVG 导出，不作为编辑源 |
+| `nanzi-n-icon-apple-touch-180.png` | iPhone 添加到主屏幕的图标 | 由主 icon 导出的 180×180 满版不透明 PNG，交由 iOS 套用圆角 |
 
 SVG 是唯一的可编辑源。后续要调整颜色、节点数量或导出尺寸时，优先修改 SVG，再重新生成 PNG。
 
@@ -103,9 +104,10 @@ SVG 是唯一的可编辑源。后续要调整颜色、节点数量或导出尺�
 默认资源已经同步到前端公共目录：
 
 - `frontend/public/favicon.svg`：浏览器优先使用的 SVG favicon。
-- `frontend/public/favicon.png`：PNG favicon fallback、Apple touch icon 的位图资源。
+- `frontend/public/favicon.png`：PNG favicon fallback 的位图资源。
+- `frontend/public/apple-touch-icon.png`：iPhone 添加到主屏幕专用的满版不透明 PNG；iOS 会在此基础上套用圆角，不会暴露透明黑边。
 - `frontend/public/logo.png`：项目公共 logo 位图，使用主 icon 的 320×320 导出。
-- `frontend/index.html`：同时声明 SVG favicon、PNG fallback 和 Apple touch icon。
+- `frontend/index.html`：同时声明 SVG favicon、PNG fallback 和独立的 Apple touch icon。
 
 `useBranding` 与后端品牌配置仍然保留动态覆盖能力：只有在没有配置自定义 `icon_url` 时，才回退到透明的 `/favicon.svg`；PNG 只承担兼容和 Apple touch icon 场景。浏览器标题文案继续由品牌配置控制，默认值为 `NanZi·智能体平台`，不会把文字标题误当成图标资源。
 

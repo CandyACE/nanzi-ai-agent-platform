@@ -11,7 +11,7 @@ def test_index_declares_svg_png_and_apple_touch_icons_with_nanzi_title():
 
     assert '<link rel="icon" type="image/svg+xml" href="/favicon.svg" />' in index
     assert '<link rel="icon" type="image/png" sizes="512x512" href="/favicon.png" />' in index
-    assert '<link rel="apple-touch-icon" sizes="180x180" href="/favicon.png" />' in index
+    assert '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />' in index
     assert "<title>NanZi·智能体平台</title>" in index
 
 
@@ -47,6 +47,18 @@ def test_project_icon_pngs_keep_transparent_outer_corners():
     ):
         image = Image.open(ROOT / relative_path).convert("RGBA")
         assert image.getpixel((0, 0))[3] == 0, relative_path
+
+
+def test_apple_touch_icon_is_an_opaque_rounded_app_icon_export():
+    public_asset = ROOT / "frontend/public/apple-touch-icon.png"
+    brand_asset = ROOT / "docs/brand/nanzi-n-icon-apple-touch-180.png"
+
+    assert public_asset.is_file()
+    assert public_asset.read_bytes() == brand_asset.read_bytes()
+
+    image = Image.open(public_asset).convert("RGBA")
+    assert image.size == (180, 180)
+    assert image.getpixel((0, 0))[3] == 255
 
 
 def test_extended_brand_asset_pack_contains_the_documented_vi_resources():
