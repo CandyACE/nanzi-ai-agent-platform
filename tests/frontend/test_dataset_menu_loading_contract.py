@@ -286,6 +286,10 @@ def test_thought_step_dimming_contract():
     embed = _source("frontend/src/views/EmbedChat.vue")
     assert "isDimmedThoughtStep(log, msg.isThinking)" in embed
     assert "进行中" in embed
+    # 进行中步骤用左侧色条强调，避免整行粗边框抢戏
+    assert "border-l-2 border-primary/55" in embed
+    assert "border border-blue-100/80 dark:border-blue-800/40 shadow-sm animate-pulse-subtle" not in embed
+
 
 
 def test_thought_step_timer_contract():

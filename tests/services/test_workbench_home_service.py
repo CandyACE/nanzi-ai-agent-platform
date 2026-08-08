@@ -182,6 +182,7 @@ def test_personal_resources_are_normalized_into_payload():
         "skills",
         "mcp",
         "tasks",
+        "inbox",
     ]
     tokens = next(item for item in payload["personal_resources"] if item["key"] == "tokens")
     assert tokens["value"] == 12345
@@ -193,9 +194,9 @@ def test_personal_resources_are_normalized_into_payload():
 
 def test_personal_resources_default_to_empty_shell_when_missing():
     payload = _payload()
-    assert len(payload["personal_resources"]) == 6
+    assert len(payload["personal_resources"]) == 7
     assert payload["personal_resources"][0]["key"] == "memory"
-    assert payload["personal_resources"][-1]["key"] == "tasks"
+    assert payload["personal_resources"][-1]["key"] == "inbox"
     assert all(item["tab"] for item in payload["personal_resources"])
 
     payload = _payload(

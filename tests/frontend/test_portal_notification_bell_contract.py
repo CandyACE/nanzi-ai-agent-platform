@@ -12,6 +12,10 @@ def test_dashboard_mounts_persistent_notification_bell():
     bell = (ROOT / "frontend/src/components/PortalNotificationBell.vue").read_text(encoding="utf-8")
     assert "PortalNotificationBell" in dashboard
     assert "/api/portal/inbox/unread-count" in bell
+    assert "OPEN_PORTAL_INBOX_EVENT" in bell
+    assert "openFromExternal" in bell
+    assert "isModalVariant" in bell
+    assert '"modal"' in bell
     assert "/api/portal/inbox/read-all" in bell
     assert "全部已读" in bell
     assert "关闭通知" in bell

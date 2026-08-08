@@ -105,7 +105,7 @@ const recommendedPrompts = computed(() => {
       </p>
     </div>
 
-    <!-- 资源条单独放宽，避免 max-w-3xl 下 6 列被挤扁 -->
+    <!-- 资源条单独放宽，避免 max-w-3xl 下 5 列被挤扁 -->
     <div v-if="personalResources?.length" class="w-full max-w-3xl mb-8 sm:mb-10">
       <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-3 px-1">我的资源</p>
       <WorkbenchPersonalResources

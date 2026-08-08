@@ -8,12 +8,29 @@ export const PERSONAL_RESOURCE_DEFS = [
   { key: "skills", label: "我的技能", unit: "个", tab: "skills" },
   { key: "mcp", label: "我的 MCP", unit: "个服务", tab: "mcp" },
   { key: "tasks", label: "我的任务", unit: "个", tab: "tasks" },
+  { key: "inbox", label: "我的站内消息", unit: "条未读", tab: "inbox" },
 ] as const
 
-export type PersonalResourceTab = (typeof PERSONAL_RESOURCE_DEFS)[number]["tab"]
+export type PersonalResourceTab = Exclude<(typeof PERSONAL_RESOURCE_DEFS)[number]["tab"], "inbox">
+
+/** 「我的资源」弹层 Tab：不含站内消息（点击改为打开铃铛面板） */
+export const PERSONAL_RESOURCE_MODAL_TABS = PERSONAL_RESOURCE_DEFS.filter(
+  (spec) => spec.key !== "inbox",
+)
 
 /** Embed 欢迎页资源条不展示：记忆有侧栏入口，数据门户有能力卡入口 */
 export const EMBED_WELCOME_HIDDEN_RESOURCE_KEYS = new Set(["memory", "data"])
+
+export const OPEN_PORTAL_INBOX_EVENT = "nanzi:open-portal-inbox"
+
+export function isInboxPersonalResource(item: { key?: string; tab?: string } | null | undefined): boolean {
+  return item?.key === "inbox" || item?.tab === "inbox"
+}
+
+export function openPortalInboxPanel(): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent(OPEN_PORTAL_INBOX_EVENT))
+}
 
 export function filterEmbedWelcomePersonalResources(
   items: WorkbenchPersonalResource[],

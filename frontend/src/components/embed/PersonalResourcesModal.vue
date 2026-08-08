@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
 import {
-  PERSONAL_RESOURCE_DEFS,
+  PERSONAL_RESOURCE_MODAL_TABS,
   type PersonalResourceTab,
 } from '@/constants/personalResources'
 
@@ -81,7 +81,7 @@ const setTab = (tab: PersonalResourceTab) => {
         class="flex flex-shrink-0 gap-1 overflow-x-auto px-5 sm:px-6 pb-3 border-b border-gray-100 dark:border-gray-700/60"
       >
         <button
-          v-for="spec in PERSONAL_RESOURCE_DEFS"
+          v-for="spec in PERSONAL_RESOURCE_MODAL_TABS"
           :key="spec.tab"
           type="button"
           class="whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-bold transition-colors"

@@ -26,6 +26,9 @@ def test_personal_resources_modal_shell_and_tabs():
     assert "activeTab" in modal
     # Embed 弹层须传 delegate-navigation；PersonalCenter 仅传 embedded
     assert "delegate-navigation" in modal or "delegateNavigation" in modal
+    # 弹层 Tab 不含站内消息（点击资源卡改为打开铃铛）
+    assert "PERSONAL_RESOURCE_MODAL_TABS" in modal
+    assert "我的站内消息" not in modal
 
 
 def test_welcome_dashboard_renders_personal_resources_before_capabilities():
@@ -47,4 +50,19 @@ def test_embed_chat_wires_workbench_home_and_personal_resources_modal():
     assert "filterEmbedWelcomePersonalResources" in embed
     constants = _source("frontend/src/constants/personalResources.ts")
     assert '"memory"' in constants and '"data"' in constants
+    assert '"inbox"' in constants
+    assert "OPEN_PORTAL_INBOX_EVENT" in constants
     assert "EMBED_WELCOME_HIDDEN_RESOURCE_KEYS" in constants
+    assert "PERSONAL_RESOURCE_MODAL_TABS" in constants
+    assert "PortalNotificationBell" in embed
+    assert 'variant="modal"' in embed
+    assert "portalInboxRef" in embed
+    assert "handleInboxOpenSavedReport" in embed
+    bell = _source("frontend/src/components/PortalNotificationBell.vue")
+    assert "OPEN_PORTAL_INBOX_EVENT" in bell
+    assert "openFromExternal" in bell
+    assert "isModalVariant" in bell
+    assert 'variant?: "bell" | "modal"' in bell
+    cards = _source("frontend/src/components/workbench/WorkbenchPersonalResources.vue")
+    assert "sm:grid-cols-5" in cards
+    assert "isInboxPersonalResource" in embed

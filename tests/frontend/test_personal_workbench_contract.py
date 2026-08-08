@@ -165,8 +165,11 @@ def test_workbench_personal_resource_cards_link_to_personal_tabs():
     assert 'path: "/dashboard/personal"' in page
     assert "query: { tab: item.tab }" in page
     assert "formatTokenCompact" in cards
-    for key in ("memory", "tokens", "data", "skills", "mcp", "tasks"):
+    for key in ("memory", "tokens", "data", "skills", "mcp", "tasks", "inbox"):
         assert key in _read("app/services/workbench_home_service.py")
+    assert "openPortalInboxPanel" in page
+    assert "isInboxPersonalResource" in page
+    assert "sm:grid-cols-5" in cards or "xl:grid-cols-7" in cards
 
 
 def test_workbench_personal_resources_emits_select_instead_of_router():

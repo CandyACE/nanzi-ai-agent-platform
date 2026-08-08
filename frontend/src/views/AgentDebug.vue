@@ -4346,30 +4346,18 @@ onUnmounted(() => {
                       </div>
                     </div>
 
-                    <div class="relative ml-2 pl-4 py-2 space-y-1.5 border-l border-gray-200">
+                    <div class="relative space-y-0.5 py-1">
                       <div
-                        v-for="(log, idx) in msg.logs"
+                        v-for="log in msg.logs"
                         :key="log.id"
                         class="relative group/log transition-opacity duration-300"
                         :class="{ 'opacity-45 group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking) }"
                       >
-                        <!-- Timeline Numbered Badge (Soft) -->
-                        <div class="absolute -left-[23px] top-2 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold group-hover/log:scale-110 transition-all z-10 select-none ring-4 ring-white"
-                             :class="{
-                               'bg-red-50 text-red-500 border border-red-200': log.status === 'error',
-                               'bg-primary/10 text-primary border border-primary/25': isActiveThoughtStep(log, msg.isThinking),
-                               'bg-gray-100 text-gray-500 border border-gray-200': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
-                               'animate-pulse': log.status === 'pending'
-                             }"
-                        >
-                          {{ Number(idx) + 1 }}
-                        </div>
-
                         <!-- Log Card (Lightweight Row) -->
                         <div
-                            class="rounded-lg p-2 text-xs transition-all duration-300 cursor-pointer"
+                            class="rounded-lg px-1.5 py-1 text-xs transition-all duration-300 cursor-pointer"
                             :class="{
-                               'bg-blue-50/50 border border-blue-100/80 shadow-sm': isActiveThoughtStep(log, msg.isThinking),
+                               'border-l-2 border-primary/55 bg-primary/[0.04] pl-2': isActiveThoughtStep(log, msg.isThinking),
                                'bg-transparent hover:bg-gray-50': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
                                'bg-red-50/30 hover:bg-red-50/50 border border-red-100': log.status === 'error'
                             }"
@@ -4410,7 +4398,7 @@ onUnmounted(() => {
                                             </span>
                                             <span
                                               v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                              class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center"
+                                              class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 scale-90 sm:scale-100 origin-center"
                                             >
                                               进行中
                                             </span>

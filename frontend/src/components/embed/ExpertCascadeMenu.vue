@@ -26,6 +26,7 @@ const emit = defineEmits<{
   (e: 'select-auto'): void
   (e: 'select-expert', agentId: string): void
   (e: 'refresh'): void
+  (e: 'close'): void
 }>()
 
 const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
@@ -63,6 +64,18 @@ const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
           </svg>
         </button>
       </div>
+      <button
+        v-if="!fullWidth"
+        type="button"
+        class="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200 shrink-0"
+        aria-label="关闭专家中心"
+        title="关闭"
+        @click.stop="emit('close')"
+      >
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
     </div>
 
     <!-- fillHeight 时由父级定高，列表 flex-1 滚动；否则用固定 max-h -->

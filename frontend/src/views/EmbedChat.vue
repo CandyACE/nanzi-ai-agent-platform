@@ -615,24 +615,16 @@
 
                     <div
                       :ref="(el) => bindThoughtLogsEl(msg.id, el)"
-                      class="relative ml-2 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto border-l border-gray-100 py-2 pl-5 sm:max-h-none sm:space-y-1.5 dark:border-gray-700/30"
+                      class="relative max-h-[min(420px,50vh)] space-y-0.5 overflow-y-auto py-1 sm:max-h-none"
                       @scroll.passive="onThoughtLogsScroll(msg.id, $event)"
                     >
-                      <!-- 骨架屏占位 (响应初期的等待动效) -->
+                      <!-- 首个步骤到达前：用状态文案代替空骨架，避免“计时在走、下面空白”的割裂感 -->
                       <div
                         v-if="msg.isThinking && (!msg.logs || getDisplayLogs(msg).length === 0)"
-                        class="space-y-3 py-1.5 animate-pulse"
+                        class="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-500 dark:text-gray-400"
                       >
-                        <div class="flex items-center gap-3">
-                          <div class="h-4.5 w-4.5 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
-                          <div class="h-3 w-28 rounded bg-gray-200 dark:bg-gray-700"></div>
-                          <div class="ml-auto h-3 w-8 rounded bg-gray-200 dark:bg-gray-700"></div>
-                        </div>
-                        <div class="flex items-center gap-3 opacity-50">
-                          <div class="h-4.5 w-4.5 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
-                          <div class="h-3 w-36 rounded bg-gray-200 dark:bg-gray-700"></div>
-                          <div class="ml-auto h-3 w-8 rounded bg-gray-200 dark:bg-gray-700"></div>
-                        </div>
+                        <SparklesIcon class="h-3.5 w-3.5 flex-shrink-0 animate-pulse text-primary/70" />
+                        <span class="truncate animate-pulse">{{ msg.thinkingText || '正在连接服务…' }}</span>
                       </div>
 
                       <div
@@ -644,22 +636,11 @@
                           'opacity-70 sm:opacity-45 sm:group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking),
                         }"
                       >
-                        <!-- Timeline Numbered Badge：落在 pl 区域内，避免 overflow-y 裁切双位数字 -->
-                        <div class="absolute -left-[19px] top-2 z-10 flex h-[18px] w-[18px] select-none items-center justify-center rounded-full text-[9px] font-bold ring-4 ring-white transition-all dark:ring-gray-800 sm:group-hover/log:scale-110"
-                             :class="{
-                               'bg-red-50 text-red-500 border border-red-200 dark:bg-red-900/30 dark:border-red-800/50': log.status === 'error',
-                               'bg-primary/10 text-primary border border-primary/25 dark:bg-primary/20 dark:border-primary/30': isActiveThoughtStep(log, msg.isThinking),
-                               'bg-gray-100 text-gray-500 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
-                               'animate-pulse': log.status === 'pending'
-                             }"
-                        >
-                          {{ Number(idx) + 1 }}
-                        </div>
                         <!-- Log Card (Lightweight Row) -->
                         <div
-                          class="min-h-[40px] rounded-lg p-2 text-xs transition-all duration-300 cursor-pointer sm:min-h-0"
+                          class="min-h-[32px] rounded-lg px-1.5 py-1 text-xs transition-all duration-300 cursor-pointer sm:min-h-0"
                           :class="{
-                             'bg-blue-50/50 dark:bg-blue-900/15 border border-blue-100/80 dark:border-blue-800/40 shadow-sm animate-pulse-subtle': isActiveThoughtStep(log, msg.isThinking),
+                             'border-l-2 border-primary/55 bg-primary/[0.04] pl-2 dark:bg-primary/10 animate-pulse-subtle': isActiveThoughtStep(log, msg.isThinking),
                              'bg-transparent active:bg-gray-50 sm:hover:bg-gray-50 dark:active:bg-gray-700/30 dark:sm:hover:bg-gray-700/30': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
                              'bg-red-50/30 active:bg-red-50/50 sm:hover:bg-red-50/50 dark:bg-red-900/10 dark:active:bg-red-900/20 dark:sm:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
                           }"
@@ -706,7 +687,7 @@
                                >🔒</span>
                                <span
                                  v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center animate-pulse"
+                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 scale-90 sm:scale-100 origin-center animate-pulse"
                                >
                                  进行中
                                </span>
@@ -1710,6 +1691,13 @@
       @open-conversation="handlePersonalResourceOpenConversation"
       @open-question="handlePersonalResourceOpenQuestion"
     />
+    <!-- Embed 内独立站内消息弹层：iframe / 外部集成不依赖 Dashboard 顶栏铃铛 -->
+    <PortalNotificationBell
+      ref="portalInboxRef"
+      variant="modal"
+      :listen-global-event="false"
+      @open-saved-report="handleInboxOpenSavedReport"
+    />
     <SavedReportEditorModal
       :visible="showSaveReportModal"
       :form="saveReportForm"
@@ -2203,6 +2191,7 @@ import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
+import PortalNotificationBell from "@/components/PortalNotificationBell.vue";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome";
@@ -2210,8 +2199,10 @@ import {
   personalResourceFallbackItems,
   personalResourcePlaceholderItems,
   filterEmbedWelcomePersonalResources,
+  isInboxPersonalResource,
   type PersonalResourceTab,
 } from "@/constants/personalResources";
+import type { SavedReportOpenRequest } from "@/utils/savedReportOpenProtocol";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
 import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
@@ -2871,6 +2862,7 @@ const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 const showPersonalResources = ref(false);
 const personalResourcesTab = ref<PersonalResourceTab>("tokens");
+const portalInboxRef = ref<{ open: () => void | Promise<void> } | null>(null);
 const {
   payload: workbenchHome,
   load: loadWorkbenchHome,
@@ -2887,8 +2879,16 @@ const welcomePersonalResources = computed(() => {
 });
 
 const openPersonalResources = (tab: string) => {
+  if (isInboxPersonalResource({ tab })) {
+    void portalInboxRef.value?.open();
+    return;
+  }
   personalResourcesTab.value = (tab as PersonalResourceTab) || "tokens";
   showPersonalResources.value = true;
+};
+
+const handleInboxOpenSavedReport = (request: SavedReportOpenRequest) => {
+  openSavedReportFromHost(request);
 };
 
 const handlePersonalResourceOpenReport = (payload: any) => {
@@ -3836,9 +3836,11 @@ const startThoughtTimer = (msg: Message) => {
   msg.thoughtDuration = "0.0";
   let ticks = 0;
   const THINKING_MESSAGES = [
-    "正在分析任务...",
-    "正在组织回答...",
+    "正在连接服务…",
+    "正在分析任务…",
+    "正在组织回答…",
   ];
+  msg.thinkingText = THINKING_MESSAGES[0];
   thoughtTimer = setInterval(() => {
     ticks++;
     if (msg.thoughtStartTime) {
@@ -3854,7 +3856,7 @@ const startThoughtTimer = (msg: Message) => {
       if (stepIndex < THINKING_MESSAGES.length) {
         msg.thinkingText = THINKING_MESSAGES[stepIndex];
       } else {
-        msg.thinkingText = "任务处理中，请稍候...";
+        msg.thinkingText = "任务处理中，请稍候…";
       }
       triggerRef(messages);
     }
@@ -6577,7 +6579,7 @@ const sendMessage = async () => {
     role: "agent",
     content: "",
     isThinking: true,
-    thinkingText: "任务处理中，请稍候...",
+    thinkingText: "正在连接服务…",
     logs: [],
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",

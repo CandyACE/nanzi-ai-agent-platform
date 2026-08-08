@@ -29,6 +29,7 @@ PERSONAL_RESOURCE_DEFS = (
     {"key": "skills", "label": "我的技能", "unit": "个", "tab": "skills"},
     {"key": "mcp", "label": "我的 MCP", "unit": "个服务", "tab": "mcp"},
     {"key": "tasks", "label": "我的任务", "unit": "个", "tab": "tasks"},
+    {"key": "inbox", "label": "我的站内消息", "unit": "条未读", "tab": "inbox"},
 )
 
 SEVERITY_ORDER = {"critical": 3, "warning": 2, "info": 1}
@@ -652,6 +653,12 @@ async def _count_personal_tasks(db: AsyncSession, user_id: int) -> int:
     return agent_count + report_count
 
 
+async def _count_inbox_unread(db: AsyncSession, user_id: int) -> int:
+    from app.services.portal_notification_service import PortalNotificationService
+
+    return await PortalNotificationService.unread_count(db, user_id)
+
+
 async def _load_personal_resources(
     db: AsyncSession,
     *,
@@ -678,6 +685,7 @@ async def _load_personal_resources(
     await _put("skills", lambda: _count_personal_skills(user))
     await _put("mcp", lambda: _count_personal_mcp(db, user_id))
     await _put("tasks", lambda: _count_personal_tasks(db, user_id))
+    await _put("inbox", lambda: _count_inbox_unread(db, user_id))
     return _normalize_personal_resources([cards[spec["key"]] for spec in PERSONAL_RESOURCE_DEFS])
 
 

@@ -225,6 +225,10 @@ import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
 import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
+import {
+  isInboxPersonalResource,
+  openPortalInboxPanel,
+} from "@/constants/personalResources"
 import type {
   WorkbenchAgent,
   WorkbenchItem,
@@ -307,6 +311,10 @@ const summaryToneClass = computed(() => {
 })
 
 function openPersonalResource(item: WorkbenchPersonalResource) {
+  if (isInboxPersonalResource(item)) {
+    openPortalInboxPanel()
+    return
+  }
   router.push({ path: "/dashboard/personal", query: { tab: item.tab } })
 }
 

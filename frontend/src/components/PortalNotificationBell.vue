@@ -6,11 +6,31 @@ import { renderMarkdown } from "../utils/markdown";
 import {
   createSavedReportOpenRequest,
   publishSavedReportOpenRequest,
+  type SavedReportOpenRequest,
 } from "../utils/savedReportOpenProtocol";
 import { copyToClipboard } from "../utils/clipboard";
+import { OPEN_PORTAL_INBOX_EVENT } from "../constants/personalResources";
+
+const props = withDefaults(defineProps<{
+  /** bell：Dashboard 顶栏下拉；modal：EmbedChat 内独立居中弹层（iframe 集成不依赖父页铃铛） */
+  variant?: "bell" | "modal";
+  /** 是否监听全局打开事件；Embed 内嵌实例应关闭，避免与 Dashboard 铃铛抢事件 */
+  listenGlobalEvent?: boolean;
+}>(), {
+  variant: "bell",
+  listenGlobalEvent: undefined,
+});
+
+const emit = defineEmits<{
+  (e: "open-saved-report", request: SavedReportOpenRequest): void;
+}>();
 
 const router = useRouter();
 const open = ref(false);
+const shouldListenGlobalEvent = computed(() =>
+  props.listenGlobalEvent ?? props.variant === "bell",
+);
+const isModalVariant = computed(() => props.variant === "modal");
 const loading = ref(false);
 const refreshing = ref(false);
 const unreadCount = ref(0);
@@ -100,6 +120,7 @@ const startListPolling = () => {
 };
 const refreshWhenActive = () => {
   if (document.hidden) return;
+  if (isModalVariant.value && !open.value) return;
   if (open.value) refreshNotifications(true).catch(() => undefined);
   else fetchUnreadCount().catch(() => undefined);
   startUnreadPolling();
@@ -123,6 +144,12 @@ const toggle = async () => {
   } else {
     closeNotifications();
   }
+};
+const openFromExternal = async () => {
+  if (open.value) return;
+  open.value = true;
+  await refreshNotifications();
+  startListPolling();
 };
 const markItemRead = async (item: any) => {
   if (item.read_at) return;
@@ -171,12 +198,18 @@ const openNotification = async (item: any) => {
   if (notificationTarget && savedReportOpenRequest) {
     closeNotifications();
     closeDetail();
+    if (isModalVariant.value) {
+      // Embed 内不跳转父路由，交给宿主打开黄金报表
+      emit("open-saved-report", savedReportOpenRequest);
+      publishSavedReportOpenRequest(savedReportOpenRequest);
+      return;
+    }
     await router.push(notificationTarget);
     publishSavedReportOpenRequest(savedReportOpenRequest);
     return;
   }
 
-  // 智能体/系统站内消息：打开详情弹窗并自动关闭下拉弹框；黄金报表消息保持原样
+  // 智能体/系统站内消息：打开详情弹窗并自动关闭列表；黄金报表消息保持原样
   if (!isSavedReportNotification(item)) {
     closeNotifications();
   }
@@ -236,28 +269,44 @@ const previewText = (content: string) =>
     .trim();
 
 onMounted(() => {
-  fetchUnreadCount().catch(() => undefined);
-  startUnreadPolling();
+  // modal 变体仅在打开时拉取，避免 Embed 欢迎页无意义轮询
+  if (!isModalVariant.value) {
+    fetchUnreadCount().catch(() => undefined);
+    startUnreadPolling();
+  }
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("focus", refreshWhenActive);
+  if (shouldListenGlobalEvent.value) {
+    window.addEventListener(OPEN_PORTAL_INBOX_EVENT, openFromExternal as EventListener);
+  }
 });
 onUnmounted(() => {
   if (unreadTimer) clearInterval(unreadTimer);
   if (listTimer) clearInterval(listTimer);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
   window.removeEventListener("focus", refreshWhenActive);
+  window.removeEventListener(OPEN_PORTAL_INBOX_EVENT, openFromExternal as EventListener);
 });
+
+defineExpose({ open: openFromExternal, toggle });
 </script>
 
 <template>
-  <div class="relative">
-    <button type="button" class="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100" title="站内通知" @click="toggle">
+  <div :class="isModalVariant ? 'contents' : 'relative'">
+    <button
+      v-if="!isModalVariant"
+      type="button"
+      class="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100"
+      title="站内通知"
+      @click="toggle"
+    >
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 01-6 0" /></svg>
       <span v-if="unreadCount" class="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-4 text-center">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
     </button>
-    <!-- 移动端铃铛不在视口右缘，absolute+宽面板会向左溢出被裁切；窄屏改为贴视口左右边距的 fixed -->
+
+    <!-- Dashboard 铃铛：下拉面板 -->
     <div
-      v-if="open"
+      v-if="open && !isModalVariant"
       class="notification-panel fixed left-3 right-3 top-[4.25rem] z-50 max-h-[min(28rem,calc(100dvh-5rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[22rem] sm:max-w-[min(22rem,calc(100vw-1.5rem))]"
     >
       <div class="border-b border-gray-100">
@@ -303,6 +352,70 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- EmbedChat 独立弹层：不依赖父页 Dashboard 铃铛 -->
+    <teleport to="body">
+      <div
+        v-if="open && isModalVariant"
+        class="fixed inset-0 z-[260] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
+        @click.self="closeNotifications"
+      >
+        <div class="notification-panel flex max-h-[min(36rem,85vh)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+          <div class="border-b border-gray-100 dark:border-gray-700">
+            <div class="notification-header-main flex items-start justify-between gap-3 px-4 pb-2 pt-3">
+              <div class="min-w-0">
+                <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">站内消息</h3>
+                <p class="mt-0.5 truncate text-[10px] text-gray-400">报表运行与系统消息</p>
+              </div>
+              <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700" title="关闭通知" aria-label="关闭通知" @click="closeNotifications">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div class="notification-header-actions flex items-center gap-1.5 px-3 pb-3 whitespace-nowrap">
+              <button type="button" class="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-50 dark:bg-gray-700/50 dark:text-gray-300" :disabled="refreshing" title="刷新消息" aria-label="刷新消息" @click="refreshNotifications()">
+                <svg class="h-3.5 w-3.5" :class="refreshing ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15" /></svg>
+                <span>{{ refreshing ? '刷新中' : '刷新' }}</span>
+              </button>
+              <button class="rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300" @click="markAllRead">全部已读</button>
+              <button type="button" class="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!hasReadNotifications" @click="requestClearRead">清空已读</button>
+            </div>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto">
+            <p v-if="loading" class="py-10 text-center text-xs text-gray-400">正在加载...</p>
+            <p v-else-if="!notifications.length" class="py-10 text-center text-xs text-gray-400">暂无通知</p>
+            <div v-for="item in notifications" v-else :key="item.id" class="group flex border-b border-gray-50 hover:bg-gray-50 dark:border-gray-700/60 dark:hover:bg-gray-700/40" :class="!item.read_at ? 'bg-blue-50/50 dark:bg-blue-950/20' : 'bg-white dark:bg-transparent'">
+              <button class="min-w-0 flex-1 px-4 py-3 text-left" @click="openNotification(item)">
+                <div class="flex gap-2">
+                  <span
+                    class="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                    :class="!item.read_at ? 'bg-blue-500' : 'bg-gray-200'"
+                    :title="item.read_at ? '已读' : '未读'"
+                  ></span>
+                  <div class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-1.5">
+                      <span
+                        class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black"
+                        :class="isSavedReportNotification(item) ? 'border border-amber-100 bg-amber-50 text-amber-700' : 'border border-slate-200 bg-slate-100 text-slate-600'"
+                      >{{ isSavedReportNotification(item) ? '⭐ 黄金报表' : notificationKindLabel(item) }}</span>
+                      <span
+                        v-if="!item.read_at"
+                        class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-black text-blue-600"
+                      >未读</span>
+                      <p class="truncate text-xs" :class="!item.read_at ? 'font-black text-gray-800 dark:text-gray-100' : 'font-medium text-gray-500'">{{ item.title }}</p>
+                    </div>
+                    <p class="mt-1 line-clamp-2 text-[11px]" :class="!item.read_at ? 'text-gray-600 dark:text-gray-300' : 'text-gray-400'">{{ previewText(item.content) }}</p>
+                    <p class="mt-1 text-[10px] text-gray-400">{{ formatDate(item.created_at) }}</p>
+                  </div>
+                </div>
+              </button>
+              <button type="button" class="mr-2 self-center rounded-lg p-2 text-gray-300 opacity-70 transition-all hover:bg-red-50 hover:text-red-500 focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100" title="删除消息" aria-label="删除消息" @click.stop="requestDeleteNotification(item)">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7h12m-10 0 1 13h6l1-13m-6 0V4h4v3"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
 
     <teleport to="body">
       <div

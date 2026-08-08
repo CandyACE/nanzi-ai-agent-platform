@@ -1579,6 +1579,7 @@ defineExpose({
                                     @select-auto="selectAutoRouting"
                                     @select-expert="selectExpertAgent"
                                     @refresh="emit('refresh-agents')"
+                                    @close="closeExpertCascade"
                                   />
                                 </div>
                             </div>
@@ -1719,6 +1720,7 @@ defineExpose({
                               @select-auto="selectAutoRouting"
                               @select-expert="selectExpertAgent"
                               @refresh="emit('refresh-agents')"
+                              @close="closeExpertCascade"
                             />
                           </div>
                         </div>
@@ -1816,6 +1818,7 @@ defineExpose({
                               @select-auto="selectAutoRouting"
                               @select-expert="selectExpertAgent"
                               @refresh="emit('refresh-agents')"
+                              @close="showExpertSelector = false"
                             />
                           </div>
                           <div
@@ -1835,6 +1838,7 @@ defineExpose({
                               @select-auto="selectAutoRouting"
                               @select-expert="selectExpertAgent"
                               @refresh="emit('refresh-agents')"
+                              @close="showExpertSelector = false"
                             />
                           </div>
                         </div>
@@ -1934,13 +1938,24 @@ defineExpose({
                                   @click.stop
                                 >
                                     <div
-                                      class="border-b border-gray-100 dark:border-gray-700"
+                                      class="flex items-center justify-between border-b border-gray-100 dark:border-gray-700"
                                       :class="isMobileViewport ? 'px-4 py-3.5' : 'px-3 py-2.5'"
                                     >
                                         <p
                                           class="font-semibold text-gray-900 dark:text-gray-100"
                                           :class="isMobileViewport ? 'text-sm' : 'text-xs'"
                                         >应如何批准工具操作？</p>
+                                        <button
+                                          type="button"
+                                          class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                                          aria-label="关闭工具批准方式"
+                                          title="关闭"
+                                          @click.stop="showApprovalMenu = false"
+                                        >
+                                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" d="M6 6l12 12M18 6L6 18" />
+                                            </svg>
+                                        </button>
                                     </div>
                                     <div
                                       class="overflow-y-auto py-1 custom-scrollbar"
