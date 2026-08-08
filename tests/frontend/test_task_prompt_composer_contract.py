@@ -53,6 +53,11 @@ def test_task_prompt_composer_panels_escape_modal_clipping():
     # 面板不能再用相对父容器的绝对定位，否则会被裁掉
     assert "absolute bottom-full" not in text
     assert "panelStyle" in text
+    # 浮层水平位置：数据集/知识库相对工具栏居中；技能/MCP 相对按钮右对齐
+    assert "setTriggerRef" in text
+    assert "triggerRefs" in text
+    assert "(barRect.width - width) / 2" in text
+    assert "triggerRect.right - width" in text
     assert "getBoundingClientRect" in text
     # 需要跟随滚动/缩放重算位置，capture=true 才能捕获弹窗正文的滚动
     assert "'scroll', onViewportChange, true" in text

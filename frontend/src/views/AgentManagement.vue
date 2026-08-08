@@ -169,7 +169,7 @@ const showAdvancedSafety = ref(false);
 
 // AI 消息排版样式选择与效果预览变量
 const selectedMarkdownTheme = ref("default");
-const hideMessageBorder = ref(false);
+const hideMessageBorder = ref(true);
 const showThemePreviewHelp = ref(false);
 const previewTheme = ref("default");
 const markdownThemeOptions = [
@@ -1184,11 +1184,11 @@ const startAgentCreation = () => {
       safety_check_input_strategy: "append",
       safety_check_output_strategy: "append",
       default_markdown_theme: "default",
-      hide_message_border: false,
+      hide_message_border: true,
     },
   };
   selectedMarkdownTheme.value = "default";
-  hideMessageBorder.value = false;
+  hideMessageBorder.value = true;
   versionForm.value = {
     model_name: "",
     temperature: 0,

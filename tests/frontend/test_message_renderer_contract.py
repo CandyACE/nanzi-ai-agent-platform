@@ -139,7 +139,7 @@ def test_ai_message_border_visibility_is_configurable_and_persisted():
 
     assert "hide_message_border" in management_source
     assert "hide_message_border" in drawer_source
-    assert "hideMessageBorder: false" in embed_source
+    assert "hideMessageBorder: true" in embed_source
     assert "message-borderless" in embed_source
     assert "config.hideMessageBorder" in embed_source
     borderless_css = embed_source.split(".message-borderless {", 1)[1].split("}", 1)[0]
@@ -284,11 +284,13 @@ def test_compact_table_uses_near_white_borders():
     assert "--md-table-cell-border: #f8fafc;" in compact_theme
 
 
-def test_thought_steps_timeline_line_is_subtle():
+def test_thought_steps_waiting_state_uses_status_copy_not_empty_skeleton():
     source = _source("frontend/src/views/EmbedChat.vue")
 
-    assert "overflow-y-auto border-l border-gray-100" in source
-    assert "dark:border-gray-700/30" in source
+    # 首包到达前用状态文案，不再用空骨架条；进行中步骤用左侧色条强调
+    assert "正在连接服务" in source
+    assert "border-l-2 border-primary/55" in source
+    assert "overflow-y-auto border-l border-gray-100" not in source
 
 
 def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():

@@ -872,17 +872,7 @@ const expertCapsuleLabel = computed(() => {
   return isMobileViewport.value ? "自动" : "全能助手";
 });
 
-const approvalCapsuleLabel = computed(() => {
-  if (!isMobileViewport.value) return activeApprovalLabel.value;
-  switch (activeApprovalMode.value) {
-    case "allow":
-      return "自动";
-    case "deny":
-      return "拒绝";
-    default:
-      return "请求";
-  }
-});
+const approvalCapsuleLabel = computed(() => activeApprovalLabel.value);
 
 const inputPlaceholder = computed(() => {
   if (props.isProcessing) return "";
@@ -1852,7 +1842,7 @@ defineExpose({
                       type="button"
                       :disabled="isProcessing"
                       :title="`工具批准：${activeApprovalLabel}`"
-                      class="flex h-7 max-w-[4.75rem] sm:max-w-none items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                      class="flex h-7 max-w-[7.25rem] sm:max-w-none items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                       :class="[
                         approvalTriggerToneClass,
                         showApprovalMenu && !isProcessing
@@ -2188,6 +2178,9 @@ defineExpose({
                                 </div>
 
                                 <div v-if="thinkingEnabledForSession" class="relative">
+                                  <div class="mb-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+                                    开启思考可能增加响应耗时，适合复杂推理任务。
+                                  </div>
                                   <div class="mb-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">思考强度</div>
                                   <div class="max-h-[240px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
                                     <button

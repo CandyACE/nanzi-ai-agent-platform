@@ -546,7 +546,7 @@
                     class="inline-flex items-center space-x-1.5"
                   >
                     <span>{{ msg.agentDisplayName || msg.agentName }}</span>
-                    <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
+                    <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 为您服务' }}</span>
                   </span>
                   <span v-else key="dispatch-placeholder" class="inline-flex items-center">
                     智能体正在分配调度中
@@ -2855,7 +2855,7 @@ const config = reactive({
   enableGrounding: true, // Embed 默认开启反幻觉校验
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
-  hideMessageBorder: false,
+  hideMessageBorder: true,
 });
 const thinkingEnableOverride = ref<boolean | null>(null);
 const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
@@ -3714,7 +3714,7 @@ const fetchAllowedAgents = async (force = false) => {
                     }
                 }
                 if (!hasCustomMessageBorderPreference()) {
-                    config.hideMessageBorder = currentAgent?.engine_config?.hide_message_border === true;
+                    config.hideMessageBorder = currentAgent?.engine_config?.hide_message_border ?? true;
                 }
             }
             
@@ -3762,7 +3762,7 @@ watch(() => config.expertAgentId, (newAgentId) => {
             }
         }
         if (!hasCustomMessageBorderPreference()) {
-            config.hideMessageBorder = currentAgent?.engine_config?.hide_message_border === true;
+            config.hideMessageBorder = currentAgent?.engine_config?.hide_message_border ?? true;
         }
     }
 }, { immediate: true });

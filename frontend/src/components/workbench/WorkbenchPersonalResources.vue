@@ -28,7 +28,7 @@ const displayValue = (item: WorkbenchPersonalResource) => {
     class="grid"
     :class="compact
       ? 'grid-cols-2 gap-2 sm:grid-cols-5'
-      : 'grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-7'"
+      : 'grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6'"
   >
     <button
       v-for="item in items"

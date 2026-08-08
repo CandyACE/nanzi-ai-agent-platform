@@ -72,8 +72,8 @@
     </div>
 
     <WorkbenchPersonalResources
-      v-if="payload?.personal_resources?.length"
-      :items="payload.personal_resources"
+      v-if="workbenchPersonalResources.length"
+      :items="workbenchPersonalResources"
       @select="openPersonalResource"
     />
 
@@ -226,6 +226,7 @@ import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonal
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
 import {
+  filterWorkbenchPersonalResources,
   isInboxPersonalResource,
   openPortalInboxPanel,
 } from "@/constants/personalResources"
@@ -239,6 +240,9 @@ import type {
 const router = useRouter()
 const { branding } = useBranding()
 const { payload, loading, refreshing, error, load, refresh } = useWorkbenchHome()
+const workbenchPersonalResources = computed(() =>
+  filterWorkbenchPersonalResources(payload.value?.personal_resources || []),
+)
 const activeMode = computed(() => payload.value?.mode === "active")
 const quietMode = computed(() => payload.value?.mode === "quiet")
 const newUserMode = computed(() => payload.value?.mode === "new_user")

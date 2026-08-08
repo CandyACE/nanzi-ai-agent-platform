@@ -21,6 +21,9 @@ export const PERSONAL_RESOURCE_MODAL_TABS = PERSONAL_RESOURCE_DEFS.filter(
 /** Embed 欢迎页资源条不展示：记忆有侧栏入口，数据门户有能力卡入口 */
 export const EMBED_WELCOME_HIDDEN_RESOURCE_KEYS = new Set(["memory", "data"])
 
+/** 工作台资源条不展示：顶栏铃铛已能看站内消息 */
+export const WORKBENCH_HIDDEN_RESOURCE_KEYS = new Set(["inbox"])
+
 export const OPEN_PORTAL_INBOX_EVENT = "nanzi:open-portal-inbox"
 
 export function isInboxPersonalResource(item: { key?: string; tab?: string } | null | undefined): boolean {
@@ -36,6 +39,12 @@ export function filterEmbedWelcomePersonalResources(
   items: WorkbenchPersonalResource[],
 ): WorkbenchPersonalResource[] {
   return items.filter((item) => !EMBED_WELCOME_HIDDEN_RESOURCE_KEYS.has(item.key))
+}
+
+export function filterWorkbenchPersonalResources(
+  items: WorkbenchPersonalResource[],
+): WorkbenchPersonalResource[] {
+  return items.filter((item) => !WORKBENCH_HIDDEN_RESOURCE_KEYS.has(item.key))
 }
 
 /** home 尚未返回：静默占位，避免误显示「暂时无法获取」 */

@@ -88,6 +88,11 @@ const APPROVAL_OPTIONS: { value: TaskApprovalMode; label: string; description: s
 const activePanel = ref<PanelKey>(null)
 const barRef = ref<HTMLElement | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
+const triggerRefs = ref<Partial<Record<Exclude<PanelKey, null>, HTMLElement | null>>>({})
+
+const setTriggerRef = (panel: Exclude<PanelKey, null>, el: unknown) => {
+  triggerRefs.value[panel] = el instanceof HTMLElement ? el : null
+}
 const availableModels = ref<AIModel[]>([])
 const optionLists = ref<Record<'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools', TaskScopeItem[]>>({
   datasets: [],
@@ -215,22 +220,40 @@ const updatePanelRect = () => {
   const bar = barRef.value
   const panel = activePanel.value
   if (!bar || !panel) return
-  const rect = bar.getBoundingClientRect()
+  const barRect = bar.getBoundingClientRect()
+  const trigger = triggerRefs.value[panel] || bar
+  const triggerRect = trigger.getBoundingClientRect()
+  // 无显式宽度时沿用整条工具栏宽度（数据集/知识库等宽面板），水平仍锚到触发按钮
+  const preferredWidth = PANEL_WIDTH[panel] ?? Math.max(barRect.width, 280)
   const width = Math.min(
-    PANEL_WIDTH[panel] ?? rect.width,
+    preferredWidth,
     Math.max(200, window.innerWidth - VIEWPORT_MARGIN * 2),
   )
-  const spaceAbove = rect.top - PANEL_GAP - VIEWPORT_MARGIN
-  const spaceBelow = window.innerHeight - rect.bottom - PANEL_GAP - VIEWPORT_MARGIN
+  const spaceAbove = barRect.top - PANEL_GAP - VIEWPORT_MARGIN
+  const spaceBelow = window.innerHeight - barRect.bottom - PANEL_GAP - VIEWPORT_MARGIN
   const placement = spaceAbove >= spaceBelow ? 'top' : 'bottom'
+  // 数据集/知识库：相对整条工具栏居中（宽面板右对齐会左侧溢出）
+  // 技能/MCP：相对按钮右对齐；模型/批准：相对按钮左对齐，溢出再右对齐
+  let left: number
+  if (panel === 'datasets' || panel === 'knowledge_bases') {
+    left = barRect.left + (barRect.width - width) / 2
+  } else if (panel === 'skills' || panel === 'mcp_tools') {
+    left = triggerRect.right - width
+  } else {
+    left = triggerRect.left
+    if (left + width > window.innerWidth - VIEWPORT_MARGIN) {
+      left = triggerRect.right - width
+    }
+  }
+  left = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(left, window.innerWidth - width - VIEWPORT_MARGIN),
+  )
   panelRect.value = {
-    left: Math.max(
-      VIEWPORT_MARGIN,
-      Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN),
-    ),
+    left,
     width,
-    top: rect.bottom + PANEL_GAP,
-    bottom: window.innerHeight - rect.top + PANEL_GAP,
+    top: barRect.bottom + PANEL_GAP,
+    bottom: window.innerHeight - barRect.top + PANEL_GAP,
     maxHeight: Math.max(180, Math.floor(placement === 'top' ? spaceAbove : spaceBelow)),
     placement,
   }
@@ -674,6 +697,7 @@ watch(
       @pointerleave="scheduleClose"
     >
       <button
+        :ref="(el) => setTriggerRef('model', el)"
         type="button"
         class="inline-flex h-8 max-w-[14rem] items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
         :class="activePanel === 'model' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
@@ -687,6 +711,7 @@ watch(
       </button>
 
       <button
+        :ref="(el) => setTriggerRef('approval', el)"
         type="button"
         class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
         :class="approvalMode === 'allow'
@@ -702,6 +727,7 @@ watch(
       </button>
 
       <button
+        :ref="(el) => setTriggerRef('datasets', el)"
         type="button"
         class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
         :class="activePanel === 'datasets' || resourceScope.datasets.length ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
@@ -712,6 +738,7 @@ watch(
       </button>
 
       <button
+        :ref="(el) => setTriggerRef('knowledge_bases', el)"
         type="button"
         class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
         :class="activePanel === 'knowledge_bases' || resourceScope.knowledge_bases.length ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
@@ -722,6 +749,7 @@ watch(
       </button>
 
       <button
+        :ref="(el) => setTriggerRef('skills', el)"
         type="button"
         class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
         :class="activePanel === 'skills' || resourceScope.skills.length ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
@@ -732,6 +760,7 @@ watch(
       </button>
 
       <button
+        :ref="(el) => setTriggerRef('mcp_tools', el)"
         type="button"
         class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
         :class="activePanel === 'mcp_tools' || resourceScope.mcp_tools.length ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
@@ -828,6 +857,9 @@ watch(
             </div>
 
             <div v-if="thinkingEnabledForTask">
+              <div class="mb-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
+                开启思考可能增加响应耗时，适合复杂推理任务。
+              </div>
               <div class="mb-1 text-[10px] font-semibold text-gray-500">思考强度</div>
               <div class="max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1">
                 <button

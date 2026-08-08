@@ -167,9 +167,11 @@ def test_workbench_personal_resource_cards_link_to_personal_tabs():
     assert "formatTokenCompact" in cards
     for key in ("memory", "tokens", "data", "skills", "mcp", "tasks", "inbox"):
         assert key in _read("app/services/workbench_home_service.py")
+    assert "filterWorkbenchPersonalResources" in page
+    assert "WORKBENCH_HIDDEN_RESOURCE_KEYS" in _read("frontend/src/constants/personalResources.ts")
     assert "openPortalInboxPanel" in page
     assert "isInboxPersonalResource" in page
-    assert "sm:grid-cols-5" in cards or "xl:grid-cols-7" in cards
+    assert "sm:grid-cols-5" in cards or "xl:grid-cols-6" in cards
 
 
 def test_workbench_personal_resources_emits_select_instead_of_router():
