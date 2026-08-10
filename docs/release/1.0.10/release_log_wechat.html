@@ -1,0 +1,275 @@
+<!--
+  微信公众号排版 HTML — 南孜 AI 智能体平台 v1.0.10
+  风格：墨色编辑风（少渐变、少彩虹色块、优雅深墨色调）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图可在编辑器中自行上传替换
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#44403c;line-height:1.85;letter-spacing:0.3px;text-align:justify;font-family:Georgia,'Songti SC','Noto Serif SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei',serif;">
+
+  <!-- 标题区：实底墨色，无渐变光晕 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:#1c1917;border-radius:2px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#a8a29e;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">南孜开源智能体平台 v1.0.10</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#d6d3d1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">模型原生思考推理 · 技能审核发布 · 代码画布在线运行 · 黄金报表解读管线 · 平台全局时区</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e7e5e4;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#1c1917;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#57534e;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#1c1917;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习与打磨。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #1c1917;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#1c1917;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#44403c;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 28px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#292524;line-height:1.9;">
+      南孜开源智能体平台正式发布 <strong style="color:#1c1917;">v1.0.10</strong> 版本！本次迭代以 <strong>AgentScope 原生模型思考与推理流 (Thinking & Reasoning Stream) 贯通</strong> 为核心领衔，并推进 <strong>个人技能审核发布与版本治理全流程、代码画布多语言在线运行、黄金报表统一解读管线、轻量联网搜索与 MCP 会话挂载、Embed 我的资源与导航注入，以及平台全局时区（platform_timezone）和视觉体验升级</strong>。
+    </p>
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f5f5f4;padding:2px 6px;border-radius:2px;color:#44403c;">50b56211</code> 至 <code style="font-size:12px;background:#f5f5f4;padding:2px 6px;border-radius:2px;color:#44403c;">4aee6280</code>，共 <strong>81 个提交</strong>（73 个非 Merge 提交），变更 <strong>324 个文件</strong>。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 1. 原生思考与推理流 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. 🧠 AgentScope 原生思考模式与推理流
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>原生思考参数</strong>：平台全面对齐 AgentScope 原生思考配置，支持 6 档思考强度调节（<code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">off</code>, <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">minimal</code>, <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">low</code>, <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">medium</code>, <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">high</code>, <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">deep</code>），可在智能体与任务中心灵活下发。</li>
+        <li><strong>流式推理展示</strong>：后端流式下发 <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">reasoning_content</code>，前端提供实时思考面板折叠/展开与优雅过渡动画。</li>
+        <li><strong>推理持久化与回放</strong>：数据库下发与持久化扩展，支持历史会话中模型推理内容的存储、查询与完美回放。</li>
+        <li><strong>KaTeX 公式渲染</strong>：消息面板与代码画布集成 KaTeX 数学公式渲染，优雅呈现科技与学术文本。</li>
+        <li><strong>路由解耦</strong>：路由意图解析自动忽略会话级别的思考覆盖，确保路由精准度不受影响。</li>
+      </ul>
+      <!-- 图片占位符：AgentScope 思考与推理 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：AgentScope 原生思考模式、强度选择与 reasoning_content 实时推理流展示</p>
+      </section>
+    </section>
+
+    <!-- 2. 个人技能审核发布 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. 🛠️ 个人技能审核发布与版本治理
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>全流程贯通</strong>：实现个人技能提交申请、管理员审核放开/驳回、版本更新、下架与撤销全流程。</li>
+        <li><strong>权限控制</strong>：注册 <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">element:skills:admin</code> 管理员权限，普通用户免菜单权限可查询平台技能列表。</li>
+        <li><strong>环境与规范</strong>：更新 Python 3.11+ 基础环境规范与文档，优化技能发布服务 metadata 拼接逻辑。</li>
+      </ul>
+      <!-- 图片占位符：技能审核发布 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：个人技能申请发布、管理员审核后台与版本记录展示</p>
+      </section>
+    </section>
+
+    <!-- 3. 代码画布在线运行 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. 💻 代码画布在线运行与工作区保存
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>多语言运行</strong>：新增代码画布多语言脚本（Python / JavaScript 等）在线交互式运行，运行结果自动回写工作区保存。</li>
+        <li><strong>Auto Pin 模式</strong>：首次打开支持自动开启钉住固定模式（Auto Pin）；桌面端铺满可用宽度，移动端置顶且保留工作区。</li>
+        <li><strong>混合渲染</strong>：画布 Markdown 预览完美支持 ECharts 数据图表与 Mermaid 流程图/架构图混合渲染。</li>
+      </ul>
+      <!-- 图片占位符：代码画布运行 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：代码画布在线脚本运行输出与图表混合渲染展示</p>
+      </section>
+    </section>
+
+    <!-- 4. 黄金报表解读管线 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 📊 黄金报表统一解读管线与走查数分析
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>统一解读管线</strong>：统一黄金报表执行解读管线，优化列语义理解与等待加载体验。</li>
+        <li><strong>延续走查数</strong>：新增通用消息继续分析（continuation analysis），支持强制走查数智能体并保留可视化上下文。</li>
+        <li><strong>元数据扩展</strong>：保存报表表结构增加 <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">column_meta</code> 列元数据与解读分析相关字段。</li>
+      </ul>
+      <!-- 图片占位符：黄金报表解读 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：黄金报表统一解读与延续走查数交互展示</p>
+      </section>
+    </section>
+
+    <!-- 5. 搜索与 MCP 会话挂载 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        5. 🌐 联网搜索隐/显式工具、MCP 会话挂载与 JSON 快速登记
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>轻量联网搜索</strong>：新增百度/Bing HTTP 轻量联网搜索隐式/显式工具分组，升级 Prompt 动态装配与知识库检索误报净化。</li>
+        <li><strong>会话级 MCP</strong>：支持在单次会话中动态挂载个人 MCP 服务，优化资源级联交互与浮层对齐。</li>
+        <li><strong>JSON 快速登记</strong>：支持直接粘贴 <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">mcpServers</code> JSON 配置一键登记 MCP 服务，支持服务备注（<code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">remark</code>）与固定命向前缀。</li>
+      </ul>
+      <!-- 图片占位符：联网搜索与 MCP 挂载 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：会话级 MCP 挂载、JSON 登记与联网搜索界面展示</p>
+      </section>
+    </section>
+
+    <!-- 6. EmbedChat / 个人中心「我的资源」统计卡 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        6. 🎨 EmbedChat / 个人中心「我的资源」统计卡与导航注入
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>我的资源卡片</strong>：EmbedChat 初始页接入「我的资源」统计卡与弹层，与个人中心共享 <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">PersonalMemoryPanel</code>（采用 keep-alive 保留 Tab 状态）。</li>
+        <li><strong>导航与布局</strong>：DataPortal / TaskCenter 支持 Embed 导航注入与布局拆分，优化思考步骤展示与站内消息独立弹层。</li>
+      </ul>
+      <!-- 图片占位符：Embed 我的资源 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：EmbedChat 初始页「我的资源」统计卡片与弹层展示</p>
+      </section>
+    </section>
+
+    <!-- 7. 平台全局时区与视觉升级 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        7. ⏰ 平台全局时区系统配置与基础体验/视觉升级
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong>全局时区系统</strong>：新增系统配置 <code style="font-size:12px;background:#e7e5e4;padding:1px 5px;border-radius:2px;">platform_timezone</code>（默认 Asia/Shanghai），贯通定时任务调度与日志/界面时间展示。</li>
+        <li><strong>活跃用户卡片</strong>：将仪表盘原「最新用户」模块重构为「活跃用户」卡片，信息更贴合运维需要。</li>
+        <li><strong>品牌主视觉</strong>：升级登录页品牌主视觉轮播（暗黑极客配色与平滑光晕），Dashboard 支持亮/暗色主题，修复 iOS home 图标暗色边框。</li>
+      </ul>
+      <!-- 图片占位符：全局时区与视觉 -->
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：登录页暗黑极客主视觉与仪表盘活跃用户卡片展示</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 章节二：缺陷修复 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 缺陷修复与体验优化 (Bug Fixes)
+    </p>
+    <ul style="margin:0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.85;">
+      <li><strong>检索误报净化</strong>：修复知识库成功检索后的误报问题，动态过滤非本轮 Prompt 工具清单。</li>
+      <li><strong>工具挂载保留</strong>：修复智能体版本发布时 DB 工具定义缓存清理，保留智能体显式配置的知识库工具挂载。</li>
+      <li><strong>协程与快照</strong>：修复 AgentScope 确认快照重复消费协程的问题；修复黄金报表继续分析可视化上下文丢失。</li>
+      <li><strong>K 线图空白</strong>：修复 ECharts K 线图双 grid 空白问题，支持按数据自适应切换视图；统一复制按钮样式。</li>
+      <li><strong>顶栏与折行</strong>：修复移动端站内通知防裁切问题，普通用户隐蔽在线人数，消除资源卡错误态 dark 边框冲突。</li>
+    </ul>
+  </section>
+
+  <!-- 章节三：数据库迁移说明 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库增量升级说明 (Database Upgrades)
+    </p>
+
+    <p style="margin:0 0 12px 0;font-size:14px;color:#57534e;">
+      本版本在 MySQL（<code style="font-size:12px;background:#f5f5f4;padding:2px 5px;">db-prod/</code>）与 PostgreSQL（<code style="font-size:12px;background:#f5f5f4;padding:2px 5px;">db-prod-pg/</code>）双引擎下同步提供了 9 个对应的增量迁移脚本：
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr style="background:#1c1917;color:#fafaf9;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;">MySQL 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;">PG 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;">核心变更说明</th>
+        </tr>
+      </thead>
+      <tbody style="color:#44403c;">
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V110</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V10</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">创建个人技能审核与版本记录表</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V112</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V11</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">增加技能下架/撤销状态支持</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V113</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V12</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">注册技能审核管理员权限 element:skills:admin</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V114</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V13</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">MCP 服务表增加备注字段 remark</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V115</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V14</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">新增平台全局时区配置 platform_timezone</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V116 / V117</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V15 / V16</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">AI 模型增加 AgentScope 思考模式与强度参数</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V100</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V17</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">执行历史表增加 reasoning_content 列</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V118</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;">V18</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">保存报表增加 column_meta 与解读扩展列</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 章节四：升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📦 快速升级指南 (Upgrade Guide)
+    </p>
+
+    <section style="margin:0 0 16px 0;padding:14px;background:#1c1917;border-radius:2px;color:#e7e5e4;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#a8a29e;"># 1. 拉取最新代码</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">git fetch origin && git checkout main && git pull origin main</p>
+      <p style="margin:0;color:#a8a29e;"># 2. 执行数据库升级</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">./db-prod/apply-sql-native.sh  <span style="color:#a8a29e;"># PG: ./db-prod-pg/apply-sql.sh</span></p>
+      <p style="margin:0;color:#a8a29e;"># 3. 重新编译前端并启动</p>
+      <p style="margin:0;color:#fafaf9;">cd frontend && npm install && npm run build && cd .. && ./dev.sh</p>
+    </section>
+  </section>
+
+  <!-- 页脚 -->
+  <section style="margin:36px 0 0 0;padding:20px 0 0 0;border-top:1px solid #e7e5e4;text-align:center;font-size:13px;color:#78716c;">
+    <p style="margin:0 0 4px 0;">感谢所有参与 v1.0.10 版本开发的贡献者！</p>
+    <p style="margin:0;">NanZi AI Agent Platform · 开源智能体平台</p>
+  </section>
+
+</section>
