@@ -23,7 +23,7 @@ export const detectSavedReportDateTemplate = (sql: string) => {
     const endParam = /\d{2}:\d{2}:\d{2}/.test(secondRaw) ? "end_datetime" : "end_date";
     return {
       sql_template: `${sql.slice(0, first.index)}{{${startParam}}}${sql.slice(first.index + firstRaw.length, second.index)}{{${endParam}}}${sql.slice(second.index + secondRaw.length)}`,
-      params_schema: [{ name: "date_range", type: "date_range", label: "日期范围", default: "month_start_to_today", options: ["today", "yesterday", "last_7_days", "month_start_to_today", "custom_range"] }],
+      params_schema: [{ name: "date_range", type: "date_range", label: "日期范围", default: "month_start_to_today", options: ["today", "yesterday", "last_7_days", "month_start_to_today", "year_start_to_today", "custom_range"] }],
       default_params: { date_range: "month_start_to_today" },
     };
   }

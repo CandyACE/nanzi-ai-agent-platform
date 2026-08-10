@@ -47,6 +47,7 @@ const emit = defineEmits<{
               <option value="yesterday">昨天</option>
               <option value="last_7_days">最近 7 天</option>
               <option value="month_start_to_today">本月截至今天</option>
+              <option value="year_start_to_today">今年（年初至今天）</option>
               <option value="custom_range">自定义日期</option>
             </select>
           </div>

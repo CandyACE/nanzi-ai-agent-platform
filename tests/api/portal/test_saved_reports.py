@@ -561,6 +561,36 @@ def test_saved_report_param_sql_renders_builtin_last_7_days():
     assert params == {"start_date": "2026-06-21", "end_date": "2026-06-28", "date_range": "last_7_days"}
 
 
+def test_saved_report_param_sql_renders_builtin_year_start_to_today():
+    report = saved_reports.SavedReportItem.model_validate(
+        {
+            "id": "rpt_3b",
+            "title": "今年订单",
+            "sql_content": "SELECT * FROM orders",
+            "sql_template": "SELECT * FROM orders WHERE created_at >= {{start_date}} AND created_at < {{end_date}}",
+            "mode": "param_sql",
+            "params_schema": [
+                {"name": "date_range", "type": "date_range", "label": "日期范围", "default": "year_start_to_today"}
+            ],
+            "default_params": {"date_range": "year_start_to_today"},
+            "data_source": "mysql_test",
+            "dataset_id": None,
+            "original_query": "今年订单",
+            "created_at": "2026-06-27T00:00:00+00:00",
+            "analysis_mode": "auto",
+        }
+    )
+
+    sql, params = saved_reports._resolve_report_sql(
+        report,
+        body=saved_reports.ExecuteReportRequest.model_validate({}),
+        today=date(2026, 6, 27),
+    )
+
+    assert sql == "SELECT * FROM orders WHERE created_at >= '2026-01-01' AND created_at < '2026-06-28'"
+    assert params == {"start_date": "2026-01-01", "end_date": "2026-06-28", "date_range": "year_start_to_today"}
+
+
 def test_saved_report_param_sql_rejects_unknown_placeholder():
     report = saved_reports.SavedReportItem.model_validate(
         {
