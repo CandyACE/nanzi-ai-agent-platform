@@ -458,6 +458,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False):
                     channels=notification_channels,
                     trace_id=trace_id,
                     content=str(result.get("content") or ""),
+                    reasoning_content=str(result.get("reasoning_content") or "") or None,
                 )
                 logger.info(
                     "📬 Task %s notification delivery trace=%s ok=%s notes=%s",

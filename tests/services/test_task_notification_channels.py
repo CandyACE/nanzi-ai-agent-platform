@@ -45,4 +45,5 @@ def test_build_notification_delivery_supplement_lists_channels_and_scheduler_own
     assert "钉钉" in text
     assert "无需、也不应调用" in text
     assert "send_portal_notification" in text
+    assert "禁止在回复正文中提及" in text
     assert build_notification_delivery_supplement([]) == ""

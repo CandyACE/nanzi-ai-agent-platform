@@ -78,5 +78,6 @@ def build_notification_delivery_supplement(channels: Iterable[str]) -> str:
             "你无需、也不应调用 send_portal_notification / send_dingtalk_message / send_wechat_work_message / send_email 等通知工具。",
             "请把完整分析结论写在最终回复正文中（含关键数据解读）；系统会结合查数工具结果一并投递。",
             "严禁在分析未完成、仅输出“查询成功/让我再补充…”等半截话术时结束本轮。",
+            "禁止在回复正文中提及本说明、TaskCenter、通知工具名或“将由系统统一投递”等元话术；正文只写给终端用户看的业务结论。",
         ]
     )

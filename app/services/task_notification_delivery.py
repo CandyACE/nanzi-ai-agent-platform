@@ -45,19 +45,6 @@ _PROVISIONAL_PATTERNS = (
     "马上为您",
 )
 
-_THINK_BLOCK_PATTERNS = (
-    r"<thought\b[^>]*>.*?</thought>",
-    r"<thought\b[^>]*>.*",
-    r"<think\b[^>]*>.*?</think>",
-    r"<think\b[^>]*>.*",
-    r"<reasoning\b[^>]*>.*?</reasoning>",
-    r"<reasoning\b[^>]*>.*",
-    r"<redacted_reasoning\b[^>]*>.*?</redacted_reasoning>",
-    r"<redacted_reasoning\b[^>]*>.*",
-    r"<function_calls\b[^>]*>.*?</function_calls>",
-    r"<function_calls\b[^>]*>.*",
-)
-
 _EXTERNAL_SENDERS = {
     "dingtalk": "send_dingtalk",
     "wechat_work": "send_wechat_work",
@@ -99,25 +86,30 @@ def build_task_notification_title(task_name: str) -> str:
     return f"TaskCenter：{cleaned}"
 
 
-def strip_thinking_from_notification_content(content: str) -> str:
-    """剥离思考链 / 工具调用 XML，避免 TaskCenter 推送夹带 think 过程。"""
-    text = str(content or "")
-    if not text:
-        return ""
-    for pattern in _THINK_BLOCK_PATTERNS:
-        text = re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
-    # 常见「思考过程」独立段落（到下一空行或「回答/结论」标题为止）
-    text = re.sub(
-        r"(?im)^\s*(?:思考过程|深度思考|推理过程|Thinking|Reasoning)\s*[:：]?\s*\n(?:.*\n)*?(?=^\s*(?:回答|结论|最终|分析结论|Result|Answer)\s*[:：]?|\Z)",
-        "",
-        text,
+def strip_thinking_from_notification_content(
+    content: str,
+    *,
+    reasoning_content: str | None = None,
+) -> str:
+    """剥离 EmbedChat「模型思考推理」折叠面板对应内容，避免进入任务推送。"""
+    from app.services.ai.runtime.agentscope.text_sanitize import strip_model_reasoning_from_answer
+
+    return strip_model_reasoning_from_answer(
+        content,
+        reasoning_content=reasoning_content,
     )
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
 
 
-def build_task_notification_body(content: str, *, fallback: bool) -> str:
-    body = strip_thinking_from_notification_content(content)
+def build_task_notification_body(
+    content: str,
+    *,
+    fallback: bool,
+    reasoning_content: str | None = None,
+) -> str:
+    body = strip_thinking_from_notification_content(
+        content,
+        reasoning_content=reasoning_content,
+    )
     if not body:
         body = "（任务已执行，但无可展示的文本摘要。）"
     if len(body) > MAX_NOTIFICATION_BODY_CHARS:
@@ -260,9 +252,14 @@ def tabular_payload_to_markdown(payload: Dict[str, Any], *, max_rows: int = MAX_
 def compose_scheduler_notification_content(
     assistant_content: str,
     sql_payloads: List[Dict[str, Any]],
+    *,
+    reasoning_content: str | None = None,
 ) -> str:
     parts: List[str] = []
-    summary = strip_thinking_from_notification_content(assistant_content)
+    summary = strip_thinking_from_notification_content(
+        assistant_content,
+        reasoning_content=reasoning_content,
+    )
     if summary:
         parts.append(summary)
 
@@ -440,12 +437,14 @@ async def ensure_task_notification_deliveries(
     channels: List[str],
     trace_id: Optional[str],
     content: str,
+    reasoning_content: Optional[str] = None,
 ) -> Tuple[bool, List[str]]:
     """
     确保各勾选渠道至少送达一次。
 
     - 若智能体已成功调用对应通知工具则跳过（避免重复）。
     - 否则由调度侧统一投递：正文 = 助手总结 + trace 中查数结果表。
+    - 正文与 EmbedChat 一致：不含模型思考折叠面板（reasoning_content）。
     - 内容不完整（半截话且无可用数据）时拒绝投递并返回失败。
     """
     normalized = normalize_notification_channels(channels)
@@ -461,8 +460,15 @@ async def ensure_task_notification_deliveries(
         return True, notes
 
     had_sql_tool, sql_payloads = await load_sql_tool_artifacts(trace_id)
-    cleaned_assistant = strip_thinking_from_notification_content(content)
-    composed = compose_scheduler_notification_content(cleaned_assistant, sql_payloads)
+    cleaned_assistant = strip_thinking_from_notification_content(
+        content,
+        reasoning_content=reasoning_content,
+    )
+    composed = compose_scheduler_notification_content(
+        cleaned_assistant,
+        sql_payloads,
+        reasoning_content=reasoning_content,
+    )
     complete, reason = assess_delivery_completeness(
         composed,
         has_sql_data=bool(sql_payloads),
@@ -474,7 +480,11 @@ async def ensure_task_notification_deliveries(
         return False, notes
 
     title = build_task_notification_title(task_name)
-    body = build_task_notification_body(composed, fallback=True)
+    body = build_task_notification_body(
+        composed,
+        fallback=True,
+        reasoning_content=reasoning_content,
+    )
 
     all_ok = True
     for channel in missing:

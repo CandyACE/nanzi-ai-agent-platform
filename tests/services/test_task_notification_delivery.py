@@ -63,6 +63,26 @@ def test_strip_thinking_blocks_from_notification_content():
     assert "最终结论：订单量环比上升。" in body
 
 
+def test_strip_embedchat_reasoning_panel_leak_from_notification():
+    """对齐 EmbedChat reasoningContent：模型思考折叠面板内容不得进入推送。"""
+    reasoning = "先看订单表结构，再按天聚合 GMV，注意过滤退款单。"
+    answer = f"{reasoning}\n\n本周订单 GMV 环比上升 12%。"
+    cleaned = strip_thinking_from_notification_content(
+        answer,
+        reasoning_content=reasoning,
+    )
+    assert "先看订单表结构" not in cleaned
+    assert "本周订单 GMV 环比上升 12%。" in cleaned
+
+    body = build_task_notification_body(
+        answer,
+        fallback=True,
+        reasoning_content=reasoning,
+    )
+    assert "先看订单表结构" not in body
+    assert "本周订单 GMV 环比上升 12%。" in body
+
+
 def test_compose_strips_think_before_appending_sql():
     content = compose_scheduler_notification_content(
         "正常话语。<think>内部推理</think>订单分析完成。",
