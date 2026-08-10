@@ -432,6 +432,27 @@ async def get_conversation_history(
     from app.services.ai.memory_service import memory_service
     
     history = await memory_service.get_history(user_id, conversation_id, limit=limit, offset=offset)
+
+    # Enrich Redis-backed assistant messages so the frontend can keep the same
+    # message actions available after a page reload.
+    agent_type_by_name: Dict[str, str] = {}
+    agent_type_by_id: Dict[str, str] = {}
+    try:
+        from app.services.ai.agent_manager import AgentManagerService
+        all_agents = await AgentManagerService.list_agents(db, user=user_info)
+        for agent in all_agents:
+            agent_type = getattr(agent, "agent_type", None) or "GENERAL"
+            agent_type = getattr(agent_type, "value", agent_type)
+            agent_type_by_name[str(agent.name)] = str(agent_type)
+            agent_type_by_id[str(agent.id)] = str(agent_type)
+    except Exception:
+        pass
+
+    for message in history:
+        if message.get("role") == "assistant" and message.get("agent_name"):
+            agent_type = agent_type_by_name.get(str(message["agent_name"]))
+            if agent_type:
+                message["agent_type"] = agent_type
     
     # Fallback to DB audit logs if Redis cache is empty/expired
     if not history:
@@ -481,6 +502,7 @@ async def get_conversation_history(
                     "timestamp": r.created_at.isoformat() if r.created_at else None,
                     "agent_name": agent_name,
                     "agent_display_name": agent_display_name,
+                    "agent_type": agent_type_by_id.get(str(r.agent_id)),
                     "trace_id": r.trace_id,
                     "feedback": r.feedback
                 })

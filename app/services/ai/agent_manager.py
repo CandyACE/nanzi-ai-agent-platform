@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
+from app.services.ai.agent_types import resolve_agent_type
 from app.services.ai.welcome_card_service import normalize_welcome_config, safe_welcome_config
 import json
 from dataclasses import dataclass
@@ -385,6 +386,7 @@ class AgentManagerService:
                     agent_id=agent.id,
                     agent_name=agent.name,
                     agent_display_name=agent.display_name or agent.name,
+                    agent_type=resolve_agent_type(agent),
                     description=agent.description or "",
                     agent_version="managed",
                     model_name=agent.engine_config.get("model", "OpenClaw-Remote") if agent.engine_type == 'OPENCLAW' else "RAGFlow-Remote",
@@ -421,6 +423,7 @@ class AgentManagerService:
                 agent_id=agent.id,
                 agent_name=agent.name,
                 agent_display_name=agent.display_name or agent.name,
+                agent_type=resolve_agent_type(agent),
                 description=agent.description or "",
                 agent_version=f"v{version.version_number}",
                 model_name=version.model_name,
@@ -468,6 +471,7 @@ class AgentManagerService:
                     agent_id=version.agent_id,
                     agent_name=version.agent.name,
                     agent_display_name=version.agent.display_name or version.agent.name,
+                    agent_type=resolve_agent_type(version.agent),
                     agent_version=f"v{version.version_number}",
                     model_name=version.model_name,
                     temperature=version.temperature,

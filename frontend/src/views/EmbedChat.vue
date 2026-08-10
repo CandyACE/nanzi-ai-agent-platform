@@ -1224,6 +1224,11 @@
                   @select="handleQuickQuestion"
                   @action="(action) => handleChatBIResultAction(action, msg)"
                 />
+                <MessageContinueAnalysis
+                  v-if="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && msg.content"
+                  :is-mobile="isMobile"
+                  @select="(query) => handleQuickQuestion(query, 'send', msg.content)"
+                />
                 <button
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
                   type="button"
@@ -2169,6 +2174,7 @@ import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
@@ -2384,6 +2390,7 @@ interface Message {
   thinkingText?: string;
   agentName?: string;
   agentDisplayName?: string;
+  agentType?: string;
   turnType?: TurnType | string;
   hasDataOutput?: boolean;
   chatbiInsight?: ChatBIInsightMeta;
@@ -3689,6 +3696,13 @@ const hasCustomMessageBorderPreference = () =>
     localStorage.getItem("user_has_custom_border_preference") === "true";
 
 const allowedAgents = ref<any[]>([]);
+const isGeneralAgentMessage = (msg: Message): boolean => {
+  if (msg.agentType) return msg.agentType === "GENERAL";
+  const agent = allowedAgents.value.find(
+    (item: any) => item.name === msg.agentName || item.id === msg.agentName,
+  );
+  return agent?.agent_type === "GENERAL";
+};
 const hasFetchedAgents = ref(false);
 const isLoadingAgents = ref(false);
 const fetchAllowedAgents = async (force = false) => {
@@ -5462,6 +5476,7 @@ const fetchConversationHistory = async (isLoadMore = false) => {
                   feedback: null,
                   agentName: item.agent_name ?? undefined,
                   agentDisplayName: item.agent_display_name ?? undefined,
+                  agentType: item.agent_type ?? undefined,
                   prompt_tokens: item.prompt_tokens ?? undefined,
                   completion_tokens: item.completion_tokens ?? undefined,
                   total_tokens: item.total_tokens ?? undefined,
@@ -5932,11 +5947,14 @@ const handleChatBIResultAction = async (
   }
 };
 
-const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send") => {
+const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send", sourceContent?: string) => {
   if (!content) return;
   if (action === "send" && isProcessing.value) return;
   if (action === "send" && await handleSystemCommand(content)) return;
-  userInput.value = content;
+  const selectedSource = sourceContent?.trim();
+  userInput.value = selectedSource
+    ? `${content}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
+    : content;
   if (action === "send") {
     sendMessage();
   }
@@ -6309,6 +6327,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     });
   } else if (data.type === "meta") {
     if (data.agent_name) msg.agentName = data.agent_name;
+    if (data.agent_type) msg.agentType = data.agent_type;
     if (data.agent_display_name) msg.agentDisplayName = data.agent_display_name;
     if (data.turn_type) msg.turnType = data.turn_type;
     if (data.prompt_tokens !== undefined) msg.prompt_tokens = data.prompt_tokens;
@@ -6716,6 +6735,7 @@ const sendMessage = async () => {
           } else if (data.type === "meta") {
             if (data.agent_name) {
               agentMsg.value.agentName = data.agent_name;
+              if (data.agent_type) agentMsg.value.agentType = data.agent_type;
               if (data.agent_display_name) {
                   agentMsg.value.agentDisplayName = data.agent_display_name;
               }

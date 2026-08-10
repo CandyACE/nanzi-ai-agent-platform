@@ -12,6 +12,7 @@ import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
@@ -340,6 +341,13 @@ watch(
 // Agents State for Dropdown
 const agents = ref<any[]>([]);
 const debugMode = ref<"auto" | "specific">("auto");
+const isGeneralAgentMessage = (msg: Message): boolean => {
+  if (msg.agentType) return msg.agentType === "GENERAL";
+  const agent = agents.value.find(
+    (item: any) => item.name === msg.agentName || item.id === msg.agentName,
+  );
+  return agent?.agent_type === "GENERAL";
+};
 
 const showAgentDropdown = ref(false);
 const agentDropdownRef = ref<HTMLElement | null>(null);
@@ -555,6 +563,7 @@ const loadSessionHistory = async (id: string) => {
           feedback: m.feedback,
           agentName: m.agent_name || undefined,
           agentDisplayName: m.agent_display_name || undefined,
+          agentType: m.agent_type || undefined,
         })
       );
       if (historyMsg.length > 0) {
@@ -1230,6 +1239,7 @@ interface Message {
   isCitationsExpanded?: boolean; // Collapsible toggle
   agentName?: string; // Which agent responded (ID or Name)
   agentDisplayName?: string; // Human readable display name
+  agentType?: string;
   isThoughtExpanded?: boolean; // Toggle for the logs block
   thoughtStartTime?: number; // Timestamp when thinking started
   thoughtDuration?: string; // Duration in seconds (formatted)
@@ -2167,11 +2177,14 @@ const handleChatBIResultAction = async (
   }
 };
 
-const handleQuickQuestion = async (question: string, action: "send" | "fill" = "send") => {
+const handleQuickQuestion = async (question: string, action: "send" | "fill" = "send", sourceContent?: string) => {
   if (!question) return;
   if (action === "send" && isProcessing.value) return;
   if (action === "send" && await handleSystemCommand(question)) return;
-  userInput.value = question;
+  const selectedSource = sourceContent?.trim();
+  userInput.value = selectedSource
+    ? `${question}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
+    : question;
   if (action === "send") {
     sendMessage();
   }
@@ -3128,6 +3141,7 @@ const sendMessage = async () => {
             else if (data.type === "meta") {
               if (data.agent_name) {
                 agentMsg.value.agentName = data.agent_name;
+                if (data.agent_type) agentMsg.value.agentType = data.agent_type;
                 if (data.agent_display_name) {
                     agentMsg.value.agentDisplayName = data.agent_display_name;
                 }
@@ -3369,6 +3383,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     msg.isThinking = true;
   } else if (data.type === "meta") {
     if (data.agent_name) msg.agentName = data.agent_name;
+    if (data.agent_type) msg.agentType = data.agent_type;
     if (data.agent_display_name) msg.agentDisplayName = data.agent_display_name;
     if (data.rag_retrieval) ragRetrievalMeta.value = data.rag_retrieval;
     if (data.permission_notice) msg.permissionNotice = data.permission_notice;
@@ -4743,6 +4758,12 @@ onUnmounted(() => {
                     :result-id="msg.chatbiInsight.result_id"
                     @select="handleQuickQuestion"
                     @action="(action) => handleChatBIResultAction(action, msg)"
+                  />
+                </div>
+                <div v-if="msg.role === 'agent' && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && msg.content" class="mt-2 flex justify-end">
+                  <MessageContinueAnalysis
+                    :is-mobile="isMobile"
+                    @select="(query) => handleQuickQuestion(query, 'send', msg.content)"
                   />
                 </div>
                 <DatasetCapabilityMenu
