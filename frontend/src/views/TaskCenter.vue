@@ -18,6 +18,7 @@ import TaskPromptComposer, {
   type TaskApprovalMode,
   type TaskResourceScope,
 } from '@/components/task/TaskPromptComposer.vue'
+import PromptAiOptimize from '@/components/PromptAiOptimize.vue'
 import type { ReasoningEffort } from '@/api/model'
 
 const emptyResourceScope = (): TaskResourceScope => ({
@@ -346,6 +347,56 @@ const applyPromptExample = (text: string) => {
   showPromptHelpModal.value = false
   showToast('已填入示例，可按需修改')
 }
+const promptTemplates = [
+  {
+    title: '通用结构',
+    desc: '目标 / 范围 / 输出要求四段骨架',
+    text: `【任务目标】____（要做什么，如：查询 / 统计 / 汇总…）
+【数据范围】时间：____（如：昨天 / 本周）；对象：____（如：某机房 / 某项目）
+【输出要求】____（如：Markdown 输出，核心结论 + 关键指标表格）
+【其他说明】____（可选，如：超过阈值请重点标注；不需要可删除本行）`,
+  },
+  {
+    title: '数据查询 / 报表',
+    desc: '查数出报表，含环比对比',
+    text: `查询 ____（对象，如：华东一号机房）在 ____（时间范围，如：昨天）的 ____（指标，如：PUE 峰值与均值）。
+用 Markdown 输出：核心结论先行 + 关键指标表格，并与上一周期对比说明变化。`,
+  },
+  {
+    title: '监控巡检 / 告警',
+    desc: '异常显著标注，正常一句话简报',
+    text: `检查 ____（对象）在 ____（时间范围）内的 ____（指标 / 告警）情况。
+若 ____（异常条件，如：超过阈值 / 出现告警），请在结果开头用「【异常】」显著标注并给出原因分析；一切正常则只输出一句话简报。`,
+  },
+  {
+    title: '定期汇总简报',
+    desc: '周报 / 月报式结构化汇总',
+    text: `汇总 ____（时间范围，如：本周）的 ____（内容，如：任务执行情况 / 项目进展）。
+按「总体结论 → 分项明细 → 风险与建议（3 条以内）」结构输出，保持简洁。`,
+  },
+] as const
+const showPromptTemplateDropdown = ref(false)
+const promptTemplateDropdownRef = ref<HTMLElement | null>(null)
+const handlePromptTemplateOutsideClick = (e: MouseEvent) => {
+  if (promptTemplateDropdownRef.value && !promptTemplateDropdownRef.value.contains(e.target as Node)) {
+    showPromptTemplateDropdown.value = false
+  }
+}
+const applyPromptTemplate = (text: string) => {
+  editingTask.value.prompt = text
+  showPromptTemplateDropdown.value = false
+  showToast('已插入模板，骨架仅供参考，可自由增删')
+}
+const clearTaskPrompt = () => {
+  editingTask.value.prompt = ''
+  showToast('已清空执行指令')
+}
+const applyOptimizedPrompt = (content: string) => {
+  editingTask.value.prompt = content
+}
+const onOptimizeToast = (message: string, type?: 'success' | 'error' | 'info') => {
+  showToast(message, type === 'error' ? 'error' : 'success')
+}
 const selectedTask = ref<AgentTask | null>(null)
 const logs = ref<TaskLog[]>([])
 const logsLoading = ref(false)
@@ -363,11 +414,13 @@ const currentViewMode = computed(() => isMobile.value ? 'grid' : viewMode.value)
 onMounted(() => {
   window.addEventListener('resize', () => windowWidth.value = window.innerWidth)
   document.addEventListener('click', handleAgentDropdownOutsideClick)
+  document.addEventListener('click', handlePromptTemplateOutsideClick)
 })
 onUnmounted(() => {
   if (historyFilterTimer !== undefined) window.clearTimeout(historyFilterTimer)
   window.removeEventListener('resize', () => windowWidth.value = window.innerWidth)
   document.removeEventListener('click', handleAgentDropdownOutsideClick)
+  document.removeEventListener('click', handlePromptTemplateOutsideClick)
 })
 
 // Cron Builder Logic
@@ -1780,6 +1833,50 @@ onMounted(async () => {
                 aria-label="查看填写示例"
                 @click="showPromptHelpModal = true"
               >?</button>
+              <div class="ml-auto flex items-center gap-1">
+                <button
+                  v-if="String(editingTask.prompt || '').trim()"
+                  type="button"
+                  class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600"
+                  title="清空执行指令"
+                  @click="clearTaskPrompt"
+                >清空</button>
+                <div v-else ref="promptTemplateDropdownRef" class="relative">
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-0.5"
+                    title="选择结构模板插入，骨架仅供参考"
+                    @click.stop="showPromptTemplateDropdown = !showPromptTemplateDropdown"
+                  >
+                    插入模板
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                  </button>
+                  <div
+                    v-if="showPromptTemplateDropdown"
+                    class="absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
+                  >
+                    <button
+                      v-for="tpl in promptTemplates"
+                      :key="tpl.title"
+                      type="button"
+                      class="w-full px-3 py-2 text-left hover:bg-indigo-50/60 transition-colors"
+                      @click="applyPromptTemplate(tpl.text)"
+                    >
+                      <div class="text-xs font-semibold text-gray-700">{{ tpl.title }}</div>
+                      <div class="text-[10px] text-gray-400 mt-0.5">{{ tpl.desc }}</div>
+                    </button>
+                  </div>
+                </div>
+                <PromptAiOptimize
+                  :content="String(editingTask.prompt || '')"
+                  endpoint="/api/portal/prompts/optimize/task-instruction"
+                  :require-permission="false"
+                  confirm-message="AI 将针对当前执行指令生成 3 个侧重点不同的优化版本（结构化完整 / 精简直达 / 输出契约），大约需要几秒钟。是否开始？"
+                  loading-hint="正在为您生成 3 个差异化方案"
+                  @apply="applyOptimizedPrompt"
+                  @toast="onOptimizeToast"
+                />
+              </div>
             </div>
             <TaskPromptComposer
               :prompt="String(editingTask.prompt || '')"
@@ -1820,7 +1917,7 @@ onMounted(async () => {
                 </label>
               </div>
               <p class="text-[10px] text-gray-400 leading-relaxed">
-                勾选后由调度器在执行时补充通知要求；站内消息始终可用。钉钉 / 企业微信 / 邮件需所选智能体绑定对应工具，并在个人中心启用通道。
+                勾选后任务执行完成由调度器统一投递结果；站内消息始终可用。钉钉 / 企业微信 / 邮件需先在个人中心配置并启用对应通道。
               </p>
               <p v-if="unavailableExternalChannels.length" class="text-[10px] text-amber-600 leading-relaxed">
                 {{ unavailableExternalChannels.join('、') }} 尚未在个人中心配置或未启用，已禁止勾选。

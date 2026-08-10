@@ -13,8 +13,11 @@ from app.services.ai.scheduler_service import (
     _is_incomplete_task_result,
     _new_task_run_conversation_id,
     _normalize_task_metrics,
+    _should_alert_delivery_failure,
     _should_alert_failure,
     _task_permission_options,
+    execution_timeout_from_task_config,
+    retry_policy_from_task_config,
 )
 
 
@@ -112,6 +115,48 @@ def test_task_metrics_normalization_and_alert_cadence():
     assert _should_alert_failure(metrics)
     assert _should_alert_failure({"consecutive_failures": 1})
     assert not _should_alert_failure({"consecutive_failures": 2})
+
+
+@pytest.mark.no_infrastructure
+def test_task_metrics_defaults_include_delivery_fields():
+    """结果投递状态与任务执行成败解耦，指标里单独记录 delivery 维度。"""
+    metrics = _normalize_task_metrics({})
+
+    assert metrics["last_delivery_status"] is None
+    assert metrics["last_delivery_error"] is None
+    assert metrics["last_delivery_at"] is None
+    assert metrics["delivery_failure_streak"] == 0
+
+    metrics = _normalize_task_metrics({"task_metrics": {"delivery_failure_streak": "2"}})
+    assert metrics["delivery_failure_streak"] == 2
+
+
+@pytest.mark.no_infrastructure
+def test_delivery_failure_alert_cadence():
+    assert _should_alert_delivery_failure({"delivery_failure_streak": 1})
+    assert not _should_alert_delivery_failure({"delivery_failure_streak": 2})
+    assert _should_alert_delivery_failure({"delivery_failure_streak": 3})
+    assert _should_alert_delivery_failure({"delivery_failure_streak": 6})
+    assert not _should_alert_delivery_failure({"delivery_failure_streak": 0})
+
+
+@pytest.mark.no_infrastructure
+def test_execution_timeout_from_task_config_clamped():
+    assert execution_timeout_from_task_config(None) == 1800
+    assert execution_timeout_from_task_config({}) == 1800
+    assert execution_timeout_from_task_config({"execution_timeout_seconds": "600"}) == 600
+    assert execution_timeout_from_task_config({"execution_timeout_seconds": 10}) == 60
+    assert execution_timeout_from_task_config({"execution_timeout_seconds": 999999}) == 7200
+    assert execution_timeout_from_task_config({"execution_timeout_seconds": "abc"}) == 1800
+
+
+@pytest.mark.no_infrastructure
+def test_retry_policy_from_task_config_defaults_and_clamps():
+    assert retry_policy_from_task_config(None) == (0, 300)
+    assert retry_policy_from_task_config({}) == (0, 300)
+    assert retry_policy_from_task_config({"max_retries": 2, "retry_delay_seconds": 600}) == (2, 600)
+    assert retry_policy_from_task_config({"max_retries": 99, "retry_delay_seconds": 5}) == (3, 60)
+    assert retry_policy_from_task_config({"max_retries": -1, "retry_delay_seconds": 999999}) == (0, 3600)
 
 @pytest.fixture
 async def cleanup_tasks():

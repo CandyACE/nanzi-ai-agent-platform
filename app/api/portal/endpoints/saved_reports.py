@@ -402,7 +402,7 @@ def _detect_default_date_range_template(sql: str) -> Tuple[Optional[str], List[D
                 "type": "date_range",
                 "label": "日期范围",
                 "default": "month_start_to_today",
-                "options": ["today", "yesterday", "last_7_days", "month_start_to_today", "custom_range"],
+                "options": ["today", "yesterday", "last_7_days", "month_start_to_today", "year_start_to_today", "custom_range"],
             }
         ]
         return template, params_schema, {"date_range": "month_start_to_today"}
@@ -625,6 +625,10 @@ def _resolve_builtin_date_range(params: Dict[str, Any], today: date) -> Dict[str
         end_inclusive = today
     elif date_range == "month_start_to_today":
         start = today.replace(day=1)
+        end = today + timedelta(days=1)
+        end_inclusive = today
+    elif date_range == "year_start_to_today":
+        start = date(today.year, 1, 1)
         end = today + timedelta(days=1)
         end_inclusive = today
     elif date_range == "custom_range":

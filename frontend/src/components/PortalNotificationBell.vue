@@ -52,7 +52,17 @@ const notificationKindLabel = (item: any) => {
   if (isSavedReportNotification(item)) return "黄金报表";
   if (item?.category === "agent") return "智能体";
   if (item?.category === "saved_report") return "报表";
+  if (item?.category === "task_center") return "任务中心";
   return "系统";
+};
+
+const isTaskCenterNotification = (item: any) =>
+  item?.category === "task_center" || item?.resource_type === "scheduled_task";
+
+const goToTaskCenter = async () => {
+  closeDetail();
+  closeNotifications();
+  await router.push({ path: "/dashboard/tasks" }).catch(() => undefined);
 };
 
 const detailHtml = computed(() => renderMarkdown(String(detailItem.value?.content || "")));
@@ -461,6 +471,12 @@ defineExpose({ open: openFromExternal, toggle });
             <div class="markdown-body text-sm text-gray-700 leading-relaxed" v-html="detailHtml"></div>
           </div>
           <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
+            <button
+              v-if="isTaskCenterNotification(detailItem) && !isModalVariant"
+              type="button"
+              class="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+              @click="goToTaskCenter"
+            >前往任务中心</button>
             <button type="button" class="rounded-lg border px-3 py-2 text-xs font-bold text-gray-600" @click="closeDetail">关闭</button>
           </div>
         </div>

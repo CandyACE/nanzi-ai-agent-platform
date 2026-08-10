@@ -27,6 +27,7 @@ _DATE_RANGE_LABELS = {
     "yesterday": "昨日",
     "last_7_days": "近7天",
     "month_start_to_today": "本月至今",
+    "year_start_to_today": "今年至今",
     "custom_range": "自定义区间",
 }
 _PARAM_LABELS = {

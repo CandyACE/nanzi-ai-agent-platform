@@ -10,6 +10,7 @@ import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, r
 
 const LEGACY_RECENT_FILES_KEY = 'workspace_recent_files_v1'
 const LEGACY_BROWSER_PREFS_KEY = 'workspace_browser_prefs_v1'
+const SHOW_TYPE_FILTER_KEY = 'workspace_show_type_filter_v1'
 const MAX_RECENT = 20
 const LIST_PAGE_SIZE = 200
 
@@ -62,9 +63,14 @@ const listPage = ref(1)
 const recentFiles = ref<Array<{ path: string; name: string; mtime: number }>>([])
 const recentFilesOpen = ref(false)
 const recentFilesMenuRef = ref<HTMLElement | null>(null)
-const recentFilesTriggerRef = ref<HTMLElement | null>(null)
 const recentFilesMenuPos = ref({ top: 0, left: 0 })
 const RECENT_FILES_MENU_WIDTH = 288
+
+const quickNavOpen = ref(false)
+const quickNavMenuRef = ref<HTMLElement | null>(null)
+const quickNavTriggerRef = ref<HTMLElement | null>(null)
+const quickNavMenuPos = ref({ top: 0, left: 0 })
+const QUICK_NAV_MENU_WIDTH = 220
 const longPressTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const { showToast } = useToast()
@@ -76,6 +82,10 @@ const recursiveSearchResults = ref<any[]>([])
 const searchTruncated = ref(false)
 type TypeFilterKey = 'all' | FileTypeCategory | 'markdown' | 'html'
 const typeFilter = ref<TypeFilterKey>('all')
+/** 默认收起类型筛选，节省纵向空间；有活跃筛选时自动展开 */
+const showTypeFilter = ref(
+  typeof window !== 'undefined' && localStorage.getItem(SHOW_TYPE_FILTER_KEY) === '1',
+)
 
 const TYPE_FILTER_OPTIONS: Array<{ key: TypeFilterKey; label: string; icon: string }> = [
   { key: 'all', label: '全部', icon: '✨' },
@@ -116,6 +126,7 @@ const loadBrowserPrefs = async () => {
       includeSubdirs.value = prefs.include_subdirs
     }
     if (prefs?.type_filter) typeFilter.value = prefs.type_filter as TypeFilterKey
+    if (typeFilter.value !== 'all') showTypeFilter.value = true
     await migrateLegacyBrowserPrefsIfNeeded()
   } catch { /* ignore */ }
 }
@@ -223,24 +234,46 @@ const clearRecentFiles = () => {
 }
 
 const updateRecentFilesMenuPosition = () => {
-  const trigger = recentFilesTriggerRef.value
+  const trigger = quickNavTriggerRef.value
   if (!trigger) return
   const rect = trigger.getBoundingClientRect()
   const width = Math.min(RECENT_FILES_MENU_WIDTH, window.innerWidth - 16)
-  let left = rect.right - width
+  let left = rect.left
   left = Math.max(8, Math.min(left, window.innerWidth - width - 8))
   recentFilesMenuPos.value = { top: rect.bottom + 4, left }
 }
 
 const syncRecentFilesMenuPosition = () => {
   if (recentFilesOpen.value) updateRecentFilesMenuPosition()
+  if (quickNavOpen.value) updateQuickNavMenuPosition()
 }
 
-const toggleRecentFilesMenu = () => {
-  if (recentFilesOpen.value) {
-    closeRecentFilesMenu()
+const updateQuickNavMenuPosition = () => {
+  const trigger = quickNavTriggerRef.value
+  if (!trigger) return
+  const rect = trigger.getBoundingClientRect()
+  const width = Math.min(QUICK_NAV_MENU_WIDTH, window.innerWidth - 16)
+  let left = rect.left
+  left = Math.max(8, Math.min(left, window.innerWidth - width - 8))
+  quickNavMenuPos.value = { top: rect.bottom + 4, left }
+}
+
+const closeQuickNavMenu = () => {
+  quickNavOpen.value = false
+}
+
+const toggleQuickNavMenu = () => {
+  if (quickNavOpen.value) {
+    closeQuickNavMenu()
     return
   }
+  closeRecentFilesMenu()
+  quickNavOpen.value = true
+  nextTick(updateQuickNavMenuPosition)
+}
+
+const openRecentFilesFromQuickNav = () => {
+  closeQuickNavMenu()
   void loadRecentFiles()
   recentFilesOpen.value = true
   nextTick(updateRecentFilesMenuPosition)
@@ -549,6 +582,15 @@ watch([displayItems, sortKey, sortDir], () => {
 
 watch([includeSubdirs, typeFilter], saveBrowserPrefs)
 
+watch(showTypeFilter, (show) => {
+  try {
+    localStorage.setItem(SHOW_TYPE_FILTER_KEY, show ? '1' : '0')
+  } catch { /* ignore */ }
+  if (!show && typeFilter.value !== 'all') {
+    typeFilter.value = 'all'
+  }
+})
+
 const setTypeFilter = (key: TypeFilterKey) => {
   typeFilter.value = key
   saveBrowserPrefs()
@@ -783,38 +825,17 @@ watch(
       baseDir.value = ''
       loadRecentFiles()
       fetchDirectory()
-      nextTick(syncQuickNavScrollHints)
     } else {
+      closeQuickNavMenu()
       closeRecentFilesMenu()
     }
   },
   { immediate: true },
 )
 
-const quickNavScrollRef = ref<HTMLElement | null>(null)
-const quickNavScrollRight = ref(false)
-const quickNavScrollLeft = ref(false)
-
-const syncQuickNavScrollHints = () => {
-  const el = quickNavScrollRef.value
-  if (!el) {
-    quickNavScrollRight.value = false
-    quickNavScrollLeft.value = false
-    return
-  }
-  const maxScroll = el.scrollWidth - el.clientWidth
-  quickNavScrollLeft.value = el.scrollLeft > 4
-  quickNavScrollRight.value = maxScroll > 4 && el.scrollLeft < maxScroll - 4
-}
-
-const scrollQuickNav = (direction: 'left' | 'right') => {
-  const el = quickNavScrollRef.value
-  if (!el) return
-  el.scrollBy({ left: direction === 'right' ? 140 : -140, behavior: 'smooth' })
-}
-
 const onGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
+    closeQuickNavMenu()
     closeRecentFilesMenu()
     closeContextMenu()
     if (createDialog.value && !createSubmitting.value) {
@@ -829,11 +850,17 @@ const onGlobalKeydown = (event: KeyboardEvent) => {
 
 const onDocumentClick = (event: MouseEvent) => {
   closeContextMenu()
-  if (!recentFilesOpen.value) return
   const target = event.target as Node
-  if (recentFilesMenuRef.value?.contains(target)) return
-  if (recentFilesTriggerRef.value?.contains(target)) return
-  closeRecentFilesMenu()
+  if (quickNavOpen.value) {
+    if (!quickNavMenuRef.value?.contains(target) && !quickNavTriggerRef.value?.contains(target)) {
+      closeQuickNavMenu()
+    }
+  }
+  if (recentFilesOpen.value) {
+    if (!recentFilesMenuRef.value?.contains(target) && !quickNavTriggerRef.value?.contains(target)) {
+      closeRecentFilesMenu()
+    }
+  }
 }
 
 onMounted(() => {
@@ -847,7 +874,6 @@ onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('resize', syncRecentFilesMenuPosition)
   window.addEventListener('scroll', syncRecentFilesMenuPosition, true)
-  nextTick(syncQuickNavScrollHints)
 })
 
 onUnmounted(() => {
@@ -1094,18 +1120,6 @@ const mountSelectedBatch = () => {
   clearMultiSelect()
 }
 
-const mountCurrentDirectoryToSession = () => {
-  if (!currentPath.value || isVirtualRoot.value) return
-  const dirName = currentPath.value.split('/').filter(Boolean).pop() || 'data'
-  finishSelect({
-    type: 'local_dir',
-    path: currentPath.value,
-    name: dirName,
-    size: 0,
-    ext: '',
-  })
-}
-
 const shouldShowRowActions = (item: { path: string }) => selectedItem.value?.path === item.path
 
 const trashNavLink = computed(() => {
@@ -1145,22 +1159,14 @@ const quickNavLinks = computed(() => {
   return links
 })
 
-watch(quickNavLinks, () => {
-  nextTick(syncQuickNavScrollHints)
-})
-
-watch(quickNavScrollRef, (el, _, onCleanup) => {
-  if (!el || typeof ResizeObserver === 'undefined') return
-  const observer = new ResizeObserver(() => syncQuickNavScrollHints())
-  observer.observe(el)
-  onCleanup(() => observer.disconnect())
-})
+const isQuickLinkActive = (path: string) => Boolean(path) && currentPath.value === path
 
 const handleQuickNavClick = (link: { path: string; disabled?: boolean; disabledTitle?: string }) => {
   if (link.disabled) {
     showToast(link.disabledTitle || '当前不可用', 'info')
     return
   }
+  closeQuickNavMenu()
   navigateQuick(link.path)
 }
 
@@ -1588,95 +1594,6 @@ onUnmounted(() => {
 
             <div class="workspace-drawer-scroll flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 bg-white dark:bg-gray-900/60 min-h-0 touch-pan-y flex flex-col">
               <div class="flex flex-col flex-1 min-h-0">
-                <div class="relative mb-3 shrink-0 min-w-0">
-                  <div
-                    ref="quickNavScrollRef"
-                    class="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-nowrap min-w-0 touch-pan-x scroll-smooth pr-1"
-                    @scroll="syncQuickNavScrollHints"
-                  >
-                      <button
-                        v-for="link in quickNavLinks"
-                        :key="link.key"
-                        type="button"
-                        class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all"
-                        :class="link.disabled
-                          ? 'opacity-40 cursor-not-allowed text-gray-400 dark:text-gray-500'
-                          : 'hover:border-primary/30 hover:text-primary'"
-                        :aria-disabled="link.disabled ? 'true' : undefined"
-                        :title="link.disabled ? link.disabledTitle : link.label"
-                        @click="handleQuickNavClick(link)"
-                      >
-                        <span>{{ link.icon }}</span>
-                        <span>{{ link.label }}</span>
-                      </button>
-                      <div class="shrink-0">
-                        <button
-                          ref="recentFilesTriggerRef"
-                          type="button"
-                          class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all"
-                          :class="recentFilesOpen ? 'border-primary/30 text-primary bg-primary/5' : 'text-gray-500 hover:border-primary/30 hover:text-primary'"
-                          @click.stop="toggleRecentFilesMenu"
-                        >
-                          <span>🕒</span>
-                          <span>最近文件</span>
-                          <svg
-                            class="w-3 h-3 transition-transform"
-                            :class="recentFilesOpen ? 'rotate-180' : ''"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                            aria-hidden="true"
-                          >
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-                      </div>
-                      <button
-                        v-if="trashNavLink"
-                        type="button"
-                        class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all hover:border-primary/30 hover:text-primary"
-                        @click="handleQuickNavClick(trashNavLink)"
-                      >
-                        <span>{{ trashNavLink.icon }}</span>
-                        <span>{{ trashNavLink.label }}</span>
-                    </button>
-                  </div>
-                  <div
-                    v-if="quickNavScrollLeft"
-                    class="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-white via-white/95 to-transparent dark:from-gray-900 dark:via-gray-900/95"
-                    aria-hidden="true"
-                  />
-                  <div
-                    v-if="quickNavScrollRight"
-                    class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white via-white/95 to-transparent dark:from-gray-900 dark:via-gray-900/95"
-                    aria-hidden="true"
-                  />
-                  <button
-                    v-if="quickNavScrollRight"
-                    type="button"
-                    class="absolute right-0 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-400 shadow-sm transition-colors hover:border-primary/30 hover:text-primary dark:border-gray-700 dark:bg-gray-900/95 dark:text-gray-500"
-                    title="向右滑动查看更多"
-                    aria-label="向右滑动查看更多"
-                    @click="scrollQuickNav('right')"
-                  >
-                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                  <button
-                    v-if="quickNavScrollLeft"
-                    type="button"
-                    class="absolute left-0 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-400 shadow-sm transition-colors hover:border-primary/30 hover:text-primary dark:border-gray-700 dark:bg-gray-900/95 dark:text-gray-500"
-                    title="向左滑动查看更多"
-                    aria-label="向左滑动查看更多"
-                    @click="scrollQuickNav('left')"
-                  >
-                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-                </div>
-
                 <div
                   v-if="isTrashView"
                   class="mb-2 px-2.5 py-2 rounded-lg text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 border border-amber-200/60 dark:border-amber-500/20 shrink-0 flex items-center justify-between gap-2"
@@ -1694,6 +1611,32 @@ onUnmounted(() => {
 
                 <div class="flex items-center gap-2 mb-2 shrink-0">
                   <div class="flex items-center space-x-2 px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800 flex-1 min-w-0 overflow-x-auto no-scrollbar">
+                    <button
+                      ref="quickNavTriggerRef"
+                      type="button"
+                      class="inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md text-[10px] font-bold shrink-0 transition-colors focus:outline-none"
+                      :class="quickNavOpen || recentFilesOpen
+                        ? 'text-primary bg-primary/10'
+                        : 'text-gray-500 hover:text-primary hover:bg-gray-200/70 dark:hover:bg-gray-700'"
+                      title="快捷入口"
+                      aria-label="快捷入口"
+                      aria-haspopup="menu"
+                      :aria-expanded="quickNavOpen ? 'true' : 'false'"
+                      @click.stop="toggleQuickNavMenu"
+                    >
+                      <span>快捷</span>
+                      <svg
+                        class="w-3 h-3 transition-transform"
+                        :class="quickNavOpen ? 'rotate-180' : ''"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    <span class="text-gray-300 dark:text-gray-700 shrink-0">|</span>
                     <button
                       class="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 disabled:opacity-30 disabled:hover:bg-transparent transition-colors shrink-0"
                       :disabled="isRoot || loading"
@@ -1728,19 +1671,10 @@ onUnmounted(() => {
                       </template>
                     </div>
                   </div>
-                  <button
-                    v-if="!isSearchActive && currentPath && !isVirtualRoot"
-                    type="button"
-                    class="flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-primary bg-primary/10 hover:bg-primary/15 border border-primary/20 transition-all whitespace-nowrap focus:outline-none"
-                    title="将当前目录添加到 AI 会话"
-                    @click="mountCurrentDirectoryToSession"
-                  >
-                    添加当前目录
-                  </button>
                 </div>
 
                 <div class="flex items-center gap-2 mb-2 shrink-0">
-                  <div class="relative flex-1">
+                  <div class="relative flex-1 min-w-0">
                     <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400">
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1764,18 +1698,35 @@ onUnmounted(() => {
                       </svg>
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    class="flex-shrink-0 px-2.5 py-2 rounded-lg text-[10px] font-bold border transition-all focus:outline-none"
-                    :class="includeSubdirs ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500'"
-                    @click="includeSubdirs = !includeSubdirs"
+                  <label
+                    class="inline-flex items-center gap-1 shrink-0 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer select-none"
+                    title="搜索时是否包含子目录"
                   >
+                    <input
+                      v-model="includeSubdirs"
+                      type="checkbox"
+                      class="rounded border-gray-300 text-primary focus:ring-primary/30"
+                    />
                     含子目录
-                  </button>
+                  </label>
+                  <label
+                    class="inline-flex items-center gap-1 shrink-0 text-[10px] font-bold cursor-pointer select-none"
+                    :class="showTypeFilter || isTypeFilterActive ? 'text-primary' : 'text-gray-500 dark:text-gray-400'"
+                    title="显示文件类型筛选"
+                  >
+                    <input
+                      v-model="showTypeFilter"
+                      type="checkbox"
+                      class="rounded border-gray-300 text-primary focus:ring-primary/30"
+                    />
+                    类型
+                  </label>
                 </div>
 
-                <div class="flex items-center gap-1.5 mb-2 shrink-0 min-w-0">
-                  <span class="text-[10px] font-black text-gray-400 tracking-wider shrink-0">类型</span>
+                <div
+                  v-if="showTypeFilter"
+                  class="flex items-center gap-1.5 mb-2 shrink-0 min-w-0"
+                >
                   <div class="flex-1 min-w-0 overflow-x-auto no-scrollbar">
                     <div class="flex items-center gap-1.5 pr-1">
                       <button
@@ -2097,6 +2048,70 @@ onUnmounted(() => {
   </teleport>
 
   <input ref="uploadInputRef" type="file" multiple class="hidden" @change="handleUploadFiles">
+
+  <Teleport to="body">
+    <div
+      v-if="quickNavOpen"
+      ref="quickNavMenuRef"
+      class="fixed z-[130] max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl ring-1 ring-black/5 py-1 text-xs"
+      :style="{ top: `${quickNavMenuPos.top}px`, left: `${quickNavMenuPos.left}px`, width: `${QUICK_NAV_MENU_WIDTH}px` }"
+      role="menu"
+      @click.stop
+    >
+      <div class="px-3 py-1.5 text-[9px] font-bold text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-800 mb-0.5">
+        快捷入口
+      </div>
+      <button
+        v-for="link in quickNavLinks"
+        :key="link.key"
+        type="button"
+        role="menuitem"
+        class="w-full px-3 py-2 text-left flex items-center gap-2 transition-colors focus:outline-none"
+        :class="link.disabled
+          ? 'opacity-40 cursor-not-allowed text-gray-400 dark:text-gray-500'
+          : isQuickLinkActive(link.path)
+            ? 'bg-primary/5 text-primary font-bold'
+            : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'"
+        :title="link.disabled ? link.disabledTitle : link.label"
+        :aria-disabled="link.disabled ? 'true' : undefined"
+        @click="handleQuickNavClick(link)"
+      >
+        <span class="shrink-0">{{ link.icon }}</span>
+        <span class="truncate flex-1">{{ link.label }}</span>
+        <span
+          v-if="isQuickLinkActive(link.path) && !link.disabled"
+          class="text-[9px] font-bold text-primary/70"
+        >当前</span>
+      </button>
+      <div class="my-1 border-t border-gray-100 dark:border-gray-800" />
+      <button
+        type="button"
+        role="menuitem"
+        class="w-full px-3 py-2 text-left flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
+        @click="openRecentFilesFromQuickNav"
+      >
+        <span class="shrink-0">🕒</span>
+        <span class="truncate flex-1">最近文件</span>
+        <svg class="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+      <button
+        v-if="trashNavLink"
+        type="button"
+        role="menuitem"
+        class="w-full px-3 py-2 text-left flex items-center gap-2 transition-colors focus:outline-none"
+        :class="isTrashView
+          ? 'bg-primary/5 text-primary font-bold'
+          : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'"
+        @click="handleQuickNavClick(trashNavLink)"
+      >
+        <span class="shrink-0">{{ trashNavLink.icon }}</span>
+        <span class="truncate flex-1">{{ trashNavLink.label }}</span>
+        <span v-if="isTrashView" class="text-[9px] font-bold text-primary/70">当前</span>
+      </button>
+    </div>
+  </Teleport>
 
   <Teleport to="body">
     <div
