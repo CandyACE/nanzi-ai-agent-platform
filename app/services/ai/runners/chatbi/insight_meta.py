@@ -274,3 +274,49 @@ def build_federated_chatbi_insight_meta(
             "actions": _build_actions(rows),
         },
     }
+
+
+def build_saved_report_chatbi_insight_meta(
+    parsed_result: Any,
+    *,
+    sql: str = "",
+    dataset_name: str | None = None,
+    data_source: str | None = None,
+    permission_notice: dict[str, Any] | None = None,
+    result_id: str | None = None,
+) -> dict[str, Any] | None:
+    """黄金报表直跑成功后，复用 ChatBI 继续分析动作契约。"""
+    parsed = _parse_result(parsed_result)
+    rows = _rows_from_result(parsed)
+    if not rows:
+        return None
+    notice = permission_notice if isinstance(permission_notice, dict) else {}
+    if not notice and isinstance(parsed, dict) and isinstance(parsed.get("permission_notice"), dict):
+        notice = parsed.get("permission_notice") or {}
+    safe_notice = {
+        key: notice.get(key)
+        for key in ("row_filter_applied", "dataset_name", "rule_count", "message")
+        if notice.get(key) is not None
+    }
+    dataset = str(dataset_name or safe_notice.get("dataset_name") or "").strip()
+    source = str(data_source or "").strip()
+    return {
+        "version": 1,
+        "status": "success",
+        "result_id": result_id,
+        "sources": (
+            [{"dataset_name": dataset, "data_source": source, "tables": []}]
+            if dataset or source
+            else []
+        ),
+        "permission": safe_notice,
+        "evidence": _build_evidence_metadata(parsed),
+        "execution": {
+            "mode": "direct",
+            "row_count": len(rows),
+            "repair_count": 0,
+            "federated": False,
+        },
+        "final_sql": str(sql or "").strip(),
+        "actions": _build_actions(rows),
+    }

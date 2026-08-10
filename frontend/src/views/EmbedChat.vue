@@ -268,9 +268,11 @@
         :slash-commands="effectiveSlashCommands"
         :welcome-cards="welcomeCards"
         :personal-resources="welcomePersonalResources"
+        :personal-resources-refreshing="workbenchHomeRefreshing"
         @quick-question="handleQuickQuestion"
         @open-data-portal="openPortalDrawer"
         @open-personal-resources="openPersonalResources"
+        @refresh-personal-resources="refreshWelcomePersonalResources"
         @select-knowledge-base="openKnowledgePortal"
         @open-workspace="showWorkspaceDrawer = true"
       />
@@ -1221,7 +1223,7 @@
                   :actions="msg.chatbiInsight.actions"
                   :is-mobile="isMobile"
                   :result-id="msg.chatbiInsight.result_id"
-                  @select="handleQuickQuestion"
+                  @select="handleChatBIContinueSelect"
                   @action="(action) => handleChatBIResultAction(action, msg)"
                 />
                 <MessageContinueAnalysis
@@ -2393,6 +2395,7 @@ interface Message {
   agentName?: string;
   agentDisplayName?: string;
   agentType?: string;
+  isSavedReportResult?: boolean;
   turnType?: TurnType | string;
   hasDataOutput?: boolean;
   chatbiInsight?: ChatBIInsightMeta;
@@ -2875,6 +2878,8 @@ const portalInboxRef = ref<{ open: () => void | Promise<void> } | null>(null);
 const {
   payload: workbenchHome,
   load: loadWorkbenchHome,
+  refresh: refreshWorkbenchHome,
+  refreshing: workbenchHomeRefreshing,
   error: workbenchHomeError,
 } = useWorkbenchHome();
 const welcomePersonalResources = computed(() => {
@@ -2886,6 +2891,10 @@ const welcomePersonalResources = computed(() => {
       : personalResourcePlaceholderItems();
   return filterEmbedWelcomePersonalResources(source);
 });
+
+const refreshWelcomePersonalResources = () => {
+  void refreshWorkbenchHome();
+};
 
 const openPersonalResources = (tab: string) => {
   if (isInboxPersonalResource({ tab })) {
@@ -3809,6 +3818,29 @@ const findUniqueDataQueryAgent = () => {
 
 const hasDataQueryAgent = () => listDataQueryAgents().length > 0;
 
+/** ChatBI「继续分析」等追问：本轮强制走查数智能体，避免自动路由到主助手 */
+const forceDataQueryAgentOnce = ref(false);
+const resolvePreferredDataQueryAgentId = () => {
+  const unique = findUniqueDataQueryAgent();
+  if (unique?.id) return String(unique.id);
+  const first = listDataQueryAgents()[0];
+  return first?.id ? String(first.id) : "";
+};
+const armDataQueryAgentForFollowup = () => {
+  if (isUrlAgentPinned.value) return;
+  const agentId = resolvePreferredDataQueryAgentId();
+  if (!agentId) {
+    showToast("未找到可用的数据查询智能体，无法继续可视化分析", "warning");
+    return false;
+  }
+  forceDataQueryAgentOnce.value = true;
+  return true;
+};
+const handleChatBIContinueSelect = (query: string) => {
+  if (!armDataQueryAgentForFollowup()) return;
+  void handleQuickQuestion(query);
+};
+
 const handleReorderCommands = async (reorderData: any[]) => {
     try {
         await axios.post("/api/portal/slash-commands/reorder", { items: reorderData });
@@ -4672,6 +4704,11 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     closePortalDrawer();
   }
 
+  // 保证有会话 ID，否则 Redis last_data_result 无法写入，后续「可视化分析」会丢上下文
+  if (!conversationId.value) {
+    generateNewConversation();
+  }
+
   isProcessing.value = true;
 
   messages.value.push({
@@ -4686,6 +4723,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     role: "agent",
     agentName: "chat-bi",
     agentDisplayName: "数据智能助手",
+    isSavedReportResult: true,
     content: "",
     isThinking: true,
     thinkingText: "正在执行黄金报表，请稍候...",
@@ -4725,6 +4763,9 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
       agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, execResult);
       detailsText = `${report.sql_content}\n--- 结果 ---\n${typeof execResult === 'object' ? JSON.stringify(execResult, null, 2) : String(execResult)}`;
       agentMsg.value.permissionNotice = execResult?.permission_notice;
+      if (execResult?.chatbi_insight?.actions?.length) {
+        agentMsg.value.chatbiInsight = execResult.chatbi_insight;
+      }
     } else {
       agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, null);
       detailsText = `${report.sql_content}\n--- 结果 ---\n无`;
@@ -5946,7 +5987,10 @@ const handleChatBIResultAction = async (
     chatbiMonitorDialogOpen.value = true;
     return;
   }
-  if (action.id !== "brief") return handleQuickQuestion(action.query);
+  if (action.id !== "brief") {
+    if (!armDataQueryAgentForFollowup()) return;
+    return handleQuickQuestion(action.query);
+  }
   const assistantReport = sourceMessage?.content?.trim();
   if (!assistantReport) {
     showToast("未找到当前分析正文，请在本轮回复旁重试", "warning");
@@ -6577,6 +6621,10 @@ const sendMessage = async () => {
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
   if ((!content && files.length === 0) || isProcessing.value) return;
 
+  // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
+  const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
+  forceDataQueryAgentOnce.value = false;
+
   const quotaBlock = await ensureCanSend();
   if (quotaBlock) {
     showToast(quotaBlock, "error");
@@ -6655,7 +6703,7 @@ const sendMessage = async () => {
     const body: Record<string, unknown> = {
       messages: buildOutboundMessages(),
       stream: true,
-      agent_id: (config.routingMode === "expert" && config.expertAgentId) ? config.expertAgentId : (config.overrideAgentId || config.agentId),
+      agent_id: forcedDataAgentIdForTurn || ((config.routingMode === "expert" && config.expertAgentId) ? config.expertAgentId : (config.overrideAgentId || config.agentId)),
       enable_multi_agent: config.enableMultiAgent,
       conversation_id: conversationId.value,
       debug_options: {

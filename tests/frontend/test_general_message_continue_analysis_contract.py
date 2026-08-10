@@ -47,6 +47,22 @@ def test_generic_continue_analysis_is_wired_to_non_chatbi_agent_messages():
         assert "!msg.isThinking" in source
 
 
+def test_saved_report_execute_attaches_chatbi_continue_analysis():
+    for source_path in (EMBED, DEBUG):
+        source = source_path.read_text(encoding="utf-8")
+        assert "chatbi_insight" in source
+        assert "agentMsg.value.chatbiInsight = execResult.chatbi_insight" in source
+        assert "<ChatBIContinueAnalysis" in source
+        assert "msg.chatbiInsight?.actions?.length" in source
+        # 黄金报表「继续分析」须强制走查数智能体，并保证会话 ID 以写入 last_data_result
+        assert "@select=\"handleChatBIContinueSelect\"" in source
+        assert "forceDataQueryAgentOnce" in source
+        assert "armDataQueryAgentForFollowup" in source
+        assert "forcedDataAgentIdForTurn" in source
+        assert "Redis last_data_result" in source or "last_data_result" in source
+        assert "if (!conversationId.value)" in source
+
+
 def test_generic_continue_analysis_preserves_selected_message_context():
     for source_path in (EMBED, DEBUG):
         source = source_path.read_text(encoding="utf-8")

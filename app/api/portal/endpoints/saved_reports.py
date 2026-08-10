@@ -2123,6 +2123,20 @@ async def _execute_saved_report_impl(
         response_payload["analysis_markdown"] = analysis_markdown
         response_payload["analysis_status"] = analysis_status
         response_payload["run_id"] = int(run_row.id) if getattr(run_row, "id", None) is not None else None
+        try:
+            from app.services.ai.runners.chatbi.insight_meta import build_saved_report_chatbi_insight_meta
+            insight = build_saved_report_chatbi_insight_meta(
+                parsed,
+                sql=sql_to_execute,
+                dataset_name=dataset_name,
+                data_source=report.data_source,
+                permission_notice=permission_notice,
+                result_id=f"saved_report_run:{run_row.id}" if getattr(run_row, "id", None) is not None else None,
+            )
+            if insight:
+                response_payload["chatbi_insight"] = insight
+        except Exception as insight_err:
+            logger.warning("Failed to build saved report chatbi insight: %s", insight_err)
         return StandardResponse(data=response_payload)
     except json.JSONDecodeError:
         pass
