@@ -103,10 +103,12 @@ import {
 } from "@/utils/savedReportDefaults";
 import {
   buildSavedReportRunParams,
+  composeSavedReportExecuteMarkdown,
   detectSavedReportDateTemplate,
+  extractColumnMetaFromAgentMessage,
   extractSavedReportExecuteErrorMessage,
+  mergeSavedReportAnalysisIntoResult,
   parseSavedReportTags,
-  renderSavedReportDataToMarkdown,
   todayDateString,
   todayMonthString,
 } from "@/composables/chat/useSavedReportWorkflow";
@@ -725,6 +727,7 @@ const saveReportForm = ref({
   sql_template: '',
   params_schema: [] as any[],
   default_params: {} as Record<string, any>,
+  column_meta: null as Record<string, any> | null,
   analysis_mode: 'auto',
   tags_input: '',
 });
@@ -778,6 +781,7 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
     sql_template: detectedTemplate?.sql_template || '',
     params_schema: detectedTemplate?.params_schema || [],
     default_params: detectedTemplate?.default_params || {},
+    column_meta: extractColumnMetaFromAgentMessage(agentMessage),
     analysis_mode: 'auto',
     tags_input: deriveSavedReportTagsInput(requirementIntent, originalQuery),
   };
@@ -803,6 +807,7 @@ const openEditReportModal = (report: any) => {
     sql_template: report.sql_template || '',
     params_schema: report.params_schema || [],
     default_params: report.default_params || {},
+    column_meta: report.column_meta || null,
     analysis_mode: 'auto',
     tags_input: Array.isArray(report.tags) ? report.tags.join(', ') : '',
   };
@@ -827,6 +832,7 @@ const submitSaveReport = async () => {
       sql_template: saveReportForm.value.sql_template || undefined,
       params_schema: saveReportForm.value.params_schema,
       default_params: saveReportForm.value.default_params,
+      column_meta: saveReportForm.value.column_meta || undefined,
       analysis_mode: saveReportForm.value.analysis_mode,
       tags: parseSavedReportTags(saveReportForm.value.tags_input),
     };
@@ -990,7 +996,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     agentDisplayName: "数据智能助手",
     content: "",
     isThinking: true,
-    thinkingText: "正在进行免模型极速直连安全执行，请稍候...",
+    thinkingText: "正在执行黄金报表，请稍候...",
     logs: [],
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
@@ -1006,12 +1012,13 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   let resultMarkdown = "";
 
   try {
-    const shouldAutoAnalyze = true;
     const res = await axios.post(`/api/portal/saved-reports/${report.id}/execute`, {
       params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value),
       analysis_mode: 'auto',
+      defer_analysis: true,
     }, {
-      params: { conversation_id: conversationId.value }
+      params: { conversation_id: conversationId.value },
+      timeout: 60000,
     });
 
     agentMsg.value.isThinking = false;
@@ -1020,17 +1027,19 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     let detailsText = "";
 
     if (res.data && res.data.data !== undefined) {
-      execResult = res.data.data;
-      resultMarkdown = renderSavedReportDataToMarkdown(execResult);
+      execResult = {
+        ...res.data.data,
+        analysis_status: res.data.data?.analysis_status || 'deferred',
+      };
+      resultMarkdown = composeSavedReportExecuteMarkdown(report.title, execResult);
       detailsText = `${report.sql_content}\n--- 结果 ---\n${typeof execResult === 'object' ? JSON.stringify(execResult, null, 2) : String(execResult)}`;
       agentMsg.value.permissionNotice = execResult?.permission_notice;
     } else {
-      resultMarkdown = "执行结果为空。";
+      resultMarkdown = composeSavedReportExecuteMarkdown(report.title, null);
       detailsText = `${report.sql_content}\n--- 结果 ---\n无`;
     }
 
-    // 直连成功后输出表格，并在结尾拼接“深度可视化分析一下”快捷按钮，方便用户手动点击触发大模型分析流程
-    agentMsg.value.content = `### 📊 黄金报表「${report.title}」执行结果：\n\n${resultMarkdown}\n\n---\n- [🙋 深度可视化分析一下](quick:深度可视化分析一下)`;
+    agentMsg.value.content = resultMarkdown;
 
     agentMsg.value.logs = [
       {
@@ -1042,10 +1051,30 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
         details: detailsText,
       }
     ];
-    if (shouldAutoAnalyze) {
-      setTimeout(() => {
-        handleQuickQuestion("请基于刚才黄金报表结果做业务解读，指出关键结论、异常点和后续建议。");
-      }, 0);
+
+    if (execResult) {
+      try {
+        agentMsg.value.isThinking = true;
+        agentMsg.value.thinkingText = "正在生成业务解读…";
+        const analyzeRes = await axios.post(`/api/portal/saved-reports/${report.id}/analyze`, {
+          conversation_id: conversationId.value,
+          run_id: execResult.run_id,
+        }, {
+          params: { conversation_id: conversationId.value },
+          timeout: 120000,
+        });
+        const merged = mergeSavedReportAnalysisIntoResult(execResult, analyzeRes.data?.data || {});
+        agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, merged);
+      } catch (analyzeError) {
+        console.warn("Failed to analyze saved report:", analyzeError);
+        agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, {
+          ...execResult,
+          analysis_status: 'error',
+        });
+      } finally {
+        agentMsg.value.isThinking = false;
+        agentMsg.value.thinkingText = "";
+      }
     }
   } catch (error: any) {
     console.error("Failed to execute saved report:", error);

@@ -165,9 +165,13 @@ def test_saved_report_parameterized_execution_contract():
     assert "reportRunForm" in source
     assert "executeSavedReportWithOptions" in source
     assert "analysis_mode: 'auto'" in source
-    assert "const shouldAutoAnalyze = true" in source
+    assert "defer_analysis: true" in source
+    assert "/analyze" in source
+    assert "composeSavedReportExecuteMarkdown" in source
+    assert "extractColumnMetaFromAgentMessage" in source
     assert "params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value)" in source
-    assert "handleQuickQuestion(\"请基于刚才黄金报表结果做业务解读，指出关键结论、异常点和后续建议。\")" in source
+    assert "handleQuickQuestion(\"请基于刚才黄金报表结果做业务解读，指出关键结论、异常点和后续建议。\")" not in source
+    assert "const shouldAutoAnalyze = true" not in source
     assert "mode: saveReportForm.value.mode" in source
     assert "sql_template: saveReportForm.value.sql_template" in source
     assert "tags: parseSavedReportTags(saveReportForm.value.tags_input)" in source
