@@ -468,7 +468,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False):
                 )
                 if not delivery_ok:
                     error = (
-                        "任务已生成结果，但结果通知未全部送达："
+                        "任务结果通知未完成（内容不完整或渠道投递失败）："
                         + "; ".join(delivery_notes)
                     )
                     metrics = await _mark_task_failure(session, task, trace_id=trace_id, error=error)
