@@ -272,9 +272,22 @@ cd frontend && npm install && npm run dev
 
 ## 💬 Contact & Community
 
-If you have any questions, feature suggestions, or need further technical updates, please scan the QR code to follow our WeChat Official Account:
+If you have any questions, feature suggestions, or need further technical updates, please scan the QR code to follow our WeChat Official Account, or join our WeChat community group:
 
-<img src="docs/images/weixin.png" alt="WeChat QR Code" width="200" />
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/images/weixin.png" alt="WeChat Official Account" width="200" /><br/>
+      <sub>WeChat Official Account</sub>
+    </td>
+    <td align="center">
+      <img src="docs/images/weixin-group.png" alt="WeChat Community Group" width="200" /><br/>
+      <sub>WeChat Community Group (valid for 7 days)</sub>
+    </td>
+  </tr>
+</table>
+
+Scan the group QR code to get a free platform trial account and access URL.
 
 ---
 

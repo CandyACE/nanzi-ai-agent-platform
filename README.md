@@ -334,6 +334,8 @@ cd frontend && npm install && npm run dev
   </tr>
 </table>
 
+扫码进群获取平台免费体验账号和地址。
+
 ---
 
 ## 📄 许可证
