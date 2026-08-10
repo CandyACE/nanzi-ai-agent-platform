@@ -41,6 +41,9 @@ class TaskResponse(TaskBase):
     last_attempt_at: Optional[str] = None
     last_finished_at: Optional[str] = None
     last_alert_at: Optional[str] = None
+    last_delivery_status: Optional[str] = None
+    last_delivery_error: Optional[str] = None
+    last_delivery_at: Optional[str] = None
     last_run_id: Optional[str] = None
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None

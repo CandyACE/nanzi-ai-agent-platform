@@ -45,7 +45,7 @@
             </div>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.dingtalk.is_enabled" class="sr-only peer">
+            <input type="checkbox" v-model="configs.dingtalk.is_enabled" class="sr-only peer" @change="onToggleChannel('dingtalk')">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
           </label>
         </div>
@@ -116,7 +116,7 @@
             </div>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.wechat_work.is_enabled" class="sr-only peer">
+            <input type="checkbox" v-model="configs.wechat_work.is_enabled" class="sr-only peer" @change="onToggleChannel('wechat_work')">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
           </label>
         </div>
@@ -177,7 +177,7 @@
             </div>
           </div>
           <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.email.is_enabled" class="sr-only peer">
+            <input type="checkbox" v-model="configs.email.is_enabled" class="sr-only peer" @change="onToggleChannel('email')">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
           </label>
         </div>
@@ -236,6 +236,17 @@
             />
           </div>
 
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">收件人邮箱 (可选)</label>
+            <input 
+              type="text" 
+              v-model="configs.email.recipients"
+              placeholder="a@example.com, b@example.com"
+              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
+            />
+            <p class="text-[11px] text-gray-400 mt-1">通知实际投递的收件人，多个地址用逗号或分号分隔；留空则发送给发件人账号自身。</p>
+          </div>
+
           <div class="flex items-center justify-end space-x-3 pt-2">
             <button 
               @click="testConfig('email')"
@@ -276,7 +287,7 @@ const loading = ref(false)
 const configs = ref<Record<string, any>>({
   dingtalk: { is_enabled: false, webhook_url: '', secret: '' },
   wechat_work: { is_enabled: false, webhook_url: '' },
-  email: { is_enabled: false, smtp_host: '', smtp_port: 465, smtp_user: '', smtp_password: '', sender_name: 'AI Agent' }
+  email: { is_enabled: false, smtp_host: '', smtp_port: 465, smtp_user: '', smtp_password: '', sender_name: 'AI Agent', recipients: '' }
 })
 
 const testingChannel = ref<Record<string, boolean>>({})
@@ -306,7 +317,7 @@ const fetchConfigs = async () => {
   }
 }
 
-const saveConfig = async (channel: string) => {
+const saveConfig = async (channel: string, successMessage?: string) => {
   savingChannel.value[channel] = true
   try {
     const res = await axios.put('/api/portal/notifications/config', {
@@ -314,7 +325,7 @@ const saveConfig = async (channel: string) => {
       config_data: configs.value[channel]
     })
     if (res.data && res.data.status === 'success') {
-      emit('show-toast', `${getChannelName(channel)}配置保存成功`, 'success')
+      emit('show-toast', successMessage || `${getChannelName(channel)}配置保存成功`, 'success')
       await fetchConfigs() // 重新拉取以更新打星号
     }
   } catch (error: any) {
@@ -322,6 +333,12 @@ const saveConfig = async (channel: string) => {
   } finally {
     savingChannel.value[channel] = false
   }
+}
+
+// 开关本身也要持久化：关闭后表单（含保存按钮）会收起，若不在此保存，刷新后状态会回弹
+const onToggleChannel = async (channel: string) => {
+  const enabled = configs.value[channel]?.is_enabled
+  await saveConfig(channel, `${getChannelName(channel)}通知已${enabled ? '开启' : '关闭'}`)
 }
 
 const testConfig = async (channel: string) => {

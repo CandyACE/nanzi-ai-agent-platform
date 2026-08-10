@@ -19,6 +19,44 @@ from app.models.user_notification_config import UserNotificationConfig
 
 logger = logging.getLogger(__name__)
 
+# 发送重试：仅对网络/传输类异常重试；渠道返回的业务错误码（如 webhook 配置错误）不重试
+_SEND_RETRY_DELAYS_SEC = (2.0, 5.0)
+_TRUNCATED_NOTE = "\n\n…（内容超出渠道长度限制，已截断）"
+# 企业微信 markdown 上限 4096 字节；钉钉 markdown 上限 20000 字节，留出余量
+_WECHAT_WORK_MAX_BYTES = 4000
+_DINGTALK_MAX_BYTES = 18000
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """按 UTF-8 字节数截断，避免超过渠道消息体上限被整条拒收。"""
+    raw = str(text or "")
+    encoded = raw.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return raw
+    note_bytes = _TRUNCATED_NOTE.encode("utf-8")
+    budget = max(0, max_bytes - len(note_bytes))
+    truncated = encoded[:budget].decode("utf-8", errors="ignore")
+    return truncated + _TRUNCATED_NOTE
+
+
+async def _send_with_retries(send_once, *, channel: str) -> Tuple[bool, str]:
+    """send_once() 返回 (ok, err)。抛异常视为传输失败并按退避重试；业务失败立即返回。"""
+    last_err = ""
+    for attempt in range(len(_SEND_RETRY_DELAYS_SEC) + 1):
+        try:
+            return await send_once()
+        except Exception as exc:
+            last_err = str(exc)
+            if attempt < len(_SEND_RETRY_DELAYS_SEC):
+                delay = _SEND_RETRY_DELAYS_SEC[attempt]
+                logger.warning(
+                    "Notification send failed via %s (attempt %s), retrying in %ss: %s",
+                    channel, attempt + 1, delay, last_err,
+                )
+                await asyncio.sleep(delay)
+    return False, last_err
+
+
 class NotificationService:
     DEFAULT_CONFIGS = {
         "dingtalk": {
@@ -36,7 +74,8 @@ class NotificationService:
             "smtp_port": 465,
             "smtp_user": "",
             "smtp_password": "",
-            "sender_name": "AI Agent"
+            "sender_name": "AI Agent",
+            "recipients": ""
         }
     }
 
@@ -264,7 +303,9 @@ class NotificationService:
     async def _send_dingtalk_msg_real(cls, config: Dict[str, Any], title: str, content: str) -> Tuple[bool, str]:
         webhook_url = config.get("webhook_url")
         secret = config.get("secret")
-        try:
+        body = _truncate_utf8(f"### {title}\n\n{content}", _DINGTALK_MAX_BYTES)
+
+        async def send_once() -> Tuple[bool, str]:
             target_url = webhook_url
             if secret:
                 timestamp = str(round(time.time() * 1000))
@@ -277,7 +318,7 @@ class NotificationService:
                 "msgtype": "markdown",
                 "markdown": {
                     "title": title,
-                    "text": f"### {title}\n\n{content}"
+                    "text": body
                 }
             }
 
@@ -286,10 +327,9 @@ class NotificationService:
                 resp_data = response.json()
                 if resp_data.get("errcode") == 0:
                     return True, ""
-                else:
-                    return False, f"{resp_data.get('errmsg')} (Code: {resp_data.get('errcode')})"
-        except Exception as e:
-            return False, str(e)
+                return False, f"{resp_data.get('errmsg')} (Code: {resp_data.get('errcode')})"
+
+        return await _send_with_retries(send_once, channel="dingtalk")
 
     @classmethod
     async def send_wechat_work(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
@@ -299,14 +339,24 @@ class NotificationService:
         config = json.loads(record.config_json)
         if not config.get("is_enabled") or not config.get("webhook_url"):
             return False, "用户未启用企业微信通知"
-        try:
-            payload = {"msgtype": "markdown", "markdown": {"content": f"### {title}\n\n{content}"}}
+
+        body = _truncate_utf8(f"### {title}\n\n{content}", _WECHAT_WORK_MAX_BYTES)
+
+        async def send_once() -> Tuple[bool, str]:
+            payload = {"msgtype": "markdown", "markdown": {"content": body}}
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(config["webhook_url"], json=payload)
                 data = response.json()
             return (True, "") if data.get("errcode") == 0 else (False, str(data.get("errmsg") or data))
-        except Exception as exc:
-            return False, str(exc)
+
+        return await _send_with_retries(send_once, channel="wechat_work")
+
+    @staticmethod
+    def parse_email_recipients(raw: Any) -> List[str]:
+        """解析收件人配置：支持逗号/分号/空白分隔的多个地址。"""
+        text = str(raw or "").replace("；", ";").replace("，", ",")
+        parts = [p.strip() for chunk in text.split(";") for p in chunk.split(",")]
+        return [p for p in parts if p and "@" in p]
 
     @classmethod
     async def send_email(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
@@ -322,20 +372,22 @@ class NotificationService:
             username, password = config.get("smtp_user"), config.get("smtp_password")
             if not host or not username or not password:
                 raise ValueError("SMTP 配置不完整")
+            # 收件人可配置；未配置时回退给 SMTP 账号自身
+            recipients = cls.parse_email_recipients(config.get("recipients")) or [username]
             message = MIMEMultipart()
             message["From"] = formataddr((config.get("sender_name") or "AI Agent", username))
-            message["To"] = username
+            message["To"] = ", ".join(recipients)
             message["Subject"] = title
             message.attach(MIMEText(content, "plain", "utf-8"))
             server = smtplib.SMTP_SSL(host, port, timeout=10.0) if port == 465 else smtplib.SMTP(host, port, timeout=10.0)
             if port != 465:
                 server.starttls()
             server.login(username, password)
-            server.sendmail(username, [username], message.as_string())
+            server.sendmail(username, recipients, message.as_string())
             server.quit()
 
-        try:
+        async def send_once() -> Tuple[bool, str]:
             await asyncio.to_thread(send_sync)
             return True, ""
-        except Exception as exc:
-            return False, str(exc)
+
+        return await _send_with_retries(send_once, channel="email")

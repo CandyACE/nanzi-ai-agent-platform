@@ -692,14 +692,14 @@ watch(
 
     <div
       ref="barRef"
-      class="relative flex flex-wrap items-center gap-1.5 border-t border-gray-100 bg-gray-50/70 px-2 py-2"
+      class="relative flex flex-wrap items-center gap-1 border-t border-gray-100 bg-gray-50/70 px-2 py-1.5"
       @pointerenter="cancelPendingClose"
       @pointerleave="scheduleClose"
     >
       <button
         :ref="(el) => setTriggerRef('model', el)"
         type="button"
-        class="inline-flex h-8 max-w-[14rem] items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
+        class="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="activePanel === 'model' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('model')"
       >
@@ -713,7 +713,7 @@ watch(
       <button
         :ref="(el) => setTriggerRef('approval', el)"
         type="button"
-        class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
+        class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="approvalMode === 'allow'
           ? 'border-blue-200 bg-blue-50 text-blue-700'
           : approvalMode === 'ask'
@@ -721,7 +721,7 @@ watch(
             : 'border-gray-200 bg-white text-gray-600'"
         @click.stop="togglePanel('approval')"
       >
-        <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         <span>{{ approvalLabel }}</span>
         <svg class="h-3 w-3 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
       </button>
@@ -729,7 +729,7 @@ watch(
       <button
         :ref="(el) => setTriggerRef('datasets', el)"
         type="button"
-        class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
+        class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="activePanel === 'datasets' || resourceScope.datasets.length ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('datasets')"
       >
@@ -740,7 +740,7 @@ watch(
       <button
         :ref="(el) => setTriggerRef('knowledge_bases', el)"
         type="button"
-        class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
+        class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="activePanel === 'knowledge_bases' || resourceScope.knowledge_bases.length ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('knowledge_bases')"
       >
@@ -751,7 +751,7 @@ watch(
       <button
         :ref="(el) => setTriggerRef('skills', el)"
         type="button"
-        class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
+        class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="activePanel === 'skills' || resourceScope.skills.length ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('skills')"
       >
@@ -762,7 +762,7 @@ watch(
       <button
         :ref="(el) => setTriggerRef('mcp_tools', el)"
         type="button"
-        class="inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition"
+        class="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="activePanel === 'mcp_tools' || resourceScope.mcp_tools.length ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
         @click.stop="togglePanel('mcp_tools')"
       >

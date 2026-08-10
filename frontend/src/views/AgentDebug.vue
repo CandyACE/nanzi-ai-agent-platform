@@ -1685,8 +1685,25 @@ const workspacePinned = ref(
     readStoredBoolean("debug_workspace_pinned", false),
 );
 watch(workspacePinned, (val) => {
+  // 窄屏下抽屉会强制取消钉住，属于临时状态，不覆盖桌面端的钉住偏好
+  if (window.matchMedia("(max-width: 639px)").matches) return;
   localStorage.setItem("debug_workspace_pinned", val ? "1" : "0");
 });
+
+/** 桌面端打开工作空间时强制钉住；用户仍可手动取消钉住 */
+const openWorkspaceDrawer = () => {
+  if (!window.matchMedia("(max-width: 639px)").matches) {
+    workspacePinned.value = true;
+  }
+  showWorkspaceDrawer.value = true;
+};
+const toggleWorkspaceDrawer = () => {
+  if (showWorkspaceDrawer.value) {
+    showWorkspaceDrawer.value = false;
+    return;
+  }
+  openWorkspaceDrawer();
+};
 
 const showMemoryDrawer = ref(false);
 
@@ -2141,7 +2158,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   }
   if (isWorkspaceSlashCommand(normalizedCmd)) {
     userInput.value = "";
-    showWorkspaceDrawer.value = !showWorkspaceDrawer.value;
+    toggleWorkspaceDrawer();
     return true;
   }
   if (isKnowledgePortalSlashCommand(normalizedCmd)) {
@@ -5005,7 +5022,7 @@ onUnmounted(() => {
           @reorder-commands="handleReorderCommands"
           :agent-id="agentParams.agent_id"
           @select-knowledge-base="openKnowledgePortal"
-          @select-local-fs="showWorkspaceDrawer = true"
+          @select-local-fs="openWorkspaceDrawer"
           @select-memory="openMemorySelector"
           @select-mcp-tool="mountMcpToolToSession"
           @system-command="handleSystemCommand"

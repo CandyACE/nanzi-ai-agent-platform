@@ -495,6 +495,49 @@ class PromptService:
 若无法输出 XML，也可退回 JSON（content 内双引号必须写成 \\"，换行写成 \\n）：
 {"suggestions":[{"title":"...","content":"...","reason":"..."}]}"""
 
+        return await PromptService._generate_optimize_suggestions(
+            system_prompt, f"原始提示词如下：\n\n{content}"
+        )
+
+    @staticmethod
+    async def optimize_task_instruction(content: str) -> Dict[str, Any]:
+        """利用 LLM 为定时任务的执行指令生成 3 个优化版本。"""
+        system_prompt = """你是一个 AI 任务指令优化专家。用户会给你一段「定时任务执行指令」，该指令将定期发送给 AI 智能体自动执行（智能体可查询数据库、检索知识库、生成报告等），执行结果会推送给用户。
+你的任务是生成恰好 3 个不同侧重点的优化版本。
+
+优化原则：
+- 严格保留用户的业务意图，不要虚构用户没有提到的数据范围、指标或阈值。
+- 如果关键信息缺失（如时间范围、统计对象、阈值），用占位符「____」标注并提示用户补充，不要自行编造。
+- 指令面向自动化执行场景：应明确任务目标、数据/时间范围、输出格式，避免开放式闲聊措辞。
+
+必须提供以下 3 个方案（每个方案 1 个，title 需体现方案名称）：
+1. **结构化完整版**：按「任务目标 / 数据范围 / 输出要求 / 其他说明」骨架组织，信息完整、边界清晰。
+2. **精简直达版**：保持简短（几行以内），一句话说清目标与范围，适合简单任务。
+3. **输出契约版**：重点固定输出结构（如固定章节、指标表格、结论先行），让每次推送的结果格式稳定、便于阅读对比。
+
+输出格式要求（优先使用 XML，避免正文中的引号/换行破坏结构）：
+请仅返回如下 XML，不要 Markdown 代码块，不要额外解释：
+<suggestions>
+  <item>
+    <title>方案标题 (如：结构化完整版)</title>
+    <reason>推荐理由</reason>
+    <content><![CDATA[
+优化后的执行指令内容
+]]></content>
+  </item>
+  <!-- 必须恰好 3 个 item -->
+</suggestions>
+
+若无法输出 XML，也可退回 JSON（content 内双引号必须写成 \\"，换行写成 \\n）：
+{"suggestions":[{"title":"...","content":"...","reason":"..."}]}"""
+
+        return await PromptService._generate_optimize_suggestions(
+            system_prompt, f"原始执行指令如下：\n\n{content}"
+        )
+
+    @staticmethod
+    async def _generate_optimize_suggestions(system_prompt: str, user_text: str) -> Dict[str, Any]:
+        """调用 LLM 生成优化建议，解析失败时做一次修复重试。"""
         try:
             llm = await get_llm_async()
             if not llm:
@@ -508,7 +551,7 @@ class PromptService:
                 ),
                 RuntimeMessage(
                     role="user",
-                    content=[RuntimeContentBlock(type="text", text=f"原始提示词如下：\n\n{content}")],
+                    content=[RuntimeContentBlock(type="text", text=user_text)],
                 ),
             ]
             raw_text = await chat_client.generate_text(messages)
@@ -529,7 +572,7 @@ class PromptService:
                                 type="text",
                                 text=(
                                     "你是 JSON/XML 修复器。用户会给你一段损坏的提示词优化结果。"
-                                    "请改写为合法 XML（推荐）或合法 JSON，保留全部 8 个方案的 title/reason/content。"
+                                    "请改写为合法 XML（推荐）或合法 JSON，保留全部方案的 title/reason/content。"
                                     "content 优先放在 CDATA 中。只输出修复后的结果，不要解释。"
                                 ),
                             )

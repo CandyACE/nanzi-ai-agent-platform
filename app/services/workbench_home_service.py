@@ -282,7 +282,15 @@ async def _load_tasks(
     items: List[Dict[str, Any]] = []
     for row in result.scalars().all():
         row_status = int(row.status or 0)
-        is_failed = row_status == 2
+        # 执行异常从 config.task_metrics 判定：调度器从不写 status=2（死枚举），
+        # 真实执行态在 metrics.last_status / health_status 里。
+        raw_cfg = getattr(row, "config", None)
+        cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
+        metrics = cfg.get("task_metrics") if isinstance(cfg.get("task_metrics"), dict) else {}
+        is_failed = (
+            metrics.get("last_status") == "failed"
+            or metrics.get("health_status") == "error"
+        )
         is_active = row_status == 1
         if is_failed:
             status_key = "failed"
@@ -296,7 +304,7 @@ async def _load_tasks(
         items.append(
             {
                 "id": f"task:{row.id}",
-                "business_key": f"task:{row.id}:status:{row.status}",
+                "business_key": f"task:{row.id}:status:{row.status}:{metrics.get('last_status') or '-'}",
                 "type": "task_failure" if is_failed else "scheduled_task",
                 "title": row.name,
                 "subtitle": subtitle,

@@ -93,6 +93,24 @@ async def optimize_agent_editor_prompt(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/optimize/task-instruction", response_model=PromptOptimizeResponse)
+async def optimize_task_instruction(
+    data: Dict[str, str],
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """为任务中心的执行指令提供 AI 润色；仅要求登录，不要求提示词工坊权限。"""
+    content = data.get("content")
+    if not content:
+        raise HTTPException(status_code=400, detail="Missing content")
+
+    try:
+        return await PromptService.optimize_task_instruction(content)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"AI 润色结果解析失败，请重试：{e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/history")
 async def get_prompt_history(
     source: PromptSource,

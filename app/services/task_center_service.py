@@ -6,7 +6,11 @@ from datetime import datetime
 import uuid
 
 from app.models.task import AgentScheduledTask
-from app.services.ai.scheduler_service import scheduler_service, _task_run_conversation_prefix
+from app.services.ai.scheduler_service import (
+    TASK_METRICS_KEY,
+    scheduler_service,
+    _task_run_conversation_prefix,
+)
 from app.models.audit import AgentExecutionHistory
 
 logger = logging.getLogger(__name__)
@@ -27,6 +31,9 @@ def attach_task_metrics(task: AgentScheduledTask) -> AgentScheduledTask:
     task.last_attempt_at = metrics.get("last_started_at") or metrics.get("last_finished_at")
     task.last_finished_at = metrics.get("last_finished_at")
     task.last_alert_at = metrics.get("last_alert_at")
+    task.last_delivery_status = metrics.get("last_delivery_status")
+    task.last_delivery_error = metrics.get("last_delivery_error")
+    task.last_delivery_at = metrics.get("last_delivery_at")
     return task
 
 class TaskCenterService:
@@ -114,6 +121,21 @@ class TaskCenterService:
         task_id: int,
         updates: Dict[str, Any]
     ) -> Optional[AgentScheduledTask]:
+        # 执行指标存于 config.task_metrics（由调度器维护）；前端 PATCH 提交的 config
+        # 通常不含该字段，整体覆盖会抹掉执行统计，这里始终以库内指标为准回填。
+        if "config" in updates:
+            from app.services.ai.scheduler_service import TASK_METRICS_KEY
+
+            existing_config = (
+                await db.execute(
+                    select(AgentScheduledTask.config).where(AgentScheduledTask.id == task_id)
+                )
+            ).scalar_one_or_none() or {}
+            new_config = dict(updates["config"] or {})
+            if TASK_METRICS_KEY in existing_config:
+                new_config[TASK_METRICS_KEY] = existing_config[TASK_METRICS_KEY]
+            updates = {**updates, "config": new_config}
+
         stmt = update(AgentScheduledTask).where(AgentScheduledTask.id == task_id).values(**updates)
         await db.execute(stmt)
         await db.commit()
@@ -127,9 +149,8 @@ class TaskCenterService:
     async def delete_task(db: AsyncSession, task_id: int):
         task = await TaskCenterService.get_task(db, task_id)
         if task:
-            # Stop in scheduler
-            task.status = 0
-            await scheduler_service.upsert_task(task)
+            # 彻底摘除调度 Job（含未执行的重试 Job）
+            await scheduler_service.remove_task(task_id)
             
             # Delete from DB
             await db.execute(delete(AgentScheduledTask).where(AgentScheduledTask.id == task_id))

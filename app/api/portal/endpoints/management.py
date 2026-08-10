@@ -653,6 +653,13 @@ async def delete_user(
     # 1. Clean up non-relationship data (permissions and scheduled tasks)
     from app.models.task import AgentScheduledTask
     
+    # 先记下任务 ID，删完库里的行后同步摘除调度器 Job，避免留下到点空跑的僵尸调度
+    task_ids = list(
+        (await db.execute(
+            select(AgentScheduledTask.id).where(AgentScheduledTask.user_id == user_id)
+        )).scalars().all()
+    )
+
     await db.execute(delete(ResourcePermission).where(ResourcePermission.user_id == user_id))
     await db.execute(delete(AgentScheduledTask).where(AgentScheduledTask.user_id == user_id))
     
@@ -664,6 +671,15 @@ async def delete_user(
     # 3. Finally delete the user
     await db.delete(user)
     await db.commit()
+    
+    # Remove scheduler jobs for the deleted tasks
+    if task_ids:
+        try:
+            from app.services.ai.scheduler_service import scheduler_service
+            for task_id in task_ids:
+                await scheduler_service.remove_task(task_id)
+        except Exception as e:
+            logger.error(f"Failed to remove scheduler jobs for deleted user {user_id}: {e}")
     
     # Security: Clear Redis cache
     try:

@@ -16,9 +16,13 @@ const props = withDefaults(defineProps<{
   disabled?: boolean;
   endpoint?: string;
   requirePermission?: boolean;
+  confirmMessage?: string;
+  loadingHint?: string;
 }>(), {
   endpoint: '/api/portal/prompts/optimize',
   requirePermission: true,
+  confirmMessage: 'AI 将针对当前内容生成 8 个侧重点不同的优化方案（含工具调用、反幻觉、输出契约等高级范式），大约需要几秒钟。是否开始？',
+  loadingHint: '正在为您生成 8 个差异化方案',
 });
 
 const emit = defineEmits<{
@@ -133,7 +137,7 @@ onUnmounted(() => {
   <ConfirmModal
     v-if="showOptimizeConfirm"
     title="AI 提示词润色"
-    message="AI 将针对当前内容生成 8 个侧重点不同的优化方案（含工具调用、反幻觉、输出契约等高级范式），大约需要几秒钟。是否开始？"
+    :message="props.confirmMessage"
     confirm-text="开始润色"
     cancel-text="取消"
     type="primary"
@@ -163,7 +167,7 @@ onUnmounted(() => {
             <SparklesIcon class="absolute inset-0 m-auto w-8 h-8 text-indigo-500 animate-pulse" />
           </div>
           <div class="text-base font-bold text-gray-900 mb-2">AI 正在深度优化中...</div>
-          <div class="text-xs text-gray-400 mb-5">正在为您生成 8 个差异化方案</div>
+          <div class="text-xs text-gray-400 mb-5">{{ props.loadingHint }}</div>
           <button
             type="button"
             class="px-4 py-2 text-xs font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors"
