@@ -15,6 +15,7 @@ from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.agent_readiness import has_knowledge_binding
+from app.services.ai.agent_types import AgentType
 from app.services.ai.prompt_assembler import (
     PromptAssemblyInput,
     assemble_system_prompt,
@@ -39,6 +40,19 @@ logger = logging.getLogger(__name__)
 
 AWAITING_RESUME_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
+
+
+def _public_agent_type(agent_config: Any) -> str:
+    """Return a JSON-safe primary type, including compatibility for test/runtime shims."""
+    raw_type = getattr(agent_config, "agent_type", AgentType.GENERAL)
+    if isinstance(raw_type, AgentType):
+        return raw_type.value
+    if isinstance(raw_type, str):
+        try:
+            return AgentType(raw_type).value
+        except ValueError:
+            pass
+    return AgentType.GENERAL.value
 
 
 def build_current_model_answer(info: RuntimeModelInfo) -> str:
@@ -1398,6 +1412,7 @@ class AgentService:
                     "type": "meta",
                     "agent_name": agent_config.agent_name,
                     "agent_display_name": agent_config.agent_display_name or agent_config.agent_name,
+                    "agent_type": _public_agent_type(agent_config),
                     "model": runtime_model_info.effective_model_id,
                     "runtime_model_info": runtime_model_info.public_dict(),
                 }
@@ -1801,11 +1816,11 @@ class AgentService:
                 }
 
             agent_config.model_name = runtime_model_info.configured_model
-
             meta_event: Dict[str, Any] = {
                 "type": "meta",
                 "agent_name": agent_config.agent_name,
                 "agent_display_name": agent_config.agent_display_name or agent_config.agent_name,
+                "agent_type": _public_agent_type(agent_config),
                 "model": runtime_model_info.effective_model_id,
                 "configured_model": runtime_model_info.configured_model,
                 "effective_model_id": runtime_model_info.effective_model_id,

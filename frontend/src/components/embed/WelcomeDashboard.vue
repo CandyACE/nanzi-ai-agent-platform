@@ -11,6 +11,7 @@ const props = defineProps<{
   slashCommands: any[];
   welcomeCards?: Array<{ icon: string; title: string; subtitle: string; prompt: string }>;
   personalResources?: WorkbenchPersonalResource[];
+  personalResourcesRefreshing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -19,6 +20,7 @@ const emit = defineEmits<{
   (e: 'select-knowledge-base'): void;
   (e: 'open-workspace'): void;
   (e: 'open-personal-resources', tab: string): void;
+  (e: 'refresh-personal-resources'): void;
 }>();
 
 type CapabilityAction = 'data-portal' | 'knowledge-base' | 'workspace';
@@ -107,7 +109,34 @@ const recommendedPrompts = computed(() => {
 
     <!-- 资源条单独放宽，避免 max-w-3xl 下 5 列被挤扁 -->
     <div v-if="personalResources?.length" class="w-full max-w-3xl mb-8 sm:mb-10">
-      <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-3 px-1">我的资源</p>
+      <div class="mb-3 flex items-center gap-1.5 px-1">
+        <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest">我的资源</p>
+        <button
+          type="button"
+          class="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-300 transition-colors hover:bg-gray-100 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-gray-800"
+          :disabled="personalResourcesRefreshing"
+          :aria-busy="personalResourcesRefreshing"
+          :aria-label="personalResourcesRefreshing ? '刷新中' : '刷新我的资源'"
+          title="刷新我的资源"
+          @click="emit('refresh-personal-resources')"
+        >
+          <svg
+            class="h-3 w-3"
+            :class="{ 'animate-spin': personalResourcesRefreshing }"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+        </button>
+      </div>
       <WorkbenchPersonalResources
         compact
         :items="personalResources"

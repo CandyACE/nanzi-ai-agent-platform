@@ -50,6 +50,7 @@ class SaveReportRequest(BaseModel):
     sql_template: Optional[str] = Field(None, description="参数化 SQL 模板")
     params_schema: List[Dict[str, Any]] = Field(default_factory=list, description="运行参数定义")
     default_params: Dict[str, Any] = Field(default_factory=dict, description="默认运行参数")
+    column_meta: Optional[Dict[str, Any]] = Field(None, description="结果列业务语义快照")
     analysis_mode: str = Field("manual", description="执行后分析模式：manual 或 auto")
     tags: List[str] = Field(default_factory=list, description="报表标签")
 
@@ -57,6 +58,16 @@ class SaveReportRequest(BaseModel):
 class ExecuteReportRequest(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict, description="本次运行参数")
     analysis_mode: Optional[str] = Field(None, description="覆盖报表默认分析模式")
+    defer_analysis: bool = Field(
+        True,
+        description="为 True 时本次仅查数并返回表格上下文，解读请调用 /analyze",
+    )
+
+
+class AnalyzeReportRequest(BaseModel):
+    conversation_id: Optional[str] = Field(None, description="会话 ID，优先复用 Redis 最近结果")
+    run_id: Optional[int] = Field(None, description="指定运行记录 ID")
+    analysis_instruction: Optional[str] = Field(None, max_length=500, description="可选分析偏好")
 
 
 class SavedReportSubscriptionRequest(BaseModel):
@@ -96,6 +107,7 @@ class UpdateReportRequest(BaseModel):
     sql_template: Optional[str] = Field(None, description="参数化 SQL 模板")
     params_schema: Optional[List[Dict[str, Any]]] = Field(None, description="运行参数定义")
     default_params: Optional[Dict[str, Any]] = Field(None, description="默认运行参数")
+    column_meta: Optional[Dict[str, Any]] = Field(None, description="结果列业务语义快照")
     analysis_mode: Optional[str] = Field(None, description="执行后分析模式：manual 或 auto")
     tags: Optional[List[str]] = Field(None, description="报表标签")
 
@@ -130,6 +142,7 @@ class SavedReportItem(BaseModel):
     sql_template: Optional[str] = None
     params_schema: List[Dict[str, Any]] = Field(default_factory=list)
     default_params: Dict[str, Any] = Field(default_factory=dict)
+    column_meta: Optional[Dict[str, Any]] = None
     analysis_mode: str = "manual"
     tags: List[str] = Field(default_factory=list)
     owner_user_id: Optional[int] = None
@@ -223,6 +236,8 @@ def _build_saved_report_result_snapshot(
     parsed: Any,
     *,
     limit: int = 200,
+    column_meta: Any = None,
+    column_labels: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     columns: List[Any] = []
     rows: List[Any] = []
@@ -251,7 +266,12 @@ def _build_saved_report_result_snapshot(
         columns = list(rows[0].keys())
     snapshot_rows = rows[: max(0, limit)]
     row_count = max(len(rows), explicit_total or 0)
-    return {"columns": columns, "rows": snapshot_rows}, row_count, len(snapshot_rows)
+    snapshot: Dict[str, Any] = {"columns": columns, "rows": snapshot_rows}
+    if column_meta:
+        snapshot["column_meta"] = column_meta
+    if column_labels:
+        snapshot["column_labels"] = dict(column_labels)
+    return snapshot, row_count, len(snapshot_rows)
 
 
 def _saved_report_permission_snapshot(permission_notice: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -319,12 +339,21 @@ def _finish_saved_report_run_success(
     parsed: Any,
     permission_notice: Dict[str, Any],
     started: float,
+    *,
+    column_meta: Any = None,
+    column_labels: Optional[Dict[str, Any]] = None,
+    analysis_snapshot: Any = None,
 ) -> None:
-    snapshot, row_count, snapshot_row_count = _build_saved_report_result_snapshot(parsed)
+    snapshot, row_count, snapshot_row_count = _build_saved_report_result_snapshot(
+        parsed,
+        column_meta=column_meta,
+        column_labels=column_labels,
+    )
     run.status = "success"
     run.row_count = row_count
     run.snapshot_row_count = snapshot_row_count
     run.result_snapshot = snapshot
+    run.analysis_snapshot = analysis_snapshot
     run.permission_notice = _saved_report_permission_snapshot(permission_notice)
     run.duration_ms = max(0, int((time.perf_counter() - started) * 1000))
     run.finished_at = datetime.now()
@@ -436,6 +465,13 @@ def _build_saved_report_item(
         mode = "param_sql"
 
     analysis_mode = body.analysis_mode if body.analysis_mode in {"manual", "auto"} else "manual"
+    from app.services.saved_report_column_meta import (
+        fill_missing_terms_with_heuristics,
+        normalize_column_meta,
+    )
+
+    column_meta = normalize_column_meta(getattr(body, "column_meta", None))
+    column_meta = fill_missing_terms_with_heuristics(column_meta, sql=sql_clean) or column_meta
 
     return SavedReportItem(
         id=report_id,
@@ -451,6 +487,7 @@ def _build_saved_report_item(
         sql_template=sql_template,
         params_schema=params_schema,
         default_params=default_params,
+        column_meta=column_meta,
         analysis_mode=analysis_mode,
         tags=_clean_tags(tags if tags is not None else body.tags),
         owner_user_id=owner_user_id,
@@ -526,6 +563,7 @@ def _report_row_to_item(report: PortalSavedReport, *, current_user_id: int) -> S
         sql_template=report.sql_template,
         params_schema=_normalize_json_list(report.params_schema),
         default_params=_normalize_json_dict(report.default_params),
+        column_meta=_normalize_json_dict(report.column_meta) or None,
         analysis_mode=report.analysis_mode or "manual",
         tags=_clean_tags(report.tags if isinstance(report.tags, list) else []),
         owner_user_id=int(report.owner_user_id) if report.owner_user_id is not None else None,
@@ -1065,6 +1103,7 @@ def _apply_report_item_to_row(report: PortalSavedReport, item: SavedReportItem) 
     report.sql_template = item.sql_template
     report.params_schema = item.params_schema
     report.default_params = item.default_params
+    report.column_meta = item.column_meta
     report.analysis_mode = item.analysis_mode
     report.tags = item.tags
     report.visibility = item.visibility
@@ -1365,6 +1404,7 @@ async def update_saved_report(
     sql_template = body.sql_template if "sql_template" in fields_set else existing.sql_template
     params_schema = body.params_schema if "params_schema" in fields_set and body.params_schema is not None else existing.params_schema
     default_params = body.default_params if "default_params" in fields_set and body.default_params is not None else existing.default_params
+    column_meta = body.column_meta if "column_meta" in fields_set else existing.column_meta
     analysis_mode = body.analysis_mode if "analysis_mode" in fields_set and body.analysis_mode is not None else existing.analysis_mode
 
     if "sql_content" in fields_set and "sql_template" not in fields_set and "params_schema" not in fields_set:
@@ -1391,6 +1431,7 @@ async def update_saved_report(
         sql_template=sql_template,
         params_schema=params_schema or [],
         default_params=default_params or {},
+        column_meta=column_meta,
         analysis_mode=analysis_mode or "manual",
         tags=tags or [],
     )
@@ -1511,6 +1552,7 @@ async def copy_saved_report(
         sql_template=source_item.sql_template,
         params_schema=source_item.params_schema,
         default_params=source_item.default_params,
+        column_meta=source_item.column_meta,
         analysis_mode=source_item.analysis_mode,
         tags=source_item.tags,
     )
@@ -1727,6 +1769,137 @@ async def delete_saved_report_subscription(report_id: str, user_info=Depends(req
 
 
 @router.post(
+    "/{report_id}/analyze",
+    response_model=StandardResponse[Any],
+    summary="对最近一次黄金报表执行结果做业务解读",
+)
+async def analyze_saved_report(
+    report_id: str,
+    body: Optional[AnalyzeReportRequest] = None,
+    conversation_id: Optional[str] = Query(None),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from app.services.saved_report_analysis_service import analyze_saved_report_result
+    from app.services.saved_report_column_meta import (
+        column_labels_from_meta,
+        resolve_column_meta_for_result,
+    )
+
+    user_id = int(user_info["user_id"])
+    role_ids = await _get_user_role_ids(db, user_id)
+    report_row = await _get_report_for_user(db, report_id=report_id, user_id=user_id, role_ids=role_ids)
+    report = _report_row_to_item(report_row, current_user_id=user_id)
+    request_body = body or AnalyzeReportRequest()
+    conv_id = conversation_id or request_body.conversation_id
+
+    parsed: Any = None
+    column_labels: Dict[str, Any] = {}
+    column_meta = report_row.column_meta
+    resolved_params: Dict[str, Any] = {}
+    run_row: Optional[PortalSavedReportRun] = None
+
+    if request_body.run_id is not None:
+        run_result = await db.execute(
+            select(PortalSavedReportRun).where(
+                PortalSavedReportRun.id == int(request_body.run_id),
+                PortalSavedReportRun.report_id == report_id,
+            )
+        )
+        run_row = run_result.scalar_one_or_none()
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        snapshot = run_row.result_snapshot if isinstance(run_row.result_snapshot, dict) else {}
+        parsed = snapshot
+        column_labels = dict(snapshot.get("column_labels") or {})
+        column_meta = snapshot.get("column_meta") or column_meta
+        resolved_params = dict(run_row.resolved_params or {})
+    elif conv_id:
+        try:
+            from app.services.ai.memory_service import memory_service
+
+            cached = await memory_service.get_last_data_result(str(user_id), conv_id)
+        except Exception:
+            cached = None
+        if isinstance(cached, dict) and str(cached.get("report_id") or "") == str(report_id):
+            parsed = cached.get("rows")
+            column_labels = dict(cached.get("column_labels") or {})
+            column_meta = cached.get("column_meta") or column_meta
+            resolved_params = dict(cached.get("params") or {})
+
+    if parsed is None:
+        latest = await db.execute(
+            select(PortalSavedReportRun)
+            .where(
+                PortalSavedReportRun.report_id == report_id,
+                PortalSavedReportRun.status == "success",
+            )
+            .order_by(PortalSavedReportRun.id.desc())
+            .limit(1)
+        )
+        run_row = latest.scalar_one_or_none()
+        if run_row is None or not isinstance(run_row.result_snapshot, dict):
+            raise HTTPException(status_code=400, detail="暂无可解读的执行结果，请先运行报表")
+        snapshot = run_row.result_snapshot
+        parsed = snapshot
+        column_labels = dict(snapshot.get("column_labels") or {})
+        column_meta = snapshot.get("column_meta") or column_meta
+        resolved_params = dict(run_row.resolved_params or {})
+
+    if not column_labels:
+        try:
+            dataset_name = await _dataset_name_from_id(db, report.dataset_id)
+            column_meta, column_labels = await resolve_column_meta_for_result(
+                db,
+                parsed_result=parsed,
+                dataset_names=[name for name in [dataset_name] if name],
+                snapshot_meta=column_meta,
+                sql=report.sql_content,
+            )
+        except Exception as meta_err:
+            logger.warning("Analyze path failed to resolve column meta: %s", meta_err)
+            column_labels = column_labels_from_meta(column_meta)
+
+    analysis_result = await analyze_saved_report_result(
+        report_title=report.title,
+        original_query=report.original_query,
+        parsed_result=parsed,
+        column_labels=column_labels,
+        params=resolved_params,
+        analysis_instruction=request_body.analysis_instruction,
+    )
+
+    if run_row is not None:
+        run_row.analysis_snapshot = analysis_result.get("analysis_snapshot")
+        await db.flush()
+
+    if conv_id:
+        try:
+            from app.services.ai.memory_service import memory_service
+
+            cached = await memory_service.get_last_data_result(str(user_id), conv_id)
+            if isinstance(cached, dict) and str(cached.get("report_id") or "") == str(report_id):
+                cached = dict(cached)
+                cached["analysis"] = analysis_result.get("analysis")
+                cached["column_labels"] = column_labels or cached.get("column_labels")
+                cached["column_meta"] = column_meta or cached.get("column_meta")
+                await memory_service.set_last_data_result(str(user_id), conv_id, cached)
+        except Exception as cache_err:
+            logger.warning("Failed to update analysis in last_data_result: %s", cache_err)
+
+    return StandardResponse(
+        data={
+            "report_id": report.id,
+            "run_id": int(run_row.id) if run_row is not None and getattr(run_row, "id", None) is not None else None,
+            "analysis": analysis_result.get("analysis"),
+            "analysis_markdown": analysis_result.get("analysis_markdown"),
+            "analysis_status": analysis_result.get("analysis_status"),
+            "column_labels": column_labels,
+        }
+    )
+
+
+@router.post(
     "/{report_id}/execute",
     response_model=StandardResponse[Any],
     summary="免模型极速安全运行暂存的黄金 SQL 报表",
@@ -1842,7 +2015,59 @@ async def _execute_saved_report_impl(
             _finish_saved_report_run_error(run_row, _saved_report_sql_error_detail(raw_res), run_started)
             await db.commit()
             await _raise_saved_report_sql_error(db, report_row, raw_res)
-            
+
+        from app.services.saved_report_analysis_service import analyze_saved_report_result
+        from app.services.saved_report_column_meta import resolve_column_meta_for_result
+
+        column_meta = None
+        column_labels: Dict[str, Any] = {}
+        try:
+            dataset_names = [name for name in [dataset_name] if name]
+            column_meta, column_labels = await resolve_column_meta_for_result(
+                db,
+                parsed_result=parsed,
+                dataset_names=dataset_names,
+                snapshot_meta=report_row.column_meta,
+                sql=sql_to_execute,
+            )
+            if column_meta:
+                report_row.column_meta = column_meta
+        except Exception as meta_err:
+            logger.warning("Failed to resolve saved report column meta: %s", meta_err)
+
+        effective_analysis_mode = request_body.analysis_mode or report.analysis_mode or "manual"
+        if effective_analysis_mode not in {"manual", "auto"}:
+            effective_analysis_mode = "manual"
+        # 会话默认 defer_analysis=True：先出表，由 /analyze 二次补解读。
+        # 订阅任务仍由 digest AI 解读，避免 execute 内重复调用模型。
+        defer_analysis = bool(getattr(request_body, "defer_analysis", True))
+        should_analyze = (
+            effective_analysis_mode == "auto"
+            and trigger_type != "scheduled"
+            and not defer_analysis
+        )
+
+        analysis_payload = None
+        analysis_markdown = None
+        analysis_status = "deferred" if (effective_analysis_mode == "auto" and defer_analysis and trigger_type != "scheduled") else "disabled"
+        analysis_snapshot = None
+        if should_analyze:
+            try:
+                analysis_result = await analyze_saved_report_result(
+                    report_title=report.title,
+                    original_query=report.original_query,
+                    parsed_result=parsed,
+                    column_labels=column_labels,
+                    params=resolved_params,
+                )
+                analysis_payload = analysis_result.get("analysis")
+                analysis_markdown = analysis_result.get("analysis_markdown")
+                analysis_status = str(analysis_result.get("analysis_status") or "fallback")
+                analysis_snapshot = analysis_result.get("analysis_snapshot")
+            except Exception as analysis_err:
+                logger.warning("Failed to analyze saved report result: %s", analysis_err)
+                analysis_status = "error"
+
         # 若传入了会话ID，写入缓存供大模型下一轮做可视化复用
         if conversation_id:
             try:
@@ -1856,6 +2081,10 @@ async def _execute_saved_report_impl(
                     "params": resolved_params,
                     "report_id": report.id,
                     "report_title": report.title,
+                    "original_query": report.original_query,
+                    "column_meta": column_meta,
+                    "column_labels": column_labels,
+                    "analysis": analysis_payload,
                     "saved_at": datetime.now(timezone.utc).isoformat(),
                     "trace_id": None,
                 }
@@ -1868,13 +2097,47 @@ async def _execute_saved_report_impl(
         report_row.last_success_at = now
         report_row.last_error = None
         report_row.status = "active"
-        _finish_saved_report_run_success(run_row, parsed, permission_notice, run_started)
+        _finish_saved_report_run_success(
+            run_row,
+            parsed,
+            permission_notice,
+            run_started,
+            column_meta=column_meta,
+            column_labels=column_labels,
+            analysis_snapshot=analysis_snapshot,
+        )
         try:
             await _record_saved_report_run(db, report_id=report.id, user_id=user_id)
         except Exception as pref_err:
             logger.warning("Failed to record saved report run preference for %s: %s", report.id, pref_err)
         await db.flush()
-        return StandardResponse(data=_attach_permission_notice(parsed, permission_notice))
+        response_payload = _attach_permission_notice(parsed if isinstance(parsed, dict) else {"rows": parsed}, permission_notice)
+        if not isinstance(response_payload, dict):
+            response_payload = {"rows": response_payload}
+        response_payload = dict(response_payload)
+        if column_meta:
+            response_payload["column_meta"] = column_meta
+        if column_labels:
+            response_payload["column_labels"] = column_labels
+        response_payload["analysis"] = analysis_payload
+        response_payload["analysis_markdown"] = analysis_markdown
+        response_payload["analysis_status"] = analysis_status
+        response_payload["run_id"] = int(run_row.id) if getattr(run_row, "id", None) is not None else None
+        try:
+            from app.services.ai.runners.chatbi.insight_meta import build_saved_report_chatbi_insight_meta
+            insight = build_saved_report_chatbi_insight_meta(
+                parsed,
+                sql=sql_to_execute,
+                dataset_name=dataset_name,
+                data_source=report.data_source,
+                permission_notice=permission_notice,
+                result_id=f"saved_report_run:{run_row.id}" if getattr(run_row, "id", None) is not None else None,
+            )
+            if insight:
+                response_payload["chatbi_insight"] = insight
+        except Exception as insight_err:
+            logger.warning("Failed to build saved report chatbi insight: %s", insight_err)
+        return StandardResponse(data=response_payload)
     except json.JSONDecodeError:
         pass
 

@@ -268,9 +268,11 @@
         :slash-commands="effectiveSlashCommands"
         :welcome-cards="welcomeCards"
         :personal-resources="welcomePersonalResources"
+        :personal-resources-refreshing="workbenchHomeRefreshing"
         @quick-question="handleQuickQuestion"
         @open-data-portal="openPortalDrawer"
         @open-personal-resources="openPersonalResources"
+        @refresh-personal-resources="refreshWelcomePersonalResources"
         @select-knowledge-base="openKnowledgePortal"
         @open-workspace="showWorkspaceDrawer = true"
       />
@@ -1221,8 +1223,13 @@
                   :actions="msg.chatbiInsight.actions"
                   :is-mobile="isMobile"
                   :result-id="msg.chatbiInsight.result_id"
-                  @select="handleQuickQuestion"
+                  @select="handleChatBIContinueSelect"
                   @action="(action) => handleChatBIResultAction(action, msg)"
+                />
+                <MessageContinueAnalysis
+                  v-if="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && msg.content"
+                  :is-mobile="isMobile"
+                  @select="(query) => handleQuickQuestion(query, 'send', msg.content)"
                 />
                 <button
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
@@ -2169,6 +2176,7 @@ import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
@@ -2249,10 +2257,12 @@ import {
 } from "@/utils/savedReportDefaults";
 import {
   buildSavedReportRunParams,
+  composeSavedReportExecuteMarkdown,
   detectSavedReportDateTemplate,
+  extractColumnMetaFromAgentMessage,
   extractSavedReportExecuteErrorMessage,
+  mergeSavedReportAnalysisIntoResult,
   parseSavedReportTags,
-  renderSavedReportDataToMarkdown,
   todayDateString,
   todayMonthString,
 } from "@/composables/chat/useSavedReportWorkflow";
@@ -2384,6 +2394,8 @@ interface Message {
   thinkingText?: string;
   agentName?: string;
   agentDisplayName?: string;
+  agentType?: string;
+  isSavedReportResult?: boolean;
   turnType?: TurnType | string;
   hasDataOutput?: boolean;
   chatbiInsight?: ChatBIInsightMeta;
@@ -2866,6 +2878,8 @@ const portalInboxRef = ref<{ open: () => void | Promise<void> } | null>(null);
 const {
   payload: workbenchHome,
   load: loadWorkbenchHome,
+  refresh: refreshWorkbenchHome,
+  refreshing: workbenchHomeRefreshing,
   error: workbenchHomeError,
 } = useWorkbenchHome();
 const welcomePersonalResources = computed(() => {
@@ -2877,6 +2891,10 @@ const welcomePersonalResources = computed(() => {
       : personalResourcePlaceholderItems();
   return filterEmbedWelcomePersonalResources(source);
 });
+
+const refreshWelcomePersonalResources = () => {
+  void refreshWorkbenchHome();
+};
 
 const openPersonalResources = (tab: string) => {
   if (isInboxPersonalResource({ tab })) {
@@ -3689,6 +3707,13 @@ const hasCustomMessageBorderPreference = () =>
     localStorage.getItem("user_has_custom_border_preference") === "true";
 
 const allowedAgents = ref<any[]>([]);
+const isGeneralAgentMessage = (msg: Message): boolean => {
+  if (msg.agentType) return msg.agentType === "GENERAL";
+  const agent = allowedAgents.value.find(
+    (item: any) => item.name === msg.agentName || item.id === msg.agentName,
+  );
+  return agent?.agent_type === "GENERAL";
+};
 const hasFetchedAgents = ref(false);
 const isLoadingAgents = ref(false);
 const fetchAllowedAgents = async (force = false) => {
@@ -3792,6 +3817,29 @@ const findUniqueDataQueryAgent = () => {
 };
 
 const hasDataQueryAgent = () => listDataQueryAgents().length > 0;
+
+/** ChatBI「继续分析」等追问：本轮强制走查数智能体，避免自动路由到主助手 */
+const forceDataQueryAgentOnce = ref(false);
+const resolvePreferredDataQueryAgentId = () => {
+  const unique = findUniqueDataQueryAgent();
+  if (unique?.id) return String(unique.id);
+  const first = listDataQueryAgents()[0];
+  return first?.id ? String(first.id) : "";
+};
+const armDataQueryAgentForFollowup = () => {
+  if (isUrlAgentPinned.value) return;
+  const agentId = resolvePreferredDataQueryAgentId();
+  if (!agentId) {
+    showToast("未找到可用的数据查询智能体，无法继续可视化分析", "warning");
+    return false;
+  }
+  forceDataQueryAgentOnce.value = true;
+  return true;
+};
+const handleChatBIContinueSelect = (query: string) => {
+  if (!armDataQueryAgentForFollowup()) return;
+  void handleQuickQuestion(query);
+};
 
 const handleReorderCommands = async (reorderData: any[]) => {
     try {
@@ -4394,6 +4442,7 @@ const saveReportForm = ref({
   sql_template: '',
   params_schema: [] as any[],
   default_params: {} as Record<string, any>,
+  column_meta: null as Record<string, any> | null,
   analysis_mode: 'auto',
   tags_input: '',
 });
@@ -4460,6 +4509,7 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
     sql_template: detectedTemplate?.sql_template || '',
     params_schema: detectedTemplate?.params_schema || [],
     default_params: detectedTemplate?.default_params || {},
+    column_meta: extractColumnMetaFromAgentMessage(agentMessage),
     analysis_mode: 'auto',
     tags_input: deriveSavedReportTagsInput(requirementIntent, originalQuery),
   };
@@ -4480,6 +4530,7 @@ const openEditReportModal = (report: any) => {
     sql_template: report.sql_template || '',
     params_schema: report.params_schema || [],
     default_params: report.default_params || {},
+    column_meta: report.column_meta || null,
     analysis_mode: 'auto',
     tags_input: Array.isArray(report.tags) ? report.tags.join(', ') : '',
   };
@@ -4504,6 +4555,7 @@ const submitSaveReport = async () => {
       sql_template: saveReportForm.value.sql_template || undefined,
       params_schema: saveReportForm.value.params_schema,
       default_params: saveReportForm.value.default_params,
+      column_meta: saveReportForm.value.column_meta || undefined,
       analysis_mode: saveReportForm.value.analysis_mode,
       tags: parseSavedReportTags(saveReportForm.value.tags_input),
     };
@@ -4652,6 +4704,11 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     closePortalDrawer();
   }
 
+  // 保证有会话 ID，否则 Redis last_data_result 无法写入，后续「可视化分析」会丢上下文
+  if (!conversationId.value) {
+    generateNewConversation();
+  }
+
   isProcessing.value = true;
 
   messages.value.push({
@@ -4666,9 +4723,10 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     role: "agent",
     agentName: "chat-bi",
     agentDisplayName: "数据智能助手",
+    isSavedReportResult: true,
     content: "",
     isThinking: true,
-    thinkingText: "正在进行免模型极速直连安全执行，请稍候...",
+    thinkingText: "正在执行黄金报表，请稍候...",
     logs: [],
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
@@ -4682,32 +4740,36 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   scrollToBottom(true);
 
   try {
-    const shouldAutoAnalyze = true;
     const res = await axios.post(`/api/portal/saved-reports/${report.id}/execute`, {
       params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value),
       analysis_mode: 'auto',
+      defer_analysis: true,
     }, {
-      params: { conversation_id: conversationId.value }
+      params: { conversation_id: conversationId.value },
+      timeout: 60000,
     });
 
     agentMsg.value.isThinking = false;
     agentMsg.value.thinkingText = "";
 
-    let resultMarkdown = "";
     let detailsText = "";
+    let execResult: any = null;
 
     if (res.data && res.data.data !== undefined) {
-      const execResult = res.data.data;
-      resultMarkdown = renderSavedReportDataToMarkdown(execResult);
+      execResult = {
+        ...res.data.data,
+        analysis_status: res.data.data?.analysis_status || 'deferred',
+      };
+      agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, execResult);
       detailsText = `${report.sql_content}\n--- 结果 ---\n${typeof execResult === 'object' ? JSON.stringify(execResult, null, 2) : String(execResult)}`;
       agentMsg.value.permissionNotice = execResult?.permission_notice;
+      if (execResult?.chatbi_insight?.actions?.length) {
+        agentMsg.value.chatbiInsight = execResult.chatbi_insight;
+      }
     } else {
-      resultMarkdown = "执行结果为空。";
+      agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, null);
       detailsText = `${report.sql_content}\n--- 结果 ---\n无`;
     }
-
-    // 直连成功后输出表格，并在结尾拼接“深度可视化分析一下”快捷按钮，方便用户手动点击触发大模型分析流程
-    agentMsg.value.content = `### 📊 黄金报表「${report.title}」执行结果：\n\n${resultMarkdown}\n\n---\n- [🙋 深度可视化分析一下](quick:深度可视化分析一下)`;
 
     agentMsg.value.logs = [
       {
@@ -4720,11 +4782,31 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
         details: detailsText,
       }
     ];
-    if (shouldAutoAnalyze) {
-      pendingSavedReport.value = null;
-      setTimeout(() => {
-        handleQuickQuestion("请基于刚才黄金报表结果做业务解读，指出关键结论、异常点和后续建议。");
-      }, 0);
+    pendingSavedReport.value = null;
+
+    if (execResult) {
+      try {
+        agentMsg.value.isThinking = true;
+        agentMsg.value.thinkingText = "正在生成业务解读…";
+        const analyzeRes = await axios.post(`/api/portal/saved-reports/${report.id}/analyze`, {
+          conversation_id: conversationId.value,
+          run_id: execResult.run_id,
+        }, {
+          params: { conversation_id: conversationId.value },
+          timeout: 120000,
+        });
+        const merged = mergeSavedReportAnalysisIntoResult(execResult, analyzeRes.data?.data || {});
+        agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, merged);
+      } catch (analyzeError) {
+        console.warn("Failed to analyze saved report:", analyzeError);
+        agentMsg.value.content = composeSavedReportExecuteMarkdown(report.title, {
+          ...execResult,
+          analysis_status: 'error',
+        });
+      } finally {
+        agentMsg.value.isThinking = false;
+        agentMsg.value.thinkingText = "";
+      }
     }
   } catch (error: any) {
     console.error("Failed to execute saved report:", error);
@@ -5462,6 +5544,7 @@ const fetchConversationHistory = async (isLoadMore = false) => {
                   feedback: null,
                   agentName: item.agent_name ?? undefined,
                   agentDisplayName: item.agent_display_name ?? undefined,
+                  agentType: item.agent_type ?? undefined,
                   prompt_tokens: item.prompt_tokens ?? undefined,
                   completion_tokens: item.completion_tokens ?? undefined,
                   total_tokens: item.total_tokens ?? undefined,
@@ -5904,7 +5987,10 @@ const handleChatBIResultAction = async (
     chatbiMonitorDialogOpen.value = true;
     return;
   }
-  if (action.id !== "brief") return handleQuickQuestion(action.query);
+  if (action.id !== "brief") {
+    if (!armDataQueryAgentForFollowup()) return;
+    return handleQuickQuestion(action.query);
+  }
   const assistantReport = sourceMessage?.content?.trim();
   if (!assistantReport) {
     showToast("未找到当前分析正文，请在本轮回复旁重试", "warning");
@@ -5932,11 +6018,14 @@ const handleChatBIResultAction = async (
   }
 };
 
-const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send") => {
+const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send", sourceContent?: string) => {
   if (!content) return;
   if (action === "send" && isProcessing.value) return;
   if (action === "send" && await handleSystemCommand(content)) return;
-  userInput.value = content;
+  const selectedSource = sourceContent?.trim();
+  userInput.value = selectedSource
+    ? `${content}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
+    : content;
   if (action === "send") {
     sendMessage();
   }
@@ -6309,6 +6398,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     });
   } else if (data.type === "meta") {
     if (data.agent_name) msg.agentName = data.agent_name;
+    if (data.agent_type) msg.agentType = data.agent_type;
     if (data.agent_display_name) msg.agentDisplayName = data.agent_display_name;
     if (data.turn_type) msg.turnType = data.turn_type;
     if (data.prompt_tokens !== undefined) msg.prompt_tokens = data.prompt_tokens;
@@ -6531,6 +6621,10 @@ const sendMessage = async () => {
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
   if ((!content && files.length === 0) || isProcessing.value) return;
 
+  // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
+  const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
+  forceDataQueryAgentOnce.value = false;
+
   const quotaBlock = await ensureCanSend();
   if (quotaBlock) {
     showToast(quotaBlock, "error");
@@ -6609,7 +6703,7 @@ const sendMessage = async () => {
     const body: Record<string, unknown> = {
       messages: buildOutboundMessages(),
       stream: true,
-      agent_id: (config.routingMode === "expert" && config.expertAgentId) ? config.expertAgentId : (config.overrideAgentId || config.agentId),
+      agent_id: forcedDataAgentIdForTurn || ((config.routingMode === "expert" && config.expertAgentId) ? config.expertAgentId : (config.overrideAgentId || config.agentId)),
       enable_multi_agent: config.enableMultiAgent,
       conversation_id: conversationId.value,
       debug_options: {
@@ -6716,6 +6810,7 @@ const sendMessage = async () => {
           } else if (data.type === "meta") {
             if (data.agent_name) {
               agentMsg.value.agentName = data.agent_name;
+              if (data.agent_type) agentMsg.value.agentType = data.agent_type;
               if (data.agent_display_name) {
                   agentMsg.value.agentDisplayName = data.agent_display_name;
               }

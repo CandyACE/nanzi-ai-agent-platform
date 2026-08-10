@@ -120,6 +120,7 @@ class ChatConfig(BaseModel):
     agent_id: str
     agent_name: str
     agent_display_name: Optional[str] = None
+    agent_type: AgentType = AgentType.GENERAL
     description: str = ""
     project_name: Optional[str] = None
     agent_version: Optional[str] = None

@@ -35,10 +35,21 @@ def test_welcome_dashboard_renders_personal_resources_before_capabilities():
     dashboard = _source("frontend/src/components/embed/WelcomeDashboard.vue")
     assert "WorkbenchPersonalResources" in dashboard
     assert "open-personal-resources" in dashboard
+    assert "refresh-personal-resources" in dashboard
+    assert "刷新我的资源" in dashboard
+    assert "personalResourcesRefreshing" in dashboard
     resources_pos = dashboard.find("open-personal-resources")
     caps_pos = dashboard.find("grid-cols-1 sm:grid-cols-3")
     assert resources_pos != -1 and caps_pos != -1
     assert resources_pos < caps_pos
+
+
+def test_embed_chat_wires_personal_resources_refresh():
+    embed = _source("frontend/src/views/EmbedChat.vue")
+    assert "refreshWorkbenchHome" in embed
+    assert "workbenchHomeRefreshing" in embed
+    assert 'refresh-personal-resources="refreshWelcomePersonalResources"' in embed or "@refresh-personal-resources=\"refreshWelcomePersonalResources\"" in embed
+    assert ":personal-resources-refreshing=" in embed
 
 
 def test_embed_chat_wires_workbench_home_and_personal_resources_modal():

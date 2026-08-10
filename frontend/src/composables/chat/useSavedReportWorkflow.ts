@@ -62,6 +62,14 @@ export const parseSavedReportTags = (input: string) => {
 
 export const renderSavedReportDataToMarkdown = (data: any): string => {
   if (!data) return "执行结果为空";
+  const labels: Record<string, string> =
+    data?.column_labels && typeof data.column_labels === "object" && !Array.isArray(data.column_labels)
+      ? data.column_labels
+      : {};
+  const labelOf = (name: string) => {
+    const raw = String(name || "");
+    return String(labels[raw] || labels[raw.toLowerCase()] || raw);
+  };
   let columns: string[] = Array.isArray(data.columns)
     ? data.columns.map((column: any) => typeof column === "object" ? (column.name || "") : String(column))
     : [];
@@ -77,9 +85,10 @@ export const renderSavedReportDataToMarkdown = (data: any): string => {
     else if (Array.isArray(firstRow)) columns = firstRow.map((_, index) => `列 ${index + 1}`);
     else columns = ["结果值"];
   }
+  const displayColumns = columns.map((column) => labelOf(column));
   const maxDisplayRows = 150;
   const displayRows = rows.slice(0, maxDisplayRows);
-  let markdown = `\n\n| ${columns.join(" | ")} |\n| ${columns.map(() => "---").join(" | ")} |\n`;
+  let markdown = `\n\n| ${displayColumns.join(" | ")} |\n| ${displayColumns.map(() => "---").join(" | ")} |\n`;
   for (const row of displayRows) {
     let cells: string[] = [];
     if (Array.isArray(row)) {
@@ -98,6 +107,161 @@ export const renderSavedReportDataToMarkdown = (data: any): string => {
   if (rows.length > maxDisplayRows) markdown += `\n> *⚠️ 结果集数据量较大，已在聊天框中自动为您省略后半部分（共展示前 ${maxDisplayRows} 行 / 总计 ${rows.length} 行）。*`;
   return markdown;
 };
+
+const looksChinese = (text: string) => /[\u4e00-\u9fff]/.test(text);
+
+const heuristicTermForColumn = (name: string): string | null => {
+  const raw = String(name || "").trim();
+  if (!raw) return null;
+  if (looksChinese(raw)) return raw;
+  const tokenMap: Record<string, string> = {
+    register: "注册",
+    registration: "注册",
+    user: "用户",
+    users: "用户",
+    cust: "客户",
+    customer: "客户",
+    count: "数量",
+    cnt: "数量",
+    num: "数量",
+    amt: "金额",
+    amount: "金额",
+    date: "日期",
+    time: "时间",
+    month: "月份",
+    year: "年份",
+    create: "创建",
+    created: "创建",
+    stat: "统计",
+  };
+  const tokens = raw.replace(/^(t_|dim_|fact_)/i, "").split(/[_\s]+/).filter(Boolean);
+  const parts: string[] = [];
+  for (const token of tokens) {
+    const mapped = tokenMap[token.toLowerCase()];
+    if (!mapped) return null;
+    if (!parts.includes(mapped)) parts.push(mapped);
+  }
+  const term = parts.join("");
+  return looksChinese(term) ? term : null;
+};
+
+/** 从 ChatBI 成功查数消息提取 column_meta，供保存黄金报表时固化语义 */
+export const extractColumnMetaFromAgentMessage = (msg: any): Record<string, any> | null => {
+  const logs = Array.isArray(msg?.logs) ? msg.logs : [];
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    const log = logs[i];
+    const label = `${log?.name || ""} ${log?.title || ""}`;
+    if (!/execute_sql_query/i.test(label) || log?.status !== "success") continue;
+    const details = String(log?.details || "");
+    const delim = "--- 结果 ---";
+    const idx = details.indexOf(delim);
+    if (idx < 0) continue;
+    const body = details.slice(idx + delim.length).replace(/\n\n\[系统检测\][\s\S]*$/, "").trim();
+    try {
+      const parsed = JSON.parse(body);
+      const labels: Record<string, string> = {};
+      const columns: Array<Record<string, string>> = [];
+      const rawColumns = Array.isArray(parsed?.columns) ? parsed.columns : [];
+      if (rawColumns.length) {
+        for (const col of rawColumns) {
+          if (typeof col === "string") {
+            const term = heuristicTermForColumn(col);
+            columns.push(term ? { name: col, term } : { name: col });
+            continue;
+          }
+          if (!col || typeof col !== "object") continue;
+          const name = String(col.name || "").trim();
+          if (!name) continue;
+          let term = "";
+          for (const key of ["term", "label", "display_name", "title", "comment"]) {
+            const value = String(col[key] || "").trim();
+            if (value && (looksChinese(value) || key === "term")) {
+              term = value;
+              break;
+            }
+          }
+          if (!term) term = heuristicTermForColumn(name) || "";
+          columns.push(term ? { name, term } : { name });
+          if (term) labels[name] = term;
+        }
+      } else {
+        let rows: any[] = [];
+        if (Array.isArray(parsed?.rows)) rows = parsed.rows;
+        else if (Array.isArray(parsed)) rows = parsed;
+        const first = rows[0];
+        if (first && typeof first === "object" && !Array.isArray(first)) {
+          for (const name of Object.keys(first)) {
+            const term = heuristicTermForColumn(name);
+            columns.push(term ? { name, term } : { name });
+            if (term) labels[name] = term;
+          }
+        }
+      }
+
+      // 若助手正文 markdown 表头是中文，尽量对齐物理列顺序
+      const content = String(msg?.content || "");
+      const tableMatch = content.match(/\n\|([^\n]+)\|\n\|(?:\s*:?-{3,}:?\s*\|)+\n/);
+      if (tableMatch && columns.length) {
+        const headers = tableMatch[1]
+          .split("|")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        if (headers.length === columns.length) {
+          headers.forEach((header, index) => {
+            if (!looksChinese(header)) return;
+            const col = columns[index];
+            if (!col) return;
+            if (!col.term || !looksChinese(col.term)) col.term = header;
+            labels[col.name] = header;
+          });
+        }
+      }
+
+      if (!columns.length) return null;
+      return {
+        version: 1,
+        source: "save_time",
+        columns,
+      };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+};
+
+export const composeSavedReportExecuteMarkdown = (
+  reportTitle: string,
+  execResult: any,
+): string => {
+  const resultMarkdown = renderSavedReportDataToMarkdown(execResult);
+  const analysisMarkdown = String(execResult?.analysis_markdown || "").trim();
+  const analysisStatus = String(execResult?.analysis_status || "");
+  const parts = [
+    `### 📊 黄金报表「${reportTitle}」执行结果：`,
+    resultMarkdown,
+  ];
+  if (analysisMarkdown) {
+    parts.push("---", analysisMarkdown);
+  } else if (analysisStatus === "deferred" || analysisStatus === "pending") {
+    parts.push("---", "> 正在生成业务解读…");
+  } else if (analysisStatus && analysisStatus !== "disabled" && analysisStatus !== "success") {
+    parts.push("---", "> 业务解读暂不可用。");
+  }
+  return parts.join("\n\n");
+};
+
+export const mergeSavedReportAnalysisIntoResult = (execResult: any, analysisResult: any) => ({
+  ...(execResult && typeof execResult === "object" ? execResult : {}),
+  ...(analysisResult && typeof analysisResult === "object" ? analysisResult : {}),
+  column_labels: {
+    ...(execResult?.column_labels || {}),
+    ...(analysisResult?.column_labels || {}),
+  },
+  analysis: analysisResult?.analysis ?? execResult?.analysis ?? null,
+  analysis_markdown: analysisResult?.analysis_markdown ?? execResult?.analysis_markdown ?? null,
+  analysis_status: analysisResult?.analysis_status || execResult?.analysis_status || "fallback",
+});
 
 export const buildSavedReportRunParams = (
   report: SavedReportRunTarget | null | undefined,

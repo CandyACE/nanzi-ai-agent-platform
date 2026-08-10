@@ -22,10 +22,16 @@ def test_both_chat_surfaces_use_shared_saved_report_workflow():
         "todayMonthString",
         "parseSavedReportTags",
         "renderSavedReportDataToMarkdown",
+        "composeSavedReportExecuteMarkdown",
+        "extractColumnMetaFromAgentMessage",
+        "mergeSavedReportAnalysisIntoResult",
         "buildSavedReportRunParams",
         "extractSavedReportExecuteErrorMessage",
     ):
         assert f"export const {name}" in shared
+        if name == "renderSavedReportDataToMarkdown":
+            # 表格渲染由 compose 内部复用，页面入口改为 composeSavedReportExecuteMarkdown
+            continue
         assert name in embed
         assert name in debug
         assert f"const {name} =" not in embed
