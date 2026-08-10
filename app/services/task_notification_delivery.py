@@ -45,6 +45,19 @@ _PROVISIONAL_PATTERNS = (
     "马上为您",
 )
 
+_THINK_BLOCK_PATTERNS = (
+    r"<thought\b[^>]*>.*?</thought>",
+    r"<thought\b[^>]*>.*",
+    r"<think\b[^>]*>.*?</think>",
+    r"<think\b[^>]*>.*",
+    r"<reasoning\b[^>]*>.*?</reasoning>",
+    r"<reasoning\b[^>]*>.*",
+    r"<redacted_reasoning\b[^>]*>.*?</redacted_reasoning>",
+    r"<redacted_reasoning\b[^>]*>.*",
+    r"<function_calls\b[^>]*>.*?</function_calls>",
+    r"<function_calls\b[^>]*>.*",
+)
+
 _EXTERNAL_SENDERS = {
     "dingtalk": "send_dingtalk",
     "wechat_work": "send_wechat_work",
@@ -86,8 +99,25 @@ def build_task_notification_title(task_name: str) -> str:
     return f"TaskCenter：{cleaned}"
 
 
+def strip_thinking_from_notification_content(content: str) -> str:
+    """剥离思考链 / 工具调用 XML，避免 TaskCenter 推送夹带 think 过程。"""
+    text = str(content or "")
+    if not text:
+        return ""
+    for pattern in _THINK_BLOCK_PATTERNS:
+        text = re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
+    # 常见「思考过程」独立段落（到下一空行或「回答/结论」标题为止）
+    text = re.sub(
+        r"(?im)^\s*(?:思考过程|深度思考|推理过程|Thinking|Reasoning)\s*[:：]?\s*\n(?:.*\n)*?(?=^\s*(?:回答|结论|最终|分析结论|Result|Answer)\s*[:：]?|\Z)",
+        "",
+        text,
+    )
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def build_task_notification_body(content: str, *, fallback: bool) -> str:
-    body = str(content or "").strip()
+    body = strip_thinking_from_notification_content(content)
     if not body:
         body = "（任务已执行，但无可展示的文本摘要。）"
     if len(body) > MAX_NOTIFICATION_BODY_CHARS:
@@ -232,7 +262,7 @@ def compose_scheduler_notification_content(
     sql_payloads: List[Dict[str, Any]],
 ) -> str:
     parts: List[str] = []
-    summary = str(assistant_content or "").strip()
+    summary = strip_thinking_from_notification_content(assistant_content)
     if summary:
         parts.append(summary)
 
@@ -431,12 +461,13 @@ async def ensure_task_notification_deliveries(
         return True, notes
 
     had_sql_tool, sql_payloads = await load_sql_tool_artifacts(trace_id)
-    composed = compose_scheduler_notification_content(content, sql_payloads)
+    cleaned_assistant = strip_thinking_from_notification_content(content)
+    composed = compose_scheduler_notification_content(cleaned_assistant, sql_payloads)
     complete, reason = assess_delivery_completeness(
         composed,
         has_sql_data=bool(sql_payloads),
         had_sql_tool=had_sql_tool,
-        assistant_content=content,
+        assistant_content=cleaned_assistant,
     )
     if not complete:
         notes.append(f"incomplete_content:{reason}")

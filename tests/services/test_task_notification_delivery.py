@@ -10,6 +10,7 @@ from app.services.task_notification_delivery import (
     extract_tabular_payload,
     is_provisional_assistant_text,
     notification_tool_succeeded,
+    strip_thinking_from_notification_content,
     tabular_payload_to_markdown,
 )
 
@@ -41,6 +42,41 @@ def test_build_task_notification_body_truncates_and_marks_scheduler_delivery():
     assert "TaskCenter 统一投递" in body
     assert "自动补发" not in body
     assert len(body) <= 6100
+
+
+def test_strip_thinking_blocks_from_notification_content():
+    raw = (
+        "前置说明。\n"
+        "<think>这里是长思考链，不应推送</think>\n"
+        "<thought>SQL 计划推演</thought>\n"
+        "最终结论：订单量环比上升。"
+    )
+    cleaned = strip_thinking_from_notification_content(raw)
+    assert "<think>" not in cleaned
+    assert "<thought>" not in cleaned
+    assert "长思考链" not in cleaned
+    assert "SQL 计划推演" not in cleaned
+    assert "最终结论：订单量环比上升。" in cleaned
+
+    body = build_task_notification_body(raw, fallback=True)
+    assert "长思考链" not in body
+    assert "最终结论：订单量环比上升。" in body
+
+
+def test_compose_strips_think_before_appending_sql():
+    content = compose_scheduler_notification_content(
+        "正常话语。<think>内部推理</think>订单分析完成。",
+        [
+            {
+                "columns": ["day", "orders"],
+                "rows": [["2026-08-01", 12]],
+                "row_count": 1,
+            }
+        ],
+    )
+    assert "内部推理" not in content
+    assert "订单分析完成。" in content
+    assert "| day | orders |" in content
 
 
 def test_extract_and_render_sql_payload():
