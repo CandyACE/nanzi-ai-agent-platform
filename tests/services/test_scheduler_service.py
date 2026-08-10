@@ -46,6 +46,8 @@ def test_scheduled_task_prompt_requires_real_tool_execution():
     assert "【🌐 TaskCenter 自动化全局执行规则】" in prompt
     assert "无人值守模式" in prompt
     assert "工具驱动执行" in prompt
+    assert "最终可见正文只交付结果" in prompt
+    assert "禁止在正文中输出中间思考" in prompt
     assert "【📋 任务执行指令 - ID: 24】@主助手(Main)" in prompt
     assert "检查机器负载并发送钉钉" in prompt
     assert "【结果通知说明】" not in prompt
@@ -66,6 +68,8 @@ def test_scheduled_task_prompt_appends_notification_channels_supplement():
     assert "无需、也不应调用" in prompt
     assert "send_portal_notification" in prompt
     assert "send_dingtalk_message" in prompt
+    assert "禁止夹带中间思考" in prompt
+    assert "最终可见正文只交付结果" in prompt
 
 
 @pytest.mark.no_infrastructure
