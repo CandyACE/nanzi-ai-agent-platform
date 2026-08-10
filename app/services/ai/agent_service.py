@@ -2033,6 +2033,7 @@ class AgentService:
         Consumes the stream and returns the final result.
         """
         full_content = ""
+        full_reasoning_content = ""
         trace_id = ""
         agent_name_resp = ""
         final_status = "success"
@@ -2055,6 +2056,9 @@ class AgentService:
                 trace_id = chunk["trace_id"]
             final_status = _apply_turn_status_signal(final_status, chunk)
             full_content = _accumulate_stream_content(full_content, chunk)
+            full_reasoning_content = _accumulate_reasoning_content(
+                full_reasoning_content, chunk
+            )
             if "agent_name" in chunk:
                 agent_name_resp = chunk["agent_name"]
 
@@ -2063,8 +2067,17 @@ class AgentService:
 
             full_content = suppress_quick_suggestions(full_content)
 
+        from app.services.ai.runtime.agentscope.text_sanitize import strip_model_reasoning_from_answer
+
+        # 与 EmbedChat 一致：任务侧只用正文，不含「模型思考推理」折叠面板内容
+        full_content = strip_model_reasoning_from_answer(
+            full_content,
+            reasoning_content=full_reasoning_content or None,
+        )
+
         return {
             "content": full_content,
+            "reasoning_content": full_reasoning_content or None,
             "intent": "general_chat", # Simplified, real intent is in stream but not easily exposed here without refactor
             "trace_id": trace_id,
             "agent_name": agent_name_resp,

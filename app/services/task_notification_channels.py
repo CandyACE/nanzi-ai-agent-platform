@@ -69,19 +69,15 @@ def build_notification_delivery_supplement(channels: Iterable[str]) -> str:
     normalized = normalize_notification_channels(list(channels))
     if not normalized:
         return ""
-    lines = [
-        "【🚨 结果通知强制指令 (System Mandatory Command)】",
-        "本次为 TaskCenter 自动化任务运行。任务数据分析或处理完成后，你【必须且必须】通过下发真正的 API 工具调用（Tool Call）将结果推送到以下指定渠道！",
-        "",
-        "⚠️ 极其重要的操作约束：",
-        "1. 严禁仅在文本回答中口头说明“已发送”或仅输出文字总结！必须在系统里触发真正的工具函数调用 (Tool Call)。",
-        "2. 必须按照以下指定渠道清单，触发对应的通知工具：",
-    ]
-    for channel in normalized:
-        _tool, label, hint = CHANNEL_SPECS[channel]
-        lines.append(f"   - {label}：{hint}")
-    lines.append(
-        "3. 必须在成功触发上述通知工具并收到工具返回结果后，再给出最终总结。\n"
-        "4. 每个勾选渠道仅触发一次 API 调用，请勿漏发，也不要重复调用未列出的渠道。"
+    labels = [CHANNEL_SPECS[channel][1] for channel in normalized]
+    channel_list = "、".join(labels)
+    return "\n".join(
+        [
+            "【结果通知说明】",
+            f"任务结束后将由 TaskCenter 统一投递结果到已勾选渠道（{channel_list}）。",
+            "你无需、也不应调用 send_portal_notification / send_dingtalk_message / send_wechat_work_message / send_email 等通知工具。",
+            "请把完整分析结论写在最终回复正文中（含关键数据解读）；系统会结合查数工具结果一并投递。",
+            "严禁在分析未完成、仅输出“查询成功/让我再补充…”等半截话术时结束本轮。",
+            "禁止在回复正文中提及本说明、TaskCenter、通知工具名或“将由系统统一投递”等元话术；正文只写给终端用户看的业务结论。",
+        ]
     )
-    return "\n".join(lines)

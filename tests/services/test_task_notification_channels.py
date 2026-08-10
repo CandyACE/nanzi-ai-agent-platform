@@ -37,10 +37,13 @@ def test_channels_from_task_config_and_merge_preserve_metrics():
     assert cleared["task_metrics"]["trigger_count"] == 2
 
 
-def test_build_notification_delivery_supplement_lists_tools_and_dedupe():
+def test_build_notification_delivery_supplement_lists_channels_and_scheduler_owns_delivery():
     text = build_notification_delivery_supplement(["portal", "dingtalk"])
-    assert "【结果通知要求】" in text
+    assert "【结果通知说明】" in text
+    assert "TaskCenter 统一投递" in text
+    assert "站内消息" in text
+    assert "钉钉" in text
+    assert "无需、也不应调用" in text
     assert "send_portal_notification" in text
-    assert "send_dingtalk_message" in text
-    assert "每个渠道只发送一次" in text
+    assert "禁止在回复正文中提及" in text
     assert build_notification_delivery_supplement([]) == ""
