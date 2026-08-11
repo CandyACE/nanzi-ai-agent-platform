@@ -308,6 +308,28 @@ async def synthesize_from_cached_sql_result(
             "- 随后模型仍输出「查询返回为空 / 先查看分布」类半截话，与结果冲突，平台已撤回并复用查询结果。"
         )
         reused_flag = "reused_contradictory_empty_reply"
+    elif reason == "sql_without_followup_content":
+        log_title = "补全工具后的最终回答"
+        log_details = (
+            "检测到最新成功 SQL 发生在最后一次可见正文之后（模型在查数前/中输出过程话后停轮）。"
+            "平台已撤回旧正文，并基于最新成功查询结果生成完整回答。"
+        )
+        review_reason = (
+            "- 已成功执行 SQL 并获得非空结果。\n"
+            "- 该成功 SQL 发生在最后一次可见正文之后，模型未再给出实质汇总；平台已撤回旧过程话并复用查询结果。"
+        )
+        reused_flag = "reused_sql_without_followup_content"
+    elif reason == "process_only_after_sql":
+        log_title = "补全过程句后的最终回答"
+        log_details = (
+            "检测到查数成功后正文仍仅为「现在查询 / 继续分析」等过程句。"
+            "平台已撤回该过程话，并基于成功查询结果生成完整回答。"
+        )
+        review_reason = (
+            "- 已成功执行 SQL 并获得非空结果。\n"
+            "- 随后模型只输出过程性叙述而未给出实质汇总，平台已撤回并复用查询结果。"
+        )
+        reused_flag = "reused_process_only_after_sql"
     else:
         log_title = "复用已执行 SQL 结果"
         log_details = (

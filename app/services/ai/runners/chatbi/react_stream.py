@@ -15,6 +15,10 @@ from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk, map_standard_agentscope_event
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.runners.chatbi.sql_result_compact import (
+    mark_successful_nonempty_sql,
+    mark_visible_content_emitted,
+)
 from app.services.ai.runners.chatbi.platform_auto_retry import (
     format_platform_auto_retry_details,
     format_platform_auto_retry_title,
@@ -110,6 +114,7 @@ async def stream_agentscope_events(
                 state.sql_error = False
                 state.sql_error_message = ""
                 state.platform_auto_retry_ready = True
+                mark_successful_nonempty_sql(state, tool_name=tool_name)
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:where_condition_auto_retry",
@@ -154,6 +159,7 @@ async def stream_agentscope_events(
                 parsed_output = auto_retry.parsed_output
                 state.tool_outputs[tool_id] = output
                 state.platform_auto_retry_ready = True
+                mark_successful_nonempty_sql(state, tool_name=tool_name)
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:empty_filter_auto_retry",
@@ -221,6 +227,7 @@ async def stream_agentscope_events(
                 )
                 state.tool_outputs[tool_id] = output
                 state.last_successful_sql_output = output
+                mark_successful_nonempty_sql(state, tool_name=tool_name)
                 await runner._save_last_data_result_for_followups(tool_args, parsed_output)
                 if enrichment_result is not None and getattr(enrichment_result, "applied", False):
                     runner._increment_step()
@@ -363,6 +370,7 @@ async def stream_agentscope_events(
             }
         state.full_content += delta
         state.current_text_block_emitted = True
+        mark_visible_content_emitted(state)
         yield {"content": delta}
 
     async for event in event_stream:
@@ -643,6 +651,8 @@ async def retract_provisional_content_before_repair(
     state.content_emitted = False
     state.current_text_block_emitted = False
     state.text_blocks_emitted_since_last_tool = 0
+    # 撤回可见正文后重置正文时序；保留成功 SQL 时序，便于后续走「工具后无收口」合成。
+    state.last_visible_content_at = 0
     yield {
         "type": "retraction",
         "content": "",

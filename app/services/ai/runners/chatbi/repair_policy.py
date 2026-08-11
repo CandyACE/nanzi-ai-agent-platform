@@ -355,6 +355,10 @@ def reset_state_for_repair(state: DataRunState) -> None:
     state.text_blocks_emitted_since_last_tool = 0
     state.current_text_block_emitted = False
     state.halt_current_react = False
+    state.event_seq = 0
+    state.last_visible_content_at = 0
+    state.last_successful_nonempty_sql_at = 0
+    state.last_tool_name = ""
     state.sql_completed = False
     state.sql_error = False
     state.sql_error_message = ""

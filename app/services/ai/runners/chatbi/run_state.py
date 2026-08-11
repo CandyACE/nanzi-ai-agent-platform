@@ -19,6 +19,11 @@ class DataRunState:
     full_content: str = ""
     blocked_content: str = ""
     content_emitted: bool = False
+    # 可见正文 vs 成功 SQL 的相对时序（单调递增）。用于判定「工具后无收口正文」。
+    event_seq: int = 0
+    last_visible_content_at: int = 0
+    last_successful_nonempty_sql_at: int = 0
+    last_tool_name: str = ""
     schema_completed: bool = False
     schema_service_unavailable: bool = False
     rag_not_synced: bool = False
@@ -112,6 +117,15 @@ class DataRunState:
     schema_refreshed_after_sql_error: bool = False
     preflight_fail_signatures: dict[str, int] = field(default_factory=dict)
     platform_auto_sql_attempts: int = 0
+
+    @property
+    def successful_sql_after_visible_content(self) -> bool:
+        """True when the latest nonempty business SQL happened after the last visible reply text."""
+        return (
+            int(self.last_successful_nonempty_sql_at or 0) > 0
+            and int(self.last_successful_nonempty_sql_at or 0)
+            > int(self.last_visible_content_at or 0)
+        )
 
     @property
     def has_successful_nonempty_sql(self) -> bool:

@@ -21,6 +21,8 @@ from app.services.ai.runners.chatbi.sql_result_compact import (
     should_force_deferred_continue_query,
     should_rescue_contradictory_empty_reply,
     should_rescue_deferred_sql_reply,
+    should_rescue_process_only_after_sql,
+    should_rescue_sql_without_followup_content,
 )
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
@@ -45,6 +47,49 @@ async def _persist_agent_state(
         tools_fingerprint=tools_fingerprint,
         model_name=str(model_name) if model_name else None,
         state=agent.state,
+    )
+
+
+async def _retract_and_synthesize_from_cache(
+    runner: Any,
+    *,
+    state: DataRunState,
+    runtime_messages: List[Any],
+    system_content: str,
+    user_question: str,
+    agent_name: str,
+    tools_fingerprint: str,
+    model_name: Any,
+    agent: Any,
+    reason: str,
+    retract_reason: str,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    if state.full_content:
+        async for chunk in runner._retract_provisional_content_before_repair(
+            state,
+            reason=retract_reason,
+        ):
+            yield chunk
+    async for chunk in runner._synthesize_from_cached_sql_result(
+        runtime_messages=runtime_messages,
+        system_prompt=system_content,
+        user_question=user_question,
+        state=state,
+        reason=reason,
+    ):
+        yield chunk
+    insight_event = take_chatbi_insight_meta_event(
+        state,
+        evidence_metadata=getattr(runner, "_evidence_metadata", None),
+    )
+    if insight_event is not None:
+        yield insight_event
+    await _persist_agent_state(
+        runner,
+        agent_name=agent_name,
+        tools_fingerprint=tools_fingerprint,
+        model_name=model_name,
+        agent=agent,
     )
 
 
@@ -250,68 +295,83 @@ async def run_native_agent_turn(
                 yield chunk
             # 保留 deferred_continue_query，落入下方 repair 循环强制再跑一轮 SQL。
     if (
-        state.full_content
-        and not runner._current_repair_kind(state)
-        and should_rescue_contradictory_empty_reply(state)
+        not runner._current_repair_kind(state)
+        and should_rescue_sql_without_followup_content(state)
     ):
-        async for chunk in runner._retract_provisional_content_before_repair(
-            state,
-            reason="contradictory empty reply after successful SQL",
-        ):
-            yield chunk
-        async for chunk in runner._synthesize_from_cached_sql_result(
-            runtime_messages=runtime_messages,
-            system_prompt=system_content,
-            user_question=user_question,
-            state=state,
-            reason="contradictory_empty_reply",
-        ):
-            yield chunk
-        insight_event = take_chatbi_insight_meta_event(
-            state,
-            evidence_metadata=getattr(runner, "_evidence_metadata", None),
-        )
-        if insight_event is not None:
-            yield insight_event
-        await _persist_agent_state(
+        async for chunk in _retract_and_synthesize_from_cache(
             runner,
+            state=state,
+            runtime_messages=runtime_messages,
+            system_content=system_content,
+            user_question=user_question,
             agent_name=agent_name,
             tools_fingerprint=tools_fingerprint,
             model_name=model_name,
             agent=agent,
-        )
+            reason="sql_without_followup_content",
+            retract_reason="successful SQL after last visible content without follow-up answer",
+        ):
+            yield chunk
+        return
+    if (
+        state.full_content
+        and not runner._current_repair_kind(state)
+        and should_rescue_process_only_after_sql(state)
+    ):
+        async for chunk in _retract_and_synthesize_from_cache(
+            runner,
+            state=state,
+            runtime_messages=runtime_messages,
+            system_content=system_content,
+            user_question=user_question,
+            agent_name=agent_name,
+            tools_fingerprint=tools_fingerprint,
+            model_name=model_name,
+            agent=agent,
+            reason="process_only_after_sql",
+            retract_reason="process-only reply after successful SQL",
+        ):
+            yield chunk
+        return
+    if (
+        state.full_content
+        and not runner._current_repair_kind(state)
+        and should_rescue_contradictory_empty_reply(state)
+    ):
+        async for chunk in _retract_and_synthesize_from_cache(
+            runner,
+            state=state,
+            runtime_messages=runtime_messages,
+            system_content=system_content,
+            user_question=user_question,
+            agent_name=agent_name,
+            tools_fingerprint=tools_fingerprint,
+            model_name=model_name,
+            agent=agent,
+            reason="contradictory_empty_reply",
+            retract_reason="contradictory empty reply after successful SQL",
+        ):
+            yield chunk
         return
     if (
         state.full_content
         and not runner._current_repair_kind(state)
         and should_rescue_deferred_sql_reply(state)
     ):
-        async for chunk in runner._retract_provisional_content_before_repair(
-            state,
-            reason="deferred incomplete reply after successful SQL",
-        ):
-            yield chunk
-        async for chunk in runner._synthesize_from_cached_sql_result(
-            runtime_messages=runtime_messages,
-            system_prompt=system_content,
-            user_question=user_question,
-            state=state,
-            reason="deferred_incomplete_reply",
-        ):
-            yield chunk
-        insight_event = take_chatbi_insight_meta_event(
-            state,
-            evidence_metadata=getattr(runner, "_evidence_metadata", None),
-        )
-        if insight_event is not None:
-            yield insight_event
-        await _persist_agent_state(
+        async for chunk in _retract_and_synthesize_from_cache(
             runner,
+            state=state,
+            runtime_messages=runtime_messages,
+            system_content=system_content,
+            user_question=user_question,
             agent_name=agent_name,
             tools_fingerprint=tools_fingerprint,
             model_name=model_name,
             agent=agent,
-        )
+            reason="deferred_incomplete_reply",
+            retract_reason="deferred incomplete reply after successful SQL",
+        ):
+            yield chunk
         return
     if state.full_content and not runner._current_repair_kind(state):
         async for chunk in _finalize_content_and_persist(
@@ -451,68 +511,83 @@ async def run_native_agent_turn(
                     yield chunk
                 continue
         if (
-            state.full_content
-            and not runner._current_repair_kind(state)
-            and should_rescue_contradictory_empty_reply(state)
+            not runner._current_repair_kind(state)
+            and should_rescue_sql_without_followup_content(state)
         ):
-            async for chunk in runner._retract_provisional_content_before_repair(
-                state,
-                reason="contradictory empty reply after repair-loop SQL",
-            ):
-                yield chunk
-            async for chunk in runner._synthesize_from_cached_sql_result(
-                runtime_messages=runtime_messages,
-                system_prompt=system_content,
-                user_question=user_question,
-                state=state,
-                reason="contradictory_empty_reply",
-            ):
-                yield chunk
-            insight_event = take_chatbi_insight_meta_event(
-                state,
-                evidence_metadata=getattr(runner, "_evidence_metadata", None),
-            )
-            if insight_event is not None:
-                yield insight_event
-            await _persist_agent_state(
+            async for chunk in _retract_and_synthesize_from_cache(
                 runner,
+                state=state,
+                runtime_messages=runtime_messages,
+                system_content=system_content,
+                user_question=user_question,
                 agent_name=agent_name,
                 tools_fingerprint=tools_fingerprint,
                 model_name=model_name,
                 agent=agent,
-            )
+                reason="sql_without_followup_content",
+                retract_reason="successful SQL after last visible content without follow-up answer (repair loop)",
+            ):
+                yield chunk
+            return
+        if (
+            state.full_content
+            and not runner._current_repair_kind(state)
+            and should_rescue_process_only_after_sql(state)
+        ):
+            async for chunk in _retract_and_synthesize_from_cache(
+                runner,
+                state=state,
+                runtime_messages=runtime_messages,
+                system_content=system_content,
+                user_question=user_question,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+                reason="process_only_after_sql",
+                retract_reason="process-only reply after repair-loop SQL",
+            ):
+                yield chunk
+            return
+        if (
+            state.full_content
+            and not runner._current_repair_kind(state)
+            and should_rescue_contradictory_empty_reply(state)
+        ):
+            async for chunk in _retract_and_synthesize_from_cache(
+                runner,
+                state=state,
+                runtime_messages=runtime_messages,
+                system_content=system_content,
+                user_question=user_question,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+                reason="contradictory_empty_reply",
+                retract_reason="contradictory empty reply after repair-loop SQL",
+            ):
+                yield chunk
             return
         if (
             state.full_content
             and not runner._current_repair_kind(state)
             and should_rescue_deferred_sql_reply(state)
         ):
-            async for chunk in runner._retract_provisional_content_before_repair(
-                state,
-                reason="deferred incomplete reply after repair-loop SQL",
-            ):
-                yield chunk
-            async for chunk in runner._synthesize_from_cached_sql_result(
-                runtime_messages=runtime_messages,
-                system_prompt=system_content,
-                user_question=user_question,
-                state=state,
-                reason="deferred_incomplete_reply",
-            ):
-                yield chunk
-            insight_event = take_chatbi_insight_meta_event(
-                state,
-                evidence_metadata=getattr(runner, "_evidence_metadata", None),
-            )
-            if insight_event is not None:
-                yield insight_event
-            await _persist_agent_state(
+            async for chunk in _retract_and_synthesize_from_cache(
                 runner,
+                state=state,
+                runtime_messages=runtime_messages,
+                system_content=system_content,
+                user_question=user_question,
                 agent_name=agent_name,
                 tools_fingerprint=tools_fingerprint,
                 model_name=model_name,
                 agent=agent,
-            )
+                reason="deferred_incomplete_reply",
+                retract_reason="deferred incomplete reply after repair-loop SQL",
+            ):
+                yield chunk
             return
         if state.platform_auto_retry_ready and state.last_successful_sql_output is not None:
             if state.full_content:

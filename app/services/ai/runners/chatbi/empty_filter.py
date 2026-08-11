@@ -101,6 +101,8 @@ def apply_auto_retry_sql_result(
     output: Any,
     parsed_output: Any,
 ) -> bool:
+    from app.services.ai.runners.chatbi.sql_result_compact import mark_successful_nonempty_sql
+
     state.empty_sql_result = False
     state.empty_sql_reason = ""
     state.empty_sql_text = ""
@@ -108,6 +110,7 @@ def apply_auto_retry_sql_result(
     state.diagnostic_sql_pending_final = False
     state.sql_completed = True
     state.last_successful_sql_output = output
+    mark_successful_nonempty_sql(state, tool_name="execute_sql_query")
     state.duration_anomaly = False
     state.duration_anomaly_reason = ""
     duration_anomaly, duration_reason = runner._detect_duration_anomaly(parsed_output)

@@ -72,6 +72,21 @@ _CONTRADICTORY_EMPTY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
+# SQL 成功后正文仍只是过程句（辅助网兜；主规则看时序状态）。
+_PROCESS_ONLY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"现在(查询|查一下|查数|统计|获取)",
+        r"正在(查询|查数|统计|获取|分析)",
+        r"接着(查|查询|统计|分析)",
+        r"下面(我)?(来)?(统计|查询|分析|看)",
+        r"继续(查询|查数|分析|统计)",
+        r"我来(查询|查一下|统计)",
+        r"开始查询",
+        r"接下来(查询|统计|分析)",
+    )
+)
+
 _SUBSTANTIVE_MARKERS = (
     "| ---",
     "|---",
@@ -118,6 +133,14 @@ def looks_like_contradictory_empty_reply(text: str) -> bool:
     return looks_like_deferred_continue_query_reply(raw) and (
         "空" in raw or "分布" in raw or "编码" in raw or "确认" in raw
     )
+
+
+def looks_like_process_only_reply(text: str) -> bool:
+    """True when short reply is only in-progress query narration, not a real answer."""
+    raw = str(text or "").strip()
+    if not _is_short_deferred_candidate(raw):
+        return False
+    return any(p.search(raw) for p in _PROCESS_ONLY_PATTERNS)
 
 
 def looks_like_deferred_data_reply(text: str) -> bool:
@@ -337,6 +360,62 @@ def build_model_result_scope(
     }
 
 
+def mark_visible_content_emitted(state: Any) -> None:
+    """Record that visible assistant text was streamed to the user."""
+    state.event_seq = int(getattr(state, "event_seq", 0) or 0) + 1
+    state.last_visible_content_at = state.event_seq
+
+
+def mark_successful_nonempty_sql(state: Any, *, tool_name: str = "execute_sql_query") -> None:
+    """Record that a nonempty business SQL result is now the latest evidence."""
+    state.event_seq = int(getattr(state, "event_seq", 0) or 0) + 1
+    state.last_successful_nonempty_sql_at = state.event_seq
+    if tool_name:
+        state.last_tool_name = str(tool_name)
+
+
+def should_rescue_sql_without_followup_content(state: Any) -> bool:
+    """
+    Structural rescue: latest nonempty SQL happened after the last visible content.
+
+    Covers 'process narration before SQL, then SQL succeeds, then stop' without relying on regex.
+    """
+    if getattr(state, "empty_sql_result", False):
+        return False
+    if getattr(state, "diagnostic_sql_pending_final", False):
+        return False
+    if getattr(state, "last_successful_sql_output", None) is None:
+        return False
+    if getattr(state, "sql_repeat_gate_block", False):
+        return False
+    if getattr(state, "deferred_continue_query", False):
+        return False
+    if not getattr(state, "has_successful_nonempty_sql", False):
+        return False
+    last_sql_at = int(getattr(state, "last_successful_nonempty_sql_at", 0) or 0)
+    last_content_at = int(getattr(state, "last_visible_content_at", 0) or 0)
+    if last_sql_at <= 0:
+        return False
+    return last_sql_at > last_content_at
+
+
+def should_rescue_process_only_after_sql(state: Any) -> bool:
+    """Auxiliary: content exists after SQL but is only process narration."""
+    if should_rescue_sql_without_followup_content(state):
+        return False
+    if getattr(state, "empty_sql_result", False):
+        return False
+    if getattr(state, "last_successful_sql_output", None) is None:
+        return False
+    if getattr(state, "sql_repeat_gate_block", False):
+        return False
+    if getattr(state, "deferred_continue_query", False):
+        return False
+    if not getattr(state, "has_successful_nonempty_sql", False):
+        return False
+    return looks_like_process_only_reply(getattr(state, "full_content", "") or "")
+
+
 def should_rescue_deferred_sql_reply(state: Any) -> bool:
     """Whether to retract a deferred summarize reply and synthesize from cached SQL."""
     if not getattr(state, "ready_to_answer", False):
@@ -347,6 +426,8 @@ def should_rescue_deferred_sql_reply(state: Any) -> bool:
         # 已有专用缓存合成路径
         return False
     if getattr(state, "deferred_continue_query", False):
+        return False
+    if should_rescue_sql_without_followup_content(state):
         return False
     return looks_like_deferred_data_reply(getattr(state, "full_content", "") or "")
 
@@ -363,6 +444,8 @@ def should_rescue_contradictory_empty_reply(state: Any) -> bool:
         return False
     if not getattr(state, "has_successful_nonempty_sql", False):
         return False
+    if should_rescue_sql_without_followup_content(state):
+        return False
     return looks_like_contradictory_empty_reply(getattr(state, "full_content", "") or "")
 
 
@@ -376,8 +459,13 @@ def should_force_deferred_continue_query(state: Any) -> bool:
         return False
     if getattr(state, "sql_repeat_gate_block", False):
         return False
+    # 最新成功 SQL 后尚无正文收口 → 合成，不空转再查。
+    if should_rescue_sql_without_followup_content(state):
+        return False
     # 已有非空业务结果却仍说「空/先探查」→ 走缓存合成，不要再强制空转查数。
     if should_rescue_contradictory_empty_reply(state):
+        return False
+    if should_rescue_process_only_after_sql(state):
         return False
     return looks_like_deferred_continue_query_reply(getattr(state, "full_content", "") or "")
 

@@ -13,10 +13,15 @@ from app.services.ai.runners.chatbi.sql_result_compact import (
     looks_like_contradictory_empty_reply,
     looks_like_deferred_continue_query_reply,
     looks_like_deferred_data_reply,
+    looks_like_process_only_reply,
     mark_deferred_continue_query,
+    mark_successful_nonempty_sql,
+    mark_visible_content_emitted,
     should_force_deferred_continue_query,
     should_rescue_contradictory_empty_reply,
     should_rescue_deferred_sql_reply,
+    should_rescue_process_only_after_sql,
+    should_rescue_sql_without_followup_content,
 )
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
@@ -112,6 +117,117 @@ def test_compact_sql_result_for_model_skips_under_threshold():
         "items": [[i] for i in range(500)],
     }
     assert compact_sql_result_for_model(_FakeRunner(), json.dumps(payload)) is None
+
+
+def test_should_rescue_sql_without_followup_after_process_narration():
+    """截图回归：过程句在前 → SQL 成功 → 无后续正文 → 必须缓存合成。"""
+    state = SimpleNamespace(
+        empty_sql_result=False,
+        diagnostic_sql_pending_final=False,
+        has_successful_nonempty_sql=True,
+        last_successful_sql_output='{"items":[["dev-1","normal"]]}',
+        sql_repeat_gate_block=False,
+        deferred_continue_query=False,
+        full_content="现在查询该机房的设备实例，统计各状态数量。",
+        last_visible_content_at=1,
+        last_successful_nonempty_sql_at=2,
+        event_seq=2,
+    )
+    assert should_rescue_sql_without_followup_content(state) is True
+    assert should_force_deferred_continue_query(state) is False
+
+
+def test_should_rescue_sql_without_followup_for_distribution_narration():
+    state = SimpleNamespace(
+        empty_sql_result=False,
+        diagnostic_sql_pending_final=False,
+        has_successful_nonempty_sql=True,
+        last_successful_sql_output='{"items":[["normal",10]]}',
+        sql_repeat_gate_block=False,
+        deferred_continue_query=False,
+        full_content="下面统计设备状态分布。",
+        last_visible_content_at=3,
+        last_successful_nonempty_sql_at=4,
+        event_seq=4,
+    )
+    assert should_rescue_sql_without_followup_content(state) is True
+
+
+def test_should_rescue_latest_sql_b_after_intermediate_a_promise():
+    """已查到 A，继续查 B 且 B 成功后无正文 → 基于 B 合成。"""
+    state = SimpleNamespace(
+        empty_sql_result=False,
+        diagnostic_sql_pending_final=False,
+        has_successful_nonempty_sql=True,
+        last_successful_sql_output='{"items":[["B",1]]}',
+        sql_repeat_gate_block=False,
+        deferred_continue_query=False,
+        full_content="已查到机房清单，现在继续查询设备实例。",
+        last_visible_content_at=5,
+        last_successful_nonempty_sql_at=8,
+        event_seq=8,
+    )
+    assert should_rescue_sql_without_followup_content(state) is True
+
+
+def test_substantive_answer_after_sql_is_not_rescued_by_timing():
+    state = SimpleNamespace(
+        empty_sql_result=False,
+        diagnostic_sql_pending_final=False,
+        has_successful_nonempty_sql=True,
+        last_successful_sql_output='{"items":[[110]]}',
+        sql_repeat_gate_block=False,
+        deferred_continue_query=False,
+        ready_to_answer=True,
+        full_content=(
+            "查询成功，共 110 台设备。\n\n"
+            "## 汇总\n"
+            "- 正常：37\n"
+            "- 离线：15\n\n"
+            "| 指标 | 值 |\n"
+            "| --- | --- |\n"
+            "| device_count | 110 |\n"
+        ),
+        last_visible_content_at=9,
+        last_successful_nonempty_sql_at=7,
+        event_seq=9,
+    )
+    assert should_rescue_sql_without_followup_content(state) is False
+    assert should_rescue_process_only_after_sql(state) is False
+    assert should_rescue_deferred_sql_reply(state) is False
+    assert should_force_deferred_continue_query(state) is False
+
+
+def test_process_only_after_sql_auxiliary_rescue():
+    state = SimpleNamespace(
+        empty_sql_result=False,
+        diagnostic_sql_pending_final=False,
+        has_successful_nonempty_sql=True,
+        last_successful_sql_output='{"items":[[1]]}',
+        sql_repeat_gate_block=False,
+        deferred_continue_query=False,
+        full_content="现在查询该机房的设备实例。",
+        last_visible_content_at=4,
+        last_successful_nonempty_sql_at=3,
+        event_seq=4,
+    )
+    assert looks_like_process_only_reply(state.full_content) is True
+    assert should_rescue_sql_without_followup_content(state) is False
+    assert should_rescue_process_only_after_sql(state) is True
+
+
+def test_mark_helpers_order_sql_after_content():
+    state = SimpleNamespace(
+        event_seq=0,
+        last_visible_content_at=0,
+        last_successful_nonempty_sql_at=0,
+        last_tool_name="",
+    )
+    mark_visible_content_emitted(state)
+    assert state.last_visible_content_at == 1
+    mark_successful_nonempty_sql(state)
+    assert state.last_successful_nonempty_sql_at == 2
+    assert state.last_successful_nonempty_sql_at > state.last_visible_content_at
 
 
 def test_looks_like_contradictory_empty_reply_matches_screenshot():
