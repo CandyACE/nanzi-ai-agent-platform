@@ -793,12 +793,6 @@
                   </div>
                 </transition>
               </div>
-              <BusinessConfirmationCard
-                v-if="msg.businessConfirmation"
-                :payload="msg.businessConfirmation"
-                :disabled="isProcessing"
-                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
-              />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -990,6 +984,13 @@
                                   :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
                                                                 ></span>
                                                               </div>
+
+              <BusinessConfirmationCard
+                v-if="msg.businessConfirmation"
+                :payload="msg.businessConfirmation"
+                :disabled="isProcessing"
+                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
 
                                 <!-- AI Stalled Thinking Prompt (Moved out to be sibling to msg.content) -->
                                 <div

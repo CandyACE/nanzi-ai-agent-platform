@@ -117,6 +117,11 @@ def test_business_confirmation_frontend_wiring_contract():
     assert "shouldSuppressBusinessConfirmation" in util
     assert "BusinessConfirmationCard" in embed
     assert "submitBusinessConfirmation" in embed
+    assert embed.index("MessageRenderer") < embed.index("<BusinessConfirmationCard") or embed.rfind("BusinessConfirmationCard") > embed.find('v-if="msg.content && !msg.groundingBlocked"')
+    # 确认卡应出现在主正文区块之后（避免排在 AI 消息前面）
+    content_marker = 'v-if="msg.content && !msg.groundingBlocked"'
+    assert embed.find(content_marker) < embed.find("<BusinessConfirmationCard")
+    assert debug.find(content_marker) < debug.find("<BusinessConfirmationCard")
     assert "buildBusinessConfirmationUserMessage" in embed
     assert "BusinessConfirmationCard" in debug
     assert "submitBusinessConfirmation" in debug

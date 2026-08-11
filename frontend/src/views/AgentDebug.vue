@@ -4666,12 +4666,6 @@ onUnmounted(() => {
               </div>
               <!-- Close the v-if="msg.logs && msg.logs.length > 0" container -->
 
-              <BusinessConfirmationCard
-                v-if="msg.businessConfirmation"
-                :payload="msg.businessConfirmation"
-                :disabled="isProcessing"
-                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
-              />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -4969,6 +4963,14 @@ onUnmounted(() => {
                   class="typing-cursor"
                 ></span>
               </div>
+
+              <BusinessConfirmationCard
+                v-if="msg.businessConfirmation"
+                :payload="msg.businessConfirmation"
+                :disabled="isProcessing"
+                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
+
               <!-- Citations Area (Always outside text content container) -->
               <div v-if="msg.citations && msg.citations.length > 0" class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700/50 relative z-10">
                 <button @click="msg.isCitationsExpanded = !msg.isCitationsExpanded" class="flex items-center space-x-1.5 mb-2 w-full text-left group/cite-head">
