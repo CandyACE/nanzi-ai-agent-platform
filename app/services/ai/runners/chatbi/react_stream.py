@@ -68,6 +68,12 @@ async def stream_agentscope_events(
                     str(stream_meta.get("user_question") or ""),
                 )
         elif tool_name == "execute_sql_query":
+            # 工具层可能已向模型回传抽样结果；完整结果在 pending 中，供落库/enrich/依据卡。
+            full_output = getattr(state, "pending_sql_tool_full_output", None)
+            if full_output is not None:
+                output = full_output
+                state.tool_outputs[tool_id] = full_output
+                state.pending_sql_tool_full_output = None
             parsed_output, should_save_followup = runner._apply_sql_tool_result(
                 state,
                 tool_args=tool_args,

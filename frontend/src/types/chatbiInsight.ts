@@ -23,6 +23,25 @@ export interface ChatBIEvidenceMeta {
   freshness?: string | null;
 }
 
+/** Platform-rendered result table (independent of LLM markdown). */
+export interface ChatBIResultTable {
+  columns: string[];
+  /** Row values aligned to columns. */
+  rows: unknown[][];
+  total_row_count: number;
+  embedded_row_count: number;
+  page_size: number;
+  truncated?: boolean;
+}
+
+/** Whether the model analyzed full rows or a sample. */
+export interface ChatBIAnalysisScope {
+  mode: "full" | "sample";
+  total_row_count: number;
+  model_row_count: number;
+  user_notice?: string;
+}
+
 export interface ChatBIInsightMeta {
   version: number;
   status: "success";
@@ -43,4 +62,6 @@ export interface ChatBIInsightMeta {
   };
   final_sql?: string;
   actions: ChatBIInsightAction[];
+  table?: ChatBIResultTable | null;
+  analysis_scope?: ChatBIAnalysisScope | null;
 }

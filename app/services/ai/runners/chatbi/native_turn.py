@@ -16,6 +16,11 @@ from app.services.ai.runners.chatbi.constants import DATA_REPAIR_BUDGETS, MAX_DA
 from app.services.ai.runners.chatbi.forced_tool_choice import ForcedFirstToolChoiceModel
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.insight_meta import take_chatbi_insight_meta_event
+from app.services.ai.runners.chatbi.sql_result_compact import (
+    mark_deferred_continue_query,
+    should_force_deferred_continue_query,
+    should_rescue_deferred_sql_reply,
+)
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
 logger = logging.getLogger(__name__)
@@ -228,6 +233,53 @@ async def run_native_agent_turn(
             reason="main-loop content followed by a repair condition",
         ):
             yield chunk
+    if (
+        state.full_content
+        and not runner._current_repair_kind(state)
+        and should_force_deferred_continue_query(state)
+    ):
+        mark_deferred_continue_query(state)
+        if runner._repair_budget_exhausted(state):
+            state.deferred_continue_query = False
+        else:
+            async for chunk in runner._retract_provisional_content_before_repair(
+                state,
+                reason="deferred continue-query reply after successful SQL",
+            ):
+                yield chunk
+            # 保留 deferred_continue_query，落入下方 repair 循环强制再跑一轮 SQL。
+    if (
+        state.full_content
+        and not runner._current_repair_kind(state)
+        and should_rescue_deferred_sql_reply(state)
+    ):
+        async for chunk in runner._retract_provisional_content_before_repair(
+            state,
+            reason="deferred incomplete reply after successful SQL",
+        ):
+            yield chunk
+        async for chunk in runner._synthesize_from_cached_sql_result(
+            runtime_messages=runtime_messages,
+            system_prompt=system_content,
+            user_question=user_question,
+            state=state,
+            reason="deferred_incomplete_reply",
+        ):
+            yield chunk
+        insight_event = take_chatbi_insight_meta_event(
+            state,
+            evidence_metadata=getattr(runner, "_evidence_metadata", None),
+        )
+        if insight_event is not None:
+            yield insight_event
+        await _persist_agent_state(
+            runner,
+            agent_name=agent_name,
+            tools_fingerprint=tools_fingerprint,
+            model_name=model_name,
+            agent=agent,
+        )
+        return
     if state.full_content and not runner._current_repair_kind(state):
         async for chunk in _finalize_content_and_persist(
             runner,
@@ -319,6 +371,53 @@ async def run_native_agent_turn(
                 yield chunk
         if state.full_content and runner._should_replace_generic_empty_failure_reply(state):
             state.full_content = format_empty_filter_result_content(state.empty_filter_diagnostics)
+        if (
+            state.full_content
+            and not runner._current_repair_kind(state)
+            and should_force_deferred_continue_query(state)
+        ):
+            mark_deferred_continue_query(state)
+            if runner._repair_budget_exhausted(state):
+                state.deferred_continue_query = False
+            else:
+                async for chunk in runner._retract_provisional_content_before_repair(
+                    state,
+                    reason="deferred continue-query reply after repair-loop SQL",
+                ):
+                    yield chunk
+                continue
+        if (
+            state.full_content
+            and not runner._current_repair_kind(state)
+            and should_rescue_deferred_sql_reply(state)
+        ):
+            async for chunk in runner._retract_provisional_content_before_repair(
+                state,
+                reason="deferred incomplete reply after repair-loop SQL",
+            ):
+                yield chunk
+            async for chunk in runner._synthesize_from_cached_sql_result(
+                runtime_messages=runtime_messages,
+                system_prompt=system_content,
+                user_question=user_question,
+                state=state,
+                reason="deferred_incomplete_reply",
+            ):
+                yield chunk
+            insight_event = take_chatbi_insight_meta_event(
+                state,
+                evidence_metadata=getattr(runner, "_evidence_metadata", None),
+            )
+            if insight_event is not None:
+                yield insight_event
+            await _persist_agent_state(
+                runner,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+            )
+            return
         if state.full_content and not runner._current_repair_kind(state):
             async for chunk in _finalize_content_and_persist(
                 runner,

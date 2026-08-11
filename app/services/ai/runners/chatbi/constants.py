@@ -29,6 +29,8 @@ DATA_REPAIR_BUDGETS = {
     "diagnostic_sql_pending_final": 2,
     "missing_schema": 1,
     "missing_sql": 2,
+    # 模型承诺「再查/再统计」却停轮：强制续一轮 SQL。
+    "deferred_continue_query": 1,
 }
 SCHEMA_RETRY_STOPWORDS = (
     "帮我",
@@ -76,3 +78,6 @@ _SQL_RESULT_DISPLAY_MAX_ROWS = 15
 _SQL_RESULT_ROW_KEYS = ("items", "rows", "data", "records")
 _SQL_TOOL_RESULT_DELIMITER = "--- 结果 ---"
 _SQL_TOOL_ERROR_DELIMITER = "--- 错误 ---"
+# 回传给模型的 SQL 结果：超过阈值则抽样，完整结果仍保存在 DataRunState 供追问/依据卡/平台表。
+SQL_RESULT_MODEL_COMPACT_THRESHOLD = 500
+SQL_RESULT_MODEL_SAMPLE_ROWS = 500

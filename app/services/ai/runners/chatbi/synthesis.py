@@ -272,13 +272,36 @@ async def synthesize_from_cached_sql_result(
     system_prompt: str,
     user_question: str,
     state: DataRunState,
+    reason: str = "repeat_sql",
 ) -> AsyncGenerator[Dict[str, Any], None]:
     start_synthesis = time.time()
+    if reason == "deferred_incomplete_reply":
+        log_title = "补全未完成的汇总回答"
+        log_details = (
+            "检测到模型在查数成功后仅输出过渡句（如「读取完整数据后再汇总」）即停轮。"
+            "平台已撤回半截回复，并基于本轮成功查询结果生成完整回答。"
+        )
+        review_reason = (
+            "- 已成功执行 SQL 并获得非空结果。\n"
+            "- 随后模型只输出了过渡性承诺而未给出实质汇总，平台已撤回该半截回复并复用查询结果。"
+        )
+        reused_flag = "reused_deferred_incomplete_reply"
+    else:
+        log_title = "复用已执行 SQL 结果"
+        log_details = (
+            "检测到模型重复调用相同 SQL。平台已拦截重复执行，并基于首次成功查询结果生成最终回答。"
+        )
+        review_reason = (
+            "- 已成功执行 SQL 并获得非空结果。\n"
+            "- 随后模型重复调用相同 SQL，平台已拦截重复执行并复用首次成功查询结果。"
+        )
+        reused_flag = "reused_repeated_sql_result"
+
     yield {
         "type": "log",
         "id": f"repeat_sql_{uuid.uuid4().hex[:8]}",
-        "title": "复用已执行 SQL 结果",
-        "details": "检测到模型重复调用相同 SQL。平台已拦截重复执行，并基于首次成功查询结果生成最终回答。",
+        "title": log_title,
+        "details": log_details,
         "status": "success",
     }
 
@@ -297,8 +320,7 @@ async def synthesize_from_cached_sql_result(
     )
     execution_review = (
         "【执行过程回顾】\n"
-        "- 已成功执行 SQL 并获得非空结果。\n"
-        "- 随后模型重复调用相同 SQL，平台已拦截重复执行并复用首次成功查询结果。\n\n"
+        f"{review_reason}\n\n"
         "【查询结果】\n"
         f"{result_json}"
     )
@@ -338,5 +360,5 @@ async def synthesize_from_cached_sql_result(
         runner,
         start_synthesis=start_synthesis,
         stream_state=stream_state,
-        tool_output={"content": stream_state.full_content, "reused_repeated_sql_result": True},
+        tool_output={"content": stream_state.full_content, reused_flag: True},
     )

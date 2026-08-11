@@ -237,12 +237,21 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                     "请收窄时间范围、补充 LIMIT，或修正 JOIN 条件后重新调用 execute_sql_query。"
                 )
             if current_sql_normalized and current_sql_normalized in state.successful_sqls:
+                from app.services.ai.runners.chatbi.sql_result_compact import (
+                    build_model_result_scope,
+                    compact_sql_result_for_model,
+                )
+
                 cached_output = state.successful_sqls[current_sql_normalized]
+                state.last_successful_sql_output = cached_output
+                state.pending_sql_tool_full_output = cached_output
+                state.model_result_scope = build_model_result_scope(runner, cached_output)
+                model_payload = compact_sql_result_for_model(runner, cached_output) or cached_output
                 return (
                     f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功执行过相同的 SQL 查询，禁止重复 execute_sql_query。\n"
                     "为保证正常输出，系统已自动为您加载该 SQL 上一次查询成功的缓存数据结果，"
                     "请直接基于此数据进行回答，无需再次调用查数工具：\n\n"
-                    f"{cached_output}"
+                    f"{model_payload}"
                 )
             binding_token = set_current_sql_query_binding(state.sql_query_binding)
             try:
@@ -259,6 +268,11 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                         and not runner._is_sql_plan_gate_block(result)
                         and not runner._is_sql_sandbox_gate_block(result)
                     ):
+                        from app.services.ai.runners.chatbi.sql_result_compact import (
+                            build_model_result_scope,
+                            compact_sql_result_for_model,
+                        )
+
                         parsed_output = runner._try_parse_json_output(result)
                         empty_reason = runner._detect_empty_result(parsed_output)
                         sql_error, _ = runner._detect_sql_error(result)
@@ -267,6 +281,11 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                             if current_sql_normalized:
                                 state.successful_sqls[current_sql_normalized] = result
                             state.last_successful_sql_output = result
+                            state.pending_sql_tool_full_output = result
+                            state.model_result_scope = build_model_result_scope(runner, result)
+                            compacted = compact_sql_result_for_model(runner, result)
+                            if compacted is not None:
+                                return compacted
                 except Exception:
                     pass
                 return result

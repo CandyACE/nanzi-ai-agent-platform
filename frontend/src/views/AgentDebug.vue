@@ -11,7 +11,7 @@ import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
-import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
+import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
@@ -4860,7 +4860,12 @@ onUnmounted(() => {
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                   @open-canvas="handleOpenCanvas"
                 />
-                <ChatBIDataEvidence v-if="msg.chatbiInsight" :meta="msg.chatbiInsight" />
+                <ChatBIInsightPanel
+                  v-if="msg.chatbiInsight || (msg.citations && msg.citations.length)"
+                  :meta="msg.chatbiInsight"
+                  :citations="msg.citations"
+                  @open-citation="({ citation, event }) => openCitationPopover(citation, event)"
+                />
                 <ChatBIMetadataGuide v-if="msg.chatbiMetadataGuide" :guide="msg.chatbiMetadataGuide" @select="handleQuickQuestion" />
                 <div v-if="msg.chatbiInsight?.actions?.length && !msg.isThinking" class="mt-2 flex justify-end">
                   <ChatBIContinueAnalysis
@@ -4971,31 +4976,6 @@ onUnmounted(() => {
                 :disabled="isProcessing"
                 @submit="(payload) => submitBusinessConfirmation(msg, payload)"
               />
-
-              <!-- Citations Area (Always outside text content container) -->
-              <div v-if="msg.citations && msg.citations.length > 0" class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700/50 relative z-10">
-                <button @click="msg.isCitationsExpanded = !msg.isCitationsExpanded" class="flex items-center space-x-1.5 mb-2 w-full text-left group/cite-head">
-                   <svg class="w-3.5 h-3.5 text-gray-400 group-hover/cite-head:text-primary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                   <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex-1">引用来源 ({{ msg.citations.length }})</span>
-                   <svg class="w-3.5 h-3.5 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': msg.isCitationsExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-                </button>
-                <transition enter-active-class="transition-all duration-300 ease-out" enter-from-class="opacity-0 max-h-0" enter-to-class="opacity-100 max-h-[500px]" leave-active-class="transition-all duration-200 ease-in" leave-from-class="opacity-100 max-h-[500px]" leave-to-class="opacity-0 max-h-0">
-                  <div v-show="msg.isCitationsExpanded" class="overflow-hidden">
-                    <div class="flex flex-wrap gap-2 py-1">
-                       <template v-for="(cite, cIdx) in msg.citations" :key="cIdx">
-                         <div class="citation-chip group/cite relative flex items-center space-x-2 px-2.5 py-1.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700 rounded-lg hover:border-primary/40 dark:hover:border-primary/40 transition-all cursor-pointer overflow-hidden" @click.stop="openCitationPopover(cite, $event)">
-                            <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            <span class="text-[11px] font-medium text-gray-600 dark:text-gray-300 truncate max-w-[150px]">{{ cite.doc_name }}</span>
-                            <span v-if="cite.similarity" class="text-[9px] font-mono text-gray-400 px-1 rounded bg-gray-100 dark:bg-gray-700">{{ (cite.similarity * 100).toFixed(0) }}%</span>
-                         </div>
-                       </template>
-                    </div>
-                  </div>
-                </transition>
-              </div>
-
-
-
 
               <style scoped>
               .typing-cursor::after {

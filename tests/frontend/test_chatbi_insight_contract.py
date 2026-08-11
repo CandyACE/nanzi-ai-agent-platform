@@ -1,3 +1,5 @@
+"""Tests for ChatBI insight frontend contracts."""
+
 from pathlib import Path
 
 import pytest
@@ -16,16 +18,28 @@ def test_shared_chatbi_insight_contract_is_wired_to_both_chat_surfaces():
     reducer = _source("frontend/src/utils/chatbiInsight.ts")
     embed = _source("frontend/src/views/EmbedChat.vue")
     debug = _source("frontend/src/views/AgentDebug.vue")
+    panel = _source("frontend/src/components/chatbi/ChatBIInsightPanel.vue")
 
     assert "export interface ChatBIInsightMeta" in types
+    assert "export interface ChatBIResultTable" in types
+    assert "export interface ChatBIAnalysisScope" in types
+    assert "table?: ChatBIResultTable | null" in types
+    assert "analysis_scope?: ChatBIAnalysisScope | null" in types
     assert "actions: ChatBIInsightAction[]" in types
     assert "applyChatBIInsightEvent" in reducer
     assert "chatbi_insight_meta" in reducer
+    assert 'label: "明细"' in panel
+    assert 'label: "依据"' in panel
+    assert "引用来源" in panel
+    assert "rounded-xl border border-gray-200" not in panel
     for source in (embed, debug):
-        assert "ChatBIDataEvidence" in source
+        assert "ChatBIInsightPanel" in source
         assert "ChatBIContinueAnalysis" in source
         assert "chatbiInsight?: ChatBIInsightMeta" in source
         assert "applyChatBIInsightEvent" in source
+        assert ':citations="msg.citations"' in source
+        assert "@open-citation=" in source
+        assert 'uppercase tracking-wider flex-1">引用来源' not in source
 
 
 def test_continue_analysis_uses_one_trigger_and_responsive_chooser():
@@ -65,3 +79,20 @@ def test_data_evidence_panel_shows_source_and_freshness_metadata():
         assert label in source
     for field in ("result_status", "source_ref", "observed_at", "source_as_of", "freshness"):
         assert f"meta.evidence?.{field}" in source
+
+
+def test_insight_panel_is_minimal_tabbed_and_borderless():
+    panel = _source("frontend/src/components/chatbi/ChatBIInsightPanel.vue")
+
+    assert "明细" in panel
+    assert "依据" in panel
+    assert "引用来源" in panel
+    assert 'id: "citations"' in panel
+    assert "toggleTab" in panel
+    assert "activeTab" in panel
+    assert "AI 样例" in panel
+    assert "border-t border-gray-100" in panel
+    assert "tracking-wider" in panel
+    assert "citation-chip" in panel
+    assert "mb-3" in panel
+    assert "rounded-xl border border-gray-200" not in panel

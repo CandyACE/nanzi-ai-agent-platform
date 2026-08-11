@@ -31,6 +31,8 @@ from app.services.ai.time_anchor import build_data_query_time_anchor_block
 def current_repair_kind(state: DataRunState) -> str:
     if is_schema_fatal(state):
         return ""
+    if state.deferred_continue_query:
+        return "deferred_continue_query"
     if state.schema_ambiguous:
         return "schema_ambiguous"
     if state.schema_refresh_required and not state.schema_refreshed_after_sql_error:
@@ -330,6 +332,14 @@ def build_repair_message(
                 f"{DataQueryPrompts.FORCE_SQL_AFTER_SCHEMA}\n"
                 "禁止直接回答用户，必须先完成 SQL 查数。"
             )
+    if state.deferred_continue_query:
+        return (
+            "【继续细化查数】你刚才表示当前结果粒度不够、需要进一步查询/统计，"
+            "但未发起新的 execute_sql_query 就停轮了。\n"
+            "请立即调用 execute_sql_query，按你承诺的更细粒度（如完整编码/明细维度）完成查询；"
+            "禁止再次只输出「让我进一步…」类过渡句后结束。"
+            "查数成功后直接给出可读结论。"
+        )
     return ""
 
 
@@ -369,14 +379,21 @@ def reset_state_for_repair(state: DataRunState) -> None:
     if repair_kind in {"empty_sql_result", "duration_anomaly"}:
         state.expecting_final_sql_after_diagnostic = True
     state.diagnostic_sql_pending_final = False
-    # Soft duration tip：保留已成功结果，预算用尽后仍可基于缓存合成回答，避免硬拦截无答。
+    # Soft duration tip / 继续细化查数：保留已成功结果，便于失败回退或预算用尽后合成。
     preserved_sql_output = (
-        state.last_successful_sql_output if repair_kind == "duration_anomaly" else None
+        state.last_successful_sql_output
+        if repair_kind in {"duration_anomaly", "deferred_continue_query"}
+        else None
+    )
+    preserved_sql_args = (
+        dict(state.last_successful_sql_args)
+        if repair_kind == "deferred_continue_query" and state.last_successful_sql_args
+        else {}
     )
     state.duration_anomaly = False
     state.duration_anomaly_reason = ""
     state.last_successful_sql_output = preserved_sql_output
-    state.last_successful_sql_args = {}
+    state.last_successful_sql_args = preserved_sql_args
     state.successful_sqls = {}
     state.sql_citation_counter = 0
     state.emitted_sql_citation_signatures = []
@@ -387,6 +404,7 @@ def reset_state_for_repair(state: DataRunState) -> None:
     if repair_kind != "tool_loop_fuse":
         state.tool_loop_fuse_triggered = False
         state.tool_loop_fuse_reason = ""
+    state.deferred_continue_query = False
 
 
 def build_repair_title(state: DataRunState) -> str:
@@ -420,6 +438,8 @@ def build_repair_title(state: DataRunState) -> str:
         return "停止重复工具调用"
     if state.diagnostic_sql_pending_final:
         return "执行最终 SQL"
+    if state.deferred_continue_query:
+        return "继续细化查数"
     if (
         state.requires_fresh_data
         and state.blocked_content.strip()
@@ -491,6 +511,8 @@ def resolve_repair_tool_choice(state: DataRunState) -> Any | None:
             return ToolChoice(mode="execute_sql_query")
         return ToolChoice(mode="get_dataset_schema")
     if state.empty_sql_result or state.diagnostic_sql_pending_final:
+        return ToolChoice(mode="execute_sql_query")
+    if state.deferred_continue_query:
         return ToolChoice(mode="execute_sql_query")
     if state.sql_error:
         return ToolChoice(mode="required")

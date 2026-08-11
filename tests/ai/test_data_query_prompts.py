@@ -405,6 +405,20 @@ def test_chatbi_synthesis_prompts_share_strict_echarts_output_contract():
             assert marker in prompt
 
 
+def test_followup_synthesis_allows_compact_visualization_outline():
+    prompt = DataQueryPrompts.followup_synthesis_user_message("可视化分析", '{"rows":[]}')
+    history_prompt = DataQueryPrompts.followup_synthesis_from_history_user_message(
+        "可视化分析", "上轮查数展示"
+    )
+    for content in (prompt, history_prompt):
+        assert "关键发现 → ```chart``` 图表" in content
+        assert "图表解读 → 简要结论与建议" in content
+        assert "不得编造" in content
+        assert "不足以生成可靠图表" in content
+        assert "🎯 核心结论" in content
+        assert "禁止" in content
+
+
 def test_chatbi_interactive_synthesis_quick_targets_are_natural_language_only():
     prompts = [
         DataQueryPrompts.synthesis_user_message("统计销售额", "【查询结果】{}"),

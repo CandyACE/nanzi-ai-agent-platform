@@ -20,6 +20,15 @@ def _doc_key(user_id: str, conversation_id: str) -> str:
     return f"{SUMMARY_KEY_PREFIX}{user_id}:{conversation_id}"
 
 
+def _conversation_id_from_doc_key(key: str, user_id: str) -> str:
+    """Recover conversation_id from Redis key when HASH field is missing."""
+    key_str = key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key or "")
+    prefix = f"{SUMMARY_KEY_PREFIX}{user_id}:"
+    if key_str.startswith(prefix):
+        return key_str[len(prefix) :].strip()
+    return ""
+
+
 def _vector_to_bytes(vec: List[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
@@ -228,6 +237,15 @@ class MemoryIndexService:
         return out
 
     @staticmethod
+    async def _parse_summary_doc(raw: Dict[Any, Any], *, user_id: str, key: str) -> Dict[str, Any]:
+        item = await MemoryIndexService._parse_hash(raw)
+        if not str(item.get("conversation_id") or "").strip():
+            recovered = _conversation_id_from_doc_key(key, user_id)
+            if recovered:
+                item["conversation_id"] = recovered
+        return item
+
+    @staticmethod
     async def list_summaries(
         user_id: str,
         keyword: Optional[str] = None,
@@ -237,20 +255,25 @@ class MemoryIndexService:
         redis = await get_redis()
         if not redis:
             return []
-        pattern = f"{SUMMARY_KEY_PREFIX}{user_id}:*"
+        uid = str(user_id)
+        pattern = f"{SUMMARY_KEY_PREFIX}{uid}:*"
         if conversation_id:
-            key = _doc_key(user_id, conversation_id)
+            key = _doc_key(uid, conversation_id)
             raw = await MemoryIndexService._hgetall_summary(key)
             if not raw:
                 return []
-            items = [await MemoryIndexService._parse_hash(raw)]
+            items = [await MemoryIndexService._parse_summary_doc(raw, user_id=uid, key=key)]
         else:
             items = []
             async for key in redis.scan_iter(match=pattern, count=200):
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
                 raw = await MemoryIndexService._hgetall_summary(key_str)
                 if raw:
-                    items.append(await MemoryIndexService._parse_hash(raw))
+                    items.append(
+                        await MemoryIndexService._parse_summary_doc(
+                            raw, user_id=uid, key=key_str
+                        )
+                    )
 
         kw = (keyword or "").strip().lower()
         if kw:

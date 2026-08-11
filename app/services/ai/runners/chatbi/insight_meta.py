@@ -14,6 +14,10 @@ _ROW_KEYS = ("rows", "data", "result", "results", "items", "records")
 _DATE_NAME_RE = re.compile(r"(date|time|day|week|month|year|日期|时间|日|周|月|年)", re.I)
 _DATE_VALUE_RE = re.compile(r"^\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?")
 
+# 气泡下方平台明细表：前端默认每页行数；SSE 最多嵌入行数（超出截断，仍报 total）。
+CHATBI_RESULT_TABLE_PAGE_SIZE = 50
+CHATBI_RESULT_TABLE_MAX_EMBED_ROWS = 2000
+
 
 def _parse_result(output: Any) -> Any:
     if isinstance(output, (dict, list)):
@@ -87,6 +91,29 @@ def _action(action_id: str, label: str, description: str, query: str, priority: 
     }
 
 
+def _visualize_query(numeric: list[str], temporal: list[str], categorical: list[str]) -> str:
+    """Build a slightly richer visualize follow-up while staying incremental."""
+    structure_hints: list[str] = []
+    if temporal and numeric:
+        structure_hints.append(
+            f"时间列（{'、'.join(temporal[:2])}）与数值列优先折线或柱状趋势图"
+        )
+    if categorical and numeric:
+        structure_hints.append(
+            f"分类列（{'、'.join(categorical[:2])}）与数值列优先柱状/条形或占比饼图"
+        )
+    chart_hint = "；".join(structure_hints) if structure_hints else "根据时间、分类和数值结构选择合适图表"
+    return (
+        "基于刚才的查询结果做结构化可视化分析："
+        "先简要说明数据范围与适合出图的字段，再提炼关键发现、对比或异常；"
+        f"{chart_hint}；"
+        "用合法的 ```chart ECharts 输出图表，并在图后解读图表结论；"
+        "图表数据必须完全来自刚才的查询结果，不得编造；"
+        "若数据不足以生成可靠图表，请说明原因而不要强行出图；"
+        "最后给出简要结论与建议。不要重复上一轮已展示的完整表格或三段式报告。"
+    )
+
+
 def _build_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     numeric, temporal, categorical = _column_roles(rows)
     actions: list[dict[str, Any]] = []
@@ -97,8 +124,8 @@ def _build_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ))
     if numeric and len(rows) > 1 and (temporal or categorical):
         actions.append(_action(
-            "visualize", "可视化分析", "根据数据结构选择合适图表",
-            "基于刚才的查询结果做可视化分析，并根据时间、分类和数值结构选择合适的图表。", 95,
+            "visualize", "可视化分析", "选合适图表并解读关键发现",
+            _visualize_query(numeric, temporal, categorical), 95,
         ))
     if numeric and categorical:
         dimension = categorical[0]
@@ -184,6 +211,42 @@ def _build_evidence_metadata(
     }
 
 
+def _jsonable_cell(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, dict)):
+        try:
+            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def build_result_table_payload(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Structured table for platform UI (not for LLM context)."""
+    if not rows:
+        return None
+    columns: list[str] = list(rows[0].keys())
+    for row in rows[1 : min(100, len(rows))]:
+        for key in row.keys():
+            if key not in columns:
+                columns.append(str(key))
+    total = len(rows)
+    embed_rows = rows[:CHATBI_RESULT_TABLE_MAX_EMBED_ROWS]
+    matrix = [
+        [_jsonable_cell(row.get(column)) for column in columns]
+        for row in embed_rows
+    ]
+    return {
+        "columns": columns,
+        "rows": matrix,
+        "total_row_count": total,
+        "embedded_row_count": len(embed_rows),
+        "page_size": CHATBI_RESULT_TABLE_PAGE_SIZE,
+        "truncated": total > len(embed_rows),
+    }
+
+
 def build_chatbi_insight_meta(
     state: DataRunState,
     *,
@@ -205,6 +268,17 @@ def build_chatbi_insight_meta(
     raw_sql = str(state.last_successful_sql_args.get("sql") or state.last_successful_sql_args.get("query") or "").strip()
     executed_sql = str(notice.get("executed_sql") or "").strip() if isinstance(notice, dict) else ""
     repair_count = sum(int(count or 0) for count in state.repair_attempts.values()) + int(state.platform_auto_sql_attempts or 0)
+    table = build_result_table_payload(rows)
+    scope = getattr(state, "model_result_scope", None)
+    if not isinstance(scope, dict) or scope.get("mode") not in {"full", "sample"}:
+        from app.services.ai.runners.chatbi.sql_result_compact import build_model_result_scope
+
+        class _ScopeRunner:
+            @staticmethod
+            def _try_parse_json_output(output: Any) -> Any:
+                return _parse_result(output)
+
+        scope = build_model_result_scope(_ScopeRunner(), state.last_successful_sql_output)
     return {
         "type": "chatbi_insight_meta",
         "data": {
@@ -222,6 +296,8 @@ def build_chatbi_insight_meta(
             },
             "final_sql": executed_sql or raw_sql,
             "actions": _build_actions(rows),
+            "table": table,
+            "analysis_scope": scope,
         },
     }
 
@@ -272,6 +348,13 @@ def build_federated_chatbi_insight_meta(
             },
             "final_sql": str(final_sql or "").strip(),
             "actions": _build_actions(rows),
+            "table": build_result_table_payload(rows),
+            "analysis_scope": {
+                "mode": "full",
+                "total_row_count": len(rows),
+                "model_row_count": len(rows),
+                "user_notice": "",
+            },
         },
     }
 
@@ -319,4 +402,11 @@ def build_saved_report_chatbi_insight_meta(
         },
         "final_sql": str(sql or "").strip(),
         "actions": _build_actions(rows),
+        "table": build_result_table_payload(rows),
+        "analysis_scope": {
+            "mode": "full",
+            "total_row_count": len(rows),
+            "model_row_count": len(rows),
+            "user_notice": "",
+        },
     }

@@ -170,3 +170,31 @@ async def test_merge_session_summary_stores_structured_fields_and_refreshes_dail
     assert "新增 daily summary" in embed_text
     assert "memory_search" in embed_text
     mock_daily.assert_awaited_once_with("7")
+
+
+@pytest.mark.asyncio
+async def test_prune_excess_summaries_skips_missing_and_keeps_current():
+    items = [
+        {"conversation_id": "keep-me", "last_active": 300},
+        {"conversation_id": "old-1", "last_active": 200},
+        {"title": "broken", "last_active": 100},  # missing conversation_id
+        {"conversation_id": "old-2", "last_active": 50},
+    ]
+
+    with patch(
+        "app.services.ai.session_summary_service.MemoryConfigService.get_int",
+        new_callable=AsyncMock,
+        return_value=2,
+    ), patch(
+        "app.services.ai.session_summary_service.MemoryIndexService.list_summaries",
+        new_callable=AsyncMock,
+        return_value=items,
+    ), patch(
+        "app.services.ai.session_summary_service.MemoryIndexService.delete_summary",
+        new_callable=AsyncMock,
+    ) as mock_delete:
+        await SessionSummaryService._prune_excess_summaries("7", keep_conversation_id="keep-me")
+
+    deleted = [call.args[1] for call in mock_delete.await_args_list]
+    assert deleted == ["old-2"]
+    assert "keep-me" not in deleted

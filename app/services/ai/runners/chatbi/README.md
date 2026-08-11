@@ -27,7 +27,8 @@
 | `agent_builder.py` | 工具解析、AgentScope `Agent` 构建 |
 | `native_turn.py` | ReAct 主循环 + repair 轮次 + AgentState 持久化 |
 | `react_stream.py` | AgentScope 事件流映射、final guard、内容撤回 |
-| `tool_gate_wrapper.py` | Schema / SQL 重复等工具层 Gate；构建并注入 `SqlQueryBinding` |
+| `tool_gate_wrapper.py` | Schema / SQL 重复等工具层 Gate；构建并注入 `SqlQueryBinding`；大结果向模型回传抽样 |
+| `sql_result_compact.py` | 大结果抽样摘要、半截「稍后汇总」检测与兜底判定 |
 | `tool_result_handlers.py` | Schema/SQL 工具结果解析与应用；写入 `table_bindings` |
 | `sql_gates.py` | SQL 静态风险、schema 预检辅助函数、Gate 检测 |
 | `sql_repair_hints.py` | SQL 修复 hint 文案 |
