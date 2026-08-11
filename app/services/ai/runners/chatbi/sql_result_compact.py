@@ -8,7 +8,6 @@ from collections import Counter
 from typing import Any
 
 from app.services.ai.runners.chatbi.constants import (
-    _SQL_RESULT_DISPLAY_MAX_ROWS,
     _SQL_RESULT_ROW_KEYS,
     SQL_RESULT_MODEL_SAMPLE_ROWS,
     SQL_RESULT_MODEL_COMPACT_THRESHOLD,
@@ -209,7 +208,7 @@ def compact_sql_result_for_model(
     if total <= threshold:
         return None
 
-    sample_n = max(1, min(int(sample_rows), _SQL_RESULT_DISPLAY_MAX_ROWS, total))
+    sample_n = max(1, min(int(sample_rows), total))
     if isinstance(parsed, list):
         labels = _column_labels({}, rows[0] if rows else None)
         dims = _build_dimension_summaries(rows, labels=labels)
@@ -261,8 +260,49 @@ def _model_context_note(*, total: int, sample_n: int, has_dims: bool) -> str:
         "请基于总行数、样例与分布直接给出汇总/要点回答；"
         "禁止承诺「读取完整数据后再汇总」；"
         "禁止再用 Bash/Read/Grep 把明细重新 dump；"
-        "完整明细由前端「查看数据依据」提供，不必在回复中逐行粘贴。"
+        "完整明细由前端「查询结果明细」表格提供，不必在回复中逐行粘贴。\n"
+        "【必须告知用户】回答开头用一两句明确说明："
+        f"本次解读基于全部 {total} 行中的前 {sample_n} 行样例"
+        f"{'及维度分布' if has_dims else ''}，并非对全部明细的逐行全量分析；"
+        "完整明细请查看下方「查询结果明细」。"
     )
+
+
+def build_model_result_scope(
+    runner: Any,
+    output: Any,
+    *,
+    sample_rows: int = SQL_RESULT_MODEL_SAMPLE_ROWS,
+    threshold: int = SQL_RESULT_MODEL_COMPACT_THRESHOLD,
+) -> dict[str, Any]:
+    """Describe whether the model saw full rows or a sample (for UI + prompts)."""
+    parsed = runner._try_parse_json_output(output)
+    rows, _ = _extract_primary_rows(parsed)
+    total = len(rows) if rows is not None else 0
+    if total <= 0:
+        return {
+            "mode": "full",
+            "total_row_count": 0,
+            "model_row_count": 0,
+            "user_notice": "",
+        }
+    if total <= threshold:
+        return {
+            "mode": "full",
+            "total_row_count": total,
+            "model_row_count": total,
+            "user_notice": "",
+        }
+    sample_n = max(1, min(int(sample_rows), total))
+    return {
+        "mode": "sample",
+        "total_row_count": total,
+        "model_row_count": sample_n,
+        "user_notice": (
+            f"AI 解读基于全部 {total} 行中的前 {sample_n} 行样例及维度分布，"
+            "并非逐行全量分析；完整明细见下方「查询结果明细」。"
+        ),
+    }
 
 
 def should_rescue_deferred_sql_reply(state: Any) -> bool:

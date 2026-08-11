@@ -139,16 +139,35 @@ class SessionSummaryService:
                 memory_type=meta.get("memory_type") or "general",
             )
             await DailySummaryService.refresh_for_date(uid)
-
-            max_sessions = await MemoryConfigService.get_int("memory_summary_max_sessions", 50)
-            all_items = await MemoryIndexService.list_summaries(uid, limit=max_sessions + 10)
-            if len(all_items) > max_sessions:
-                for old in all_items[max_sessions:]:
-                    await MemoryIndexService.delete_summary(uid, old["conversation_id"])
+            await SessionSummaryService._prune_excess_summaries(uid, keep_conversation_id=conversation_id)
 
             logger.info("[SessionSummary] Updated summary for user=%s conv=%s", uid, conversation_id)
         except Exception as e:
             logger.error("[SessionSummary] merge failed: %s", e, exc_info=True)
+
+    @staticmethod
+    async def _prune_excess_summaries(user_id: str, *, keep_conversation_id: str = "") -> None:
+        """Drop oldest session summaries beyond the configured max; tolerate legacy docs."""
+        uid = str(user_id)
+        keep_cid = str(keep_conversation_id or "").strip()
+        max_sessions = await MemoryConfigService.get_int("memory_summary_max_sessions", 50)
+        if max_sessions <= 0:
+            return
+        all_items = await MemoryIndexService.list_summaries(uid, limit=max_sessions + 10)
+        if len(all_items) <= max_sessions:
+            return
+        for old in all_items[max_sessions:]:
+            old_cid = str(old.get("conversation_id") or "").strip()
+            if not old_cid:
+                logger.warning(
+                    "[SessionSummary] skip prune: missing conversation_id title=%s last_active=%s",
+                    old.get("title"),
+                    old.get("last_active"),
+                )
+                continue
+            if keep_cid and old_cid == keep_cid:
+                continue
+            await MemoryIndexService.delete_summary(uid, old_cid)
 
     @staticmethod
     async def search_for_user(

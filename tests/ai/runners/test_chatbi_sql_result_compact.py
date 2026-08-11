@@ -75,7 +75,7 @@ def test_looks_like_deferred_data_reply_ignores_substantive_answers():
 
 
 def test_compact_sql_result_for_model_samples_large_payload():
-    rows = [[f"A{i}", f"RACK-{i % 5}", "server"] for i in range(110)]
+    rows = [[f"A{i}", f"RACK-{i % 5}", "server"] for i in range(600)]
     payload = {
         "columns": [{"name": "asset_id"}, {"name": "rack"}, {"name": "type"}],
         "items": rows,
@@ -83,16 +83,32 @@ def test_compact_sql_result_for_model_samples_large_payload():
     compact_raw = compact_sql_result_for_model(_FakeRunner(), json.dumps(payload, ensure_ascii=False))
     assert compact_raw is not None
     compact = json.loads(compact_raw)
-    assert compact["total_row_count"] == 110
-    assert compact["sample_row_count"] == 15
-    assert len(compact["items"]) == 15
+    assert compact["total_row_count"] == 600
+    assert compact["sample_row_count"] == 500
+    assert len(compact["items"]) == 500
     assert "_model_context_note" in compact
-    assert "禁止承诺" in compact["_model_context_note"]
+    assert "必须告知用户" in compact["_model_context_note"]
+    assert "并非对全部明细的逐行全量分析" in compact["_model_context_note"]
     assert "dimension_summaries" in compact
 
 
-def test_compact_sql_result_for_model_skips_small_payload():
-    payload = {"columns": [{"name": "id"}], "items": [[1], [2], [3]]}
+def test_build_model_result_scope_marks_sample_mode():
+    from app.services.ai.runners.chatbi.sql_result_compact import build_model_result_scope
+
+    rows = [[i] for i in range(600)]
+    payload = json.dumps({"columns": [{"name": "id"}], "items": rows})
+    scope = build_model_result_scope(_FakeRunner(), payload)
+    assert scope["mode"] == "sample"
+    assert scope["total_row_count"] == 600
+    assert scope["model_row_count"] == 500
+    assert "并非逐行全量分析" in scope["user_notice"]
+
+
+def test_compact_sql_result_for_model_skips_under_threshold():
+    payload = {
+        "columns": [{"name": "id"}],
+        "items": [[i] for i in range(500)],
+    }
     assert compact_sql_result_for_model(_FakeRunner(), json.dumps(payload)) is None
 
 
@@ -166,7 +182,7 @@ def test_deferred_continue_query_repair_policy(data_config):
 async def test_sql_gate_returns_compacted_payload_but_keeps_full_cache(data_config):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
 
-    rows = [[f"id-{i}", f"type-{i % 3}"] for i in range(50)]
+    rows = [[f"id-{i}", f"type-{i % 3}"] for i in range(600)]
     full = json.dumps(
         {
             "columns": [{"name": "id"}, {"name": "type"}],
@@ -190,17 +206,17 @@ async def test_sql_gate_returns_compacted_payload_but_keeps_full_cache(data_conf
     )
     wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
     returned = await wrapped.callable(
-        sql="SELECT id, type FROM demo LIMIT 100",
+        sql="SELECT id, type FROM demo LIMIT 700",
         data_source="mysql_aiagent",
         dataset_name="demo",
     )
     compact = json.loads(returned)
-    assert compact["total_row_count"] == 50
-    assert len(compact["items"]) == 15
+    assert compact["total_row_count"] == 600
+    assert len(compact["items"]) == 500
     assert state.pending_sql_tool_full_output == full
     assert state.last_successful_sql_output == full
     cached = state.successful_sqls[
-        runner._normalize_sql_text("SELECT id, type FROM demo LIMIT 100")
+        runner._normalize_sql_text("SELECT id, type FROM demo LIMIT 700")
     ]
     assert cached == full
 
@@ -239,4 +255,5 @@ def test_global_guardrails_forbid_deferred_and_bash_dump():
     assert "读取完整数据后再汇总" in text
     assert "让我进一步按" in text
     assert "Bash/Read/Grep" in text
-    assert "查看数据依据" in text
+    assert "查询结果明细" in text
+    assert "样例而非逐行全量分析" in text

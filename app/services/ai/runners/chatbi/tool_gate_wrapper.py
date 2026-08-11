@@ -238,12 +238,14 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                 )
             if current_sql_normalized and current_sql_normalized in state.successful_sqls:
                 from app.services.ai.runners.chatbi.sql_result_compact import (
+                    build_model_result_scope,
                     compact_sql_result_for_model,
                 )
 
                 cached_output = state.successful_sqls[current_sql_normalized]
                 state.last_successful_sql_output = cached_output
                 state.pending_sql_tool_full_output = cached_output
+                state.model_result_scope = build_model_result_scope(runner, cached_output)
                 model_payload = compact_sql_result_for_model(runner, cached_output) or cached_output
                 return (
                     f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功执行过相同的 SQL 查询，禁止重复 execute_sql_query。\n"
@@ -267,6 +269,7 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                         and not runner._is_sql_sandbox_gate_block(result)
                     ):
                         from app.services.ai.runners.chatbi.sql_result_compact import (
+                            build_model_result_scope,
                             compact_sql_result_for_model,
                         )
 
@@ -279,6 +282,7 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                                 state.successful_sqls[current_sql_normalized] = result
                             state.last_successful_sql_output = result
                             state.pending_sql_tool_full_output = result
+                            state.model_result_scope = build_model_result_scope(runner, result)
                             compacted = compact_sql_result_for_model(runner, result)
                             if compacted is not None:
                                 return compacted

@@ -14,6 +14,10 @@ _ROW_KEYS = ("rows", "data", "result", "results", "items", "records")
 _DATE_NAME_RE = re.compile(r"(date|time|day|week|month|year|日期|时间|日|周|月|年)", re.I)
 _DATE_VALUE_RE = re.compile(r"^\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?")
 
+# 气泡下方平台明细表：前端默认每页行数；SSE 最多嵌入行数（超出截断，仍报 total）。
+CHATBI_RESULT_TABLE_PAGE_SIZE = 50
+CHATBI_RESULT_TABLE_MAX_EMBED_ROWS = 2000
+
 
 def _parse_result(output: Any) -> Any:
     if isinstance(output, (dict, list)):
@@ -207,6 +211,42 @@ def _build_evidence_metadata(
     }
 
 
+def _jsonable_cell(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, dict)):
+        try:
+            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def build_result_table_payload(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Structured table for platform UI (not for LLM context)."""
+    if not rows:
+        return None
+    columns: list[str] = list(rows[0].keys())
+    for row in rows[1 : min(100, len(rows))]:
+        for key in row.keys():
+            if key not in columns:
+                columns.append(str(key))
+    total = len(rows)
+    embed_rows = rows[:CHATBI_RESULT_TABLE_MAX_EMBED_ROWS]
+    matrix = [
+        [_jsonable_cell(row.get(column)) for column in columns]
+        for row in embed_rows
+    ]
+    return {
+        "columns": columns,
+        "rows": matrix,
+        "total_row_count": total,
+        "embedded_row_count": len(embed_rows),
+        "page_size": CHATBI_RESULT_TABLE_PAGE_SIZE,
+        "truncated": total > len(embed_rows),
+    }
+
+
 def build_chatbi_insight_meta(
     state: DataRunState,
     *,
@@ -228,6 +268,17 @@ def build_chatbi_insight_meta(
     raw_sql = str(state.last_successful_sql_args.get("sql") or state.last_successful_sql_args.get("query") or "").strip()
     executed_sql = str(notice.get("executed_sql") or "").strip() if isinstance(notice, dict) else ""
     repair_count = sum(int(count or 0) for count in state.repair_attempts.values()) + int(state.platform_auto_sql_attempts or 0)
+    table = build_result_table_payload(rows)
+    scope = getattr(state, "model_result_scope", None)
+    if not isinstance(scope, dict) or scope.get("mode") not in {"full", "sample"}:
+        from app.services.ai.runners.chatbi.sql_result_compact import build_model_result_scope
+
+        class _ScopeRunner:
+            @staticmethod
+            def _try_parse_json_output(output: Any) -> Any:
+                return _parse_result(output)
+
+        scope = build_model_result_scope(_ScopeRunner(), state.last_successful_sql_output)
     return {
         "type": "chatbi_insight_meta",
         "data": {
@@ -245,6 +296,8 @@ def build_chatbi_insight_meta(
             },
             "final_sql": executed_sql or raw_sql,
             "actions": _build_actions(rows),
+            "table": table,
+            "analysis_scope": scope,
         },
     }
 
@@ -295,6 +348,13 @@ def build_federated_chatbi_insight_meta(
             },
             "final_sql": str(final_sql or "").strip(),
             "actions": _build_actions(rows),
+            "table": build_result_table_payload(rows),
+            "analysis_scope": {
+                "mode": "full",
+                "total_row_count": len(rows),
+                "model_row_count": len(rows),
+                "user_notice": "",
+            },
         },
     }
 
@@ -342,4 +402,11 @@ def build_saved_report_chatbi_insight_meta(
         },
         "final_sql": str(sql or "").strip(),
         "actions": _build_actions(rows),
+        "table": build_result_table_payload(rows),
+        "analysis_scope": {
+            "mode": "full",
+            "total_row_count": len(rows),
+            "model_row_count": len(rows),
+            "user_notice": "",
+        },
     }

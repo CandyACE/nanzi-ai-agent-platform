@@ -141,8 +141,52 @@ def test_build_insight_exposes_evidence_metadata_for_the_evidence_panel():
     }
 
 
-def test_build_insight_returns_none_without_successful_query():
-    assert build_chatbi_insight_meta(DataRunState()) is None
+def test_build_insight_includes_paginated_result_table():
+    rows = [{"asset_id": f"A{i}", "rack": f"R{i % 5}"} for i in range(60)]
+    state = _state(rows)
+
+    data = build_chatbi_insight_meta(state)["data"]
+    table = data["table"]
+
+    assert table["page_size"] == 50
+    assert table["total_row_count"] == 60
+    assert table["embedded_row_count"] == 60
+    assert table["columns"] == ["asset_id", "rack"]
+    assert len(table["rows"]) == 60
+    assert table["rows"][0] == ["A0", "R0"]
+    assert table["truncated"] is False
+    assert data["analysis_scope"]["mode"] == "full"
+    assert data["analysis_scope"]["total_row_count"] == 60
+
+
+def test_build_insight_analysis_scope_sample_when_state_marks_sample():
+    rows = [{"id": i} for i in range(600)]
+    state = _state(rows)
+    state.model_result_scope = {
+        "mode": "sample",
+        "total_row_count": 600,
+        "model_row_count": 500,
+        "user_notice": "AI 解读基于样例",
+    }
+
+    data = build_chatbi_insight_meta(state)["data"]
+    assert data["analysis_scope"]["mode"] == "sample"
+    assert data["analysis_scope"]["model_row_count"] == 500
+    assert "样例" in data["analysis_scope"]["user_notice"]
+
+
+def test_build_insight_table_caps_embedded_rows(monkeypatch):
+    from app.services.ai.runners.chatbi import insight_meta as mod
+
+    monkeypatch.setattr(mod, "CHATBI_RESULT_TABLE_MAX_EMBED_ROWS", 10)
+    rows = [{"id": i} for i in range(25)]
+    state = _state(rows)
+
+    table = build_chatbi_insight_meta(state)["data"]["table"]
+    assert table["total_row_count"] == 25
+    assert table["embedded_row_count"] == 10
+    assert len(table["rows"]) == 10
+    assert table["truncated"] is True
 
 
 def test_take_insight_event_emits_only_once():

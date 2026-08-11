@@ -78,6 +78,6 @@ _SQL_RESULT_DISPLAY_MAX_ROWS = 15
 _SQL_RESULT_ROW_KEYS = ("items", "rows", "data", "records")
 _SQL_TOOL_RESULT_DELIMITER = "--- 结果 ---"
 _SQL_TOOL_ERROR_DELIMITER = "--- 错误 ---"
-# 回传给模型的 SQL 结果：超过阈值则抽样，完整结果仍保存在 DataRunState 供追问/依据卡。
-SQL_RESULT_MODEL_COMPACT_THRESHOLD = 20
-SQL_RESULT_MODEL_SAMPLE_ROWS = 15
+# 回传给模型的 SQL 结果：超过阈值则抽样，完整结果仍保存在 DataRunState 供追问/依据卡/平台表。
+SQL_RESULT_MODEL_COMPACT_THRESHOLD = 500
+SQL_RESULT_MODEL_SAMPLE_ROWS = 500

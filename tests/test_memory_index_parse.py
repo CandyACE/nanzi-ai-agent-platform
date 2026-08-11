@@ -71,6 +71,41 @@ async def test_list_summaries_uses_binary_redis_for_hgetall():
 
 
 @pytest.mark.asyncio
+async def test_list_summaries_backfills_conversation_id_from_redis_key():
+    binary_redis = AsyncMock()
+    binary_redis.hgetall = AsyncMock(
+        return_value={
+            b"user_id": b"9",
+            b"title": b"legacy",
+            b"summary": b"missing cid field",
+            b"last_active": b"100",
+            b"turn_count": b"1",
+        }
+    )
+    text_redis = AsyncMock()
+
+    async def scan_iter(match, count=200):
+        yield "memory:summary:9:legacy-conv"
+
+    text_redis.scan_iter = scan_iter
+
+    with patch(
+        "app.services.ai.memory_index_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=text_redis,
+    ), patch(
+        "app.services.ai.memory_index_service.get_redis_binary",
+        new_callable=AsyncMock,
+        return_value=binary_redis,
+    ):
+        items = await MemoryIndexService.list_summaries("9", limit=10)
+
+    assert len(items) == 1
+    assert items[0]["conversation_id"] == "legacy-conv"
+    assert items[0]["title"] == "legacy"
+
+
+@pytest.mark.asyncio
 async def test_search_summaries_uses_redis_knn_when_query_embedding_exists():
     binary_redis = AsyncMock()
     binary_redis.execute_command = AsyncMock(

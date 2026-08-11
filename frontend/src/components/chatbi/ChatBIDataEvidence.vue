@@ -1,13 +1,25 @@
 <template>
-  <div class="mt-3 rounded-xl border border-gray-200 bg-gray-50/80 text-xs dark:border-gray-700 dark:bg-gray-800/40">
-    <button type="button" class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left" @click="showDetails = !showDetails">
+  <div
+    :class="
+      embedded
+        ? ''
+        : 'mt-3 rounded-xl border border-gray-200 bg-gray-50/80 text-xs dark:border-gray-700 dark:bg-gray-800/40'
+    "
+  >
+    <button
+      type="button"
+      class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-white/50 dark:hover:bg-gray-900/20"
+      @click="showDetails = !showDetails"
+    >
       <span class="flex min-w-0 items-center gap-2 font-semibold text-gray-700 dark:text-gray-200">
         <span class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">✓</span>
         <span class="truncate">数据查询成功 · {{ meta.execution.row_count }} 行{{ permissionLabel }}</span>
       </span>
-      <span class="shrink-0 text-[11px] font-semibold text-primary hover:underline">查看数据依据</span>
+      <span class="shrink-0 text-[11px] font-semibold text-primary hover:underline">
+        {{ showDetails ? "收起依据" : "查看数据依据" }}
+      </span>
     </button>
-    <div v-if="showDetails" class="space-y-3 border-t border-gray-200 px-3 py-3 text-gray-600 dark:border-gray-700 dark:text-gray-300">
+    <div v-if="showDetails" class="space-y-3 border-t border-gray-200/80 px-3 py-3 text-gray-600 dark:border-gray-700/80 dark:text-gray-300">
       <section class="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>
           <div class="mb-1 font-bold text-gray-700 dark:text-gray-200">证据状态</div>
@@ -57,7 +69,10 @@
 import { computed, ref } from "vue";
 import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
 
-const props = defineProps<{ meta: ChatBIInsightMeta }>();
+const props = withDefaults(
+  defineProps<{ meta: ChatBIInsightMeta; embedded?: boolean }>(),
+  { embedded: false },
+);
 const showDetails = ref(false);
 const showSql = ref(false);
 const permissionLabel = computed(() => props.meta.permission?.row_filter_applied ? " · 已按权限过滤" : "");
