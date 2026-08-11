@@ -776,6 +776,67 @@ async def test_route_query_business_confirmation_receipt_without_last_agent_stil
     mock_get_llm.assert_called()
 
 
+@pytest.mark.asyncio
+async def test_route_query_sole_candidate_after_permission_skips_all_llms():
+    """权限过滤后仅 1 个候选时，跳过意图与路由 LLM。"""
+    service = RouterService()
+    sole = [
+        {
+            "id": "agent-general",
+            "name": "general-chat",
+            "description": "General Assistant",
+            "capabilities": ["chat"],
+        }
+    ]
+    mock_chat = _mock_chat_client("{}")
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.intent_service.identify_intent", new_callable=AsyncMock) as mock_identify, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = sole
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("供应商名称:测试 我要录入")
+
+    assert result is not None
+    assert result.agent_id == "agent-general"
+    assert "唯一可路由智能体" in result.reasoning
+    assert result.turn_labels == ["sole_candidate"]
+    mock_identify.assert_not_called()
+    mock_get_llm.assert_not_called()
+    mock_chat.generate_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_query_sole_candidate_after_constrain_skips_route_llm(mock_agents_metadata):
+    """意图约束后仅剩 1 个候选时，跳过路由 LLM。"""
+    service = RouterService()
+    mock_chat = _mock_chat_client("{}")
+    sole = [mock_agents_metadata[0]]  # ChatBI only
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch.object(service, "_constrain_candidates_by_intent", return_value=sole) as mock_constrain, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("列出某个系统中的全部记录")
+
+    assert result is not None
+    assert result.agent_id == "agent-chatbi"
+    assert "唯一可路由智能体" in result.reasoning
+    assert "sole_candidate" in result.turn_labels
+    mock_constrain.assert_called()
+    mock_get_llm.assert_not_called()
+    mock_chat.generate_text.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "query",
     [
