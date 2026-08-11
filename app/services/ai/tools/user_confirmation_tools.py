@@ -66,6 +66,14 @@ class RequestUserConfirmationTool(BaseTool):
     args_schema = RequestUserConfirmationArgs
 
     async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
+        from app.services.ai.business_confirmation import (
+            cancel_gate_block_payload,
+            is_cancel_confirmation_gate_armed,
+        )
+
+        if is_cancel_confirmation_gate_armed():
+            return json.dumps(cancel_gate_block_payload(), ensure_ascii=False)
+
         arguments = arguments or {}
         try:
             args = RequestUserConfirmationArgs.model_validate(arguments)

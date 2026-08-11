@@ -1,5 +1,9 @@
 import type { BusinessConfirmationState } from "./businessConfirmation";
-import { markOtherBusinessConfirmationsStale, parseBusinessConfirmationEvent } from "./businessConfirmation";
+import {
+  markOtherBusinessConfirmationsStale,
+  parseBusinessConfirmationEvent,
+  shouldSuppressBusinessConfirmation,
+} from "./businessConfirmation";
 
 /**
  * AgentScope 运行时 SSE 事件处理（permission / external / observability）
@@ -461,10 +465,20 @@ export function handleBusinessConfirmation<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
   addLog: AddStreamLogFn<T>,
-  allMessages?: Array<{ businessConfirmation?: BusinessConfirmationState }>,
+  allMessages?: Array<{ role?: string; content?: string; businessConfirmation?: BusinessConfirmationState }>,
 ) {
   const parsed = parseBusinessConfirmationEvent(data);
   if (!parsed) return;
+  if (shouldSuppressBusinessConfirmation(allMessages)) {
+    addLog(msg, {
+      id: `business_confirmation_suppressed_${parsed.confirmation_id}`,
+      title: "已拦截业务确认卡",
+      details: "用户刚取消确认，本轮禁止再次弹出确认卡。",
+      status: "warning",
+      category: "business_confirmation",
+    });
+    return;
+  }
   if (allMessages) {
     markOtherBusinessConfirmationsStale(allMessages, parsed.confirmation_id);
   }
@@ -483,7 +497,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
   addLog: AddStreamLogFn<T>,
-  allMessages?: Array<{ businessConfirmation?: BusinessConfirmationState }>,
+  allMessages?: Array<{ role?: string; content?: string; businessConfirmation?: BusinessConfirmationState }>,
 ): boolean {
   switch (data.type) {
     case "permission_required":

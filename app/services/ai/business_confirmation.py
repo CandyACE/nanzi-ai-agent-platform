@@ -2,10 +2,44 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 BUSINESS_CONFIRMATION_TOOL_NAME = "request_user_confirmation"
 BUSINESS_CONFIRMATION_MESSAGE_PREFIX = "【业务确认】"
+BUSINESS_CONFIRMATION_CANCEL_MARKER = f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消"
+BUSINESS_CONFIRMATION_CONFIRM_MARKER = f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已确定"
+
+_cancel_gate_armed: ContextVar[bool] = ContextVar(
+    "business_confirmation_cancel_gate",
+    default=False,
+)
+
+
+def is_business_confirmation_cancel_message(text: str | None) -> bool:
+    return BUSINESS_CONFIRMATION_CANCEL_MARKER in str(text or "")
+
+
+def arm_cancel_confirmation_gate(user_message: str | None) -> bool:
+    """Arm per-turn gate when the latest user message is a cancel confirmation."""
+    armed = is_business_confirmation_cancel_message(user_message)
+    _cancel_gate_armed.set(armed)
+    return armed
+
+
+def is_cancel_confirmation_gate_armed() -> bool:
+    return bool(_cancel_gate_armed.get())
+
+
+def cancel_gate_block_payload() -> dict[str, Any]:
+    return {
+        "status": "error",
+        "error": "business_confirmation_cancelled",
+        "message": (
+            "用户刚取消业务确认：禁止再次调用 request_user_confirmation，不要重新弹确认卡。"
+            "请只用文字确认已取消，并询问用户是否修改后重试或放弃。"
+        ),
+    }
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
@@ -52,6 +86,8 @@ def build_business_confirmation_sse(
 ) -> dict[str, Any] | None:
     """Build frontend SSE event for a business confirmation card."""
     if tool_name != BUSINESS_CONFIRMATION_TOOL_NAME:
+        return None
+    if is_cancel_confirmation_gate_armed():
         return None
     payload = parse_confirmation_tool_output(tool_output)
     if not payload:

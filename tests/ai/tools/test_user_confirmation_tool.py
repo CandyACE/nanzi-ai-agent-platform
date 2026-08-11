@@ -134,3 +134,41 @@ def test_cancel_message_forbids_reopening_confirmation_card():
     section = AgentServicePrompts._PLATFORM_BUSINESS_CONFIRMATION_SECTION
     assert "禁止再次调用 request_user_confirmation" in section
     assert "不得重新弹确认卡" in section
+
+
+@pytest.mark.asyncio
+async def test_cancel_gate_hard_blocks_tool_and_sse():
+    from app.services.ai.business_confirmation import (
+        arm_cancel_confirmation_gate,
+        build_business_confirmation_sse,
+    )
+
+    arm_cancel_confirmation_gate("【业务确认】用户已取消\nconfirmation_id: bc_x")
+    blocked = await request_user_confirmation.ainvoke(
+        {
+            "title": "不应出卡",
+            "fields": [{"key": "a", "label": "A", "value": "1"}],
+        }
+    )
+    payload = json.loads(blocked)
+    assert payload["status"] == "error"
+    assert payload["error"] == "business_confirmation_cancelled"
+    assert (
+        build_business_confirmation_sse(
+            tool_name=BUSINESS_CONFIRMATION_TOOL_NAME,
+            tool_output=json.dumps(
+                {
+                    "status": "awaiting_user",
+                    "confirmation_id": "bc_should_not",
+                    "ui": {
+                        "title": "x",
+                        "fields": [{"key": "a", "label": "A", "value": "1"}],
+                    },
+                }
+            ),
+            tool_call_id="c1",
+        )
+        is None
+    )
+    # Clear gate for other tests
+    arm_cancel_confirmation_gate("普通用户消息")

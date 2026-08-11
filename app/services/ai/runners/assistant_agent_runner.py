@@ -1262,6 +1262,9 @@ class AssistantAgentRunner(BaseExecutor):
                     "",
                 )
                 self._session_artifact_turn["user_question"] = state["user_query"]
+                from app.services.ai.business_confirmation import arm_cancel_confirmation_gate
+
+                arm_cancel_confirmation_gate(state["user_query"])
                 interrupted = False
                 try:
                     async for chunk in self._stream_agentscope_native_events(

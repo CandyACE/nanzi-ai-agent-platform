@@ -24,6 +24,24 @@ export interface BusinessConfirmationState {
 }
 
 export const BUSINESS_CONFIRMATION_MESSAGE_PREFIX = "【业务确认】";
+export const BUSINESS_CONFIRMATION_CANCEL_MARKER = `${BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消`;
+
+export function isBusinessConfirmationCancelMessage(content: string | undefined | null): boolean {
+  return String(content || "").includes(BUSINESS_CONFIRMATION_CANCEL_MARKER);
+}
+
+export function shouldSuppressBusinessConfirmation(
+  messages?: Array<{ role?: string; content?: string }>,
+): boolean {
+  if (!messages?.length) return false;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    const role = String(msg?.role || "").toLowerCase();
+    if (role !== "user" && role !== "human") continue;
+    return isBusinessConfirmationCancelMessage(msg?.content);
+  }
+  return false;
+}
 
 function asFields(raw: unknown): BusinessConfirmationField[] {
   if (!Array.isArray(raw)) return [];
