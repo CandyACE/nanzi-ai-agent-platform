@@ -59,6 +59,7 @@ READ_ONLY_TOOL_NAMES = {
     "memory_search",
     "fetch_user_long_term_memory",
     "get_myinfo",
+    "request_user_confirmation",
     "get_my_tasks",
     "jira_search",
     "jira_get_projects",

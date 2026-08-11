@@ -1,0 +1,116 @@
+"""Business data confirmation helpers (SSE payload + message contract)."""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+BUSINESS_CONFIRMATION_TOOL_NAME = "request_user_confirmation"
+BUSINESS_CONFIRMATION_MESSAGE_PREFIX = "【业务确认】"
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def parse_confirmation_tool_output(tool_output: Any) -> dict[str, Any] | None:
+    """Parse successful tool output into a confirmation payload dict."""
+    payload = _as_dict(tool_output)
+    if not payload:
+        # Nested text/data_blocks shape from some runners
+        if isinstance(tool_output, dict) and "text" in tool_output:
+            payload = _as_dict(tool_output.get("text"))
+    if not payload:
+        return None
+    if payload.get("status") != "awaiting_user":
+        return None
+    confirmation_id = str(payload.get("confirmation_id") or "").strip()
+    ui = payload.get("ui")
+    if not confirmation_id or not isinstance(ui, dict):
+        return None
+    fields = ui.get("fields")
+    if not isinstance(fields, list) or not fields:
+        return None
+    return payload
+
+
+def build_business_confirmation_sse(
+    *,
+    tool_name: str,
+    tool_output: Any,
+    tool_call_id: str = "",
+) -> dict[str, Any] | None:
+    """Build frontend SSE event for a business confirmation card."""
+    if tool_name != BUSINESS_CONFIRMATION_TOOL_NAME:
+        return None
+    payload = parse_confirmation_tool_output(tool_output)
+    if not payload:
+        return None
+    ui = payload["ui"]
+    return {
+        "type": "business_confirmation",
+        "tool_call_id": tool_call_id,
+        "confirmation_id": str(payload["confirmation_id"]),
+        "title": str(ui.get("title") or "请确认以下信息"),
+        "summary": str(ui.get("summary") or ""),
+        "fields": ui.get("fields") or [],
+        "confirm_label": str(ui.get("confirm_label") or "确定"),
+        "cancel_label": str(ui.get("cancel_label") or "取消"),
+        "risk_note": str(ui.get("risk_note") or ""),
+        "status": "pending",
+    }
+
+
+def format_field_snapshot_lines(fields: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        key = str(field.get("key") or "").strip()
+        label = str(field.get("label") or key or "字段").strip()
+        value = field.get("value")
+        if value is None:
+            value_text = ""
+        else:
+            value_text = str(value)
+        if key:
+            lines.append(f"- {label} ({key}): {value_text}")
+        else:
+            lines.append(f"- {label}: {value_text}")
+    return lines
+
+
+def build_user_confirmation_message(
+    *,
+    confirmed: bool,
+    confirmation_id: str,
+    fields: list[dict[str, Any]],
+) -> str:
+    """Build the plain user message sent after confirm/cancel click."""
+    snapshot = "\n".join(format_field_snapshot_lines(fields))
+    cid = confirmation_id.strip() or "unknown"
+    if confirmed:
+        body = (
+            f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已确定\n"
+            f"confirmation_id: {cid}\n"
+            "请根据以下已确认字段继续执行（如需写入请调用相应工具）：\n"
+            f"{snapshot}"
+        )
+    else:
+        body = (
+            f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消\n"
+            f"confirmation_id: {cid}\n"
+            "请停止本次录入/变更，不要调用写入类工具。如需修改请询问用户。\n"
+            f"当时字段快照：\n{snapshot}"
+        )
+    return body.strip()

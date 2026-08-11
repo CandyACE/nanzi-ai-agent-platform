@@ -1420,6 +1420,8 @@ class AssistantAgentRunner(BaseExecutor):
             )
             if result.get("log"):
                 yield result["log"]
+            if result.get("business_confirmation"):
+                yield result["business_confirmation"]
             if result.get("citation"):
                 yield result["citation"]
             if result.get("trace"):
@@ -2146,10 +2148,23 @@ class AssistantAgentRunner(BaseExecutor):
             except Exception as e:
                 logger.warning(f"Failed to extract citations from {tool_name}: {e}")
 
+        from app.services.ai.business_confirmation import build_business_confirmation_sse
+
+        confirmation_output = tool_output
+        if isinstance(tool_output, dict) and "text" in tool_output:
+            confirmation_output = tool_output.get("text", tool_output)
+
         return {
             "index": tool_index,
             "final_tool_message_content": final_tool_message_content,
             "trace": trace_step,
             "log": log_event,
-            "citation": citation_event
+            "citation": citation_event,
+            "business_confirmation": None
+            if is_error
+            else build_business_confirmation_sse(
+                tool_name=tool_name,
+                tool_output=confirmation_output,
+                tool_call_id=tool_id,
+            ),
         }

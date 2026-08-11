@@ -793,6 +793,12 @@
                   </div>
                 </transition>
               </div>
+              <BusinessConfirmationCard
+                v-if="msg.businessConfirmation"
+                :payload="msg.businessConfirmation"
+                :disabled="isProcessing"
+                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -2172,6 +2178,7 @@ const {
 const showToast = toast.showToast;
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
+import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
@@ -2291,6 +2298,11 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
+import {
+  buildBusinessConfirmationUserMessage,
+  type BusinessConfirmationField,
+  type BusinessConfirmationState,
+} from "@/utils/businessConfirmation";
 // --- Types ---
 interface LogEntry {
   id: number | string;
@@ -2300,7 +2312,7 @@ interface LogEntry {
   status: "pending" | "success" | "error";
   isExpanded: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'default';
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
@@ -2413,6 +2425,7 @@ interface Message {
   datasetNavigation?: DatasetNavigationPayload;
   permissionNotice?: PermissionNotice;
   groundingBlocked?: GroundingBlockedPayload;
+  businessConfirmation?: BusinessConfirmationState;
   _hasSilentlyRefreshed?: boolean;
 }
 // Helper: Check Role
@@ -6378,7 +6391,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
 
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
-  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream)) {
+  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream, messages.value)) {
     if (data.type === "error") {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
@@ -6480,6 +6493,24 @@ const submitPendingExternalExecution = async (msg: Message) => {
       if (!isMobile.value) chatInputRef.value?.focus();
     });
   }
+};
+
+const submitBusinessConfirmation = async (
+  msg: Message,
+  payload: { confirmed: boolean; fields: BusinessConfirmationField[] },
+) => {
+  const card = msg.businessConfirmation;
+  if (!card || card.status !== "pending" || isProcessing.value) return;
+  const content = buildBusinessConfirmationUserMessage(
+    payload.confirmed,
+    card.confirmation_id,
+    payload.fields,
+  );
+  card.fields = payload.fields.map((field) => ({ ...field }));
+  card.status = "submitted";
+  card.decision = payload.confirmed ? "confirmed" : "cancelled";
+  userInput.value = content;
+  await sendMessage();
 };
 
 const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
@@ -6819,7 +6850,7 @@ const sendMessage = async () => {
             }
           } else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
             // Additive ChatBI evidence event; answer content stays unchanged.
-          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream)) {
+          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) {
             if (data.type === "permission_required" && thoughtTimer) {
               clearInterval(thoughtTimer);
               thoughtTimer = null;

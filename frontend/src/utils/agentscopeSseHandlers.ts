@@ -1,3 +1,6 @@
+import type { BusinessConfirmationState } from "./businessConfirmation";
+import { markOtherBusinessConfirmationsStale, parseBusinessConfirmationEvent } from "./businessConfirmation";
+
 /**
  * AgentScope 运行时 SSE 事件处理（permission / external / observability）
  * EmbedChat 与 AgentDebug 共用。
@@ -89,6 +92,7 @@ export interface AgentStreamMessage {
   pendingExternalExecution?: PendingExternalExecution;
   toolResultData?: Record<string, ToolResultDataBlock[]>;
   groundingBlocked?: GroundingBlockedPayload;
+  businessConfirmation?: BusinessConfirmationState;
 }
 
 export type AddStreamLogFn<T extends AgentStreamMessage = AgentStreamMessage> = (
@@ -453,11 +457,33 @@ export function handleContextUpdate<T extends AgentStreamMessage>(
   });
 }
 
+export function handleBusinessConfirmation<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+  addLog: AddStreamLogFn<T>,
+  allMessages?: Array<{ businessConfirmation?: BusinessConfirmationState }>,
+) {
+  const parsed = parseBusinessConfirmationEvent(data);
+  if (!parsed) return;
+  if (allMessages) {
+    markOtherBusinessConfirmationsStale(allMessages, parsed.confirmation_id);
+  }
+  msg.businessConfirmation = parsed;
+  addLog(msg, {
+    id: `business_confirmation_${parsed.confirmation_id}`,
+    title: "业务数据确认",
+    details: parsed.title,
+    status: "pending",
+    category: "business_confirmation",
+  });
+}
+
 /** 主聊天流与 resume 流共用的 AgentScope 扩展事件分发 */
 export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
   addLog: AddStreamLogFn<T>,
+  allMessages?: Array<{ businessConfirmation?: BusinessConfirmationState }>,
 ): boolean {
   switch (data.type) {
     case "permission_required":
@@ -465,6 +491,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "external_execution_required":
       handleExternalExecutionRequired(msg, data, addLog);
+      return true;
+    case "business_confirmation":
+      handleBusinessConfirmation(msg, data, addLog, allMessages);
       return true;
     case "external_execution_result":
       if (msg.pendingExternalExecution) {
