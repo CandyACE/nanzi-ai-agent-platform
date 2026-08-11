@@ -412,7 +412,14 @@ XML 示例：
         "table_desc、列 term、metrics_scope、数据集中文名（meta_name）等均为业务说明，严禁直接当作表名；"
         "指标块（metrics）仅提供计算口径参考，不含表结构，禁止把指标块或 metrics_scope 当作可查询的表。\n"
         "11. 分页语法：禁止 ORDER BY ... AND ROWNUM/LIMIT；Oracle TopN 用子查询包排序后外层 ROWNUM 或 FETCH FIRST；"
-        "MySQL/ClickHouse 用 LIMIT；SQL Server 用 TOP N 或 ORDER BY ... OFFSET ... FETCH NEXT。"
+        "MySQL/ClickHouse 用 LIMIT；SQL Server 用 TOP N 或 ORDER BY ... OFFSET ... FETCH NEXT。\n"
+        "12. execute_sql_query 成功返回后，必须在本轮直接给出可读结论；"
+        "禁止只写「结果较多，读取完整数据后再汇总」或「让我进一步按…统计」等过渡句后停轮。"
+        "若当前结果粒度不够，必须立刻再调用 execute_sql_query 完成细化查询，然后再回答。"
+        "行数较多时：用总行数、关键维度分布、样例要点做汇总，"
+        "不要逐行粘贴全部明细；完整明细由前端「查看数据依据」提供。\n"
+        "13. 查数主路径成功后，禁止再用 Bash/Read/Grep 把 SQL 明细重新 dump 或二次加工后再承诺汇总；"
+        "确需计算时优先在 SQL 内完成聚合，或基于工具已返回的样例/摘要直接回答。"
     )
 
     # 分页/TopN 常见语法反例（Oracle ROWNUM 与 ORDER BY 混用是高频错误）
@@ -2401,6 +2408,16 @@ XML 示例：
             "4. 输出的 chart json 必须是合法的 JSON，不要带有 JS 表达式或注释。\n"
         )
 
+    _FOLLOWUP_SYNTHESIS_LAYOUT = (
+        "这是基于已有结果的追问：不要重复上一轮已展示过的完整表格或核心结论原文，只输出本轮新增分析或可视化。\n"
+        "【排版特别约束】：【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，"
+        "也禁止重复输出上轮数据表格。\n"
+        "可视化或分析追问可按精简结构输出：关键发现 → ```chart``` 图表（若适合）→ 图表解读 → 简要结论与建议；"
+        "保持简洁，不要长篇套话。\n"
+        "图表数据必须完全来自已有结果，不得编造；若数据不足以生成可靠图表，明确说明原因并跳过出图。\n"
+        "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
+    )
+
     @staticmethod
     def followup_synthesis_user_message(user_question: str, result_json: str) -> str:
         """基于上一轮结构化结果做分析/可视化的合成用户消息。"""
@@ -2409,11 +2426,9 @@ XML 示例：
             "【上一轮结构化查询结果】\n"
             f"{result_json}\n\n"
             "请只基于上一轮结构化查询结果完成分析或可视化，不要声称已重新查询数据库。\n"
-            "如果结果中包含数据来源、观测时间、数据截至时间或 result_status，最终回答必须如实保留；不能把成功空结果写成有数据，也不能补造缺失数字。\n"
-            "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
-            "【排版特别约束】：因为是追问，请直接输出图表（```chart```） and 新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
-            "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
-            "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
+            "如果结果中包含数据来源、观测时间、数据截至时间或 result_status，最终回答必须如实保留；"
+            "不能把成功空结果写成有数据，也不能补造缺失数字。\n"
+            f"{DataQueryPrompts._FOLLOWUP_SYNTHESIS_LAYOUT}\n"
             f"{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}\n\n"
             f"{SharedPrompts.DATA_QUERY_MARKDOWN_OUTPUT_FORMAT}\n\n"
             f"{SharedPrompts.QUICK_SUGGESTIONS_PLACEMENT}"
@@ -2428,10 +2443,7 @@ XML 示例：
             f"{history_excerpt}\n\n"
             "请只基于上述已有查数展示完成分析或可视化，不要声称已重新查询数据库。\n"
             "若历史展示没有明确来源或时效，必须说明来源/时间不可核验，不得补造具体数字。\n"
-            "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
-            "【排版特别约束】：因为是追问，请直接输出图表（```chart```） and 新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
-            "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
-            "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
+            f"{DataQueryPrompts._FOLLOWUP_SYNTHESIS_LAYOUT}\n"
             f"{DataQueryPrompts.ECHARTS_OUTPUT_CONTRACT}\n\n"
             f"{SharedPrompts.DATA_QUERY_MARKDOWN_OUTPUT_FORMAT}\n\n"
             f"{SharedPrompts.QUICK_SUGGESTIONS_PLACEMENT}"

@@ -68,6 +68,10 @@ class DataRunState:
     halt_current_react: bool = False
     last_successful_sql_output: Any = None
     last_successful_sql_args: dict[str, Any] = field(default_factory=dict)
+    # 工具层向模型回传抽样结果前，暂存完整 SQL 输出，供 on_tool_result_end 落库/enrich。
+    pending_sql_tool_full_output: Any = None
+    # 模型承诺继续细化查数但未发起工具：进入 repair 强制 execute_sql_query。
+    deferred_continue_query: bool = False
     successful_sqls: dict[str, Any] = field(default_factory=dict)
     sql_citation_counter: int = 0
     emitted_sql_citation_signatures: list[str] = field(default_factory=list)

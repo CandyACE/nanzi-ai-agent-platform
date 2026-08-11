@@ -89,6 +89,26 @@ def test_build_insight_marks_repaired_and_exposes_delivery_actions():
     assert "monitor" in action_ids
 
 
+def test_visualize_action_query_includes_structure_and_report_guidance():
+    state = _state(
+        [
+            {"stat_date": "2026-07-14", "room_name": "上海一号", "pue": 1.42},
+            {"stat_date": "2026-07-15", "room_name": "上海二号", "pue": 1.51},
+        ]
+    )
+
+    actions = {action["id"]: action for action in build_chatbi_insight_meta(state)["data"]["actions"]}
+    visualize = actions["visualize"]
+
+    assert visualize["description"] == "选合适图表并解读关键发现"
+    assert "结构化可视化分析" in visualize["query"]
+    assert "stat_date" in visualize["query"]
+    assert "room_name" in visualize["query"]
+    assert "不得编造" in visualize["query"]
+    assert "简要结论与建议" in visualize["query"]
+    assert "```chart" in visualize["query"]
+
+
 def test_build_insight_binds_actions_to_saved_result():
     state = _state([{"room_name": "上海一号", "pue": 1.42}])
     state.current_result_id = "result_abc123"

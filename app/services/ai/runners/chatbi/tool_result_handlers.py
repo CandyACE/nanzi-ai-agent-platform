@@ -293,6 +293,16 @@ def apply_sql_tool_result(
     if runner._is_sql_repeat_gate_block(output):
         state.sql_repeat_gate_block = True
         state.sql_completed = True
+        normalized_sql = ""
+        if isinstance(tool_args, dict):
+            normalized_sql = runner._normalize_sql_text(
+                str(tool_args.get("sql") or tool_args.get("query") or "")
+            )
+        cached_full = state.successful_sqls.get(normalized_sql) if normalized_sql else None
+        if cached_full is not None:
+            state.last_successful_sql_output = cached_full
+            parsed = runner._try_parse_json_output(cached_full)
+            return parsed, False
         text = str(output or "")
         cached_text = text
         if "\n\n" in text:

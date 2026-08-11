@@ -87,6 +87,29 @@ def _action(action_id: str, label: str, description: str, query: str, priority: 
     }
 
 
+def _visualize_query(numeric: list[str], temporal: list[str], categorical: list[str]) -> str:
+    """Build a slightly richer visualize follow-up while staying incremental."""
+    structure_hints: list[str] = []
+    if temporal and numeric:
+        structure_hints.append(
+            f"时间列（{'、'.join(temporal[:2])}）与数值列优先折线或柱状趋势图"
+        )
+    if categorical and numeric:
+        structure_hints.append(
+            f"分类列（{'、'.join(categorical[:2])}）与数值列优先柱状/条形或占比饼图"
+        )
+    chart_hint = "；".join(structure_hints) if structure_hints else "根据时间、分类和数值结构选择合适图表"
+    return (
+        "基于刚才的查询结果做结构化可视化分析："
+        "先简要说明数据范围与适合出图的字段，再提炼关键发现、对比或异常；"
+        f"{chart_hint}；"
+        "用合法的 ```chart ECharts 输出图表，并在图后解读图表结论；"
+        "图表数据必须完全来自刚才的查询结果，不得编造；"
+        "若数据不足以生成可靠图表，请说明原因而不要强行出图；"
+        "最后给出简要结论与建议。不要重复上一轮已展示的完整表格或三段式报告。"
+    )
+
+
 def _build_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     numeric, temporal, categorical = _column_roles(rows)
     actions: list[dict[str, Any]] = []
@@ -97,8 +120,8 @@ def _build_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ))
     if numeric and len(rows) > 1 and (temporal or categorical):
         actions.append(_action(
-            "visualize", "可视化分析", "根据数据结构选择合适图表",
-            "基于刚才的查询结果做可视化分析，并根据时间、分类和数值结构选择合适的图表。", 95,
+            "visualize", "可视化分析", "选合适图表并解读关键发现",
+            _visualize_query(numeric, temporal, categorical), 95,
         ))
     if numeric and categorical:
         dimension = categorical[0]

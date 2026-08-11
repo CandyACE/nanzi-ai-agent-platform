@@ -784,8 +784,8 @@ class DataAgentRunner(BaseExecutor):
         async for _chunk in chatbi_synthesis.synthesize_from_history_data_result(self, runtime_messages, system_prompt, user_question, history):
             yield _chunk
 
-    async def _synthesize_from_cached_sql_result(self, *, runtime_messages: List[Any], system_prompt: str, user_question: str, state: _DataRunState) -> AsyncGenerator[Dict[str, Any], None]:
-        async for _chunk in chatbi_synthesis.synthesize_from_cached_sql_result(self, runtime_messages=runtime_messages, system_prompt=system_prompt, user_question=user_question, state=state):
+    async def _synthesize_from_cached_sql_result(self, *, runtime_messages: List[Any], system_prompt: str, user_question: str, state: _DataRunState, reason: str="repeat_sql") -> AsyncGenerator[Dict[str, Any], None]:
+        async for _chunk in chatbi_synthesis.synthesize_from_cached_sql_result(self, runtime_messages=runtime_messages, system_prompt=system_prompt, user_question=user_question, state=state, reason=reason):
             yield _chunk
 
     async def _build_system_content(self, *, context_action_result: Optional[Dict[str, Any]]=None, include_context_action: bool=False) -> str:
