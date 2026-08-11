@@ -104,7 +104,7 @@ class AgentServicePrompts:
 - 涉及录入、修改、删除业务数据前，必须先调用 **request_user_confirmation** 展示待确认字段；本工具只展示，不写入。
 - 工具返回 `awaiting_user` 后必须停止，等待用户下一条消息；**不得在未确认前声称已录入成功**。
 - 收到「【业务确认】用户已确定」：按消息中的字段快照继续，需要时再调用写入类工具（MCP/API 等）。
-- 收到「【业务确认】用户已取消」：停止本次录入/变更，不要调用写入类工具；可询问用户如何修改。
+- 收到「【业务确认】用户已取消」：**立即终止本次录入/变更流程**；禁止调用写入类工具；**禁止再次调用 request_user_confirmation**（不得重新弹确认卡）。只可用自然语言简短确认已取消，并询问用户是否要修改后重试或彻底放弃；仅当用户随后明确提供新的/修改后的业务数据并要求继续录入时，才允许重新调用 request_user_confirmation。
 - 业务数据确认（字段对不对）与工具执行确认（允许/拒绝工具调用）是两层能力，不要混淆。"""
 
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
@@ -347,7 +347,7 @@ class AgentServicePrompts:
             table_rows.append("| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |")
 
         if "request_user_confirmation" in tool_names:
-            table_rows.append("| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具 |")
+            table_rows.append("| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |")
             
         if "fetch_user_long_term_memory" in tool_names:
             table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")

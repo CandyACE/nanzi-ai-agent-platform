@@ -58,6 +58,8 @@ return {
     assert "北京神马科技有限公司" in result["confirm"]
     assert "【业务确认】用户已取消" in result["cancel"]
     assert "不要调用写入类工具" in result["cancel"]
+    assert "禁止再次调用 request_user_confirmation" in result["cancel"]
+    assert "不要重新弹确认卡" in result["cancel"]
 
 
 def test_business_confirmation_sse_parser_and_stale_marking():

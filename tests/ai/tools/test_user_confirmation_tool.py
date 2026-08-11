@@ -118,3 +118,19 @@ def test_build_user_confirmation_message_format():
     assert "【业务确认】用户已确定" in text
     assert "confirmation_id: bc_abc" in text
     assert "名称 (name): 测试" in text
+
+
+def test_cancel_message_forbids_reopening_confirmation_card():
+    from app.services.ai.business_confirmation import build_user_confirmation_message
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    text = build_user_confirmation_message(
+        confirmed=False,
+        confirmation_id="bc_cancel",
+        fields=[{"key": "name", "label": "名称", "value": "测试"}],
+    )
+    assert "禁止再次调用 request_user_confirmation" in text
+    assert "不要重新弹确认卡" in text
+    section = AgentServicePrompts._PLATFORM_BUSINESS_CONFIRMATION_SECTION
+    assert "禁止再次调用 request_user_confirmation" in section
+    assert "不得重新弹确认卡" in section
