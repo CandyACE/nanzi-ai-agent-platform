@@ -127,3 +127,31 @@ def test_business_confirmation_frontend_wiring_contract():
     assert "submitBusinessConfirmation" in debug
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)" in embed
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)" in debug
+    assert 'hide-quick-buttons="!!msg.businessConfirmation"' in embed
+    assert 'hide-quick-buttons="!!msg.businessConfirmation"' in debug
+    assert "hideQuickButtons" in (ROOT / "frontend/src/components/MessageRenderer.vue").read_text(encoding="utf-8")
+    assert "stripQuickButtons" in (ROOT / "frontend/src/utils/quickButtons.ts").read_text(encoding="utf-8")
+
+
+def test_strip_quick_buttons_removes_quick_markdown():
+    result = _run_typescript(
+        "frontend/src/utils/quickButtons.ts",
+        """
+const text = '请核对确认卡信息。\\n\\n确认完成后，您还可以继续:\\n- [确认录入该供应商](quick:确认录入)\\n- [取消本次录入](quick:取消录入)\\n';
+const classic = '结果已生成。\\n\\n### 💬 您可能还想了解\\n---\\n- [查看趋势](quick:查看趋势)\\n- [对比明细](quick:对比明细)\\n';
+return {
+  stripped: api.stripQuickButtons(text),
+  classic: api.stripQuickButtons(classic),
+  parsedHasBtn: api.parseQuickButtons(text).includes('quick-action-btn'),
+};
+""",
+    )
+    assert "请核对确认卡信息。" in result["stripped"]
+    assert "确认完成后" not in result["stripped"]
+    assert "还可以继续" not in result["stripped"]
+    assert "确认录入该供应商" not in result["stripped"]
+    assert "取消本次录入" not in result["stripped"]
+    assert "-" not in result["stripped"].strip().splitlines()[-1] if result["stripped"].strip() else True
+    assert result["stripped"].count("•") == 0
+    assert result["classic"] == "结果已生成。"
+    assert result["parsedHasBtn"] is True

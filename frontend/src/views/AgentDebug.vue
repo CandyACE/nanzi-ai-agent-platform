@@ -4855,6 +4855,7 @@ onUnmounted(() => {
                 <MessageRenderer
                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                   :content="msg.content"
+                  :hide-quick-buttons="!!msg.businessConfirmation"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                   @open-canvas="handleOpenCanvas"

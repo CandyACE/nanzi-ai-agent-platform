@@ -134,6 +134,8 @@ def test_cancel_message_forbids_reopening_confirmation_card():
     section = AgentServicePrompts._PLATFORM_BUSINESS_CONFIRMATION_SECTION
     assert "禁止再次调用 request_user_confirmation" in section
     assert "不得重新弹确认卡" in section
+    assert "禁止再输出任何 `quick:` 链接" in section or "禁止再输出任何 quick" in section
+    assert "确认/取消只走确认卡按钮" in section
 
 
 @pytest.mark.asyncio

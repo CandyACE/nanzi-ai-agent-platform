@@ -964,6 +964,7 @@
                                                                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                                                                   :content="msg.content"
                                                                   :theme="config.markdownTheme"
+                                                                  :hide-quick-buttons="!!msg.businessConfirmation"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
