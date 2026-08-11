@@ -417,8 +417,20 @@ class RouterService:
                             ],
                         ),
                     ]
-                content = (await chat_client.generate_text(attempt_messages)).strip()
-                result_json = self._parse_router_json(content)
+                result_json = await chat_client.generate_structured_dict(
+                    attempt_messages,
+                    LLMRouterResponse,
+                )
+                content = ""
+                if result_json is None:
+                    content = (await chat_client.generate_text(attempt_messages)).strip()
+                    result_json = self._parse_router_json(content)
+                else:
+                    content = json.dumps(result_json, ensure_ascii=False)
+                    logger.info(
+                        "LLM Routing used AgentScope structured_output (attempt %s)",
+                        attempt + 1,
+                    )
                 if result_json is None:
                     raise ValueError(f"Unparseable router response: {content[:200]!r}")
 

@@ -61,6 +61,7 @@ class MockLLMResponse:
 
 def _mock_chat_client(content: str):
     mock_client = AsyncMock()
+    mock_client.generate_structured_dict.return_value = None
     mock_client.generate_text.return_value = content
     return mock_client
 

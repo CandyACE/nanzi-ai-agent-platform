@@ -1018,6 +1018,22 @@ class IntentService:
 
         try:
             chat_client = chat_client_from_handle(active_llm)
+            structured = await chat_client.generate_structured_dict(messages, IntentResponse)
+            if structured is not None:
+                tool_intent = self._intent_from_tool_call_payload(structured)
+                if tool_intent is not None:
+                    return tool_intent
+                if (
+                    "domain" not in structured
+                    and str(structured.get("intent") or "").upper() == IntentType.DATA_QUERY.value
+                ):
+                    structured = dict(structured)
+                    structured["domain"] = "unqualified_data_intent"
+                import logging
+                logging.getLogger(__name__).info(
+                    "Intent recognition used AgentScope structured_output"
+                )
+                return IntentResponse.model_validate(structured)
             response = await chat_client.generate_text(messages)
             return self._parse_response(response)
         except Exception as e:

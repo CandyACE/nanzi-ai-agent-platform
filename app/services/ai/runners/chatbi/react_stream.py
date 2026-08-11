@@ -315,6 +315,17 @@ async def stream_agentscope_events(
             log_payload["row_filter_applied"] = True
         yield log_payload
 
+        from app.services.ai.business_confirmation import build_business_confirmation_sse
+
+        if not is_error:
+            confirmation_event = build_business_confirmation_sse(
+                tool_name=tool_name,
+                tool_output=output,
+                tool_call_id=tool_id,
+            )
+            if confirmation_event:
+                yield confirmation_event
+
     def track_sql_plan_delta(delta: str) -> None:
         state.text_window = (state.text_window + delta)[-4000:]
         if runner._has_sql_plan(state.text_window):

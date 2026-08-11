@@ -1323,13 +1323,17 @@ class AssistantAgentRunner(BaseExecutor):
         loop_detector: ToolLoopDetector | None = None,
     ) -> Any:
         from agentscope.agent import Agent, ReActConfig
-        from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
+        from app.services.ai.runtime.agentscope.agent_runtime import (
+            build_runtime_middlewares,
+            load_injection_config,
+        )
 
         context_config = await load_context_config()
         model_config = await build_model_config(
             config=self.config,
             primary_model_name=primary_model_name,
         )
+        injection_config = await load_injection_config()
         workspace = await get_local_workspace(
             user_id=self._runtime_user_id(),
             user_name=self._runtime_user_name(),
@@ -1345,16 +1349,12 @@ class AssistantAgentRunner(BaseExecutor):
             loop_detector=loop_detector,
             user_id=self._runtime_user_id(),
         )
-        middlewares = []
-        if self.conversation_id:
-            middlewares.append(
-                ModelCallStatsMiddleware(
-                    user_id=self._runtime_user_id(),
-                    conversation_id=self.conversation_id,
-                    agent_name=self._runtime_agent_name(),
-                    trace_id=self.trace_id,
-                )
-            )
+        middlewares = build_runtime_middlewares(
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+            agent_name=self._runtime_agent_name(),
+            trace_id=self.trace_id,
+        )
         return Agent(
             name=self._runtime_agent_name(),
             system_prompt=system_content,
@@ -1364,6 +1364,7 @@ class AssistantAgentRunner(BaseExecutor):
             offloader=workspace,
             model_config=model_config,
             context_config=context_config,
+            injection_config=injection_config,
             react_config=ReActConfig(max_iters=max_steps),
             middlewares=middlewares,
         )
@@ -1419,6 +1420,8 @@ class AssistantAgentRunner(BaseExecutor):
             )
             if result.get("log"):
                 yield result["log"]
+            if result.get("business_confirmation"):
+                yield result["business_confirmation"]
             if result.get("citation"):
                 yield result["citation"]
             if result.get("trace"):
@@ -2145,10 +2148,23 @@ class AssistantAgentRunner(BaseExecutor):
             except Exception as e:
                 logger.warning(f"Failed to extract citations from {tool_name}: {e}")
 
+        from app.services.ai.business_confirmation import build_business_confirmation_sse
+
+        confirmation_output = tool_output
+        if isinstance(tool_output, dict) and "text" in tool_output:
+            confirmation_output = tool_output.get("text", tool_output)
+
         return {
             "index": tool_index,
             "final_tool_message_content": final_tool_message_content,
             "trace": trace_step,
             "log": log_event,
-            "citation": citation_event
+            "citation": citation_event,
+            "business_confirmation": None
+            if is_error
+            else build_business_confirmation_sse(
+                tool_name=tool_name,
+                tool_output=confirmation_output,
+                tool_call_id=tool_id,
+            ),
         }

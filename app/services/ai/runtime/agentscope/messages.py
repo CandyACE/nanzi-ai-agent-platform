@@ -61,6 +61,31 @@ def system_user_prompt_messages(
     ]
 
 
+def extract_msg_structured_output(msg: Any) -> dict[str, Any] | None:
+    """Read AgentScope Msg.structured_output if present (2.0.5+).
+
+    Safe no-op helper for opt-in callers. Does **not** change reply paths
+    unless a runner explicitly passes ``structured_schema`` to reply/reply_stream.
+    """
+    if msg is None:
+        return None
+    raw = getattr(msg, "structured_output", None)
+    if raw is None and isinstance(msg, dict):
+        raw = msg.get("structured_output")
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    model_dump = getattr(raw, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump()
+            return dumped if isinstance(dumped, dict) else None
+        except Exception:
+            return None
+    return None
+
+
 def convert_history_to_runtime_messages(history: list[dict[str, Any]]) -> list[RuntimeMessage]:
     messages: list[RuntimeMessage] = []
     for item in history:

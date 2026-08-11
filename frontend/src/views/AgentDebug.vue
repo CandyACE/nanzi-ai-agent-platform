@@ -8,6 +8,7 @@ import AgentLogicFlowModal from "@/components/debug/AgentLogicFlowModal.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
+import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
@@ -60,6 +61,11 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
+import {
+  buildBusinessConfirmationUserMessage,
+  type BusinessConfirmationField,
+  type BusinessConfirmationState,
+} from "@/utils/businessConfirmation";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "@/composables/useTokenQuota";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
@@ -1295,6 +1301,7 @@ interface Message {
   chatbiMetadataGuide?: ChatBIMetadataGuidePayload;
   agentHandoff?: AgentHandoffNoticeData;
   groundingBlocked?: GroundingBlockedPayload;
+  businessConfirmation?: BusinessConfirmationState;
   prompt_tokens?: number;
   completion_tokens?: number;
 }
@@ -3185,7 +3192,7 @@ const sendMessage = async () => {
                 agentMsg.value.isThinking = true;
               }
             }
-            else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog)) {
+            else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)) {
               if (data.type === "permission_required" && thoughtTimer) {
                 clearInterval(thoughtTimer);
                 thoughtTimer = null;
@@ -3400,7 +3407,7 @@ const submitPendingExternalExecution = async (msg: Message) => {
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
   applyStreamTraceId(msg, data);
 
-  if (dispatchAgentscopeStreamEvent(msg, data, addRealLog)) {
+  if (dispatchAgentscopeStreamEvent(msg, data, addRealLog, messages.value)) {
     if (data.type === "error") {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
@@ -3510,6 +3517,24 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     msg.content += `\n\n> ❌ **服务异常**: ${errText}`;
   }
   if (data.intent) msg.intent = data.intent;
+};
+
+const submitBusinessConfirmation = async (
+  msg: Message,
+  payload: { confirmed: boolean; fields: BusinessConfirmationField[] },
+) => {
+  const card = msg.businessConfirmation;
+  if (!card || card.status !== "pending" || isProcessing.value) return;
+  const content = buildBusinessConfirmationUserMessage(
+    payload.confirmed,
+    card.confirmation_id,
+    payload.fields,
+  );
+  card.fields = payload.fields.map((field) => ({ ...field }));
+  card.status = "submitted";
+  card.decision = payload.confirmed ? "confirmed" : "cancelled";
+  userInput.value = content;
+  await sendMessage();
 };
 
 const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
@@ -4641,6 +4666,12 @@ onUnmounted(() => {
               </div>
               <!-- Close the v-if="msg.logs && msg.logs.length > 0" container -->
 
+              <BusinessConfirmationCard
+                v-if="msg.businessConfirmation"
+                :payload="msg.businessConfirmation"
+                :disabled="isProcessing"
+                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"

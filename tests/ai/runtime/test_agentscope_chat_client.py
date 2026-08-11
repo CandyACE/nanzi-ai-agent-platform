@@ -129,3 +129,54 @@ async def test_chat_client_collects_streaming_final_text():
     )
 
     assert text == "final answer"
+
+
+@pytest.mark.asyncio
+async def test_chat_client_generate_structured_dict_fail_open_and_success():
+    from pydantic import BaseModel, Field
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    class Payload(BaseModel):
+        agent_name: str = Field(default="")
+        confidence: float = Field(default=0.0)
+
+    class BrokenNative:
+        async def generate_structured_output(self, **kwargs):
+            raise RuntimeError("boom")
+
+    broken = AgentScopeChatClient(BrokenNative())
+    assert (
+        await broken.generate_structured_dict(
+            [
+                RuntimeMessage(
+                    role="user",
+                    content=[RuntimeContentBlock(type="text", text="x")],
+                )
+            ],
+            Payload,
+        )
+        is None
+    )
+
+    class OkNative:
+        async def generate_structured_output(self, **kwargs):
+            assert "structured_model" in kwargs
+            assert kwargs["messages"]
+            return type("R", (), {"content": {"agent_name": "main", "confidence": 0.9}})()
+
+    ok = AgentScopeChatClient(OkNative())
+    payload = await ok.generate_structured_dict(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="x")],
+            )
+        ],
+        Payload,
+    )
+    assert payload == {"agent_name": "main", "confidence": 0.9}

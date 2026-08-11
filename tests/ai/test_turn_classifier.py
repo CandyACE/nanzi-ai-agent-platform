@@ -27,6 +27,7 @@ pytestmark = pytest.mark.no_infrastructure
 
 def _mock_chat_client(content: str):
     chat_client = AsyncMock()
+    chat_client.generate_structured_dict.return_value = None
     chat_client.generate_text.return_value = content
     return chat_client
 
@@ -439,6 +440,9 @@ async def test_data_query_classifier_prompt_includes_federated_turn_type():
     captured = {}
 
     class FakeChatClient:
+        async def generate_structured_dict(self, messages, structured_model):
+            return None
+
         async def generate_text(self, messages):
             captured["messages"] = messages
             return '{"turn_type":"federated_data_query","reasoning":"用户显式要求跨数据集关联查询"}'

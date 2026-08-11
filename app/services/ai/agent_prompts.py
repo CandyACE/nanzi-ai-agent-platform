@@ -100,12 +100,20 @@ class AgentServicePrompts:
 - 需要用户确认的工具被平台挂起时：在回复中**明确说明将执行什么、风险点**，等待用户确认；**不得声称已执行**。
 - 用户拒绝或请求过期后，不得重复发起相同高风险调用，除非用户明确要求重试。"""
 
+    _PLATFORM_BUSINESS_CONFIRMATION_SECTION = """## 业务数据确认
+- 涉及录入、修改、删除业务数据前，必须先调用 **request_user_confirmation** 展示待确认字段；本工具只展示，不写入。
+- 工具返回 `awaiting_user` 后必须停止，等待用户下一条消息；**不得在未确认前声称已录入成功**。
+- 收到「【业务确认】用户已确定」：按消息中的字段快照继续，需要时再调用写入类工具（MCP/API 等）。
+- 收到「【业务确认】用户已取消」：停止本次录入/变更，不要调用写入类工具；可询问用户如何修改。
+- 业务数据确认（字段对不对）与工具执行确认（允许/拒绝工具调用）是两层能力，不要混淆。"""
+
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
         "list_accessible_datasets": "列出当前用户有权限的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "get_myinfo": "读取当前用户本人的基本信息、扩展信息、详情信息、角色与权限",
+        "request_user_confirmation": "录入/修改/删除业务数据前，向用户展示可编辑确认卡并等待【业务确认】回执",
         "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
@@ -337,6 +345,9 @@ class AgentServicePrompts:
 
         if "get_myinfo" in tool_names:
             table_rows.append("| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |")
+
+        if "request_user_confirmation" in tool_names:
+            table_rows.append("| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具 |")
             
         if "fetch_user_long_term_memory" in tool_names:
             table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")
@@ -367,6 +378,9 @@ class AgentServicePrompts:
 
         if tool_names & AgentServicePrompts._PLATFORM_APPROVAL_SENSITIVE_TOOLS:
             prompt_parts.append(AgentServicePrompts._PLATFORM_TOOL_APPROVAL_SECTION)
+
+        if "request_user_confirmation" in tool_names:
+            prompt_parts.append(AgentServicePrompts._PLATFORM_BUSINESS_CONFIRMATION_SECTION)
             
         if quick_suggestions_forbidden:
             interaction_section = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。

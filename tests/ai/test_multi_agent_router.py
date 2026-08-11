@@ -26,6 +26,7 @@ async def test_router_single_intent():
     ]
     
     mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = None
     mock_chat.generate_text.return_value = json.dumps(mock_llm_response)
     with patch.object(RouterService, '_fetch_agents_from_db', return_value=mock_agents):
         with patch('app.services.ai.router_service.get_llm_async', AsyncMock(return_value=object())), \
@@ -56,6 +57,7 @@ async def test_router_multi_intent():
     ]
     
     mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = None
     mock_chat.generate_text.return_value = json.dumps(mock_llm_response)
     with patch.object(RouterService, '_fetch_agents_from_db', return_value=mock_agents):
         with patch('app.services.ai.router_service.get_llm_async', AsyncMock(return_value=object())), \
@@ -87,6 +89,7 @@ async def test_router_fallback_on_low_confidence():
     ]
     
     mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = None
     mock_chat.generate_text.return_value = json.dumps(mock_llm_response)
     with patch.object(RouterService, '_fetch_agents_from_db', return_value=mock_agents):
         with patch('app.services.ai.router_service.get_llm_async', AsyncMock(return_value=object())), \
