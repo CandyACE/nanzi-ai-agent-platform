@@ -114,11 +114,12 @@ def test_ordinary_notification_opens_markdown_detail_while_saved_report_jumps():
     bell = (ROOT / "frontend/src/components/PortalNotificationBell.vue").read_text(encoding="utf-8")
 
     assert "isSavedReportNotification" in bell
-    assert 'from "../utils/markdown"' in bell
-    assert "renderMarkdown" in bell
+    assert "CanvasMarkdownRenderer" in bell
+    assert "detailContent" in bell
     assert "detailItem" in bell
     assert "notification-detail-body" in bell
-    assert 'v-html="detailHtml"' in bell
+    assert '<CanvasMarkdownRenderer' in bell
+    assert ":content=\"detailContent\"" in bell
     assert "⭐ 黄金报表" in bell
     assert "openNotification" in bell
     assert "detailItem.value = item" in bell
@@ -126,3 +127,16 @@ def test_ordinary_notification_opens_markdown_detail_while_saved_report_jumps():
     assert "未读" in bell
     assert "已读" in bell
     assert "applyLocal" in bell
+
+
+def test_notification_detail_renders_mermaid_and_echarts_via_canvas_markdown():
+    """站内消息详情复用画布富文本渲染，支持 mermaid / echarts 代码块。"""
+    bell = (ROOT / "frontend/src/components/PortalNotificationBell.vue").read_text(encoding="utf-8")
+    renderer = (ROOT / "frontend/src/components/embed/CanvasMarkdownRenderer.vue").read_text(encoding="utf-8")
+
+    assert "CanvasMarkdownRenderer" in bell
+    assert "MermaidRenderer" in renderer
+    assert "VChart" in renderer
+    assert "chart|echarts|json" in renderer
+    assert "mermaid" in renderer
+    assert "graph|flowchart|sequenceDiagram" in renderer

@@ -146,7 +146,11 @@ const recommendedPrompts = computed(() => {
 
     <!-- Version-configured cards replace fixed capabilities only when enabled. -->
     <Transition name="welcome-card-set" mode="out-in">
-      <div :key="welcomeCardSetKey" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12 w-full max-w-3xl">
+      <div :key="welcomeCardSetKey" class="w-full max-w-3xl mb-12">
+        <div class="mb-3 px-1">
+          <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest">快捷入口</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <template v-if="welcomeCards?.length === 3">
           <button
             v-for="(card, index) in welcomeCards"
@@ -177,6 +181,7 @@ const recommendedPrompts = computed(() => {
             <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
           </button>
         </template>
+        </div>
       </div>
     </Transition>
 

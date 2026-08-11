@@ -38,10 +38,12 @@ def test_welcome_dashboard_renders_personal_resources_before_capabilities():
     assert "refresh-personal-resources" in dashboard
     assert "刷新我的资源" in dashboard
     assert "personalResourcesRefreshing" in dashboard
+    assert "快捷入口" in dashboard
     resources_pos = dashboard.find("open-personal-resources")
+    quick_entry_pos = dashboard.find("快捷入口")
     caps_pos = dashboard.find("grid-cols-1 sm:grid-cols-3")
-    assert resources_pos != -1 and caps_pos != -1
-    assert resources_pos < caps_pos
+    assert resources_pos != -1 and caps_pos != -1 and quick_entry_pos != -1
+    assert resources_pos < quick_entry_pos < caps_pos
 
 
 def test_embed_chat_wires_personal_resources_refresh():

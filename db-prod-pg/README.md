@@ -161,6 +161,7 @@ cd /Users/chenxiaolong/workspace/nanzi-ai-agent-platform
 - V2 会把记忆 Embedding 模型和维度重新写为 `bge-m3` / `1024`，因此重跑可能覆盖
   这两个配置的人工修改；
 - V3、V4、V5 的结构和种子语句按 PostgreSQL 幂等方式编写；V6～V14 分别覆盖 MCP 唯一性/可用性、模型约束、Skill 发布、MCP 备注和平台时区配置，重复执行语义以各版本文件为准。
+- V15、V17、V18 等加列迁移使用 `ADD COLUMN IF NOT EXISTS`，列已存在时可安全重跑。
 
 这意味着“幂等”表示重复执行不会重复建表、重复插入同一条种子或因已存在对象而失败，
 不等于所有 SQL 都会保留人工修改过的配置值。

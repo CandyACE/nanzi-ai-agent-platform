@@ -30,6 +30,8 @@ def test_canvas_markdown_renderer_supports_echarts_and_mermaid_fences():
     assert "chart|echarts|json" in renderer
     assert "mermaid" in renderer
     assert "CandlestickChart" in renderer
+    assert "graph|flowchart|sequenceDiagram" in renderer
+    assert "MERMAID_BARE_START_RE" in renderer
 
 
 def test_canvas_markdown_renderer_keeps_invalid_json_as_markdown_code():

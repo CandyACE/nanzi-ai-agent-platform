@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
-import { renderMarkdown } from "../utils/markdown";
+import CanvasMarkdownRenderer from "./embed/CanvasMarkdownRenderer.vue";
 import {
   createSavedReportOpenRequest,
   publishSavedReportOpenRequest,
@@ -65,7 +65,7 @@ const goToTaskCenter = async () => {
   await router.push({ path: "/dashboard/tasks" }).catch(() => undefined);
 };
 
-const detailHtml = computed(() => renderMarkdown(String(detailItem.value?.content || "")));
+const detailContent = computed(() => String(detailItem.value?.content || ""));
 
 const detailCopied = ref(false);
 const closeNotifications = () => {
@@ -468,7 +468,10 @@ defineExpose({ open: openFromExternal, toggle });
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
             </button>
-            <div class="markdown-body text-sm text-gray-700 leading-relaxed" v-html="detailHtml"></div>
+            <CanvasMarkdownRenderer
+              class="notification-detail-markdown text-sm text-gray-700 leading-relaxed"
+              :content="detailContent"
+            />
           </div>
           <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
             <button
@@ -496,8 +499,17 @@ defineExpose({ open: openFromExternal, toggle });
 </template>
 
 <style scoped>
-.notification-detail-body :deep(.markdown-body) {
+.notification-detail-body :deep(.markdown-body),
+.notification-detail-body :deep(.canvas-markdown-renderer) {
   overflow-wrap: break-word;
+}
+.notification-detail-body :deep(.canvas-markdown-chart) {
+  min-height: 280px;
+}
+.notification-detail-body :deep(.canvas-markdown-chart .echarts),
+.notification-detail-body :deep(.canvas-markdown-chart > div) {
+  height: 280px !important;
+  min-height: 280px;
 }
 .notification-detail-body :deep(h1),
 .notification-detail-body :deep(h2),

@@ -60,8 +60,12 @@ type MarkdownSegment =
 
 // Only explicit chart/echarts fences and valid ECharts options in json fences
 // become charts. Ordinary JSON code blocks remain ordinary Markdown code.
+// Mermaid：显式 ```mermaid，或未标注语言但正文以常见 diagram 关键字开头。
 const RICH_BLOCK_PATTERN =
-  /(?:<chart>([\s\S]*?)<\/chart>)|(?:```[ \t]*(chart|echarts|json)[ \t]*\r?\n([\s\S]*?)```)|(?:```[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)```)/gi;
+  /(?:<chart>([\s\S]*?)<\/chart>)|(?:```[ \t]*(chart|echarts|json)[ \t]*\r?\n([\s\S]*?)```)|(?:```[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)```)|(?:```[ \t]*\r?\n((?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart)\b[\s\S]*?)```)/gi;
+
+const MERMAID_BARE_START_RE =
+  /^(?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart)\b/;
 
 const renderParseError = (rawBlock: string, message: string) =>
   renderMarkdownPreview(
@@ -89,15 +93,21 @@ const parseSegments = (content: string): MarkdownSegment[] => {
 
     const rawChartContent = match[1] ?? match[3];
     const language = (match[2] || '').toLowerCase();
-    const mermaidContent = match[4];
+    const mermaidContent = match[4] ?? match[5];
     const rawBlock = match[0];
 
     if (mermaidContent !== undefined) {
-      segments.push({
-        kind: 'mermaid',
-        key: `mermaid-${segmentIndex++}`,
-        content: mermaidContent.trim(),
-      });
+      const trimmed = mermaidContent.trim();
+      // bare fence 已由正则约束关键字；显式 mermaid fence 再兜底校验一次
+      if (match[4] !== undefined || MERMAID_BARE_START_RE.test(trimmed)) {
+        segments.push({
+          kind: 'mermaid',
+          key: `mermaid-${segmentIndex++}`,
+          content: trimmed,
+        });
+      } else {
+        appendMarkdown(rawBlock);
+      }
     } else if (rawChartContent !== undefined) {
       const parsed = parseChartOptions(rawChartContent.trim());
       if (parsed.ok) {
