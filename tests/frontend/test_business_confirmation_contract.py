@@ -58,6 +58,8 @@ return {
     assert "北京神马科技有限公司" in result["confirm"]
     assert "【业务确认】用户已取消" in result["cancel"]
     assert "不要调用写入类工具" in result["cancel"]
+    assert "禁止再次调用 request_user_confirmation" in result["cancel"]
+    assert "不要重新弹确认卡" in result["cancel"]
 
 
 def test_business_confirmation_sse_parser_and_stale_marking():
@@ -81,12 +83,22 @@ return {
   ok: !!parsed,
   oldStatus: messages[0].businessConfirmation.status,
   newStatus: messages[1].businessConfirmation.status,
+  suppressCancel: api.shouldSuppressBusinessConfirmation([
+    { role: 'user', content: '【业务确认】用户已取消\\nconfirmation_id: bc_1' },
+  ]),
+  allowAfterNewInput: api.shouldSuppressBusinessConfirmation([
+    { role: 'user', content: '【业务确认】用户已取消' },
+    { role: 'agent', content: '已取消' },
+    { role: 'user', content: '把备注改成新的，继续录入' },
+  ]),
 };
 """,
     )
     assert result["ok"] is True
     assert result["oldStatus"] == "stale"
     assert result["newStatus"] == "pending"
+    assert result["suppressCancel"] is True
+    assert result["allowAfterNewInput"] is False
 
 
 def test_business_confirmation_frontend_wiring_contract():
@@ -94,15 +106,52 @@ def test_business_confirmation_frontend_wiring_contract():
     handlers = (ROOT / "frontend/src/utils/agentscopeSseHandlers.ts").read_text(encoding="utf-8")
     embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+    util = (ROOT / "frontend/src/utils/businessConfirmation.ts").read_text(encoding="utf-8")
 
     assert "业务数据确认" in card or "请确认以下信息" in card
     assert "emit('submit'" in card or 'emit("submit"' in card or "event: 'submit'" in card
     assert 'case "business_confirmation"' in handlers
     assert "handleBusinessConfirmation" in handlers
+    assert "shouldSuppressBusinessConfirmation" in handlers
+    assert "已拦截业务确认卡" in handlers
+    assert "shouldSuppressBusinessConfirmation" in util
     assert "BusinessConfirmationCard" in embed
     assert "submitBusinessConfirmation" in embed
+    assert embed.index("MessageRenderer") < embed.index("<BusinessConfirmationCard") or embed.rfind("BusinessConfirmationCard") > embed.find('v-if="msg.content && !msg.groundingBlocked"')
+    # 确认卡应出现在主正文区块之后（避免排在 AI 消息前面）
+    content_marker = 'v-if="msg.content && !msg.groundingBlocked"'
+    assert embed.find(content_marker) < embed.find("<BusinessConfirmationCard")
+    assert debug.find(content_marker) < debug.find("<BusinessConfirmationCard")
     assert "buildBusinessConfirmationUserMessage" in embed
     assert "BusinessConfirmationCard" in debug
     assert "submitBusinessConfirmation" in debug
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)" in embed
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)" in debug
+    assert 'hide-quick-buttons="!!msg.businessConfirmation"' in embed
+    assert 'hide-quick-buttons="!!msg.businessConfirmation"' in debug
+    assert "hideQuickButtons" in (ROOT / "frontend/src/components/MessageRenderer.vue").read_text(encoding="utf-8")
+    assert "stripQuickButtons" in (ROOT / "frontend/src/utils/quickButtons.ts").read_text(encoding="utf-8")
+
+
+def test_strip_quick_buttons_removes_quick_markdown():
+    result = _run_typescript(
+        "frontend/src/utils/quickButtons.ts",
+        """
+const text = '请核对确认卡信息。\\n\\n确认完成后，您还可以继续:\\n- [确认录入该供应商](quick:确认录入)\\n- [取消本次录入](quick:取消录入)\\n';
+const classic = '结果已生成。\\n\\n### 💬 您可能还想了解\\n---\\n- [查看趋势](quick:查看趋势)\\n- [对比明细](quick:对比明细)\\n';
+return {
+  stripped: api.stripQuickButtons(text),
+  classic: api.stripQuickButtons(classic),
+  parsedHasBtn: api.parseQuickButtons(text).includes('quick-action-btn'),
+};
+""",
+    )
+    assert "请核对确认卡信息。" in result["stripped"]
+    assert "确认完成后" not in result["stripped"]
+    assert "还可以继续" not in result["stripped"]
+    assert "确认录入该供应商" not in result["stripped"]
+    assert "取消本次录入" not in result["stripped"]
+    assert "-" not in result["stripped"].strip().splitlines()[-1] if result["stripped"].strip() else True
+    assert result["stripped"].count("•") == 0
+    assert result["classic"] == "结果已生成。"
+    assert result["parsedHasBtn"] is True

@@ -222,6 +222,18 @@ class RouterService:
             logger.warning("No routeable agents available for user %s.", user_id)
             return None
 
+        # 结构短路：权限过滤后仅剩 1 个候选，无需意图/路由 LLM。
+        if len(agents_metadata) == 1:
+            sole = agents_metadata[0]
+            logger.info(
+                "Sole candidate shortcut (post-permission): routing to %s without LLM",
+                sole.get("name"),
+            )
+            return self._route_to_sole_candidate(
+                sole,
+                reasoning="权限过滤后仅剩唯一可路由智能体，结构短路跳过路由 LLM",
+            )
+
         from app.services.ai.intent_service import (
             DataSessionAffinity,
             looks_like_accessible_resource_catalog_query,
@@ -276,6 +288,27 @@ class RouterService:
                     reasoning="联网/外部公网检索请求，启发式短路至通用助手",
                     turn_labels=["topic_switch", "general_chat"],
                     relation_to_previous="topic_switch",
+                    user_action_type="chat",
+                )
+
+        # 业务确认回执（确定/取消）：协议固定前缀，会话粘性沿用上一轮智能体，跳过路由 LLM。
+        from app.services.ai.business_confirmation import is_business_confirmation_receipt_message
+
+        if last_agent_name and is_business_confirmation_receipt_message(user_input):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent:
+                logger.info(
+                    "Business confirmation receipt shortcut: sticky route to %s without LLM",
+                    sticky_agent["name"],
+                )
+                return RouteResult(
+                    agent_id=sticky_agent["id"],
+                    confidence=0.99,
+                    reasoning=(
+                        "业务确认回执（确定/取消），会话粘性沿用上一轮智能体（跳过路由 LLM）"
+                    ),
+                    turn_labels=["business_confirmation_receipt", "follow_up"],
+                    relation_to_previous="follow_up",
                     user_action_type="chat",
                 )
 
@@ -350,6 +383,20 @@ class RouterService:
             data_route_allowed=bool(data_route_allowed),
             request_decision=request_decision,
         )
+
+        # 结构短路：意图约束后仅剩 1 个候选，跳过路由 LLM（意图 LLM 可能已执行）。
+        if len(routing_agents) == 1:
+            sole = routing_agents[0]
+            logger.info(
+                "Sole candidate shortcut (post-constrain): routing to %s without route LLM",
+                sole.get("name"),
+            )
+            return self._route_to_sole_candidate(
+                sole,
+                reasoning="意图约束后仅剩唯一可路由智能体，结构短路跳过路由 LLM",
+                intent_info=intent_info,
+                request_decision=request_decision,
+            )
 
         # 2. Unified LLM Routing
         # 路由提示词内置在代码中（DEFAULT_SYSTEM_PROMPT），不再从数据库配置读取，
@@ -959,6 +1006,49 @@ class RouterService:
         if agent:
             return str(agent["name"])
         return self.FALLBACK_AGENT_NAMES[-1]
+
+    def _route_to_sole_candidate(
+        self,
+        agent: dict,
+        *,
+        reasoning: str,
+        intent_info: Optional[IntentResponse] = None,
+        request_decision: Optional[RequestDecision] = None,
+    ) -> RouteResult:
+        """Route directly when structural filtering left exactly one agent."""
+        return RouteResult(
+            agent_id=str(agent["id"]),
+            confidence=0.98,
+            reasoning=reasoning,
+            intent_info=intent_info,
+            turn_labels=["sole_candidate"],
+            relation_to_previous="unknown",
+            user_action_type="chat",
+            request_source=(request_decision.source.value if request_decision else None),
+            request_capability=(request_decision.capability.value if request_decision else None),
+            request_should_delegate=bool(request_decision.should_delegate) if request_decision else False,
+            request_delegate_capability=(
+                request_decision.delegate_capability if request_decision else None
+            ),
+            request_reasoning=(request_decision.reasoning if request_decision else None),
+            semantic_domain=(request_decision.semantic_domain if request_decision else None),
+            semantic_operation=(request_decision.semantic_operation if request_decision else None),
+            fact_kind=(request_decision.fact_kind if request_decision else None),
+            freshness_requirement=(
+                request_decision.freshness_requirement if request_decision else "unknown"
+            ),
+            time_scope=(request_decision.time_scope if request_decision else None),
+            reference_mode=(request_decision.reference_mode if request_decision else "unknown"),
+            needs_fresh_data=(request_decision.needs_fresh_data if request_decision else False),
+            chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
+            chatbi_evidence_level=(
+                request_decision.chatbi_evidence_level if request_decision else "none"
+            ),
+            chatbi_reason=(request_decision.chatbi_reason if request_decision else None),
+            matched_dataset_ids=(
+                list(request_decision.matched_dataset_ids) if request_decision else []
+            ),
+        )
 
     def _fallback_to_general(
         self,

@@ -2,10 +2,55 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 BUSINESS_CONFIRMATION_TOOL_NAME = "request_user_confirmation"
 BUSINESS_CONFIRMATION_MESSAGE_PREFIX = "【业务确认】"
+BUSINESS_CONFIRMATION_CANCEL_MARKER = f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消"
+BUSINESS_CONFIRMATION_CONFIRM_MARKER = f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已确定"
+
+_cancel_gate_armed: ContextVar[bool] = ContextVar(
+    "business_confirmation_cancel_gate",
+    default=False,
+)
+
+
+def is_business_confirmation_cancel_message(text: str | None) -> bool:
+    return BUSINESS_CONFIRMATION_CANCEL_MARKER in str(text or "")
+
+
+def is_business_confirmation_confirm_message(text: str | None) -> bool:
+    return BUSINESS_CONFIRMATION_CONFIRM_MARKER in str(text or "")
+
+
+def is_business_confirmation_receipt_message(text: str | None) -> bool:
+    """True for confirm/cancel receipts produced by the business confirmation card."""
+    return is_business_confirmation_cancel_message(text) or is_business_confirmation_confirm_message(
+        text
+    )
+
+
+def arm_cancel_confirmation_gate(user_message: str | None) -> bool:
+    """Arm per-turn gate when the latest user message is a cancel confirmation."""
+    armed = is_business_confirmation_cancel_message(user_message)
+    _cancel_gate_armed.set(armed)
+    return armed
+
+
+def is_cancel_confirmation_gate_armed() -> bool:
+    return bool(_cancel_gate_armed.get())
+
+
+def cancel_gate_block_payload() -> dict[str, Any]:
+    return {
+        "status": "error",
+        "error": "business_confirmation_cancelled",
+        "message": (
+            "用户刚取消业务确认：禁止再次调用 request_user_confirmation，不要重新弹确认卡。"
+            "请只用文字确认已取消，并询问用户是否修改后重试或放弃。"
+        ),
+    }
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
@@ -52,6 +97,8 @@ def build_business_confirmation_sse(
 ) -> dict[str, Any] | None:
     """Build frontend SSE event for a business confirmation card."""
     if tool_name != BUSINESS_CONFIRMATION_TOOL_NAME:
+        return None
+    if is_cancel_confirmation_gate_armed():
         return None
     payload = parse_confirmation_tool_output(tool_output)
     if not payload:
@@ -110,7 +157,11 @@ def build_user_confirmation_message(
         body = (
             f"{BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消\n"
             f"confirmation_id: {cid}\n"
-            "请停止本次录入/变更，不要调用写入类工具。如需修改请询问用户。\n"
+            "请立即终止本次录入/变更："
+            "不要调用写入类工具；"
+            "禁止再次调用 request_user_confirmation（不要重新弹确认卡）。"
+            "只用文字确认已取消，并询问用户是否修改后重试或放弃。"
+            "仅当用户随后明确提供新的/修改后的数据并要求继续时，才可再次请求确认。\n"
             f"当时字段快照：\n{snapshot}"
         )
     return body.strip()

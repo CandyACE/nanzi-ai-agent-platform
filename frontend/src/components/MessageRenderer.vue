@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { normalizeGeneratedFileHref } from '@/utils/generatedFileUrl';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
-import { parseQuickButtons, postProcessQuickButtonHtml } from '@/utils/quickButtons';
+import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from '@/utils/quickButtons';
 import { applyChartViewMode, buildChartTableRows, getAvailableChartViewModes, getChartViewModeLabel, mergeChartDefaults, parseChartOptions, resolveActiveChartViewMode, type ChartViewMode } from '@/utils/chartRenderer';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -53,8 +53,11 @@ use([
 const props = withDefaults(defineProps<{
   content: string;
   theme?: 'default' | 'minimal' | 'academic' | 'apple' | 'warm' | 'compact';
+  /** 为 true 时不渲染 quick 按钮（例如同条消息已有业务确认卡） */
+  hideQuickButtons?: boolean;
 }>(), {
-  theme: 'default'
+  theme: 'default',
+  hideQuickButtons: false,
 });
 
 const emit = defineEmits<{
@@ -143,7 +146,17 @@ interface ContentSegment {
    */
   const postProcessHtml = (html: string) => {
     if (!html) return '';
-    let res = postProcessQuickButtonHtml(html);
+    let res = props.hideQuickButtons ? html : postProcessQuickButtonHtml(html);
+    if (props.hideQuickButtons) {
+      res = res.replace(
+        /<a\s+[^>]*class=["'][^"']*quick-action-btn[^"']*["'][^>]*>[\s\S]*?<\/a>/gi,
+        '',
+      );
+      res = res.replace(
+        /&lt;a\s+[\s\S]*?href=(?:&quot;|")quick:([\s\S]*?)(?:&quot;|")[\s\S]*?&gt;([\s\S]*?)&lt;\/a&gt;/gi,
+        '',
+      );
+    }
 
     // 智能将服务器物理绝对路径重映射为可加载的网络相对路径（uploads 转静态托管，其他绝对路径转 fs 预览 API）
     res = res.replace(/(src|href)=["']([^"']*)["']/gi, (match, attr, val) => {
@@ -342,8 +355,10 @@ const segments = computed<ContentSegment[]>(() => {
   // 1. 隐藏函数调用
   cleanContent = cleanContent.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '\n> [!NOTE]\n> 🔄 *System: Internal processing steps hidden.*\n\n');
 
-  // 2. 预处理 Quick 按钮 (核心改进)
-  cleanContent = parseQuickButtons(cleanContent);
+  // 2. 预处理 Quick 按钮（有业务确认卡等场景可隐藏）
+  cleanContent = props.hideQuickButtons
+    ? stripQuickButtons(cleanContent)
+    : parseQuickButtons(cleanContent);
 
   const regex = /(?:<sql_plan>([\s\S]*?)<\/sql_plan>)|(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)|(?::::clarification\s*([^\n]*)\n([\s\S]*?)\n:::)|(?:```\s*([a-zA-Z0-9_\-]+)?\s*\n([\s\S]*?)```)/gi;
   const result: ContentSegment[] = [];
@@ -383,7 +398,11 @@ const segments = computed<ContentSegment[]>(() => {
       result.push({
         type: 'clarification',
         title: (match[8] || '需要再确认一下').trim() || '需要再确认一下',
-        content: renderMarkdownSegment(parseQuickButtons(match[9]?.trim() || '')),
+        content: renderMarkdownSegment(
+          props.hideQuickButtons
+            ? stripQuickButtons(match[9]?.trim() || '')
+            : parseQuickButtons(match[9]?.trim() || ''),
+        ),
       });
     }
     else if (match[3] || match[4]) {

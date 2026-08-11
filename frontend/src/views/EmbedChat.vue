@@ -793,12 +793,6 @@
                   </div>
                 </transition>
               </div>
-              <BusinessConfirmationCard
-                v-if="msg.businessConfirmation"
-                :payload="msg.businessConfirmation"
-                :disabled="isProcessing"
-                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
-              />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -970,6 +964,7 @@
                                                                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                                                                   :content="msg.content"
                                                                   :theme="config.markdownTheme"
+                                                                  :hide-quick-buttons="!!msg.businessConfirmation"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
@@ -990,6 +985,13 @@
                                   :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
                                                                 ></span>
                                                               </div>
+
+              <BusinessConfirmationCard
+                v-if="msg.businessConfirmation"
+                :payload="msg.businessConfirmation"
+                :disabled="isProcessing"
+                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
 
                                 <!-- AI Stalled Thinking Prompt (Moved out to be sibling to msg.content) -->
                                 <div

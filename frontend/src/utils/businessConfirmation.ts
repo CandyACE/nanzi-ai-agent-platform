@@ -24,6 +24,24 @@ export interface BusinessConfirmationState {
 }
 
 export const BUSINESS_CONFIRMATION_MESSAGE_PREFIX = "【业务确认】";
+export const BUSINESS_CONFIRMATION_CANCEL_MARKER = `${BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消`;
+
+export function isBusinessConfirmationCancelMessage(content: string | undefined | null): boolean {
+  return String(content || "").includes(BUSINESS_CONFIRMATION_CANCEL_MARKER);
+}
+
+export function shouldSuppressBusinessConfirmation(
+  messages?: Array<{ role?: string; content?: string }>,
+): boolean {
+  if (!messages?.length) return false;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    const role = String(msg?.role || "").toLowerCase();
+    if (role !== "user" && role !== "human") continue;
+    return isBusinessConfirmationCancelMessage(msg?.content);
+  }
+  return false;
+}
 
 function asFields(raw: unknown): BusinessConfirmationField[] {
   if (!Array.isArray(raw)) return [];
@@ -91,7 +109,7 @@ export function buildBusinessConfirmationUserMessage(
   return [
     `${BUSINESS_CONFIRMATION_MESSAGE_PREFIX}用户已取消`,
     `confirmation_id: ${cid}`,
-    "请停止本次录入/变更，不要调用写入类工具。如需修改请询问用户。",
+    "请立即终止本次录入/变更：不要调用写入类工具；禁止再次调用 request_user_confirmation（不要重新弹确认卡）。只用文字确认已取消，并询问用户是否修改后重试或放弃。仅当用户随后明确提供新的/修改后的数据并要求继续时，才可再次请求确认。",
     "当时字段快照：",
     snapshot,
   ].join("\n");
