@@ -80,6 +80,15 @@
     </p>
   </section>
 
+  <!-- 截图占位｜00 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜00：MCP Client-Server 与三大原语示意</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：Host/Client 对接多个 MCP Server，标注 Tools / Resources / Prompts 三大原语（USB-C 比喻示意图亦可）</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1｜MCP 像 AI 时代的 USB-C：一次实现，多宿主复用</p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
 
   <!-- ========== 01｜MCP 与平台静态内置工具对比 ========== -->
@@ -142,6 +151,15 @@
     <p style="margin:0;font-size:14px;color:#065f46;line-height:1.85;">
       <strong>互补定位总结：</strong>内置工具是 NanZi 平台的“基石硬实力”，追求性能与绝对掌控力；MCP 工具则是“生态万能适配器”，追求开放性与解耦扩展。两者在 NanZi 运行时中统一汇聚进入 AgentScope <code style="background:#dcfce7;padding:1px 4px;border-radius:3px;">Toolkit</code>，模型调用体验完全一致。
     </p>
+  </section>
+
+  <!-- 截图占位｜01 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜01：内置 Tools 与 MCP 汇入 Toolkit</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：Built-in Tools（进程内）与 MCP Tools（远端）并列汇入 AgentScope Toolkit，再交给模型 Function Calling 的架构示意</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 2｜互补定位：内置硬实力 + MCP 万能适配器，统一进入 Toolkit</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -247,6 +265,15 @@
     </table>
   </section>
 
+  <!-- 截图占位｜步骤 1 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜第一步：MCP 控制台登记界面</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取：系统配置 ➔ MCP 服务管理（或个人中心 ➔ 我的 MCP）新建/编辑表单，含 Server 名称、SSE URL、Auth Headers</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 3｜控制台可视化登记：全局 / 个人 MCP Server 配置表单</p>
+  </section>
+
   <!-- 步骤 2 -->
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">第二步：快捷导入 Anthropic 标准 `mcpServers` JSON</p>
@@ -268,12 +295,30 @@
     </p>
   </section>
 
+  <!-- 截图占位｜步骤 2 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜第二步：粘贴 JSON 快速导入</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取：弹窗中「粘贴 JSON 快速导入」入口，以及粘贴 mcpServers 配置后自动回填表单的效果</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 4｜快捷导入 Anthropic / Cursor 标准 mcpServers JSON</p>
+  </section>
+
   <!-- 步骤 3 -->
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">第三步：连通性在线测试（POST /api/portal/mcp/verify）</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
       在保存之前，点击「测试连接」按钮。后端会触发 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">verify_mcp_server</code> 接口，生成一个临时 Session (<code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">verify_uuid8</code>)，在不影响数据库的情况下向对端握手并尝试拉取工具。若握手成功，将直接回显发现的工具清单；若失败，则提供精准报错日志供排障。
     </p>
+  </section>
+
+  <!-- 截图占位｜步骤 3 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜第三步：连通性测试（Verify）</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取：「测试连接」按钮与 Verify 结果弹窗——成功时回显工具清单，失败时展示报错日志</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 5｜连通性在线测试：握手成功回显工具清单 / 失败精准排障</p>
   </section>
 
   <!-- 步骤 4 & 5 -->
@@ -286,13 +331,13 @@
     </p>
   </section>
 
-  <!-- 截图占位图 1 -->
-  <section style="margin:16px 0;">
-    <section style="box-sizing:border-box;min-height:180px;padding:48px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
-      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜MCP 控制台管理界面（McpManagement.vue）</p>
-      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取后台 MCP 登记界面：包含 Server 列表、连接测试(Verify)弹窗、工具缓存列表与发布(Publish)开关</p>
+  <!-- 截图占位｜步骤 4 & 5 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜第四/五步：同步、发布与试跑</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取：工具缓存列表、「同步工具」与「发布」开关，以及 McpToolTester 试跑面板输入参数与返回结果</p>
     </section>
-    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1｜NanZi 平台 MCP 服务管理控制台：登记、校验连通性、同步缓存与灰度发布</p>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 6｜同步缓存 → 灰度发布 → 控制台 Execute 试跑验证</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
@@ -323,6 +368,15 @@
     </p>
   </section>
 
+  <!-- 截图占位｜场景 A -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜场景 A：Agent 版本级 MCP 工具勾选</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取：智能体版本编辑抽屉（AgentVersionEditorDrawer）中「MCP 动态工具」列表，勾选全名工具并保存发布的界面</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 7｜智能体版本级固定配置：在版本编辑中勾选已发布的 MCP 工具</p>
+  </section>
+
   <!-- 场景 B -->
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">场景 B：会话级（Session-level）动态临时挂载</p>
@@ -344,13 +398,13 @@
     </p>
   </section>
 
-  <!-- 截图占位图 2 -->
-  <section style="margin:16px 0;">
-    <section style="box-sizing:border-box;min-height:180px;padding:48px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
-      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜会话级 MCP 动态挂载界面（SessionResourceScopeBar）</p>
-      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取对话界面：底部资源栏勾选个人私有 MCP 菜单，展示会话级资源临时挂载与求并集调用效果</p>
+  <!-- 截图占位｜场景 B -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜场景 B：会话级 MCP 动态挂载</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">请截取对话界面：底部资源栏（SessionResourceScopeBar）勾选个人私有 MCP 菜单（McpCascadeMenu），展示会话级临时挂载效果</p>
     </section>
-    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 2｜会话级动态挂载：无需修改 Agent 版本，即插即用个人专属 MCP</p>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 8｜会话级动态挂载：无需修改 Agent 版本，即插即用个人专属 MCP</p>
   </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
