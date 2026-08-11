@@ -405,6 +405,7 @@ def reset_state_for_repair(state: DataRunState) -> None:
         state.tool_loop_fuse_triggered = False
         state.tool_loop_fuse_reason = ""
     state.deferred_continue_query = False
+    state.platform_auto_retry_ready = False
 
 
 def build_repair_title(state: DataRunState) -> str:

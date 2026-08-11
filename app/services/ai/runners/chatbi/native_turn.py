@@ -19,6 +19,7 @@ from app.services.ai.runners.chatbi.insight_meta import take_chatbi_insight_meta
 from app.services.ai.runners.chatbi.sql_result_compact import (
     mark_deferred_continue_query,
     should_force_deferred_continue_query,
+    should_rescue_contradictory_empty_reply,
     should_rescue_deferred_sql_reply,
 )
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -251,6 +252,38 @@ async def run_native_agent_turn(
     if (
         state.full_content
         and not runner._current_repair_kind(state)
+        and should_rescue_contradictory_empty_reply(state)
+    ):
+        async for chunk in runner._retract_provisional_content_before_repair(
+            state,
+            reason="contradictory empty reply after successful SQL",
+        ):
+            yield chunk
+        async for chunk in runner._synthesize_from_cached_sql_result(
+            runtime_messages=runtime_messages,
+            system_prompt=system_content,
+            user_question=user_question,
+            state=state,
+            reason="contradictory_empty_reply",
+        ):
+            yield chunk
+        insight_event = take_chatbi_insight_meta_event(
+            state,
+            evidence_metadata=getattr(runner, "_evidence_metadata", None),
+        )
+        if insight_event is not None:
+            yield insight_event
+        await _persist_agent_state(
+            runner,
+            agent_name=agent_name,
+            tools_fingerprint=tools_fingerprint,
+            model_name=model_name,
+            agent=agent,
+        )
+        return
+    if (
+        state.full_content
+        and not runner._current_repair_kind(state)
         and should_rescue_deferred_sql_reply(state)
     ):
         async for chunk in runner._retract_provisional_content_before_repair(
@@ -290,6 +323,37 @@ async def run_native_agent_turn(
             agent=agent,
         ):
             yield chunk
+        return
+
+    if state.platform_auto_retry_ready and state.last_successful_sql_output is not None:
+        if state.full_content:
+            async for chunk in runner._retract_provisional_content_before_repair(
+                state,
+                reason="platform auto-retry success supersedes provisional reply",
+            ):
+                yield chunk
+        async for chunk in runner._synthesize_from_cached_sql_result(
+            runtime_messages=runtime_messages,
+            system_prompt=system_content,
+            user_question=user_question,
+            state=state,
+            reason="platform_auto_retry",
+        ):
+            yield chunk
+        state.platform_auto_retry_ready = False
+        insight_event = take_chatbi_insight_meta_event(
+            state,
+            evidence_metadata=getattr(runner, "_evidence_metadata", None),
+        )
+        if insight_event is not None:
+            yield insight_event
+        await _persist_agent_state(
+            runner,
+            agent_name=agent_name,
+            tools_fingerprint=tools_fingerprint,
+            model_name=model_name,
+            agent=agent,
+        )
         return
 
     if state.sql_repeat_gate_block and state.last_successful_sql_output is not None:
@@ -389,6 +453,38 @@ async def run_native_agent_turn(
         if (
             state.full_content
             and not runner._current_repair_kind(state)
+            and should_rescue_contradictory_empty_reply(state)
+        ):
+            async for chunk in runner._retract_provisional_content_before_repair(
+                state,
+                reason="contradictory empty reply after repair-loop SQL",
+            ):
+                yield chunk
+            async for chunk in runner._synthesize_from_cached_sql_result(
+                runtime_messages=runtime_messages,
+                system_prompt=system_content,
+                user_question=user_question,
+                state=state,
+                reason="contradictory_empty_reply",
+            ):
+                yield chunk
+            insight_event = take_chatbi_insight_meta_event(
+                state,
+                evidence_metadata=getattr(runner, "_evidence_metadata", None),
+            )
+            if insight_event is not None:
+                yield insight_event
+            await _persist_agent_state(
+                runner,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+            )
+            return
+        if (
+            state.full_content
+            and not runner._current_repair_kind(state)
             and should_rescue_deferred_sql_reply(state)
         ):
             async for chunk in runner._retract_provisional_content_before_repair(
@@ -404,6 +500,36 @@ async def run_native_agent_turn(
                 reason="deferred_incomplete_reply",
             ):
                 yield chunk
+            insight_event = take_chatbi_insight_meta_event(
+                state,
+                evidence_metadata=getattr(runner, "_evidence_metadata", None),
+            )
+            if insight_event is not None:
+                yield insight_event
+            await _persist_agent_state(
+                runner,
+                agent_name=agent_name,
+                tools_fingerprint=tools_fingerprint,
+                model_name=model_name,
+                agent=agent,
+            )
+            return
+        if state.platform_auto_retry_ready and state.last_successful_sql_output is not None:
+            if state.full_content:
+                async for chunk in runner._retract_provisional_content_before_repair(
+                    state,
+                    reason="platform auto-retry success after repair-loop SQL",
+                ):
+                    yield chunk
+            async for chunk in runner._synthesize_from_cached_sql_result(
+                runtime_messages=runtime_messages,
+                system_prompt=system_content,
+                user_question=user_question,
+                state=state,
+                reason="platform_auto_retry",
+            ):
+                yield chunk
+            state.platform_auto_retry_ready = False
             insight_event = take_chatbi_insight_meta_event(
                 state,
                 evidence_metadata=getattr(runner, "_evidence_metadata", None),

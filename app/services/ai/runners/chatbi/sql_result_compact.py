@@ -39,6 +39,9 @@ _DEFERRED_CONTINUE_QUERY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     for p in (
         r"让我进一步",
         r"让我再(查|统计|按|执行|跑|获取)",
+        r"让我先(查看|查一下|确认|核对|探查|检查)",
+        r"我先(查看|查一下|确认|核对|探查)",
+        r"先查看.{0,40}(分布|样例|编码|名称|基础信息)",
         r"我再进一步",
         r"我再(按|查|统计|执行|跑).{0,24}(统计|查询|明细|汇总)?",
         r"接下来(我)?(再|将|会)?(按|查|统计|执行|获取|细化)",
@@ -48,8 +51,24 @@ _DEFERRED_CONTINUE_QUERY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"下一步.{0,16}(查|统计|执行|按)",
         r"改用.{0,20}(完整|明细).{0,16}(统计|查询)",
         r"而非.{0,40}明细.{0,20}(让我|我再|接下来)",
-        r"let me (further|next).{0,40}(query|count|aggregate|break)",
-        r"i('ll| will) (further|next).{0,40}(query|count|aggregate)",
+        r"let me (further|next|first).{0,40}(query|count|aggregate|break|check|look)",
+        r"i('ll| will) (further|next|first).{0,40}(query|count|aggregate|check)",
+    )
+)
+
+# 平台已有非空结果，但正文仍宣称空结果/准备探查分布（常见于自动重试后模型未见新结果）。
+_CONTRADICTORY_EMPTY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"查询返回为空",
+        r"查询结果为空",
+        r"返回为空",
+        r"结果为空",
+        r"未查询到",
+        r"没有查到",
+        r"查无(结果|数据|记录)",
+        r"无匹配(结果|数据|记录)",
+        r"暂时(没有|无).{0,12}(数据|结果)",
     )
 )
 
@@ -86,6 +105,19 @@ def looks_like_deferred_continue_query_reply(text: str) -> bool:
     if not _is_short_deferred_candidate(raw):
         return False
     return any(p.search(raw) for p in _DEFERRED_CONTINUE_QUERY_PATTERNS)
+
+
+def looks_like_contradictory_empty_reply(text: str) -> bool:
+    """True when short reply claims empty / starts probing despite cached nonempty SQL."""
+    raw = str(text or "").strip()
+    if not _is_short_deferred_candidate(raw):
+        return False
+    if any(p.search(raw) for p in _CONTRADICTORY_EMPTY_PATTERNS):
+        return True
+    # 「让我先查看…分布」且无实质汇总，也视为与已有成功结果冲突的半截话。
+    return looks_like_deferred_continue_query_reply(raw) and (
+        "空" in raw or "分布" in raw or "编码" in raw or "确认" in raw
+    )
 
 
 def looks_like_deferred_data_reply(text: str) -> bool:
@@ -319,6 +351,21 @@ def should_rescue_deferred_sql_reply(state: Any) -> bool:
     return looks_like_deferred_data_reply(getattr(state, "full_content", "") or "")
 
 
+def should_rescue_contradictory_empty_reply(state: Any) -> bool:
+    """Retract empty/probe narration when platform already cached nonempty SQL rows."""
+    if getattr(state, "empty_sql_result", False):
+        return False
+    if getattr(state, "last_successful_sql_output", None) is None:
+        return False
+    if getattr(state, "sql_repeat_gate_block", False):
+        return False
+    if getattr(state, "deferred_continue_query", False):
+        return False
+    if not getattr(state, "has_successful_nonempty_sql", False):
+        return False
+    return looks_like_contradictory_empty_reply(getattr(state, "full_content", "") or "")
+
+
 def should_force_deferred_continue_query(state: Any) -> bool:
     """Whether to retract and force another execute_sql_query round."""
     if getattr(state, "deferred_continue_query", False):
@@ -328,6 +375,9 @@ def should_force_deferred_continue_query(state: Any) -> bool:
     if getattr(state, "last_successful_sql_output", None) is None:
         return False
     if getattr(state, "sql_repeat_gate_block", False):
+        return False
+    # 已有非空业务结果却仍说「空/先探查」→ 走缓存合成，不要再强制空转查数。
+    if should_rescue_contradictory_empty_reply(state):
         return False
     return looks_like_deferred_continue_query_reply(getattr(state, "full_content", "") or "")
 

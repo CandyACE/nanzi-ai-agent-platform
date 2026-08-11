@@ -286,6 +286,28 @@ async def synthesize_from_cached_sql_result(
             "- 随后模型只输出了过渡性承诺而未给出实质汇总，平台已撤回该半截回复并复用查询结果。"
         )
         reused_flag = "reused_deferred_incomplete_reply"
+    elif reason == "platform_auto_retry":
+        log_title = "基于平台自动修正结果生成回答"
+        log_details = (
+            "平台已自动修正筛选/WHERE 并重试成功，但模型侧仍可能只看到修正前的空结果。"
+            "已停止半截 ReAct，并基于自动重试后的成功结果生成最终回答。"
+        )
+        review_reason = (
+            "- 首次 SQL 为空或 WHERE 失败后，平台已自动修正并重试成功。\n"
+            "- 为避免模型继续基于旧的空/错结果回答，平台已改用自动重试后的成功查询结果。"
+        )
+        reused_flag = "reused_platform_auto_retry_result"
+    elif reason == "contradictory_empty_reply":
+        log_title = "纠正空结果误述并补全回答"
+        log_details = (
+            "检测到模型正文仍宣称「查询返回为空」或仅准备探查分布，但本轮已有成功非空查询结果。"
+            "平台已撤回该误述，并基于成功结果生成完整回答。"
+        )
+        review_reason = (
+            "- 已成功执行 SQL 并获得非空结果。\n"
+            "- 随后模型仍输出「查询返回为空 / 先查看分布」类半截话，与结果冲突，平台已撤回并复用查询结果。"
+        )
+        reused_flag = "reused_contradictory_empty_reply"
     else:
         log_title = "复用已执行 SQL 结果"
         log_details = (

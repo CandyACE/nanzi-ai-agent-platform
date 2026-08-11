@@ -10,10 +10,12 @@ import pytest
 from app.services.ai.config import ChatConfig
 from app.services.ai.runners.chatbi.sql_result_compact import (
     compact_sql_result_for_model,
+    looks_like_contradictory_empty_reply,
     looks_like_deferred_continue_query_reply,
     looks_like_deferred_data_reply,
     mark_deferred_continue_query,
     should_force_deferred_continue_query,
+    should_rescue_contradictory_empty_reply,
     should_rescue_deferred_sql_reply,
 )
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -110,6 +112,38 @@ def test_compact_sql_result_for_model_skips_under_threshold():
         "items": [[i] for i in range(500)],
     }
     assert compact_sql_result_for_model(_FakeRunner(), json.dumps(payload)) is None
+
+
+def test_looks_like_contradictory_empty_reply_matches_screenshot():
+    text = (
+        "查询返回为空。我需要确认上海 WGQ 园区在数据中的实际城市编码和名称。"
+        "让我先查看园区基础信息表中的数据分布。"
+    )
+    assert looks_like_contradictory_empty_reply(text) is True
+    assert looks_like_deferred_continue_query_reply(text) is True
+
+
+def test_should_rescue_contradictory_empty_when_cache_has_rows():
+    text = (
+        "查询返回为空。我需要确认上海 WGQ 园区在数据中的实际城市编码和名称。"
+        "让我先查看园区基础信息表中的数据分布。"
+    )
+    state = SimpleNamespace(
+        ready_to_answer=True,
+        empty_sql_result=False,
+        has_successful_nonempty_sql=True,
+        last_successful_sql_output='{"items":[[110,37,0,15,78,32,310]]}',
+        sql_repeat_gate_block=False,
+        deferred_continue_query=False,
+        full_content=text,
+    )
+    assert should_rescue_contradictory_empty_reply(state) is True
+    assert should_force_deferred_continue_query(state) is False
+    assert should_rescue_deferred_sql_reply(state) is False
+
+    state.empty_sql_result = True
+    state.has_successful_nonempty_sql = False
+    assert should_rescue_contradictory_empty_reply(state) is False
 
 
 def test_should_rescue_deferred_sql_reply_requires_ready_cache():

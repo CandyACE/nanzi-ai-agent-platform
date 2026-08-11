@@ -109,6 +109,7 @@ async def stream_agentscope_events(
                 state.tool_outputs[tool_id] = output
                 state.sql_error = False
                 state.sql_error_message = ""
+                state.platform_auto_retry_ready = True
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:where_condition_auto_retry",
@@ -152,6 +153,7 @@ async def stream_agentscope_events(
                 output = auto_retry.raw_output
                 parsed_output = auto_retry.parsed_output
                 state.tool_outputs[tool_id] = output
+                state.platform_auto_retry_ready = True
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:empty_filter_auto_retry",
@@ -272,6 +274,7 @@ async def stream_agentscope_events(
             or state.failed_sql_repeat_gate_block
             or state.duration_anomaly
             or state.diagnostic_sql_pending_final
+            or state.platform_auto_retry_ready
             or state.tool_loop_fuse_triggered
             or runner._is_schema_fatal(state)
         )

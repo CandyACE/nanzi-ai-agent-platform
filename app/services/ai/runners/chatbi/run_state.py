@@ -72,6 +72,8 @@ class DataRunState:
     pending_sql_tool_full_output: Any = None
     # 模型承诺继续细化查数但未发起工具：进入 repair 强制 execute_sql_query。
     deferred_continue_query: bool = False
+    # 平台 empty/WHERE 自动重试已拿到非空结果，但模型工具观测仍是旧空/错结果 → 停 ReAct 改走缓存合成。
+    platform_auto_retry_ready: bool = False
     # 模型侧结果范围：full=全量进上下文；sample=仅样例（用于用户可见提示）。
     model_result_scope: dict[str, Any] | None = None
     successful_sqls: dict[str, Any] = field(default_factory=dict)
