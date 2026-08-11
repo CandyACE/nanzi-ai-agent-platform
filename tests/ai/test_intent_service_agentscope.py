@@ -10,6 +10,7 @@ pytestmark = pytest.mark.no_infrastructure
 
 def _mock_chat_client(content: str):
     chat_client = AsyncMock()
+    chat_client.generate_structured_dict.return_value = None
     chat_client.generate_text.return_value = content
     return chat_client
 

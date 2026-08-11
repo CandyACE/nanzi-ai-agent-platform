@@ -558,6 +558,24 @@ def _parse_llm_json(content: str) -> Dict:
             return {}
 
 
+def _turn_classifier_structured_schema() -> type:
+    from pydantic import BaseModel, Field
+
+    class DataQueryTurnLLMSchema(BaseModel):
+        turn_type: str = Field(
+            description=(
+                "new_data_query|data_followup_query|metadata_query|reuse_previous_result|"
+                "result_analysis|result_presentation|context_action|result_action|"
+                "skill_execution|non_data_request|clarification_required|format_correction|"
+                "federated_data_query"
+            )
+        )
+        reasoning: str = Field(default="", description="一句中文原因")
+        missing_fields: list[str] = Field(default_factory=list)
+
+    return DataQueryTurnLLMSchema
+
+
 async def _classify_with_llm(
     user_query: str,
     messages: Optional[List[Dict[str, str]]],
@@ -614,10 +632,18 @@ JSON 格式：
 
         llm = await AgentConfigProvider.get_configured_llm(streaming=False)
         chat_client = chat_client_from_handle(llm)
-        content = await chat_client.generate_text(
-            system_user_prompt_messages(prompt, user_prompt=user_query)
+        attempt_messages = system_user_prompt_messages(prompt, user_prompt=user_query)
+        data = await chat_client.generate_structured_dict(
+            attempt_messages,
+            _turn_classifier_structured_schema(),
         )
-        data = _parse_llm_json(content)
+        if data is None:
+            content = await chat_client.generate_text(attempt_messages)
+            data = _parse_llm_json(content)
+        else:
+            logger.info(
+                "[DataQueryTurnClassifier] used AgentScope structured_output"
+            )
         raw_turn_type = str(data.get("turn_type") or "").strip()
         reasoning = str(data.get("reasoning") or "ChatBI 请求类别由大模型兜底识别").strip()
         turn_type = DataQueryTurnType(raw_turn_type)

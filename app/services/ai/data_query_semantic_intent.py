@@ -182,8 +182,19 @@ def _extract_json_object(content: str) -> dict[str, Any]:
 
 def parse_semantic_intent_payload(content: str, *, fallback_question: str = "") -> DataQuerySemanticIntent:
     data = _extract_json_object(content)
+    return parse_semantic_intent_data(data, fallback_question=fallback_question)
+
+
+def parse_semantic_intent_data(
+    data: dict[str, Any] | None,
+    *,
+    fallback_question: str = "",
+) -> DataQuerySemanticIntent:
+    """Parse intent from a dict (e.g. AgentScope structured_output) or empty."""
+    if not isinstance(data, dict):
+        data = {}
     filters: list[SemanticIntentFilter] = []
-    raw_filters = data.get("filters") if isinstance(data, dict) else None
+    raw_filters = data.get("filters")
     if isinstance(raw_filters, list):
         for raw in raw_filters[:8]:
             if not isinstance(raw, dict):
@@ -454,3 +465,60 @@ def format_empty_result_semantic_repair_context(
         "或用诊断 SQL 证明父子关系后再修正最终 SQL。"
     )
     return "\n".join(lines)
+
+
+def semantic_intent_structured_schema() -> type:
+    """Pydantic schema for AgentScope ``generate_structured_output`` (ChatBI pilot)."""
+    from pydantic import BaseModel, Field
+
+    class SemanticIntentFilterSchema(BaseModel):
+        phrase: str = Field(default="", description="用户筛选原词")
+        semantic_type: str = Field(default="", description="筛选语义类型")
+        expected_column_types: list[str] = Field(default_factory=list)
+        avoid_column_types: list[str] = Field(default_factory=list)
+        relation: str = Field(default="")
+
+    class SemanticIntentStructuredSchema(BaseModel):
+        keywords: str = Field(default="", description="用于 get_dataset_schema 的关键词")
+        goal: str = Field(default="", description="用户业务目标")
+        metrics: list[str] = Field(default_factory=list)
+        dimensions: list[str] = Field(default_factory=list)
+        filters: list[SemanticIntentFilterSchema] = Field(default_factory=list)
+        time_range: str = Field(default="")
+        grain: str = Field(default="")
+        target_datasets: list[str] = Field(default_factory=list)
+        reasoning: str = Field(default="")
+
+    return SemanticIntentStructuredSchema
+
+
+async def try_generate_semantic_intent_structured(
+    native_model: Any,
+    prompt: str,
+) -> tuple[dict[str, Any] | None, Any]:
+    """Try AgentScope structured output; fail open with ``(None, None)``.
+
+    Returns ``(payload_dict, structured_response)``.
+    """
+    if native_model is None or not hasattr(native_model, "generate_structured_output"):
+        return None, None
+    try:
+        from agentscope.message import UserMsg
+
+        schema = semantic_intent_structured_schema()
+        response = await native_model.generate_structured_output(
+            messages=[UserMsg("user", prompt)],
+            structured_model=schema,
+        )
+        content = getattr(response, "content", None)
+        if isinstance(content, dict) and content:
+            return content, response
+        model_dump = getattr(content, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict) and dumped:
+                return dumped, response
+    except Exception:
+        return None, None
+    return None, None
+

@@ -672,6 +672,8 @@ const getCategoryTip = (key: string) => {
     'ragflow_metadata_top_k': '检索数据库表/字段描述时，最大召回的候选文档数量。值越大，召回的内容越多，但会增加 Token 消耗。',
     'sql_execution_mode': '控制生成的 SQL 查询的执行位置。remote 表示通过安全的远程微服务沙箱执行，local 表示直连本地配置好的数据源连接池执行。',
     'platform_timezone': '平台业务时区（IANA）。用于定时任务、当前时间锚点与前端时间展示。默认 Asia/Shanghai。修改后会刷新缓存并尝试重载调度器。外部数据库服务器时区不受此项控制。',
+    'agentscope_inject_runtime_state': '向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用等）。时区跟随「平台业务时区」。关闭后不注入 hint，不影响工具权限与 HITL。',
+    'agentscope_inject_time_interval_hours': '时间字段重复注入的最小间隔（小时）。仅在开启运行时状态注入时生效。默认 0.5（约 30 分钟）。',
     'chatbi_sample_knowledge_base': 'ChatBI 经验库在 RAGFlow 中自动创建和同步对应的知识库 ID（由系统自动校验与测试连接生成，不可手动修改）。',
     'chatbi_sample_top_k': '检索用户提问时召回的最相似问答案例（Few-shot）最大限制条数。值越大参考条数越多，但会占据更多的 Prompt 上下文。',
     'chatbi_sample_similarity_threshold': `【匹配相似度阈值 (chatbi_sample_similarity_threshold)】
@@ -886,6 +888,12 @@ const handleDatasetSelect = (val: string | string[]) => {
     }
 }
 
+/** 左侧简短说明；右侧控件下方仍用 item.description 展示详细备注 */
+const configShortDescriptions: Record<string, string> = {
+  agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
+  agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
+}
+
 const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   if (!items) return []
   let list = [...items]
@@ -910,7 +918,11 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     })
   }
   if (category === 'general') {
-    const order = ['platform_timezone']
+    const order = [
+      'platform_timezone',
+      'agentscope_inject_runtime_state',
+      'agentscope_inject_time_interval_hours',
+    ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
       const idxB = order.indexOf(b.key)
@@ -1773,7 +1785,9 @@ onMounted(() => {
                               </svg>
                             </button>
                          </label>
-                         <p class="text-xs text-gray-500 mt-1">{{ item.description }}</p>
+                         <p class="text-xs text-gray-500 mt-1">
+                           {{ configShortDescriptions[item.key] || item.description }}
+                         </p>
                       </div>
                        <div class="md:col-span-2 relative">
                           <div v-if="item.key === 'llm_model_name'">
@@ -2061,7 +2075,8 @@ onMounted(() => {
                                   </div>
                               </div>
                           </div>
-                          <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled'].includes(item.key)" class="flex items-center">
+                          <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
+                             <div class="flex items-center">
                              <button
                                type="button"
                                :disabled="isConfigItemDisabled(String(category), item)"
@@ -2075,6 +2090,46 @@ onMounted(() => {
                                  :class="item.value === 'true' ? 'translate-x-5' : 'translate-x-0'"
                                ></span>
                              </button>
+                             </div>
+                             <p
+                               v-if="item.key === 'agentscope_inject_runtime_state' && item.description"
+                               class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                             >{{ item.description }}</p>
+                          </div>
+                          <div v-else-if="item.key === 'agentscope_inject_time_interval_hours'">
+                             <div class="flex items-center gap-3 max-w-xs">
+                               <input
+                                 type="number"
+                                 inputmode="decimal"
+                                 min="0"
+                                 max="24"
+                                 step="0.1"
+                                 :value="item.value"
+                                 :disabled="isConfigItemDisabled(String(category), item)"
+                                 @keypress="!/[0-9.]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                                 @input="(e) => {
+                                   const raw = (e.target as HTMLInputElement).value.replace(/[^\d.]/g, '')
+                                   const parts = raw.split('.')
+                                   const normalized = parts.length <= 1 ? raw : `${parts[0]}.${parts.slice(1).join('').slice(0, 2)}`
+                                   item.value = normalized
+                                   ;(e.target as HTMLInputElement).value = normalized
+                                 }"
+                                 @blur="() => {
+                                   const n = Number(item.value)
+                                   if (!Number.isFinite(n) || item.value === '' || item.value === '.') {
+                                     item.value = '0.5'
+                                     return
+                                   }
+                                   item.value = String(Math.min(24, Math.max(0, n)))
+                                 }"
+                                 class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:opacity-70 disabled:cursor-not-allowed p-2"
+                               />
+                               <span class="text-sm text-gray-500 shrink-0">小时</span>
+                             </div>
+                             <p
+                               v-if="item.description"
+                               class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                             >{{ item.description }}</p>
                           </div>
                           <div v-else-if="item.key === 'embedchat_watermark_style'">
                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">

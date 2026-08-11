@@ -18,7 +18,7 @@ def test_dockerfile_uses_python_311_or_newer_for_agentscope():
 def test_requirements_declares_agentscope_runtime_extras():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
 
-    assert "agentscope[service,storage,workspace]" in requirements
+    assert "agentscope[service,storage,workspace]>=2.0.6" in requirements
 
 
 def test_checklist_tracks_agentscope_runtime_replacement():

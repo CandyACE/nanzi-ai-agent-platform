@@ -1,14 +1,7 @@
-"""AgentScope Middleware 扩展：LLM 调用统计。
+"""AgentScope Middleware 扩展：LLM 调用统计与权限审计。
 
-实现 on_model_call 钩子，记录每次 LLM 调用的：
-- 调用序号、时间戳、模型名
-- 输入/输出 Token 数（含缓存命中 Token）
-- 是否含工具调用及工具名列表
-- 调用耗时（ms）
-
-统计数据以追加方式写入 Redis List，Key 格式：
-    nanzi:{uid}:{conv_id}:model_call_stats
-TTL：7 天（与 AgentState 保持一致）
+- ``ModelCallStatsMiddleware``：``on_model_call`` 记录 token / 工具 / 耗时到 Redis
+- ``ToolPermissionMiddleware``：``on_check_permission`` 默认透传并审计日志
 """
 
 from __future__ import annotations
@@ -332,3 +325,88 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         )
         asyncio.ensure_future(_append_stat_to_redis(redis_key, record))
         return result
+
+
+class ToolPermissionMiddleware(MiddlewareBase):
+    """AgentScope ``on_check_permission`` 审计切面。
+
+    默认**始终透传** ``next_handler`` 的决策，不改变现有
+    ``tools.check_permissions`` / HITL / forbidden_tools 行为。
+    可选 ``deny_override`` 仅允许把结果收紧为 DENY（永不放宽）。
+    """
+
+    def __init__(
+        self,
+        *,
+        user_id: str | int | None = None,
+        conversation_id: str | None = None,
+        agent_name: str | None = None,
+        deny_override: Callable[..., Awaitable[Any]] | Callable[..., Any] | None = None,
+    ) -> None:
+        self._user_id = user_id
+        self._conversation_id = conversation_id
+        self._agent_name = agent_name
+        self._deny_override = deny_override
+
+    async def on_check_permission(
+        self,
+        agent: Any,
+        input_kwargs: dict,
+        next_handler: Callable[..., Awaitable[Any]],
+    ) -> Any:
+        decision = await next_handler(**input_kwargs)
+        tool = input_kwargs.get("tool")
+        tool_name = getattr(tool, "name", None) or getattr(
+            input_kwargs.get("tool_call"), "name", None
+        )
+        behavior = getattr(decision, "behavior", None)
+        behavior_value = getattr(behavior, "value", behavior)
+
+        logger.info(
+            "[ToolPermissionMiddleware] agent=%s conv=%s user=%s tool=%s behavior=%s",
+            self._agent_name or getattr(agent, "name", None),
+            self._conversation_id,
+            self._user_id,
+            tool_name,
+            behavior_value,
+        )
+
+        if self._deny_override is None:
+            return decision
+
+        try:
+            override = self._deny_override(
+                agent=agent,
+                input_kwargs=input_kwargs,
+                decision=decision,
+            )
+            if asyncio.iscoroutine(override):
+                override = await override
+        except Exception as exc:
+            logger.warning(
+                "[ToolPermissionMiddleware] deny_override failed tool=%s: %s",
+                tool_name,
+                exc,
+            )
+            return decision
+
+        if override is None:
+            return decision
+
+        from agentscope.permission import PermissionBehavior
+
+        override_behavior = getattr(override, "behavior", None)
+        if override_behavior == PermissionBehavior.DENY:
+            logger.info(
+                "[ToolPermissionMiddleware] deny_override applied tool=%s reason=%s",
+                tool_name,
+                getattr(override, "decision_reason", None)
+                or getattr(override, "message", None),
+            )
+            return override
+        logger.warning(
+            "[ToolPermissionMiddleware] ignore non-DENY override tool=%s behavior=%s",
+            tool_name,
+            getattr(override_behavior, "value", override_behavior),
+        )
+        return decision

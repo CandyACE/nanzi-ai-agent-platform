@@ -44,6 +44,7 @@ async def test_router_context_awareness():
              patch('app.services.ai.router_service.chat_client_from_handle') as mock_chat_factory:
             mock_llm_instance = MagicMock()
             mock_chat = AsyncMock()
+            mock_chat.generate_structured_dict.return_value = None
             mock_chat.generate_text.return_value = '{"thought": "test", "agent_name": "chat-bi", "confidence": 0.9}'
             mock_get_llm.return_value = mock_llm_instance
             mock_chat_factory.return_value = mock_chat
@@ -85,6 +86,7 @@ async def test_router_heuristic_bypass_history():
         
         mock_llm_instance = MagicMock()
         mock_chat = AsyncMock()
+        mock_chat.generate_structured_dict.return_value = None
         mock_chat.generate_text.return_value = '{"thought": "Standard Routing", "agent_name": "chat-bi", "confidence": 0.9}'
         mock_get_llm.return_value = mock_llm_instance
         mock_chat_factory.return_value = mock_chat

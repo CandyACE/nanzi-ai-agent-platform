@@ -55,23 +55,23 @@ async def build_native_agent(
         skills_custom=bool(getattr(runner.config, "skills_custom", False)),
         allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
     )
+    from app.services.ai.runtime.agentscope.agent_runtime import (
+        build_runtime_middlewares,
+        load_injection_config,
+    )
+
     context_config = await dar.load_context_config()
     model_config = await dar.build_model_config(
         config=runner.config,
         primary_model_name=primary_model_name,
     )
-    middlewares = []
-    if runner.conversation_id:
-        from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
-
-        middlewares.append(
-            ModelCallStatsMiddleware(
-                user_id=runner._current_user_id(),
-                conversation_id=runner.conversation_id,
-                agent_name=runner._runtime_agent_name(),
-                trace_id=runner.trace_id,
-            )
-        )
+    injection_config = await load_injection_config()
+    middlewares = build_runtime_middlewares(
+        user_id=runner._current_user_id(),
+        conversation_id=runner.conversation_id,
+        agent_name=runner._runtime_agent_name(),
+        trace_id=runner.trace_id,
+    )
     kwargs: Dict[str, Any] = {
         "name": runner._runtime_agent_name(),
         "system_prompt": system_content,
@@ -79,6 +79,7 @@ async def build_native_agent(
         "toolkit": toolkit,
         "react_config": dar.ReActConfig(max_iters=max_steps),
         "middlewares": middlewares,
+        "injection_config": injection_config,
     }
     if restored_state is not None:
         kwargs["state"] = restored_state

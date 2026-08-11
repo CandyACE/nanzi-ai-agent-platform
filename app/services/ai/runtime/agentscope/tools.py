@@ -717,7 +717,14 @@ def _shell_deletion_permission_decision(
     return None
 
 
-async def _enforce_tool_forbidden(tool_name: str, explicit_user_id: int | str | None = None) -> Any:
+async def enforce_tool_forbidden(
+    tool_name: str,
+    explicit_user_id: int | str | None = None,
+) -> Any:
+    """DENY when the user has the tool in ``forbidden_tools`` (alias-aware).
+
+    Shared by tool ``check_permissions`` and ``ToolPermissionMiddleware``.
+    """
     from app.core.context import get_current_agent_context
     agent_ctx = get_current_agent_context()
     user_id = explicit_user_id or (agent_ctx.user_id if agent_ctx else None)
@@ -760,6 +767,10 @@ async def _enforce_tool_forbidden(tool_name: str, explicit_user_id: int | str | 
             logger.exception("Failed to enforce forbidden tools for user %s", user_id)
             return _permission_policy_unavailable_decision()
     return None
+
+
+# Backward-compatible alias for existing call sites / tests.
+_enforce_tool_forbidden = enforce_tool_forbidden
 
 
 async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any], explicit_user_id: int | str | None = None) -> Any:

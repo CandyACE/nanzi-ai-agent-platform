@@ -146,6 +146,32 @@ class AgentScopeChatClient:
     def __init__(self, native_model: Any):
         self.native_model = native_model
 
+    async def generate_structured_dict(
+        self,
+        messages: list[RuntimeMessage],
+        structured_model: Any,
+    ) -> dict[str, Any] | None:
+        """Try AgentScope ``generate_structured_output``; return dict or None (fail-open)."""
+        native = self.native_model
+        if native is None or not hasattr(native, "generate_structured_output"):
+            return None
+        try:
+            response = await native.generate_structured_output(
+                messages=to_agentscope_messages(messages),
+                structured_model=structured_model,
+            )
+            content = _safe_getattr(response, "content", None)
+            if isinstance(content, dict) and content:
+                return content
+            model_dump = getattr(content, "model_dump", None)
+            if callable(model_dump):
+                dumped = model_dump()
+                if isinstance(dumped, dict) and dumped:
+                    return dumped
+        except Exception:
+            return None
+        return None
+
     async def generate_text(self, messages: list[RuntimeMessage], **kwargs: Any) -> str:
         result = self.native_model(to_agentscope_messages(messages), **kwargs)
         if inspect.isawaitable(result):

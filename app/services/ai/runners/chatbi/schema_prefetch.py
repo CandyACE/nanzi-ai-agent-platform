@@ -17,7 +17,9 @@ from app.services.ai.data_query_semantic_intent import (
     build_semantic_intent_prompt,
     derive_keywords_from_semantic_intent,
     format_semantic_intent_context,
+    parse_semantic_intent_data,
     parse_semantic_intent_payload,
+    try_generate_semantic_intent_structured,
 )
 from app.services.ai.data_query_turn_classifier import DataQueryTurnType
 from app.services.ai.executors.common import extract_tokens_from_message
@@ -176,18 +178,52 @@ async def plan_schema_search_keywords(
     )
     try:
         model = await AgentConfigProvider.get_configured_llm(streaming=False, config=runner.config)
-        response = await model.ainvoke([HumanMessage(content=prompt)])
-        tokens = extract_tokens_from_message(response)
-        runner.record_llm_token_usage(
-            prompt_tokens=tokens["prompt_tokens"],
-            completion_tokens=tokens["completion_tokens"],
-            event_type="thought",
-            model=str(getattr(model, "model_name", runner.config.model_name) or ""),
-            tool_name="schema_keyword_planner",
+        fallback_question = standalone_query or user_question
+        intent = None
+        used_structured = False
+        structured_payload, structured_response = await try_generate_semantic_intent_structured(
+            getattr(model, "native_model", None),
+            prompt,
         )
-        content = (getattr(response, "content", "") or "").strip()
-        intent = parse_semantic_intent_payload(content, fallback_question=standalone_query or user_question)
-        runner._semantic_intent = intent if intent.has_content() else None
+        if structured_payload is not None:
+            candidate = parse_semantic_intent_data(
+                structured_payload,
+                fallback_question=fallback_question,
+            )
+            if candidate and candidate.has_content():
+                intent = candidate
+                used_structured = True
+                usage = getattr(structured_response, "usage", None)
+                prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+                completion_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+                if prompt_tokens or completion_tokens:
+                    runner.record_llm_token_usage(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        event_type="thought",
+                        model=str(getattr(model, "model_name", runner.config.model_name) or ""),
+                        tool_name="schema_keyword_planner",
+                    )
+                logger.info(
+                    "[DataAgentRunner] schema keyword planner used AgentScope structured_output"
+                )
+        if not used_structured:
+            response = await model.ainvoke([HumanMessage(content=prompt)])
+            tokens = extract_tokens_from_message(response)
+            runner.record_llm_token_usage(
+                prompt_tokens=tokens["prompt_tokens"],
+                completion_tokens=tokens["completion_tokens"],
+                event_type="thought",
+                model=str(getattr(model, "model_name", runner.config.model_name) or ""),
+                tool_name="schema_keyword_planner",
+            )
+            content = (getattr(response, "content", "") or "").strip()
+            intent = parse_semantic_intent_payload(
+                content,
+                fallback_question=fallback_question,
+            )
+
+        runner._semantic_intent = intent if intent and intent.has_content() else None
         keywords = (intent.keywords if intent else "").strip()
         if is_invalid_schema_search_keywords(keywords):
             derived_keywords = derive_keywords_from_semantic_intent(runner._semantic_intent)

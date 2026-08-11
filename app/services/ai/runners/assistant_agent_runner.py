@@ -1323,13 +1323,17 @@ class AssistantAgentRunner(BaseExecutor):
         loop_detector: ToolLoopDetector | None = None,
     ) -> Any:
         from agentscope.agent import Agent, ReActConfig
-        from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
+        from app.services.ai.runtime.agentscope.agent_runtime import (
+            build_runtime_middlewares,
+            load_injection_config,
+        )
 
         context_config = await load_context_config()
         model_config = await build_model_config(
             config=self.config,
             primary_model_name=primary_model_name,
         )
+        injection_config = await load_injection_config()
         workspace = await get_local_workspace(
             user_id=self._runtime_user_id(),
             user_name=self._runtime_user_name(),
@@ -1345,16 +1349,12 @@ class AssistantAgentRunner(BaseExecutor):
             loop_detector=loop_detector,
             user_id=self._runtime_user_id(),
         )
-        middlewares = []
-        if self.conversation_id:
-            middlewares.append(
-                ModelCallStatsMiddleware(
-                    user_id=self._runtime_user_id(),
-                    conversation_id=self.conversation_id,
-                    agent_name=self._runtime_agent_name(),
-                    trace_id=self.trace_id,
-                )
-            )
+        middlewares = build_runtime_middlewares(
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+            agent_name=self._runtime_agent_name(),
+            trace_id=self.trace_id,
+        )
         return Agent(
             name=self._runtime_agent_name(),
             system_prompt=system_content,
@@ -1364,6 +1364,7 @@ class AssistantAgentRunner(BaseExecutor):
             offloader=workspace,
             model_config=model_config,
             context_config=context_config,
+            injection_config=injection_config,
             react_config=ReActConfig(max_iters=max_steps),
             middlewares=middlewares,
         )

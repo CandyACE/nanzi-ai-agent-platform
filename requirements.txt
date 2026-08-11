@@ -20,7 +20,7 @@ greenlet>=3.0.0
 sqlglot>=11.0.0
 passlib[bcrypt]>=1.7.4
 bcrypt==4.0.1
-agentscope[service,storage,workspace]
+agentscope[service,storage,workspace]>=2.0.6
 openai>=1.0.0
 atlassian-python-api>=3.41.11
 oracledb>=2.0.0

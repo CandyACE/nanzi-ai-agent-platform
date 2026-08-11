@@ -9,6 +9,92 @@ from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 logger = logging.getLogger(__name__)
 
 
+def _config_flag_enabled(raw: Any, *, default: bool = True) -> bool:
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def load_injection_config(*, inject_runtime_state: bool | None = None) -> Any:
+    """Build AgentScope InjectionConfig with platform timezone.
+
+    AgentScope 默认已开启 runtime state 注入（时区 UTC）。此处显式绑定
+    ``platform_timezone``；可用系统配置 ``agentscope_inject_runtime_state``
+    关闭。可选 ``agentscope_inject_time_interval_hours`` 控制时间重复注入间隔。
+    不改变工具链 / HITL，仅影响上下文 hint。
+    """
+    from agentscope.agent import InjectionConfig
+    from app.services.config_service import ConfigService
+    from app.services.platform_timezone import get_cached_platform_timezone
+
+    enabled = inject_runtime_state
+    if enabled is None:
+        raw = await ConfigService.get("agentscope_inject_runtime_state")
+        enabled = _config_flag_enabled(raw, default=True)
+
+    interval_raw = await ConfigService.get("agentscope_inject_time_interval_hours")
+    try:
+        time_interval = float(interval_raw) if interval_raw not in (None, "") else 0.5
+    except (TypeError, ValueError):
+        time_interval = 0.5
+    time_interval = min(max(time_interval, 0.0), 24.0)
+
+    return InjectionConfig(
+        inject_runtime_state=bool(enabled),
+        timezone=get_cached_platform_timezone(),
+        time_interval=time_interval,
+    )
+
+
+def build_runtime_middlewares(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    agent_name: str | None = None,
+    trace_id: str | None = None,
+) -> list[Any]:
+    """Assemble Agent middlewares: forbidden-tool DENY + audit + model-call stats."""
+    from app.services.ai.runtime.agentscope.middleware import (
+        ModelCallStatsMiddleware,
+        ToolPermissionMiddleware,
+    )
+
+    async def _forbidden_tools_deny_override(
+        *,
+        agent: Any,
+        input_kwargs: dict[str, Any],
+        decision: Any,
+    ) -> Any:
+        del agent, decision
+        from app.services.ai.runtime.agentscope.tools import enforce_tool_forbidden
+
+        tool = input_kwargs.get("tool")
+        tool_call = input_kwargs.get("tool_call")
+        tool_name = getattr(tool, "name", None) or getattr(tool_call, "name", None)
+        if not tool_name:
+            return None
+        return await enforce_tool_forbidden(str(tool_name), user_id)
+
+    middlewares: list[Any] = [
+        ToolPermissionMiddleware(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            deny_override=_forbidden_tools_deny_override,
+        )
+    ]
+    if conversation_id:
+        middlewares.append(
+            ModelCallStatsMiddleware(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+                trace_id=trace_id,
+            )
+        )
+    return middlewares
+
+
 async def load_context_config() -> Any:
     """Build AgentScope ContextConfig from platform settings."""
     from agentscope.agent import ContextConfig
