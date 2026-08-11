@@ -83,12 +83,22 @@ return {
   ok: !!parsed,
   oldStatus: messages[0].businessConfirmation.status,
   newStatus: messages[1].businessConfirmation.status,
+  suppressCancel: api.shouldSuppressBusinessConfirmation([
+    { role: 'user', content: '【业务确认】用户已取消\\nconfirmation_id: bc_1' },
+  ]),
+  allowAfterNewInput: api.shouldSuppressBusinessConfirmation([
+    { role: 'user', content: '【业务确认】用户已取消' },
+    { role: 'agent', content: '已取消' },
+    { role: 'user', content: '把备注改成新的，继续录入' },
+  ]),
 };
 """,
     )
     assert result["ok"] is True
     assert result["oldStatus"] == "stale"
     assert result["newStatus"] == "pending"
+    assert result["suppressCancel"] is True
+    assert result["allowAfterNewInput"] is False
 
 
 def test_business_confirmation_frontend_wiring_contract():
@@ -96,11 +106,15 @@ def test_business_confirmation_frontend_wiring_contract():
     handlers = (ROOT / "frontend/src/utils/agentscopeSseHandlers.ts").read_text(encoding="utf-8")
     embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+    util = (ROOT / "frontend/src/utils/businessConfirmation.ts").read_text(encoding="utf-8")
 
     assert "业务数据确认" in card or "请确认以下信息" in card
     assert "emit('submit'" in card or 'emit("submit"' in card or "event: 'submit'" in card
     assert 'case "business_confirmation"' in handlers
     assert "handleBusinessConfirmation" in handlers
+    assert "shouldSuppressBusinessConfirmation" in handlers
+    assert "已拦截业务确认卡" in handlers
+    assert "shouldSuppressBusinessConfirmation" in util
     assert "BusinessConfirmationCard" in embed
     assert "submitBusinessConfirmation" in embed
     assert "buildBusinessConfirmationUserMessage" in embed
