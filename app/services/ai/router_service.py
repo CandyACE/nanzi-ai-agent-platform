@@ -279,6 +279,27 @@ class RouterService:
                     user_action_type="chat",
                 )
 
+        # 业务确认回执（确定/取消）：协议固定前缀，会话粘性沿用上一轮智能体，跳过路由 LLM。
+        from app.services.ai.business_confirmation import is_business_confirmation_receipt_message
+
+        if last_agent_name and is_business_confirmation_receipt_message(user_input):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent:
+                logger.info(
+                    "Business confirmation receipt shortcut: sticky route to %s without LLM",
+                    sticky_agent["name"],
+                )
+                return RouteResult(
+                    agent_id=sticky_agent["id"],
+                    confidence=0.99,
+                    reasoning=(
+                        "业务确认回执（确定/取消），会话粘性沿用上一轮智能体（跳过路由 LLM）"
+                    ),
+                    turn_labels=["business_confirmation_receipt", "follow_up"],
+                    relation_to_previous="follow_up",
+                    user_action_type="chat",
+                )
+
         if (
             last_agent_name
             and self._is_data_query_agent(agents_metadata, last_agent_name)

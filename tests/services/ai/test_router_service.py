@@ -696,6 +696,89 @@ async def test_route_query_greeting_shortcut_skips_llm(mock_agents_metadata):
 @pytest.mark.parametrize(
     "query",
     [
+        "【业务确认】用户已确定\nconfirmation_id: bc_1\n请根据以下已确认字段继续执行",
+        "【业务确认】用户已取消\nconfirmation_id: bc_1\n请立即终止本次录入/变更",
+    ],
+)
+@pytest.mark.asyncio
+async def test_route_query_business_confirmation_receipt_sticky_skips_llm(
+    mock_agents_metadata,
+    query,
+):
+    """业务确认确定/取消回执应粘滞上一轮智能体，跳过路由 LLM。"""
+    service = RouterService()
+    mock_chat = _mock_chat_client("{}")
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.intent_service.identify_intent", new_callable=AsyncMock) as mock_identify, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_identify.return_value = IntentResponse(
+            intent=IntentType.GENERAL,
+            confidence=0.5,
+            reasoning="should not be used",
+            entities=[],
+        )
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query(query, last_agent_name="general-chat")
+
+    assert result is not None
+    assert result.agent_id == "agent-general"
+    assert result.confidence >= 0.99
+    assert "业务确认回执" in result.reasoning
+    assert "business_confirmation_receipt" in result.turn_labels
+    assert result.relation_to_previous == "follow_up"
+    mock_get_llm.assert_not_called()
+    mock_identify.assert_not_called()
+    mock_chat.generate_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_query_business_confirmation_receipt_without_last_agent_still_routes(
+    mock_agents_metadata,
+):
+    """无上一轮智能体时，确认回执不短路，仍走正常路由。"""
+    service = RouterService()
+    mock_chat = _mock_chat_client(
+        json.dumps(
+            {
+                "thought": "无粘性，走通用助手",
+                "agent_name": "general-chat",
+                "confidence": 0.9,
+                "secondary_agents": [],
+                "turn_labels": ["general_chat"],
+                "relation_to_previous": "standalone",
+                "user_action_type": "chat",
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query(
+            "【业务确认】用户已确定\nconfirmation_id: bc_1",
+            last_agent_name=None,
+        )
+
+    assert result is not None
+    assert result.agent_id == "agent-general"
+    mock_get_llm.assert_called()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         "我有哪些知识库权限",
         "我们有哪些知识库权限",
         "我们有哪些知识库",

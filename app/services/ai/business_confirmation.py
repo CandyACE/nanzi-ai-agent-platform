@@ -20,6 +20,17 @@ def is_business_confirmation_cancel_message(text: str | None) -> bool:
     return BUSINESS_CONFIRMATION_CANCEL_MARKER in str(text or "")
 
 
+def is_business_confirmation_confirm_message(text: str | None) -> bool:
+    return BUSINESS_CONFIRMATION_CONFIRM_MARKER in str(text or "")
+
+
+def is_business_confirmation_receipt_message(text: str | None) -> bool:
+    """True for confirm/cancel receipts produced by the business confirmation card."""
+    return is_business_confirmation_cancel_message(text) or is_business_confirmation_confirm_message(
+        text
+    )
+
+
 def arm_cancel_confirmation_gate(user_message: str | None) -> bool:
     """Arm per-turn gate when the latest user message is a cancel confirmation."""
     armed = is_business_confirmation_cancel_message(user_message)
