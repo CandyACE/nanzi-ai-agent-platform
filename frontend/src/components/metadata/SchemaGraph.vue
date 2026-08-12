@@ -6,6 +6,7 @@ import { GraphChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent } from 'echarts/components'
 import type { Table, Relationship } from '../../api/metadata'
 import { metadataApi } from '../../api/metadata'
+import { formatRelationshipJoinTypeLabel } from '../../utils/relationshipJoinType'
 
 echarts.use([CanvasRenderer, GraphChart, TooltipComponent, LegendComponent])
 
@@ -75,7 +76,7 @@ const updateChart = () => {
                             <div class="text-xs text-gray-300">${data.term || ''}</div>`
                 } else {
                     const data = params.data
-                    return `<div class="font-bold text-xs">${data.join_type || 'Join'}</div>
+                    return `<div class="font-bold text-xs">${formatRelationshipJoinTypeLabel(data.join_type)}</div>
                             <div class="text-xs text-gray-300">ON ${data.join_condition}</div>`
                 }
             },

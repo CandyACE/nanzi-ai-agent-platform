@@ -3,6 +3,10 @@ import { ref, onMounted, watch, computed, nextTick } from "vue";
 import { metadataApi } from "../../api/metadata";
 import type { Relationship, Table, AllTablesDataset } from "../../api/metadata";
 import { useUser } from "../../composables/useUser";
+import {
+  formatRelationshipJoinTypeLabel,
+  normalizeRelationshipJoinType,
+} from "../../utils/relationshipJoinType";
 
 const { isAdmin: _isAdmin, hasPermission } = useUser();
 
@@ -139,7 +143,10 @@ const openCreate = () => {
 
 const openEdit = (r: Relationship) => {
   editingId.value = r.id || null;
-  form.value = { ...r };
+  form.value = {
+    ...r,
+    join_type: normalizeRelationshipJoinType(r.join_type),
+  };
   
   // Use nextTick to ensure watchers (which reset fields on ID change) 
   // run first before we set the parsed field values.
@@ -197,10 +204,14 @@ const handleSave = async () => {
   }
   saving.value = true;
   try {
+    const payload: Relationship = {
+      ...form.value,
+      join_type: normalizeRelationshipJoinType(form.value.join_type),
+    };
     if (editingId.value) {
-      await metadataApi.updateRelationship(editingId.value, form.value);
+      await metadataApi.updateRelationship(editingId.value, payload);
     } else {
-      await metadataApi.createRelationship(props.datasetId, form.value);
+      await metadataApi.createRelationship(props.datasetId, payload);
     }
     showModal.value = false;
     fetchRelationships();
@@ -342,8 +353,9 @@ onMounted(() => {
           <!-- Connector -->
           <div class="flex flex-col items-center shrink-0">
             <span
-              class="text-[10px] text-purple-500 font-bold uppercase tracking-wider bg-purple-50 px-2 py-0.5 rounded border border-purple-100 whitespace-nowrap"
-              >{{ r.join_type }}</span
+              class="text-[10px] text-purple-500 font-bold tracking-wider bg-purple-50 px-2 py-0.5 rounded border border-purple-100 whitespace-nowrap"
+              :title="r.join_type"
+              >{{ formatRelationshipJoinTypeLabel(r.join_type) }}</span
             >
             <svg
               class="w-6 h-6 text-gray-300"
@@ -599,7 +611,7 @@ onMounted(() => {
             <label class="block text-sm font-medium text-gray-700 mb-1"
               >关联类型</label
             >
-            <div class="flex gap-4">
+            <div class="flex flex-wrap gap-4">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -607,7 +619,7 @@ onMounted(() => {
                   value="left"
                   class="text-purple-600 focus:ring-purple-500"
                 />
-                <span class="text-sm">Left Join (1:N)</span>
+                <span class="text-sm">Left Join · One to Many (1:N)</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input
@@ -628,6 +640,9 @@ onMounted(() => {
                 <span class="text-sm">One to One</span>
               </label>
             </div>
+            <p class="mt-1.5 text-xs text-gray-500">
+              一对多请选第一项；历史数据里的 <code class="font-mono">ONE_TO_MANY</code> 会自动映射到此项。
+            </p>
           </div>
 
           <div>

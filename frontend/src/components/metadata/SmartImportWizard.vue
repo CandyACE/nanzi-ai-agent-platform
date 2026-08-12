@@ -5,6 +5,7 @@ import { metadataApi } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
 import TraceLogViewer from '../TraceLogViewer.vue'
 import DatabaseImportModal from './DatabaseImportModal.vue'
+import { normalizeRelationshipJoinType } from '../../utils/relationshipJoinType'
 
 const props = defineProps<{
   show: boolean,
@@ -306,7 +307,7 @@ const handleSave = async () => {
              source_table_id: sourceId,
              target_table_id: targetId,
              join_condition: rel.condition || '1=1', // Fallback
-             join_type: rel.type || 'left'
+             join_type: normalizeRelationshipJoinType(rel.type || 'left')
           })
        } else {
           console.warn(`Skipping relationship ${rel.source_table}->${rel.target_table} because tables not found in this import batch.`)
