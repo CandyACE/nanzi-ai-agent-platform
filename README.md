@@ -14,6 +14,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![AgentScope](https://img.shields.io/badge/AgentScope-2.x-7C3AED.svg)](https://github.com/agentscope-ai/agentscope) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
+> 📖 **实战连载**：[NanZi 开源智能体平台实战连载](https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzU3NzAwOTA0NA==&action=getalbum&album_id=4613921118301732865#wechat_redirect)（架构 · 安装 · 智能体配置 · ChatBI · 工具箱 · MCP）
 
 ![Promo](docs/images/nanzi-platform-promo-16x9.png)
 ![Overview](docs/images/nanzi-platform-overview-16x9.png)
@@ -162,6 +163,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [微信实战连载](https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzU3NzAwOTA0NA==&action=getalbum&album_id=4613921118301732865#wechat_redirect) | 架构分层、安装部署、智能体配置、ChatBI、工具箱、MCP |
 | [HOW_TO_INSTALL.md](HOW_TO_INSTALL.md) | 安装部署与 FAQ |
 | [architech/README.md](architech/README.md) | 架构文档索引 |
 | [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) | 聊天端到端流程 |
@@ -319,7 +321,7 @@ cd frontend && npm install && npm run dev
 
 ## 💬 联系与交流
 
-如果您在使用过程中有任何疑问、功能建议，或者想要获取更多技术资讯，欢迎扫码关注我们的微信公众号，或加入微信交流群：
+如果您在使用过程中有任何疑问、功能建议，或者想要获取更多技术资讯，欢迎扫码关注我们的微信公众号，或加入微信交流群；亦可阅读 [NanZi 开源智能体平台实战连载](https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzU3NzAwOTA0NA==&action=getalbum&album_id=4613921118301732865#wechat_redirect)：
 
 <table>
   <tr>
