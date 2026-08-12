@@ -83,7 +83,7 @@ def test_strip_embedchat_reasoning_panel_leak_from_notification():
     assert "本周订单 GMV 环比上升 12%。" in body
 
 
-def test_compose_strips_think_before_appending_sql():
+def test_compose_strips_think_without_appending_sql():
     content = compose_scheduler_notification_content(
         "正常话语。<think>内部推理</think>订单分析完成。",
         [
@@ -96,7 +96,7 @@ def test_compose_strips_think_before_appending_sql():
     )
     assert "内部推理" not in content
     assert "订单分析完成。" in content
-    assert "| day | orders |" in content
+    assert "| day | orders |" not in content
 
 
 def test_extract_and_render_sql_payload():
@@ -114,7 +114,7 @@ def test_extract_and_render_sql_payload():
     assert "12" in md
 
 
-def test_compose_includes_assistant_and_sql_table():
+def test_compose_excludes_sql_table_from_notification():
     content = compose_scheduler_notification_content(
         "查询成功。让我再补充按下单时间维度的汇总分析。",
         [
@@ -126,8 +126,8 @@ def test_compose_includes_assistant_and_sql_table():
         ],
     )
     assert "查询成功" in content
-    assert "### 查询结果" in content
-    assert "| day | orders |" in content
+    assert "### 查询结果" not in content
+    assert "| day | orders |" not in content
 
 
 def test_completeness_rejects_provisional_without_sql():
@@ -142,7 +142,7 @@ def test_completeness_rejects_provisional_without_sql():
     assert is_provisional_assistant_text("查询成功。让我再补充按下单时间维度的汇总分析。")
 
 
-def test_completeness_accepts_provisional_when_sql_enriched():
+def test_completeness_rejects_provisional_when_sql_succeeded():
     composed = compose_scheduler_notification_content(
         "查询成功。让我再补充分析。",
         [{"columns": ["a"], "rows": [[1]], "row_count": 1}],
@@ -153,8 +153,8 @@ def test_completeness_accepts_provisional_when_sql_enriched():
         had_sql_tool=True,
         assistant_content="查询成功。让我再补充分析。",
     )
-    assert ok is True
-    assert reason == "ok_with_sql"
+    assert ok is False
+    assert reason == "provisional"
 
 
 @pytest.mark.asyncio
@@ -236,7 +236,7 @@ async def test_ensure_rejects_incomplete_provisional_content():
 
 
 @pytest.mark.asyncio
-async def test_ensure_enriches_with_sql_when_assistant_is_thin():
+async def test_ensure_does_not_include_sql_details():
     db = AsyncMock()
     sql_payload = {
         "columns": ["day", "orders"],
@@ -259,12 +259,12 @@ async def test_ensure_enriches_with_sql_when_assistant_is_thin():
             task_name="数据查询测试推送",
             channels=["portal"],
             trace_id="trace-4",
-            content="查询成功。让我再补充按下单时间维度的汇总分析。",
+            content="订单趋势分析完成，本期订单量保持稳定，无需额外处置。",
         )
 
     assert ok is True
     assert any(n.startswith("scheduler_delivered:") for n in notes)
-    assert "enriched_sql_sections:1" in notes
+    assert not any(n.startswith("enriched_sql_sections:") for n in notes)
     body = portal_create.await_args.kwargs["content"]
-    assert "| day | orders |" in body
-    assert "12" in body
+    assert "| day | orders |" not in body
+    assert "12" not in body

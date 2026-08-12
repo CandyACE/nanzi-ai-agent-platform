@@ -47,4 +47,8 @@ def test_build_notification_delivery_supplement_lists_channels_and_scheduler_own
     assert "send_portal_notification" in text
     assert "禁止在回复正文中提及" in text
     assert "禁止夹带中间思考" in text
+    assert "否则可能随通知正文发送给用户" in text
+    assert "却会原样推送给用户" not in text
+    assert "完整分析结论和关键数据解读都写在最终回复正文中" in text
+    assert "结合查数工具结果一并投递" not in text
     assert build_notification_delivery_supplement([]) == ""

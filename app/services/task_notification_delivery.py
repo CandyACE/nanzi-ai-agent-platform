@@ -1,4 +1,4 @@
-"""TaskCenter 结果通知：调度侧统一投递；结合助手正文与查数工具结果组装内容。"""
+"""TaskCenter 结果通知：调度侧统一投递助手最终正文。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 MAX_NOTIFICATION_BODY_CHARS = 6000
 MAX_SQL_RESULT_ROWS = 40
-MAX_SQL_SECTIONS = 2
 _TRACE_POLL_ATTEMPTS = 10
 _TRACE_POLL_INTERVAL_SEC = 0.3
 
@@ -255,27 +254,11 @@ def compose_scheduler_notification_content(
     *,
     reasoning_content: str | None = None,
 ) -> str:
-    parts: List[str] = []
     summary = strip_thinking_from_notification_content(
         assistant_content,
         reasoning_content=reasoning_content,
     )
-    if summary:
-        parts.append(summary)
-
-    usable = [p for p in sql_payloads if isinstance(p, dict) and p.get("columns") is not None]
-    selected = usable[-MAX_SQL_SECTIONS:]
-    for idx, payload in enumerate(selected):
-        table_md = tabular_payload_to_markdown(payload)
-        if not table_md:
-            continue
-        title = "### 查询结果" if len(selected) == 1 else f"### 查询结果 {idx + 1}"
-        row_count = payload.get("row_count")
-        if isinstance(row_count, int):
-            title = f"{title}（{row_count} 行）"
-        parts.append(f"{title}\n\n{table_md}")
-
-    return "\n\n".join(parts).strip()
+    return summary.strip()
 
 
 def assess_delivery_completeness(
@@ -295,12 +278,10 @@ def assess_delivery_completeness(
 
     if had_sql_tool and not has_sql_data and provisional:
         return False, "sql_without_usable_result"
-    if provisional and not has_sql_data:
-        return False, "provisional_without_data"
-    if has_sql_data:
-        return True, "ok_with_sql"
     if provisional:
         return False, "provisional"
+    if has_sql_data:
+        return True, "ok_with_sql"
     if len(text) < 20:
         return False, "too_short"
     return True, "ok"
@@ -443,7 +424,7 @@ async def ensure_task_notification_deliveries(
     确保各勾选渠道至少送达一次。
 
     - 若智能体已成功调用对应通知工具则跳过（避免重复）。
-    - 否则由调度侧统一投递：正文 = 助手总结 + trace 中查数结果表。
+    - 否则由调度侧统一投递助手总结；查数结果仅用于完整性校验。
     - 正文与 EmbedChat 一致：不含模型思考折叠面板（reasoning_content）。
     - 内容不完整（半截话且无可用数据）时拒绝投递并返回失败。
     """
@@ -503,6 +484,4 @@ async def ensure_task_notification_deliveries(
 
     if all_ok:
         notes.insert(0, f"scheduler_delivered:{','.join(missing)}")
-        if sql_payloads:
-            notes.insert(1, f"enriched_sql_sections:{min(len(sql_payloads), MAX_SQL_SECTIONS)}")
     return all_ok, notes

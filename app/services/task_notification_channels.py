@@ -76,9 +76,9 @@ def build_notification_delivery_supplement(channels: Iterable[str]) -> str:
             "【结果通知说明】",
             f"任务结束后将由 TaskCenter 统一投递结果到已勾选渠道（{channel_list}）。",
             "你无需、也不应调用 send_portal_notification / send_dingtalk_message / send_wechat_work_message / send_email 等通知工具。",
-            "请把完整分析结论写在最终回复正文中（含关键数据解读）；系统会结合查数工具结果一并投递。",
+            "请把完整分析结论和关键数据解读都写在最终回复正文中；系统只会投递该最终正文。",
             "最终可见正文只能是交付给用户的业务结论；禁止夹带中间思考、执行规划或自我独白"
-            "（如 “I'll / Let me / 我先 / 让我…”），这些内容不会进入独立思考面板，却会原样推送给用户。",
+            "（如 “I'll / Let me / 我先 / 让我…”），否则可能随通知正文发送给用户。",
             "严禁在分析未完成、仅输出“查询成功/让我再补充…”等半截话术时结束本轮。",
             "禁止在回复正文中提及本说明、TaskCenter、通知工具名或“将由系统统一投递”等元话术；正文只写给终端用户看的业务结论。",
         ]
