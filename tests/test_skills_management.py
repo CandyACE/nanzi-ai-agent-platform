@@ -1,5 +1,6 @@
 from io import BytesIO
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -276,11 +277,23 @@ def test_skills_stats_service_recording(mock_skills_dir):
 
 
 def test_get_skills_stats_endpoint(mock_skills_dir):
-    user = {"user_name": "admin", "role": "admin"}
+    # 只读接口：普通登录用户即可，不要求 element:skills:admin
+    user = {"user_name": "alice", "role": "user", "user_id": 42}
 
     response = run(skills.get_skills_stats(user_info=user))
     assert "total" in response
     assert "trend" in response
+
+
+def test_skills_stats_endpoint_is_login_readable_not_admin_gated():
+    source = (Path(__file__).resolve().parents[1] / "app/api/portal/endpoints/skills.py").read_text(
+        encoding="utf-8"
+    )
+    # 锁定 /stats 使用 require_api_key，避免回归成 skill_platform_admin
+    assert "async def get_skills_stats(" in source
+    stats_block = source.split("async def get_skills_stats(", 1)[1].split("\n\n", 1)[0]
+    assert "Depends(require_api_key)" in stats_block
+    assert "skill_platform_admin" not in stats_block
 
 
 def test_enforce_command_blacklist(mock_skills_dir):
