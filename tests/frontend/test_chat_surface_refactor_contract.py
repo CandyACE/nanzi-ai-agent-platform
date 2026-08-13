@@ -61,6 +61,21 @@ def test_chat_surface_refactor_keeps_existing_shared_feature_entrypoints():
             assert contract in source
 
 
+def test_stop_generation_cancels_backend_run_before_aborting_sse():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+    util = _read("frontend/src/utils/cancelConversationRun.ts")
+
+    assert "/api/v1/chat/cancel" in util
+    for source in (embed, debug):
+        cancel_at = source.find("cancelConversationRun(")
+        abort_at = source.find("abortController.abort()")
+        stop_at = source.find("const stopGeneration")
+        assert cancel_at > stop_at > 0
+        assert abort_at > cancel_at
+
+
+
 def test_both_chat_surfaces_use_shared_workspace_canvas_lifecycle():
     shared = _read("frontend/src/composables/chat/useWorkspaceCanvas.ts")
     embed = _read("frontend/src/views/EmbedChat.vue")

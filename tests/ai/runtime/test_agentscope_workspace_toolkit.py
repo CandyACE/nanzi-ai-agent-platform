@@ -1,9 +1,12 @@
+import os
+
 import pytest
 
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runtime.agentscope.workspace import (
     build_workspace_toolkit,
     is_workspace_managed_tool_spec,
+    resolve_session_workdir,
 )
 
 
@@ -30,7 +33,7 @@ async def test_build_workspace_toolkit_uses_workspace_builtins_and_keeps_platfor
     )
     monkeypatch.setattr(
         "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
-        lambda: [],
+        lambda **kwargs: [],
     )
 
     workspace = await get_local_workspace(user_id="u1", conversation_id="c1")
@@ -73,6 +76,95 @@ async def test_build_workspace_toolkit_uses_workspace_builtins_and_keeps_platfor
     assert "search_knowledge_base" in tool_names
     assert "list_available_skills" not in tool_names
     assert tool_names.count("Bash") == 1
+
+
+@pytest.mark.asyncio
+async def test_bind_configured_tools_to_workspace_sets_bash_cwd_without_injecting_extras(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope.workspace import (
+        bind_configured_tools_to_workspace,
+        clear_workspace_cache,
+        get_local_workspace,
+    )
+    from app.services.ai.tools.registry import ToolRegistry
+
+    clear_workspace_cache()
+
+    async def _root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        _root,
+    )
+
+    workspace = await get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-bash",
+    )
+    assert workspace is not None
+
+    specs = await ToolRegistry.get_runtime_tools(["exec_command", "search_knowledge_base"])
+    unbound_bash = next(spec for spec in specs if spec.name == "Bash")
+    assert getattr(unbound_bash.native_tool, "_cwd", None) in (None, "")
+
+    bound = await bind_configured_tools_to_workspace(workspace, specs)
+    expected_cwd = resolve_session_workdir(
+        root=str(tmp_path),
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-bash",
+    )
+
+    assert [spec.name for spec in bound] == [spec.name for spec in specs]
+    bound_bash = next(spec for spec in bound if spec.name == "Bash")
+    assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(expected_cwd)
+    assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(workspace.workdir)
+    from app.services.ai.runtime.conversation_run_subprocess import CancellableLocalBackend
+
+    assert isinstance(bound_bash.native_tool._backend, CancellableLocalBackend)
+    assert "Read" not in [spec.name for spec in bound]
+
+
+@pytest.mark.asyncio
+async def test_bind_configured_tools_to_workspace_is_noop_without_workspace():
+    from app.services.ai.runtime.agentscope.workspace import (
+        bind_configured_tools_to_workspace,
+    )
+    spec = RuntimeToolSpec(
+        name="Bash",
+        description="bash",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=_noop_tool,
+        permission_scope="ask",
+    )
+    bound = await bind_configured_tools_to_workspace(None, [spec])
+    assert bound == [spec]
+
+
+@pytest.mark.asyncio
+async def test_bind_configured_tools_to_workspace_ignores_non_list_list_tools():
+    from unittest.mock import MagicMock
+
+    from app.services.ai.runtime.agentscope.workspace import (
+        bind_configured_tools_to_workspace,
+    )
+
+    spec = RuntimeToolSpec(
+        name="Bash",
+        description="bash",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=_noop_tool,
+        permission_scope="ask",
+    )
+    fake_workspace = MagicMock()
+    bound = await bind_configured_tools_to_workspace(fake_workspace, [spec])
+    assert bound == [spec]
 
 
 def test_is_workspace_managed_tool_spec_matches_aliases():

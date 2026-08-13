@@ -114,7 +114,7 @@ class ChatCompletionResponse(BaseModel):
 
 
 class ChatCancelRequest(BaseModel):
-    conversation_id: str = Field(..., description="要释放运行锁的会话 ID")
+    conversation_id: str = Field(..., description="要取消本轮生成并释放运行锁的会话 ID")
     trace_id: Optional[str] = Field(default=None, description="可选，用于日志关联")
 
 
@@ -122,6 +122,8 @@ class ChatCancelResponse(BaseModel):
     success: bool
     lane_released: bool
     session_locks_released: int = 0
+    run_cancelled: bool = False
+    canvas_stopped: int = 0
 
 
 class ToolPermissionConfirmRequest(BaseModel):
@@ -264,20 +266,20 @@ async def get_dataset_menu_navigation(
     "/cancel",
     response_model=StandardResponse[ChatCancelResponse],
     summary="取消当前会话运行并释放锁",
-    description="用户在前端终止生成时调用，强制释放会话运行锁与 AgentScope session 锁，避免无法继续提问。",
+    description="用户在前端终止生成时调用：取消本轮生成任务、停止同会话代码画布进程，并释放会话运行锁。",
 )
 async def cancel_chat_completion(
     request: ChatCancelRequest,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    from app.services.ai.runtime.conversation_run_cancel import release_conversation_run_locks
+    from app.services.ai.runtime.conversation_run_cancel import cancel_conversation_run
 
     conversation_id = (request.conversation_id or "").strip()
     if not conversation_id:
         raise HTTPException(status_code=400, detail="conversation_id is required")
 
     lane_user_id = user_info.get("user_id") or user_info.get("id")
-    result = await release_conversation_run_locks(
+    result = await cancel_conversation_run(
         user_id=lane_user_id,
         conversation_id=conversation_id,
         trace_id=request.trace_id,
@@ -745,7 +747,12 @@ async def create_chat_completion(
                 else:
                     yield "data: [DONE]\n\n"
             except asyncio.CancelledError:
-                await _release_locks_on_client_abort()
+                from app.core.cancellation import spawn_detached
+
+                spawn_detached(
+                    _release_locks_on_client_abort(),
+                    name=f"release-locks-{conversation_id or 'unknown'}",
+                )
                 raise
 
         return StreamingResponse(sse_generator(), media_type="text/event-stream")

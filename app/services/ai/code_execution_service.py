@@ -487,3 +487,28 @@ def unregister_execution(handle_or_id: CodeExecutionHandle | str) -> None:
         handle_or_id.execution_id if isinstance(handle_or_id, CodeExecutionHandle) else handle_or_id
     )
     _EXECUTION_REGISTRY.pop(execution_id, None)
+
+
+def _same_user(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return True
+    return str(left) == str(right)
+
+
+async def stop_executions_for_conversation(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+) -> int:
+    """Stop canvas/script runs belonging to this conversation."""
+    if not conversation_id:
+        return 0
+    stopped = 0
+    for handle in list(_EXECUTION_REGISTRY.values()):
+        if handle.conversation_id != conversation_id:
+            continue
+        if not _same_user(handle.user_id, user_id):
+            continue
+        if await handle.stop():
+            stopped += 1
+    return stopped

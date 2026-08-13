@@ -30,8 +30,9 @@ skill_publication_reviewer = skill_platform_admin
 
 @router.get("/stats", summary="获取技能调用统计数据")
 async def get_skills_stats(
-    user_info: dict = Depends(skill_platform_admin)
+    user_info: dict = Depends(require_api_key),
 ):
+    """只读统计：登录用户均可查看，不要求 element:skills:admin。"""
     from app.services.ai.skills_stats_service import skills_stats_service
     return await skills_stats_service.get_stats()
 

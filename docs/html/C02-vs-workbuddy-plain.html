@@ -1,0 +1,281 @@
+<!--
+  微信公众号排版 HTML — NanZi 盘外加餐 · C02（克制配色版）
+  系列：《NanZi 开源智能体平台实战连载》盘外篇
+  说明：版式与 C02-vs-workbuddy.html 同源；配色统一采用深石板灰 + 墨色点缀，风格更加克制内敛。
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式
+  2. 【配图占位符】区域：选中对应的虚线卡片，直接在编辑器中替换/粘贴你的公众号素材图片即可
+  3. 全部样式均为内联 style，勿依赖外部 CSS/JS 样式表
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区：深石板灰 -->
+  <section style="margin:0 0 24px 0;padding:26px 18px;background:#1c1917;border-radius:12px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:normal;color:#a8a29e;line-height:1.5;letter-spacing:1.5px;text-transform:uppercase;">NanZi 开源智能体平台 · 盘外加餐 C02</p>
+    <p style="margin:0 0 12px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.5;letter-spacing:1px;">WorkBuddy 刷屏！对比 NanZi：个人 Copilot 与企业编排中枢，你该怎么选？</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#d6d3d1;line-height:1.6;letter-spacing:0.5px;">用 5 个关键维度看清「桌面数字同事」与包含通用 Agent、MCP/Skills、RAG 与 ChatBI 的「企业级智能中枢」的本质区别</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">💡 项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与二次开发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      「NanZi」来自网名（南孜），取「孜孜不倦」之意。开源 GitHub 仓库：
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;word-break:break-all;font-weight:500;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      最近，腾讯推出的 <strong>WorkBuddy（AI 办公工作台/数字同事）</strong> 在职场与开发者圈子里引发热议。不少技术负责人、数据分析与 AI 开发者同学跑来问我：
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#111827;line-height:1.9;background:#f5f5f4;padding:12px 14px;border-left:4px solid #44403c;border-radius:0 6px 6px 0;">
+      <strong>「腾讯的 WorkBuddy 这么火，你们开源的 NanZi 智能体平台跟它有什么区别？能互相替代吗？企业落地到底选哪一个更靠谱？」</strong>
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      其实，这两个产品虽然都叫“智能体”，但<strong>定位、应用场景与底座能力全然不同</strong>：
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      👉 <strong>WorkBuddy</strong> 走的是<strong>「个人/团队桌面端 Copilot」</strong>路线，主打接管本地软件、自动化办公与微信/企微远程遥控；<br>
+      👉 <strong>NanZi 平台</strong> 则是<strong>「企业级多智能体编排与数据中枢」</strong>。它远不只是 Text-to-SQL 数仓问数，而是完整集成了<strong>“通用 Agent 能力 (MCP+Skills) + 深度知识库 RAG + 企业级 ChatBI”</strong>三大专属智能体引擎，结合纯私有化部署、业务系统嵌入（Embed SDK）与精细化 RBAC 治理。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      本篇作为《NanZi 实战连载》的盘外加餐，纯干货剖析，帮你搞懂它们各自的底层逻辑与最佳选型指南。
+    </p>
+  </section>
+
+  <!-- 一句话结论 -->
+  <section style="margin:0 0 24px 0;padding:14px 16px;background:#f5f5f4;border-left:4px solid #292524;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;">
+      <strong>📌 一句话总结选型逻辑：</strong><br>
+      如果你需要一个<strong>开箱即用的个人桌面助理</strong>，帮你在电脑本地整理文件、写周报或通过微信远程推任务，选 <strong>WorkBuddy</strong> 非常省心；<br>
+      如果你的目标是<strong>构建企业级 AI 基础设施与统一中枢</strong>，需要自定义通用 Agent（MCP+Skills 扩展）、建立深度知识库 RAG、直连数仓做安全 ChatBI 问数、把 AI 嵌入已有 ERP/CRM 系统，并有严格的权限与审计门禁，<strong>NanZi 智能体平台</strong> 是更契合的企业级方案。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 快速画画像 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">01｜先看画像：它们各自的核心能力全景</p>
+  </section>
+
+  <!-- WorkBuddy 卡片 -->
+  <section style="margin:0 0 14px 0;padding:16px;background-color:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;line-height:1.5;">🤖 WorkBuddy · 随身 AI 数字同事 (Desktop & Mobile Copilot)</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      源自腾讯云 CodeBuddy 团队，定位为<strong>个人与团队的桌面端 AI 工作台</strong>。它的杀手锏在于“桌面接管与自动化”：
+    </p>
+    <ul style="margin:0;padding-left:18px;font-size:14px;color:#374151;line-height:1.8;">
+      <li><strong>本地桌面操作：</strong> 能读取和控制用户电脑上的本地文件、表格、浏览器、终端与桌面应用。</li>
+      <li><strong>腾讯生态深度集成：</strong> 原生无缝连接腾讯文档、腾讯会议、企业微信与微信，支持手机远程发指令遥控电脑工作。</li>
+      <li><strong>开箱即用专家库：</strong> 预置招聘、法务、前端、投研等海量预制数字人与简单 Skill 插件。</li>
+    </ul>
+  </section>
+
+  <!-- NanZi 卡片 -->
+  <section style="margin:0 0 16px 0;padding:16px;background-color:#f4f4f5;border:1px solid #d4d4d8;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#18181b;line-height:1.5;">🏛️ NanZi · 企业多智能体编排中枢 (Enterprise Hybrid Agent Hub)</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      完全开源（MIT 协议），定位为<strong>企业级 AI 架构的核心编排中枢与能力引擎</strong>。具备以下三大专属引擎与扩展生态：
+    </p>
+    <ul style="margin:0;padding-left:18px;font-size:14px;color:#374151;line-height:1.8;">
+      <li>🛠️ <strong>通用 Agent + MCP + Skills 自定义智能体：</strong> 基于 AgentScope 2.x ReAct 引擎，原生支持 Model Context Protocol (MCP) 扩展生态、<code>SKILL.md</code> 动态扫描与白名单控制，内置 Python/Shell 代码画布，可自由组装任何自定义业务智能体。</li>
+      <li>📚 <strong>深度知识库 RAG 智能体：</strong> 提供非结构化文档树形管理、切片预览、召回测试、语义合并与 Grounding 事实门禁（证据账本与引用拦截）；可一键对接 RAGFlow 在线托管知识库。</li>
+      <li>📊 <strong>企业级 ChatBI 智能体：</strong> 直连 Oracle、ClickHouse、MySQL 等物理生产数仓，具备元数据业务导航、Schema 门禁、SQL 错误自愈、<code>&lt;sql_plan&gt;</code> 结构化推演、我的数据门户与黄金报表告警。</li>
+      <li>🔌 <strong>嵌入与统一治理：</strong> 独创 Embed Chat SDK，3 行代码嵌入现有业务系统；支持 RBAC 细粒度权限、防泄密动态水印与 Trace 决策审计。</li>
+    </ul>
+  </section>
+
+  <!-- 🖼️ 配图占位符 01 -->
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:2px dashed #a8a29e;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">🖼️ 【配图占位符 01 · 架构全景对比图】</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#44403c;font-weight:bold;">👉 请在此处粘贴或上传图片</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">（内容建议：左侧显示 WorkBuddy 桌面端操控与微信遥控流程，右侧显示 NanZi 平台包含通用 Agent (MCP/Skills)、RAG、ChatBI 与 Embed SDK 的全景架构图）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 五大维度深度硬核对比 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">02｜硬核对决：5 个关键维度的深入对比</p>
+  </section>
+
+  <!-- 维度 1 -->
+  <section style="margin:0 0 14px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#111827;">1️⃣ 通用 Agent 拓展与自定义（桌面简单插件 vs MCP + Skills 平台级生态）</p>
+    <div style="font-size:14px;color:#374151;line-height:1.8;">
+      <p style="margin:0 0 6px 0;">• <strong>WorkBuddy：</strong> 侧重于<strong>开箱即用的预置桌面专家</strong>。用户可以通过界面配置简易 Skill 或选择预设的角色模板，适合解决常见的标准办公任务。</p>
+      <p style="margin:0;">• <strong>NanZi 平台：</strong> 具备强悍的<strong>通用 Agent 编排与二次开发能力</strong>。原生支持 Anthropic MCP (Model Context Protocol) 协议，可无缝缝合 Jira、GitLab、企业自定义 API；支持将业务经验编写为 <code>SKILL.md</code> 技能包并实现挂载白名单治理；内置<strong>代码画布（Code Canvas）</strong>在私有工作区流式运行 Python/Shell 脚本，开发者可自由打造任意复杂的自定义智能体。</p>
+    </div>
+  </section>
+
+  <!-- 维度 2 -->
+  <section style="margin:0 0 14px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#111827;">2️⃣ 知识库与 RAG 检索深度（单文件临时阅读 vs 一站式 RAG & 事实门禁）</p>
+    <div style="font-size:14px;color:#374151;line-height:1.8;">
+      <p style="margin:0 0 6px 0;">• <strong>WorkBuddy：</strong> 擅长<strong>读取桌面上具体的单个 PDF/Word 文档</strong>，帮助个人进行快速摘要与问答，偏向个人文档临时分析。</p>
+      <p style="margin:0;">• <strong>NanZi 平台：</strong> 拥有<strong>体系化的知识库管理中心与 Grounding 门禁</strong>。支持非结构化文档树形管理、切片预览、向量召回测试与语义合并；ReAct 对话前自动预检索并注入引用卡片；搭载 Grounding 事实门禁，空召回/无引用回答可精准拦截防幻觉。同时可直接对接 RAGFlow 托管智能体与知识库，实现跨系统知识融合。</p>
+    </div>
+  </section>
+
+  <!-- 维度 3 -->
+  <section style="margin:0 0 14px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#111827;">3️⃣ 数据分析与 ChatBI（Excel 本地汇总 vs 原生物理数仓 Text-to-SQL）</p>
+    <div style="font-size:14px;color:#374151;line-height:1.8;">
+      <p style="margin:0 0 6px 0;">• <strong>WorkBuddy：</strong> 擅长<strong>本地轻量表格计算</strong>。丢给它一份 Excel/CSV，它基于 Python 解释器进行局部数据清洗与发图。</p>
+      <p style="margin:0;">• <strong>NanZi 平台：</strong> 打造<strong>原生企业级 ChatBI 闭环</strong>。直连 Oracle、ClickHouse、MySQL 等物理生产数仓，具备元数据业务导航、Schema 门禁、SQL 报错自愈、高风险查询 <code>&lt;sql_plan&gt;</code> 结构化推演、我的数据门户（<code>/dataset_portal</code>）与黄金报表订阅告警，满足经营决策级的复杂数据分析需求。</p>
+    </div>
+  </section>
+
+  <!-- 维度 4 -->
+  <section style="margin:0 0 14px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#111827;">4️⃣ 业务集成与嵌入能力（客户端/企微协同 vs 嵌入式 Embed SDK）</p>
+    <div style="font-size:14px;color:#374151;line-height:1.8;">
+      <p style="margin:0 0 6px 0;">• <strong>WorkBuddy：</strong> 采用<strong>独立的客户端 + 企微助手</strong>形态。员工在桌面上打开 WorkBuddy，或者在企微群里喊它，属于独立协同应用。</p>
+      <p style="margin:0;">• <strong>NanZi 平台：</strong> 提倡<strong>“AI 隐形嵌入业务”</strong>。提供标准的 Embed Chat SDK，通过跨域 <code>postMessage</code> 契约，3 行代码就能把 AI 助手无缝嵌进企业已有的 ERP、CRM、OA 或自建 BI 门户中，员工无需离开原有工作界面。</p>
+    </div>
+  </section>
+
+  <!-- 维度 5 -->
+  <section style="margin:0 0 16px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#111827;">5️⃣ 部署模式、数据主权与 RBAC 安全（SaaS/云端服务 vs 全栈 MIT 纯私有化）</p>
+    <div style="font-size:14px;color:#374151;line-height:1.8;">
+      <p style="margin:0 0 6px 0;">• <strong>WorkBuddy：</strong> 以<strong>云端服务结合客户端</strong>为主。数据流向与调度依赖云端模型和服务生态，适合办公侧轻量落地。</p>
+      <p style="margin:0;">• <strong>NanZi 平台：</strong> 保持<strong>100% 开源与纯私有化部署</strong>。依赖仅为 Docker、MySQL 与 Redis Stack，支持内网物理隔离。提供精细化 RBAC（菜单与按钮元素级权限）、数据集行级隔离、工具敏感审批、Embed 防泄密动态水印（用户名+时间戳）与全链路 Trace 决策审计。</p>
+    </div>
+  </section>
+
+  <!-- 🖼️ 配图占位符 02 -->
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:2px dashed #78716c;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">🖼️ 【配图占位符 02 · 核心能力雷达图】</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#44403c;font-weight:bold;">👉 请在此处粘贴或上传图片</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">（内容建议：五维雷达对比图，包含：通用 Agent (MCP/Skills)、RAG 知识库深度、ChatBI 问数能力、业务系统嵌入性、私有化安全合规）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 对比对照表格 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">03｜一图速览：核心指标横向对照表</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;color:#374151;text-align:left;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
+      <thead>
+        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
+          <th style="padding:10px 12px;font-weight:bold;color:#111827;width:22%;">对比维度</th>
+          <th style="padding:10px 12px;font-weight:bold;color:#065f46;width:39%;background:#f0fdf4;">WorkBuddy (腾讯)</th>
+          <th style="padding:10px 12px;font-weight:bold;color:#1d4ed8;width:39%;background:#eff6ff;">NanZi 智能体平台</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">核心定位</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">个人/团队桌面 AI Copilot</td>
+          <td style="padding:10px 12px;background:#eff6ff;">企业级多智能体编排与数据中枢</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">通用 Agent 与扩展</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">预制桌面专家与常规 Skill 插件</td>
+          <td style="padding:10px 12px;background:#eff6ff;">原生 MCP 协议 + SKILL.md + 代码画布</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">知识库 RAG 能力</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">单文件临时分析问答</td>
+          <td style="padding:10px 12px;background:#eff6ff;">树形文档中心 + Grounding 门禁 + RAGFlow 对接</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">数据问数能力</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">本地 Excel/CSV 处理与基础绘图</td>
+          <td style="padding:10px 12px;background:#eff6ff;">直连物理数仓 Text-to-SQL + 自愈 + 黄金报表</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">嵌入集成与交付</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">独立桌面客户端 + 微信/企微</td>
+          <td style="padding:10px 12px;background:#eff6ff;">Embed SDK 嵌入式 + V1 API + Admin Web</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">开源与私有化</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">商业 SaaS / 客户端生态</td>
+          <td style="padding:10px 12px;background:#eff6ff;">100% 开源 (MIT 协议)，纯私有化部署</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:10px 12px;font-weight:bold;color:#111827;">安全与权限治理</td>
+          <td style="padding:10px 12px;background:#f0fdf4;">客户端文件/应用级授权</td>
+          <td style="padding:10px 12px;background:#eff6ff;">精细 RBAC + 动态防泄密水印 + Trace 审计</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 🖼️ 配图占位符 03 -->
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:2px dashed #44403c;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">🖼️ 【配图占位符 03 · NanZi 平台实机界面图】</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#44403c;font-weight:bold;">👉 请在此处粘贴或上传图片</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">（内容建议：NanZi 管理后台智能体编排 Agent Studio、代码画布运行效果或 Embed Chat SDK 内嵌到 ERP/CRM 系统的实机截图）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 选型落地建议 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">03｜选型指南：你的团队到底该怎么选？</p>
+  </section>
+
+  <!-- 场景 A -->
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">👉 优先选择 WorkBuddy 的场景：</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">
+      你是一名职场白领、自由职业者或个人开发者，希望有一个开箱即用的 AI 数字同事，帮你在本地电脑上写材料、整理文件夹、处理单份表格、或通过微信/企微遥控电脑处理临时任务。
+    </p>
+  </section>
+
+  <!-- 场景 B -->
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#18181b;">👉 优先选择 NanZi 智能体平台的场景：</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">
+      你作为企业 IT 负责人、技术架构师或 AI 研发团队，需要搭建<strong>企业私有化 AI 基础设施</strong>：需要灵活定义各类通用 Agent（对接 Jira/Git/API 与 MCP 扩展）、需要构建可信的知识库 RAG、需要直连企业 MySQL/Oracle/ClickHouse 进行安全问数、需要将 AI 能力嵌入现有业务系统并进行严格的 RBAC 权限与审计管控。
+    </p>
+  </section>
+
+  <!-- 场景 C -->
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f5f5f4;border:1px solid #e7e5e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#292524;">🤝 理想的「组合打法」 (1 + 1 > 2)：</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">
+      两者完全可以完美协作——员工在个人桌面上使用 <strong>WorkBuddy</strong> 处理日常碎片化辅助工作；而企业的知识库中枢、通用 Agent 业务工具链以及数仓问数服务，则由私有部署的 <strong>NanZi 平台</strong> 稳固支撑！
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 结语 & 互动 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">04｜写在最后</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      AI 技术的浪潮正快速从“单纯对话框”演变为“多智能体编排与基础设施”。WorkBuddy 展现了腾讯在 C 端与桌面端极致体验的积累，而 NanZi 则展现了开源平台在通用 Agent 拓展、知识库 RAG、数据问数与企业级嵌入方向的深厚能力。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      希望本篇选型对比能为你和团队在规划企业 AI 路线时提供清晰的参考！
+    </p>
+  </section>
+
+  <!-- 引导关注与 GitHub 卡片 -->
+  <section style="margin:24px 0 12px 0;padding:18px 16px;background:#f5f5f4;border:1px solid #d6d3d1;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">🚀 欢迎体验 NanZi 开源智能体平台</p>
+    <p style="margin:0 0 12px 0;font-size:13px;color:#44403c;line-height:1.6;">开源 MIT 协议 · 可自由分发与二次开发 · 支持 Docker 一键部署</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#1c1917;word-break:break-all;">
+      👉 GitHub 仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;font-weight:bold;text-decoration:underline;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+    <p style="margin:0;font-size:13px;color:#78716c;">如果这篇文章对你有帮助，欢迎点个 <strong>「在看」</strong> 或在 GitHub 点个 <strong>⭐ Star</strong> 支持一下！</p>
+  </section>
+
+</section>

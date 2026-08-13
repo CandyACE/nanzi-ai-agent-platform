@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from app.services.ai.runtime.agentscope.session_lock import agentscope_session_lock
+from app.services.ai.runtime.conversation_run_registry import conversation_run_registry
 from app.services.ai.runtime.session_run_lane import conversation_run_lane
 
 logger = logging.getLogger(__name__)
@@ -51,4 +52,61 @@ async def release_conversation_run_locks(
         "success": lane_released or session_locks_released > 0,
         "lane_released": lane_released,
         "session_locks_released": session_locks_released,
+    }
+
+
+async def cancel_conversation_run(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    trace_id: str | None = None,
+) -> dict[str, Any]:
+    """Stop the in-process generation task, then release conversation locks.
+
+    Explicit Stop should hard-cancel the current run. Lock release stays so the
+    user can send the next message immediately. Canvas executions for the same
+    conversation are stopped as well.
+    """
+    run_cancelled = await conversation_run_registry.request_stop(
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+    canvas_stopped = 0
+    try:
+        from app.services.ai.code_execution_service import (
+            stop_executions_for_conversation,
+        )
+
+        canvas_stopped = await stop_executions_for_conversation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[ConversationRunCancel] failed to stop canvas executions conversation=%s: %s",
+            conversation_id,
+            exc,
+        )
+
+    locks = await release_conversation_run_locks(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        trace_id=trace_id,
+    )
+    success = bool(locks.get("success")) or run_cancelled or canvas_stopped > 0
+    if run_cancelled or canvas_stopped:
+        logger.info(
+            "[ConversationRunCancel] cancelled run conversation=%s user=%s trace=%s "
+            "run=%s canvas=%s",
+            conversation_id,
+            user_id,
+            trace_id,
+            run_cancelled,
+            canvas_stopped,
+        )
+    return {
+        **locks,
+        "success": success,
+        "run_cancelled": run_cancelled,
+        "canvas_stopped": canvas_stopped,
     }

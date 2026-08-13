@@ -25,6 +25,7 @@ from app.services.ai.runtime.session_run_lane import (
     ConversationRunBusyError,
     conversation_run_lane,
 )
+from app.services.ai.runtime.conversation_run_registry import track_conversation_run
 from app.services.ai.executors.common import _attachment_abs_path, extract_tokens_from_message
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.core.orm import AsyncSessionLocal
@@ -587,7 +588,9 @@ class AgentService:
                 return
 
         try:
-            async with conversation_run_lane.hold(
+            async with track_conversation_run(
+                lane_user_id, conversation_id
+            ) as run_handle, conversation_run_lane.hold(
                 user_id=lane_user_id,
                 conversation_id=conversation_id,
                 trace_id=trace_id,
@@ -684,6 +687,8 @@ class AgentService:
                 )
                 try:
                     async for chunk in gen:
+                        if run_handle is not None and run_handle.cancelled:
+                            raise asyncio.CancelledError
                         if isinstance(chunk, dict):
                             full_response_content = _accumulate_stream_content(
                                 full_response_content,
@@ -1972,6 +1977,11 @@ class AgentService:
                     reasoning_content=full_reasoning_content or None,
                 ))
 
+        except asyncio.CancelledError:
+            execution_status = "cancelled"
+            if shared_state is not None:
+                shared_state["execution_status"] = "cancelled"
+            raise
         except Exception as e:
             logger.error(f"Execution Error: {str(e)}", exc_info=True)
             execution_status = "error"
@@ -1989,11 +1999,19 @@ class AgentService:
 
             is_scheduled_task = bool(user_info and user_info.get("is_scheduled_task"))
             if execution_status not in AWAITING_RESUME_STATUSES or is_scheduled_task:
-                await AuditManager.log_transaction(
-                     trace_id, agent_config, user_query, full_response_content,
-                     user_info, execution_status, duration, trace_buffer,
-                     conversation_id=conversation_id,
-                     reasoning_content=full_reasoning_content or None,
+                from app.core.cancellation import await_unless_cancelling
+
+                async def _audit_cancelled_run():
+                    await AuditManager.log_transaction(
+                        trace_id, agent_config, user_query, full_response_content,
+                        user_info, execution_status, duration, trace_buffer,
+                        conversation_id=conversation_id,
+                        reasoning_content=full_reasoning_content or None,
+                    )
+
+                await await_unless_cancelling(
+                    _audit_cancelled_run,
+                    name=f"audit-run-{trace_id}",
                 )
 
             if (
@@ -2160,7 +2178,9 @@ class AgentService:
         lane_user_id = current_user_id or pending.user_id
 
         try:
-            async with conversation_run_lane.hold(
+            async with track_conversation_run(
+                lane_user_id, conversation_id
+            ) as run_handle, conversation_run_lane.hold(
                 user_id=lane_user_id,
                 conversation_id=conversation_id,
                 trace_id=pending.trace_id,
@@ -2169,6 +2189,8 @@ class AgentService:
                     pending,
                     confirmed=confirmed,
                 ):
+                    if run_handle is not None and run_handle.cancelled:
+                        raise asyncio.CancelledError
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     if confirmed:
@@ -2408,7 +2430,9 @@ class AgentService:
         lane_user_id = current_user_id or pending.user_id
 
         try:
-            async with conversation_run_lane.hold(
+            async with track_conversation_run(
+                lane_user_id, conversation_id
+            ) as run_handle, conversation_run_lane.hold(
                 user_id=lane_user_id,
                 conversation_id=conversation_id,
                 trace_id=pending.trace_id,
@@ -2417,6 +2441,8 @@ class AgentService:
                     pending,
                     execution_results=execution_results,
                 ):
+                    if run_handle is not None and run_handle.cancelled:
+                        raise asyncio.CancelledError
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)

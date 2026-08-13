@@ -46,7 +46,6 @@ async def build_native_agent(
 
     dar = _runner_module()
     tools = filter_redundant_time_tools(tools, system_content)
-    toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"), user_id=runner._current_user_id())
     workspace = await dar.get_local_workspace(
         user_id=runner._current_user_id(),
         user_name=runner._runtime_user_name(),
@@ -55,6 +54,10 @@ async def build_native_agent(
         skills_custom=bool(getattr(runner.config, "skills_custom", False)),
         allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
     )
+    from app.services.ai.runtime.agentscope.workspace import bind_configured_tools_to_workspace
+
+    tools = await bind_configured_tools_to_workspace(workspace, tools)
+    toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"), user_id=runner._current_user_id())
     from app.services.ai.runtime.agentscope.agent_runtime import (
         build_runtime_middlewares,
         load_injection_config,

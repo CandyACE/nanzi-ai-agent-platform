@@ -5,6 +5,7 @@ import inspect
 import logging
 import re
 import asyncio
+import contextlib
 from dataclasses import replace
 from typing import List, Dict, Any, AsyncGenerator, Optional, Set
 from datetime import datetime
@@ -79,7 +80,10 @@ from app.services.ai.runtime.agentscope.session_lock import (
     SessionLockTimeout,
     agentscope_session_lock,
 )
-from app.services.ai.runtime.agentscope.workspace import get_local_workspace
+from app.services.ai.runtime.agentscope.workspace import (
+    bind_configured_tools_to_workspace,
+    get_local_workspace,
+)
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.agentscope.tools import build_toolkit
@@ -635,6 +639,9 @@ class AssistantAgentRunner(BaseExecutor):
                 try:
                     async for chunk in core_stream:
                         await out_queue.put(("core", chunk))
+                except asyncio.CancelledError:
+                    await out_queue.put(("cancelled", None))
+                    raise
                 except Exception as e:
                     await out_queue.put(("error", e))
                 finally:
@@ -663,6 +670,8 @@ class AssistantAgentRunner(BaseExecutor):
                             yield val
                         elif tag == "queue":
                             yield val
+                        elif tag == "cancelled":
+                            raise asyncio.CancelledError()
                         elif tag == "core_done":
                             core_done = True
                         elif tag == "error":
@@ -674,6 +683,9 @@ class AssistantAgentRunner(BaseExecutor):
             finally:
                 t1.cancel()
                 t2.cancel()
+                for pending in (t1, t2):
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await pending
                 try:
                     await event_queue.put("DONE")
                 except Exception:
@@ -1345,7 +1357,8 @@ class AssistantAgentRunner(BaseExecutor):
             skills_custom=bool(getattr(self.config, "skills_custom", False)),
             allowed_global_skills=list(getattr(self.config, "skills", None) or []),
         )
-        # 仅挂载 agent 后端配置的工具；workspace 只作 offloader，不自动注入 Grep/Read/Bash 等内置工具。
+        # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
+        tools = await bind_configured_tools_to_workspace(workspace, tools)
         toolkit = build_toolkit(
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
@@ -1534,6 +1547,10 @@ class AssistantAgentRunner(BaseExecutor):
         native_model: Any,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流结束后：AgentState 与已发送 SSE 对齐，不足则 synthesis。"""
+        from app.core.cancellation import current_task_cancelling
+
+        if current_task_cancelling():
+            return
         streamed = state.get("full_content") or ""
         agent_text = (
             extract_latest_assistant_text(agent, include_thinking=False)
@@ -1669,6 +1686,10 @@ class AssistantAgentRunner(BaseExecutor):
         native_model: Any,
         append_after_partial: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.core.cancellation import current_task_cancelling
+
+        if current_task_cancelling():
+            return
         tool_names: Dict[str, str] = state.get("tool_names", {})
         tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
         review_lines = [

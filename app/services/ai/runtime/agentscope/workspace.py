@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
 import shutil
 import uuid
+from dataclasses import replace
 from typing import Any
 
 from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
@@ -452,6 +454,96 @@ async def append_session_workspace_sandbox_to_system_prompt(
     if base:
         return f"{base}\n\n{block}"
     return block
+
+
+def _workspace_native_name_for_spec(spec: Any) -> str | None:
+    native_tool = getattr(spec, "native_tool", None)
+    native_name = getattr(native_tool, "name", None) if native_tool is not None else None
+    if native_name in WORKSPACE_BUILTIN_TOOL_NAMES:
+        return str(native_name)
+    spec_name = str(getattr(spec, "name", "") or "")
+    aliased = AGENTSCOPE_BUILTIN_TOOL_ALIASES.get(spec_name, spec_name)
+    if aliased in WORKSPACE_BUILTIN_TOOL_NAMES:
+        return aliased
+    return None
+
+
+async def bind_configured_tools_to_workspace(
+    workspace: Any,
+    tool_specs: list[Any] | None,
+) -> list[Any]:
+    """Bind configured Bash/Read/Write/Edit/Glob/Grep to the session workspace.
+
+    Replaces already-configured native tools with LocalWorkspace copies so Bash
+    starts in ``workspace.workdir``. Does not inject extra builtins the agent
+    did not configure. Returns the original list when workspace is missing.
+    """
+    specs = list(tool_specs or [])
+    if workspace is None or not specs:
+        return specs
+
+    list_tools = getattr(workspace, "list_tools", None)
+    if list_tools is None:
+        return specs
+
+    try:
+        listed = list_tools()
+        if inspect.isawaitable(listed):
+            listed = await listed
+    except Exception as exc:
+        logger.warning("[workspace] Failed to list workspace tools: %s", exc)
+        return specs
+
+    if not isinstance(listed, (list, tuple)):
+        return specs
+
+    workspace_tools = {
+        str(getattr(tool, "name", "") or ""): tool
+        for tool in (listed or [])
+        if getattr(tool, "name", None)
+    }
+    if not workspace_tools:
+        return specs
+
+    from app.services.ai.runtime.agentscope.tools import (
+        runtime_tool_spec_from_native_agentscope_tool,
+    )
+
+    bound: list[Any] = []
+    for spec in specs:
+        native_name = _workspace_native_name_for_spec(spec)
+        workspace_tool = workspace_tools.get(native_name or "")
+        if workspace_tool is None:
+            bound.append(spec)
+            continue
+        if native_name == "Bash":
+            try:
+                from app.services.ai.runtime.conversation_run_subprocess import (
+                    attach_cancellable_backend,
+                )
+
+                attach_cancellable_backend(workspace_tool)
+            except Exception:
+                pass
+        rebound = runtime_tool_spec_from_native_agentscope_tool(
+            workspace_tool,
+            source_type=getattr(spec, "source_type", "system"),
+            permission_scope=getattr(spec, "permission_scope", None),
+        )
+        bound.append(
+            replace(
+                rebound,
+                description=spec.description or rebound.description,
+                evidence_types=getattr(spec, "evidence_types", rebound.evidence_types),
+                evidence_policy=getattr(spec, "evidence_policy", rebound.evidence_policy),
+                evidence_inference_disabled=bool(
+                    getattr(spec, "evidence_inference_disabled", False)
+                ),
+                timeout_seconds=getattr(spec, "timeout_seconds", None),
+                audit_callback=getattr(spec, "audit_callback", None),
+            )
+        )
+    return bound
 
 
 def is_workspace_managed_tool_spec(spec: Any) -> bool:

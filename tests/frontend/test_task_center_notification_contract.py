@@ -39,3 +39,16 @@ def test_task_center_saved_report_subscription_entry():
     assert "订阅设置" in page
     assert "openSavedReportSubscriptionSettings" in page
     assert "report_detail_tab" in page
+
+
+def test_task_center_cleans_resize_listener_and_run_now_timers():
+    """resize 必须用同一命名 handler 解绑；runTaskNow 轮询定时器须在 onUnmounted 清理。"""
+    page = (ROOT / "frontend/src/views/TaskCenter.vue").read_text(encoding="utf-8")
+    assert "const handleWindowResize" in page
+    assert "addEventListener('resize', handleWindowResize)" in page
+    assert "removeEventListener('resize', handleWindowResize)" in page
+    assert "() => windowWidth.value = window.innerWidth" not in page
+    assert "clearRunNowTimers" in page
+    assert "runNowTimerIds" in page
+    assert "trackRunNowTimer" in page
+    assert "releaseRunNowTimer" in page

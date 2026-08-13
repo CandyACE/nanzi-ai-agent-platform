@@ -1,105 +1,745 @@
 <!--
-  微信公众号排版 HTML — NanZi 实战连载 · 第 07 篇（深度修订）
+  微信公众号排版 HTML — NanZi 实战连载 · 第 07 篇（全景深度重构版）
   使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+  图片占位：搜索「图片占位」即可定位，替换为正式截图后删除虚线框即可
 -->
 <section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
-  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
-    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 07</p>
-    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">Skills 实战</p>
-    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">双轨目录 · frontmatter · 白名单 · 提及/扫描/工具</p>
+
+  <!-- ========== Header Banner ========== -->
+  <section style="margin:0 0 24px 0;padding:28px 18px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:12px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1.5px;">NanZi 开源智能体平台实战连载 · 07</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.4;letter-spacing:1px;">Skills 全景指南：从打法说明书到运行时触发</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">来龙去脉 · 双轨架构 · 创建方式 · 审核发布 · 触发链路 · 工具指令</p>
   </section>
+
+  <!-- ========== 项目声明卡片 ========== -->
   <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
-    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>（MIT 协议）。开源仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;font-weight:600;">RandyChen1985/nanzi-ai-agent-platform</a><br/>
+      核心代码路径：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/services/ai/skill_resolver.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/services/ai/tools/system_executive_tools.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/services/skill_publication_service.py</code> · API <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">/api/portal/skills</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">/api/portal/skills/personal</code>
+    </p>
   </section>
-  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">Skill = 可版本管理的「打法说明书」；系统提示词是人格；工具是手脚。三者叠用：提示词定角色，Skill 定流程与约束，工具执行。本篇按目录、字段、白名单、触发链路与对话工具拆开。</p></section>
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>代码入口：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_resolver.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_metadata.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">system_executive_tools.py</code> · API <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/api/portal/skills</code> 与 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/skills/personal</code></p></section>
+
+  <!-- ========== 导言 ========== -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      如果说<strong>系统提示词</strong>决定智能体「是谁」，<strong>工具（Tools / MCP）</strong>决定它「能动手做什么」，那 <strong>Skills</strong> 就是可版本管理的「怎么干」——把 SOP、约束、检查清单沉淀成一份份 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code>。NanZi 实现了<strong>平台 / 个人双轨目录</strong>、<strong>智能体版本白名单挂载</strong>、<strong>提及命中与自动扫描</strong>、<strong>个人技能审核发布到平台库</strong>，以及对话内 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">list / read / create</code> 三件套工具。本篇按「背景 → 架构 → 创建 → 管理审核 → 触发使用 → 工具 → FAQ」展开。
+    </p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
-  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜双轨目录：平台 vs 个人</p></section>
-  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;">平台 Skills</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>落在 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILLS_DIR</code>：优先 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/app/data/skills</code>，否则 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">~/.agents/skills</code>。每个技能一目录 + <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code>。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>公司统一 SOP、问数规范、客服话术——管理员维护，全员可用。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>管理端 CRUD / toggle / zip 导入；需 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">menu:skills_management</code>。scope=global。</p>
+
+  <!-- ========== 00｜来龙去脉 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">00｜来龙去脉：什么是 Skills？为什么需要它？</p>
   </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      过去两年，企业 Agent 走了一条很典型的进化线：先是「会聊天」，接着「会调工具」，再接着发现——<strong>会调工具 ≠ 会干活</strong>。真正拉开差距的，往往是有没有一套可复用、可评审、可按场景启停的「打法」。Skills 要解决的，正是这一层。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">从「全能提示词」到「打法外置」：痛点从哪来？</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.9;">
+      很多团队第一版落地都是同一个姿势：把客服话术、会议纪要模板、故障分级步骤、合规红线……全部塞进 System Prompt。短期能跑，中期必炸：
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.9;">
+      • <strong>提示词变成「巨石」</strong>：改一句回访口径要动整段 prompt；评审看不懂「哪段管客服、哪段管运维」；A/B 试跑只能整包替换。<br/>
+      • <strong>工具会了，流程不会</strong>：模型能发邮件、能建工单、能搜知识库，却不知道「先安抚再取证」「什么级别必须升级值班」「结论前要列待确认项」。<br/>
+      • <strong>经验锁在会话里</strong>：高手花半小时摸出一套售后回访话术，关掉窗口就蒸发；新人第二天又从零试错。<br/>
+      • <strong>场景互相污染</strong>：故障排障清单与周报结构挤在同一段上下文，闲聊也带着「必须输出风险等级」，成本高、干扰大。<br/>
+      • <strong>治理缺失</strong>：谁改的、哪一版生效、能否只对某个 Agent 启用，全靠口头约定。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">一个前后对比小故事（售后回访）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>没有 Skill 时：</strong>用户说「客户投诉物流延误，帮我写回访话术」。模型可能上来就长篇道歉、承诺无法兑现的时效，甚至编造「系统显示已发货」——因为「会写文字」在，但「客服打法」不在。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>有 Skill 时：</strong>先命中「售后回访」技能 → 按说明书确认投诉类型与情绪级别 → 安抚话术模板 → 收集必要信息清单 → 给出可承诺边界与升级条件 → 必要时再调工单/通知类工具。工具还是那些工具，差别在于<strong>步骤与红线被显式写进了可版本文件</strong>。
+    </p>
+  </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">个人 Skills</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>路径 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent_workspaces/{{user_key}}/skills/{{skill_id}}/SKILL.md</code>。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>个人习惯、项目专用打法；不污染全局。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>API 前缀 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/api/portal/skills/personal</code>，登录即可，不强制 skills_management 菜单。同 id 时<strong>个人覆盖平台</strong>。</p>
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">Skills 从哪来？业界在收敛什么？</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.9;">
+      「把专业流程教给模型」并不新鲜：早期有 Custom GPT 的 Instructions、各类 Bot 的「知识库 + 固定话术」、内部 Wiki 贴进上下文。真正变化的是<strong>打包形态与运行时约定</strong>逐渐趋同：
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.9;">
+      • <strong>文件化</strong>：不再只是控制台里一段不可 diff 的富文本，而是仓库里的目录 + Markdown。<br/>
+      • <strong>元数据化</strong>：YAML frontmatter 描述 id、名称、适用场景（description），方便列表、搜索、自动匹配。<br/>
+      • <strong>可附资源</strong>：references、样例、脚本与主说明书同仓，而不是散落在聊天记录。<br/>
+      • <strong>可移植</strong>：一份 Skill 包可以在本机 IDE Agent、企业平台、开源 CLI（如 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">npx skills</code>）之间迁移——NanZi 宿主机映射安装正是接上这条生态链。
+    </p>
+    <p style="margin:0;font-size:13px;color:#0e7490;line-height:1.75;">
+      可以把它想成厨师的<strong>菜谱</strong>：灶台和锅铲是 Tools/MCP，厨师人设是 System Prompt，菜谱才是 Skills——同一套厨具，换菜谱就能换出品。
+    </p>
   </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">Skills 是什么 · 不是什么</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.9;">
+      <strong>是：</strong>给模型看的结构化「打法说明书」——何时启用、先做什么、禁止什么、出错怎么办；可版本管理、可按 Agent / 会话挂载、可审核发布。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.9;">
+      <strong>不是：</strong><br/>
+      • 不是新的执行引擎（不会替代 ReAct 循环本身）<br/>
+      • 不是权限系统（读了 Skill 也不会自动获得未授权数据集）<br/>
+      • 不是 MCP / 内置 Tools（那些是「能调用的动作」，Skill 是「怎么编排这些动作」）<br/>
+      • 不是知识库全文检索（RAG 回答「资料里有什么」；Skill 规定「这类任务按什么流程做」）
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">四层对照：Prompt · Skill · Tool · MCP</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">层级</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">回答的问题</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">变更频率</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">典型载体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">System Prompt</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">你是谁？全局红线是什么？</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">低（人格稳定）</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">Prompt Factory / 版本提示词</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#059669;">Skill</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">这类任务按什么步骤做？</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">中（业务 SOP 常改）</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;"><code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">SKILL.md</code> 目录包</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">Built-in Tool</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">平台内置能执行什么动作？</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">低（跟发版走）</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">registry.py</code> 静态工具</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">MCP Tool</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">外部系统能力如何即插即用？</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">中高（业务系统多）</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">MCP Server（见连载 06）</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#475569;line-height:1.75;">
+      NanZi 里三者叠用：提示词定角色，Skill 定流程与约束，Tools/MCP 落地执行。Skill <strong>约束「怎么做」</strong>，不自动扩大「能碰什么」——RBAC、工具审批、工作区隔离等硬护栏仍然生效。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">为什么企业 Agent 平台特别需要 Skills？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.9;">
+      真实业务天然「流程密集」：客服回访有情绪分级、故障有升级路径、周报有固定结构、主助手还要自动扫描相关打法。如果全靠一条巨石 prompt：
+      <br/>• 改一版客服口径，会误伤闲聊与知识库问答；
+      <br/>• 个人摸索出的回访/排障打法无法沉淀成团队资产；
+      <br/>• 生产环境无法对主助手做「只挂白名单技能」的收敛。
+      <br/>因此 NanZi 做成<strong>双轨目录 + 白名单挂载 + 提及/扫描触发 + 审核发布</strong>——后面章节逐一展开。先有一个直觉：Skill 是「可插拔的菜谱」，不是「再写长一点的人设」。
+    </p>
+  </section>
+
+  <!-- 截图占位｜00 -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜00a：提示词 / Skills / Tools 三层叠用示意</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：三层金字塔或并列卡片；中间 Skills 标注「SOP · 约束 · 检查清单」</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1｜人格定调、打法定流程、工具落地执行</p>
+  </section>
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:140px;padding:36px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜00b：从巨石 Prompt 拆到多份 Skill（可选）</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：「巨石 Prompt → 多份 Skill」拆分示意（具体目录样例见 01｜目录结构要点）</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1b｜打法外置：从巨石提示词到可插拔 Skill 包</p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
-  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜SKILL.md frontmatter 字段</p></section>
+
+  <!-- ========== 01｜NanZi 架构 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">01｜NanZi 里的 Skills 架构：平台 vs 个人 · 目录 · 挂载</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      NanZi 采用<strong>双轨目录</strong>：平台技能面向全员治理，个人技能落在用户工作区内；运行时再按智能体版本的白名单与会话挂载决定「本轮可见哪些」。同名 id 时，<strong>个人覆盖平台</strong>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">平台 Skills vs 个人 Skills</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">对比维度</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">平台 Skills（global）</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">个人 Skills（personal）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">物理目录</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">SKILLS_DIR</code>：优先 <code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">/app/data/skills</code>，否则 <code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">~/.agents/skills</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">agent_workspaces/{user_key}/skills/{skill_id}/</code></td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">入口与权限</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">技能工作台「平台技能」；管理/审核需 <code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">element:skills:admin</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">「我的技能」/ 个人中心；登录即可维护本人目录</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">典型内容</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">公司 SOP、客服话术、会议纪要模板</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">个人习惯、项目专用打法、试验稿</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">进公共库</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">管理员直接维护；或审核通过后物化</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">提交审核 → 通过后生成<strong>独立平台 id</strong>（不直接改写个人目录）</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">运行时合并</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">受版本 <code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">skills_custom</code> 白名单约束</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">始终合并进可见集合；同 id 时覆盖平台</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">解析器保留的键</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">读文件头 8192 字节内 YAML：任意 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">key: value</code> → 小写键。常用：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">id</code>（默认目录名）、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">name</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">description</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled</code>（默认 true）。门户列表另支持 YAML 块标量。工具侧 create 至少写 name/description。<br/>正文读取有路径 jail：必须在 SKILLS_DIR 或个人 skills 根下。</p>
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">目录结构要点</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      每个技能一个目录，根上必须有 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code>（可另附 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">references/</code> 等资源）。文件头 YAML frontmatter 常用键：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">id</code>（默认目录名）、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">name</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">description</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled</code>（默认 true）。正文可读路径有 jail：必须落在平台 SKILLS_DIR 或当前用户个人 skills 根下。<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled: false</code> 或门户关闭后，加载与扫描都会跳过。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">一份 Skill 长什么样？（伪代码示意）</p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#374151;line-height:1.75;">
+      下面以<strong>售后回访</strong>为例，是精简伪代码，不是平台内置文件：
+    </p>
+    <pre style="margin:0;padding:12px 14px;background:#0b1220;border-radius:8px;overflow-x:auto;font-size:11px;line-height:1.65;color:#e5e7eb;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre;text-align:left;">cs-callback-script/
+├── SKILL.md
+└── references/          # 可选：话术样例、升级矩阵
+    └── escalation-matrix.md
+
+# ===== SKILL.md =====
+---
+id: cs-callback-script
+name: 售后回访话术
+description: 物流延误/服务投诉类回访；适用于「投诉」「回访」「安抚话术」类请求
+enabled: true
+---
+
+# 售后回访话术
+
+## When to use
+- 用户要写客户投诉回访、安抚话术或升级建议
+- 不要用于闲聊、招聘话术或与售后无关的营销文案
+
+## Workflow（伪代码）
+1. classify_case(type, severity)     # 物流延误 / 态度 / 质量…
+2. empathize(template_by_severity)  # 先共情，再谈方案
+3. collect_facts([...])              # 单号、时间、已尝试渠道
+4. propose_options(within_policy)    # 只承诺政策内可兑现项
+5. escalate_if(severity >= P1)       # 达线则建议建工单/转值班
+
+## Hard constraints
+- NEVER 编造物流轨迹或「系统已显示签收」
+- NEVER 口头承诺政策外赔偿；不确定就标「需人工确认」
+- MUST 区分「可立即答复」与「需升级」两条路径</pre>
+    <p style="margin:10px 0 0 0;font-size:12px;color:#047857;line-height:1.75;">
+      读法：frontmatter 给扫描/列表用（description 写得越像真实用户说法，自动命中越稳）；正文给模型当 checklist。章节标题可按团队习惯组织（When to use / Workflow / Constraints 只是推荐骨架）。同类写法也可套到会议纪要、故障分级、面试提纲等通识场景。
+    </p>
   </section>
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">禁用：frontmatter <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled: false</code> 或门户 toggle——加载与扫描都会跳过。</p></section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">挂载发生在哪几层？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>① 智能体版本级</strong>：配置字段 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skills_custom</code>。默认 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">false</code> = 不限制公共技能（前端常显示「全部」）；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">true</code> 时必须非空 JSON 白名单，只加载勾选的公共 id（个人技能仍合并）。生产主助手建议开白名单，只挂「售后回访」「故障分级」等稳妥技能。<br/>
+      <strong>② 会话 / 聊天 UI 级</strong>：输入框「+」→ 技能级联菜单（<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SkillCascadeMenu</code>）可本轮挂载；创建成功横幅支持「立即挂载」。平台<strong>没有</strong>独立的技能 slash 指令（与 MCP 会话挂载类似，走 UI / 工具链路）。
+    </p>
+  </section>
+
+  <!-- 截图占位｜01 -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜01a：技能工作台（平台 / 个人 Tab）</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：SkillsManagement 顶栏 +「平台技能 / 我的技能」切换；可顺带露出统计按钮</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 2｜技能工作台双轨入口</p>
+  </section>
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜01b：智能体版本编辑器中的 Skills 白名单</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：Agent 版本「全部公共技能 / 自定义白名单」开关与勾选列表</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 3｜版本级 skills_custom 挂载</p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
-  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜版本白名单 skills_custom</p></section>
+
+  <!-- ========== 02｜创建方式 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">02｜创建 Skills 的几种方式</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      NanZi 支持「工作台手工建」「压缩包导入」「对话里让模型沉淀」，以及<strong>在宿主机直接安装/克隆、经 Docker 卷映射进容器</strong>。选哪条取决于：你是管理员维护公共库、个人先试验再提审，还是对接开源 Skill 生态做本地联调。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">方式 A｜技能工作台 · 空白新建</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      进入技能工作台 →「新建技能」→ 填写 id / name / description，系统生成目录与初始 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code>，再在文件树中编辑正文与附属资源。当前 Tab 决定写入平台库还是个人库（平台侧写操作需管理权限）。
+    </p>
+  </section>
+
+  <!-- 截图占位｜02a -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜02a：空白新建弹窗</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：新建技能表单（id / 名称 / 描述）+ 创建后文件树</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 4｜工作台空白新建</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">方式 B｜导入 Zip / Tar</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      「新建」旁下拉 →「导入 Zip/Tar」。支持 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">.zip / .tar / .gz / .tgz / .bz2</code>。适合从 Cursor / 其他 Agent 生态迁入现成 Skill 包；解压后仍要求合规目录与 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code>。注意体积上限与路径安全（禁止穿越到 skills 根之外）。
+    </p>
+  </section>
+
+  <!-- 截图占位｜02b -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜02b：Zip/Tar 导入</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：导入入口与上传进度 / 成功 Toast</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 5｜压缩包导入技能</p>
+  </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">AIAgentVersion 字段</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skills_custom</code> 默认 False：不限制公共技能（前端常显示「全部」，skills 存 []）<br/>True：必须非空 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skills</code> JSON 字符串数组，只加载勾选的公共 id；个人技能仍合并<br/>校验：custom=true 且 skills 空 → 保存失败</p>
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">方式 C｜对话工具 <code style="background:#dcfce7;padding:1px 4px;border-radius:3px;">create_skills</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      在已绑定该工具的智能体对话中，让模型把本轮摸索出的打法写成 Skill。参数含 skill_id / name / description / skill_md_content；<strong>默认 scope=personal</strong>；写 global 需用户角色为 admin。skill_id 须匹配 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">^[a-zA-Z0-9_-]+$</code>。成功后流里会出现 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">NANZI_SKILL_CREATED:…</code> 标记，前端可展示「去编辑 / 立即挂载」横幅。
+    </p>
   </section>
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">安全场景：生产主助手开 skills_custom，只挂「问数规范」「告警解读」等白名单，避免模型扫到实验技能。</p></section>
+
+  <!-- 截图占位｜02c -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜02c：对话创建成功横幅</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：聊天中 SkillCreatedBanner（去编辑 / 立即挂载）</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 6｜对话内沉淀技能</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#c2410c;line-height:1.5;">方式 D｜宿主机安装，映射进容器</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      Docker 部署时，平台技能与工作区数据通过卷挂进容器，因此你可以在<strong>宿主机终端</strong>用 CLI / Git 装好 Skill，容器内的 NanZi 立刻能扫到，无需再走上传表单。compose 典型映射：
+    </p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#475569;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#fffbeb;padding:10px 12px;border-radius:6px;border:1px solid #fde68a;">
+      ~/.agents/skills &nbsp;→&nbsp; /app/data/skills<br/>
+      ./data &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp; /app/data
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#9a3412;line-height:1.5;">D1 · 平台全局技能（npx CLI）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      平台目录映射到宿主机 <code style="background:#ffedd5;padding:1px 5px;border-radius:3px;font-size:13px;">~/.agents/skills/</code>。可在本机用开源 <code style="background:#ffedd5;padding:1px 5px;border-radius:3px;font-size:13px;">npx skills</code> 从外部仓库拉取全局技能，例如：
+    </p>
+    <p style="margin:0 0 12px 0;font-size:12px;color:#1c1917;line-height:1.7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#1c1917;color:#fef3c7;padding:10px 12px;border-radius:6px;overflow-x:auto;">
+      $ npx skills add https://github.com/vercel-labs/skills --skill find-skills
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#9a3412;line-height:1.5;">D2 · 个人专属技能（Git clone）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      个人技能落在 <code style="background:#ffedd5;padding:1px 5px;border-radius:3px;font-size:13px;">agent_workspaces/{user_key}/skills/{skill_id}/</code>。因 <code style="background:#ffedd5;padding:1px 5px;border-radius:3px;font-size:13px;">./data</code> 已挂到 <code style="background:#ffedd5;padding:1px 5px;border-radius:3px;font-size:13px;">/app/data</code>，本地开发可把离线 Skill 仓直接克隆到用户隔离目录：
+    </p>
+    <p style="margin:0 0 8px 0;font-size:12px;color:#1c1917;line-height:1.7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#1c1917;color:#fef3c7;padding:10px 12px;border-radius:6px;overflow-x:auto;">
+      git clone [仓库地址] ./data/agent_workspaces/[user_key]/skills/[skill_id]
+    </p>
+    <p style="margin:0;font-size:13px;color:#9a3412;line-height:1.75;">
+      目录内仍须有合规 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">SKILL.md</code>；<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">user_key</code> 与登录用户一致，否则工作台「我的技能」看不到。改完后刷新技能列表即可，一般<strong>不必重启容器</strong>（文件落在挂载卷上即时可见）。
+    </p>
+  </section>
+
+  <!-- 截图占位｜02d -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜02d：宿主机安装映射示意 / 终端命令</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：~/.agents/skills ↔ /app/data/skills 示意，或 npx skills / git clone 终端截图</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 7｜宿主机安装，卷映射进容器</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;"><strong>小建议：</strong>个人先用方式 A/C/D2 打磨 → 再走提审进平台库；D1（npx 装全局）适合引入社区现成 Skill，装完记得在技能工作台核对 frontmatter 与启停。description 写清楚「适用场景」，否则自动扫描很难命中。</p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
-  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜运行时三条触发路径</p></section>
+
+  <!-- ========== 03｜管理与审核 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">03｜管理与审核：启停、统计、发布流水线</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">日常管理</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      技能工作台支持列表/卡片视图、按名称或时间排序、启停开关、文件树编辑、资源上传。登录用户可打开<strong>调用统计</strong>（只读：分布与趋势来自 Redis 激活记录，接口不要求 admin）。平台技能的增删改、以及「待审核」Tab，仍由 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">element:skills:admin</code> 控制。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">个人 → 平台：审核步骤</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      1. 在个人技能上点「提交为平台技能」（已发布过可「提交新版本」）。<br/>
+      2. 系统生成只读快照版本，状态 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">PENDING</code>，并向具备审核权限的管理员发站内信。<br/>
+      3. 管理员在「待审核」：<strong>通过</strong> → 物化为独立平台 Skill（<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">PUBLISHED</code>）；<strong>驳回</strong> → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">REJECTED</code>（需填原因）；提交人也可在 PENDING 时<strong>撤回</strong>（<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">WITHDRAWN</code>）。<br/>
+      4. 个人原目录仍保留，便于继续改；平台侧与个人侧 id 可隔离，避免同名踩踏。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">状态速查</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:7px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">状态</th>
+          <th style="padding:7px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">含义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">UNPUBLISHED</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;">尚未进入审核 / 撤回后回到未发布</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">PENDING</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;">待管理员审核</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">PUBLISHED</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;">已物化到平台库，可供版本白名单挂载</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">REJECTED</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;">已驳回，可改稿后再次提交</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">WITHDRAWN</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;">提交人主动撤回待审版本</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>重要：</strong>审核通过<strong>不会</strong>自动把新平台技能塞进已有 Agent 版本的白名单。仍需在对应版本勾选并回归验证，避免「库里有了但对话永远扫不到」。</p>
+  </section>
+
+  <!-- 截图占位｜03 -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜03a：个人技能提交审核</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：卡片上「提交为平台技能」与状态徽章（审核中 / 已发布）</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 8｜提交审核入口</p>
+  </section>
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜03b：待审核列表（通过 / 驳回）</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：管理员待审核 Tab + 驳回原因输入</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 9｜审核操作台</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04｜使用与触发 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">04｜如何使用 / 触发 Skills</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      运行时由 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_resolver</code> 决定「本轮激活哪些技能摘要 / 全文」，再注入提示词中的 <strong>[Active Skills Loaded]</strong> 区块；模型按摘要或预载全文执行，必要时再调工具读全文。下面用具体话术说明四种触发方式。
+    </p>
+  </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">resolve_skills_from_query</code> · 提及命中</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>用户话里「使用 XX 技能」等模式，或含「技能」/skill。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>显式点名：「用对账技能跑一遍上周差异」。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>匹配分：精确名/id=1.0，子串名=0.9，id=0.85，描述=0.7；阈值 ≥0.7；display name 子串兜底 0.75。默认 max_results=2，match_source=mention。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      用户话里出现「使用 XX 技能」等模式，或显式点名技能名/id。匹配分：精确名/id ≈1.0，子串名 0.9，id 0.85，描述 0.7；默认阈值 ≥0.7，最多约 2 条。
+    </p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#92400e;">可照抄的用户话术示例：</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.85;">
+      • 「<strong>使用售后回访技能</strong>，客户投诉物流延误，帮我写安抚话术」<br/>
+      • 「按 <strong>meeting-minutes</strong> 技能走一遍，把这段录音纪要整理成决议+待办」<br/>
+      • 「用一下我的 <strong>周报生成</strong> 技能，把本周进展收成周五周报提纲」<br/>
+      • 「启用技能 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">incident-triage</code>，先分级再决定是否通知值班」
+    </p>
   </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">scan_relevant_skills</code> · 自动扫描</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>未提及注入时，主助手可自动扫相关技能。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>用户没说「技能」但问题像某套 SOP。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>仅主助手：id <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys-agent-chat</code> 或 slug assistant|main|general-chat。配置：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_scan_enabled</code> 默认 true；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_scan_min_score</code> 默认 0.45；max_results 默认 1（钳制 1–3）。查询过短/寒暄不扫。个人技能 +0.05 分。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      用户<strong>没点名</strong>，但问题像某套 SOP 时，由<strong>主助手</strong>（id 如 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys-agent-chat</code>，或 slug assistant / main / general-chat）自动扫描。配置项：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_scan_enabled</code>（默认 true）、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_scan_min_score</code>（默认 0.45）、max_results 默认 1（钳制 1–3）。过短/寒暄不扫；个人技能略加分。
+    </p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#92400e;">场景示例（假设库里有 description 写清场景的技能）：</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.85;">
+      • 用户：「帮我写一份<strong>售后回访话术</strong>，客户投诉物流延迟」→ 可能扫中 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">cs-callback-script</code><br/>
+      • 用户：「机房巡检发现一台服务器温度偏高，按标准流程处理」→ 可能扫中 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">dc-incident-sop</code><br/>
+      • 用户：「你好」/「在吗」→ <strong>不扫</strong>（寒暄短路）
+    </p>
   </section>
-  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;">全文预加载阈值</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>高相关时把 SKILL.md 正文预注入，减少再调 read。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>命中后直接按说明书执行。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_full_load_enabled</code> 默认 true；scan 需分 ≥ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_full_load_min_score</code>（默认 0.75）；max_count 默认 1；max_bytes 默认 65536（上限 262144）。mention/mounted 可直接满载。</p>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">全文预加载</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      高相关时把 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code> 正文预注入，减少再调 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">read_skill_instruction</code>。<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_full_load_enabled</code> 默认 true；扫描路径需分 ≥ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_full_load_min_score</code>（默认 0.75）；条数与字节有上限（默认约 64KB，上限 256KB）。提及/已挂载路径可更积极满载。
+    </p>
+    <p style="margin:0;font-size:13px;color:#0e7490;line-height:1.8;">
+      <strong>例子：</strong>用户说「使用售后回访技能写物流延误安抚话术」且命中分很高 → Active Skills 里直接带上完整 workflow（分级 → 共情 → 取证清单 → 可承诺边界），模型可不先调 read，直接按步骤组织回复；若只注入了摘要，你会在思考链路里看到随后的 <code style="background:#cffafe;padding:1px 4px;border-radius:2px;">read_skill_instruction</code>。
+    </p>
   </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;">会话里手动挂载</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      聊天输入区「+」打开技能级联：选个人或平台可见技能，本轮挂载后进入 Active Skills。适合「这轮明确要按某本手册执行」，比赌自动扫描更稳。
+    </p>
+    <p style="margin:0;font-size:13px;color:#065f46;line-height:1.85;">
+      <strong>操作示例：</strong>① 点「+」→ 技能 → 勾选「售后回访话术」；② 再输入「客户投诉物流延误，帮我写回访」。即使话里不提「技能」二字，本轮也会带着该 SKILL 的约束（先共情、不编造轨迹、政策外赔偿需确认等）进入执行链。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">一条完整对话对照（提及命中）</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:7px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:22%;">角色</th>
+          <th style="padding:7px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;">内容 / 系统行为</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">用户</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;">「使用售后回访技能，客户投诉物流延误，帮我写安抚话术」</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">平台</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;">提及命中 <code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">cs-callback-script</code> → 注入 Active Skills（摘要或全文）</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;">模型</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#ffffff;">若仅摘要：先 <code style="background:#f1f5f9;padding:1px 3px;border-radius:2px;">read_skill_instruction("cs-callback-script")</code>；再按 SKILL 步骤组织话术，必要时调工单/通知工具</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;">你可见</td>
+          <td style="padding:7px 6px;border:1px solid #e2e8f0;background:#f9fafb;">思考链路里出现技能激活与工具步；最终给出合规边界内的回访稿（仍受权限与确认策略约束）</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 截图占位｜04 -->
+  <section style="margin:0 0 12px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜04a：聊天「+」技能级联挂载</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：SkillCascadeMenu 展开（平台 / 个人分组）</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 10｜会话级挂载</p>
+  </section>
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:40px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜04b：思考链路中的技能激活 / 工具调用</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：Trace 或思考步骤里出现 read_skill_instruction / Active Skills</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 11｜运行时触发可观测</p>
+  </section>
+
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
-  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">05｜对话工具三件套</p></section>
+
+  <!-- ========== 05｜相关工具 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">05｜与 Skills 相关的工具指令</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      三个工具需在智能体版本的工具列表中勾选后，模型才能调用。下面按「用户怎么说 → 模型通常调什么」给出例子（参数名以平台注册为准）。
+    </p>
+  </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">list_available_skills</code></p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>列出当前可见技能 id/name/description/scope。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>模型先盘点再选。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>尊重 skills_custom 与 disabled。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">列出当前可见技能的 id / name / description / scope。尊重 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skills_custom</code> 与 disabled。模型「先盘点再选型」时用。</p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#065f46;">用户可以这样说：</p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#374151;line-height:1.85;">
+      • 「你现在能用哪些技能？列一下名称和用途」<br/>
+      • 「有没有和周报、回访、故障分级相关的技能？」
+    </p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#065f46;">模型侧示意调用：</p>
+    <p style="margin:0;font-size:12px;line-height:1.7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#064e3b;color:#ecfdf5;padding:10px 12px;border-radius:6px;">
+      list_available_skills()
+    </p>
   </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">read_skill_instruction(skill_id)</code></p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>读取 SKILL.md（≤262144 字节）。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>按说明书逐步执行。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>路径 jail + 可见性过滤。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">读取指定技能 SKILL.md 全文（有字节上限与路径 jail）。Active Skills 仅摘要、或需刷新核对时必须调用；已预载全文时可按提示直接执行。</p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#0e7490;">用户可以这样说：</p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#374151;line-height:1.85;">
+      • 「先读一下售后回访技能的完整说明，再帮我写话术」<br/>
+      • 「把 <code style="background:#cffafe;padding:1px 4px;border-radius:2px;">incident-triage</code> 的步骤原文贴给我看看」
+    </p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#0e7490;">模型侧示意调用：</p>
+    <p style="margin:0;font-size:12px;line-height:1.7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#0e7490;color:#ecfeff;padding:10px 12px;border-radius:6px;">
+      read_skill_instruction(skill_id="reconciliation")
+    </p>
   </section>
+
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">create_skills(...)</code></p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>对话里创建技能文件。</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>沉淀本次打法为可复用 Skill。</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>参数：skill_id/name/description/skill_md_content，scope 默认 personal（global 需 admin）。skill_id 正则 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">^[a-zA-Z0-9_-]+$</code>。成功回标记 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">NANZI_SKILL_CREATED:{{json}}</code>。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">对话内创建技能文件；默认写入个人库。需在智能体版本工具列表中勾选该工具才会出现在模型可调用集合中。</p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#5b21b6;">用户可以这样说：</p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#374151;line-height:1.85;">
+      • 「把刚才这套『先共情再取证再给方案』的回访打法存成个人技能，叫 <code style="background:#ede9fe;padding:1px 4px;border-radius:2px;">my-cs-callback</code>」<br/>
+      • 「根据我们刚确认的巡检步骤，创建技能：名称机房巡检 SOP，描述写清适用巡检告警」
+    </p>
+    <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#5b21b6;">模型侧示意调用（字段示意）：</p>
+    <p style="margin:0 0 8px 0;font-size:12px;line-height:1.7;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#4c1d95;color:#f5f3ff;padding:10px 12px;border-radius:6px;word-break:break-all;">
+      create_skills(<br/>
+      &nbsp;&nbsp;skill_id="my-cs-callback",<br/>
+      &nbsp;&nbsp;name="我的回访打法",<br/>
+      &nbsp;&nbsp;description="投诉回访：先共情、再取证、只承诺政策内方案",<br/>
+      &nbsp;&nbsp;skill_md_content="---\nname: ...\n---\n## Workflow\n1. ...",<br/>
+      &nbsp;&nbsp;scope="personal"<br/>
+      )
+    </p>
+    <p style="margin:0;font-size:13px;color:#5b21b6;line-height:1.8;">成功后流里会出现 <code style="background:#ede9fe;padding:1px 4px;border-radius:2px;">NANZI_SKILL_CREATED:…</code>，前端可弹出「去编辑 / 立即挂载」。</p>
   </section>
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>边界：</strong>Skill 不能替代 RBAC、SQL Gate、工作区隔离、工具审批。它约束「怎么做」，不扩大「能碰什么」。</p></section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">工具组合：一轮「不知道有没有合适技能」</p>
+    <p style="margin:0;font-size:13px;color:#475569;line-height:1.85;">
+      用户：「处理客户投诉物流延迟，按标准流程来」<br/>
+      ① <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">list_available_skills()</code> → 发现 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">cs-callback-script</code><br/>
+      ② <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">read_skill_instruction(skill_id="cs-callback-script")</code><br/>
+      ③ 按 SKILL 步骤组织回复 / 调业务工具（仍过权限与确认卡）
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#334155;">提示词侧约定（摘要）</p>
+    <p style="margin:0;font-size:13px;color:#475569;line-height:1.8;">
+      • 已匹配且<strong>预载完整指令</strong> → 直接按 SKILL.md workflow 执行。<br/>
+      • 已匹配但<strong>仅摘要</strong> → 先 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">read_skill_instruction</code>。<br/>
+      • 未匹配但可能需要 → <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">list_available_skills</code> → 再对最具体匹配的一个 read。<br/>
+      实现参考：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">agent_prompts.py</code> · <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">system_executive_tools.py</code> · <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">registry.py</code>
+    </p>
+  </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
-  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">06｜个人 Skill 发布与审核</p></section>
-  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">状态流转</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">个人 Skill 在自己的目录中创建、编辑和测试后，可通过 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">/api/portal/skills/personal/{skill_id}/submit</code> 提交审核；管理员在待审核列表中处理，通过后生成独立的平台 Skill 版本，撤回则回到个人侧继续修改。发布审核需要 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">element:skills:admin</code>，普通用户不应直接写平台目录。</p>
+
+  <!-- ========== 06｜FAQ ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #ef4444;padding-left:12px;line-height:1.4;">06｜补充与 FAQ</p>
   </section>
-  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">发布只是把内容纳入平台治理，不会自动扩大已有 Agent 版本的 Skill 白名单；仍需在对应版本中选择并验证。</p></section>
+
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#991b1b;">常见问题速查</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:7px 6px;border:1px solid #fee2e2;background:#b91c1c;color:#ffffff;text-align:left;width:28%;">现象</th>
+          <th style="padding:7px 6px;border:1px solid #fee2e2;background:#b91c1c;color:#ffffff;text-align:left;width:32%;">常见原因</th>
+          <th style="padding:7px 6px;border:1px solid #fee2e2;background:#b91c1c;color:#ffffff;text-align:left;width:40%;">怎么处理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;font-weight:bold;color:#7f1d1d;">对话从不触发某平台技能</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">版本开了 skills_custom 但未勾选；或 enabled=false</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">检查版本白名单与启停；或会话「+」手动挂载；显式说「使用 XX 技能」</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;font-weight:bold;color:#7f1d1d;">审核通过了但仍扫不到</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">发布≠自动进白名单</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">到目标 Agent 版本勾选新平台 skill_id 并保存发布</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;font-weight:bold;color:#7f1d1d;">专家智能体不自动扫描</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">自动扫描仅主助手开启</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">用提及 / 会话挂载；或在该专家版本绑定工具让模型主动 list/read</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;font-weight:bold;color:#7f1d1d;">create_skills 写不进平台库</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">非 admin 用户写 global 被拒</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">先写 personal，再走提审；或由管理员在工作台创建</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;font-weight:bold;color:#7f1d1d;">同 id 行为「怪怪的」</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">个人覆盖平台</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">检查个人目录是否残留同名技能；发布物化时用独立平台 id</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;font-weight:bold;color:#7f1d1d;">Skill 能绕过权限吗？</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">不能</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">Skill 只影响模型怎么想；工具与资源仍过 RBAC、审批等硬护栏</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#334155;">最佳实践与代码速查</p>
+    <p style="margin:0;font-size:13px;color:#475569;line-height:1.8;">
+      • <strong>description 写场景词</strong>：扫描靠名称/描述相关度，别只写「通用助手技能」。<br/>
+      • <strong>生产开白名单</strong>：主助手 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">skills_custom=true</code>，只挂评审过的公共技能。<br/>
+      • <strong>个人试验 → 提审 → 版本挂载</strong>：三步不要跳。<br/>
+      • 解析与扫描：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/services/ai/skill_resolver.py</code><br/>
+      • 对话工具：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/services/ai/tools/system_executive_tools.py</code><br/>
+      • 发布审核：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/services/skill_publication_service.py</code><br/>
+      • 门户 API：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/api/portal/endpoints/skills.py</code> · <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">personal_skills.py</code>
+    </p>
+  </section>
+
+  <!-- 可选总览占位 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:140px;padding:36px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:center;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;">图片占位｜06：Skills 全链路总览（可选）</p>
+      <p style="margin:0;font-size:12px;color:#64748b;line-height:1.7;">建议配图：创建 → 审核 → 版本挂载 → 提及/扫描/会话挂载 → list/read 执行</p>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 12｜从沉淀到触发的闭环</p>
+  </section>
 
   <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 下期预告与 Footer ========== -->
   <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
     <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
-    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>消息通知</strong></p>
-    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">四通道凭据、简报流水线与失败节流。</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>NanZi 实战连载 · 08｜消息通知</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">多通道凭据、站内信与审核通知、简报流水线与失败节流。</p>
   </section>
+
   <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
     <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 07</p>
     <p style="margin:0;font-size:13px;color:#9ca3af;">打法可版本，触发可观测。</p>
   </section>
+
 </section>
