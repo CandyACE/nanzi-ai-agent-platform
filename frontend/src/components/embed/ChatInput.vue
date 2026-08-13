@@ -468,7 +468,7 @@ const canSend = computed(
 );
 
 const modelLabel = computed(() => {
-  if (!props.selectedModel) return "模型";
+  if (!props.selectedModel) return "默认模型";
   const model = props.availableModels?.find((item) => item.model_id === props.selectedModel);
   return model?.name || props.selectedModel;
 });
