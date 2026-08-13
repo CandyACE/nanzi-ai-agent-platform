@@ -471,6 +471,8 @@ docs/html/
 | 代号 | 标题 | HTML | 说明 |
 |:---:|------|------|------|
 | C01 | NanZi vs Dify / n8n / 扣子：不是比谁更火，是比谁更贴场景 | `C01-vs-dify-n8n-coze.html` | 选型对比文；公平写清各产品主场与 NanZi 差异化（ChatBI、治理、混编引擎、运维闭环、Embed） |
+| C02 | WorkBuddy 刷屏！对比 NanZi：个人 Copilot 与企业编排中枢，你该怎么选？ | `C02-vs-workbuddy.html` | 选型对比文；硬核对比桌面 Copilot (WorkBuddy) 与企业级私有化中枢 (NanZi) 的 5 大核心差异 |
+
 
 ---
 
