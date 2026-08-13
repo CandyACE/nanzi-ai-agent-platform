@@ -196,6 +196,35 @@ class MemoryService:
         except Exception as e:
             logger.error(f"[MemoryService] Failed to add message to key {key}: {e}")
 
+    async def update_last_user_message_content(
+        self,
+        user_id: str,
+        conversation_id: str,
+        content: str,
+    ) -> bool:
+        """Patch the latest user message content (e.g. persist vision sidecar text)."""
+        redis = await get_redis()
+        if not redis:
+            logger.warning("[MemoryService] Redis client not available for update_last_user_message_content")
+            return False
+        key = self._get_key(user_id, conversation_id)
+        try:
+            data = await redis.lrange(key, 0, -1)
+            for index in range(len(data) - 1, -1, -1):
+                try:
+                    message = json.loads(data[index])
+                except Exception:
+                    continue
+                if message.get("role") != "user":
+                    continue
+                message["content"] = content
+                await redis.lset(key, index, json.dumps(message, ensure_ascii=False))
+                return True
+        except Exception as e:
+            logger.error(f"[MemoryService] Failed to update last user message for key {key}: {e}")
+            return False
+        return False
+
     async def get_last_data_result(self, user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve the latest structured SQL result for follow-up analysis/chart requests.

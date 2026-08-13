@@ -1,13 +1,25 @@
 """多模态（Vision）附件与模型能力校验、用户可读错误文案。"""
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any, Dict, List, Optional
+import uuid
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from sqlalchemy import or_, select
 
 from app.services.ai.agent_prompts import AgentServicePrompts
-from app.services.ai.executors.common import _is_image_attachment
+from app.services.ai.executors.common import (
+    USER_MESSAGE_CONTEXT_DIVIDER,
+    _is_image_attachment,
+    _plain_user_text,
+    convert_history_to_messages,
+    has_vision_sidecar,
+)
+
+logger = logging.getLogger(__name__)
+
+MULTIMODAL_CONFIG_KEY = "multimodal_model_name"
 
 MULTIMODAL_MODEL_TYPES = frozenset({"multimodal", "vision", "image2text"})
 
@@ -118,20 +130,216 @@ def resolve_runtime_model_name(
     return getattr(config, "model_name", None)
 
 
+def format_vision_sidecar_block(vision_model: str, caption: str) -> str:
+    caption = (caption or "").strip()
+    return (
+        f'<vision_sidecar model="{vision_model}">\n'
+        "【图片解析】以下内容由系统默认多模态模型生成，供后续纯文本模型使用，不是用户原文。\n\n"
+        f"{caption}\n"
+        "</vision_sidecar>"
+    )
+
+
+def inject_vision_sidecar(message: Dict[str, Any], vision_model: str, caption: str) -> str:
+    """把旁路解析写入用户消息 content，返回注入后的全文。"""
+    block = format_vision_sidecar_block(vision_model, caption)
+    content = str(message.get("content") or "").rstrip()
+    if has_vision_sidecar(content):
+        return content
+    if not content:
+        updated = block
+    elif USER_MESSAGE_CONTEXT_DIVIDER in content:
+        updated = f"{content}\n\n{block}"
+    else:
+        updated = f"{content}{USER_MESSAGE_CONTEXT_DIVIDER}{block}"
+    message["content"] = updated
+    return updated
+
+
+async def resolve_default_multimodal_model_name() -> Optional[str]:
+    """读取并校验系统默认多模态模型；未配置或类型不符时返回 None。"""
+    from app.services.config_service import ConfigService
+
+    name = (await ConfigService.get(MULTIMODAL_CONFIG_KEY) or "").strip()
+    if not name:
+        return None
+    supports = await model_supports_multimodal(name)
+    if supports is True:
+        return name
+    return None
+
+
+def _response_text(response: Any) -> str:
+    text = getattr(response, "content", None)
+    if isinstance(text, list):
+        parts: List[str] = []
+        for item in text:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+            else:
+                parts.append(str(item))
+        return "".join(parts).strip()
+    if text is None:
+        return str(response or "").strip()
+    return str(text).strip()
+
+
+async def describe_images_with_vision_model(
+    last_user: Dict[str, Any],
+    vision_model: str,
+) -> str:
+    """用默认多模态模型解析本轮图片，只返回描述文本。"""
+    from app.services.ai.config import AgentConfigProvider
+
+    prompt = AgentServicePrompts.vision_sidecar_prompt(
+        _plain_user_text(str(last_user.get("content") or ""))
+    )
+    messages = convert_history_to_messages(
+        [
+            {
+                "role": "user",
+                "content": prompt,
+                "files": last_user.get("files") or [],
+            }
+        ]
+    )
+    if not messages:
+        raise RuntimeError("未能构造识图请求")
+    human = messages[0]
+    content = getattr(human, "content", None)
+    has_image = isinstance(content, list) and any(
+        isinstance(item, dict) and item.get("type") == "image_url" for item in content
+    )
+    if not has_image:
+        raise RuntimeError("未能读取图片附件")
+
+    llm = await AgentConfigProvider.get_configured_llm(
+        streaming=False,
+        model_override=vision_model,
+        temp_override=0.0,
+    )
+    response = await llm.ainvoke([human])
+    text = _response_text(response)
+    if not text:
+        raise RuntimeError("多模态模型未返回图片解析结果")
+    return text
+
+
+async def _persist_vision_sidecar(
+    user_id: Optional[str],
+    conversation_id: Optional[str],
+    content: str,
+) -> None:
+    if not user_id or not conversation_id:
+        return
+    try:
+        from app.services.ai.memory_service import memory_service
+
+        await memory_service.update_last_user_message_content(
+            user_id,
+            conversation_id,
+            content,
+        )
+    except Exception:
+        logger.warning("Failed to persist vision sidecar into conversation history", exc_info=True)
+
+
+def _vision_log_event(status: str, details: str, log_id: str) -> Dict[str, Any]:
+    return {
+        "type": "log",
+        "id": log_id,
+        "title": "解析图片",
+        "details": details,
+        "status": status,
+        "category": "vision",
+    }
+
+
+async def run_multimodal_gate(
+    history: List[Dict[str, Any]],
+    model_name: Optional[str],
+    *,
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    本轮含图且当前模型不支持多模态时：
+    - 有默认多模态则旁路看图、注入文字、告知用户；
+    - 否则 yield status=error 的拦截提示。
+    调用方遇到无 type 的 error 事件后应停止本轮执行。
+    """
+    last_user = get_last_user_message(history)
+    if not last_user or not last_user_message_has_images(history):
+        return
+    if has_vision_sidecar(last_user.get("content")):
+        return
+    if not model_name:
+        return
+
+    supports = await model_supports_multimodal(model_name)
+    if supports is not False:
+        return
+
+    vision_model = await resolve_default_multimodal_model_name()
+    if not vision_model:
+        yield {
+            "content": AgentServicePrompts.multimodal_unsupported_message(model_name),
+            "status": "error",
+        }
+        return
+
+    log_id = f"vision_sidecar_{uuid.uuid4().hex[:8]}"
+    yield _vision_log_event(
+        "pending",
+        f"当前模型 {model_name} 不支持识图，正在使用系统默认多模态模型 {vision_model} 解析图片。",
+        log_id,
+    )
+    try:
+        caption = await describe_images_with_vision_model(last_user, vision_model)
+        updated = inject_vision_sidecar(last_user, vision_model, caption)
+        await _persist_vision_sidecar(user_id, conversation_id, updated)
+    except Exception as exc:
+        logger.warning("Vision sidecar failed for model %s: %s", vision_model, exc)
+        yield _vision_log_event("error", f"系统默认多模态模型 {vision_model} 解析失败。", log_id)
+        yield {
+            "content": AgentServicePrompts.multimodal_sidecar_failed_message(
+                model_name,
+                vision_model,
+                str(exc),
+            ),
+            "status": "error",
+        }
+        return
+
+    yield _vision_log_event(
+        "success",
+        f"已使用系统默认多模态模型 {vision_model} 完成图片解析，本轮仍由 {model_name} 继续回答。",
+        log_id,
+    )
+    yield {
+        "content": AgentServicePrompts.multimodal_sidecar_notice(model_name, vision_model),
+        "status": "success",
+    }
+
+
 async def ensure_multimodal_compatible(
     history: List[Dict[str, Any]],
     model_name: Optional[str],
 ) -> Optional[str]:
     """
-    若**当前轮**用户消息含图片且模型明确不支持多模态，返回用户提示文案。
-    历史轮次的图片不应阻塞后续纯文本追问。
+    兼容旧调用：若当前轮含图且模型不支持多模态、又无法旁路，返回拦截文案。
+    新代码请使用 run_multimodal_gate。
     """
     if not last_user_message_has_images(history):
         return None
     if not model_name:
         return None
+    if has_vision_sidecar((get_last_user_message(history) or {}).get("content")):
+        return None
 
     supports = await model_supports_multimodal(model_name)
-    if supports is False:
-        return AgentServicePrompts.multimodal_unsupported_message(model_name)
-    return None
+    if supports is not False:
+        return None
+    if await resolve_default_multimodal_model_name():
+        return None
+    return AgentServicePrompts.multimodal_unsupported_message(model_name)

@@ -299,13 +299,14 @@ async def _collect_model_references(db: AsyncSession, model: AIModel) -> list[di
 
     config_result = await db.execute(
         select(_SYSTEM_CONFIGS_TABLE.c.key, _SYSTEM_CONFIGS_TABLE.c.value).where(
-            _SYSTEM_CONFIGS_TABLE.c.key.in_(["llm_model_name", "embed_model_name"]),
+            _SYSTEM_CONFIGS_TABLE.c.key.in_(["llm_model_name", "embed_model_name", "multimodal_model_name"]),
             _SYSTEM_CONFIGS_TABLE.c.value.in_(identifiers),
         )
     )
     config_labels = {
         "llm_model_name": "系统默认 LLM 模型",
         "embed_model_name": "系统默认 Embedding 模型",
+        "multimodal_model_name": "系统默认多模态模型",
     }
     for key, value in config_result.all():
         references.append({

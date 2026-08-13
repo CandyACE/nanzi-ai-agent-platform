@@ -1,0 +1,415 @@
+<!--
+  微信公众号排版 HTML — NanZi 盘外加餐 · C03（克制配色版）
+  系列：《NanZi 开源智能体平台实战连载》盘外篇
+  说明：版式与 C03-prompt-context-loop.html 同源；顶栏与 CTA 采用深石板灰，分层卡片仍保留浅色以便对照四层。
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式
+  2. 【配图占位符】区域：选中对应的虚线卡片，直接在编辑器中替换/粘贴你的公众号素材图片即可
+  3. 全部样式均为内联 style，勿依赖外部 CSS/JS 样式表
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:26px 18px;background:#1c1917;border-radius:12px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:normal;color:#a8a29e;line-height:1.5;letter-spacing:1.5px;text-transform:uppercase;">NanZi 开源智能体平台 · 盘外加餐 C03</p>
+    <p style="margin:0 0 12px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.5;letter-spacing:1px;">智能体不是写好一句 Prompt：从 Prompt 到 Loop，NanZi 这一圈怎么转</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#d6d3d1;line-height:1.6;letter-spacing:0.5px;">Prompt / Context / Harness / Loop 四层原理，对照通用助手、知识库与 ChatBI 的落地路径</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">💡 项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与二次开发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      「NanZi」来自网名（南孜），取「孜孜不倦」之意。开源 GitHub 仓库：
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;word-break:break-all;font-weight:500;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      做企业智能体，最容易陷入的误区是：<strong>把「智能体」当成「写好一句系统提示词」</strong>。提示词当然重要，但它只决定「这一轮对模型说什么」。真正让助手会查数、会检索、敢停手、能审计的，是下面整叠工程。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#111827;line-height:1.9;background:#f3f4f6;padding:12px 14px;border-left:4px solid #44403c;border-radius:0 6px 6px 0;">
+      <strong>Prompt engineering</strong>：这一轮对模型说什么。<br>
+      <strong>Context engineering</strong>：这一轮塞进哪些历史、工具结果、记忆。<br>
+      <strong>Harness engineering</strong>：工具、记忆、权限、工作区、沙箱这些「手脚、工位和刹车」怎么接到模型上。<br>
+      <strong>Loop engineering</strong>：这些材料在多轮里怎么循环、何时停、失败如何再进一圈。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      四层是<strong>自下而上支撑</strong>的：提示词写得再漂亮，上下文塞错、工具没权限、循环停不住，照样会空转或胡说。本篇作为盘外加餐，先讲原理，再对照 NanZi 开源智能体平台里已经落地的路径——不堆源码文件名，只讲产品语言能对上的那一层。
+    </p>
+  </section>
+
+  <!-- 一句话结论 -->
+  <section style="margin:0 0 24px 0;padding:14px 16px;background:#f5f5f4;border-left:4px solid #292524;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;">
+      <strong>📌 一句话：</strong>NanZi 不是「对话框套一层 Prompt」。通用助手跑的是 ReAct 工具环，知识库在进环前先检索，ChatBI 在环里修 SQL、熔断空转；权限确认是人机环，点停止是从外面把这一圈掐断。Prompt 只是最内层。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 四层栈 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">01｜先看栈：四层工程，一层撑一层</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      可以把智能体想成洋葱。最里面是对模型说的话；往外一层是这一轮看得见的材料；再往外是手脚和权限；最外面才是「转几圈、怎么停」。下面这张图就是这个栈——箭头向上写着「支撑」，意思是：<strong>没有下层，上层转不起来</strong>。
+    </p>
+  </section>
+
+  <!-- 🖼️ 配图占位符 01 -->
+  <section style="margin:20px 0;padding:24px 16px;background:#f8fafc;border:2px dashed #94a3b8;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#0f172a;">🖼️ 【配图占位符 01 · 四层工程栈】</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#44403c;font-weight:bold;">👉 请在此处粘贴四层嵌套图（Prompt → Context → Harness → Loop）</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;">（由内到外：指令/角色/few-shot → 上下文/检索/记忆窗口 → 工具/记忆/权限/工作区/沙箱 → 循环验证/何时暂停/长周期）</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">四层对照（原理 → 产品语言）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">• <strong>Prompt</strong>：角色、指令、few-shot → 智能体系统提示、Skills 打法、工具清单文案。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">• <strong>Context</strong>：历史窗口、检索、记忆 → 会话历史、知识库预检索、Schema 预取、长期记忆画像。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">• <strong>Harness</strong>：工具、记忆、权限、工作区、沙箱 → MCP / 内置工具、确认卡片、RBAC、会话工作区与路径围栏、代码画布执行沙箱。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">• <strong>Loop</strong>：验证、暂停、长周期 → ReAct 步数、工具环熔断、技能/委派闸、ChatBI 修 SQL、点停止、定时任务。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 Prompt ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">02｜Prompt Engineering：这一轮对模型说什么</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      原理很朴素：模型没有「人格」，只有这一次请求里的文字。角色设定、任务指令、几个好例子（few-shot），决定它<strong>想扮演谁、先干什么、什么叫做对</strong>。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      企业场景里，坑通常不是「不会写 Prompt」，而是<strong>把运行时动态内容也塞进同一段死提示词</strong>——工具变了、技能换了、用户身份变了，提示词却还在说「你可以使用以下全部工具」。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background-color:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#065f46;line-height:1.5;">NanZi 实践：分层组装，而不是一段永久系统提示</p>
+    <ul style="margin:0;padding-left:18px;font-size:14px;color:#374151;line-height:1.8;">
+      <li><strong>智能体人格</strong>：版本里的系统提示，在 Prompt Studio 可草稿、测试、发布，避免热改进生产。</li>
+      <li><strong>本轮可用工具清单</strong>：只注入这一轮真正解禁的工具名，而不是把注册表全倒进去。</li>
+      <li><strong>Skills</strong>：把「怎么干」写成可挂载的打法说明书，和人格提示词分开——Skill 是打法，Prompt 是人格。</li>
+      <li><strong>主助手通讯录</strong>：可委派的专家名单动态注入，避免模型虚构一个不存在的同事。</li>
+      <li><strong>ChatBI few-shot</strong>：问数案例按智能体类型与审核状态进上下文，空 SQL 的案例过不了审。</li>
+    </ul>
+    <p style="margin:10px 0 0 0;font-size:13px;color:#57534e;line-height:1.75;">Studio 里保存的只是栈底那一段。整包 messages 长什么样，见下一节示例。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">
+      <strong>进阶：</strong>运行时还会叠时间锚点、设备端提示（手机上少画大表）、调试覆盖。排障时不要只看 Studio 里保存的那一段，要对着 Trace 看「实际进模型的那一轮」。这正是 B03《Prompt 分层与 Trace》要展开的。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 Context ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">03｜Context Engineering：这一轮塞进什么</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      同一句 Prompt，配上不同上下文，答案可以完全相反。Context engineering 管的是：<strong>历史留多长、检索进不进、记忆用哪一段、工具刚吐出的结果怎么回灌</strong>。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      原则就三条：<strong>相关、够用、可追溯</strong>。塞太多会稀释指令，塞太少会让模型编。企业问数还多一条：<strong>没授权的表，根本不该出现在上下文里</strong>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1d4ed8;line-height:1.5;">NanZi 实践：窗口 + 预取 + 授权范围</p>
+    <ul style="margin:0;padding-left:18px;font-size:14px;color:#374151;line-height:1.8;">
+      <li><strong>会话窗口</strong>：服务端按会话取历史，默认大约 20 条；超出时把被挤掉的旧消息压成一段摘录再塞回去，而不是直接丢掉。</li>
+      <li><strong>知识库预检索</strong>：知识型专家在 ReAct 开始前，平台先搜一遍知识库，不把「想不想搜」完全交给模型自觉。</li>
+      <li><strong>Schema 预取</strong>：ChatBI 新查数前，平台侧先拉数据集结构，减少「瞎写表名」的第一圈。</li>
+      <li><strong>会话资源范围</strong>：本会话勾选的数据集 / 知识库 / 技能 / MCP，会收成这一轮的上下文边界。</li>
+      <li><strong>长期记忆</strong>：偏好与摘要按需注入，而不是把一辈子聊天记录砸进窗口（详见 B01）。</li>
+    </ul>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      进模型的从来不是 Studio 里保存的那一段。运营写的「智能体专规」只是系统提示词的<strong>栈底</strong>；这一轮真正塞进去的，是一整包 messages。Prompt 管「怎么说」，Context 管「这一包里还有什么、按什么顺序、哪些本轮不该出现」。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#ffffff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e3a8a;">这一包发给模型，大致长这样（从上到下）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>① 系统提示词栈</strong>（通常合成一条 System）</p>
+    <p style="margin:0 0 4px 0;padding-left:12px;font-size:13px;color:#4b5563;line-height:1.8;">• <strong>平台全局守则</strong>：安全与保密、仅调用本轮已绑定工具、记忆/知识对照表；权限和确认不能靠提示词绕过。本地编排每轮都有。</p>
+    <p style="margin:0 0 4px 0;padding-left:12px;font-size:13px;color:#4b5563;line-height:1.8;">• <strong>用户画像</strong>：姓名、部门、称呼礼仪。查数轮常裁掉，以免稀释 SQL。</p>
+    <p style="margin:0 0 4px 0;padding-left:12px;font-size:13px;color:#4b5563;line-height:1.8;">• <strong>本轮动态块</strong>（有才塞）：已挂载技能的<strong>摘要</strong>（全文要再读 Skill）、长期记忆、跨会话检索提示、预加载的回忆摘要。</p>
+    <p style="margin:0 0 10px 0;padding-left:12px;font-size:13px;color:#4b5563;line-height:1.8;">• <strong>智能体专规</strong>（栈底）：Prompt Studio 发布的角色、口径、输出格式。ChatBI 里的数据集目录占位，运行时替换成<strong>当前用户有权看到的目录</strong>。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>② 会话运行时</strong>（可选）：手机端少用宽表、调试注入的设备上下文。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>③ 历史对话</strong>：默认最近约 20 条；被挤掉的旧消息压成一段摘录再塞回去。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>④ 本轮用户</strong>：可见原话在前；后面可跟附件路径、「本轮关联了知识库，必须先检索」等增强。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>⑤ 执行器加料</strong>（按类型）：ChatBI 带审过的 few-shot、Schema 预取、SQL 计划；知识库带进环前的检索片段；通用助手带工具预检便签。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>⑥ 工具结果</strong>：ReAct 中途回灌的 schema / SQL / 检索片段。这不是再写一句 Prompt，而是把观察塞回下一圈。</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#f8fafc;border:1px dashed #93c5fd;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#1e3a8a;">对照一例：用户问「本月华东签单同比？」</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#111827;line-height:1.85;"><strong>会进这一包的，例如：</strong></p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• 全局守则里的「只调已绑定问数工具、不编造表名」</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• ChatBI 专规 + 已替换成授权范围的数据集目录</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• 命中则带上审过的问数案例（空 SQL 的案例过不了审）</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• 窗口里上一句「先看华东」，追问会继承条件</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• 用户原话「本月华东签单同比？」</p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#374151;line-height:1.8;">• 平台预取的表结构（进工具环之前，减少第一圈瞎写表名）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#111827;line-height:1.85;"><strong>故意不进这一包的，例如：</strong></p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• 未授权的财务明细表——没授权的表不该出现在上下文里</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• Skill 全文（只给摘要，要干活再读）</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.8;">• 一辈子聊天记录（窗口外只留摘录）</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.8;">• 查数轮里容易干扰口径的长期偏好闲聊</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#eff6ff;border-left:4px solid #2563eb;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#1e3a8a;line-height:1.85;">
+      排障时不要只打开 Studio 看专规。要对着 Trace 看<strong>实际进模型的那一轮</strong>：缺目录、缺 Schema、历史串了别的表，都是 Context 层的事。分层字段与轨迹见 <strong>B03</strong>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
+      边界要写清楚：上下文再工程，也替代不了元数据质量。表注释乱、口径没维护，ChatBI 只能「少胡说」，做不到「绝对正确」。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 Harness ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">04｜Harness Engineering：手脚和刹车</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      图里夹在 Context 和 Loop 之间的那一层，叫 <strong>Harness</strong>：把模型「套」进真实世界的挽具。工具是手，记忆是可查询的档案，权限是闸；<strong>工作区是工位，沙箱是围栏</strong>。没有工位，相对路径会落到进程随便一个目录；没有围栏，手可以摸到别人的会话甚至宿主机。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      原图上写的是「工具 / 记忆 / 权限」，这是 Harness 的三块招牌。落到企业平台上，还必须把<strong>文件落在哪、命令在哪执行、越界谁来拒</strong>算进去——否则手脚接到了真实世界，却没有台面和护栏。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#92400e;line-height:1.5;">NanZi 实践：工具是手，权限是闸，工作区是工位，沙箱是围栏</p>
+    <ul style="margin:0;padding-left:18px;font-size:14px;color:#374151;line-height:1.8;">
+      <li><strong>工具</strong>：内置问数 / 知识 / 通知 / 办公文档 / HTTP，加上 MCP 动态工具与 Skills。能力边界 ≈ 本轮挂上的工具边界。</li>
+      <li><strong>权限</strong>：菜单与按钮级 RBAC；工具分读 / 写 / 询问 / 危险。写文件、Bash、外部写入默认会弹出确认卡片，loop 在这里<strong>暂停等人</strong>，不是偷偷执行。</li>
+      <li><strong>工作区</strong>：每个用户、每个会话一块台面。Bash / 读写 / 搜索的相对路径默认落在当前会话目录；跨会话交付的文档有默认文档目录。AgentScope 把这套目录绑成执行器的工作区，而不是用进程当前目录。</li>
+      <li><strong>路径沙箱</strong>：文件和命令只能在平台允许的范围内生效（本会话、本人 uploads、授权的平台数据目录）。越界、串用户、串会话会被工具层拒绝；禁止臆造路径。挂了文件/Shell 工具时，系统会把「工位在哪、围栏在哪」写进本轮提示，避免模型对着空气写 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">./out.md</code>。</li>
+      <li><strong>执行沙箱</strong>：代码画布在会话工作区内落临时脚本再跑，带超时和中点终止，高危路径防穿越；Bash 以独立进程组启动，点停止能把这一组带走。这是路径围栏之上的「跑起来也关得住」。</li>
+      <li><strong>问数沙箱</strong>：ChatBI 对过重或危险 SQL 有独立闸，拦在工具层，不是等库被打满再熔断。</li>
+      <li><strong>记忆工具</strong>：需要时才检索偏好与摘要，和「系统提示里写死用户画像」分开。</li>
+    </ul>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">
+      边界要写清：NanZi 的沙箱是<strong>会话工作区 + 路径校验 + 确认卡 + 进程可取消</strong>，不是虚拟机级隔离。容器是部署外盒；代码画布里任意解释器若没有进程沙箱开关，产品会明确告诉你「当前未启用」，而不是假装已经物理隔离。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      这一层决定 loop 能不能「碰到真实世界，且碰得有台面、有围栏」。A05–A07 讲工具、MCP、Skills，B02 讲事实门禁：工具结果进证据账本，回答不能信口开河。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 Loop ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">05｜Loop Engineering：多轮怎么转、何时停</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      智能体不是一次答完，而是：<strong>想 → 调工具 → 看结果 → 再想 → … → 收口</strong>。Loop engineering 管的是这圈的预算、失败怎么再进、什么叫「可以停了」、什么必须问人、什么从外面一刀切断。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      先分清两类环：<strong>底座环</strong>管「转几步、空转怎么停、人怎么介入」——通用、知识库、ChatBI 共用；<strong>领域修复环</strong>管「这次失败属于哪一类、按预算再试」——几乎只在 ChatBI。通用助手不是没有 Loop，而是没有对 Bash / 读文件做一套问数那样的分类修复机。
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">三条路径，loop 各管一段</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>共用底座：</strong>ReAct 步数、工具环熔断、nudge、确认暂停、点停止、定时任务。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>通用助手另有：</strong>技能环（摘要 → 读 SKILL.md → 再干活）；主助手委派闸（同一专家同一问题本轮只委一次，同一专家最多两次，禁止套娃委派）。失败了回到 ReAct 让模型换思路，步数或熔断到了就停。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>知识库另有：</strong>进环前平台先检索；追问可复用上一轮文献；生成后做引用/幻觉校验，通不过最多再跑两圈。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>ChatBI 另有：</strong>按失败类型分的修复策略（schema、SQL 报错、空结果、时间异常……），LLM 修复与平台自动重试有独立预算，不和对话步数混用。</p>
+  </section>
+
+  <!-- 🖼️ 配图占位符 02 -->
+  <section style="margin:20px 0;padding:24px 16px;background:#f8fafc;border:2px dashed #94a3b8;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#0f172a;">🖼️ 【配图占位符 02 · 一圈 ReAct】</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#44403c;font-weight:bold;">👉 请在此处粘贴「想 / 工具 / 观察 / 熔断或收口」循环图</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;">（旁路标出：确认挂起、SQL 自愈、技能/委派、点停止）</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">① 主循环：ReAct 步数预算</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      通用助手与 ChatBI 都跑 AgentScope ReAct。步数来自系统配置（默认大约 5 步）。这是「模型自己决定要不要再调一次工具」的预算，不是无限聊下去。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">② 防空转：工具环熔断</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      同一工具同一参数连调、两个工具来回拉锯、单轮工具总次数打满——任一触发就熔断，强制根据已有结果回答。问数里常见的是 schema ↔ SQL；通用助手里常见的是反复读同一个文件、技能读了又读、Bash 来回。这是 loop 的「保险丝」，避免 Token 烧在原地打转。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">③ 失败再进一圈：ChatBI 修 SQL（领域修复环）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      问数不是生成一条 SQL 就结束。语法错、空结果、时间条件离谱，会按类型再进修复圈：模型修一轮、平台也可在工具回调里自动重试若干次。修完仍半截回复时，用成功结果做收口，而不是把错误轨迹接着编。通用助手没有对等物——Bash 失败不会按「缺依赖 / 超时 / 无权限」分预算再试，而是回到主循环让模型换思路。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">④ 通用特有：技能环与委派闸</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      技能不是一次灌进全文，而是摘要 → 读 SKILL.md → 再按打法调工具，靠 ReAct 步数和熔断兜底。主助手要把查数/查手册交给专家时走委派：禁止套娃、同一问题不打第二遍、同一专家有次数上限，防止把 ChatBI 当成内部无限循环。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">⑤ 把模型推进圈里：nudge 与预执行</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      该查数却在闲聊、该检索却在编制度——平台会注入 nudge，必要时强制第一下先调某个工具。知识库与 Schema 的预取，则是「进 ReAct 之前平台先跑半步」，减少对模型自觉的依赖。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">⑥ 人机环与硬停止</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      确认卡片是 loop 的「暂停」：SSE 先结束，等人点允许或拒绝再恢复。点停止则是 loop 的「急停」——取消本轮生成任务、杀掉已跟踪的 Bash 与同会话画布进程，并释放会话锁，让你立刻追问。已经执行完的外部写入无法撤回，这是产品边界，不是 bug。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#111827;">⑦ 长周期：调度是无人值守的 loop</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      对话 loop 是「人在场的一圈」；任务中心 Cron 是「人不在场的一圈」：同一套智能体身份、资源范围和通知通道，按计划再跑。早报、巡检、黄金报表订阅走这里（见 A09）。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">
+      <strong>进阶配置名（给实施同学）：</strong>步数 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent_max_iterations</code>；工具环开关与阈值 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent_tool_loop_detection_enabled</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent_tool_loop_fuse_threshold</code>（默认 3）；拉锯与总次数另有配置。ChatBI 修复轮次与自动 SQL 重试有独立预算，不和对话步数混用。主助手委派另有超时与次数上限。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06 走一遍问数 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">06｜用一句问数，把四层串起来</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      业务同学问：<strong>「本月华东签单同比？」</strong> 在 NanZi 里大致会这样走——不是神秘黑盒，是四层依次上场。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#065f46;">1. Prompt</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">ChatBI 专家人格 + 本轮问数工具清单 + 时间锚点（「本月」相对于平台时区）+ 可选案例 few-shot。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1d4ed8;">2. Context</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">会话历史里如果刚问过「华东」，追问会继承条件；平台预取你有权看到的 Schema，未授权表不会进上下文。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#92400e;">3. Harness</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">真正执行 SQL 的是问数工具，连的是业务库适配器；只读查询通常自动走，写操作仍要确认。结果进证据账本，供 Grounding 与「依据」面板使用。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#6b21a8;">4. Loop</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">第一圈 SQL 报错 → 按修复预算再进一圈；空结果可能自动探查条件；步数或工具环打满则收口说明限制。你点停止，这一圈立刻取消，可以接着问「改成华南」。</p>
+  </section>
+
+  <!-- 🖼️ 配图占位符 03 -->
+  <section style="margin:20px 0;padding:24px 16px;background:#f8fafc;border:2px dashed #94a3b8;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#0f172a;">🖼️ 【配图占位符 03 · 对话 Trace 时间线】</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#44403c;font-weight:bold;">👉 请在此处粘贴一次问数的 Trace / 思维链截图</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;">（标出 router、schema、sql、repair、synthesis 几步即可）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 07 怎么用这张图做实施 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">07｜实施时怎么用这张地图排障</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;">答非所问、口吻不对</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">先查 Prompt 层：版本是否发布、Skills 是否挂上、工具清单是否只含本轮解禁项。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;">像失忆、串了别的表、引用了不该看的库</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">先查 Context：会话窗口、资源范围、知识库/数据集授权、预检索有没有进。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;">会说不会干、或干了不该干的、文件写到了别人的目录</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">先查 Harness：工具/MCP 是否勾选、确认策略是询问还是自动、工作区是否绑在当前会话、路径是否越界被拒、代码画布是否在会话沙箱内跑。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;">空转、重复调工具、点停止停不下来、定时任务与对话抢会话</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">先查 Loop：步数与熔断、ChatBI 修复预算、通用侧技能是否卡在「读了又读」、主助手是否反复委派、停止是否打到同一会话、任务是否用了独立会话身份。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 08 结语 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">08｜写在最后</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      Prompt 让模型「像个专家」；Context 让它「看见这一轮该看见的」；Harness 让它「碰得到真实系统，且有工位、有围栏、有闸」；Loop 让它「会转、会停、会再试」。企业智能体难的不是把对话框做漂亮，而是把这四层做成可配置、可审计、可急停的运营系统。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      NanZi 把这四层写进了通用助手、知识库与 ChatBI 三条主路径。它不是银弹——元数据、授权和模型能力仍然是上限——但它让「这一圈怎么转」从口口相传的经验，变成平台里能开关、能熔断、能对着 Trace 复盘的机制。
+    </p>
+  </section>
+
+  <!-- 下期 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:#f5f5f4;border:1px solid #d6d3d1;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;">📌 回看与下期</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;">
+      想对照产品细节：<strong>A04</strong> 问数全链路、<strong>A05–A07</strong> 工具 / MCP / Skills、<strong>B01–B03</strong> 记忆、Grounding 与 Prompt/Trace。
+    </p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">盘外加餐还会继续：把「编排智能，连接数据」拆成可落地的选型与机制，而不是口号。</p>
+  </section>
+
+  <!-- CTA -->
+  <section style="margin:24px 0 12px 0;padding:18px 16px;background:#f5f5f4;border:1px solid #d6d3d1;border-radius:12px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">🚀 欢迎体验 NanZi 开源智能体平台</p>
+    <p style="margin:0 0 12px 0;font-size:13px;color:#44403c;line-height:1.6;">开源 MIT 协议 · 可自由分发与二次开发 · 支持 Docker 一键部署</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#1c1917;word-break:break-all;">
+      👉 GitHub 仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;font-weight:bold;text-decoration:underline;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+    <p style="margin:0;font-size:13px;color:#78716c;">如果这篇文章对你有帮助，欢迎点个 <strong>「在看」</strong> 或在 GitHub 点个 <strong>⭐ Star</strong> 支持一下！</p>
+  </section>
+
+</section>

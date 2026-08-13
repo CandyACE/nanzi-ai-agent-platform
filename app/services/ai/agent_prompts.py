@@ -210,11 +210,51 @@ class AgentServicePrompts:
         return (
             "**⚠️ 当前模型不支持图片理解**\n\n"
             f"您本轮消息包含图片附件，但当前使用的模型 **{model_name}** 仅支持纯文本，"
-            "无法以视觉方式识图。\n\n"
+            "无法以视觉方式识图。系统也尚未配置可用的默认多模态模型，因此无法自动解析图片。\n\n"
             "**您可以尝试：**\n"
             "1. 在对话设置或智能体配置中，切换到支持多模态（Vision）的模型；\n"
             "2. 在「模型注册表」中将该模型类型设为 **Multimodal**（若其实支持识图）；\n"
-            "3. 移除图片附件，改用文字描述图片内容后再提问。"
+            "3. 请管理员在系统参数中配置「默认多模态模型」，之后上传图片会自动解析；\n"
+            "4. 移除图片附件，改用文字描述图片内容后再提问。"
+        )
+
+    @staticmethod
+    def multimodal_sidecar_notice(session_model: str, vision_model: str) -> str:
+        """旁路看图成功后插入回复开头的用户告知。"""
+        return (
+            f"> ℹ️ 当前模型 **{session_model}** 不支持图片理解，"
+            f"已自动使用系统默认多模态模型 **{vision_model}** 解析图片。\n\n"
+        )
+
+    @staticmethod
+    def multimodal_sidecar_failed_message(
+        session_model: str,
+        vision_model: str,
+        err: str = "",
+    ) -> str:
+        """默认多模态已配置但看图失败时的降级提示。"""
+        detail = f"失败原因：{err}\n\n" if err else ""
+        return (
+            "**⚠️ 图片自动解析失败**\n\n"
+            f"您本轮消息包含图片附件，当前模型 **{session_model}** 不支持识图，"
+            f"系统已尝试使用默认多模态模型 **{vision_model}** 解析，但未能完成。\n\n"
+            f"{detail}"
+            "**您可以尝试：**\n"
+            "1. 稍后重试，或切换到支持多模态（Vision）的模型后重新发送；\n"
+            "2. 移除图片附件，改用文字描述图片内容后再提问。"
+        )
+
+    @staticmethod
+    def vision_sidecar_prompt(user_text: str) -> str:
+        """系统默认多模态模型的看图提示：只解析图片，不回答用户问题。"""
+        question = (user_text or "").strip() or "（用户未提供文字说明）"
+        return (
+            "请仔细阅读用户上传的图片，输出结构化中文解析，供后续纯文本模型使用。\n"
+            "要求：\n"
+            "1. 逐张说明图中可见的文字（OCR）、表格/图表数据、关键物体与布局；\n"
+            "2. 不要回答用户的问题本身，只描述图片内容；\n"
+            "3. 若无法看清请明确说明。\n\n"
+            f"用户原话：{question}"
         )
 
     @staticmethod

@@ -8,6 +8,7 @@ from app.services.ai.executors.common import (
     append_system_instruction,
     convert_history_to_messages,
     normalize_messages_for_llm,
+    _plain_user_text,
 )
 
 pytestmark = pytest.mark.no_infrastructure
@@ -144,6 +145,59 @@ def test_historical_image_not_resubmitted_as_multimodal(sample_png, tmp_path, mo
     assert messages[0].content == "describe image"
     assert isinstance(messages[2].content, str)
     assert messages[2].content == "just a follow up question"
+
+
+def test_vision_sidecar_skips_image_url_on_current_turn(sample_png, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    os.makedirs("data/uploads", exist_ok=True)
+    with open("data/uploads/chart.png", "wb") as f:
+        f.write(b"\x89PNG fake")
+
+    history = [
+        {
+            "role": "user",
+            "content": (
+                "describe this\n\n"
+                "<vision_sidecar model=\"qwen-vl\">图表标题是销售额</vision_sidecar>"
+            ),
+            "files": [
+                {
+                    "url": "/static/uploads/chart.png",
+                    "filename": "chart.png",
+                    "size": 128,
+                    "ext": "png",
+                }
+            ],
+        }
+    ]
+
+    messages = convert_history_to_messages(history)
+    content = messages[0].content
+    assert isinstance(content, str)
+    assert "销售额" in content
+    assert "image_url" not in content
+
+
+def test_historical_vision_sidecar_kept_for_followup():
+    history = [
+        {
+            "role": "user",
+            "content": (
+                "看这张图\n\n---\n\n用户本轮已上传图片：a.png\n\n"
+                "<vision_sidecar model=\"qwen-vl\">第三行是合计 128</vision_sidecar>"
+            ),
+            "files": [{"url": "/static/uploads/a.png", "filename": "a.png", "ext": "png"}],
+        },
+        {"role": "assistant", "content": "收到"},
+        {"role": "user", "content": "第三行是什么"},
+    ]
+
+    messages = convert_history_to_messages(history)
+    assert "看这张图" in messages[0].content
+    assert "第三行是合计 128" in messages[0].content
+    assert "vision_sidecar" in messages[0].content
+    assert "用户本轮已上传图片" not in messages[0].content
+    assert _plain_user_text(history[0]["content"]).startswith("看这张图")
 
 
 def test_normalize_messages_for_llm_merges_system_messages_at_beginning():
