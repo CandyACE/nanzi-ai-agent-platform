@@ -776,15 +776,20 @@ class AssistantAgentRunner(BaseExecutor):
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from app.services.ai.multimodal_support import (
-            ensure_multimodal_compatible,
             resolve_runtime_model_name,
+            run_multimodal_gate,
         )
 
         model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
-        incompatible_msg = await ensure_multimodal_compatible(history, model_name)
-        if incompatible_msg:
-            yield {"content": incompatible_msg, "status": "error"}
-            return
+        async for chunk in run_multimodal_gate(
+            history,
+            model_name,
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+        ):
+            yield chunk
+            if chunk.get("status") == "error" and not chunk.get("type"):
+                return
 
         # 1. Prepare LLM
         tools = await self._resolve_runtime_tools_from_config()

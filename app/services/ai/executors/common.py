@@ -34,15 +34,32 @@ T = TypeVar("T")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n"
+VISION_SIDECAR_RE = re.compile(
+    r"<vision_sidecar\b[^>]*>.*?</vision_sidecar>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def extract_vision_sidecar_blocks(content: str) -> str:
+    """提取已落库的图片旁路解析块，供历史轮次复用。"""
+    return "\n\n".join(
+        match.group(0).strip() for match in VISION_SIDECAR_RE.finditer(content or "")
+    )
+
+
+def has_vision_sidecar(content: Any) -> bool:
+    return bool(VISION_SIDECAR_RE.search(str(content or "")))
 
 
 def _plain_user_text(content: str) -> str:
-    """历史轮次仅保留用户可见纯文字，剥离附件系统指令块。"""
+    """历史轮次仅保留用户可见纯文字，剥离附件系统指令块，但保留图片旁路解析。"""
     raw = content or ""
+    sidecar = extract_vision_sidecar_blocks(raw)
     idx = raw.find(USER_MESSAGE_CONTEXT_DIVIDER)
-    if idx == -1:
-        return raw.strip()
-    return raw[:idx].strip()
+    visible = (raw[:idx] if idx != -1 else raw).strip()
+    if sidecar and sidecar not in visible:
+        return f"{visible}\n\n{sidecar}".strip()
+    return visible
 
 
 def _normalize_file_ext(ext: str = "", url: str = "") -> str:
@@ -358,12 +375,14 @@ def convert_history_to_messages(history: List[Dict[str, str]], strip_thought: bo
             files = m.get("files")
             img_files: List[Dict[str, Any]] = []
             non_img_files: List[Dict[str, Any]] = []
+            skip_images = has_vision_sidecar(content)
             if files:
                 for f in files:
                     if f.get("type") in ("skill", "knowledge_base"):
                         continue
                     if _is_image_attachment(f):
-                        img_files.append(f)
+                        if not skip_images:
+                            img_files.append(f)
                     else:
                         non_img_files.append(f)
 

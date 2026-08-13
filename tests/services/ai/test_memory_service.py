@@ -122,3 +122,31 @@ async def test_memory_service_clear_history(mock_redis):
         assert mock_redis.delete.call_count == 4
         mock_redis.delete.assert_any_call("conversation:u1:c1:history")
         mock_redis.delete.assert_any_call("conversation:u1:c1:last_data_result")
+
+
+@pytest.mark.asyncio
+async def test_memory_service_update_last_user_message_content(mock_redis):
+    service = MemoryService()
+    mock_redis.lrange.return_value = [
+        json.dumps({"role": "user", "content": "old", "files": [{"url": "a.png"}]}),
+        json.dumps({"role": "assistant", "content": "ok"}),
+        json.dumps({"role": "user", "content": "latest image", "files": [{"url": "b.png"}]}),
+    ]
+    mock_redis.lset = AsyncMock(return_value=True)
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+        updated = await service.update_last_user_message_content(
+            "u1",
+            "c1",
+            "latest image\n\n<vision_sidecar>caption</vision_sidecar>",
+        )
+
+    assert updated is True
+    mock_redis.lset.assert_awaited_once()
+    index, payload = mock_redis.lset.await_args.args[1:]
+    assert index == 2
+    stored = json.loads(payload)
+    assert stored["role"] == "user"
+    assert "<vision_sidecar>" in stored["content"]
+    assert stored["files"] == [{"url": "b.png"}]

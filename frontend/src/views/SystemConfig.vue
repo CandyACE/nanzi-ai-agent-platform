@@ -628,6 +628,7 @@ const showExplanation = (item: ConfigItem) => {
 const getCategoryTip = (key: string) => {
   const tips: Record<string, string> = {
     'llm_temperature': '大模型温度系数，范围为 0.0 至 1.0。趋近于 0.0 表示回答更加确定、严谨和精准（适合数据查询与逻辑推理）；趋近于 1.0 表示回答更具创造力、发散性和随机性。',
+    'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
     'agent_max_context_turns': '智能体能够保留的最大历史上下文轮数。设置合理的值能防止发送给大模型的消息体过长，从而节约 Token 并加速模型响应。',
     'external_sql_api_url': '用于远程安全沙箱中执行生成 SQL 查询的 API 服务网关地址。直连物理执行模式（local）下此配置项将被忽略。',
@@ -815,6 +816,11 @@ const selectedEmbedModelId = ref('')
 const embeddingModelsForConfig = computed(() =>
   models.value.filter((m) => m.type === 'embedding' && m.is_active)
 )
+const multimodalModelsForConfig = computed(() =>
+  models.value.filter(
+    (m) => ['multimodal', 'vision', 'image2text'].includes(String(m.type || '').toLowerCase()) && m.is_active
+  )
+)
 
 const findConfigItemByKey = (key: string): ConfigItem | null => {
   for (const list of Object.values(configGroups.value)) {
@@ -892,6 +898,7 @@ const handleDatasetSelect = (val: string | string[]) => {
 const configShortDescriptions: Record<string, string> = {
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
+  multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
 }
 
 const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
@@ -902,6 +909,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'agent_max_context_messages',
       'agent_max_iterations',
       'llm_model_name',
+      'multimodal_model_name',
       'llm_temperature',
       'embed_api_url',
       'embed_api_key',
@@ -1798,6 +1806,17 @@ onMounted(() => {
                                  </option>
                                  <option v-if="item.value && !models.find(m => m.model_id === item.value)" :value="item.value">
                                      {{ item.value }} (未知/环境变量)
+                                 </option>
+                              </select>
+                          </div>
+                          <div v-else-if="item.key === 'multimodal_model_name'">
+                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                                 <option value="">未配置（不支持识图时提示用户）</option>
+                                 <option v-for="m in multimodalModelsForConfig" :key="m.id" :value="m.model_id">
+                                    {{ m.name }} ({{ m.model_id }})
+                                 </option>
+                                 <option v-if="item.value && !multimodalModelsForConfig.find(m => m.model_id === item.value)" :value="item.value">
+                                     {{ item.value }} (未知/未启用)
                                  </option>
                               </select>
                           </div>

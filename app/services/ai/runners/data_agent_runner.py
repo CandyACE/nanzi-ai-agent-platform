@@ -28,7 +28,7 @@ from app.services.ai.grounding.policy import (
 )
 from app.services.ai.grounding.service import GroundingAuditResult, GroundingService
 from app.services.ai.time_anchor import TIME_RANGE_GATE_PREFIX, build_data_query_time_anchor_block, build_time_range_gate_message, detect_time_range_mismatch
-from app.services.ai.multimodal_support import ensure_multimodal_compatible, resolve_runtime_model_name
+from app.services.ai.multimodal_support import resolve_runtime_model_name, run_multimodal_gate
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage, system_user_prompt_messages
 from app.services.ai.runtime.agentscope.agent_runtime import build_model_config, build_tools_fingerprint, load_context_config
@@ -582,10 +582,15 @@ class DataAgentRunner(BaseExecutor):
         self._ensure_grounding_ledger()
         self._active_history = list(history or [])
         model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
-        incompatible_msg = await ensure_multimodal_compatible(history, model_name)
-        if incompatible_msg:
-            yield {'content': incompatible_msg, 'status': 'error'}
-            return
+        async for chunk in run_multimodal_gate(
+            history,
+            model_name,
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+        ):
+            yield chunk
+            if chunk.get("status") == "error" and not chunk.get("type"):
+                return
         runtime_messages = [message for message in normalize_messages_for_llm(convert_history_to_messages(history, strip_thought=True)) if not isinstance(message, SystemMessage)]
         user_question = next((str(getattr(message, 'content', '')) for message in reversed(runtime_messages)), '')
         if not self._mixed_task_plan_active:

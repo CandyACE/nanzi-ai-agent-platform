@@ -1259,18 +1259,19 @@ async def test_data_agent_runner_checks_multimodal_compatibility_before_native_m
 ):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner
 
-    async def fake_ensure_multimodal_compatible(history, model_name):
-        assert history == [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}]
-        assert model_name == "vision-check-model"
-        return "当前模型不支持图片输入。"
-
     monkeypatch.setattr(
         "app.services.ai.runners.data_agent_runner.resolve_runtime_model_name",
         lambda config, prefer_synthesis=True: "vision-check-model",
     )
+
+    async def fake_run_multimodal_gate(history, model_name, **kwargs):
+        assert history == [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}]
+        assert model_name == "vision-check-model"
+        yield {"content": "当前模型不支持图片输入。", "status": "error"}
+
     monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.ensure_multimodal_compatible",
-        fake_ensure_multimodal_compatible,
+        "app.services.ai.runners.data_agent_runner.run_multimodal_gate",
+        fake_run_multimodal_gate,
     )
     monkeypatch.setattr(
         "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
