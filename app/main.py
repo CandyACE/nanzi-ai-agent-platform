@@ -12,6 +12,7 @@ from app.api.v1.api import v1_router
 from app.core.config import settings
 from app.core import database, redis
 from app.core.middleware import AccessLogMiddleware
+from app.core.logging_filters import install_cancellation_log_filters
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.core.errors import ErrorCode
@@ -35,10 +36,12 @@ logging.basicConfig(
     format='%(levelname)s:     %(message)s'
 )
 logging.getLogger('apscheduler').setLevel(logging.DEBUG)
+install_cancellation_log_filters()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    install_cancellation_log_filters()
     await database.init_db()
     await redis.init_redis()
     await AuditService.start_worker()

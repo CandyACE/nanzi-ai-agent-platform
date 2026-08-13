@@ -5,6 +5,7 @@ import inspect
 import logging
 import re
 import asyncio
+import contextlib
 from dataclasses import replace
 from typing import List, Dict, Any, AsyncGenerator, Optional, Set
 from datetime import datetime
@@ -638,6 +639,9 @@ class AssistantAgentRunner(BaseExecutor):
                 try:
                     async for chunk in core_stream:
                         await out_queue.put(("core", chunk))
+                except asyncio.CancelledError:
+                    await out_queue.put(("cancelled", None))
+                    raise
                 except Exception as e:
                     await out_queue.put(("error", e))
                 finally:
@@ -666,6 +670,8 @@ class AssistantAgentRunner(BaseExecutor):
                             yield val
                         elif tag == "queue":
                             yield val
+                        elif tag == "cancelled":
+                            raise asyncio.CancelledError()
                         elif tag == "core_done":
                             core_done = True
                         elif tag == "error":
@@ -677,6 +683,9 @@ class AssistantAgentRunner(BaseExecutor):
             finally:
                 t1.cancel()
                 t2.cancel()
+                for pending in (t1, t2):
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await pending
                 try:
                     await event_queue.put("DONE")
                 except Exception:
@@ -1538,6 +1547,10 @@ class AssistantAgentRunner(BaseExecutor):
         native_model: Any,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流结束后：AgentState 与已发送 SSE 对齐，不足则 synthesis。"""
+        from app.core.cancellation import current_task_cancelling
+
+        if current_task_cancelling():
+            return
         streamed = state.get("full_content") or ""
         agent_text = (
             extract_latest_assistant_text(agent, include_thinking=False)
@@ -1673,6 +1686,10 @@ class AssistantAgentRunner(BaseExecutor):
         native_model: Any,
         append_after_partial: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.core.cancellation import current_task_cancelling
+
+        if current_task_cancelling():
+            return
         tool_names: Dict[str, str] = state.get("tool_names", {})
         tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
         review_lines = [

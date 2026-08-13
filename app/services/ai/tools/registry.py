@@ -592,15 +592,25 @@ class ToolRegistry:
             return None
         from agentscope.tool import Bash, Edit, Glob, Grep, Read, Write
 
+        if builtin_name == "Bash":
+            try:
+                from app.services.ai.runtime.conversation_run_subprocess import (
+                    CancellableLocalBackend,
+                )
+
+                return Bash(backend=CancellableLocalBackend())
+            except Exception:
+                return Bash()
+
         builtin_classes = {
-            "Bash": Bash,
             "Read": Read,
             "Write": Write,
             "Edit": Edit,
             "Glob": Glob,
             "Grep": Grep,
         }
-        return builtin_classes[builtin_name]()
+        factory = builtin_classes.get(builtin_name)
+        return factory() if factory else None
 
     @staticmethod
     async def _invoke_registry_entry(tool: Any, payload: Dict[str, Any]) -> Any:

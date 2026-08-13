@@ -123,6 +123,9 @@ async def test_bind_configured_tools_to_workspace_sets_bash_cwd_without_injectin
     bound_bash = next(spec for spec in bound if spec.name == "Bash")
     assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(expected_cwd)
     assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(workspace.workdir)
+    from app.services.ai.runtime.conversation_run_subprocess import CancellableLocalBackend
+
+    assert isinstance(bound_bash.native_tool._backend, CancellableLocalBackend)
     assert "Read" not in [spec.name for spec in bound]
 
 

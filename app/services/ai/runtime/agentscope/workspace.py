@@ -516,6 +516,15 @@ async def bind_configured_tools_to_workspace(
         if workspace_tool is None:
             bound.append(spec)
             continue
+        if native_name == "Bash":
+            try:
+                from app.services.ai.runtime.conversation_run_subprocess import (
+                    attach_cancellable_backend,
+                )
+
+                attach_cancellable_backend(workspace_tool)
+            except Exception:
+                pass
         rebound = runtime_tool_spec_from_native_agentscope_tool(
             workspace_tool,
             source_type=getattr(spec, "source_type", "system"),

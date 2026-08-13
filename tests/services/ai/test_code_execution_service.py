@@ -146,6 +146,42 @@ async def test_stop_is_idempotent_and_reports_stopped(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_stop_executions_for_conversation_only_stops_matching_run(tmp_path: Path):
+    from app.services.ai import code_execution_service as code_exec
+
+    matching = start_code_execution(
+        language="python",
+        code="import time; time.sleep(10)",
+        workspace=tmp_path,
+        user_info={},
+        conversation_id="conv-a",
+    )
+    other = start_code_execution(
+        language="python",
+        code="import time; time.sleep(10)",
+        workspace=tmp_path,
+        user_info={},
+        conversation_id="conv-b",
+    )
+    code_exec.register_execution(matching)
+    code_exec.register_execution(other)
+    try:
+        await asyncio.wait_for(matching.started.wait(), timeout=1)
+        await asyncio.wait_for(other.started.wait(), timeout=1)
+        stopped = await code_exec.stop_executions_for_conversation(
+            user_id="u1",
+            conversation_id="conv-a",
+        )
+        assert stopped == 1
+        assert (await matching.result()).status == "stopped"
+        assert other._task.done() is False
+        assert await other.stop() is True
+    finally:
+        code_exec.unregister_execution(matching)
+        code_exec.unregister_execution(other)
+
+
+@pytest.mark.asyncio
 async def test_shared_shell_capture_returns_stdout_stderr_and_exit_code(tmp_path: Path):
     from app.services.ai.code_execution_service import run_shell_command_capture
 

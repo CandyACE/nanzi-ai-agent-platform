@@ -6,8 +6,8 @@ export interface CancelConversationRunOptions {
 }
 
 /**
- * Release backend conversation run locks after the user stops generation.
- * Fire-and-forget friendly; failures are logged only.
+ * Cancel the current conversation generation on the backend, then the caller
+ * should abort the SSE fetch. Failures are logged only.
  */
 export async function cancelConversationRun(
   conversationId: string,
