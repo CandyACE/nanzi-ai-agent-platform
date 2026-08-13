@@ -79,7 +79,10 @@ from app.services.ai.runtime.agentscope.session_lock import (
     SessionLockTimeout,
     agentscope_session_lock,
 )
-from app.services.ai.runtime.agentscope.workspace import get_local_workspace
+from app.services.ai.runtime.agentscope.workspace import (
+    bind_configured_tools_to_workspace,
+    get_local_workspace,
+)
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.agentscope.tools import build_toolkit
@@ -1345,7 +1348,8 @@ class AssistantAgentRunner(BaseExecutor):
             skills_custom=bool(getattr(self.config, "skills_custom", False)),
             allowed_global_skills=list(getattr(self.config, "skills", None) or []),
         )
-        # 仅挂载 agent 后端配置的工具；workspace 只作 offloader，不自动注入 Grep/Read/Bash 等内置工具。
+        # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
+        tools = await bind_configured_tools_to_workspace(workspace, tools)
         toolkit = build_toolkit(
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
