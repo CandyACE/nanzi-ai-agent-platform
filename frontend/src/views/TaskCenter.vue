@@ -411,14 +411,39 @@ const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)
 const currentViewMode = computed(() => isMobile.value ? 'grid' : viewMode.value)
 
+const handleWindowResize = () => {
+  windowWidth.value = window.innerWidth
+}
+
+/** runTaskNow 轮询相关定时器；卸载时统一清理，避免页面切走后仍叠加回调 */
+const runNowTimerIds = new Set<number>()
+
+const trackRunNowTimer = (id: number) => {
+  runNowTimerIds.add(id)
+  return id
+}
+
+const releaseRunNowTimer = (id: number) => {
+  window.clearInterval(id)
+  window.clearTimeout(id)
+  runNowTimerIds.delete(id)
+}
+
+const clearRunNowTimers = () => {
+  for (const id of [...runNowTimerIds]) {
+    releaseRunNowTimer(id)
+  }
+}
+
 onMounted(() => {
-  window.addEventListener('resize', () => windowWidth.value = window.innerWidth)
+  window.addEventListener('resize', handleWindowResize)
   document.addEventListener('click', handleAgentDropdownOutsideClick)
   document.addEventListener('click', handlePromptTemplateOutsideClick)
 })
 onUnmounted(() => {
   if (historyFilterTimer !== undefined) window.clearTimeout(historyFilterTimer)
-  window.removeEventListener('resize', () => windowWidth.value = window.innerWidth)
+  clearRunNowTimers()
+  window.removeEventListener('resize', handleWindowResize)
   document.removeEventListener('click', handleAgentDropdownOutsideClick)
   document.removeEventListener('click', handlePromptTemplateOutsideClick)
 })
@@ -724,12 +749,20 @@ const runTaskNow = async (task: AgentTask) => {
     showToast(`任务 已发送触发指令`, 'success')
     // Poll for status update for 5 seconds
     let attempts = 0
-    const poll = setInterval(async () => {
+    const poll = trackRunNowTimer(window.setInterval(async () => {
         attempts++
-        if (attempts > 5) { clearInterval(poll); runningTaskIds.value.delete(task.id); return }
+        if (attempts > 5) {
+          releaseRunNowTimer(poll)
+          runningTaskIds.value.delete(task.id)
+          return
+        }
         await fetchTasks(true)
-    }, 1000)
-    setTimeout(() => { clearInterval(poll); runningTaskIds.value.delete(task.id) }, 5000)
+    }, 1000))
+    const pollTimeout = trackRunNowTimer(window.setTimeout(() => {
+      releaseRunNowTimer(poll)
+      releaseRunNowTimer(pollTimeout)
+      runningTaskIds.value.delete(task.id)
+    }, 5000))
   } catch (e) {
     showToast('触发失败', 'error')
     runningTaskIds.value.delete(task.id)
