@@ -305,7 +305,7 @@ const menuGroups: MenuGroup[] = [
       { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
 
       { name: '任务调度台', to: '/dashboard/tasks', icon: 'tasks', perm: 'menu:task_center', activeNames: ['TaskCenter'] },
-      { name: '智能体测评', to: '/dashboard/agent-debug', icon: 'agent_debug', perm: 'menu:agent_debug', desktopOnly: true, activeNames: ['AgentDebug'] },
+      { name: '智能体调试', to: '/dashboard/agent-debug', icon: 'agent_debug', perm: 'menu:agent_debug', desktopOnly: true, activeNames: ['AgentDebug'] },
       { name: '接口调试台', to: '/dashboard/playground', icon: 'playground', perm: 'menu:playground', desktopOnly: true, activeNames: ['Playground'] },
       { name: '组件调试台', to: '/dashboard/widget-debug', icon: 'widget', perm: 'menu:widget_debug', desktopOnly: true, activeNames: ['WidgetDebugger'] }
     ]

@@ -261,7 +261,7 @@ class PermissionService:
             'agent_management': '智能体中心',
             'Agent_management': '智能体中心',
             'skills_management': '技能工作台',
-            'agent_debug': '智能体测评',
+            'agent_debug': '智能体调试',
             'playground': '接口调试台',
             'chat_logs': '聊天日志',
             'chatbi_examples': '用户反馈管理',
