@@ -237,6 +237,7 @@ class RouterService:
         from app.services.ai.intent_service import (
             DataSessionAffinity,
             looks_like_accessible_resource_catalog_query,
+            looks_like_data_followup,
             looks_like_greeting,
             looks_like_web_search_query,
             resolve_data_agent_session_affinity,
@@ -335,6 +336,39 @@ class RouterService:
                     relation_to_previous="topic_switch",
                     user_action_type="chat",
                 )
+
+        # 纯结果追问不需要重新做“意图识别 + 路由选择”：上一轮 Agent 已经
+        # 通过权限过滤，且本轮只复用已有 ChatBI 结果，不会引入新的数据范围。
+        # 新查数请求不会命中 looks_like_data_followup，仍保留完整资格校验。
+        if last_agent_name and looks_like_data_followup(user_input):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent and self._is_data_query_agent(agents_metadata, last_agent_name):
+                request_decision = resolve_request_decision(
+                    user_input,
+                    has_last_data_result=True,
+                )
+                if request_decision.allows_data_route:
+                    request_decision = apply_chatbi_qualification(
+                        request_decision,
+                        qualify_chatbi_request(
+                            domain="conversation_context",
+                            operation="transform",
+                            dataset_candidates=[],
+                            previous_chatbi_result=True,
+                        ),
+                    )
+                    logger.info(
+                        "Data-result follow-up shortcut: sticky route to %s without intent/router LLM",
+                        sticky_agent.get("name"),
+                    )
+                    return self._route_to_sole_candidate(
+                        sticky_agent,
+                        reasoning="上一轮 ChatBI 结果追问，沿用已授权智能体并跳过意图/路由 LLM",
+                        request_decision=request_decision,
+                        turn_labels=["continuation_followup", "business_related", "same_topic"],
+                        relation_to_previous="followup",
+                        user_action_type="transform_context",
+                    )
 
         intent_info = await self._resolve_intent_evidence(user_input, history)
         previous_chatbi_result = bool(
@@ -1014,6 +1048,9 @@ class RouterService:
         reasoning: str,
         intent_info: Optional[IntentResponse] = None,
         request_decision: Optional[RequestDecision] = None,
+        turn_labels: Optional[List[str]] = None,
+        relation_to_previous: str = "unknown",
+        user_action_type: str = "chat",
     ) -> RouteResult:
         """Route directly when structural filtering left exactly one agent."""
         return RouteResult(
@@ -1021,9 +1058,9 @@ class RouterService:
             confidence=0.98,
             reasoning=reasoning,
             intent_info=intent_info,
-            turn_labels=["sole_candidate"],
-            relation_to_previous="unknown",
-            user_action_type="chat",
+            turn_labels=turn_labels or ["sole_candidate"],
+            relation_to_previous=relation_to_previous,
+            user_action_type=user_action_type,
             request_source=(request_decision.source.value if request_decision else None),
             request_capability=(request_decision.capability.value if request_decision else None),
             request_should_delegate=bool(request_decision.should_delegate) if request_decision else False,

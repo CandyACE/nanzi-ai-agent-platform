@@ -69,6 +69,7 @@ from app.services.ai.runtime.agentscope.event_stream import (
     map_standard_agentscope_event,
     new_native_stream_state,
 )
+from app.services.ai.runtime.agentscope import process_narration as process_narration_events
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.stream_reconcile import (
     GENERIC_SYNTHESIS_EMPTY_FALLBACK,
@@ -91,6 +92,26 @@ from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
+
+
+def _is_grounding_bufferable_chunk(chunk: Dict[str, Any]) -> bool:
+    """Only buffer legacy untyped answer text that still needs grounding review.
+
+    Typed answer_delta / retraction / promote events are already the user
+    visible stream. Buffering them would hide token-by-token output until the
+    model call finished. Grounding still audits the accumulated text after
+    the stream, and appends a warning without delaying the answer.
+    """
+    chunk_type = str(chunk.get("type") or "")
+    if chunk_type in {
+        "process_narration",
+        "process_narration_commit",
+        "process_narration_promote",
+        "answer_delta",
+        "retraction",
+    }:
+        return False
+    return not chunk_type and "content" in chunk
 
 
 class _ForcedFirstToolChoiceModel:
@@ -695,8 +716,9 @@ class AssistantAgentRunner(BaseExecutor):
             if self._chunk_indicates_tool_attempt(chunk):
                 has_attempted_tool = True
 
-            if "content" in chunk and buffer_output:
-                full_text += chunk["content"]
+            if buffer_output:
+                full_text = process_narration_events.accumulate_visible_answer(full_text, chunk)
+            if buffer_output and _is_grounding_bufferable_chunk(chunk):
                 chunks_buffer.append(chunk)
             else:
                 yield chunk
@@ -867,7 +889,11 @@ class AssistantAgentRunner(BaseExecutor):
                                 yield {"type": "log", "id": f"gen_s_{uuid.uuid4().hex[:8]}", "title": "✨ 开始生成回复", "status": "success"}
                             content_emitted = True
                             full_content += chunk.content
-                            yield {"content": chunk.content}
+                            yield {
+                                "type": "answer_delta",
+                                "content": chunk.content,
+                                "phase": "synthesis",
+                            }
                     stream_succeeded = True
                     break
                 except Exception as stream_err:
@@ -1415,6 +1441,7 @@ class AssistantAgentRunner(BaseExecutor):
         tool_started_at: Dict[str, float] = state["tool_started_at"]
 
         async def on_tool_result_end(event: Any) -> AsyncGenerator[Dict[str, Any], None]:
+            process_narration_events.on_tool_result_end(state)
             tool_id = getattr(event, "tool_call_id", "")
             tool_name = tool_names.get(tool_id, "")
             raw_args = tool_args_text.get(tool_id, "") or "{}"
@@ -1452,35 +1479,28 @@ class AssistantAgentRunner(BaseExecutor):
             delta = sanitize_assistant_stream_text(str(getattr(event, "delta", "")))
             if not delta:
                 return
-            if state["used_tools"] and not state["synthesis_log_emitted"]:
-                state["synthesis_log_emitted"] = True
-                yield {
-                    "type": "log",
-                    "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
-                    "title": "📝 汇总工具结果",
-                    "details": "已获取所需数据，正在组织语言...",
-                    "status": "success",
-                }
-                yield {"type": "thinking", "status": "continuing"}
-            if not state["content_emitted"]:
-                state["content_emitted"] = True
-                yield {
-                    "type": "log",
-                    "id": f"gen_start_{uuid.uuid4().hex[:8]}",
-                    "title": "✨ 开始生成回复",
-                    "status": "success",
-                }
-            state["full_content"] += delta
-            yield {"content": delta}
+            for chunk in process_narration_events.on_text_delta(state, delta):
+                async for item in self._yield_process_narration_chunk(state, chunk):
+                    yield item
 
         async for event in event_stream:
             event_type = str(getattr(event, "type", ""))
-            if event_type == "MODEL_CALL_END":
+            if event_type == "MODEL_CALL_START":
+                for chunk in process_narration_events.on_model_call_start(state):
+                    async for item in self._yield_process_narration_chunk(state, chunk):
+                        yield item
+            elif event_type == "TOOL_CALL_START":
+                for chunk in process_narration_events.on_tool_call_start(state):
+                    yield chunk
+            elif event_type == "MODEL_CALL_END":
                 self._record_agent_scope_model_call(
                     event,
                     state=state,
                     native_model=native_model,
                 )
+                for chunk in process_narration_events.on_model_call_end(state):
+                    async for item in self._yield_process_narration_chunk(state, chunk):
+                        yield item
             async for chunk in map_standard_agentscope_event(
                 event,
                 state=state,
@@ -1518,6 +1538,50 @@ class AssistantAgentRunner(BaseExecutor):
                 timestamp=datetime.fromtimestamp(state["start_synthesis"]),
             ))
 
+    async def _yield_process_narration_chunk(
+        self,
+        state: Dict[str, Any],
+        chunk: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        if chunk.get("type") == "answer_delta" and str(chunk.get("content") or "").strip():
+            if state.get("used_tools") and not state.get("synthesis_log_emitted"):
+                state["synthesis_log_emitted"] = True
+                yield {
+                    "type": "log",
+                    "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
+                    "title": "📝 汇总工具结果",
+                    "details": "已获取所需数据，正在组织语言...",
+                    "status": "success",
+                }
+            if not state.get("gen_start_emitted"):
+                state["gen_start_emitted"] = True
+                yield {
+                    "type": "log",
+                    "id": f"gen_start_{uuid.uuid4().hex[:8]}",
+                    "title": "✨ 开始生成回复",
+                    "status": "success",
+                }
+        if chunk.get("type") == "process_narration_promote" and str(chunk.get("content") or "").strip():
+            if state.get("used_tools") and not state.get("synthesis_log_emitted"):
+                state["synthesis_log_emitted"] = True
+                yield {
+                    "type": "log",
+                    "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
+                    "title": "📝 汇总工具结果",
+                    "details": "已获取所需数据，正在组织语言...",
+                    "status": "success",
+                }
+                yield {"type": "thinking", "status": "continuing"}
+            if not state.get("gen_start_emitted"):
+                state["gen_start_emitted"] = True
+                yield {
+                    "type": "log",
+                    "id": f"gen_start_{uuid.uuid4().hex[:8]}",
+                    "title": "✨ 开始生成回复",
+                    "status": "success",
+                }
+        yield chunk
+
     async def _emit_reply_text_chunks(
         self,
         state: Dict[str, Any],
@@ -1535,6 +1599,8 @@ class AssistantAgentRunner(BaseExecutor):
             yield {"type": "thinking", "status": "continuing"}
         if not state.get("content_emitted"):
             state["content_emitted"] = True
+        if not state.get("gen_start_emitted"):
+            state["gen_start_emitted"] = True
             yield {
                 "type": "log",
                 "id": f"gen_start_{uuid.uuid4().hex[:8]}",
@@ -1542,7 +1608,7 @@ class AssistantAgentRunner(BaseExecutor):
                 "status": "success",
             }
         state["full_content"] = (state.get("full_content") or "") + text
-        yield {"content": text}
+        yield {"type": "answer_delta", "content": text, "phase": "synthesis"}
 
     async def _reconcile_reply_after_stream(
         self,
@@ -1556,6 +1622,9 @@ class AssistantAgentRunner(BaseExecutor):
 
         if current_task_cancelling():
             return
+        for chunk in process_narration_events.on_model_call_end(state):
+            async for item in self._yield_process_narration_chunk(state, chunk):
+                yield item
         streamed = state.get("full_content") or ""
         agent_text = (
             extract_latest_assistant_text(agent, include_thinking=False)
@@ -1563,7 +1632,11 @@ class AssistantAgentRunner(BaseExecutor):
             else ""
         )
 
-        gap = compute_stream_reconcile_gap(streamed, agent_text)
+        synthesis_agent_text = process_narration_events.extract_agent_answer_after_process_narration(
+            state,
+            agent_text,
+        )
+        gap = compute_stream_reconcile_gap(streamed, synthesis_agent_text)
         if gap.strip():
             logger.info(
                 "[AssistantAgentRunner] Stream reconcile gap chars=%d streamed=%d agent=%d",
@@ -1577,8 +1650,9 @@ class AssistantAgentRunner(BaseExecutor):
 
         if not needs_tool_synthesis_fallback(
             streamed,
-            agent_text,
+            synthesis_agent_text,
             used_tools=bool(state.get("used_tools")),
+            tool_outputs=state.get("tool_outputs"),
         ):
             if not streamed.strip() and not agent_text.strip():
                 logger.warning(
@@ -1668,7 +1742,7 @@ class AssistantAgentRunner(BaseExecutor):
                         "status": "success",
                     }
                 state["full_content"] = (state.get("full_content") or "") + content
-                yield {"content": content}
+                yield {"type": "answer_delta", "content": content, "phase": "synthesis"}
         except Exception as synthesis_err:
             logger.error(
                 "[AssistantAgentRunner] Tool-loop fuse convergence failed: %s",
@@ -1682,7 +1756,7 @@ class AssistantAgentRunner(BaseExecutor):
                 "请换一种问法重试，或直接说明你需要的具体日期范围。"
             )
             state["full_content"] = fallback
-            yield {"content": fallback}
+            yield {"type": "answer_delta", "content": fallback, "phase": "synthesis"}
 
     async def _stream_general_synthesis_fallback(
         self,
@@ -1704,7 +1778,11 @@ class AssistantAgentRunner(BaseExecutor):
         if not review_lines:
             logger.warning("[AssistantAgentRunner] Synthesis skipped: no tool review lines")
             state["full_content"] = (state.get("full_content") or "") + GENERIC_SYNTHESIS_EMPTY_FALLBACK
-            yield {"content": GENERIC_SYNTHESIS_EMPTY_FALLBACK}
+            yield {
+                "type": "answer_delta",
+                "content": GENERIC_SYNTHESIS_EMPTY_FALLBACK,
+                "phase": "synthesis",
+            }
             return
 
         user_query = str(state.get("user_query") or "")
@@ -1715,7 +1793,7 @@ class AssistantAgentRunner(BaseExecutor):
         )
 
         if append_after_partial:
-            yield {"content": "\n\n"}
+            yield {"type": "answer_delta", "content": "\n\n", "phase": "synthesis"}
 
         if not state.get("synthesis_fb_log_emitted"):
             state["synthesis_fb_log_emitted"] = True
@@ -1752,14 +1830,18 @@ class AssistantAgentRunner(BaseExecutor):
                         "status": "success",
                     }
                 state["full_content"] = (state.get("full_content") or "") + content
-                yield {"content": content}
+                yield {"type": "answer_delta", "content": content, "phase": "synthesis"}
         except Exception as exc:
             logger.error("[AssistantAgentRunner] Synthesis fallback failed: %s", exc, exc_info=True)
 
         if not emitted_any:
             logger.warning("[AssistantAgentRunner] Synthesis produced no visible text")
             state["full_content"] = (state.get("full_content") or "") + GENERIC_SYNTHESIS_EMPTY_FALLBACK
-            yield {"content": GENERIC_SYNTHESIS_EMPTY_FALLBACK}
+            yield {
+                "type": "answer_delta",
+                "content": GENERIC_SYNTHESIS_EMPTY_FALLBACK,
+                "phase": "synthesis",
+            }
             return
 
         synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
@@ -1936,6 +2018,7 @@ class AssistantAgentRunner(BaseExecutor):
                     )
                 )
                 buffered_content: List[Dict[str, Any]] = []
+                grounding_candidate_text = ""
                 try:
                     async for chunk in self._stream_agentscope_native_events(
                         event_stream=agent.reply_stream(resume_event),
@@ -1946,9 +2029,16 @@ class AssistantAgentRunner(BaseExecutor):
                     ):
                         if is_interrupt_sse_chunk(chunk):
                             interrupted = True
+                        if buffer_output:
+                            grounding_candidate_text = (
+                                process_narration_events.accumulate_visible_answer(
+                                    grounding_candidate_text,
+                                    chunk,
+                                )
+                            )
                         if (
                             buffer_output
-                            and "content" in chunk
+                            and _is_grounding_bufferable_chunk(chunk)
                             and chunk.get("type") not in {"error"}
                         ):
                             buffered_content.append(chunk)
@@ -1966,10 +2056,8 @@ class AssistantAgentRunner(BaseExecutor):
                         yield chunk
                     return
 
-                if buffered_content and not interrupted:
-                    # 只取用户可见的纯文本输出（type 为 None 或空）进行事实检测，
-                    # 过滤掉 log/tool_result 等结构化 chunk，避免噪音影响门禁判断精度。
-                    candidate_text = "".join(
+                if (buffered_content or grounding_candidate_text) and not interrupted:
+                    candidate_text = grounding_candidate_text or "".join(
                         str(chunk.get("content") or "")
                         for chunk in buffered_content
                         if not chunk.get("type")

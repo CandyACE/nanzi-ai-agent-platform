@@ -26,7 +26,7 @@ def test_embed_chat_message_level_golden_report_button():
     assert "canSaveGoldenReportFromMessage(msg)" in source
     assert "handleSaveReportFromMessage(msg)" in source
     assert "添加黄金报表" in source
-    assert "resolveSavableSqlFromLog(log)" in source
+    assert "resolveSavableSqlFromMessage(msg)" in source
     assert "parseRequirementAnalysisFromMessage(agentMessage)" in source
 
 
@@ -35,7 +35,7 @@ def test_agent_debug_message_level_golden_report_button():
 
     assert "canSaveGoldenReportFromMessage(msg)" in source
     assert "handleSaveReportFromMessage(msg)" in source
-    assert "resolveSavableSqlFromLog(log)" in source
+    assert "resolveSavableSqlFromMessage(msg)" in source
     assert "parseRequirementAnalysisFromMessage(agentMessage)" in source
 
 

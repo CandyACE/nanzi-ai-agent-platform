@@ -278,6 +278,16 @@ async def _consume_sub_agent_stream(
             )
             break
 
+        if chunk_type in {"process_narration", "process_narration_commit"}:
+            # 委派对主聊天只穿透工具日志，不转发子代理过程旁白。
+            # 旁白若计入工具结果，会与随后的 promote/正文重复。
+            continue
+
+        if chunk_type == "retraction":
+            # 兼容旧流：retraction 用新正文整体替换已积累内容。
+            full_output = str(chunk.get("content") or "")
+            continue
+
         text = _extract_delegation_text(chunk)
         if text:
             full_output += text

@@ -981,8 +981,8 @@ async def test_route_query_uncertain_topic_after_chatbi_reaches_semantic_router(
 
 
 @pytest.mark.asyncio
-async def test_route_query_data_followup_after_chatbi_still_uses_llm(mock_agents_metadata):
-    """上一轮 ChatBI 后，纯数据结果追问仍应走路由 LLM（保留粘性，不误切通用助手）。"""
+async def test_route_query_data_followup_after_chatbi_reuses_sticky_agent_without_llm(mock_agents_metadata):
+    """上一轮 ChatBI 后，纯结果追问应复用会话智能体并跳过两次路由模型调用。"""
     service = RouterService()
     llm_resp_content = json.dumps({
         "thought": "Follow-up visualization on previous query result.",
@@ -1012,8 +1012,11 @@ async def test_route_query_data_followup_after_chatbi_still_uses_llm(mock_agents
         )
 
     assert result.agent_id == "agent-chatbi"
-    mock_get_llm.assert_called_once()
-    mock_chat.generate_text.assert_called_once()
+    assert result.relation_to_previous == "followup"
+    assert result.user_action_type == "transform_context"
+    mock_identify.assert_not_awaited()
+    mock_get_llm.assert_not_awaited()
+    mock_chat.generate_text.assert_not_called()
 
 
 @pytest.mark.asyncio

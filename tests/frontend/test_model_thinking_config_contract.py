@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 import pytest
 
@@ -171,39 +170,52 @@ def test_thinking_effort_options_are_expanded_without_a_second_click():
 
 
 def test_reasoning_panel_only_renders_after_reasoning_content_arrives():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    assert "reasoningContent" in timeline
+    assert "item.textKind === 'reasoning'" in timeline
     for path in (EMBED_CHAT, AGENT_DEBUG):
         source = path.read_text(encoding="utf-8")
-        match = re.search(
-            r'<div\s+v-if="([^"]+)"\s+class="reasoning-content-panel',
-            source,
-        )
-        assert match is not None
-        assert match.group(1) == "msg.reasoningContent"
+        assert "<ChatExecutionTimeline" in source
+        assert ':reasoning-content="msg.reasoningContent"' in source
 
 
 def test_reasoning_panel_is_collapsible_and_uses_light_quote_style():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    assert 'v-show="expanded"' in timeline
+    assert "text-violet-500" not in timeline
+    assert "text-violet-600" not in timeline
+    assert "<blockquote" in timeline
+    assert "border-l-2 border-gray-200" in timeline
     for path in (EMBED_CHAT, AGENT_DEBUG):
         source = path.read_text(encoding="utf-8")
-        assert "isReasoningExpanded?: boolean" in source
-        assert "@click=\"msg.isReasoningExpanded = !msg.isReasoningExpanded\"" in source
-        assert 'v-show="msg.isReasoningExpanded === true"' in source
-        assert ':aria-expanded="msg.isReasoningExpanded === true"' in source
-        assert "bg-slate-50" in source
-        assert "border-l-4" in source
-        assert "border-slate-200" in source
+        assert 'v-model="msg.isThoughtExpanded"' in source
 
 
 def test_reasoning_panel_uses_model_inference_label():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    assert 'props.hasAnswer ? "思考完成" : "执行过程"' in timeline
+    assert "深度思考" in timeline
+    assert "item.textKind === 'reasoning'" in timeline
+    assert "💭" in timeline
+    assert "isReasoningBodyOpen" in timeline
+    assert "item.textKind === 'reasoning' ? '🧠'" not in timeline
+    assert 'item.category === "intent"' in timeline
+    assert "rounded-full border border-violet" not in timeline
     for path in (EMBED_CHAT, AGENT_DEBUG):
         source = path.read_text(encoding="utf-8")
-        panel_start = source.index("reasoning-content-panel")
-        panel_end = source.index("<!-- Main Content", panel_start)
-        panel = source[panel_start:panel_end]
-        assert "本次会话已启用模型思考推理" in panel
-        assert "思考过程" not in panel
+        assert "本次会话已启用模型思考推理" not in source
 
 
 def test_history_loaders_restore_reasoning_content_separately_from_answer():
     assert "reasoningContent: item.reasoning_content ?? undefined" in EMBED_CHAT.read_text(encoding="utf-8")
     agent_debug = AGENT_DEBUG.read_text(encoding="utf-8")
     assert "reasoningContent: m.reasoning_content || undefined" in agent_debug
+
+
+def test_history_loaders_restore_process_timeline_for_thinking_card():
+    embed = EMBED_CHAT.read_text(encoding="utf-8")
+    debug = AGENT_DEBUG.read_text(encoding="utf-8")
+    assert "hydrateHistoryProcessTimeline" in embed
+    assert "hydrateHistoryProcessTimeline" in debug
+    assert "item.process_timeline" in embed
+    assert "m.process_timeline" in debug

@@ -529,7 +529,7 @@
               ></div>
             </div>
           </div>
-          <div class="max-w-[90%]">
+          <div class="w-full max-w-[90%] min-w-0">
             <!-- Agent Name (Smart Status Capsule) -->
             <div class="mb-1 ml-1 flex items-center">
               <div
@@ -562,237 +562,35 @@
               </div>
             </div>
             <div
-              class="px-4 py-3 rounded-2xl rounded-tl-sm shadow-none border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 text-sm leading-relaxed min-h-[46px] transition-all duration-300 relative group/bubble"
+              class="text-sm leading-relaxed transition-all duration-300 relative group/bubble"
               :class="[
                 `markdown-theme-${config.markdownTheme || 'default'}`,
                 { 'message-borderless': config.hideMessageBorder },
-                msg.isThinking
-                    ? 'bg-slate-50/80 dark:bg-slate-800/80'
-                    : 'bg-white dark:bg-gray-800'
+                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation
+                  ? [
+                      'px-4 py-3 rounded-2xl rounded-tl-sm shadow-none border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 min-h-[46px]',
+                      msg.isThinking
+                        ? 'bg-slate-50/80 dark:bg-slate-800/80'
+                        : 'bg-white dark:bg-gray-800',
+                    ]
+                  : 'min-h-0 bg-transparent',
               ]"
             >
-              <!-- Thinking Process (Collapsible Accordion) -->
-              <div v-if="msg.isThinking || (msg.logs && msg.logs.length > 0)" class="mb-2">
-                <!-- Accordion Header -->
-                <ChatThinkingHeader
-                  v-model:expanded="msg.isThoughtExpanded"
-                  :is-thinking="msg.isThinking"
-                  :title="getThoughtPanelTitle(msg)"
-                  :step-count="getDisplayLogs(msg).length"
-                  :hidden-step-count="getHiddenLogCount(msg)"
-                  :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
-                  :duration="msg.thoughtDuration"
-                  dark-mode
-                />
-                <!-- Accordion Body (Logs) -->
-                <transition
-                  enter-active-class="transition-all duration-300 ease-out"
-                  enter-from-class="opacity-0 max-h-0"
-                  enter-to-class="opacity-100 max-h-[500px]"
-                  leave-active-class="transition-all duration-200 ease-in"
-                  leave-from-class="opacity-100 max-h-[500px]"
-                  leave-to-class="opacity-0 max-h-0"
-                >
-                  <div
-                    v-show="msg.isThoughtExpanded"
-                    class="overflow-hidden"
-                  >
-                    <!-- Ecosystem Skills Notice -->
-                    <div v-if="getSkillFlowBadgesForMessage(msg, messages).length > 0" class="mt-2 ml-2 pl-4 flex flex-col gap-1.5">
-                      <div class="flex items-center space-x-1.5 text-xs text-purple-700 dark:text-purple-400 font-semibold bg-purple-50/50 dark:bg-purple-950/10 border border-purple-100/60 dark:border-purple-900/20 rounded-lg px-3 py-2">
-                        <span class="text-[14px]">⚡</span>
-                        <span>{{ skillFlowNoticeLabel(getSkillFlowBadgesForMessage(msg, messages)) }}</span>
-                        <div class="flex flex-wrap gap-1">
-                          <span
-                            v-for="skill in getSkillFlowBadgesForMessage(msg, messages)"
-                            :key="skill.key"
-                            class="px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/40 text-[10px] font-bold border border-purple-200/50 dark:border-purple-800/30"
-                            :title="skill.description"
-                          >
-                            {{ skill.label }}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div
-                      :ref="(el) => bindThoughtLogsEl(msg.id, el)"
-                      class="relative max-h-[min(420px,50vh)] space-y-0.5 overflow-y-auto py-1 sm:max-h-none"
-                      @scroll.passive="onThoughtLogsScroll(msg.id, $event)"
-                    >
-                      <!-- 首个步骤到达前：用状态文案代替空骨架，避免“计时在走、下面空白”的割裂感 -->
-                      <div
-                        v-if="msg.isThinking && (!msg.logs || getDisplayLogs(msg).length === 0)"
-                        class="flex items-center gap-2 px-1.5 py-1 text-xs text-gray-500 dark:text-gray-400"
-                      >
-                        <SparklesIcon class="h-3.5 w-3.5 flex-shrink-0 animate-pulse text-primary/70" />
-                        <span class="truncate animate-pulse">{{ msg.thinkingText || '正在连接服务…' }}</span>
-                      </div>
-
-                      <div
-                        v-for="(log, idx) in getDisplayLogs(msg)"
-                        :key="idx"
-                        class="relative group/log transition-opacity duration-300"
-                        :class="{
-                          // 移动端无 hover：保持可读；桌面端弱化并用 hover 提亮
-                          'opacity-70 sm:opacity-45 sm:group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking),
-                        }"
-                      >
-                        <!-- Log Card (Lightweight Row) -->
-                        <div
-                          class="min-h-[32px] rounded-lg px-1.5 py-1 text-xs transition-all duration-300 cursor-pointer sm:min-h-0"
-                          :class="{
-                             'border-l-2 border-primary/55 bg-primary/[0.04] pl-2 dark:bg-primary/10 animate-pulse-subtle': isActiveThoughtStep(log, msg.isThinking),
-                             'bg-transparent active:bg-gray-50 sm:hover:bg-gray-50 dark:active:bg-gray-700/30 dark:sm:hover:bg-gray-700/30': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
-                             'bg-red-50/30 active:bg-red-50/50 sm:hover:bg-red-50/50 dark:bg-red-900/10 dark:active:bg-red-900/20 dark:sm:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
-                          }"
-                          @click="log.details ? (log.isExpanded = !log.isExpanded) : null"
-                        >
-                          <div class="flex items-start justify-between gap-2 sm:items-center">
-                             <div class="flex items-start gap-2 flex-1 min-w-0 sm:items-center"
-                                  :class="[
-                                    isTechnicalLogStep(log)
-                                      ? 'text-[11px] font-normal'
-                                      : 'font-medium',
-                                    {
-                                      'text-red-700 dark:text-red-400': log.status === 'error',
-                                      'text-gray-800 dark:text-gray-100': isActiveThoughtStep(log, msg.isThinking) && !isTechnicalLogStep(log),
-                                      // 已完成步骤统一浅灰（技术步骤也走同一套）
-                                      'text-gray-400 dark:text-gray-500': isDimmedThoughtStep(log, msg.isThinking) && log.status !== 'error',
-                                      'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && !isDimmedThoughtStep(log, msg.isThinking) && log.status !== 'error' && !isTechnicalLogStep(log),
-                                    }
-                                  ]">
-                               <!-- Semantic Icon -->
-                               <span
-                                 class="mt-0.5 flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center sm:mt-0"
-                                 :class="{
-                                   'animate-pulse': log.status === 'pending',
-                                   'grayscale opacity-80': isDimmedThoughtStep(log, msg.isThinking) && log.status !== 'error',
-                                 }"
-                               >
-                                 <template v-if="log.status === 'error'">⚠️</template>
-                                 <template v-else-if="log.category === 'router'">🧠</template>
-                                 <template v-else-if="log.category === 'tool' || log.category === 'sql'">🛠️</template>
-                                 <template v-else-if="log.category === 'permission'">🔒</template>
-                                 <SparklesIcon
-                                   v-else
-                                   class="h-3.5 w-3.5"
-                                   :class="isDimmedThoughtStep(log, msg.isThinking) ? 'text-gray-400 dark:text-gray-500' : 'text-primary'"
-                                 />
-                               </span>
-                               <!-- Main Text：窄屏允许两行，避免关键信息被截没 -->
-                               <span class="line-clamp-2 break-all sm:line-clamp-none sm:truncate" :title="log.title">{{ log.title }}</span>
-                               <span
-                                 v-if="logHasRowFilterApplied(log)"
-                                 class="flex-shrink-0 text-[12px]"
-                                 title="已按行级数据权限改写 SQL"
-                               >🔒</span>
-                               <span
-                                 v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 scale-90 sm:scale-100 origin-center animate-pulse"
-                               >
-                                 进行中
-                               </span>
-                               <span
-                                 v-if="log.status === 'success' && (log.category === 'sql' || (log.title && log.title.toLowerCase().includes('sql')))"
-                                 class="ml-1 flex-shrink-0 select-none font-bold text-gray-400 dark:text-gray-500"
-                               >
-                                 ☑
-                               </span>
-
-                             </div>
-                             <div class="flex items-center gap-1 flex-shrink-0 pt-0.5 sm:gap-2 sm:pt-0">
-                               <span
-                                 v-if="formatLogDuration(log, getDisplayLogs(msg))"
-                                 class="min-w-[2.25rem] text-right justify-end inline-flex text-[10px] font-mono flex-shrink-0 sm:w-12"
-                                 :class="getLogDurationColor(log, getDisplayLogs(msg))"
-                                 :title="log.status === 'pending' ? '当前步骤已等待时间' : '当前步骤耗时'"
-                               >
-                                 {{ formatLogDuration(log, getDisplayLogs(msg)) }}
-                               </span>
-                               <button
-                                 v-if="log.details && log.isExpanded"
-                                 @click.stop="copyMessage(log.details)"
-                                 class="flex h-8 w-8 items-center justify-center rounded text-gray-400 transition-colors hover:text-primary active:bg-gray-100 dark:active:bg-gray-700/40 sm:h-auto sm:w-auto sm:p-1"
-                                 title="复制详情"
-                               >
-                                 <svg class="h-4 w-4 sm:h-3.5 sm:w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                 </svg>
-                               </button>
-                               <!-- 有详情时可展开：移动端常显箭头，桌面端 hover 再加强 -->
-                               <svg
-                                 v-if="log.details"
-                                 class="h-3.5 w-3.5 text-gray-400 transition-all duration-200 sm:h-3 sm:w-3"
-                                 :class="{
-                                   'rotate-180': log.isExpanded,
-                                   'opacity-100': log.isExpanded,
-                                   'opacity-60 sm:opacity-0 sm:group-hover/log:opacity-100': !log.isExpanded,
-                                 }"
-                                 fill="none"
-                                 stroke="currentColor"
-                                 viewBox="0 0 24 24"
-                                 aria-hidden="true"
-                               >
-                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                               </svg>
-                             </div>
-                          </div>
-                          <!-- Details -->
-                          <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
-                            <KnowledgeToolLogDetails
-                              v-if="isKnowledgeToolLog(log.details)"
-                              :details="log.details"
-                              class="mb-1"
-                            />
-                            <template v-else-if="splitSqlToolLogDetails(log.details)">
-                              <div class="space-y-1.5 mb-1">
-                                <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
-                                  <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
-                                    <span>SQL Query</span>
-                                    <div class="flex items-center gap-1">
-                                      <button @click.stop="copyMessage(splitSqlToolLogDetails(log.details)!.sqlPart)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
-                                      <template v-if="resolveSavableSqlFromLog(log)">
-                                        <span class="text-gray-700">|</span>
-                                        <button @click.stop="openSaveReportModal(resolveSavableSqlFromLog(log)!, msg)" class="text-gray-600 hover:text-primary transition-colors" title="添加为黄金报表">添加黄金报表</button>
-                                      </template>
-                                    </div>
-                                  </div>
-                                  <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.sqlPart }}</pre>
-                                </div>
-                                <div class="p-2 rounded border font-mono text-[10px] leading-relaxed overflow-x-auto"
-                                     :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error'
-                                       ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300'
-                                       : 'bg-gray-50 dark:bg-gray-900/60 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'">
-                                  <div class="mb-1 text-[9px] font-sans uppercase tracking-tight"
-                                       :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error' ? 'text-red-500' : 'text-gray-500'">
-                                    {{ sqlToolLogBodyLabel(splitSqlToolLogDetails(log.details)!.bodyKind) }}
-                                  </div>
-                                  <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.bodyPart }}</pre>
-                                </div>
-                                <pre v-if="splitSqlToolLogDetails(log.details)!.trailingPart" class="font-mono text-[10px] text-amber-600 dark:text-amber-400 whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.trailingPart }}</pre>
-                              </div>
-                            </template>
-                            <!-- SQL Detection & Pretty Print (legacy / error-only logs) -->
-                            <div v-else-if="log.details && isSqlLikeToolLogDetails(log.details)" class="space-y-1.5 mb-1">
-                                <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
-                                    <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
-                                      <span>SQL Query</span>
-                                      <div class="flex items-center gap-1">
-                                        <button @click.stop="copyMessage(log.details)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
-                                      </div>
-                                    </div>
-                                    <pre class="whitespace-pre-wrap break-all">{{ log.details }}</pre>
-                                </div>
-                            </div>
-                            <pre v-else class="font-mono text-[10px] text-gray-500 dark:text-gray-400 whitespace-pre-wrap break-all">{{ log.details }}</pre>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </transition>
-              </div>
+              <ChatExecutionTimeline
+                v-model="msg.isThoughtExpanded"
+                :timeline="msg.processTimeline"
+                :logs="msg.logs"
+                :reasoning-content="msg.reasoningContent"
+                :process-narration="msg.processNarration"
+                :process-narration-pending="msg.processNarrationPending"
+                :is-thinking="msg.isThinking"
+                :has-answer="Boolean(msg.content)"
+                :thinking-text="msg.thinkingText"
+                :duration="msg.thoughtDuration"
+                :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
+                :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
+                dark-mode
+              />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -911,40 +709,12 @@
                 :disabled="isProcessing"
                 @action="(action) => handleGroundingAction(msg.groundingBlocked, action)"
               />
-              <!-- Model reasoning is rendered separately from the final answer. -->
-              <div
-                v-if="msg.reasoningContent"
-                class="reasoning-content-panel mb-3 overflow-hidden rounded-r-xl border-l-4 border-slate-200 bg-slate-50/75 text-sm dark:border-slate-600 dark:bg-slate-800/40"
-              >
-                <button
-                  type="button"
-                  class="flex w-full items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 text-left text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100/70 dark:border-slate-700/70 dark:text-slate-300 dark:hover:bg-slate-700/30"
-                  :aria-expanded="msg.isReasoningExpanded === true"
-                  @click="msg.isReasoningExpanded = !msg.isReasoningExpanded"
-                >
-                  <span class="inline-flex items-center gap-1.5">
-                    <span aria-hidden="true" class="text-slate-400">💭</span>
-                    <span>本次会话已启用模型思考推理</span>
-                  </span>
-                  <span class="inline-flex items-center gap-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
-                    <span v-if="msg.isThinking">进行中</span>
-                    <span class="text-sm transition-transform" :class="msg.isReasoningExpanded === true ? 'rotate-180' : ''" aria-hidden="true">⌄</span>
-                  </span>
-                </button>
-                <div v-show="msg.isReasoningExpanded === true" class="max-h-[min(360px,45vh)] overflow-y-auto px-3 py-2 text-slate-600 dark:text-slate-300">
-                  <MessageRenderer
-                    :content="msg.reasoningContent"
-                    :theme="config.markdownTheme"
-                    @open-canvas="handleOpenCanvas"
-                  />
-                </div>
-              </div>
               <!-- Main Content -->
-              <div v-if="msg.content && !msg.groundingBlocked" class="relative group/content mt-2">
+              <div v-if="visibleStreamBody(msg) && !msg.groundingBlocked" class="relative group/content mt-2">
                 <!-- Floating Copy Button (Moved here to avoid overlap) -->
                 <button
                   v-if="!msg.datasetNavigation?.groups?.length"
-                  @click="copyMessage(msg.content)"
+                  @click="copyMessage(visibleStreamBody(msg))"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md opacity-0 group-hover/content:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
                 >
@@ -962,7 +732,7 @@
                                                                 </div>
                                                                 <MessageRenderer
                                                                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
-                                                                  :content="msg.content"
+                                                                  :content="visibleStreamBody(msg)"
                                                                   :theme="config.markdownTheme"
                                                                   :hide-quick-buttons="!!msg.businessConfirmation"
                                                                   @quick-question="handleQuickQuestion"
@@ -1022,7 +792,10 @@
               @open-citation="({ citation, event }) => openCitationPopover(citation, event)"
             />
             <ChatBIMetadataGuide v-if="msg.chatbiMetadataGuide" :guide="msg.chatbiMetadataGuide" @select="handleQuickQuestion" />
-            <div class="flex flex-nowrap items-center space-x-2 mt-3">
+            <div
+              v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"
+              class="flex flex-nowrap items-center space-x-2 mt-3"
+            >
               <button
                 @click="copyMessage(msg.content)"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -2100,7 +1873,6 @@ import {
   isWorkspaceSlashCommand,
 } from "@/constants/workspaceCommand";
 
-import { SparklesIcon } from "@heroicons/vue/24/outline";
 import { useBranding } from "@/composables/useBranding";
 import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
 
@@ -2148,7 +1920,7 @@ import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import ConfirmModal from "@/components/ConfirmModal.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
-import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
+import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -2180,27 +1952,16 @@ import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { modelApi, type AIModel, type ReasoningEffort } from "@/api/model";
 import {
-  filterLogsForTurn,
-  countHiddenLogs,
-  isActiveThoughtStep,
-  isDimmedThoughtStep,
   type TurnType,
 } from "@/utils/turnLogDisplay";
-import { getEmbedThoughtSummaryTitle } from "@/utils/embedThoughtStages";
 import {
   buildSkillFlowBadges,
-  skillFlowNoticeLabel,
   summarizeSkillFlowBadges,
   type SkillFlowBadge,
 } from "@/utils/skillFlowBadges";
 import {
-  splitSqlToolLogDetails,
-  isSqlLikeToolLogDetails,
-  sqlToolLogBodyLabel,
-  resolveSavableSqlFromLog,
   canSaveGoldenReportFromMessage,
   resolveSavableSqlFromMessage,
-  logHasRowFilterApplied,
 } from "@/utils/toolLogDisplay";
 import {
   deriveSavedReportDescription,
@@ -2226,24 +1987,24 @@ import {
   useChatAttachments,
 } from "@/composables/chat/useChatAttachments";
 import { groupChatHistoryByDate } from "@/composables/chat/useChatHistoryGroups";
-import KnowledgeToolLogDetails from "@/components/KnowledgeToolLogDetails.vue";
-import { isKnowledgeToolLog } from "@/utils/knowledgeToolLog";
 import {
   applyStreamTraceId,
+  appendAssistantBodyDelta,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   formatPermissionStatus,
-  isLiveThoughtStepTimer,
   resolveStreamLogDurationMs,
   finalizeAllPendingStreamLogs,
   markStalePendingStreamLogs,
   mergeStreamCitations,
   resumeExternalExecutionStream,
+  syncProcessTimelineLog,
   type PendingExternalExecution,
   type PendingToolPermission,
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
+import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
 import {
   buildBusinessConfirmationUserMessage,
   type BusinessConfirmationField,
@@ -2346,6 +2107,10 @@ interface Message {
   citations?: any[];
   isThinking?: boolean;
   isThoughtExpanded?: boolean;
+  processNarration?: string;
+  processNarrationPending?: string;
+  processTimeline?: import("@/utils/processTimeline").ProcessTimelineItem[];
+  isProcessNarrationExpanded?: boolean;
   isCitationsExpanded?: boolean;
   thoughtStartTime?: number;
   thoughtDuration?: string;
@@ -2400,31 +2165,8 @@ const formatTimeLabel = (isoStr: string): string => {
   } catch (e) { return ""; }
 };
 
-function getDisplayLogs(msg: Message) {
-  return filterLogsForTurn(msg.logs, msg.turnType);
-}
-
-function getThoughtPanelTitle(msg: Message) {
-  const baseTitle = getEmbedThoughtSummaryTitle({
-    logs: getDisplayLogs(msg),
-    isThinking: msg.isThinking,
-    thinkingText: msg.thinkingText,
-    turnType: msg.turnType,
-  });
-
-  // 窄屏折叠态只保留进度短句，避免标题被「正在进行: 超长步骤名」挤没
-  if (msg.isThinking && !msg.isThoughtExpanded && !isMobile.value) {
-    const logs = getDisplayLogs(msg);
-    const activeLog = logs.find(log => isActiveThoughtStep(log, msg.isThinking));
-    if (activeLog && activeLog.title) {
-      return `${baseTitle} · 正在进行: ${activeLog.title}`;
-    }
-  }
-  return baseTitle;
-}
-
-function getHiddenLogCount(msg: Message) {
-  return countHiddenLogs(msg.logs, getDisplayLogs(msg));
+function visibleStreamBody(msg: Message): string {
+  return msg.content || "";
 }
 
 function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
@@ -2441,55 +2183,6 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
   }
   return buildSkillFlowBadges(files, msg.logs || []);
 }
-
-const formatDurationMs = (durationMs?: number | null): string => {
-  if (durationMs === undefined || durationMs === null || Number.isNaN(durationMs)) return "";
-  if (durationMs < 100) return "<0.1s";
-  return `${(durationMs / 1000).toFixed(1)}s`;
-};
-
-const formatLogDuration = (log: LogEntry, allLogs?: LogEntry[]): string => {
-  if (log.execution_time_ms !== undefined && log.execution_time_ms !== null) {
-    return formatDurationMs(log.execution_time_ms);
-  }
-  if (log.elapsed_time_ms !== undefined && log.elapsed_time_ms !== null) {
-    return formatDurationMs(log.elapsed_time_ms);
-  }
-  if (isLiveThoughtStepTimer(log, allLogs || []) && log.started_at) {
-    return formatDurationMs(Date.now() - log.started_at);
-  }
-  return "";
-};
-
-const isTechnicalLogStep = (log: LogEntry): boolean => {
-  return log.category === 'tool' || log.category === 'sql' || log.category === 'permission';
-};
-
-const getLogDurationColor = (log: LogEntry, allLogs?: LogEntry[]): string => {
-  // 已完成步骤统一灰色，避免绿/橙耗时色破坏「已完成变灰」
-  if (log.status !== "pending") {
-    return "text-gray-400 dark:text-gray-500";
-  }
-
-  let ms = 0;
-  if (log.execution_time_ms !== undefined && log.execution_time_ms !== null) {
-    ms = log.execution_time_ms;
-  } else if (log.elapsed_time_ms !== undefined && log.elapsed_time_ms !== null) {
-    ms = log.elapsed_time_ms;
-  } else if (isLiveThoughtStepTimer(log, allLogs || []) && log.started_at) {
-    ms = Date.now() - log.started_at;
-  } else {
-    return "text-gray-400 dark:text-gray-500";
-  }
-
-  if (ms < 500) {
-    return "text-emerald-500/80 dark:text-emerald-400/70";
-  } else if (ms < 2000) {
-    return "text-gray-400 dark:text-gray-500";
-  } else {
-    return "text-amber-500 dark:text-amber-400 font-medium";
-  }
-};
 
 // Helper: Format Timestamp for Bubbles (Smart Date)
 const formatBubbleTime = (isoStr: string): string => {
@@ -5515,6 +5208,7 @@ const fetchConversationHistory = async (isLoadMore = false) => {
                   role: 'agent',
                   content: item.summary,
                   reasoningContent: item.reasoning_content ?? undefined,
+                  processTimeline: hydrateHistoryProcessTimeline(item.process_timeline, item.reasoning_content),
                   logs: [],
                   isThinking: false,
                   feedback: null,
@@ -6286,6 +5980,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     else if (title.includes("知识") || title.includes("检索") || title.includes("引用") || title.includes("来源") || title.includes("分析")) category = "knowledge";
     else if (title.includes("工具") || title.includes("调用")) category = "tool";
     else if (title.includes("意图") || title.includes("轮次分类")) category = "intent";
+    else if (title.includes("模型")) category = "model";
     else if (title.includes("权限") || title.includes("permission") || title.includes("确认")) category = "permission";
   }
   if (data.turn_type && category === "intent") {
@@ -6314,7 +6009,13 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       started_at: currentLog.started_at ?? (data.status === "pending" ? Date.now() : data.started_at),
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,
     };
-    scheduleThoughtLogsAutoScroll(msg);
+    syncProcessTimelineLog(msg, {
+      ...data,
+      id: logId,
+      category: category !== "default" ? category : currentLog.category,
+      execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
+      started_at: currentLog.started_at ?? data.started_at,
+    });
     return;
   }
   msg.logs.push({
@@ -6329,7 +6030,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
     rowFilterApplied: data.row_filter_applied === true,
   });
-  scheduleThoughtLogsAutoScroll(msg);
+  syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);
 };
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
@@ -6343,11 +6044,19 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
       msg.isThinking = false;
       msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
-    } else if (data.content) {
+    } else if (
+      data.content &&
+      data.type !== "reasoning_content" &&
+      data.type !== "process_narration" &&
+      data.type !== "process_narration_commit" &&
+      data.type !== "process_narration_promote" &&
+      data.type !== "answer_delta" &&
+      data.type !== "retraction"
+    ) {
       const piece = sanitizeStreamContent(String(data.content || ""));
       if (piece) {
         if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
-        msg.content += piece;
+        appendAssistantBodyDelta(msg, piece);
         if (msg.isThinking) msg.isThinking = false;
         resetStallTimer();
       }
@@ -6389,7 +6098,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     const piece = sanitizeStreamContent(String(data.content || ""));
     if (piece) {
       if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
-      msg.content += piece;
+      appendAssistantBodyDelta(msg, piece);
       if (msg.isThinking) msg.isThinking = false;
       resetStallTimer();
     }
@@ -6751,22 +6460,20 @@ const sendMessage = async () => {
     const decoder = new TextDecoder();
     if (!reader) throw new Error("No body");
 
-    let buffer = ""; // 缓冲区，用于处理跨 chunk 的不完整行
+    const sseLineParser = createSseLineParser();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      // 最后一项可能是不完整的行，保留在缓冲区中
-      buffer = lines.pop() || "";
+      const dataLines = sseLineParser.feed(decoder.decode(value, { stream: true }));
 
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine || !trimmedLine.startsWith("data: ")) continue;
-
-        const dataStr = trimmedLine.slice(6).trim();
+      for (const dataStr of dataLines) {
         if (dataStr === "[DONE]") continue;
+
+        // Any SSE data frame means the stream is alive. Keep the fallback
+        // prompt hidden while logs, narration, tool events, or answer deltas
+        // continue to arrive; it should only appear during a true quiet gap.
+        resetStallTimer();
 
         try {
           const data = JSON.parse(dataStr);
@@ -6783,21 +6490,34 @@ const sendMessage = async () => {
               const thoughtText = data.thought || "No reasoning provided.";
               const agentName = data.selected_agent || "Unknown";
               const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
+              const routerId = "router_" + Date.now();
+              const routerDetails = `思考过程:\n${thoughtText}\n\n最终选择: ${agentName} ${conf}`;
               agentMsg.value.logs.push({
-                id: "router_" + Date.now(),
+                id: routerId,
                 title: "智能路由决策",
-                details: `思考过程:\n${thoughtText}\n\n最终选择: ${agentName} ${conf}`,
+                details: routerDetails,
                 status: "success",
                 isExpanded: false,
                 isRouter: true,
                 category: 'router',
                 execution_time_ms: data.execution_time_ms ?? null,
               });
+              syncProcessTimelineLog(agentMsg.value, {
+                id: routerId,
+                title: "智能路由决策",
+                details: routerDetails,
+                status: "success",
+                category: "router",
+                execution_time_ms: data.execution_time_ms ?? null,
+              }, "router");
             }
           } else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
             // Additive ChatBI evidence event; answer content stays unchanged.
           } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) {
-            if (data.type === "permission_required" && thoughtTimer) {
+            if (
+              (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
+              && thoughtTimer
+            ) {
               clearInterval(thoughtTimer);
               thoughtTimer = null;
             }
@@ -6844,13 +6564,13 @@ const sendMessage = async () => {
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "error";
             agentMsg.value.content += "\n\n> ❌ **服务异常**: " + (data.content || "未知错误");
-          } else if (data.type === "answer" || data.content) {
+          } else if (data.type === "answer" || data.type === "answer_delta" || data.content) {
             const piece = sanitizeStreamContent(String(data.content || ""));
             if (piece) {
               if (agentMsg.value.isThoughtExpanded && !agentMsg.value.content) {
                 agentMsg.value.isThoughtExpanded = false;
               }
-              agentMsg.value.content += piece;
+              appendAssistantBodyDelta(agentMsg.value, piece);
               resetStallTimer();
               if (agentMsg.value.isThinking) {
                 agentMsg.value.isThinking = false;
@@ -6871,8 +6591,22 @@ const sendMessage = async () => {
           }
           scrollToBottom();
         } catch (e) {
-          console.error("Failed to parse SSE line:", trimmedLine, e);
+          console.error("Failed to parse SSE event:", dataStr, e);
         }
+      }
+    }
+    for (const dataStr of sseLineParser.flush()) {
+      if (dataStr === "[DONE]") continue;
+      resetStallTimer();
+      try {
+        const data = JSON.parse(dataStr);
+        applyStreamTraceId(agentMsg.value, data);
+        if (data.type === "log") addEmbedLogFromStream(agentMsg.value, data);
+        else if (mergeStreamCitations(agentMsg.value, data)) continue;
+        else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) continue;
+        else if (data.content) appendAssistantBodyDelta(agentMsg.value, sanitizeStreamContent(String(data.content)));
+      } catch (e) {
+        console.error("Failed to parse final SSE event:", dataStr, e);
       }
     }
   } catch (e: any) {
@@ -6901,45 +6635,6 @@ const sendMessage = async () => {
 };
 
 const BOTTOM_THRESHOLD_PX = 80;
-const THOUGHT_LOGS_BOTTOM_THRESHOLD_PX = 48;
-
-/** 思考步骤限高滚动容器：按消息 id 绑定，流式新增时自动跟底 */
-const thoughtLogsEls = new Map<number, HTMLElement>();
-/** false = 用户在步骤列表里上滑阅读，暂停跟底 */
-const thoughtLogsFollow = new Map<number, boolean>();
-
-const bindThoughtLogsEl = (msgId: number, el: unknown) => {
-  if (el instanceof HTMLElement) {
-    thoughtLogsEls.set(msgId, el);
-    if (!thoughtLogsFollow.has(msgId)) thoughtLogsFollow.set(msgId, true);
-  } else {
-    thoughtLogsEls.delete(msgId);
-    thoughtLogsFollow.delete(msgId);
-  }
-};
-
-const onThoughtLogsScroll = (msgId: number, e: Event) => {
-  const el = e.target as HTMLDivElement;
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= THOUGHT_LOGS_BOTTOM_THRESHOLD_PX;
-  thoughtLogsFollow.set(msgId, nearBottom);
-};
-
-const scrollThoughtLogsToBottom = (msgId: number, force = false) => {
-  const el = thoughtLogsEls.get(msgId);
-  if (!el) return;
-  if (!force && thoughtLogsFollow.get(msgId) === false) return;
-  el.scrollTop = el.scrollHeight;
-  thoughtLogsFollow.set(msgId, true);
-};
-
-const scheduleThoughtLogsAutoScroll = (msg: Message, force = false) => {
-  if (!msg.isThinking || !msg.isThoughtExpanded) return;
-  nextTick(() => {
-    scrollThoughtLogsToBottom(msg.id, force);
-    // 布局偶发晚一帧（图标/两行标题），再补一次
-    requestAnimationFrame(() => scrollThoughtLogsToBottom(msg.id, force));
-  });
-};
 
 const runScrollToBottom = (force: boolean) => {
   const el = messagesContainer.value;
@@ -6962,10 +6657,6 @@ const runScrollToBottom = (force: boolean) => {
   } else {
     showNewMessageHint.value = true;
   }
-
-  // 外层跟底时，同步把正在思考的步骤列表滚到底
-  const thinkingMsg = [...messages.value].reverse().find((m) => m.isThinking && m.isThoughtExpanded);
-  if (thinkingMsg) scheduleThoughtLogsAutoScroll(thinkingMsg, force);
 };
 
 const scrollToBottom = (force = false) => {
@@ -7911,6 +7602,7 @@ onUnmounted(() => {
     opacity: 0.65;
   }
 }
+
 .animate-pulse-subtle {
   animation: pulse-subtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }

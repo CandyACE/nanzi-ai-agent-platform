@@ -1,3 +1,4 @@
+from datetime import datetime
 from types import SimpleNamespace
 from typing import AsyncIterator
 
@@ -5,6 +6,24 @@ import pytest
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+class _FakeOpenAIStream:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    def __aiter__(self):
+        return self._iterate()
+
+    async def _iterate(self):
+        for chunk in self._chunks:
+            yield chunk
 
 
 def test_llm_factory_builds_agentscope_model_config(monkeypatch):
@@ -61,6 +80,53 @@ def test_create_openai_chat_model_uses_agentscope_parameters():
     assert model.model == "deepseek-chat"
     assert model.stream is False
     assert model.parameters.temperature == 0.25
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_model_preserves_each_streamed_text_delta():
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="deepseek-chat",
+            streaming=True,
+        )
+    )
+
+    def chunk(text):
+        return SimpleNamespace(
+            id="response-1",
+            usage=None,
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=text,
+                        reasoning_content=None,
+                        reasoning=None,
+                        audio=None,
+                        tool_calls=None,
+                    )
+                )
+            ],
+        )
+
+    responses = [
+        response
+        async for response in model._parse_stream_response(
+            datetime.now(),
+            _FakeOpenAIStream([chunk("先查"), chunk("一下")]),
+        )
+    ]
+
+    assert [block.text for response in responses for block in response.content] == [
+        "先查",
+        "一下",
+    ]
 
 
 def test_create_openai_chat_model_applies_optional_context_and_output_limits():

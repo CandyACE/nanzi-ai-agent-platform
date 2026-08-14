@@ -50,17 +50,20 @@ import { createSseLineParser } from "@/utils/chartRenderer";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import {
   applyStreamTraceId,
+  appendAssistantBodyDelta,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   formatPermissionStatus,
   markStalePendingStreamLogs,
   mergeStreamCitations,
   resumeExternalExecutionStream,
+  syncProcessTimelineLog,
   type PendingExternalExecution,
   type PendingToolPermission,
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
+import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
 import {
   buildBusinessConfirmationUserMessage,
   type BusinessConfirmationField,
@@ -69,10 +72,8 @@ import {
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "@/composables/useTokenQuota";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
-import { isActiveThoughtStep, isDimmedThoughtStep } from "@/utils/turnLogDisplay";
 import {
   buildSkillFlowBadges,
-  skillFlowNoticeLabel,
   summarizeSkillFlowBadges,
   type SkillFlowBadge,
 } from "@/utils/skillFlowBadges";
@@ -83,7 +84,7 @@ import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCre
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
-import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
+import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
 import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
 import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
@@ -93,13 +94,8 @@ import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/w
 import { copyToClipboard } from "@/utils/clipboard";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
-  splitSqlToolLogDetails,
-  isSqlLikeToolLogDetails,
-  sqlToolLogBodyLabel,
-  resolveSavableSqlFromLog,
   canSaveGoldenReportFromMessage,
   resolveSavableSqlFromMessage,
-  logHasRowFilterApplied,
 } from "@/utils/toolLogDisplay";
 import {
   deriveSavedReportDescription,
@@ -125,8 +121,6 @@ import {
   useChatAttachments,
 } from "@/composables/chat/useChatAttachments";
 import { groupChatHistoryByDate } from "@/composables/chat/useChatHistoryGroups";
-import KnowledgeToolLogDetails from "@/components/KnowledgeToolLogDetails.vue";
-import { isKnowledgeToolLog } from "@/utils/knowledgeToolLog";
 
 const route = useRoute();
 const router = useRouter();
@@ -357,6 +351,10 @@ const isGeneralAgentMessage = (msg: Message): boolean => {
   return agent?.agent_type === "GENERAL";
 };
 
+const visibleStreamBody = (msg: Message): string => {
+  return msg.content || "";
+};
+
 const showAgentDropdown = ref(false);
 const agentDropdownRef = ref<HTMLElement | null>(null);
 
@@ -565,6 +563,7 @@ const loadSessionHistory = async (id: string) => {
           role: m.role === "assistant" ? "agent" : m.role,
           content: m.content as string,
           reasoningContent: m.reasoning_content || undefined,
+          processTimeline: hydrateHistoryProcessTimeline(m.process_timeline, m.reasoning_content),
           logs: [],
           isThinking: false,
           isHistory: true, // Mark as history
@@ -1275,6 +1274,10 @@ interface Message {
   rawContent?: string; // Store original markdown for copying
   logs?: LogEntry[];
   isThinking?: boolean;
+  processNarration?: string;
+  processNarrationPending?: string;
+  processTimeline?: import("@/utils/processTimeline").ProcessTimelineItem[];
+  isProcessNarrationExpanded?: boolean;
   timestamp?: string;
   intent?: string;
   rawPrompt?: any; // Store raw prompt data
@@ -3185,15 +3188,11 @@ const sendMessage = async () => {
                 agentContext.value = { ...agentContext.value, ...data.data };
               }
             }
-            // Handle Thinking State
-            else if (data.type === "thinking") {
-              // Maintain thinking state when receiving thinking continuation signals
-              if (data.status === "continuing") {
-                agentMsg.value.isThinking = true;
-              }
-            }
             else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)) {
-              if (data.type === "permission_required" && thoughtTimer) {
+              if (
+                (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
+                && thoughtTimer
+              ) {
                 clearInterval(thoughtTimer);
                 thoughtTimer = null;
               }
@@ -3210,13 +3209,13 @@ const sendMessage = async () => {
               }
             }
             // Handle Content Stream
-            else if (data.content) {
+            else if (data.type === "answer_delta" || data.content) {
               const piece = sanitizeStreamContent(String(data.content));
               if (piece) {
                 if (agentMsg.value.isThoughtExpanded && !agentMsg.value.content) {
                   agentMsg.value.isThoughtExpanded = false;
                 }
-                agentMsg.value.content += piece;
+                appendAssistantBodyDelta(agentMsg.value, piece);
                 if (agentMsg.value.isThinking) {
                   agentMsg.value.isThinking = false;
                   if (thoughtTimer) {
@@ -3332,6 +3331,7 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.isRouter !== undefined) existingLog.isRouter = data.isRouter;
     if (data.category !== undefined) existingLog.category = data.category as any;
     if (data.row_filter_applied === true) existingLog.rowFilterApplied = true;
+    syncProcessTimelineLog(msg, { ...data, id: logId }, existingLog.category);
   } else {
     // Categorization Logic for new logs
     let inferredCategory = (data.category as any) || 'default';
@@ -3342,6 +3342,7 @@ const addRealLog = (msg: Message, data: any) => {
       else if (titleLower.includes("knowledge") || titleLower.includes("知识") || titleLower.includes("检索") || titleLower.includes("分析")) inferredCategory = 'knowledge';
       else if (titleLower.includes("tool") || titleLower.includes("工具")) inferredCategory = 'tool';
       else if (titleLower.includes("intent") || titleLower.includes("意图")) inferredCategory = 'intent';
+      else if (titleLower.includes("model") || titleLower.includes("模型")) inferredCategory = 'model';
       else if (titleLower.includes("permission") || titleLower.includes("权限")) inferredCategory = 'permission';
     }
 
@@ -3359,6 +3360,7 @@ const addRealLog = (msg: Message, data: any) => {
       rowFilterApplied: data.row_filter_applied === true,
     };
     msg.logs.push(log);
+    syncProcessTimelineLog(msg, { ...data, id: logId, category: inferredCategory }, inferredCategory);
   }
 };
 
@@ -3413,11 +3415,19 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
       msg.isThinking = false;
       msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
-    } else if (data.content) {
+    } else if (
+      data.content &&
+      data.type !== "reasoning_content" &&
+      data.type !== "process_narration" &&
+      data.type !== "process_narration_commit" &&
+      data.type !== "process_narration_promote" &&
+      data.type !== "answer_delta" &&
+      data.type !== "retraction"
+    ) {
       const piece = sanitizeStreamContent(String(data.content));
       if (piece) {
         if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
-        msg.content += piece;
+        appendAssistantBodyDelta(msg, piece);
         if (msg.isThinking) {
           msg.isThinking = false;
           if (thoughtTimer) {
@@ -3498,7 +3508,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (msg.isThoughtExpanded && !msg.content) {
         msg.isThoughtExpanded = false;
       }
-      msg.content += piece;
+      appendAssistantBodyDelta(msg, piece);
       if (msg.isThinking) {
         msg.isThinking = false;
         if (thoughtTimer) {
@@ -3599,25 +3609,6 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
     });
   }
-};
-
-const toggleLog = (log: LogEntry) => {
-  log.isExpanded = !log.isExpanded;
-};
-
-// Simple Table Renderer Helper
-const tryRenderTable = (text: string) => {
-  try {
-    if (!text.trim().startsWith("[")) return null;
-    const data = JSON.parse(text);
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object") {
-      const cols = Object.keys(data[0]);
-      return { cols, rows: data };
-    }
-  } catch (e) {
-    return null;
-  }
-  return null;
 };
 
 onUnmounted(() => {
@@ -3841,7 +3832,7 @@ onUnmounted(() => {
             />
           </svg>
           <span class="font-medium text-gray-800"
-            >智能体测评</span
+            >智能体调试</span
           >
         </div>
         <div class="flex items-center space-x-4">
@@ -4424,247 +4415,26 @@ onUnmounted(() => {
 
               <!-- Agent Message Bubble (Unified Card Style) -->
               <div
-                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || msg.content || msg.reasoningContent || msg.isThinking || (msg.citations && msg.citations.length > 0)"
-                class="bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-900/20 dark:to-gray-800 rounded-2xl rounded-tl-none border border-gray-200 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 shadow-sm p-4 overflow-hidden"
+                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || msg.content || msg.reasoningContent || msg.processNarration || msg.processNarrationPending || msg.isThinking || (msg.citations && msg.citations.length > 0)"
+                :class="msg.content || (msg.citations && msg.citations.length) || msg.chatbiInsight
+                  ? 'bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-900/20 dark:to-gray-800 rounded-2xl rounded-tl-none border border-gray-200 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 shadow-sm p-4 overflow-hidden'
+                  : 'overflow-visible bg-transparent'"
               >
-              <!-- Logs (Collapsible Thought Accordion) -->
-              <div v-if="!msg.isGreeting && msg.logs && msg.logs.length > 0" class="mb-3">
-                <!-- Header -->
-                <ChatThinkingHeader
-                  v-model:expanded="msg.isThoughtExpanded"
-                  :is-thinking="msg.isThinking"
-                  :title="msg.isThinking ? (msg.thinkingText || '思考中...') : '深度思考过程'"
-                  :step-count="msg.logs.length"
-                  :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
-                  :duration="msg.thoughtDuration"
-                  bordered
-                />
-
-                <!-- Body -->
-                <transition
-                  enter-active-class="transition-all duration-300 ease-out"
-                  enter-from-class="opacity-0 max-h-0"
-                  enter-to-class="opacity-100 max-h-[500px]"
-                  leave-active-class="transition-all duration-200 ease-in"
-                  leave-from-class="opacity-100 max-h-[500px]"
-                  leave-to-class="opacity-0 max-h-0"
-                >
-                  <div
-                    v-show="msg.isThoughtExpanded"
-                    class="overflow-hidden"
-                  >
-                    <!-- Ecosystem Skills Notice -->
-                    <div v-if="getSkillFlowBadgesForMessage(msg, messages).length > 0" class="mt-2 ml-2 pl-4 flex flex-col gap-1.5">
-                      <div class="flex items-center space-x-1.5 text-xs text-purple-700 dark:text-purple-400 font-semibold bg-purple-50/50 dark:bg-purple-950/10 border border-purple-100/60 dark:border-purple-900/20 rounded-lg px-3 py-2">
-                        <span class="text-[14px]">⚡</span>
-                        <span>{{ skillFlowNoticeLabel(getSkillFlowBadgesForMessage(msg, messages)) }}</span>
-                        <div class="flex flex-wrap gap-1">
-                          <span
-                            v-for="skill in getSkillFlowBadgesForMessage(msg, messages)"
-                            :key="skill.key"
-                            class="px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/40 text-[10px] font-bold border border-purple-200/50 dark:border-purple-800/30"
-                            :title="skill.description"
-                          >
-                            {{ skill.label }}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="relative space-y-0.5 py-1">
-                      <div
-                        v-for="log in msg.logs"
-                        :key="log.id"
-                        class="relative group/log transition-opacity duration-300"
-                        :class="{ 'opacity-45 group-hover/log:opacity-80': isDimmedThoughtStep(log, msg.isThinking) }"
-                      >
-                        <!-- Log Card (Lightweight Row) -->
-                        <div
-                            class="rounded-lg px-1.5 py-1 text-xs transition-all duration-300 cursor-pointer"
-                            :class="{
-                               'border-l-2 border-primary/55 bg-primary/[0.04] pl-2': isActiveThoughtStep(log, msg.isThinking),
-                               'bg-transparent hover:bg-gray-50': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
-                               'bg-red-50/30 hover:bg-red-50/50 border border-red-100': log.status === 'error'
-                            }"
-                            @click="toggleLog(log)"
-                        >
-                            <!-- Card Header -->
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="flex-1 min-w-0 flex items-center gap-2">
-                                    <!-- Semantic Icon -->
-                                    <span class="text-[13px] flex-shrink-0" :class="{ 'animate-pulse': log.status === 'pending' }">
-                                        <template v-if="log.status === 'error'">⚠️</template>
-                                        <template v-else-if="log.category === 'router'">🧠</template>
-                                        <template v-else-if="log.category === 'tool' || log.category === 'sql' || log.category === 'knowledge'">🛠️</template>
-                                        <template v-else-if="log.category === 'permission'">🔒</template>
-                                        <template v-else-if="log.category === 'intent'">🎯</template>
-                                        <template v-else>🤖</template>
-                                    </span>
-
-                                    <!-- Title & Meta -->
-                                    <div class="flex items-center gap-1.5 flex-wrap min-w-0">
-                                        <!-- Title -->
-                                        <span class="font-medium flex items-center gap-1 truncate" :class="{
-                                          'text-red-700': log.status === 'error',
-                                          'text-gray-800': isActiveThoughtStep(log, msg.isThinking),
-                                          'text-gray-700': !isActiveThoughtStep(log, msg.isThinking) && log.status !== 'error',
-                                        }">
-                                            <span>{{ log.title }}</span>
-                                            <span
-                                              v-if="logHasRowFilterApplied(log)"
-                                              class="flex-shrink-0 text-[12px]"
-                                              title="已按行级数据权限改写 SQL"
-                                            >🔒</span>
-                                            <span
-                                              v-if="log.status === 'success' && (log.category === 'sql' || (log.title && log.title.toLowerCase().includes('sql')))"
-                                              class="text-emerald-500 font-bold ml-1 flex-shrink-0 select-none"
-                                            >
-                                              ☑
-                                            </span>
-                                            <span
-                                              v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                              class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 scale-90 sm:scale-100 origin-center"
-                                            >
-                                              进行中
-                                            </span>
-                                            <span v-else-if="log.status === 'pending'" class="text-[10px] text-gray-400 animate-pulse">...</span>
-                                        </span>
-
-                                        <!-- Category Badge -->
-                                        <span v-if="log.category && log.category !== 'default'" class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
-                                          :class="{
-                                            'bg-blue-50 text-blue-600 border border-blue-200': log.category === 'router',
-                                            'bg-violet-50 text-violet-600 border border-violet-200': log.category === 'intent',
-                                            'bg-yellow-50 text-yellow-600 border border-yellow-200': log.category === 'sql',
-                                            'bg-amber-50 text-amber-600 border border-amber-200': log.category === 'knowledge',
-                                            'bg-indigo-50 text-indigo-600 border border-indigo-200': log.category === 'tool',
-                                            'bg-emerald-50 text-emerald-600 border border-emerald-200': log.category === 'permission'
-                                          }"
-                                        >
-                                          {{ log.category }}
-                                        </span>
-
-                                        <!-- Model Info Badge (Debug Only) -->
-                                        <span
-                                          v-if="log.model"
-                                          class="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 text-[9px] text-gray-500 font-mono flex items-center"
-                                          :title="`执行模型: ${log.model} / Temp: ${log.temperature ?? 'N/A'}`"
-                                        >
-                                          <svg class="w-2.5 h-2.5 mr-1 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                                          </svg>
-                                          {{ log.model }}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <!-- Chevron & Copy Actions -->
-                                <div class="flex items-center gap-2 flex-shrink-0">
-                                  <button
-                                    v-if="log.details && log.isExpanded"
-                                    @click.stop="copyContent(log.details, $event)"
-                                    class="p-1 text-gray-400 hover:text-primary transition-all rounded hover:bg-white border border-transparent hover:border-gray-100 shadow-none hover:shadow-sm"
-                                    title="复制详情"
-                                  >
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    </svg>
-                                  </button>
-                                  <svg v-if="log.details" class="w-3 h-3 text-gray-400 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-                                </div>
-                            </div>
-
-                            <!-- Card Body (Details) -->
-                            <div v-show="log.isExpanded" class="mt-2 pt-2 border-t border-gray-100">
-                                 <!-- 1. Knowledge tool log -->
-                                <KnowledgeToolLogDetails
-                                  v-if="isKnowledgeToolLog(log.details)"
-                                  :details="log.details"
-                                />
-
-                                <!-- 2. Auto Table Rendering -->
-                                <div v-else-if="tryRenderTable(log.details)" class="overflow-x-auto border rounded-lg bg-white">
-                                    <table class="min-w-full text-xs text-left text-gray-500">
-                                        <thead class="bg-gray-50 text-gray-700 uppercase font-bold">
-                                            <tr>
-                                                <th v-for="col in tryRenderTable(log.details)?.cols" :key="col" class="px-3 py-2 border-b border-gray-200 whitespace-nowrap">{{ col }}</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody class="divide-y divide-gray-100">
-                                            <tr v-for="(row, idx) in tryRenderTable(log.details)?.rows" :key="idx" class="hover:bg-gray-50/50">
-                                                <td v-for="col in tryRenderTable(log.details)?.cols" :key="col" class="px-3 py-2 whitespace-nowrap font-mono text-gray-600">{{ (row as any)[col] }}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                <!-- 3. SQL + Result split (ChatBI success) -->
-                                <div v-if="splitSqlToolLogDetails(log.details)" class="space-y-1.5">
-                                    <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
-                                        <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
-                                          <span>SQL Query</span>
-                                          <div class="flex items-center space-x-2">
-                                            <template v-if="resolveSavableSqlFromLog(log)">
-                                              <button @click.stop="openSaveReportModal(resolveSavableSqlFromLog(log)!, msg)" class="text-gray-600 hover:text-primary transition-colors" title="添加为黄金报表">添加黄金报表</button>
-                                              <span class="text-gray-700">|</span>
-                                            </template>
-                                            <button @click.stop="copyContent(splitSqlToolLogDetails(log.details)!.sqlPart, $event)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
-                                          </div>
-                                        </div>
-                                        <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.sqlPart }}</pre>
-                                    </div>
-                                    <div class="p-2 rounded border font-mono text-[10px] leading-relaxed overflow-x-auto"
-                                         :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error'
-                                           ? 'bg-red-50 border-red-200 text-red-700'
-                                           : 'bg-gray-50 border-gray-200 text-gray-600'">
-                                        <div class="mb-1 text-[9px] font-sans uppercase tracking-tight"
-                                             :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error' ? 'text-red-500' : 'text-gray-500'">
-                                          {{ sqlToolLogBodyLabel(splitSqlToolLogDetails(log.details)!.bodyKind) }}
-                                        </div>
-                                        <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.bodyPart }}</pre>
-                                    </div>
-                                    <pre v-if="splitSqlToolLogDetails(log.details)!.trailingPart" class="font-mono text-[10px] text-amber-600 whitespace-pre-wrap break-all leading-relaxed">{{ splitSqlToolLogDetails(log.details)!.trailingPart }}</pre>
-                                </div>
-
-                                <!-- 4. SQL Detection & Pretty Print (legacy / error-only) -->
-                                <div v-else-if="log.details && isSqlLikeToolLogDetails(log.details)" class="space-y-1.5">
-                                    <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
-                                        <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
-                                          <span>SQL Query</span>
-                                          <div class="flex items-center space-x-2">
-                                            <button @click.stop="copyContent(log.details, $event)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
-                                          </div>
-                                        </div>
-                                        <pre class="whitespace-pre-wrap break-all">{{ log.details }}</pre>
-                                    </div>
-                                </div>
-
-                                <!-- 5. Default JSON/Text -->
-                                <pre v-else class="font-mono text-[10px] text-gray-500 whitespace-pre-wrap break-all leading-relaxed">{{ log.details }}</pre>
-                            </div>
-                        </div>
-                      </div>
-
-                      <!-- Dynamic Next Step Indicator -->
-                      <div
-                        v-if="msg.isThinking"
-                        class="pl-1 pb-1 pt-1 mt-2"
-                      >
-                        <div class="flex items-center space-x-3 text-[11px] text-gray-500 font-medium">
-                          <div class="relative flex h-2 w-2 -left-[5px]">
-                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-40"></span>
-                            <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                          </div>
-                          <span class="animate-pulse tracking-wide italic">
-                            {{ msg.logs && msg.logs.length > 0 ? '正在执行下一步...' : '正在初始化...' }}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </transition>
-              </div>
-              <!-- Close the v-if="msg.logs && msg.logs.length > 0" container -->
+              <ChatExecutionTimeline
+                v-model="msg.isThoughtExpanded"
+                :timeline="msg.processTimeline"
+                :logs="msg.logs"
+                :reasoning-content="msg.reasoningContent"
+                :process-narration="msg.processNarration"
+                :process-narration-pending="msg.processNarrationPending"
+                :is-thinking="msg.isThinking"
+                :has-answer="Boolean(msg.content)"
+                :thinking-text="msg.thinkingText"
+                :duration="msg.thoughtDuration"
+                :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
+                :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
+                bordered
+              />
 
               <!-- Tool Permission Confirmation -->
               <div
@@ -4787,37 +4557,9 @@ onUnmounted(() => {
                 @action="(action) => handleGroundingAction(msg.groundingBlocked, action)"
               />
 
-              <!-- Model reasoning is rendered separately from the final answer. -->
-              <div
-                v-if="msg.reasoningContent"
-                class="reasoning-content-panel mb-3 overflow-hidden rounded-r-xl border-l-4 border-slate-200 bg-slate-50/75 text-sm dark:border-slate-600 dark:bg-slate-800/40"
-              >
-                <button
-                  type="button"
-                  class="flex w-full items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2 text-left text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100/70 dark:border-slate-700/70 dark:text-slate-300 dark:hover:bg-slate-700/30"
-                  :aria-expanded="msg.isReasoningExpanded === true"
-                  @click="msg.isReasoningExpanded = !msg.isReasoningExpanded"
-                >
-                  <span class="inline-flex items-center gap-1.5">
-                    <span aria-hidden="true" class="text-slate-400">💭</span>
-                    <span>本次会话已启用模型思考推理</span>
-                  </span>
-                  <span class="inline-flex items-center gap-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
-                    <span v-if="msg.isThinking">进行中</span>
-                    <span class="text-sm transition-transform" :class="msg.isReasoningExpanded === true ? 'rotate-180' : ''" aria-hidden="true">⌄</span>
-                  </span>
-                </button>
-                <div v-show="msg.isReasoningExpanded === true" class="max-h-[min(360px,45vh)] overflow-y-auto px-3 py-2 text-slate-600 dark:text-slate-300">
-                  <MessageRenderer
-                    :content="msg.reasoningContent"
-                    @open-canvas="handleOpenCanvas"
-                  />
-                </div>
-              </div>
-
               <!-- Main Content -->
               <div
-                v-if="msg.content && !msg.groundingBlocked"
+                v-if="visibleStreamBody(msg) && !msg.groundingBlocked"
                 class="relative group/content mt-2 text-gray-800 leading-relaxed markdown-body"
               >
                 <!-- Floating Copy Button -->
@@ -4854,7 +4596,7 @@ onUnmounted(() => {
                 </div>
                 <MessageRenderer
                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
-                  :content="msg.content"
+                  :content="visibleStreamBody(msg)"
                   :hide-quick-buttons="!!msg.businessConfirmation"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
@@ -4894,7 +4636,7 @@ onUnmounted(() => {
 	                />
                 <!-- 复制 / 导出 / 点赞踩（托管 RAGFlow、OpenClaw 不展示点赞踩） -->
                 <div
-                  v-if="msg.role === 'agent' && !msg.isThinking && (msg.content || msg.trace_id || canSaveGoldenReportFromMessage(msg) || !hideDebugLikeDislikeForHostedAgent)"
+                  v-if="msg.role === 'agent' && !msg.isThinking && !(isProcessing && messages.indexOf(msg) === messages.length - 1) && (msg.content || msg.trace_id || canSaveGoldenReportFromMessage(msg) || !hideDebugLikeDislikeForHostedAgent)"
                   class="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-50 opacity-20 hover:opacity-100 group-hover/content:opacity-100 transition-opacity"
                   :class="{'!opacity-100': msg.feedback && !hideDebugLikeDislikeForHostedAgent}"
                 >

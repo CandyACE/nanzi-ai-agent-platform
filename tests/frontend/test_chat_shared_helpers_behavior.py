@@ -9,7 +9,24 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 
 
-def _run_typescript(module_path: str, expression: str, require_setup: str = "const requireModule = require;"):
+def _run_typescript(module_path: str, expression: str, require_setup: str | None = None):
+    if require_setup is None:
+        require_setup = f"""
+const path = require('path');
+const requireModule = id => {{
+  if (id.startsWith('./')) {{
+    const dependencyPath = path.resolve(path.dirname({json.dumps(module_path)}), id + '.ts');
+    const dependencySource = fs.readFileSync(dependencyPath, 'utf8');
+    const dependencyCode = ts.transpileModule(dependencySource, {{
+      compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
+    }}).outputText;
+    const dependencyRef = {{ exports: {{}} }};
+    new Function('module', 'exports', 'require', dependencyCode)(dependencyRef, dependencyRef.exports, requireModule);
+    return dependencyRef.exports;
+  }}
+  return require(id);
+}};
+"""
     script = f"""
 (async () => {{
 const fs = require('fs');
@@ -88,6 +105,698 @@ return { consumed, content: msg.content, reasoningContent: msg.reasoningContent 
         "content": "回答",
         "reasoningContent": "思考片段",
     }
+
+
+def test_agentscope_stream_dispatcher_appends_answer_delta_incrementally():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', isThinking: true };
+const consumed = api.dispatchAgentscopeStreamEvent(
+  msg,
+  { type: 'answer_delta', content: '正文片段', phase: 'synthesis' },
+  () => {}
+);
+return { consumed, content: msg.content, isThinking: msg.isThinking };
+""",
+    )
+
+    assert result == {
+        "consumed": True,
+        "content": "正文片段",
+        "isThinking": False,
+    }
+
+
+def test_process_narration_handler_is_shared_across_chat_surfaces():
+    handlers = (ROOT / "frontend/src/utils/agentscopeSseHandlers.ts").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    assert "export function applyProcessNarrationEvent" in handlers
+    assert "export function collapseSecondaryFoldsOnBody" in handlers
+    assert "export function appendAssistantBodyDelta" in handlers
+    assert "export function isDuplicateAssistantBodyDelta" in handlers
+    assert "msg.isProcessNarrationExpanded = false" in handlers
+    assert "msg.isReasoningExpanded = false" in handlers
+    assert "msg.isThoughtExpanded = false" in handlers
+    assert "appendAssistantBodyDelta" in embed
+    assert "appendAssistantBodyDelta" in debug
+    assert 'case "process_narration":' in handlers
+    assert 'case "process_narration_commit":' in handlers
+    assert 'case "process_narration_promote":' in handlers
+    assert 'case "retraction":' in handlers
+    assert "data.final === false" in handlers
+    assert "msg.processNarrationPending" in handlers
+    assert "msg.isThinking = false" in handlers
+    assert "<ChatExecutionTimeline" in embed
+    assert "<ChatExecutionTimeline" in debug
+    assert "processTimeline" in handlers
+    assert "syncProcessTimelineLog" in embed
+    assert "syncProcessTimelineLog" in debug
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    assert ':title="headerTitle"' in timeline
+    assert '"思考完成"' in timeline
+    assert "resolveTimelineCurrentStep" in timeline
+    assert "timelineHasPending" in timeline
+    assert "item.kind === 'text'" in timeline
+    assert "item.status === 'pending'" in timeline
+    assert "process_narration_promote" in embed
+    assert "process_narration_promote" in debug
+    assert ':skill-badges="getSkillFlowBadgesForMessage(msg, messages)"' in embed
+    assert ':skill-badges="getSkillFlowBadgesForMessage(msg, messages)"' in debug
+    assert "skillNoticeLabel" in timeline
+    assert "深度思考" in timeline
+    assert "item.textKind === 'reasoning'" in timeline
+    assert "💭" in timeline
+    assert "isReasoningBodyOpen" in timeline
+    assert "isReasoningContentExpanded" in timeline
+    assert "formatDuration(item.execution_time_ms)" in timeline
+    assert "item.textKind === 'reasoning' ? '🧠'" not in timeline
+    assert "text-violet-500" not in timeline
+    assert "<blockquote" in timeline
+    assert "border-l-2 border-gray-200" in timeline
+    assert "🔧" in timeline
+    assert "🛠️" not in timeline
+    assert "inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" in timeline
+    assert "shrink-0 truncate rounded-full border border-purple-100 bg-purple-50" in (
+        ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue"
+    ).read_text(encoding="utf-8")
+
+
+def test_embed_chat_treats_every_parsed_sse_event_as_stream_activity():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "if (dataStr === \"[DONE]\") continue;\n\n        // Any SSE data frame" in embed
+    assert "// Any SSE data frame means the stream is alive" in embed
+    assert "if (dataStr === \"[DONE]\") continue;\n      resetStallTimer();\n      try" in embed
+
+
+def test_execution_timeline_uses_readable_width_cap_instead_of_full_column():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    header = (ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    assert "max-w-[42rem]" in timeline
+    assert "lg:max-w-[48rem]" in timeline
+    assert "2xl:max-w-[52rem]" in timeline
+    assert "max-w-[90%]" not in timeline
+    assert "bg-gray-50/90" not in timeline
+    assert "dark:bg-gray-800/80" not in timeline
+    assert 'class="min-w-0 flex-1 truncate text-[10px] font-normal text-gray-400"' in header
+    assert "visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation" in embed
+    assert "'min-h-0 bg-transparent'" in embed
+    assert "msg.content || (msg.citations && msg.citations.length) || msg.chatbiInsight" in debug
+    assert "'overflow-visible bg-transparent'" in debug
+    assert "w-full max-w-[90%] min-w-0" in embed
+    assert "flex space-x-3 items-start max-w-[90%]" in debug
+
+
+def test_execution_timeline_uses_compact_nested_step_spacing():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert 'class="mt-0.5 space-y-0.5 px-1 py-0.5"' in timeline
+    assert "overflow-y-auto" not in timeline
+    assert "max-h-[min(520px,60vh)]" not in timeline
+    assert 'class="rounded-md px-1 py-0.5 text-[12px] leading-5' in timeline
+    assert 'class="ml-5 mt-0.5 border-l' in timeline
+    assert 'class="mb-0 flex items-center gap-1 text-[10px]' in timeline
+    assert 'class="space-y-0"' in timeline
+    assert 'class="rounded-md px-1 py-0.5 text-[11px]' in timeline
+
+
+def test_execution_timeline_pending_rows_use_indicator_without_full_row_background():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert "'border-l-2 border-primary/60': child.status === 'pending'" not in timeline
+    assert "'border-l-2 border-primary/60': item.status === 'pending'" not in timeline
+    assert "bg-primary/[0.05]" not in timeline
+    assert "dark:bg-primary/10" not in timeline
+
+
+def test_execution_timeline_pending_indicator_precedes_content_and_action_rows_align_duration():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert timeline.count('class="flex w-full items-center gap-2 text-left"') == 2
+    assert 'class="thought-status-dot shrink-0"' in timeline
+    assert timeline.index('class="thought-status-dot shrink-0"') < timeline.index('class="min-w-0 flex-1 truncate"')
+    assert 'class="w-fit max-w-full whitespace-pre-wrap break-words font-sans"' in timeline
+
+
+def test_execution_timeline_does_not_use_thought_shimmer():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    process_timeline = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    assert "thought-shimmer-text" not in timeline
+    assert "shouldShowThoughtShimmer" not in process_timeline
+    assert "thought-shimmer-text" not in embed
+    assert "thought-shimmer-text" not in debug
+
+
+def test_embed_chat_pending_log_rows_do_not_use_blue_active_border():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "border-l-2 border-primary/55" not in embed
+
+
+def test_process_narration_does_not_enter_the_body_until_promote():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [], isThinking: true };
+api.dispatchAgentscopeStreamEvent(msg, { type: 'process_narration', content: '我先查询。' }, () => {});
+const mid = { content: msg.content, pending: msg.processTimeline[0]?.pending, isThinking: msg.isThinking };
+api.dispatchAgentscopeStreamEvent(msg, { type: 'process_narration_promote', content: '我先查询。' }, () => {});
+return {
+  mid,
+  content: msg.content,
+  timeline: msg.processTimeline,
+  isThinking: msg.isThinking,
+};
+""",
+    )
+
+    assert result["mid"] == {"content": "", "pending": True, "isThinking": True}
+    assert result["content"] == "我先查询。"
+    assert result["timeline"] == []
+    assert result["isThinking"] is False
+
+
+def test_process_narration_from_parallel_agents_stays_on_separate_timeline_items():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [] };
+api.dispatchAgentscopeStreamEvent(msg, { type: 'process_narration', content: '先查营收', agent_name: 'PrimaryAgent' }, () => {});
+api.dispatchAgentscopeStreamEvent(msg, { type: 'process_narration', content: '先检索手册', agent_name: 'SecondaryAgent' }, () => {});
+api.dispatchAgentscopeStreamEvent(msg, { type: 'process_narration_commit', content: '先查营收', agent_name: 'PrimaryAgent' }, () => {});
+return msg.processTimeline.map((item) => ({
+  content: item.content,
+  pending: item.pending,
+  sourceId: item.sourceId,
+}));
+""",
+    )
+
+    assert result == [
+        {"content": "先查营收", "pending": False, "sourceId": "PrimaryAgent"},
+        {"content": "先检索手册", "pending": True, "sourceId": "SecondaryAgent"},
+    ]
+
+
+def test_thinking_end_finishes_pending_reasoning_in_shared_dispatcher():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [] };
+api.dispatchAgentscopeStreamEvent(msg, { type: 'reasoning_content', content: '内部推理' }, () => {});
+api.dispatchAgentscopeStreamEvent(msg, { type: 'thinking', phase: 'end' }, () => {});
+return msg.processTimeline;
+""",
+    )
+
+    assert result[0]["textKind"] == "reasoning"
+    assert result[0]["pending"] is False
+    assert result[0]["execution_time_ms"] >= 1
+
+
+def test_agent_debug_routes_thinking_through_shared_dispatcher():
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+    main_loop = debug.split("const sendMessage")[-1].split("const applyPermissionStreamEvent")[0]
+    thinking_before_dispatch = main_loop.find('else if (data.type === "thinking")')
+    dispatch_idx = main_loop.find("dispatchAgentscopeStreamEvent(agentMsg.value")
+    assert dispatch_idx >= 0
+    assert thinking_before_dispatch == -1 or thinking_before_dispatch > dispatch_idx
+
+
+def test_process_narration_promote_removes_candidate_from_message_and_timeline():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [] };
+api.applyProcessNarrationEvent(msg, { type: 'process_narration', content: '你好，我先介绍一下能力。' });
+api.applyProcessNarrationEvent(msg, { type: 'process_narration_promote', content: '你好，我先介绍一下能力。' });
+return {
+  content: msg.content,
+  processNarration: msg.processNarration || '',
+  processNarrationPending: msg.processNarrationPending || '',
+  timeline: msg.processTimeline
+};
+""",
+    )
+
+    assert result == {
+        "content": "你好，我先介绍一下能力。",
+        "processNarration": "",
+        "processNarrationPending": "",
+        "timeline": [],
+    }
+
+
+def test_promote_with_leading_newline_removes_candidate_when_body_already_started():
+    """正文以 \\n\\n 开头且与文字同 chunk 时，promote 也应删掉时间线候选，避免整段正文重复展示。"""
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '上一轮正文', processTimeline: [] };
+api.applyProcessNarrationEvent(msg, { type: 'process_narration', content: '\\n\\n最终报告第一段' });
+api.applyProcessNarrationEvent(msg, { type: 'process_narration', content: '第二段' });
+api.applyProcessNarrationEvent(msg, { type: 'process_narration_promote', content: '\\n\\n最终报告第一段第二段' });
+return msg.processTimeline;
+""",
+    )
+
+    assert result == []
+
+
+def test_promote_with_crlf_removes_candidate_when_body_already_started():
+    """正文含 \\r\\n 换行时，promote 也应删掉时间线候选，避免与正文气泡重复。"""
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '上一轮正文', processTimeline: [] };
+api.applyProcessNarrationEvent(msg, { type: 'process_narration', content: '最终报告\\r\\n第一段' });
+api.applyProcessNarrationEvent(msg, { type: 'process_narration_promote', content: '最终报告\\r\\n第一段' });
+return msg.processTimeline;
+""",
+    )
+
+    assert result == []
+
+
+def test_process_narration_collapses_blank_lines_without_touching_answer_text():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [] };
+api.applyProcessNarrationEvent(msg, { type: 'process_narration', content: '\\n\\n\\n我先查询。\\n\\n' });
+api.applyProcessNarrationEvent(msg, { type: 'process_narration', content: '\\n\\n然后整理结果。\\n\\n\\n' });
+api.applyProcessNarrationEvent(msg, { type: 'process_narration_commit', content: '\\n\\n\\n我先查询。\\n\\n然后整理结果。\\n\\n\\n' });
+return {
+  narration: msg.processNarration,
+  pending: msg.processNarrationPending,
+  timeline: msg.processTimeline,
+  answer: msg.content,
+};
+""",
+    )
+
+    assert result["narration"] == "我先查询。\n\n然后整理结果。"
+    assert result["pending"] == ""
+    assert result["timeline"][0]["content"] == "我先查询。\n\n然后整理结果。"
+    assert result["answer"] == ""
+
+
+def test_plain_answer_delta_discards_only_uncommitted_narration_candidate():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const noTool = { content: '', processTimeline: [] };
+api.applyProcessNarrationEvent(noTool, { type: 'process_narration', content: '你好。' });
+api.appendAssistantBodyDelta(noTool, '你好。');
+
+const withTool = { content: '', processTimeline: [] };
+api.applyProcessNarrationEvent(withTool, { type: 'process_narration', content: '我先查询。' });
+api.applyProcessNarrationEvent(withTool, { type: 'process_narration_commit', content: '我先查询。' });
+api.appendAssistantBodyDelta(withTool, '最终结果');
+
+return {
+  noTool: noTool.processTimeline,
+  withTool: withTool.processTimeline,
+};
+""",
+    )
+
+    assert result["noTool"] == []
+    assert result["withTool"][0]["content"] == "我先查询。"
+    assert result["withTool"][0]["pending"] is False
+
+
+def test_append_assistant_body_delta_skips_replayed_full_answer():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const intro = '好的，根据已获取的公开信息，为您整理晋景新能 (01783.HK) 的最新情况。';
+const body = intro + '\\n\\n' + '正文段落。'.repeat(12);
+const msg = { content: body, processTimeline: [] };
+api.appendAssistantBodyDelta(msg, 'Let me fetch detailed reports.' + body.replace(/\\n\\n/g, ''));
+api.appendAssistantBodyDelta(msg, '补充一句新结论。');
+const incremental = { content: intro, processTimeline: [] };
+api.appendAssistantBodyDelta(incremental, '继续往下写。');
+return {
+  skippedReplay: msg.content,
+  incremental: incremental.content,
+};
+""",
+    )
+
+    assert result["skippedReplay"].startswith("好的，根据已获取的公开信息")
+    assert result["skippedReplay"].count("好的，根据已获取的公开信息") == 1
+    assert result["skippedReplay"].endswith("补充一句新结论。")
+    assert result["incremental"] == "好的，根据已获取的公开信息，为您整理晋景新能 (01783.HK) 的最新情况。继续往下写。"
+
+
+def test_append_assistant_body_delta_keeps_unique_suffix_when_whitespace_differs():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const streamed = 'Hello world. More text here that is long.';
+const msg = { content: streamed, processTimeline: [] };
+api.appendAssistantBodyDelta(msg, 'Hello world.\\nMore text here that is long. UNIQUE CONCLUSION.');
+return msg.content;
+""",
+    )
+
+    assert result.startswith("Hello world.")
+    assert result.count("Hello world.") == 1
+    assert result.endswith("UNIQUE CONCLUSION.")
+
+
+def test_process_timeline_keeps_narration_and_tool_order_and_updates_tool_details():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineNarrationDelta(target, '先查时间');
+api.commitTimelineNarration(target, '先查时间');
+api.upsertTimelineLog(target, { id: 'tool-1', title: '调用工具: time', status: 'pending', category: 'tool' });
+api.upsertTimelineLog(target, { id: 'tool-1', details: '结果: 12:00', status: 'success' });
+api.appendTimelineNarrationDelta(target, '再整理结果');
+return target.processTimeline;
+""",
+    )
+
+    assert [item["kind"] for item in result] == ["text", "text"]
+    assert result[0]["content"] == "先查时间"
+    assert result[0]["children"][0]["details"] == "结果: 12:00"
+    assert result[0]["children"][0]["status"] == "success"
+    assert result[1]["content"] == "再整理结果"
+
+
+def test_process_timeline_groups_following_tools_under_committed_narration():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineNarrationDelta(target, '我先查看负载。');
+api.commitTimelineNarration(target, '我先查看负载。');
+api.upsertTimelineLog(target, { id: 'bash', title: '工具完成: Bash', details: '', status: 'success', category: 'tool' });
+api.upsertTimelineLog(target, { id: 'process', title: '工具完成: list_process', details: '', status: 'success', category: 'tool' });
+api.appendTimelineNarrationDelta(target, '我已拿到数据。');
+api.commitTimelineNarration(target, '我已拿到数据。');
+api.upsertTimelineLog(target, { id: 'top-level', title: '模型调用: DeepSeek', details: '', status: 'success', category: 'model' });
+return target.processTimeline;
+""",
+    )
+
+    assert result[0]["kind"] == "text"
+    assert [child["id"] for child in result[0]["children"]] == ["bash", "process"]
+    assert result[1]["kind"] == "text"
+    assert result[1]["children"] == []
+    assert result[2]["kind"] == "log"
+
+
+def test_process_timeline_keeps_tool_at_top_level_without_committed_narration():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.upsertTimelineLog(target, { id: 'tool-1', title: '工具完成: Bash', details: '', status: 'success', category: 'tool' });
+return target.processTimeline;
+""",
+    )
+
+    assert result == [{
+        "kind": "log",
+        "id": "tool-1",
+        "title": "工具完成: Bash",
+        "details": "",
+        "status": "success",
+        "category": "tool",
+        "isExpanded": False,
+    }]
+
+
+def test_hydrate_history_process_timeline_drops_pending_and_appends_reasoning():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+return api.hydrateHistoryProcessTimeline(
+  [
+    { kind: 'text', id: 'n1', textKind: 'narration', content: '我先搜一下', pending: false, children: [] },
+    { kind: 'text', id: 'n2', textKind: 'narration', content: '最终报告', pending: true },
+    { kind: 'log', id: 'tool-1', title: '调用工具: search', details: 'ok', status: 'success', category: 'tool' },
+  ],
+  '深度思考正文',
+);
+""",
+    )
+
+    kinds = [(item["kind"], item.get("textKind"), item.get("pending")) for item in result]
+    assert ("text", "narration", True) not in kinds
+    assert result[0]["content"] == "我先搜一下"
+    assert result[-1]["textKind"] == "reasoning"
+    assert result[-1]["content"] == "深度思考正文"
+    assert result[-1]["pending"] is False
+
+
+def test_process_timeline_backfills_logs_received_outside_timeline():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = { processTimeline: [
+  { kind: 'text', id: 'n1', textKind: 'narration', content: '先查一下', pending: false },
+  { kind: 'log', id: 'tool-1', title: '工具完成: search', details: '', status: 'success' }
+] };
+const merged = api.mergeTimelineLogs(target.processTimeline, [
+  { id: 'tool-1', title: '工具完成: search', details: '', status: 'success' },
+  { id: 'model-2', title: '模型调用: DeepSeek', details: '', status: 'pending' }
+]);
+return merged;
+""",
+    )
+
+    assert [item["id"] for item in result] == ["n1", "tool-1", "model-2"]
+
+
+def test_process_timeline_finishes_reasoning_even_when_narration_is_the_last_item():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineReasoningDelta(target, '思考中');
+api.appendTimelineNarrationDelta(target, '开始执行');
+api.finishTimelineReasoning(target);
+return target.processTimeline;
+""",
+    )
+
+    assert result[0]["textKind"] == "reasoning"
+    assert result[0]["pending"] is False
+    assert result[0]["execution_time_ms"] >= 1
+    assert result[1]["textKind"] == "narration"
+
+
+def test_reasoning_duration_stops_when_process_narration_starts():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineReasoningDelta(target, '内部推理');
+api.appendTimelineNarrationDelta(target, '开始执行');
+return target.processTimeline;
+""",
+    )
+
+    assert result[0]["textKind"] == "reasoning"
+    assert result[0]["pending"] is False
+    assert result[0]["execution_time_ms"] >= 1
+    assert result[1]["textKind"] == "narration"
+    assert result[1]["pending"] is True
+
+
+def test_reasoning_content_stays_open_while_pending_and_collapses_when_finished():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineReasoningDelta(target, '内部推理');
+const pending = target.processTimeline[0];
+const pendingOpen = api.isReasoningContentExpanded(pending);
+api.finishTimelineReasoning(target);
+const finishedClosed = api.isReasoningContentExpanded(pending);
+pending.contentExpanded = true;
+const forcedOpen = api.isReasoningContentExpanded(pending);
+return { pendingOpen, finishedClosed, forcedOpen };
+""",
+    )
+
+    assert result == {
+        "pendingOpen": True,
+        "finishedClosed": False,
+        "forcedOpen": True,
+    }
+
+
+def test_process_timeline_promotes_narration_when_parallel_log_is_interleaved():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineNarrationDelta(target, '你好');
+api.upsertTimelineLog(target, { id: 'other-agent-log', title: '其他 Agent', status: 'success' });
+api.promoteTimelineNarration(target, '你好');
+return target.processTimeline;
+""",
+    )
+
+    assert [item["kind"] for item in result] == ["log"]
+
+
+def test_process_timeline_keeps_parallel_agent_narration_on_separate_items():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineNarrationDelta(target, '先查营收', 'PrimaryAgent');
+api.appendTimelineNarrationDelta(target, '先检索手册', 'SecondaryAgent');
+api.appendTimelineNarrationDelta(target, '，再对比去年', 'PrimaryAgent');
+api.commitTimelineNarration(target, '先查营收，再对比去年', 'PrimaryAgent');
+return target.processTimeline.map((item) => ({
+  kind: item.kind,
+  content: item.content,
+  pending: item.pending,
+  sourceId: item.sourceId,
+  sourceLabel: item.sourceLabel,
+}));
+""",
+    )
+
+    assert result == [
+        {
+            "kind": "text",
+            "content": "先查营收，再对比去年",
+            "pending": False,
+            "sourceId": "PrimaryAgent",
+            "sourceLabel": "PrimaryAgent",
+        },
+        {
+            "kind": "text",
+            "content": "先检索手册",
+            "pending": True,
+            "sourceId": "SecondaryAgent",
+            "sourceLabel": "SecondaryAgent",
+        },
+    ]
+
+
+def test_process_timeline_does_not_nest_permission_logs_under_narration():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineNarrationDelta(target, '我先调用工具。');
+api.commitTimelineNarration(target, '我先调用工具。');
+api.upsertTimelineLog(target, {
+  id: 'permission_1',
+  title: '工具调用需要确认',
+  details: '参数: {}',
+  status: 'pending',
+  category: 'permission',
+});
+api.upsertTimelineLog(target, {
+  id: 'external_1',
+  title: '需要客户端执行工具',
+  details: '参数: {}',
+  status: 'pending',
+  category: 'external',
+});
+return target.processTimeline.map((item) => ({
+  kind: item.kind,
+  id: item.id,
+  category: item.category,
+  children: (item.children || []).map((child) => child.id),
+}));
+""",
+    )
+
+    assert result[0]["kind"] == "text"
+    assert result[0]["children"] == []
+    assert [item["id"] for item in result[1:]] == ["permission_1", "external_1"]
+    assert [item["category"] for item in result[1:]] == ["permission", "external"]
+
+
+def test_process_timeline_resolves_current_step_for_collapsed_header():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const pending = api.resolveTimelineCurrentStep([
+  { kind: 'text', id: 'n1', textKind: 'narration', content: '准备搜索', pending: true },
+  { kind: 'log', id: 'tool-1', title: '调用工具: search', details: '关键词', status: 'pending' }
+], true);
+const finished = api.resolveTimelineCurrentStep([
+  { kind: 'log', id: 'tool-1', title: '工具完成: search', details: '', status: 'success' }
+], false);
+return { pending, finished };
+""",
+    )
+
+    assert result == {"pending": "调用工具: search · 进行中", "finished": ""}
+
+
+def test_process_timeline_counts_nested_pending_tools_as_in_progress():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const committedWithChild = [
+  {
+    kind: 'text',
+    id: 'n1',
+    textKind: 'narration',
+    content: '我先搜索。',
+    pending: false,
+    children: [{ kind: 'log', id: 'tool-1', title: '调用工具: search', details: '', status: 'pending' }],
+  },
+];
+const idle = [
+  {
+    kind: 'text',
+    id: 'n1',
+    textKind: 'narration',
+    content: '我先搜索。',
+    pending: false,
+    children: [{ kind: 'log', id: 'tool-1', title: '工具完成: search', details: '', status: 'success' }],
+  },
+];
+return {
+  nestedPending: api.timelineHasPending(committedWithChild),
+  nestedStep: api.resolveTimelineCurrentStep(committedWithChild, api.timelineHasPending(committedWithChild)),
+  idle: api.timelineHasPending(idle),
+};
+""",
+    )
+
+    assert result == {
+        "nestedPending": True,
+        "nestedStep": "调用工具: search · 进行中",
+        "idle": False,
+    }
+
+
+def test_process_timeline_ignores_whitespace_only_narration_delta():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.appendTimelineNarrationDelta(target, ' \\n\\t\\u200b');
+return target.processTimeline || [];
+""",
+    )
+
+    assert result == []
 
 
 def test_workspace_canvas_keeps_workspace_toggle_and_debug_title_normalization():
