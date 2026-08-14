@@ -15,6 +15,12 @@ def test_router_prompt_documents_general_and_knowledge_boundaries():
     assert "即使带有「查询/查一下」" in prompt
     assert "难以区分" in prompt
     assert "优先选择" in prompt
+    assert '"intent":' in prompt
+    assert '"intent_confidence":' in prompt
+    assert '"intent_reasoning":' in prompt
+    assert "chatbi_business_data" in prompt
+    assert "local_file" in prompt
+    assert "thought 不超过 40 个汉字" in prompt
 
 
 @pytest.mark.asyncio
@@ -81,13 +87,17 @@ async def test_router_heuristic_bypass_history():
          patch('app.services.ai.router_service.chat_client_from_handle') as mock_chat_factory:
         
         mock_fetch.return_value = [
-            {"id": "1", "name": "chat-bi", "description": "Query database", "capabilities": ["data_query"]}
+            {"id": "1", "name": "chat-bi", "description": "Query database", "capabilities": ["data_query"]},
+            {"id": "2", "name": "general-chat", "description": "General assistant", "capabilities": []},
         ]
         
         mock_llm_instance = MagicMock()
         mock_chat = AsyncMock()
         mock_chat.generate_structured_dict.return_value = None
-        mock_chat.generate_text.return_value = '{"thought": "Standard Routing", "agent_name": "chat-bi", "confidence": 0.9}'
+        mock_chat.generate_text.return_value = (
+            '{"thought": "Standard Routing", "agent_name": "chat-bi", "confidence": 0.9,'
+            ' "intent": "DATA_QUERY", "domain": "chatbi_business_data"}'
+        )
         mock_get_llm.return_value = mock_llm_instance
         mock_chat_factory.return_value = mock_chat
         

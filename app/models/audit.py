@@ -44,6 +44,7 @@ class AgentExecutionHistory(Base):
     query = Column(Text, nullable=True, comment='用户提问')
     summary = Column(Text, nullable=True, comment='AI 响应/总结')
     reasoning_content = Column(Text, nullable=True, comment='模型推理过程')
+    process_timeline = Column(JSON, nullable=True, comment='思考卡定稿快照')
     prompt_tokens = Column(Integer, default=0, comment='输入 Token 消耗数')
     completion_tokens = Column(Integer, default=0, comment='输出 Token 消耗数')
     total_tokens = Column(Integer, default=0, comment='总 Token 消耗数')

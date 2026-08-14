@@ -17,10 +17,48 @@ def truncate_for_context(text: str, *, max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LE
     return raw[:max_len] + "\n… [输出已截断]"
 
 
+_SUBSTANTIAL_OVERLAP_CHARS = 64
+
+
+def _compact_reply(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def _visible_suffix_after_whitespace_prefix(prefix: str, text: str) -> str | None:
+    """If text starts with prefix ignoring whitespace, return the leftover suffix.
+
+    Empty string means they match. None means prefix is not a prefix of text.
+    """
+    i = 0
+    j = 0
+    n_prefix = len(prefix)
+    n_text = len(text)
+
+    while i < n_prefix and j < n_text:
+        while i < n_prefix and prefix[i].isspace():
+            i += 1
+        while j < n_text and text[j].isspace():
+            j += 1
+        if i >= n_prefix or j >= n_text:
+            break
+        if prefix[i] != text[j]:
+            return None
+        i += 1
+        j += 1
+
+    while i < n_prefix and prefix[i].isspace():
+        i += 1
+    if i < n_prefix:
+        return None
+    return text[j:]
+
+
 def compute_stream_reconcile_gap(streamed: str, agent_text: str) -> str:
     """
     计算 AgentState 中相对已流式发送内容多出的可展示正文。
     返回应追加到 SSE 的片段；无缺口则返回空字符串。
+
+    空白差异或 AgentState 拼接前缀不应把已流式正文整段再发一遍。
     """
     streamed_raw = streamed or ""
     agent_raw = (agent_text or "").strip()
@@ -40,6 +78,35 @@ def compute_stream_reconcile_gap(streamed: str, agent_text: str) -> str:
         extra = agent_raw[idx + len(streamed_stripped) :]
         return extra if extra.strip() else ""
 
+    whitespace_suffix = _visible_suffix_after_whitespace_prefix(streamed_stripped, agent_raw)
+    if whitespace_suffix is not None:
+        return whitespace_suffix if whitespace_suffix.strip() else ""
+
+    streamed_norm = _normalize_reply_for_compare(streamed_stripped)
+    agent_norm = _normalize_reply_for_compare(agent_raw)
+    if streamed_norm and agent_norm:
+        if agent_norm == streamed_norm:
+            return ""
+        if streamed_norm.startswith(agent_norm):
+            return ""
+        if streamed_norm in agent_norm or agent_norm in streamed_norm:
+            return ""
+
+    compact_streamed = _compact_reply(streamed_stripped)
+    compact_agent = _compact_reply(agent_raw)
+    if compact_streamed and compact_agent and len(compact_streamed) >= _SUBSTANTIAL_OVERLAP_CHARS:
+        if compact_agent == compact_streamed:
+            return ""
+        if compact_agent.startswith(compact_streamed):
+            suffix = _visible_suffix_after_whitespace_prefix(streamed_stripped, agent_raw)
+            return suffix if suffix and suffix.strip() else ""
+        if (
+            compact_streamed in compact_agent
+            or compact_agent in compact_streamed
+            or compact_streamed.startswith(compact_agent)
+        ):
+            return ""
+
     if len(agent_raw) > len(streamed_stripped) + 20:
         return agent_raw
 
@@ -58,16 +125,15 @@ def needs_tool_synthesis_fallback(
     agent_text: str,
     *,
     used_tools: bool,
+    tool_outputs: dict | None = None,
     min_complete_chars: int = DEFAULT_MIN_COMPLETE_CHARS,
 ) -> bool:
-    """工具链跑完后，若用户可见正文过短，则走 synthesis LLM（仅按 text 块判定，不含 thinking）。"""
+    """Only synthesize when tools ran but no usable final text was streamed."""
     if not used_tools:
         return False
-    streamed_len = len((streamed or "").strip())
-    if streamed_len >= min_complete_chars:
+    if (streamed or "").strip() or (agent_text or "").strip():
         return False
-    agent_len = len((agent_text or "").strip())
-    return max(streamed_len, agent_len) < min_complete_chars
+    return any(str(value or "").strip() for value in (tool_outputs or {}).values())
 
 
 GENERIC_SYNTHESIS_EMPTY_FALLBACK = (

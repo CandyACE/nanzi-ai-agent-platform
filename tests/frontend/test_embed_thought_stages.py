@@ -66,14 +66,18 @@ return {{
     assert result["emptyThinking"] == "思考中…"
 
 
-def test_embed_thought_summary_only_in_embed_chat_header():
+def test_embed_thought_summary_lives_in_shared_timeline_header():
     embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
 
-    assert "getEmbedThoughtSummaryTitle" in embed
-    assert "getDisplayLogs(msg)" in embed
+    assert "<ChatExecutionTimeline" in embed
+    assert "<ChatExecutionTimeline" in debug
+    assert "getEmbedThoughtSummaryTitle" not in embed
+    assert "getDisplayLogs(msg)" not in embed
     assert "getThoughtStages" not in embed
     assert "buildEmbedThoughtStages" not in embed
     assert 'step-label="阶段"' not in embed
     assert "getEmbedThoughtSummaryTitle" not in debug
     assert "buildEmbedThoughtStages" not in debug
+    assert 'props.hasAnswer ? "思考完成" : "执行过程"' in timeline

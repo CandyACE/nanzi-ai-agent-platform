@@ -25,11 +25,40 @@ def test_compute_gap_no_extra_when_equal():
     assert compute_stream_reconcile_gap(text, text) == ""
 
 
-def test_needs_synthesis_when_tools_and_short_reply():
+def test_compute_gap_does_not_replay_when_only_whitespace_differs():
+    streamed = "好的，根据已获取的公开信息，为您整理晋景新能。\n\n## 财务业绩"
+    agent = "好的，根据已获取的公开信息，为您整理晋景新能。## 财务业绩"
+    assert compute_stream_reconcile_gap(streamed, agent) == ""
+
+
+def test_compute_gap_keeps_unique_suffix_when_whitespace_differs():
+    streamed = "Hello world. More text here that is long."
+    agent = "Hello world.\nMore text here that is long. UNIQUE CONCLUSION."
+    gap = compute_stream_reconcile_gap(streamed, agent)
+    assert "UNIQUE CONCLUSION" in gap
+    assert "Hello world" not in gap
+
+
+def test_compute_gap_does_not_replay_when_agent_text_wraps_the_same_answer():
+    answer = "好的，根据已获取的公开信息，为您整理晋景新能 (01783.HK) 的最新情况。\n\n" + ("正文段落。" * 12)
+    agent = "Let me fetch detailed reports." + answer.replace("\n\n", "")
+    gap = compute_stream_reconcile_gap(answer, agent)
+    assert "好的，根据已获取的公开信息" not in gap
+    assert "正文段落" not in gap
+
+
+def test_compute_gap_still_fills_when_streamed_is_a_short_stub():
+    stub = "正在整理。"
+    agent = "这是最终完整回答，包含足够长的结论与建议。" * 3
+    assert compute_stream_reconcile_gap(stub, agent) == agent
+
+
+def test_needs_synthesis_when_tools_returned_but_no_reply_exists():
     assert needs_tool_synthesis_fallback(
-        "短句",
-        "短句",
+        "",
+        "",
         used_tools=True,
+        tool_outputs={"search": "结果"},
         min_complete_chars=32,
     )
 
@@ -38,21 +67,27 @@ def test_no_synthesis_without_tools():
     assert not needs_tool_synthesis_fallback("", "", used_tools=False)
 
 
-def test_no_synthesis_when_reply_long_enough():
+def test_synthesis_is_not_required_when_final_reply_exists():
     long_text = "这是一段足够长的最终回答，用于说明查询结果与后续建议。"
-    assert not needs_tool_synthesis_fallback(long_text, long_text, used_tools=True)
+    assert not needs_tool_synthesis_fallback(
+        long_text,
+        long_text,
+        used_tools=True,
+        tool_outputs={"search": "结果"},
+    )
 
 
 def test_truncate_for_context():
     assert truncate_for_context("x" * 100, max_len=20).endswith("[输出已截断]")
 
 
-def test_synthesis_for_transitional_sentence_after_tools():
+def test_synthesis_is_not_required_for_any_streamed_text_after_tools():
     transition = "企业信息查询需要实时数据，让我尝试通过搜索来获取："
-    assert needs_tool_synthesis_fallback(
+    assert not needs_tool_synthesis_fallback(
         transition,
         transition,
         used_tools=True,
+        tool_outputs={"search": "结果"},
         min_complete_chars=32,
     )
 

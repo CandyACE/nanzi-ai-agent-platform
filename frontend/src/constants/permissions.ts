@@ -96,7 +96,7 @@ export const MENU_TREE = [
     },
     {
         id: 'menu:agent_debug',
-        label: '智能体测评',
+        label: '智能体调试',
         children: []
     },
     {

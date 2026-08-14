@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.ai.agent_service import AgentService
 from app.schemas.agent import ChatConfig, AgentExecutionStep
@@ -34,8 +35,10 @@ async def test_execute_multi_agent_parallel():
     # Mock Executor Generator
     async def mock_execute(messages):
         yield {"type": "log", "title": "Starting task", "status": "success"}
+        yield {"type": "process_narration", "content": "先查一下"}
+        yield {"type": "process_narration_commit", "content": "先查一下"}
+        yield {"type": "process_narration_promote", "content": "最终内容"}
         await asyncio.sleep(0.1) # Simulate work
-        yield {"content": "Task Result"}
 
     mock_executor = MagicMock()
     mock_executor.execute = mock_execute
@@ -50,15 +53,28 @@ async def test_execute_multi_agent_parallel():
         )
         
         with patch('app.services.ai.agent_manager.AgentManagerService.get_active_agent_config', return_value=mock_secondary_config):
-            # Mock Synthesis
+            captured_outputs = {}
+
             async def mock_synthesis(config, query, outputs, trace_buffer):
+                captured_outputs["items"] = outputs
                 yield {"content": "Final Combined Answer"}
             
             with patch.object(AgentService, '_synthesize_multi_agent_results', side_effect=mock_synthesis):
                 
                 chunks = []
                 async for chunk in service._execute_multi_agent(
-                    primary_config, ["secondary-id"], "hello", [], "trace-1", [], {}, None, None, None, SESSION_TURN
+                    primary_config,
+                    ["secondary-id"],
+                    "hello",
+                    [],
+                    "trace-1",
+                    [],
+                    {},
+                    None,
+                    None,
+                    None,
+                    None,
+                    SESSION_TURN,
                 ):
                     chunks.append(chunk)
                 
@@ -68,6 +84,40 @@ async def test_execute_multi_agent_parallel():
                 assert any("[PrimaryAgent] Starting task" in t for t in log_titles)
                 assert any("[SecondaryAgent] Starting task" in t for t in log_titles)
                 assert any("结果聚合" in t for t in log_titles)
+
+                narration_types = [
+                    c["type"]
+                    for c in chunks
+                    if c.get("type") in {
+                        "process_narration",
+                        "process_narration_commit",
+                        "process_narration_promote",
+                        "answer_delta",
+                        "retraction",
+                    }
+                ]
+                assert narration_types == [
+                    "process_narration",
+                    "process_narration_commit",
+                ] * 2
+                narration_agents = [
+                    c.get("agent_name")
+                    for c in chunks
+                    if c.get("type") in {"process_narration", "process_narration_commit"}
+                ]
+                assert narration_agents == [
+                    "PrimaryAgent",
+                    "PrimaryAgent",
+                    "SecondaryAgent",
+                    "SecondaryAgent",
+                ]
+
+                # Promoted expert answers stay off the main bubble so the
+                # aggregator can synthesize once.
+                assert [item["content"] for item in captured_outputs["items"]] == [
+                    "最终内容",
+                    "最终内容",
+                ]
                 
                 # Verify final content
                 assert any(c.get("content") == "Final Combined Answer" for c in chunks)
@@ -122,3 +172,39 @@ async def test_multi_agent_error_handling():
                 
                 # Verify outputs passed to synthesis contains error text instead of crashing
                 assert any("执行失败" in out["content"] for out in captured_outputs)
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_synthesis_strips_think_tags_from_answer_delta():
+    service = AgentService()
+    config = ChatConfig(
+        agent_id="primary",
+        agent_name="PrimaryAgent",
+        system_prompt="P",
+        tools=[],
+        capabilities=[],
+        model_name="test-model",
+        temperature=0.0,
+    )
+
+    class ThinkTagLLM:
+        async def astream(self, messages):
+            yield SimpleNamespace(content="<think>内部推理</think>最终汇总")
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=ThinkTagLLM()),
+    ):
+        chunks = [
+            chunk
+            async for chunk in service._synthesize_multi_agent_results(
+                config,
+                "hello",
+                [{"name": "专家", "content": "材料"}],
+                [],
+            )
+        ]
+
+    deltas = [c["content"] for c in chunks if c.get("type") == "answer_delta"]
+    assert deltas == ["最终汇总"]
+    assert all("<think>" not in piece for piece in deltas)

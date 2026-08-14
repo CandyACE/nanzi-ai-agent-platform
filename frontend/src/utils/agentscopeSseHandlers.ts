@@ -4,6 +4,18 @@ import {
   parseBusinessConfirmationEvent,
   shouldSuppressBusinessConfirmation,
 } from "./businessConfirmation";
+import {
+  appendTimelineNarrationDelta,
+  appendProcessNarrationText,
+  appendTimelineReasoningDelta,
+  commitTimelineNarration,
+  discardPendingTimelineNarration,
+  finishTimelineReasoning,
+  normalizeProcessNarrationText,
+  promoteTimelineNarration,
+  upsertTimelineLog,
+  type ProcessTimelineItem,
+} from "./processTimeline";
 
 /**
  * AgentScope 运行时 SSE 事件处理（permission / external / observability）
@@ -87,6 +99,11 @@ export interface AgentStreamMessage {
   logs?: AgentStreamLog[];
   isThinking?: boolean;
   isThoughtExpanded?: boolean;
+  isReasoningExpanded?: boolean;
+  processNarration?: string;
+  processNarrationPending?: string;
+  isProcessNarrationExpanded?: boolean;
+  processTimeline?: ProcessTimelineItem[];
   agentName?: string;
   agentDisplayName?: string;
   turnType?: string;
@@ -230,6 +247,15 @@ export function handleToolResultData(msg: AgentStreamMessage, data: Record<strin
   const suffix = `\n\n[结构化数据 ${block.media_type || "block"}]\n${preview.slice(0, 1200)}`;
   if (toolLog) {
     toolLog.details = `${toolLog.details || ""}${suffix}`.trim();
+    upsertTimelineLog(msg, {
+      id: toolCallId,
+      title: toolLog.title,
+      details: toolLog.details,
+      status: toolLog.status,
+      category: toolLog.category,
+      execution_time_ms: toolLog.execution_time_ms,
+      started_at: toolLog.started_at,
+    });
   }
 }
 
@@ -492,6 +518,146 @@ export function handleBusinessConfirmation<T extends AgentStreamMessage>(
   });
 }
 
+export function collapseSecondaryFoldsOnBody<T extends AgentStreamMessage>(msg: T): void {
+  msg.isProcessNarrationExpanded = false;
+  msg.isReasoningExpanded = false;
+  msg.isThoughtExpanded = false;
+}
+
+export function assistantBodyHasStarted<T extends AgentStreamMessage>(msg: T): boolean {
+  return Boolean(msg.content);
+}
+
+const DUPLICATE_BODY_GUARD_CHARS = 32;
+
+function compactAssistantBody(text: string): string {
+  return (text || "").replace(/\s+/g, "");
+}
+
+function visibleSuffixAfterWhitespacePrefix(prefix: string, text: string): string | null {
+  let i = 0;
+  let j = 0;
+  const isWs = (ch: string) => /\s/.test(ch);
+  while (i < prefix.length && j < text.length) {
+    while (i < prefix.length && isWs(prefix[i])) i += 1;
+    while (j < text.length && isWs(text[j])) j += 1;
+    if (i >= prefix.length || j >= text.length) break;
+    if (prefix[i] !== text[j]) return null;
+    i += 1;
+    j += 1;
+  }
+  while (i < prefix.length && isWs(prefix[i])) i += 1;
+  if (i < prefix.length) return null;
+  return text.slice(j);
+}
+
+function narrationSourceId(data: Record<string, unknown>): string | undefined {
+  const name = String(data.agent_name || "").trim();
+  return name || undefined;
+}
+
+export function isDuplicateAssistantBodyDelta(existing: string, piece: string): boolean {
+  if (!existing || !piece) return false;
+  const existingCompact = compactAssistantBody(existing);
+  const pieceCompact = compactAssistantBody(piece);
+  if (!existingCompact || !pieceCompact) return false;
+  if (pieceCompact.length >= DUPLICATE_BODY_GUARD_CHARS && existingCompact.includes(pieceCompact)) {
+    return true;
+  }
+  if (existingCompact.length >= DUPLICATE_BODY_GUARD_CHARS && pieceCompact.includes(existingCompact)) {
+    return visibleSuffixAfterWhitespacePrefix(existing, piece) == null;
+  }
+  return false;
+}
+
+export function appendAssistantBodyDelta<T extends AgentStreamMessage>(msg: T, piece: string): void {
+  if (!piece) return;
+  const existing = msg.content || "";
+  if (existing) {
+    const extra = visibleSuffixAfterWhitespacePrefix(existing, piece);
+    if (extra !== null) {
+      if (!extra.trim()) return;
+      piece = extra;
+    } else if (isDuplicateAssistantBodyDelta(existing, piece)) {
+      return;
+    }
+  }
+  if (!existing) {
+    discardPendingTimelineNarration(msg);
+    msg.processNarrationPending = "";
+    collapseSecondaryFoldsOnBody(msg);
+  }
+  msg.content = `${existing}${piece}`;
+}
+
+export function syncProcessTimelineLog<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+  category?: string,
+): void {
+  const id = data.id as string | number | undefined;
+  if (id === undefined || id === null) return;
+  upsertTimelineLog(msg, {
+    id,
+    title: data.title === undefined ? undefined : String(data.title),
+    details: data.details === undefined ? undefined : String(data.details),
+    status: data.status as "pending" | "success" | "error" | "warning" | undefined,
+    category: category || (data.category ? String(data.category) : undefined),
+    execution_time_ms:
+      data.execution_time_ms === undefined ? undefined : Number(data.execution_time_ms),
+    started_at: data.started_at === undefined ? undefined : Number(data.started_at),
+  });
+}
+
+export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+): boolean {
+  const eventType = String(data.type || "");
+  const piece = String(data.content || "");
+  const sourceId = narrationSourceId(data);
+  if (eventType === "process_narration") {
+    if (piece) {
+      msg.processNarrationPending = appendProcessNarrationText(msg.processNarrationPending || "", piece);
+      appendTimelineNarrationDelta(msg, piece, sourceId);
+      if (!msg.content) msg.isProcessNarrationExpanded = true;
+    }
+    return true;
+  }
+  if (eventType === "process_narration_commit") {
+    if (piece) {
+      const normalizedPiece = normalizeProcessNarrationText(piece, true);
+      const previous = normalizeProcessNarrationText(msg.processNarration || "", true);
+      const gap = previous && !previous.endsWith("\n") ? "\n\n" : "";
+      msg.processNarration = `${previous}${gap}${normalizedPiece}`;
+      commitTimelineNarration(msg, normalizedPiece, sourceId);
+    }
+    msg.processNarrationPending = "";
+    if (!msg.content) msg.isProcessNarrationExpanded = true;
+    return true;
+  }
+  if (eventType === "process_narration_promote") {
+    if (piece) appendAssistantBodyDelta(msg, piece);
+    promoteTimelineNarration(msg, piece, sourceId);
+    msg.processNarrationPending = "";
+    collapseSecondaryFoldsOnBody(msg);
+    msg.isThinking = false;
+    return true;
+  }
+  if (eventType === "retraction") {
+    msg.content = String(data.content ?? "");
+    if (data.final === false) {
+      msg.isThinking = true;
+      msg.isProcessNarrationExpanded = true;
+      msg.isThoughtExpanded = true;
+    } else {
+      msg.isThinking = false;
+    }
+    return true;
+  }
+  return false;
+}
+
 /** 主聊天流与 resume 流共用的 AgentScope 扩展事件分发 */
 export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
   msg: T,
@@ -568,16 +734,34 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "thinking":
       if (data.phase === "start") msg.isThinking = true;
-      if (data.phase === "end") msg.isThinking = false;
-      if (data.status === "continuing") msg.isThinking = true;
+      if (data.phase === "end") {
+        msg.isThinking = false;
+        finishTimelineReasoning(msg);
+      }
+      if (data.status === "continuing" && !assistantBodyHasStarted(msg)) msg.isThinking = true;
       return true;
     case "reasoning_content": {
       const reasoningDelta = String(data.content || "");
       if (reasoningDelta) {
         msg.reasoningContent = `${msg.reasoningContent || ""}${reasoningDelta}`;
+        appendTimelineReasoningDelta(msg, reasoningDelta);
+        if (!assistantBodyHasStarted(msg)) msg.isReasoningExpanded = true;
       }
       return true;
     }
+    case "answer_delta": {
+      const piece = String(data.content || "");
+      if (piece) {
+        appendAssistantBodyDelta(msg, piece);
+        msg.isThinking = false;
+      }
+      return true;
+    }
+    case "process_narration":
+    case "process_narration_commit":
+    case "process_narration_promote":
+    case "retraction":
+      return applyProcessNarrationEvent(msg, data);
     default:
       return false;
   }

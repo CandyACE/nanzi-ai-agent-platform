@@ -26,6 +26,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+SSE_RESPONSE_HEADERS = {
+    # Prevent browser/proxy transformations from coalescing small narration deltas.
+    "Cache-Control": "no-cache, no-transform",
+    # Nginx otherwise buffers text/event-stream responses until its buffer fills.
+    "X-Accel-Buffering": "no",
+}
 public_router = APIRouter()
 
 
@@ -501,6 +508,7 @@ async def get_conversation_history(
                     "role": "assistant",
                     "content": r.summary,
                     "reasoning_content": r.reasoning_content,
+                    "process_timeline": r.process_timeline,
                     "timestamp": r.created_at.isoformat() if r.created_at else None,
                     "agent_name": agent_name,
                     "agent_display_name": agent_display_name,
@@ -755,7 +763,11 @@ async def create_chat_completion(
                 )
                 raise
 
-        return StreamingResponse(sse_generator(), media_type="text/event-stream")
+        return StreamingResponse(
+            sse_generator(),
+            media_type="text/event-stream",
+            headers=SSE_RESPONSE_HEADERS,
+        )
     else:
         # Standard non-streaming response
         # Extract API Key for Context Propagation (Tool Authorization)
@@ -803,7 +815,11 @@ async def confirm_tool_permission(
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
 
 
 @router.post(
@@ -825,7 +841,11 @@ async def resume_external_execution(
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
 
 
 @router.get("/history", 

@@ -27,6 +27,7 @@ from app.services.ai.runtime.session_run_lane import (
 )
 from app.services.ai.runtime.conversation_run_registry import track_conversation_run
 from app.services.ai.executors.common import _attachment_abs_path, extract_tokens_from_message
+from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.grounding.policy import resolve_fact_requirement
@@ -79,13 +80,9 @@ def build_current_model_answer(info: RuntimeModelInfo) -> str:
 
 def _accumulate_stream_content(full: str, chunk: Dict[str, Any]) -> str:
     """合并 SSE chunk 到会话正文；retraction 表示用新正文整体替换。"""
-    if chunk.get("type") == "retraction":
-        return str(chunk.get("content") or "")
-    if chunk.get("type"):
-        return full
-    if "content" in chunk:
-        return full + str(chunk["content"])
-    return full
+    from app.services.ai.runtime.agentscope.process_narration import accumulate_visible_answer
+
+    return accumulate_visible_answer(full, chunk)
 
 
 def _accumulate_reasoning_content(full: str, chunk: Dict[str, Any]) -> str:
@@ -93,6 +90,20 @@ def _accumulate_reasoning_content(full: str, chunk: Dict[str, Any]) -> str:
     if chunk.get("type") == "reasoning_content":
         return full + str(chunk.get("content") or "")
     return full
+
+
+def _track_process_timeline(state: Optional[List[Dict[str, Any]]], chunk: Dict[str, Any]) -> None:
+    if state is None or not isinstance(chunk, dict):
+        return
+    from app.services.ai.runtime.agentscope.process_timeline_snapshot import apply_stream_chunk
+
+    apply_stream_chunk(state, chunk)
+
+
+def _final_process_timeline(state: Optional[List[Dict[str, Any]]]):
+    from app.services.ai.runtime.agentscope.process_timeline_snapshot import finalize_process_timeline
+
+    return finalize_process_timeline(state)
 
 
 def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -568,7 +579,8 @@ class AgentService:
         full_response_content = ""
         shared_state = {
             "agent_config": None,
-            "execution_status": "success"
+            "execution_status": "success",
+            "process_timeline": [],
         }
 
         # 1. Initial Identity Chunk
@@ -694,6 +706,7 @@ class AgentService:
                                 full_response_content,
                                 chunk,
                             )
+                            _track_process_timeline(shared_state.get("process_timeline"), chunk)
                         yield chunk
                 finally:
                     await gen.aclose()
@@ -1436,9 +1449,10 @@ class AgentService:
                     )
                 return
 
+            direct_agent_selection = bool(agent_id or agent_name or version_id)
             route_hints = None
             route_intent_evidence = None
-            if agent_id or agent_name:
+            if direct_agent_selection:
                 route_hints = {"direct_agent_selection": True}
 
             if route_details:
@@ -1635,6 +1649,7 @@ class AgentService:
                 "has_explicit_knowledge_context": bool(current_turn_knowledge_dataset_ids),
                 "has_knowledge_history": has_knowledge_history,
                 "intent_evidence": route_intent_evidence,
+                "direct_agent_selection": direct_agent_selection,
             }
             knowledge_context_available = bool(
                 current_turn_knowledge_dataset_ids or agent_has_knowledge_binding
@@ -1975,6 +1990,9 @@ class AgentService:
                     completion_tokens=c_tokens,
                     has_data_output=has_data_output or None,
                     reasoning_content=full_reasoning_content or None,
+                    process_timeline=_final_process_timeline(
+                        (shared_state or {}).get("process_timeline")
+                    ),
                 ))
 
         except asyncio.CancelledError:
@@ -2007,6 +2025,9 @@ class AgentService:
                         user_info, execution_status, duration, trace_buffer,
                         conversation_id=conversation_id,
                         reasoning_content=full_reasoning_content or None,
+                        process_timeline=_final_process_timeline(
+                            (shared_state or {}).get("process_timeline")
+                        ),
                     )
 
                 await await_unless_cancelling(
@@ -2163,12 +2184,15 @@ class AgentService:
             user_info=user_info,
         )
 
-        yield {
+        process_timeline_state: List[Dict[str, Any]] = []
+        permission_chunk = {
             "type": "permission_result",
             "status": "success" if confirmed else "rejected",
             "permission_request_id": permission_request_id,
             "tool_call_id": getattr(pending.tool_call, "id", None),
         }
+        _track_process_timeline(process_timeline_state, permission_chunk)
+        yield permission_chunk
 
         full_response_content = ""
         full_reasoning_content = ""
@@ -2193,6 +2217,7 @@ class AgentService:
                         raise asyncio.CancelledError
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
+                    _track_process_timeline(process_timeline_state, chunk)
                     if confirmed:
                         execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
@@ -2237,6 +2262,7 @@ class AgentService:
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
                 reasoning_content=full_reasoning_content or None,
+                process_timeline=_final_process_timeline(process_timeline_state),
             ))
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
@@ -2251,6 +2277,7 @@ class AgentService:
             trace_buffer,
             conversation_id=conversation_id,
             reasoning_content=full_reasoning_content or None,
+            process_timeline=_final_process_timeline(process_timeline_state),
         ))
 
         if (
@@ -2415,12 +2442,15 @@ class AgentService:
         )
         execution_results = self._build_external_execution_results(results)
 
-        yield {
+        process_timeline_state: List[Dict[str, Any]] = []
+        external_chunk = {
             "type": "external_execution_result",
             "status": "success",
             "external_execution_request_id": external_execution_request_id,
             "tool_call_id": getattr(pending.tool_call, "id", None),
         }
+        _track_process_timeline(process_timeline_state, external_chunk)
+        yield external_chunk
 
         full_response_content = ""
         full_reasoning_content = ""
@@ -2445,6 +2475,7 @@ class AgentService:
                         raise asyncio.CancelledError
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
+                    _track_process_timeline(process_timeline_state, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
         except ConversationRunBusyError:
@@ -2488,6 +2519,7 @@ class AgentService:
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
                 reasoning_content=full_reasoning_content or None,
+                process_timeline=_final_process_timeline(process_timeline_state),
             ))
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
@@ -2502,6 +2534,7 @@ class AgentService:
             trace_buffer,
             conversation_id=conversation_id,
             reasoning_content=full_reasoning_content or None,
+            process_timeline=_final_process_timeline(process_timeline_state),
         ))
 
     async def _execute_multi_agent(
@@ -2580,14 +2613,30 @@ class AgentService:
                 # We need a clean copy of messages for each executor as they might modify it?
                 # Actually most executors just read it.
                 async for chunk in executor.execute(messages):
-                    if "content" in chunk:
-                        full_text += chunk["content"]
-                    elif "type" in chunk and chunk["type"] in ["log", "router_log"]:
+                    chunk_type = chunk.get("type")
+                    full_text = _accumulate_stream_content(full_text, chunk)
+                    if chunk_type in {
+                        "process_narration",
+                        "process_narration_commit",
+                    }:
+                        # Process narration is part of the user-visible stream.
+                        # Tag the expert so the client can keep parallel cards
+                        # apart instead of merging every pending delta.
+                        await queue.put({**chunk, "agent_name": config.agent_name})
+                    elif chunk_type in {
+                        "process_narration_promote",
+                        "answer_delta",
+                        "retraction",
+                    }:
+                        # Expert answers are input to the final synthesis.
+                        # Do not forward them to the main chat.
+                        continue
+                    elif chunk_type in ["log", "router_log"]:
                         # Prefix log title with Agent Name to identify the source
                         if "title" in chunk:
                              chunk["title"] = f"[{config.agent_name}] {chunk['title']}"
                         await queue.put(chunk)
-                    elif "type" in chunk and chunk["type"] == "thinking":
+                    elif chunk_type == "thinking":
                         # Forward thinking status (might overlap, but SSE handles it)
                         await queue.put(chunk)
             except Exception as e:
@@ -2666,9 +2715,10 @@ class AgentService:
                 accumulated_msg = chunk
             else:
                 accumulated_msg += chunk
-            if chunk.content:
-                full_content += chunk.content
-                yield {"content": chunk.content}
+            content = sanitize_assistant_stream_text(str(chunk.content or ""))
+            if content:
+                full_content += content
+                yield {"type": "answer_delta", "content": content, "phase": "synthesis"}
 
         tokens = extract_tokens_from_message(accumulated_msg)
         step_number = max((s.step_number for s in trace_buffer), default=0) + 1

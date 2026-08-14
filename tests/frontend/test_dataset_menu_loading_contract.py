@@ -215,8 +215,8 @@ def test_row_permission_notice_renders_above_chatbi_results():
 
     assert '"type": "meta", "permission_notice": notice' in react_stream_source
     assert '"row_filter_applied": True' in react_stream_source or 'log_payload["row_filter_applied"] = True' in react_stream_source
-    assert "logHasRowFilterApplied" in embed_source
-    assert "logHasRowFilterApplied" in debug_source
+    assert "msg.permissionNotice?.row_filter_applied" in embed_source
+    assert "msg.permissionNotice?.row_filter_applied" in debug_source
     assert "resolve_executed_sql_for_tool_log" in _source("app/services/ai/runners/chatbi/tool_result_handlers.py")
     assert "attach_permission_notice_to_json_result" in data_api_source
     assert "permission_notice=permission_notice" in data_api_source
@@ -287,11 +287,13 @@ def test_thought_step_dimming_contract():
     source = _source("frontend/src/utils/turnLogDisplay.ts")
     assert "isActiveThoughtStep" in source
     assert "isDimmedThoughtStep" in source
+    timeline = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
     embed = _source("frontend/src/views/EmbedChat.vue")
-    assert "isDimmedThoughtStep(log, msg.isThinking)" in embed
-    assert "进行中" in embed
-    # 进行中步骤用左侧色条强调，避免整行粗边框抢戏
-    assert "border-l-2 border-primary/55" in embed
+    assert "进行中" in timeline
+    # 进行中步骤用呼吸绿点强调，避免整行粗边框抢戏
+    assert 'class="thought-status-dot shrink-0"' in timeline
+    assert "border-l-2 border-primary/55" not in embed
+    assert "border-l-2 border-primary/55" not in timeline
     assert "border border-blue-100/80 dark:border-blue-800/40 shadow-sm animate-pulse-subtle" not in embed
 
 
@@ -302,8 +304,9 @@ def test_thought_step_timer_contract():
     assert "isLiveThoughtStepTimer" in handlers
     assert "findPendingAgentReplyLog" in handlers
     embed = _source("frontend/src/views/EmbedChat.vue")
-    assert "isLiveThoughtStepTimer(log, allLogs || [])" in embed
+    timeline = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
     assert "finalizeAllPendingStreamLogs(agentMsg.value)" in embed
+    assert "function formatDuration(duration?: number | null)" in timeline
 
 
 def test_dataset_portal_drawer_pin_contract():

@@ -7,6 +7,18 @@ from app.services.ai.runtime.agentscope.compat import AIMessage
 from app.services.ai.executors.assistant_executor import AssistantExecutor
 from app.schemas.agent import ChatConfig
 
+
+def test_grounding_buffer_only_holds_legacy_untyped_answer_content():
+    from app.services.ai.runners.assistant_agent_runner import _is_grounding_bufferable_chunk
+
+    assert _is_grounding_bufferable_chunk({"content": "回答片段"}) is True
+    assert _is_grounding_bufferable_chunk({"type": "retraction", "content": ""}) is False
+    assert _is_grounding_bufferable_chunk({"type": "process_narration_promote", "content": "最终正文"}) is False
+    assert _is_grounding_bufferable_chunk({"type": "answer_delta", "content": "最终正文"}) is False
+    assert _is_grounding_bufferable_chunk({"type": "answer_delta", "content": "合成正文", "phase": "synthesis"}) is False
+    assert _is_grounding_bufferable_chunk({"type": "process_narration", "content": "正在搜索"}) is False
+    assert _is_grounding_bufferable_chunk({"type": "process_narration_commit", "content": "正在搜索"}) is False
+
 # --- Mocks ---
 
 @pytest.fixture(scope="function", autouse=True)
@@ -370,8 +382,8 @@ async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(cha
 
 
 @pytest.mark.asyncio
-async def test_general_runner_recovers_reply_when_text_block_delta_missing(chat_config):
-    """工具执行后若 AgentScope 未发 TEXT_BLOCK_DELTA，应从 AgentState 兜底输出正文。"""
+async def test_general_runner_synthesizes_when_text_block_delta_missing(chat_config):
+    """工具执行后即使 AgentState 有文本，也统一进入 synthesis，不直接回填正文。"""
     from agentscope.message import Msg, TextBlock
     from agentscope.state import AgentState
     from types import SimpleNamespace
@@ -435,9 +447,95 @@ async def test_general_runner_recovers_reply_when_text_block_delta_missing(chat_
         chunks.append(chunk)
 
     content = "".join(
-        c["content"] for c in chunks if "content" in c and "type" not in c
+        c["content"] for c in chunks if c.get("type") == "answer_delta"
     )
     assert "recovered after bash" in content
+    assert "未能生成完整回答" not in content
+
+
+@pytest.mark.asyncio
+async def test_general_runner_keeps_tool_preamble_as_process_narration(chat_config):
+    """工具前旁白走过程消息并按 delta 流式追加；无工具的最终文字在 turn 结束时提升为正文。"""
+    from agentscope.state import AgentState
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
+
+    class FakeAgent:
+        def __init__(self):
+            self.state = AgentState(session_id="s1", reply_id="r1", context=[])
+
+    async def fake_event_stream():
+        yield SimpleNamespace(type="MODEL_CALL_START", reply_id="r1")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="Let me search.")
+        yield SimpleNamespace(
+            type="TOOL_CALL_START",
+            tool_call_id="call_search",
+            tool_call_name="web_search",
+        )
+        yield SimpleNamespace(
+            type="TOOL_RESULT_TEXT_DELTA",
+            tool_call_id="call_search",
+            delta="ok",
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_search")
+        yield SimpleNamespace(type="MODEL_CALL_END", reply_id="r1")
+        yield SimpleNamespace(type="MODEL_CALL_START", reply_id="r2")
+        yield SimpleNamespace(
+            type="TEXT_BLOCK_DELTA",
+            delta="# 晋景新能综合分析报告\n\n这是基于工具结果生成的完整回答，包含足够的可见正文内容。",
+        )
+        yield SimpleNamespace(type="MODEL_CALL_END", reply_id="r2")
+        yield SimpleNamespace(type="REPLY_END", reply_id="r2", session_id="s1")
+
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-process-narration-stream",
+        trace_buffer=[],
+    )
+    state = new_native_stream_state()
+    chunks = []
+    async for chunk in runner._stream_agentscope_native_events(
+        event_stream=fake_event_stream(),
+        agent=FakeAgent(),
+        tools=[],
+        native_model=SimpleNamespace(model="qwen-test"),
+        state=state,
+    ):
+        chunks.append(chunk)
+
+    from app.services.ai.agent_service import _accumulate_stream_content
+
+    narration = "".join(
+        str(c.get("content") or "")
+        for c in chunks
+        if c.get("type") in ("process_narration", "process_narration_commit")
+    )
+    answer_deltas = "".join(
+        str(c.get("content") or "")
+        for c in chunks
+        if c.get("type") == "answer_delta"
+    )
+    visible = ""
+    for chunk in chunks:
+        visible = _accumulate_stream_content(visible, chunk)
+    assert "Let me search." in narration
+    assert "Let me search." not in answer_deltas
+    assert "# 晋景新能综合分析报告" not in answer_deltas
+    assert "Let me search." not in visible
+    assert "# 晋景新能综合分析报告" in visible
+    assert not any(c.get("type") == "retraction" for c in chunks)
+    assert any(c.get("type") == "process_narration_promote" for c in chunks)
+    first_narration = next(
+        index for index, chunk in enumerate(chunks)
+        if chunk.get("type") == "process_narration"
+    )
+    first_tool_log = next(
+        index for index, chunk in enumerate(chunks)
+        if chunk.get("type") == "log" and "调用工具" in str(chunk.get("title") or "")
+    )
+    assert first_narration < first_tool_log
 
 
 @pytest.mark.asyncio
@@ -477,7 +575,8 @@ async def test_general_runner_synthesis_fallback_when_no_text_and_no_context(cha
         trace_id="test-synthesis-fallback",
         trace_buffer=[],
     )
-    state = new_native_stream_state(user_query="count files")
+    state = new_native_stream_state()
+    state["user_query"] = "count files"
     state["used_tools"] = True
     state["tool_names"] = {"call_bash": "Bash"}
     state["tool_outputs"] = {"call_bash": "42"}
@@ -498,7 +597,7 @@ async def test_general_runner_synthesis_fallback_when_no_text_and_no_context(cha
             chunks.append(chunk)
 
     content = "".join(
-        c["content"] for c in chunks if "content" in c and "type" not in c
+        c["content"] for c in chunks if c.get("type") == "answer_delta"
     )
     assert "synthesis fallback answer" in content
 
@@ -555,7 +654,8 @@ async def test_general_runner_synthesis_after_transitional_text_and_more_tools(c
         trace_id="test-partial-then-tools",
         trace_buffer=[],
     )
-    state = new_native_stream_state(user_query="查企业信息")
+    state = new_native_stream_state()
+    state["user_query"] = "查企业信息"
 
     with patch(
         "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
@@ -571,10 +671,18 @@ async def test_general_runner_synthesis_after_transitional_text_and_more_tools(c
         ):
             chunks.append(chunk)
 
-    content = "".join(
-        c["content"] for c in chunks if "content" in c and "type" not in c
+    from app.services.ai.agent_service import _accumulate_stream_content
+
+    content = ""
+    for chunk in chunks:
+        content = _accumulate_stream_content(content, chunk)
+    narration = "".join(
+        str(c.get("content") or "")
+        for c in chunks
+        if c.get("type") in ("process_narration", "process_narration_commit")
     )
-    assert "让我尝试通过搜索来获取" in content
+    assert "让我尝试通过搜索来获取" in narration
+    assert "让我尝试通过搜索来获取" not in content
     assert "未能获取实时企业数据" in content
 
 
@@ -634,7 +742,8 @@ async def test_general_runner_synthesis_when_empty_delta_after_tools_clears_pend
         trace_id="test-empty-delta-after-tools",
         trace_buffer=[],
     )
-    state = new_native_stream_state(user_query="查企业")
+    state = new_native_stream_state()
+    state["user_query"] = "查企业"
 
     with patch(
         "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
@@ -651,7 +760,7 @@ async def test_general_runner_synthesis_when_empty_delta_after_tools_clears_pend
             chunks.append(chunk)
 
     content = "".join(
-        c["content"] for c in chunks if "content" in c and "type" not in c
+        c["content"] for c in chunks if c.get("type") == "answer_delta"
     )
     assert "synthesis after empty think delta" in content
 
@@ -703,7 +812,8 @@ async def test_general_runner_static_fallback_when_synthesis_returns_empty(chat_
         trace_id="test-static-fallback",
         trace_buffer=[],
     )
-    state = new_native_stream_state(user_query="查企业")
+    state = new_native_stream_state()
+    state["user_query"] = "查企业"
 
     with patch(
         "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
@@ -720,7 +830,7 @@ async def test_general_runner_static_fallback_when_synthesis_returns_empty(chat_
             chunks.append(chunk)
 
     content = "".join(
-        c["content"] for c in chunks if "content" in c and "type" not in c
+        c["content"] for c in chunks if c.get("type") == "answer_delta"
     )
     assert "WAF" in content or "未能生成完整回答" in content
 
@@ -782,7 +892,7 @@ async def test_general_runner_continues_synthesis_after_tool_error_log(chat_conf
     tool_logs = [c for c in chunks if c.get("type") == "log" and c.get("status") == "error"]
     assert tool_logs, "应保留工具失败日志"
     content = "".join(
-        c["content"] for c in chunks if "content" in c and c.get("type") != "error"
+        c["content"] for c in chunks if c.get("type") == "answer_delta"
     )
     assert "文件不存在" in content or "未能生成完整回答" in content
 

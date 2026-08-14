@@ -94,6 +94,8 @@ async def test_chat_completion_stream(db_session, mock_agent_dispatcher):
         async with client.stream("POST", "/api/v1/chat/completions", json=payload, headers={"X-API-Key": user_key}) as resp:
             assert resp.status_code == 200
             assert "text/event-stream" in resp.headers["content-type"]
+            assert resp.headers["cache-control"] == "no-cache, no-transform"
+            assert resp.headers["x-accel-buffering"] == "no"
             
             chunks = []
             async for line in resp.aiter_lines():
@@ -157,6 +159,8 @@ async def test_chat_completion_stream_sse_snapshot(monkeypatch):
             ) as resp:
                 assert resp.status_code == 200
                 assert "text/event-stream" in resp.headers["content-type"]
+                assert resp.headers["cache-control"] == "no-cache, no-transform"
+                assert resp.headers["x-accel-buffering"] == "no"
                 lines = [line async for line in resp.aiter_lines() if line.startswith("data: ")]
     finally:
         app.dependency_overrides.pop(chat_endpoint.require_api_key, None)

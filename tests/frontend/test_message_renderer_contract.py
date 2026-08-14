@@ -286,10 +286,12 @@ def test_compact_table_uses_near_white_borders():
 
 def test_thought_steps_waiting_state_uses_status_copy_not_empty_skeleton():
     source = _source("frontend/src/views/EmbedChat.vue")
+    timeline = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
 
-    # 首包到达前用状态文案，不再用空骨架条；进行中步骤用左侧色条强调
+    # 首包到达前用状态文案，不再用空骨架条；进行中步骤用呼吸绿点强调
     assert "正在连接服务" in source
-    assert "border-l-2 border-primary/55" in source
+    assert 'class="thought-status-dot shrink-0"' in timeline
+    assert "border-l-2 border-primary/55" not in source
     assert "overflow-y-auto border-l border-gray-100" not in source
 
 

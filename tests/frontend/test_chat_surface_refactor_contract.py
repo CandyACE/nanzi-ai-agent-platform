@@ -61,6 +61,27 @@ def test_chat_surface_refactor_keeps_existing_shared_feature_entrypoints():
             assert contract in source
 
 
+def test_chat_surfaces_keep_permission_and_external_execution_panels():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+
+    assert 'v-if="msg.pendingPermission"' not in timeline
+    assert "confirmPendingPermission" not in timeline
+    for source in (embed, debug):
+        timeline_at = source.find("<ChatExecutionTimeline")
+        permission_at = source.find('v-if="msg.pendingPermission"')
+        external_at = source.find('v-if="msg.pendingExternalExecution"')
+        assert timeline_at >= 0
+        assert permission_at > timeline_at
+        assert external_at > permission_at
+        assert '@click="confirmPendingPermission(msg, true)"' in source
+        assert '@click="confirmPendingPermission(msg, false)"' in source
+        assert '@click="submitPendingExternalExecution(msg)"' in source
+        assert "允许" in source[permission_at:external_at]
+        assert "拒绝" in source[permission_at:external_at]
+
+
 def test_stop_generation_cancels_backend_run_before_aborting_sse():
     embed = _read("frontend/src/views/EmbedChat.vue")
     debug = _read("frontend/src/views/AgentDebug.vue")
@@ -141,15 +162,36 @@ def test_both_chat_surfaces_use_shared_thinking_header_component():
     component = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
     embed = _read("frontend/src/views/EmbedChat.vue")
     debug = _read("frontend/src/views/AgentDebug.vue")
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
 
     assert 'defineModel<boolean>("expanded"' in component
     assert "isThinking" in component
     assert "stepCount" in component
     assert "hiddenStepCount" in component
     assert "skillSummary" in component
+    assert "<ChatThinkingHeader" in timeline
+    assert 'v-model:expanded="expanded"' in timeline
     for source in (embed, debug):
-        assert "<ChatThinkingHeader" in source
-        assert "v-model:expanded=\"msg.isThoughtExpanded\"" in source
+        assert "<ChatThinkingHeader" not in source
+        assert "<ChatExecutionTimeline" in source
+        assert 'v-model="msg.isThoughtExpanded"' in source
+        assert "appendAssistantBodyDelta" in source
+        assert ':skill-badges="getSkillFlowBadgesForMessage(msg, messages)"' in source
+    assert ":title=\"headerTitle\"" in timeline
+    assert '"思考完成"' in timeline
+    assert "resolveTimelineCurrentStep" in timeline
+    assert "timelineHasPending" in timeline
+    assert ':is-thinking="!hasAnswer && (isThinking || hasPending)"' in timeline
+    assert 'if (pending && !props.hasAnswer)' in timeline
+    assert 'if (answer) expanded.value = false' in timeline
+    assert "过程消息" not in timeline
+    assert "reasoning" in timeline
+    assert "tool" in timeline
+    assert "mergeTimelineLogs" in timeline
+    assert "skillBadges" in timeline
+    assert "skillNoticeLabel" in timeline
+    assert "headerSkillSummary" in timeline
+    assert "w-full max-w-[90%] min-w-0" in embed
 
 
 def test_both_chat_surfaces_share_stream_trace_and_citation_normalization():
@@ -165,6 +207,14 @@ def test_both_chat_surfaces_share_stream_trace_and_citation_normalization():
     assert "doc_name" in shared
     assert "data.data?.trace_id || data.trace_id" in shared
     assert 'msg.trace_id = traceId as T["trace_id"]' in shared
+
+
+def test_embed_chat_uses_shared_sse_parser_for_process_events():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+
+    assert "const sseLineParser = createSseLineParser();" in embed
+    assert "sseLineParser.feed(decoder.decode(value, { stream: true }))" in embed
+    assert 'let buffer = ""; // 缓冲区，用于处理跨 chunk 的不完整行' not in embed
 
 
 def test_embed_chat_keeps_ltm_state_outside_workspace_canvas_extraction():
@@ -184,3 +234,17 @@ def test_embed_chat_keeps_ltm_state_outside_workspace_canvas_extraction():
     assert "const ltmIgnoredVal = ignoreLtmThisTurn.value" in embed
     assert ':active-ltm-preference="activeLtmPreference"' in embed
     assert '@ignore-ltm="handleIgnoreLtm"' in embed
+
+
+def test_agent_message_actions_wait_until_stream_finishes():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    assert 'v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"' in embed
+    assert "flex flex-nowrap items-center space-x-2 mt-3" in embed
+    assert embed.index('v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"') < embed.index(
+        "flex flex-nowrap items-center space-x-2 mt-3"
+    )
+    assert "!(isProcessing && messages.indexOf(msg) === messages.length - 1)" in debug
+    assert "title=\"复制\"" in embed
+    assert "title=\"复制\"" in debug

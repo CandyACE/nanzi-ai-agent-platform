@@ -63,6 +63,7 @@ class AuditManager:
         trace_buffer: List[AgentExecutionStep],
         conversation_id: Optional[str] = None,
         reasoning_content: Optional[str] = None,
+        process_timeline: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         High-level method to handle all audit logging (Trace Logs + History).
@@ -119,6 +120,7 @@ class AuditManager:
                 completion_tokens=completion_tokens_sum,
                 total_tokens=total_tokens_sum,
                 reasoning_content=reasoning_content,
+                process_timeline=process_timeline,
             )
 
     @staticmethod
@@ -177,6 +179,7 @@ class AuditManager:
         completion_tokens: int = 0,
         total_tokens: int = 0,
         reasoning_content: Optional[str] = None,
+        process_timeline: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         Saves the high-level conversation entry.
@@ -194,6 +197,7 @@ class AuditManager:
                     query=query,
                     summary=summary,
                     reasoning_content=reasoning_content,
+                    process_timeline=process_timeline,
                     status=status,
                     execution_time_ms=execution_time_ms,
                     agent_version=agent_version,

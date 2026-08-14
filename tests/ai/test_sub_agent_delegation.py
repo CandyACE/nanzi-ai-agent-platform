@@ -86,6 +86,79 @@ def test_extract_delegation_text():
     assert _extract_delegation_text({"type": "log", "title": "step"}) == ""
 
 
+@pytest.mark.asyncio
+async def test_consume_sub_agent_stream_keeps_only_final_answer():
+    """子代理流只把最终正文计入委派结果：旁白/commit 丢弃，promote 计入。"""
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    async def sub_stream():
+        yield {"type": "log", "title": "执行中", "status": "success"}
+        yield {"type": "process_narration", "content": "我先查一下企业信息"}
+        yield {"type": "process_narration_commit", "content": "我先查一下企业信息"}
+        yield {"type": "process_narration", "content": "让我再看看财务数据"}
+        yield {"type": "process_narration_commit", "content": "让我再看看财务数据"}
+        yield {"type": "process_narration_promote", "content": "# 最终报告\n正文"}
+
+    eq = asyncio.Queue()
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent", event_queue=eq)
+    full_output, interrupt = await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="专家",
+    )
+
+    assert full_output == "# 最终报告\n正文"
+    assert interrupt is None
+    # 旁白/commit 不进结果也不转发；log 仍转发并加前缀
+    log_chunks = []
+    while not eq.empty():
+        log_chunks.append(await eq.get())
+        eq.task_done()
+    assert [c["type"] for c in log_chunks] == ["log"]
+    assert log_chunks[0]["title"] == "[专家] 执行中"
+
+
+@pytest.mark.asyncio
+async def test_consume_sub_agent_stream_retraction_replaces_accumulated_text():
+    """retraction 用新正文整体替换已积累内容，而不是追加。"""
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    async def sub_stream():
+        yield {"content": "旧正文"}
+        yield {"type": "retraction", "content": "新正文", "final": True}
+        yield {"type": "answer_delta", "content": " 补充"}
+
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent")
+    full_output, interrupt = await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="专家",
+    )
+
+    assert full_output == "新正文 补充"
+    assert interrupt is None
+
+
+@pytest.mark.asyncio
+async def test_consume_sub_agent_stream_legacy_promote_still_counts_as_answer():
+    """旧版 promote 类型（其他 executor 兼容）仍计入委派正文。"""
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    async def sub_stream():
+        yield {"type": "process_narration", "content": "旁白"}
+        yield {"type": "process_narration_promote", "content": "最终正文"}
+
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent")
+    full_output, interrupt = await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="专家",
+    )
+
+    assert full_output == "最终正文"
+    assert interrupt is None
+
+
 def test_finalize_delegation_output_empty():
     assert finalize_delegation_output("") == EMPTY_DELEGATION_RESULT_MESSAGE
     assert finalize_delegation_output("   ") == EMPTY_DELEGATION_RESULT_MESSAGE

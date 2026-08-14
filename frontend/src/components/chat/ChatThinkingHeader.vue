@@ -9,10 +9,7 @@
     @click="expanded = !expanded"
   >
     <div class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-gray-100 text-gray-500" :class="{ 'dark:bg-gray-700': darkMode }">
-      <svg v-if="isThinking" class="h-3.5 w-3.5 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-      </svg>
+      <span v-if="isThinking" class="thought-status-dot" aria-label="进行中" title="进行中" />
       <svg v-else class="h-3.5 w-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
       </svg>
@@ -34,11 +31,18 @@
         </span>
         <span
           v-if="skillSummary"
-          class="hidden max-w-[9rem] truncate rounded-full border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 sm:inline-flex sm:items-center sm:gap-0.5"
+          class="hidden max-w-[9rem] shrink-0 truncate rounded-full border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 sm:inline-flex sm:items-center sm:gap-0.5"
           :class="{ 'dark:border-purple-900/30 dark:bg-purple-950/40 dark:text-purple-400': darkMode }"
           :title="skillSummary"
         >
           ⚡ {{ skillSummary }}
+        </span>
+        <span
+          v-if="currentStep && !expanded"
+          class="min-w-0 flex-1 truncate text-[10px] font-normal text-gray-400"
+          :title="currentStep"
+        >
+          {{ currentStep }}
         </span>
       </div>
       <span class="ml-1 flex-shrink-0 font-mono text-[10px] text-gray-400 sm:ml-2">{{ duration ? `${duration}s` : "" }}</span>
@@ -65,6 +69,7 @@ const props = withDefaults(defineProps<{
   stepCount?: number;
   hiddenStepCount?: number;
   skillSummary?: string;
+  currentStep?: string;
   duration?: string;
   bordered?: boolean;
   darkMode?: boolean;
@@ -73,6 +78,7 @@ const props = withDefaults(defineProps<{
   stepCount: 0,
   hiddenStepCount: 0,
   skillSummary: "",
+  currentStep: "",
   duration: "",
   bordered: false,
   darkMode: false,
@@ -87,3 +93,26 @@ const stepBadgeTitle = computed(() => {
     : `${props.stepCount} 步骤`;
 });
 </script>
+
+<style scoped>
+.thought-status-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 9999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.3);
+  animation: thought-header-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes thought-header-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.28); }
+  50% { opacity: 1; transform: scale(1.12); box-shadow: 0 0 0 0.28rem rgba(34, 197, 94, 0.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thought-status-dot {
+    animation: none;
+  }
+}
+</style>
