@@ -1272,6 +1272,27 @@ async def test_resolve_turn_reuses_routing_intent_evidence_without_second_llm_ca
 
 
 @pytest.mark.asyncio
+async def test_direct_general_agent_skips_intent_llm_when_heuristic_is_ambiguous():
+    """显式选择通用 Agent 时，模糊请求不应再单独调用意图 LLM。"""
+    with patch(
+        "app.services.ai.turn_classifier.intent_service.identify_intent",
+        new_callable=AsyncMock,
+    ) as mock_identify:
+        classification, intent_info, elapsed_ms = await resolve_turn_for_session(
+            "帮我看看这个",
+            [{"role": "user", "content": "帮我看看这个"}],
+            can_do_data=False,
+            direct_agent_selection=True,
+        )
+
+    mock_identify.assert_not_awaited()
+    assert classification.turn_type == TurnType.GENERAL
+    assert classification.skip_intent_llm is True
+    assert intent_info is None
+    assert elapsed_ms == 0.0
+
+
+@pytest.mark.asyncio
 async def test_data_query_turn_classifier_falls_back_to_rules_when_llm_invalid():
     llm = object()
     chat_client = _mock_chat_client("not json")

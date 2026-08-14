@@ -478,6 +478,7 @@ async def resolve_turn_classification(
     has_explicit_knowledge_context: Optional[bool] = None,
     has_knowledge_history: bool = False,
     intent_evidence: Optional[IntentResponse] = None,
+    direct_agent_selection: bool = False,
 ) -> Tuple[TurnClassification, Optional[IntentResponse], float]:
     """启发式 + 意图 LLM 的统一分类入口（Dispatcher 使用）。"""
     has_last_data_result = False
@@ -511,6 +512,29 @@ async def resolve_turn_classification(
     intent_info = None
     intent_elapsed_ms = 0.0
     if classification is None:
+        # 显式选择且没有 data/knowledge 能力时，Agent 边界本身就是足够的
+        # 确定性证据；不要为了一个无法改变 Agent 选择的模糊问题再打意图 LLM。
+        if direct_agent_selection:
+            if can_do_data and not explicit_knowledge_context:
+                classification = TurnClassification(
+                    turn_type=TurnType.DATA_QUERY_REQUEST,
+                    reasoning="显式选择 data Agent，模糊请求交由数据执行器继续判定",
+                    skip_intent_llm=True,
+                    intent=IntentType.DATA_QUERY,
+                )
+                return classification, intent_info, intent_elapsed_ms
+            if (
+                not can_do_data
+                and not agent_has_knowledge_binding
+                and not explicit_knowledge_context
+            ):
+                classification = TurnClassification(
+                    turn_type=TurnType.GENERAL,
+                    reasoning="显式选择无知识绑定的通用 Agent，跳过无效意图补分类",
+                    skip_intent_llm=True,
+                    intent=IntentType.GENERAL,
+                )
+                return classification, intent_info, intent_elapsed_ms
         if intent_evidence is not None:
             intent_info = intent_evidence
         else:
@@ -564,6 +588,7 @@ async def resolve_turn_for_session(
     has_explicit_knowledge_context: Optional[bool] = None,
     has_knowledge_history: bool = False,
     intent_evidence: Optional[IntentResponse] = None,
+    direct_agent_selection: bool = False,
 ) -> SharedTurn:
     """AgentService 统一入口：启发式优先，判不准则调用意图 LLM。"""
     return await resolve_turn_classification(
@@ -577,4 +602,5 @@ async def resolve_turn_for_session(
         has_explicit_knowledge_context=has_explicit_knowledge_context,
         has_knowledge_history=has_knowledge_history,
         intent_evidence=intent_evidence,
+        direct_agent_selection=direct_agent_selection,
     )

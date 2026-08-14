@@ -1449,9 +1449,10 @@ class AgentService:
                     )
                 return
 
+            direct_agent_selection = bool(agent_id or agent_name or version_id)
             route_hints = None
             route_intent_evidence = None
-            if agent_id or agent_name:
+            if direct_agent_selection:
                 route_hints = {"direct_agent_selection": True}
 
             if route_details:
@@ -1648,6 +1649,7 @@ class AgentService:
                 "has_explicit_knowledge_context": bool(current_turn_knowledge_dataset_ids),
                 "has_knowledge_history": has_knowledge_history,
                 "intent_evidence": route_intent_evidence,
+                "direct_agent_selection": direct_agent_selection,
             }
             knowledge_context_available = bool(
                 current_turn_knowledge_dataset_ids or agent_has_knowledge_binding

@@ -7,7 +7,7 @@ from app.services.ai.intent_service import (
     IntentSource,
     IntentSourceFrame,
     IntentType,
-    intent_service,
+    looks_like_strong_business_data_request,
 )
 from app.services.ai.request_decision import (
     RequestDecision,
@@ -55,22 +55,32 @@ class RouteResult(BaseModel):
     matched_dataset_ids: List[int] = []
 
 class LLMRouterResponse(BaseModel):
-    """Internal structure for LLM output."""
-    thought: str  # Reasoning/Coreference resolution
+    """Internal structure for LLM output. thought 放最后，降低截断重伤概率。"""
     agent_name: str
-    secondary_agents: List[str] = []
     confidence: float
+    secondary_agents: List[str] = []
     turn_labels: List[str] = []
     relation_to_previous: str = "unknown"
     user_action_type: str = "unknown"
+    intent: Optional[str] = None
+    domain: Optional[str] = None
+    operation: Optional[str] = None
+    fact_kind: Optional[str] = None
+    freshness_requirement: Optional[str] = None
+    time_scope: Optional[str] = None
+    reference_mode: Optional[str] = None
+    needs_fresh_data: Optional[bool] = None
+    intent_confidence: Optional[float] = None
+    intent_reasoning: Optional[str] = None
+    thought: str = ""
 
 class RouterService:
     # 兜底通用助手 slug，按优先级匹配 DB 中 ai_agents.name（首个命中即用）
     FALLBACK_AGENT_NAMES = ("assistant", "main", "general-chat")
 
-    DEFAULT_SYSTEM_PROMPT = """# Role: 南孜智能体平台 · 智能路由助手 (Smart Router V7 · 清单驱动)
+    DEFAULT_SYSTEM_PROMPT = """# Role: 南孜智能体平台 · 智能路由助手 (Smart Router V8 · 清单驱动 · 意图合并)
 
-你是智能体平台的"分诊台"。任务：依据【可用智能体清单】+【对话历史与上一轮路由】+【用户最新输入】，选出最合适的智能体。
+你是智能体平台的"分诊台"。任务：依据【可用智能体清单】+【对话历史与上一轮路由】+【用户最新输入】，选出最合适的智能体，并同时给出来源意图。
 你只输出路由决策 JSON，绝不回答业务问题本身。
 
 ## 1. 可用智能体清单 (唯一可选范围)
@@ -124,6 +134,16 @@ class RouterService:
 - user_action_type 只能是：ask_business_data_or_task、ask_knowledge、transform_context、save_or_export_context、manage_agent_or_skill、chat、unknown。
 - 如果不确定，请使用 ambiguous / unknown，不要编造标签。
 
+### Step 6 来源意图 (Source Intent) — 与选人同时输出
+- 必须同时给出 intent / domain，供后续资格校验。domain 是来源边界，优先于「统计/查询/画图」等动作词。
+- intent 只能是：DATA_QUERY、KNOWLEDGE_BASE、GENERAL、UNKNOWN。
+- domain 只能是：chatbi_business_data（平台已接入的内部业务数据/指标/记录）、conversation_context（基于上一轮 ChatBI 结果继续加工）、runtime_environment（当前机器/服务器/进程/资源/服务状态）、local_file（本机文件或目录）、public_web（公网/外部系统）、internal_docs（内部文档/SOP）、general（通用问答/编程/文本处理）、unknown。
+- operation 只能是：lookup、aggregate、visualize、transform、export、explain、unknown。
+- 「统计一下我机器的文件数」→ domain=local_file；「看看服务器 CPU」→ domain=runtime_environment；「查一下有孚网络公司信息」→ domain=public_web。这三类即使误选了数据智能体，也必须标对 domain。
+- 「统计客户订单 / 机房列表」→ intent=DATA_QUERY, domain=chatbi_business_data。
+- 难以区分时 intent=GENERAL、domain=general，不要为了安全感强行标 DATA_QUERY。
+- intent_confidence / intent_reasoning 只描述来源意图，禁止复用主智能体选择的 confidence / thought。
+
 ## 4. 硬性约束 (Hard Constraints)
 - agent_name 与 secondary_agents 中的每个值，【必须】与清单中某个智能体的 name 字段完全一致（英文 slug，如 chat-bi）。严禁使用中文名、领域名或清单里不存在的名称。
 - 当没有任何业务智能体明显匹配（纯打招呼/闲聊/无法归类）时，选择兜底智能体 {fallback_agent_name}。
@@ -139,13 +159,24 @@ class RouterService:
   "turn_labels": ["continuation_followup", "business_related", "same_topic"],
   "relation_to_previous": "followup",
   "user_action_type": "transform_context",
+  "intent": "DATA_QUERY",
+  "domain": "chatbi_business_data",
+  "operation": "lookup",
+  "fact_kind": "business_metric",
+  "freshness_requirement": "historical",
+  "time_scope": null,
+  "reference_mode": "new_query",
+  "needs_fresh_data": true,
+  "intent_confidence": 0.82,
+  "intent_reasoning": "内部业务记录查询",
   "thought": "一句话理由"
 }
 
 ## 6. 示例 (名称以"清单"为准，下例仅示意格式)
-- 用户："你好" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.9, "secondary_agents": [], "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat", "thought": "纯打招呼"}
-- 上一轮由 data-agent 处理，用户："那再画个柱状图" -> {"agent_name": "data-agent", "confidence": 0.92, "secondary_agents": [], "turn_labels": ["continuation_followup", "business_related", "same_topic"], "relation_to_previous": "followup", "user_action_type": "transform_context", "thought": "数据结果追问，沿用上一轮"}
-- 用户："我有哪些数据集/知识库" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.93, "secondary_agents": [], "turn_labels": ["meta_action", "general_chat"], "relation_to_previous": "standalone", "user_action_type": "manage_agent_or_skill", "thought": "权限内资源目录，走通用助手工具"}"""
+- 用户："你好" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.9, "secondary_agents": [], "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat", "intent": "GENERAL", "domain": "general", "operation": "explain", "thought": "纯打招呼"}
+- 上一轮由 data-agent 处理，用户："那再画个柱状图" -> {"agent_name": "data-agent", "confidence": 0.92, "secondary_agents": [], "turn_labels": ["continuation_followup", "business_related", "same_topic"], "relation_to_previous": "followup", "user_action_type": "transform_context", "intent": "DATA_QUERY", "domain": "conversation_context", "operation": "visualize", "thought": "数据结果追问，沿用上一轮"}
+- 用户："我有哪些数据集/知识库" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.93, "secondary_agents": [], "turn_labels": ["meta_action", "general_chat"], "relation_to_previous": "standalone", "user_action_type": "manage_agent_or_skill", "intent": "GENERAL", "domain": "general", "operation": "explain", "thought": "权限内资源目录，走通用助手工具"}
+- 用户："统计一下我机器的文件数" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.94, "secondary_agents": [], "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat", "intent": "GENERAL", "domain": "local_file", "operation": "aggregate", "fact_kind": "file_count", "thought": "本机文件统计，不是业务查数"}"""
 
     ALLOWED_TURN_LABELS = {
         "new_business_request",
@@ -170,6 +201,9 @@ class RouterService:
         "unknown",
     }
 
+    _INTENT_VALUES = {item.value for item in IntentType}
+    _PLACEHOLDER_INTENTS = {"", "UNKNOWN", "GENERAL"}
+    _PLACEHOLDER_DOMAINS = {"", "unknown"}
     def __init__(self):
         self._agents_cache: List[dict] = []
         self._last_cache_time: float = 0.0
@@ -370,45 +404,24 @@ class RouterService:
                         user_action_type="transform_context",
                     )
 
-        intent_info = await self._resolve_intent_evidence(user_input, history)
+        # 不再单独打意图 LLM：启发式先开闸，意图字段由同一次路由 JSON 带回后再校验。
+        intent_info = None
         previous_chatbi_result = bool(
             last_agent_name
             and self._is_data_query_agent(agents_metadata, last_agent_name)
             and should_inherit_data_agent_session(user_input)
         )
-        request_decision = resolve_request_decision(
-            user_input,
-            semantic_intent=getattr(intent_info, "intent", None),
-            semantic_confidence=getattr(intent_info, "confidence", None),
-            semantic_domain=getattr(intent_info, "domain", None),
-            semantic_operation=getattr(intent_info, "operation", None),
-            fact_kind=getattr(intent_info, "fact_kind", None),
-            freshness_requirement=getattr(intent_info, "freshness_requirement", None),
-            time_scope=getattr(intent_info, "time_scope", None),
-            reference_mode=getattr(intent_info, "reference_mode", None),
-            needs_fresh_data=getattr(intent_info, "needs_fresh_data", None),
-            has_last_data_result=previous_chatbi_result,
-        )
-        chatbi_qualification = await self._resolve_chatbi_qualification(
+        request_decision = self._request_decision_from_intent(
             user_input,
             intent_info,
-            request_decision,
-            previous_chatbi_result=previous_chatbi_result,
-            user_id=user_id,
-            is_admin=is_admin,
-        )
-        request_decision = apply_chatbi_qualification(
-            request_decision,
-            chatbi_qualification,
+            previous_chatbi_result,
         )
         source_frame = self._source_frame_from_request_decision(request_decision)
-        data_route_allowed = (
-            request_decision.allows_data_route
-            or (
-                last_agent_name
-                and self._is_data_query_agent(agents_metadata, last_agent_name)
-                and should_inherit_data_agent_session(user_input)
-            )
+        data_route_allowed = self._data_route_allowed(
+            request_decision,
+            last_agent_name=last_agent_name,
+            agents_metadata=agents_metadata,
+            user_input=user_input,
         )
         routing_agents = self._constrain_candidates_by_intent(
             agents_metadata,
@@ -418,7 +431,7 @@ class RouterService:
             request_decision=request_decision,
         )
 
-        # 结构短路：意图约束后仅剩 1 个候选，跳过路由 LLM（意图 LLM 可能已执行）。
+        # 结构短路：候选收缩后仅剩 1 个，跳过路由 LLM。
         if len(routing_agents) == 1:
             sole = routing_agents[0]
             logger.info(
@@ -479,8 +492,14 @@ class RouterService:
                         "你是路由助手。只返回一行纯 JSON，字段顺序固定为："
                         '{"agent_name":"...","confidence":0.9,"secondary_agents":[],'
                         '"turn_labels":["ambiguous"],"relation_to_previous":"unknown",'
-                        '"user_action_type":"unknown","thought":"短理由"}。'
+                        '"user_action_type":"unknown","intent":"...","domain":"...",'
+                        '"intent_confidence":0.0,"intent_reasoning":"...","thought":"短理由"}。'
                         f"agent_name 必须是清单中的英文 name；不确定时用 {fallback_agent_name}。"
+                        "必须根据当前问题重新判断 intent 与 domain，禁止照抄 GENERAL/unknown 占位。"
+                        "intent 为 DATA_QUERY/KNOWLEDGE_BASE/GENERAL/UNKNOWN；"
+                        "domain 为 chatbi_business_data/local_file/public_web/runtime_environment/"
+                        "internal_docs/general/conversation_context/unknown。"
+                        "intent_confidence 是来源意图把握，不是 agent_name 的 confidence。"
                         f"\n可用智能体：\n{agents_str}"
                     )
                     attempt_messages = [
@@ -516,6 +535,20 @@ class RouterService:
                     raise ValueError(f"Unparseable router response: {content[:200]!r}")
 
                 logger.info(f"LLM Routing Response (attempt {attempt + 1}): {content}")
+                (
+                    intent_info,
+                    request_decision,
+                    source_frame,
+                    data_route_allowed,
+                ) = await self._apply_semantic_evidence_from_router(
+                    user_input=user_input,
+                    result_json=result_json,
+                    last_agent_name=last_agent_name,
+                    agents_metadata=agents_metadata,
+                    previous_chatbi_result=previous_chatbi_result,
+                    user_id=user_id,
+                    is_admin=is_admin,
+                )
                 route_result = self._build_route_result(
                     result_json,
                     routing_agents,
@@ -547,20 +580,164 @@ class RouterService:
         )
 
     @staticmethod
-    async def _resolve_intent_evidence(
+    def _request_decision_from_intent(
         user_input: str,
-        history: Optional[List[dict]],
-    ) -> Optional[IntentResponse]:
-        """Resolve agent-independent semantic evidence without blocking route fallback."""
-        try:
-            return await intent_service.identify_intent(
-                user_input,
-                history=history,
-                ignore_session_reasoning_overrides=True,
+        intent_info: Optional[IntentResponse],
+        previous_chatbi_result: bool,
+    ) -> RequestDecision:
+        return resolve_request_decision(
+            user_input,
+            semantic_intent=getattr(intent_info, "intent", None),
+            semantic_confidence=getattr(intent_info, "confidence", None),
+            semantic_domain=getattr(intent_info, "domain", None),
+            semantic_operation=getattr(intent_info, "operation", None),
+            fact_kind=getattr(intent_info, "fact_kind", None),
+            freshness_requirement=getattr(intent_info, "freshness_requirement", None),
+            time_scope=getattr(intent_info, "time_scope", None),
+            reference_mode=getattr(intent_info, "reference_mode", None),
+            needs_fresh_data=getattr(intent_info, "needs_fresh_data", None),
+            has_last_data_result=previous_chatbi_result,
+        )
+
+    def _data_route_allowed(
+        self,
+        request_decision: RequestDecision,
+        *,
+        last_agent_name: Optional[str],
+        agents_metadata: List[dict],
+        user_input: str,
+    ) -> bool:
+        from app.services.ai.intent_service import should_inherit_data_agent_session
+
+        return bool(
+            request_decision.allows_data_route
+            or (
+                last_agent_name
+                and self._is_data_query_agent(agents_metadata, last_agent_name)
+                and should_inherit_data_agent_session(user_input)
             )
-        except Exception as exc:  # noqa: BLE001 - routing must remain available on model failure
-            logger.warning("Semantic evidence failed before routing: %s", exc)
+        )
+
+    @classmethod
+    def _intent_from_router_payload(cls, result_json: dict) -> Optional[IntentResponse]:
+        """Parse intent/domain fields from the combined router JSON.
+
+        Routing ``confidence`` / ``thought`` are agent-selection scores and must
+        not be reused as intent evidence. Placeholder GENERAL/unknown values
+        from the compact retry example are ignored.
+        """
+        if not isinstance(result_json, dict):
             return None
+        raw_intent = str(result_json.get("intent") or "").strip().upper()
+        domain = str(result_json.get("domain") or "").strip().lower() or "unknown"
+        operation = str(result_json.get("operation") or "").strip().lower() or "unknown"
+        intent_confidence_raw = result_json.get("intent_confidence")
+        has_intent_confidence = (
+            intent_confidence_raw is not None
+            and str(intent_confidence_raw).strip() != ""
+        )
+        if not raw_intent and domain == "unknown" and operation == "unknown":
+            return None
+        if (
+            raw_intent in cls._PLACEHOLDER_INTENTS
+            and domain in cls._PLACEHOLDER_DOMAINS
+            and operation in {"", "unknown"}
+            and not has_intent_confidence
+        ):
+            return None
+        intent = (
+            IntentType(raw_intent)
+            if raw_intent in cls._INTENT_VALUES
+            else IntentType.UNKNOWN
+        )
+        confidence = 0.0
+        if has_intent_confidence:
+            try:
+                confidence = float(intent_confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.0
+        reasoning = str(result_json.get("intent_reasoning") or "").strip()
+        needs_fresh = result_json.get("needs_fresh_data")
+        if isinstance(needs_fresh, str):
+            needs_fresh = needs_fresh.strip().lower() in {"true", "1", "yes"}
+        elif needs_fresh is not None:
+            needs_fresh = bool(needs_fresh)
+        time_scope = result_json.get("time_scope")
+        if time_scope is not None:
+            time_scope = str(time_scope).strip() or None
+        return IntentResponse(
+            intent=intent,
+            confidence=confidence,
+            reasoning=reasoning,
+            entities=[],
+            domain=domain,
+            operation=operation,
+            fact_kind=str(result_json.get("fact_kind") or "unknown").strip() or "unknown",
+            freshness_requirement=(
+                str(result_json.get("freshness_requirement") or "unknown").strip()
+                or "unknown"
+            ),
+            time_scope=time_scope,
+            reference_mode=(
+                str(result_json.get("reference_mode") or "unknown").strip() or "unknown"
+            ),
+            needs_fresh_data=needs_fresh,
+        )
+
+    async def _apply_semantic_evidence_from_router(
+        self,
+        *,
+        user_input: str,
+        result_json: dict,
+        last_agent_name: Optional[str],
+        agents_metadata: List[dict],
+        previous_chatbi_result: bool,
+        user_id: Optional[int],
+        is_admin: bool,
+    ) -> tuple:
+        intent_info = self._intent_from_router_payload(result_json)
+        request_decision = self._request_decision_from_intent(
+            user_input,
+            intent_info,
+            previous_chatbi_result,
+        )
+        if intent_info is None:
+            source_frame = self._source_frame_from_request_decision(request_decision)
+            data_route_allowed = self._data_route_allowed(
+                request_decision,
+                last_agent_name=last_agent_name,
+                agents_metadata=agents_metadata,
+                user_input=user_input,
+            )
+            # 占位/未知语义必须失败关闭。只有现有会话继承、统一决策已明确放行，
+            # 或 UNKNOWN 请求具备明确业务数据对象信号时，才允许保留 ChatBI 路由。
+            if (
+                not data_route_allowed
+                and request_decision.source == RequestSource.UNKNOWN
+            ):
+                data_route_allowed = looks_like_strong_business_data_request(user_input)
+            return intent_info, request_decision, source_frame, data_route_allowed
+
+        chatbi_qualification = await self._resolve_chatbi_qualification(
+            user_input,
+            intent_info,
+            request_decision,
+            previous_chatbi_result=previous_chatbi_result,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+        request_decision = apply_chatbi_qualification(
+            request_decision,
+            chatbi_qualification,
+        )
+        source_frame = self._source_frame_from_request_decision(request_decision)
+        data_route_allowed = self._data_route_allowed(
+            request_decision,
+            last_agent_name=last_agent_name,
+            agents_metadata=agents_metadata,
+            user_input=user_input,
+        )
+        return intent_info, request_decision, source_frame, data_route_allowed
 
     @staticmethod
     async def _resolve_chatbi_qualification(
@@ -914,6 +1091,15 @@ class RouterService:
             for s_name in secondary_names:
                 s_agent = self._match_agent(s_name, agents_metadata)
                 if s_agent and s_agent["id"] != target_agent["id"]:
+                    if (
+                        self._is_data_query_agent(agents_metadata, s_agent.get("name"))
+                        and not data_route_allowed
+                    ):
+                        logger.info(
+                            "Filtered data secondary agent %s without internal structured-data source",
+                            s_agent.get("name"),
+                        )
+                        continue
                     resolved_secondaries.append(s_agent["id"])
 
         return RouteResult(
