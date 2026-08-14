@@ -51,11 +51,12 @@ def _knowledge_item(row: Any) -> dict[str, Any]:
 
 @tool
 async def list_accessible_datasets() -> str:
-    """列出当前用户有权限的 ChatBI 数据集轻量目录（id/名称/备注等，不含表字段指标）。
+    """列出当前用户有权限且已启用的 ChatBI 数据集轻量目录（id/名称/备注/状态等，不含表字段指标）。
 
     使用规则：
     - 当用户问「我有哪些数据集」「能查哪些数据」「数据集列表」时调用。
-    - 仅返回目录级信息，不要据此编造表结构或查询结果。
+    - 仅返回 status=1（启用）的目录级信息；未启用的数据集不会出现。
+    - 不要据此编造表结构或查询结果。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:

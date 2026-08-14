@@ -117,8 +117,8 @@
   </section>
 
   <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">list_accessible_datasets</code> · 列出当前用户可访问的数据集</p>
-    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>返回数据集的轻量目录（ID、名称、备注、状态），不返回表结构和指标定义。</p>
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">list_accessible_datasets</code> · 列出当前用户可访问且已启用的数据集</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>返回已启用数据集的轻量目录（ID、名称、备注、状态），不返回表结构和指标定义；未启用的不会出现。</p>
     <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>用户问「我有哪些数据集」「能查哪些数据」时先列目录；确定数据集后，仍要调用 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> 获取字段。</p>
   </section>
 

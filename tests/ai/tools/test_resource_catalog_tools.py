@@ -17,6 +17,9 @@ def test_resource_catalog_tools_are_system_implicit():
     assert "list_accessible_datasets" in tool_names
     assert "list_accessible_knowledge_bases" in tool_names
     assert ToolRegistry._registry["list_accessible_datasets"].name == "list_accessible_datasets"
+    description = str(getattr(ToolRegistry._registry["list_accessible_datasets"], "description", "") or "")
+    assert "已启用" in description
+    assert "未启用" in description
     assert (
         ToolRegistry._registry["list_accessible_knowledge_bases"].name
         == "list_accessible_knowledge_bases"

@@ -596,7 +596,7 @@ class DatasetNavigationService:
         db: AsyncSession,
         groups: list[dict[str, Any]],
     ) -> None:
-        """按 related_data.dataset / display_name 回填 MetaDataset.updated_at。"""
+        """按 related_data.dataset / display_name 回填 MetaDataset.updated_at 与启用状态。"""
         names: set[str] = set()
         for group in groups:
             for related in group.get("related_data") or []:
@@ -619,6 +619,7 @@ class DatasetNavigationService:
                 MetaDataset.name,
                 MetaDataset.display_name,
                 MetaDataset.updated_at,
+                MetaDataset.status,
             ).where(
                 or_(
                     MetaDataset.name.in_(list(names)),
@@ -627,27 +628,46 @@ class DatasetNavigationService:
             )
             result = await db.execute(stmt)
             rows = result.all() if hasattr(result, "all") else []
-            by_name: dict[str, str] = {}
-            by_display: dict[str, str] = {}
+            by_name: dict[str, dict[str, Any]] = {}
+            by_display: dict[str, dict[str, Any]] = {}
             for row in rows or []:
                 try:
-                    name, display_name, updated_at = row[0], row[1], row[2]
+                    name, display_name, updated_at, status = row[0], row[1], row[2], row[3]
                 except Exception:
                     continue
-                if not updated_at:
-                    continue
-                iso = updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at)
+                iso = None
+                if updated_at:
+                    iso = updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at)
+                meta = {
+                    "enabled": int(status or 0) == 1,
+                    "updated_at": iso,
+                }
                 if name:
-                    by_name[str(name).strip()] = iso
+                    by_name[str(name).strip()] = meta
                 if display_name:
-                    by_display[str(display_name).strip()] = iso
+                    by_display[str(display_name).strip()] = meta
         except Exception as exc:
             logger.warning("Failed to enrich dataset updated_at for navigation: %s", exc)
             return
 
+        def _lookup(candidate: str) -> dict[str, Any] | None:
+            return by_name.get(candidate) or by_display.get(candidate)
+
         for group in groups:
-            if group.get("updated_at"):
-                continue
+            related_enabled: list[bool] = []
+            for related in group.get("related_data") or []:
+                related_meta = None
+                for key in ("dataset", "display_name"):
+                    value = str(related.get(key) or "").strip()
+                    if value:
+                        related_meta = _lookup(value)
+                        if related_meta:
+                            break
+                if related_meta is None:
+                    continue
+                related["enabled"] = related_meta["enabled"]
+                related_enabled.append(bool(related_meta["enabled"]))
+
             candidates: list[str] = []
             for related in group.get("related_data") or []:
                 for key in ("dataset", "display_name"):
@@ -657,11 +677,21 @@ class DatasetNavigationService:
             title = str(group.get("title") or "").strip()
             if title:
                 candidates.append(title)
+
+            group_meta = None
             for candidate in candidates:
-                iso = by_name.get(candidate) or by_display.get(candidate)
-                if iso:
-                    group["updated_at"] = iso
+                group_meta = _lookup(candidate)
+                if group_meta:
                     break
+            if group_meta is None and not related_enabled:
+                continue
+            enabled = all(related_enabled) if related_enabled else bool(group_meta and group_meta["enabled"])
+            group["enabled"] = enabled
+            if group.get("updated_at"):
+                continue
+            iso = (group_meta or {}).get("updated_at")
+            if iso:
+                group["updated_at"] = iso
 
     @staticmethod
     async def _fetch_columns_for_groups(

@@ -716,12 +716,13 @@
           class="group/card relative overflow-hidden rounded-lg border transition-colors duration-200"
           :class="[
             isCardCollapsed(group) ? 'p-2.5 sm:p-3' : 'p-3 sm:p-3.5',
-            visuals.card, visuals.cardBorder, visuals.cardHover,
-            canDragCards ? 'cursor-grab active:cursor-grabbing' : '',
+            visuals.card, visuals.cardBorder,
+            isDatasetDisabled(group) ? 'opacity-75 grayscale-[0.25] border-dashed' : visuals.cardHover,
+            canDragCards && !isDatasetDisabled(group) ? 'cursor-grab active:cursor-grabbing' : '',
             dragOverId === (group.id || group.title) ? 'border-blue-400 dark:border-blue-500' : '',
             dragSourceId === (group.id || group.title) ? 'opacity-50' : '',
           ]"
-          :draggable="canDragCards"
+          :draggable="canDragCards && !isDatasetDisabled(group)"
           @dragstart="canDragCards && handleDragStart($event, group.id || group.title)"
           @dragover="handleDragOver($event, group.id || group.title)"
           @dragleave="handleDragLeave($event)"
@@ -750,13 +751,25 @@
               />
               <div class="flex-1 min-w-0 pt-0.5">
                 <h4
-                  class="text-sm font-semibold leading-snug break-words text-gray-900 dark:text-gray-100"
+                  class="text-sm font-semibold leading-snug break-words text-gray-900 dark:text-gray-100 flex flex-wrap items-center gap-1.5"
                   :title="group.title"
                 >
-                  {{ group.title }}
+                  <span>{{ group.title }}</span>
+                  <span
+                    v-if="isDatasetDisabled(group)"
+                    class="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300"
+                  >
+                    未启用
+                  </span>
                 </h4>
                 <p
-                  v-if="formatGroupUpdatedAt(group)"
+                  v-if="isDatasetDisabled(group)"
+                  class="mt-0.5 text-[10px] leading-tight text-amber-600 dark:text-amber-400"
+                >
+                  数据集未启用，暂不可查询
+                </p>
+                <p
+                  v-else-if="formatGroupUpdatedAt(group)"
                   class="mt-0.5 text-[10px] leading-tight text-gray-500 dark:text-gray-400"
                   :title="`数据集更新时间 ${formatGroupUpdatedAt(group)}`"
                 >
@@ -766,7 +779,7 @@
               <div class="relative flex-shrink-0 flex items-center gap-0.5 mt-0.5">
                 <!-- 挂载：本轮 / 固定到会话 -->
                 <div
-                  v-if="resolveDatasetIdForGroup(group)"
+                  v-if="resolveDatasetIdForGroup(group) && !isDatasetDisabled(group)"
                   class="relative"
                   @click.stop
                 >
@@ -827,11 +840,14 @@
                 <button
                   type="button"
                   class="flex items-center justify-center w-6 h-6 rounded-lg transition-all duration-200 active:scale-90"
-                  :class="isPinned(group)
+                  :class="isDatasetDisabled(group)
+                    ? 'text-gray-300 dark:text-gray-600 opacity-40 cursor-not-allowed'
+                    : isPinned(group)
                     ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/30 opacity-100'
                     : 'text-gray-300 dark:text-gray-600 opacity-0 group-hover/card:opacity-100 hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'"
-                  :title="isPinned(group) ? '取消置顶' : '置顶此卡片'"
+                  :title="isDatasetDisabled(group) ? '数据集未启用' : (isPinned(group) ? '取消置顶' : '置顶此卡片')"
                   :aria-pressed="isPinned(group)"
+                  :disabled="isDatasetDisabled(group)"
                   @click.stop="togglePinGroup($event, group)"
                 >
                   <!-- 已置顶：实心图钉 -->
@@ -870,6 +886,8 @@
             <div
               v-show="!isCardCollapsed(group)"
               class="space-y-2.5 transition-all duration-300 pt-1"
+              :class="{ 'pointer-events-none select-none': isDatasetDisabled(group) }"
+              :aria-disabled="isDatasetDisabled(group)"
             >
             <div
               v-if="group.tags?.length"
@@ -933,7 +951,7 @@
                 <button
                   type="button"
                   class="inline-flex items-center gap-1 text-[10px] font-medium transition-colors duration-200 cursor-pointer active:scale-95 px-2 py-0.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
-                  :disabled="isQuestionsRefreshDisabled(group)"
+                  :disabled="isDatasetDisabled(group) || isQuestionsRefreshDisabled(group)"
                   @click.stop="handleRefreshGroupQuestions(group)"
                 >
                   <svg
@@ -1205,7 +1223,7 @@
               <button
                 type="button"
                 class="inline-flex items-center gap-1 text-[10px] font-bold text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-all px-2 py-0.5 rounded-md border border-gray-200/80 dark:border-gray-700 disabled:opacity-50"
-                :disabled="isFollowupsRefreshDisabled(group)"
+                :disabled="isDatasetDisabled(group) || isFollowupsRefreshDisabled(group)"
                 @click.stop="handleRefreshGroupFollowups(group)"
               >
                 <svg
@@ -1371,6 +1389,7 @@ interface DatasetCapabilityRelatedData {
   table_descriptions?: Array<{ name: string; description?: string }>;
   table_columns?: Record<string, DatasetColumnInfo[]>;
   table_physical_names?: Record<string, string>;
+  enabled?: boolean;
 }
 
 interface DatasetCapabilityGroup {
@@ -1383,6 +1402,7 @@ interface DatasetCapabilityGroup {
   related_data?: DatasetCapabilityRelatedData[];
   followups?: DatasetCapabilityQuestion[];
   updated_at?: string;
+  enabled?: boolean;
 }
 
 interface DatasetNavigationPayload {
@@ -1589,6 +1609,8 @@ const openMountMenuGroupKey = ref<string | null>(null);
 
 const groupKey = (group: DatasetCapabilityGroup) => String(group.id || group.title || "").trim();
 
+const isDatasetDisabled = (group: DatasetCapabilityGroup) => group.enabled === false;
+
 const normalizeToken = (value: unknown) => String(value || "").trim().toLowerCase();
 
 const resolveDatasetIdForGroup = (group: DatasetCapabilityGroup): string | null => {
@@ -1634,6 +1656,7 @@ const toggleMountMenu = (group: DatasetCapabilityGroup) => {
 };
 
 const handleToggleTurnMount = (group: DatasetCapabilityGroup) => {
+  if (isDatasetDisabled(group)) return;
   const id = resolveDatasetIdForGroup(group);
   if (!id) return;
   const wasMounted = isTurnMounted(group);
@@ -1643,6 +1666,7 @@ const handleToggleTurnMount = (group: DatasetCapabilityGroup) => {
 };
 
 const handlePinToSession = (group: DatasetCapabilityGroup) => {
+  if (isDatasetDisabled(group)) return;
   const id = resolveDatasetIdForGroup(group);
   if (!id) return;
   if (isSessionMounted(group)) {
@@ -1655,6 +1679,7 @@ const handlePinToSession = (group: DatasetCapabilityGroup) => {
 
 const togglePinGroup = async (event: MouseEvent, group: DatasetCapabilityGroup) => {
   event.stopPropagation();
+  if (isDatasetDisabled(group)) return;
   const id = group.id || group.title;
   if (!id) return;
   const idx = pinnedGroupIds.value.indexOf(id);
@@ -1789,6 +1814,7 @@ const handleTableDictionaryClick = (
   related: DatasetCapabilityRelatedData,
   table: string,
 ) => {
+  if (isDatasetDisabled(group)) return;
   const uniqueId = buildTableDictionaryKey(group, related, table);
   if (pinnedTableDictionary.value === uniqueId) {
     pinnedTableDictionary.value = null;
@@ -3048,6 +3074,7 @@ watch(
 );
 
 const handleRefreshGroupQuestions = async (group: DatasetCapabilityGroup) => {
+  if (isDatasetDisabled(group)) return;
   const uniqueId = group.id || group.title;
   if (refreshingGroupIds.value[uniqueId]) return;
   if (isGroupRefreshOnCooldown("questions", uniqueId)) {
@@ -3088,6 +3115,7 @@ const handleRefreshGroupQuestions = async (group: DatasetCapabilityGroup) => {
 };
 
 const handleRefreshGroupFollowups = async (group: DatasetCapabilityGroup) => {
+  if (isDatasetDisabled(group)) return;
   const uniqueId = group.id || group.title;
   if (refreshingFollowupGroupIds.value[uniqueId]) return;
   if (isGroupRefreshOnCooldown("followups", uniqueId)) {
@@ -3180,6 +3208,7 @@ const handleQuestionClick = (
   group: DatasetCapabilityGroup,
   action: "send" | "fill" = "send"
 ) => {
+  if (isDatasetDisabled(group)) return;
   const query = String(question.query || "").trim();
   if (!query) return;
   
@@ -3201,12 +3230,14 @@ const handleFollowupClick = (
   _group: DatasetCapabilityGroup,
   action: "send" | "fill" = "send"
 ) => {
+  if (isDatasetDisabled(_group)) return;
   const query = String(followup.query || "").trim();
   if (!query) return;
   emitQuickQuestion(query, action);
 };
 
 const handleMetricClick = (metric: string, group: DatasetCapabilityGroup) => {
+  if (isDatasetDisabled(group)) return;
   const metricName = String(metric || "").trim();
   const sceneTitle = String(group.title || "").trim();
   if (!metricName || !sceneTitle) return;
@@ -3215,6 +3246,7 @@ const handleMetricClick = (metric: string, group: DatasetCapabilityGroup) => {
 
 // 数据表数据字典快捷提问处理器
 const handleQuickQuestionClick = (type: 'structure' | 'query', table: string, related: DatasetCapabilityRelatedData) => {
+  if (related.enabled === false) return;
   const physicalName = related.table_physical_names?.[table] || "";
   const tableWithPhysical = physicalName ? `‘${table}’（物理表名：${physicalName}）` : `‘${table}’`;
 
@@ -3238,6 +3270,7 @@ const handleRecommendQuestions = async (
   related: DatasetCapabilityRelatedData,
   table: string,
 ) => {
+  if (isDatasetDisabled(group) || related.enabled === false) return;
   const uniqueId = buildTableDictionaryKey(group, related, table);
   pinnedTableDictionary.value = uniqueId;
   tableRecommendState.value[uniqueId] = { loading: true, questions: [] };

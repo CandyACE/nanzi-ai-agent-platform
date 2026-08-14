@@ -887,7 +887,7 @@ async def test_enrich_groups_with_dataset_updated_at_matches_name_and_display():
     class _Result:
         def all(self):
             return [
-                ("ai_agent_meta", "智能体数据集", datetime(2026, 7, 25, 9, 41, 3)),
+                ("ai_agent_meta", "智能体数据集", datetime(2026, 7, 25, 9, 41, 3), 1),
             ]
 
     db = AsyncMock()
@@ -896,4 +896,40 @@ async def test_enrich_groups_with_dataset_updated_at_matches_name_and_display():
     await DatasetNavigationService._enrich_groups_with_dataset_updated_at(db, groups)
 
     assert groups[0]["updated_at"].startswith("2026-07-25T09:41:03")
+    assert groups[0]["enabled"] is True
+    assert groups[0]["related_data"][0]["enabled"] is True
     assert "updated_at" not in groups[1]
+    assert "enabled" not in groups[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_enrich_groups_marks_disabled_dataset_even_without_updated_at():
+    groups = [
+        {
+            "title": "电商数据集",
+            "related_data": [{"dataset": "ecommerce", "display_name": "电商数据集"}],
+        },
+        {
+            "title": "启用集",
+            "related_data": [{"dataset": "live_ds", "display_name": "启用集"}],
+        },
+    ]
+
+    class _Result:
+        def all(self):
+            return [
+                ("ecommerce", "电商数据集", None, 0),
+                ("live_ds", "启用集", None, 1),
+            ]
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result())
+
+    await DatasetNavigationService._enrich_groups_with_dataset_updated_at(db, groups)
+
+    assert groups[0]["enabled"] is False
+    assert groups[0]["related_data"][0]["enabled"] is False
+    assert "updated_at" not in groups[0]
+    assert groups[1]["enabled"] is True
+    assert groups[1]["related_data"][0]["enabled"] is True

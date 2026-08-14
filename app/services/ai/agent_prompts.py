@@ -111,7 +111,7 @@ class AgentServicePrompts:
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
-        "list_accessible_datasets": "列出当前用户有权限的数据集目录",
+        "list_accessible_datasets": "列出当前用户有权限且已启用的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "get_myinfo": "读取当前用户本人的基本信息、扩展信息、详情信息、角色与权限",
         "request_user_confirmation": "录入/修改/删除业务数据前，向用户展示可编辑确认卡并等待【业务确认】回执",
@@ -379,7 +379,7 @@ class AgentServicePrompts:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
 
         if "list_accessible_datasets" in tool_names:
-            table_rows.append("| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅目录级 id/名称/备注，不含表结构） |")
+            table_rows.append("| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |")
 
         if "list_accessible_knowledge_bases" in tool_names:
             table_rows.append("| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |")

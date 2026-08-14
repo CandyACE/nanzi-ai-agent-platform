@@ -1254,6 +1254,8 @@ interface DatasetNavigationPayload {
       table_physical_names?: Record<string, string>;
     }>;
     followups?: DatasetCapabilityQuestion[];
+    updated_at?: string;
+    enabled?: boolean;
   }>;
   markdown?: string;
   is_fallback?: boolean;

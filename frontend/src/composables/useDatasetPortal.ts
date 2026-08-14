@@ -29,9 +29,11 @@ export interface DatasetPortalGroup {
     table_descriptions?: Array<{ name: string; description?: string }>;
     table_physical_names?: Record<string, string>;
     table_columns?: Record<string, DatasetPortalColumn[]>;
+    enabled?: boolean;
   }>;
   followups?: DatasetPortalQuestion[];
   updated_at?: string;
+  enabled?: boolean;
 }
 
 export interface DatasetPortalPayload {
