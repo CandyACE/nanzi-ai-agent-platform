@@ -1,0 +1,434 @@
+<!--
+  微信公众号排版 HTML — 独立稿（不属于 NanZi 实战连载）
+  主题：DeepSeek Harness 开源解读（基于源码）
+  配色：克制工程风（石板灰，无渐变、无彩虹卡片）
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式（或 135/秀米/微信编辑器）
+  2. 【配图占位符】区域：选中虚线卡片，替换为素材图
+  3. 全部内联 style，勿依赖外部 CSS/JS
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:26px 18px;background:#1c1917;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:normal;color:#a8a29e;line-height:1.5;letter-spacing:1.5px;">源码笔记 · 2026.08</p>
+    <p style="margin:0 0 12px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.5;letter-spacing:1px;">DeepSeek 把 Harness 开源了</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#d6d3d1;line-height:1.6;letter-spacing:0.5px;">开发者预览版 · 一切皆插件 · 我把仓库的核心脊柱翻了一遍</p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      2026 年 8 月 13 日，DeepSeek 发布 <strong>DeepSeek Harness</strong>（命令行 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">dsh</code>）开发者预览版，MIT 开源。官方一句话：<strong>一切皆插件</strong>。仓库自己用大写写着：会有不兼容变更。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      朋友圈更快：对标 Claude Code、单任务两毛钱、AI 从聊天变成干活。标题好传播，但大多停在发布页。我把 <a href="https://github.com/deepseek-ai/deepseek-harness" style="color:#1c1917;text-decoration:underline;">deepseek-ai/deepseek-harness</a> 的架构文档和 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">packages/</code> 核心包对了一遍。这篇只做一件事：<strong>讲清它作为产品，核心特点到底是什么。</strong>
+    </p>
+  </section>
+
+  <section style="margin:0 0 24px 0;padding:14px 16px;background:#f5f5f4;border-left:4px solid #292524;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;">
+      <strong>先给结论：</strong>DeepSeek Harness 不是「又一个 Agent 框架」，而是一套<strong>可替换的智能体运行时</strong>。官方核心 slogan 是一切皆插件；源码里的脊柱是 <strong>会话日志 + 提示词组装 + 工具管线 + agent loop</strong>；开箱能力覆盖技能、沙箱、子代理、MCP、计划/待办、压缩、Web UI 与无头运行。圈里在传的成本和「对标谁」，是使用体验；仓库里真正构成产品的，是下面这些特点。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 01 它是什么 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">01｜它到底开源了什么</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      Harness 这个词容易被当成品牌名。对照仓库，它指的是一层工程：<strong>模型负责想；Harness 负责把工具、技能、会话、沙箱、存储、循环、调度、UI 接到模型上</strong>，并规定它们怎么协作、留下什么痕迹、失败时怎么停。
+    </p>
+    <p style="margin:0 0 10px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #44403c;border-radius:0 6px 6px 0;font-size:15px;color:#111827;line-height:1.9;">
+      媒体爱写 <strong>Model + Harness = Agent</strong>。更准确的说法是：没有 Harness，模型只会聊天；有了 Harness，模型才有工位、手脚、刹车，和一份可回放的履历。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      发行面很具体：一条命令拉起 Web UI（默认本机 3080），也可以无头跑一次性任务，还可以当 ACP 服务、用 TypeScript / Python SDK 从另一个进程驱动。底座是 TypeScript + 开源插件框架 <strong>Cordis</strong>。Python 包不是「再用 Python 写一套循环」，而是 JSON-RPC 去驱打包好的 Node 运行时。
+    </p>
+  </section>
+
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:1px dashed #a8a29e;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">【配图占位符 01 · 产品形态】</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">Web UI / headless 一次性任务 / ACP / SDK，下面是同一棵插件树</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">先跑起来：两条官方路径</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      安装 Node.js 之后，一条命令就能起 Web UI，默认地址 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">http://127.0.0.1:3080</code>。想跟源码走，用下面这一组。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;">从 npm 一键启动</p>
+    <p style="margin:0 0 10px 0;padding:12px 14px;background:#1c1917;border-radius:4px;font-size:13px;color:#e7e5e4;line-height:1.7;word-break:break-all;">npx @deepseek-ai/dsh web</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.75;">命令会拉起 Web UI。界面说明见官方 Web UI guide。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;">从源码启动</p>
+    <p style="margin:0;padding:12px 14px;background:#1c1917;border-radius:4px;font-size:13px;color:#e7e5e4;line-height:1.8;word-break:break-all;">
+      git clone https://github.com/deepseek-ai/deepseek-harness.git<br>
+      cd deepseek-harness<br>
+      pnpm install<br>
+      pnpm run build<br>
+      pnpm dsh web
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 02 核心特点总表 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">02｜核心特点，先看这一张表</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      下面六条是对照官方口径和 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">docs/architecture</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">packages/core</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">packages/bundle</code> 之后，我认为构成「它是谁」的核心——不是功能清单刷屏，是产品骨架。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">1. 一切皆插件</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">模型、工具、技能、会话、沙箱、存储、循环、调度、UI，全部是插件。没有需要打补丁的特权内核。agent loop 自己也是插件，可被替换。</p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">2. Profile + Bundle 组装</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">一次运行是按层叠出来的插件树。每个 profile 先叠 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">dsh-base</code>，再叠 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">web</code> 或 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">headless</code>，用户还可以 patch 任意一行。</p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">3. 控制脊柱很薄</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">稳定面只有几块：会话日志、系统提示组装、工具注册与执行管线、Agent 接口、默认的 agent-loop、LLM 适配缝。新能力往外挂，不往 loop 里堆。</p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">4. 模型看见的 = 日志里有</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">会话是追加写的事件流。模型上下文从日志投影；fork、resume、压缩、UI、测试回放，都是同一条流的派生视图。</p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">5. 能力按「缝」交付</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">每条能力拆成定义 / 实现 / 消费者。换文件系统或沙箱 provider，Bash、终端、语言服务器跟着走。子代理后面可以是进程内、ACP、Codex、Claude Code。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#1c1917;">6. 开箱就是完整的干活运行时</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">技能目录、沙箱三档、审批、MCP、联网搜索、计划/待办、后台 jobs、上下文压缩、超长工具结果落盘、按会话的 agent preset。不是「先自己接一圈工具才能用」。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 03 插件 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">03｜特点一：一切皆插件，循环也是乘客</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      这是官方自己放在标题上的特点，源码也认账。Cordis 里，插件向共享上下文贡献服务、类型化事件、可撤销的副作用。卸载插件，注册跟着撤。文档写得很白：<strong>扩展方式是把插件挂到旁边，不是去改一个特权核心。</strong>
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      启动时不是「跑一个单体」。先是 <strong>bundle</strong>（一组可安装的配置行），再是 <strong>profile</strong>（具名组合）。<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">dsh-base</code> 是每一份 profile 的第一层：模型适配、默认模型选择、工具、持久化、沙箱与审批、设置、凭据、遥测、宿主级子代理。<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">dsh-web-app</code> 叠浏览器；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">dsh-headless</code> 叠一次性运行器、不带服务器。本机实际启动了什么，<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">dsh --dump-config</code> 能打印出来，打印出的任何一行都可以被 patch 整段替换。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      循环被压成薄协议。一次 <strong>step</strong> = 一轮模型请求 + 它调用的工具；一次 <strong>turn</strong> = 零到多步，直到不再欠下一次请求。新行为挂扩展点；改 loop 必须先改架构图。这就是「循环不是产品」在工程上的落点。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 04 脊柱 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">04｜特点二：控制脊柱只有这几块</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">packages/core</code> 自称 product API spine。插件和消费者要对着这层写，而不是对着某一个 UI 或某一个工具写：
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>session</strong>：只追加的会话事件日志 + 内存存储</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>system-prompt</strong>：提示词片段和工具 schema 的组装注册表</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>tools</strong>：带作用域的工具注册表，以及带把关的执行流水线</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>agent</strong>：Agent 接口、活体注册表、拦截用的 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">agent/*</code> 事件</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>agent-loop</strong>：默认司机，实现上面的接口，可被换掉</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· <strong>llm</strong>：消息与流式词汇表，外加适配器缝</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      扩展点分三个域，选错是大多数改动的第一错误：<strong>会话事件</strong>是重启还在的事实；<strong>Agent 事件</strong>拦截进行中的活体；<strong>能力事件</strong>把政策挂到文件系统、工具管线、遥测上，不必 import 循环。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 05 日志 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">05｜特点三：看见即记录，压缩也是检查点</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      仓库里最硬的一条不变量是：<strong>Model-visible means logged.</strong> 进到模型请求里的东西，必须能从会话日志重建。新加一种给模型看的输入，就要先发明一种会话事件。模型历史由日志投影；流式 chunk 另存，用来回放 UI。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      这直接决定了另外两件「看起来像功能、其实是同一条原则」的事。其一，持久化可以是 JSONL 或 SQLite，语义检查点包在 LLM 和工具调用外面。其二，无密钥快照测试的夹具就是产品自己落下的 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">session.jsonl</code>——把真循环再跑一遍，不需要 API Key。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      上下文压缩服从同一条。不是静默删历史，而是 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">compaction/start</code> → 摘要 → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">compaction/end</code> 这套带锁检查点。中途崩溃会留下没有配对的 start，而不是假装压完了。超长工具输出另走 <strong>spill</strong>：正文落成会话文件，模型只看到预览和定位符。
+    </p>
+  </section>
+
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:1px dashed #a8a29e;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">【配图占位符 02 · 会话日志是唯一真相源】</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">同一条事件流 → 模型上下文 / UI / 压缩检查点 / 测试回放</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 06 开箱能力 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">06｜特点四：开箱能力按「缝」组装，不是工具堆砌</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      一条完整的能力缝有三角色：<strong>定义</strong>（接口和词汇）、<strong>实现</strong>（真正干活的 provider）、<strong>消费者</strong>（通常是模型能看见的工具）。缺一角，仓库不把它叫做缝。这解释了为什么功能看起来很多，却没有烂成「每个工具私藏一份执行环境」。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;">技能：目录和正文分离</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      多个 provider 往同一张目录里汇。本地扫描按层：项目 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">.dsh/skills</code>、<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">.agents/skills</code>、用户目录、捆绑技能，同名近层获胜。模型目录只给 name + description，正文必须用 skill 工具按需加载。渐进披露是协议，不是上下文不够了再截一下。
+    </p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;">沙箱：三档，并诚实上报管住了多少</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      文件效应只有只读、工作区可写、全开。Linux 走 bwrap / Landlock，macOS 走 Seatbelt，Windows 走受限令牌。执行完整度必须报 <strong>full 或 partial</strong>。老内核和 ACL 缝不能假装「已经沙箱了」。
+    </p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;">子代理：一条缝，多种活法</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      同一套委派工具后面，可以是全新子 agent、从父历史 fork、进程外 ACP、真的 Codex、真的 Claude Code、另一份 Harness SDK。子代可回报，父代可发消息、列举、续跑。这是「能调用别的编码助手」，不是营销上的「对标」。
+    </p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;">还有一套完整的干活配件</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 计划模式：记在日志里的协作状态，退出要人审阅完整 markdown 计划</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 会话级 todo、长任务 jobs（观察 / 取消 / 等待）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· MCP 客户端、Web 搜索/抓取、Bash / 文件系统 / 持久终端</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 按会话的 agent preset：同一进程里可以跑几套不同工具和人格的 agent</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· 可选的 Code Mode：模型写一段程序，对 host 绑定调用多工具，子调用仍走同一条工具管线</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 07 工具管线 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">07｜特点五：工具怎么跑——先过安检，劝你和拦你不是一回事</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      模型说「我要跑这条命令」的时候，Harness 不立刻动手。它先把这句话记进会话日志——还没执行，就已经留底。然后分三步走：
+    </p>
+    <p style="margin:0 0 8px 0;padding:12px 14px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>跑之前</strong>：看权限、看沙箱、看要不要问人。可以放行，可以直接拒绝，也可以弹一次确认。人没答，就当拒绝，绝不假装跑成功了。<br><br>
+      <strong>跑的时候</strong>：超时、计时这些规矩包在外面，每个工具自己不用再写一遍。<br><br>
+      <strong>跑完之后</strong>：结果太长就先存成文件，只把预览和路径塞回给模型；也可以往下一轮补一句提醒。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      模型要是拿完全相同的参数，连续敲同一把工具，系统不会上来就掐死。它先塞一句：「你在重复，换个打法，或者收工。」该重试的重试，不会被误伤。写待办这种记账动作，也不会把「连续重复」的计数冲掉——不然模型夹一记流水，空转就被洗干净了。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      计划模式也是这个理。打开计划，只是多给模型一段「先把方案写清楚」的提醒；真不让写文件、真要不要问人，还是沙箱和审批说了算。两套开关互不偷看。<strong>劝你是劝你，拦你是拦你。</strong>混在一起，模型会分不清哪句是建议、哪句是红线。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 08 不是什么 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">08｜它不是什么</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#f5f5f4;border:1px solid #d6d3d1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>开发者预览</strong>，不是稳定发行版。核心插件和 API 会继续改，上生产是你自己的冒险。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>单用户 / 本机 agent 运行时</strong>，不是多租户企业中枢。没有账号体系、RBAC、业务数据护栏、把助手嵌进门户这些事。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">· 不是「已经替掉 Claude Code 的产品」。它可以把 Claude Code / Codex 当子代理 provider 挂上，说明它想当的是缰绳和插座，不是某一个编码助手的克隆。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· 仓库里有 self-modification：agent 可以检视、挂载自己的插件。桌面 harness 上这是「一切皆插件」的极限演示；企业墙内通常该锁死，不是该当功能抄。</p>
+  </section>
+
+  <section style="margin:16px 0 16px 0;">
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.85;">
+      官方页 <a href="https://deepseek.com/harness/" style="color:#1c1917;text-decoration:underline;">deepseek.com/harness</a>
+      · 源码 <a href="https://github.com/deepseek-ai/deepseek-harness" style="color:#1c1917;text-decoration:underline;">github.com/deepseek-ai/deepseek-harness</a>
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 09 和 NanZi ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">09｜多一句：和 NanZi 不在同一层</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      我日常在做开源项目 <strong>NanZi</strong>（企业级智能体编排平台）。对照完 DSH 源码，位置其实很好摆：<strong>DeepSeek Harness 是单用户侧的缰绳和插座；NanZi 是企业墙内的马厩、路权和调度室。</strong>不是谁替掉谁。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:8px 8px;border:1px solid #d6d3d1;background:#1c1917;color:#fafaf9;text-align:left;width:22%;">维度</th>
+          <th style="padding:8px 8px;border:1px solid #d6d3d1;background:#1c1917;color:#fafaf9;text-align:left;">DeepSeek Harness</th>
+          <th style="padding:8px 8px;border:1px solid #d6d3d1;background:#1c1917;color:#fafaf9;text-align:left;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">一句话</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">本机 agent 的缰绳和插座</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">企业墙内的马厩、路权和调度室</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">工作对象</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">本机 / 本进程里的一个或一窝 agent</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">多用户、多专家、多数据权限下的一次企业对话</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">运行时</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">Cordis 插件树，loop 本身可替换</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">AgentScope ReAct，外加 RAGFlow / OpenClaw 分流</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">状态</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">会话事件流是唯一真相源，看见即记录</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">Redis AgentState + 过程时间线，做恢复和 UI 回放</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">技能</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">目录只给摘要，正文按需加载</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">平台技能 + 个人技能，发布要审核</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">沙箱 / 权限</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">只读 / 工作区可写 / 全开，并上报 full 或 partial</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">RBAC、工作区隔离、工具审批、ChatBI SQL 护栏</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">人机协作</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">一次性审批；Plan 是日志里的协作状态</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">确认卡片、外执挂起、会话级恢复</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">定位</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">开发者预览，单用户干活运行时</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">可私有化的企业编排中枢</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #44403c;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;">
+      <strong>不该做的：</strong>把 dsh 当子进程塞进 NanZi，会变成两套循环、两套会话、两套权限。学它的不变量可以，搬运行时没有意义。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;">
+    <p style="margin:0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">值得 NanZi 学的，是这几条约束</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      不是把 Cordis 搬过来，也不是重写 AgentScope。对照源码，真正能接到我们平台上的，是下面这些<strong>产品级不变量</strong>——NanZi 里已经有一半影子，缺的是把它们写成硬规矩。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:8px;border:1px solid #d6d3d1;background:#1c1917;color:#fafaf9;text-align:left;width:28%;">学什么</th>
+          <th style="padding:8px;border:1px solid #d6d3d1;background:#1c1917;color:#fafaf9;text-align:left;">DSH 怎么做</th>
+          <th style="padding:8px;border:1px solid #d6d3d1;background:#1c1917;color:#fafaf9;text-align:left;">NanZi 现在</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">看见即记录</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">进模型的内容必须能从会话日志重建；压缩也是带锁检查点</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">Redis 快照 + 过程时间线，还不是同一条可回放事件流</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">工具管线在循环外</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">pre / execute / post 三条瀑布，政策挂管线，不改 loop</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">审批、超时、熔断写在工具调用里，扩展点不够干净</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">超长结果落盘</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">spill：正文进文件，模型只看预览和定位符</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">ChatBI 有 SQL 抽样，Bash / MCP / 代码执行还没有统一策略</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">技能渐进披露</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">目录只有 name + description，正文必须按需加载</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">已有 list / read 工具，但仍常把全文预注入</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#1c1917;font-weight:bold;">重复先劝告</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">相同工具相同参数连打，先提醒再让模型自己改打法</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#fafafa;color:#374151;">工具环熔断是硬停，合法重试也会被一刀切</td>
+        </tr>
+        <tr>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#1c1917;font-weight:bold;">沙箱要诚实</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">三档文件效应，并上报 full / partial，不装已经沙箱了</td>
+          <td style="padding:8px;border:1px solid #e7e5e4;background:#ffffff;color:#374151;">目录围栏 + rm 询问，还没有「管住了多少」这句实话</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      一句话：<strong>学它的不变量，不搬它的运行时。</strong>这些对任何认真做 Agent 的人有用，不限于某一个开源项目。NanZi 仓库在
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1c1917;text-decoration:underline;">RandyChen1985/nanzi-ai-agent-platform</a>。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 10 结尾 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #292524;padding-left:12px;line-height:1.4;">10｜写在最后</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      2026 年的 Agent 竞赛，越来越不像「谁的模型更会聊天」，而像「谁把干活的那一层写成可替换的基础设施」。DeepSeek 选择把这一层开源，并且把循环也做成插件——这比再发一个基准分数更像在押长期。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      预览版会碎，API 会改。真正可能留下来的，是那几条构成产品的约束：<strong>一切皆插件、脊柱要薄、看见即记录、能力走缝、政策走管线。</strong>做智能体的人，不妨把仓库当教材翻，而不是当新闻当标题。
+    </p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#fafafa;border-radius:4px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#57534e;">独立稿 · 源码笔记</p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#a8a29e;">基于 deepseek-ai/deepseek-harness 开发者预览版阅读，不代表官方立场。</p>
+    <p style="margin:0;font-size:13px;color:#a8a29e;">觉得有用，转给正在做 Agent 基础设施的同事</p>
+  </section>
+
+</section>

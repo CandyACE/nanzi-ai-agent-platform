@@ -1,0 +1,774 @@
+<!--
+  微信公众号排版 HTML — 独立稿（不属于 NanZi 实战连载）
+  主题：Qwen3.8-27B 开源解读 + SGLang 单卡部署示例（开启 MTP）
+  配色：克制工程风（石板海军蓝 + 琥珀强调，无渐变、无彩虹卡片）
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式（或 135/秀米/微信编辑器）
+  2. 【配图占位符】区域：选中虚线卡片，替换为素材图
+  3. 全部内联 style，勿依赖外部 CSS/JS
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:26px 18px;background:#0f172a;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:normal;color:#fbbf24;line-height:1.5;letter-spacing:1.5px;">开源模型观察 · 开源当天实测</p>
+    <p style="margin:0 0 12px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.5;letter-spacing:1px;">Qwen3.8-27B 今天开源：第一时间上手，看看它到底怎么样</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#cbd5e1;line-height:1.6;letter-spacing:0.5px;">从模型特性、官方评测到单卡部署实践</p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      就在今天，通义千问开源了 Qwen3.8-27B；几天前发布的 2.4T Max 则面向集群。对大多数需要自建服务的团队来说，更现实的问题是：27B 能否在单卡上把视觉输入、长上下文和 Agent 任务能力跑起来？它采用 Apache 2.0 许可，现已可从 Hugging Face 和 ModelScope 获取。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      这篇文章分四步：先看模型结构，再把官方分数放回测试条件，然后给出一套单卡部署方式，并以 H 系列为例落到具体命令，最后用 EvalScope 做压力测试。SGLang 已经提供了对应的部署 cookbook。
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #b45309;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;">
+      文章会把模型介绍、评测条件和部署实践放在一起看。模型卡上的分数只用于判断能力方向，不等同于线上吞吐；上线前仍要用自己的任务、工具链和并发规模复测。
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#1e293b;border-radius:4px;">
+    <p style="margin:0 0 7px 0;font-size:12px;color:#94a3b8;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;"># 本文采用的部署组合</p>
+    <p style="margin:0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">单卡 · FP8（以 H100 / H800 / H200 为例）<br>SGLang · 权重内 MTP（EAGLE 3/1/4）· qwen3 / qwen3_coder 解析器</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 01 介绍 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">01｜先看模型：27B 的能力从哪里来</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      Qwen3.8-27B 的架构底座是 Qwen3.5，服务路径与 Qwen3.6-27B 一样，走 SGLang 的部署链路。虽然名称是 27B，Hugging Face 上的张量规模约为 28B，但它仍然按单卡稠密模型来规划显存。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;">关键规格</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>形态</strong>：稠密因果语言模型 + 视觉编码器，原生图文 / 视频</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>层结构</strong>：64 层，16 组「3 × (Gated DeltaNet → FFN) + 1 × (Gated Attention → FFN)」——48 层线性注意力，16 层全注意力</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>隐藏层</strong>：5120；FFN 中间维 17408</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>上下文</strong>：原生 262,144 token，YaRN 可扩到 1,000,000</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· <strong>MTP</strong>：权重内已训练多步 Multi-Token Prediction 头，不用另下草稿模型</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· <strong>思考</strong>：默认开；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">reasoning_effort</code> 可调 xhigh / medium / low；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">preserve_thinking</code> 默认保留历史思考块</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      这套架构对部署有一个直接影响：它采用混合 GDN，大部分层走线性注意力，每隔三层插入一层全注意力。长上下文场景下，KV 缓存会比纯 Transformer 更省，但服务端还要为 <strong>GDN 状态池</strong>预留显存。并发上不去时，问题未必出在模型权重，也可能是这部分状态占用了余量，第三节会回到这个参数。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">权重三档</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:left;">模型</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:left;">量化</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:left;">权重</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#0f172a;">Qwen3.8-27B</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">BF16</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;font-family:Menlo,Monaco,Consolas,monospace;font-size:11px;word-break:break-all;">Qwen/Qwen3.8-27B</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#fffbeb;font-weight:bold;color:#b45309;">Qwen3.8-27B-FP8</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#fffbeb;">FP8（blockwise）</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#fffbeb;font-family:Menlo,Monaco,Consolas,monospace;font-size:11px;word-break:break-all;">Qwen/Qwen3.8-27B-FP8</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;font-weight:bold;color:#0f172a;">Qwen3.8-27B-NVFP4</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">NVFP4 W4A4 + FP8 projections</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;font-family:Menlo,Monaco,Consolas,monospace;font-size:11px;word-break:break-all;">RadixArk/Qwen3.8-27B-NVFP4</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#475569;line-height:1.7;">FP8 权重大约 28.5GB，本文以 H100 / H800 / H200 作为示例采用这一档（表中高亮）。NVFP4 约 16.5GB，更适合支持 FP4 Tensor Core 的硬件；具体选择仍要以显卡架构和后端支持情况为准。</p>
+  </section>
+
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:1px dashed #a8a29e;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">【配图占位符 01 · 模型卡 / 权重】</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">贴 ModelScope 模型页，或 cookbook 三档权重表截图</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 02 性能 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">02｜怎样阅读这些评测分数</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      先把数据边界说清楚：下面的数字全部来自模型卡，不是我们机房的压测。对照对象包括上一代开源的 <strong>Qwen3.6-27B</strong>、同门更大的 <strong>Qwen3.7-Plus</strong>、Meta 的 <strong>Muse Glimmer-30B</strong>，以及闭源的 <strong>Opus4.6 Max</strong>。表里的「--」表示官方尚未公布。
+    </p>
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.85;">
+      SWE-bench Pro、DeepSWE、QwenSWEBench 等测试多使用 Claude Code harness，温度 1.0、top_p 0.95、256K 上下文；QwenSWEBench、CoWorkBench、JobBench 属于官方内部测试集。它们适合用来观察能力变化，但不能直接换算成某张 H 卡上的 tokens/s。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">跟上一代 3.6-27B</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:left;">测试项</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">3.8-27B</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">3.6-27B</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">变化</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">Terminal Bench 2.1</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">73.0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">63.4</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+9.6</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">SWE-bench Pro</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">61.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">53.5</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+8.2</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">DeepSWE 1.1</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">42.2</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">13.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+28.9</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">QwenSWEBench</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">79.0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">49.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+29.7</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">NL2Repo-Bench</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">42.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">36.2</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+6.1</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">CoWorkBench</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">70.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">61.0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+9.7</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">JobBench</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">33.4</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">21.8</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+11.6</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">IFBench</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">79.5</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">69.1</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+10.4</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">LiveCodeBench v6</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">90.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">83.9</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+6.4</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">Agents' Last Exam</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">20.4 / 42.9</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">10.6 / 27.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">Pass@1 近翻倍</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#475569;line-height:1.7;">Agents' Last Exam 这一格写的是 Pass@1 / Score。提升最明显的集中在 DeepSWE、QwenSWEBench 这类需要理解仓库并修改代码的任务；如果只看普通问答，差距不会同样明显。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">跟更大、更贵的模型比</p>
+    <table style="width:100%;border-collapse:collapse;font-size:11px;line-height:1.5;">
+      <thead>
+        <tr>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:left;">测试项</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">3.8-27B</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">3.7-Plus</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">Glimmer-30B</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#f8fafc;text-align:right;">Opus4.6 Max</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">Terminal Bench 2.1</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;">73.0</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">64.0</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">51.7</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">78.2</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;">SWE-bench Pro</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">61.7</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">57.6</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">51.2</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">53.4</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">QwenSWEBench</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">79.0</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">59.2</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">--</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">63.8</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;">IFBench</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">79.5</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">79.1</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">77.0</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">62.5</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">LiveCodeBench v6</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">90.3</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">89.6</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">--</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">88.8</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;">CoWorkBench</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">70.7</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">65.1</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">--</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">68.2</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;">GPQA Diamond</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">89.2</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">90.3</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">83.5</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#ffffff;text-align:right;">91.3</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;">HLE</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">30.8</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">34.7</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">22.0</td>
+          <td style="padding:7px 5px;border:1px solid #cbd5e1;background:#f9fafb;text-align:right;">40.0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#475569;line-height:1.7;">这组对比更适合用来判断边界，而不是寻找“全面胜出”的模型。27B 在部分编码和办公任务上超过了更大模型或闭源对手，但 Terminal Bench、GPQA、HLE 仍然落后于 Opus。换句话说，它不是旗舰模型的替代品，却为希望在机房内部署编码和办公 Agent 的团队提供了更现实的容量档位。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">多模态</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:left;">测试项</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">3.8-27B</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">3.6-27B</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">变化</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">OSWorld-Verified</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">84.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">63.9</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+20.4</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">WebArena-Verified</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">64.8</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">48.8</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+16.0</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">AndroidWorld</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">81.9</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">70.3</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+11.6</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">SWE-MM</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">38.6</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">25.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+12.9</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;">MathVision（无 CI）</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">90.0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">85.1</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#0f766e;">+4.9</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;">BabyVision（无 CI）</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">65.7</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">28.9</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#0f766e;">+36.8</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin:9px 0 0 0;font-size:12px;color:#475569;line-height:1.7;">多模态任务的提升同样明显：OSWorld 从 63.9 提升到 84.3，MathVision 在带工具调用的设置下达到 94.6。SGLang 走的是 Qwen3-VL 路径，视觉塔也在服务链路中接入。</p>
+  </section>
+
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #44403c;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;">
+      因此，Qwen3.8-27B 的升级重点并不在普通闲聊，而在改代码、操作终端、完成较长的办公任务，以及理解图像和界面。独立复现数据尚未充分，上生产前仍应使用自己的仓库、工具和业务样本跑一遍。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 03 部署 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">03｜如何部署：以 H 系列为例</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      SGLang cookbook 给出了 H200、RTX PRO 6000、RTX 5090 和 DGX Spark 等硬件的单卡路径。下面先讲通用的部署思路，再以我们使用的 H 系列（Hopper SM90：H100 / H800 / H200）为例给出一套可直接参考的命令；其中文档明确验证的是 H200。H100 / H800 同属 SM90、显存为 80GB，FP8 权重大约 28.5GB，单卡加载后还要为 KV 缓存、GDN 状态和 MTP 校验预留空间。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      MTP 不需要另挂草稿模型，checkpoint 中已经包含训练好的多步 MTP 头。SGLang 通过 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">--speculative-algorithm EAGLE</code> 开启（<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">NEXTN</code> 是同一算法的别名）。本文沿用 cookbook 的推荐组合：<strong>3 / 1 / 4</strong>，即 3 步、topk 1、草稿 4 个 token。不同 GPU 或后端可能需要调整显存比例、prefill 分块和量化格式，但 MTP 与解析器的配置思路是一致的。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;"><strong>官方部署参考：</strong><a href="https://docs.sglang.io/cookbook/autoregressive/Qwen/Qwen3.8-27B" style="color:#b45309;text-decoration:underline;word-break:break-all;">SGLang Cookbook · Qwen3.8-27B</a></p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">部署前先分清三件事</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>MTP 和 DSpark 是两条路径。</strong>MTP 使用权重自带的头；DSpark 需要另挂 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">RadixArk/Qwen3.8-27B-DSpark</code>，两者不要写进同一条命令。</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>量化格式要和硬件匹配。</strong>本文的 H 系列示例使用 FP8；如果显卡没有 FP4 Tensor Core，就不要直接照搬 NVFP4，否则 MLP 可能回退到 Marlin W4A16。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>两个解析器都要带上。</strong><code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--reasoning-parser qwen3</code> 和 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--tool-call-parser qwen3_coder</code> 少一个，工具调用就可能退化为普通文本，而不是结构化的 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">tool_calls</code>。</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">1. 拉镜像、下权重</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      镜像使用 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">lmsysorg/sglang:qwen38-27b</code>，权重从 ModelScope 下载 FP8 版本。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:4px;overflow:hidden;">
+    <p style="margin:0;font-size:12px;color:#cbd5e1;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">docker pull lmsysorg/sglang:qwen38-27b
+
+# 按你的盘符改本地目录
+modelscope download \
+  --model Qwen/Qwen3.8-27B-FP8 \
+  --local_dir /modelshare_readonly/Qwen/Qwen3.8-27B-FP8</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">2. 单卡启动，打开 MTP</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      下面按 cookbook 的 H200 配置作为示例基线：FlashInfer、32K prefill chunk、mem-fraction 0.85，再叠加 MTP 3/1/4。H100 / H800 同样是 SM90，命令主体无需调整；其他 GPU 可以沿用启动流程，但要根据显存容量和后端支持情况重新选择量化、prefill 分块与显存比例。多卡机器可用 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">CUDA_VISIBLE_DEVICES</code> 指定一张卡，27B FP8 不需要 TP。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:4px;overflow:hidden;">
+    <p style="margin:0;font-size:11px;color:#cbd5e1;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">docker run --gpus '"device=0"' \
+  --network host \
+  --name Qwen3.8-27B \
+  --shm-size=32g --ipc=host -d \
+  --privileged \
+  -v /modelshare_readonly/Qwen/Qwen3.8-27B-FP8:/model \
+  lmsysorg/sglang:qwen38-27b \
+  python3 -m sglang.launch_server \
+  --trust-remote-code \
+  --model-path /model \
+  --served-model-name Qwen3.8-27B \
+  --mem-fraction-static 0.85 \
+  --attention-backend flashinfer \
+  --chunked-prefill-size 32768 \
+  --max-prefill-tokens 32768 \
+  --reasoning-parser qwen3 \
+  --tool-call-parser qwen3_coder \
+  --speculative-algorithm EAGLE \
+  --speculative-num-steps 3 \
+  --speculative-eagle-topk 1 \
+  --speculative-num-draft-tokens 4 \
+  --host 0.0.0.0 \
+  --port 30000</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">启动参数的四个关注点</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>MTP 四件套</strong>：EAGLE + steps 3 + topk 1 + draft 4，这是 cookbook 推荐的权重内 MTP 工作点。</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>prefill chunk</strong>：本文的 H 系列示例使用 32K；其他硬件应以对应 cookbook 配置为准，不要机械照搬这一数值。</p>
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>served-model-name</strong>：客户端填写 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">Qwen3.8-27B</code>，不要填宿主机目录名。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>上下文长度</strong>：默认 262K。显存较紧或并发要求较高时，可先加 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--context-length 65536</code> 或 131072。扩到 1M 需要用 YaRN 覆盖 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">rope_parameters</code>，并设置 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1</code>，日常部署不必开启。</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;line-height:1.5;">3. 启动后确认服务链路</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:4px;overflow:hidden;">
+    <p style="margin:0;font-size:12px;color:#cbd5e1;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">curl http://127.0.0.1:30000/v1/models
+
+curl http://127.0.0.1:30000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3.8-27B","messages":[{"role":"user","content":"用三句话介绍你自己。"}]}'</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">进程启动只是第一步。还需要确认中文输出和流式响应是否正常，<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">reasoning_content</code> 能否与答案分开，<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">tool_calls</code> 是否保持结构化；再发送一张图片，确认视觉塔已经接入。观察日志中的 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">max_running_requests</code> 和 MTP 接受率，如果并发受到显存限制，再考虑调整 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--mamba-full-memory-ratio</code>。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;">先用官方采样参数作为基线</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 思考模式：temperature=1.0，top_p=0.95，top_k=20</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 非思考：temperature=0.7，top_p=0.80，top_k=20，presence_penalty=1.5，关掉 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">enable_thinking</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· 长任务不建议一开始就把 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">reasoning_effort</code> 调到 low。单轮响应可能变快，但分析不足会带来额外重试，总耗时反而可能上升。</p>
+  </section>
+
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:1px dashed #a8a29e;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">【配图占位符 02 · 部署】</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">贴 GPU 状态，或 SGLang 启动日志（带 speculative EAGLE）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 04 压力测试 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">04｜怎么测：用 EvalScope 做压力测试</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      服务启动后，不能只用一轮 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">curl</code> 判断性能。更实际的做法是逐步提高并发和请求数，观察首 token 延迟、生成吞吐、成功率以及显存变化。这里使用 EvalScope 的 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">perf</code> 命令做压力测试，官方快速开始文档见：<a href="https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/quick_start.html" style="color:#b45309;text-decoration:underline;word-break:break-all;">EvalScope Stress Test Quick Start</a>。
+    </p>
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.85;">
+      下面这组参数将并发梯度设为 1、10、50、100、200，请求数设为 10、20、100、200、400；使用随机数据集，并把输入和输出 token 长度固定为 1024，便于横向比较。<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--url</code> 和 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--tokenizer-path</code> 需要替换成实际服务地址和本地 tokenizer 路径。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#111827;border-radius:4px;overflow:hidden;">
+    <p style="margin:0;font-size:11px;color:#cbd5e1;line-height:1.75;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-word;">evalscope perf \
+  --parallel 1 10 50 100 200 \
+  --number 10 20 100 200 400 \
+  --model qwen3.8-27b \
+  --url http://repo:30000/v1/chat/completions \
+  --api openai \
+  --dataset random \
+  --max-tokens 1024 \
+  --min-tokens 1024 \
+  --prefix-length 0 \
+  --min-prompt-length 1024 \
+  --max-prompt-length 1024 \
+  --tokenizer-path /root/evalscope-test/tokenizer/ \
+  --extra-args '{"ignore_eos": true}'</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #b45309;border-radius:0 8px 8px 0;">
+    <p style="margin:0 0 7px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">本次实测结果 · 2026-08-15</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">你贴出的日志里，已经完整跑完 4 组：并发 1、10、50、100；全部请求成功。命令还配置了并发 200、请求 400，但当前日志没有出现这一组的最终 summary，因此不在表格里补填。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">实测汇总（左右滑动查看完整表格）</p>
+    <table style="width:100%;min-width:1080px;border-collapse:collapse;font-size:12px;line-height:1.55;white-space:nowrap;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">并发</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">请求数</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:center;">成功/失败</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">时长(s)</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">请求吞吐(req/s)</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">Avg TTFT(ms)</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">Avg TPOT(ms)</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">输出吞吐(tok/s)</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">总吞吐(tok/s)</th>
+          <th style="padding:8px 6px;border:1px solid #64748b;background:#0f172a;color:#f8fafc;text-align:right;">MTP 接受率</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#0f172a;">1</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">10</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:center;color:#0f766e;">10 / 0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">56.39</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">0.18</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">106.10</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">5.41</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">181.58</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">363.23</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">0.70</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#0f172a;">10</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">20</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:center;color:#0f766e;">20 / 0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">17.72</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">1.13</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">436.55</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">7.56</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">1155.52</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">2311.33</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">0.69</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#0f172a;">50</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">100</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:center;color:#0f766e;">100 / 0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">79.11</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">1.26</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;color:#b45309;">22399.03</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">7.89</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;font-weight:bold;color:#b45309;">1294.41</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">2589.37</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#ffffff;text-align:right;">0.69</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#0f172a;">100</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">200</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:center;color:#0f766e;">200 / 0</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">151.00</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">1.32</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;color:#b45309;">50121.46</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">7.82</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;font-weight:bold;color:#b45309;">1356.29</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">2713.10</td>
+          <td style="padding:8px 6px;border:1px solid #d1d5db;background:#f9fafb;text-align:right;">0.69</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+<section style="margin:0 0 16px 0;padding:12px 14px;background:#111827;border-radius:4px;overflow:hidden;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#f8fafc;line-height:1.5;">并发 10 · 原始日志（滚动查看）</p>
+    <pre style="margin:0;max-height:520px;overflow:auto;white-space:pre;word-break:normal;font-family:Menlo,Monaco,Consolas,monospace;font-size:11px;line-height:1.6;color:#cbd5e1;"><code>2026-08-15 10:23:46 - evalscope - INFO: Running[perf]  20%| 1/5 [Elapsed: 01:13 &lt; Remaining: 04:53, 73.29s/it]
+2026-08-15 10:23:46 - evalscope - INFO: Starting benchmark with args:
+2026-08-15 10:23:46 - evalscope - INFO: {
+    "model": "qwen3.8-27b",
+    "model_id": "qwen3.8-27b",
+    "attn_implementation": null,
+    "api": "openai",
+    "tokenizer_path": "/root/evalscope-test/tokenizer/",
+    "port": 8877,
+    "url": "http://repo:30000/v1/chat/completions",
+    "headers": {},
+    "connect_timeout": null,
+    "read_timeout": null,
+    "total_timeout": 21600,
+    "api_key": null,
+    "no_test_connection": false,
+    "number": 20,
+    "parallel": 10,
+    "rate": -1.0,
+    "warmup_num": 0,
+    "open_loop": false,
+    "sleep_interval": 5,
+    "duration": null,
+    "sla_auto_tune": false,
+    "sla_variable": "parallel",
+    "sla_params": null,
+    "sla_num_runs": 3,
+    "sla_upper_bound": 65536,
+    "sla_lower_bound": 1,
+    "sla_fixed_parallel": null,
+    "sla_number_multiplier": null,
+    "db_commit_interval": 1000,
+    "queue_size_multiplier": 5,
+    "in_flight_task_multiplier": 2,
+    "num_workers": 0,
+    "log_every_n_query": 100,
+    "debug": false,
+    "enable_progress_tracker": false,
+    "visualizer": null,
+    "wandb_api_key": null,
+    "swanlab_api_key": null,
+    "swanlab_host": null,
+    "name": null,
+    "outputs_dir": "outputs/20260815_102233/qwen3.8-27b",
+    "no_timestamp": false,
+    "max_prompt_length": 1024,
+    "min_prompt_length": 1024,
+    "prefix_length": 0,
+    "prompt": null,
+    "query_template": null,
+    "apply_chat_template": true,
+    "image_width": 224,
+    "image_height": 224,
+    "image_format": "RGB",
+    "image_num": 1,
+    "image_patch_size": 28,
+    "dataset": "random",
+    "dataset_path": null,
+    "data_source": null,
+    "dataset_offset": 10,
+    "dataset_args": null,
+    "frequency_penalty": null,
+    "repetition_penalty": null,
+    "logprobs": null,
+    "max_tokens": 1024,
+    "min_tokens": 1024,
+    "n_choices": null,
+    "seed": null,
+    "stop": null,
+    "stop_token_ids": null,
+    "stream": true,
+    "temperature": 0.0,
+    "top_p": null,
+    "top_k": null,
+    "extra_args": {
+        "ignore_eos": true
+    },
+    "tokenize_prompt": false,
+    "multi_turn": false,
+    "min_turns": 1,
+    "max_turns": null,
+    "multi_turn_args": null
+}
+2026-08-15 10:23:53 - evalscope - INFO: Test connection successful.
+2026-08-15 10:23:55 - evalscope - INFO: Using 248068 allowed tokens out of 248077 total tokens (excluded 9 special/byte-fallback tokens)
+2026-08-15 10:23:55 - evalscope - INFO: Sampling input lengths from [972, 973)
+2026-08-15 10:23:55 - evalscope - INFO: Generating[requests]  95%| 19/20 [Elapsed: 00:00 &lt; Remaining: 00:00, 67.86it/s]
+Generating[requests]:  95%|███████████████████████████████████████████████████████████████████████▎   | 19/20 [00:00&lt;00:00, 62.26it/s]
+2026-08-15 10:23:56 - evalscope - INFO: Save the data base to: outputs/20260815_102233/qwen3.8-27b/parallel_10_number_20/benchmark_data.db
+2026-08-15 10:24:13 - evalscope - INFO: Processing[parallel_10_number_20] 100%| 20/20 [Elapsed: 00:17 &lt; Remaining: 00:00,  2.23it/s]
+Processing[parallel_10_number_20]: 100%|██████████████████████████████████████████████████████████████| 20/20 [00:17&lt;00:00,  1.12it/s]
+2026-08-15 10:24:13 - evalscope - INFO:
+Benchmarking summary:
+┌────────────────────────────┬─────────────┐
+│ Metric                     │       Value │
+├────────────────────────────┼─────────────┤
+│ ── General ──              │             │
+│ Test Duration (s)          │       17.72 │
+│ Concurrency                │          10 │
+│ Request Rate (req/s)       │       -1.00 │
+│ Total / Success / Failed   │ 20 / 20 / 0 │
+│ Req Throughput (req/s)     │        1.13 │
+│ ── Latency ──              │             │
+│ Avg Latency (s)            │        8.17 │
+│ Avg TTFT (ms)              │      436.55 │
+│ Avg TPOT (ms)              │        7.56 │
+│ Avg ITL (ms)               │       24.04 │
+│ ── Tokens ──               │             │
+│ Avg Input Tokens           │     1024.25 │
+│ Avg Output Tokens          │     1024.00 │
+│ Output Throughput (tok/s)  │     1155.52 │
+│ Total Throughput (tok/s)   │     2311.33 │
+│ ── Speculative Decoding ── │             │
+│ Avg Decoded Tok/Iter       │        3.23 │
+│ Spec. Accept Rate          │        0.69 │
+└────────────────────────────┴─────────────┘
+2026-08-15 10:24:13 - evalscope - INFO:
+Percentile results:
+┌────────────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
+│ Metric         │     min │      1% │      5% │     10% │     25% │     50% │     75% │     90% │     95% │     99% │     max │
+├────────────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+│ Latency (s)    │    6.90 │    6.90 │    7.12 │    7.13 │    7.31 │    7.93 │    9.13 │   10.04 │   10.52 │   10.52 │   10.52 │
+│ TTFT (ms)      │  116.45 │  116.45 │  131.95 │  132.20 │  133.58 │  538.77 │  690.29 │  755.43 │  756.01 │  756.01 │  756.01 │
+│ ITL (ms)       │    0.01 │   17.54 │   20.86 │   21.40 │   22.28 │   22.59 │   22.82 │   23.15 │   23.65 │   85.27 │  440.27 │
+│ TPOT (ms)      │    6.07 │    6.07 │    6.29 │    6.47 │    6.83 │    7.26 │    8.70 │    9.60 │    9.61 │    9.61 │    9.61 │
+│ Input tokens   │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1025.00 │ 1026.00 │ 1026.00 │ 1026.00 │
+│ Output tokens  │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │ 1024.00 │
+│ Output (tok/s) │   97.34 │   97.34 │  101.95 │  102.85 │  120.81 │  129.46 │  141.25 │  143.79 │  148.37 │  148.37 │  148.37 │
+│ Total (tok/s)  │  194.68 │  194.68 │  203.91 │  205.70 │  241.63 │  258.91 │  282.50 │  287.58 │  296.74 │  296.74 │  296.74 │
+│ Decode (tok/s) │  104.07 │  104.07 │  104.14 │  109.36 │  124.98 │  138.70 │  146.42 │  158.87 │  164.70 │  164.70 │  164.70 │
+└────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+2026-08-15 10:24:13 - evalscope - INFO:
+Workload throughput (20 samples):
+┌─────────────────────┬───────────┬────────────┬─────────────────────┐
+│ Metric (tok/s)      │   Overall │   Last 30s │   Steady (drop 20%) │
+├─────────────────────┼───────────┼────────────┼─────────────────────┤
+│ Total Prompt tok/s  │   1155.96 │    1155.96 │             1798.69 │
+│ New Prompt tok/s    │   1155.96 │    1155.96 │             1798.69 │
+│ Cached Prompt tok/s │      0.00 │       0.00 │                0.00 │
+│ Completion tok/s    │   1155.68 │    1155.68 │             1798.22 │
+└─────────────────────┴───────────┴────────────┴─────────────────────┘
+2026-08-15 10:24:13 - evalscope - INFO: Save the summary to: outputs/20260815_102233/qwen3.8-27b/parallel_10_number_20
+2026-08-15 10:24:14 - evalscope - INFO: Sleeping for 5 seconds before the next run...</code></pre>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f5f5f4;border-left:4px solid #44403c;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:14px;color:#1c1917;line-height:1.85;"><strong>这组结果怎么读：</strong>并发从 1 提升到 10 时，输出吞吐从 181.58 tok/s 增至 1155.52 tok/s；继续提高到 50 和 100 后，输出吞吐只升到 1294.41 和 1356.29 tok/s，但平均 TTFT 已分别升到 22.40 秒和 50.12 秒。也就是说，在这组 1024 输入 / 1024 输出的测试条件下，吞吐开始趋于平台期，排队等待成为主要代价；好在 4 组测试均为 0 失败。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fafafa;border:1px solid #e7e5e4;border-radius:4px;">
+    <p style="margin:0 0 7px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>怎么读结果：</strong>先从低并发跑一遍，确认接口、tokenizer 和数据集配置无误，再观察并发升高后的延迟、吞吐和失败率变化。压测结果用于比较当前部署参数，不等于所有业务场景下的生产容量；如果要做上线评估，还需要换成真实请求分布和业务数据复测。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>地址要改：</strong><code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">http://repo:30000</code> 只是示例地址，替换成实际的 OpenAI 兼容服务地址；tokenizer 路径也按测试机目录调整。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 05 NanZi 体验 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">05｜从服务启动到平台接入</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      上面的服务已经接入 <strong>NanZi 开源智能体平台</strong>。在平台里选择 Qwen3.8-27B 后，对话、工具调用和技能执行都走同一个入口；如果要验证编码或视觉能力，可以直接用一轮真实任务观察完整链路。
+    </p>
+  </section>
+
+  <section style="margin:20px 0;padding:24px 16px;background:#fafafa;border:1px dashed #a8a29e;border-radius:4px;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:16px;font-weight:bold;color:#1c1917;">【配图占位符 03 · NanZi 对话】</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.6;">贴工作台里用 Qwen3.8-27B 的一轮真实聊天</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.85;">
+      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#b45309;text-decoration:underline;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e7e5e4;"></section>
+
+  <!-- ========== 06 结尾 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b45309;padding-left:12px;line-height:1.4;">06｜结论：先看任务，再决定是否上线</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      对准备自建服务的团队，Qwen3.8-27B 的判断其实很具体：它把视觉输入、长上下文和 Agent 任务能力放进了单卡可承载的稠密模型。相比需要集群的 2.4T Max，它更接近多数团队可以实际评估和维护的容量档位。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      从模型卡数据看，它相对 3.6-27B 的提升主要集中在改代码、操作终端、办公长任务，以及看图和理解界面。SWE-bench Pro 为 61.7，OSWorld 为 84.3，部分编码项超过了更大或闭源的对手。但这些仍是厂商公布的结果，独立复现尚不充分；是否适合生产环境，最终要由自己的仓库、工具链和并发规模决定。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      部署示例以 H 系列为基线，选择 FP8，并打开权重内置的 MTP（EAGLE 3/1/4），同时配置 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">qwen3</code> 和 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">qwen3_coder</code> 两个解析器。无论使用哪种 GPU，MTP 与 DSpark 都不要混用；量化格式也要先确认硬件是否支持。如果并发受到限制，再回到 GDN 状态池和 <code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;">--mamba-full-memory-ratio</code> 排查。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      这套服务也已接入 NanZi 开源智能体平台，Qwen3.8-27B 可以直接选择。平台入口适合用来验证模型与工具、技能之间的协作效果；仓库地址为 <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#b45309;text-decoration:underline;">RandyChen1985/nanzi-ai-agent-platform</a>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #b45309;border-radius:0 8px 8px 0;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;line-height:1.5;">最后留三点判断</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 如果需要单卡承载视觉、长上下文和 Agent 任务，27B 是更现实的起点；Max 则是集群级方案。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">· 量化方案要和硬件匹配；本文以 H 系列 FP8 部署为例，MTP 和两个解析器属于同一条运行链路。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· 上线前仍要按自己的任务和并发规模复测，NanZi 可以作为一个现成的验证入口。</p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:14px 16px;background:#fafafa;border:1px solid #e2e8f0;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">参考</p>
+    <p style="margin:0 0 5px 0;font-size:13px;color:#475569;line-height:1.8;">ModelScope FP8：<a href="https://modelscope.cn/models/Qwen/Qwen3.8-27B-FP8" style="color:#b45309;text-decoration:none;word-break:break-all;">Qwen/Qwen3.8-27B-FP8</a></p>
+    <p style="margin:0 0 5px 0;font-size:13px;color:#475569;line-height:1.8;">Hugging Face 模型卡：<a href="https://huggingface.co/Qwen/Qwen3.8-27B" style="color:#b45309;text-decoration:none;word-break:break-all;">Qwen/Qwen3.8-27B</a></p>
+    <p style="margin:0 0 5px 0;font-size:13px;color:#475569;line-height:1.8;">SGLang Cookbook：<a href="https://docs.sglang.io/cookbook/autoregressive/Qwen/Qwen3.8-27B" style="color:#b45309;text-decoration:none;word-break:break-all;">Deploy Qwen3.8-27B with SGLang</a></p>
+    <p style="margin:0;font-size:13px;color:#475569;line-height:1.8;">官方博文：<a href="https://qwen.ai/blog?id=qwen3.8" style="color:#b45309;text-decoration:none;word-break:break-all;">Qwen3.8-Max: A New Bar for Coding and Cowork</a></p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#fafafa;border-radius:4px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#57534e;">独立稿 · 开源笔记</p>
+    <p style="margin:0;font-size:13px;color:#a8a29e;">基于官方模型卡与 SGLang cookbook 整理，分数为厂商公布。</p>
+  </section>
+
+</section>
