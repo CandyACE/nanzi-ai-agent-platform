@@ -25,11 +25,60 @@
         <div class="w-1/3 bg-white rounded-xl shadow p-4 overflow-y-auto space-y-6">
             <!-- 1. Initialization -->
             <section class="space-y-3">
-                <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider">1. 初始化配置</h3>
-                 <div class="grid grid-cols-1 gap-2">
-                    <label class="block text-xs">API Token</label>
-                    <input type="text" v-model="config.token" class="w-full text-sm border-gray-300 rounded-md" placeholder="eyJ...">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider">1. 初始化配置</h3>
+                    <div class="inline-flex rounded-lg bg-gray-100 p-0.5 text-xs font-medium text-gray-600">
+                        <button
+                            type="button"
+                            @click="config.authMode = 'ticket'"
+                            :class="config.authMode === 'ticket' ? 'bg-white text-blue-600 shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                            class="px-2 py-1 rounded-md transition-all"
+                        >
+                            ⭐ Ticket 模式
+                        </button>
+                        <button
+                            type="button"
+                            @click="config.authMode = 'token'"
+                            :class="config.authMode === 'token' ? 'bg-white text-blue-600 shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                            class="px-2 py-1 rounded-md transition-all"
+                        >
+                            API Token 模式
+                        </button>
+                    </div>
                 </div>
+
+                <!-- Ticket 模式表单 -->
+                <div v-if="config.authMode === 'ticket'" class="p-3 bg-blue-50/60 border border-blue-100 rounded-lg space-y-2 text-xs">
+                    <div class="flex items-center justify-between text-blue-800 font-medium">
+                        <span>凭据模式：临时 Ticket（推荐）</span>
+                        <span class="text-[11px] text-blue-600 bg-blue-100/80 px-1.5 py-0.5 rounded">自动签发</span>
+                    </div>
+                    <p class="text-gray-600 text-[11px] leading-relaxed">
+                        点击发送时将自动调用 <code class="bg-white px-1 py-0.5 rounded border border-blue-200">/api/v1/embed/tickets</code> 申请一次性短时 Ticket 并发给 IFrame。
+                    </p>
+                    <div>
+                        <label class="block text-[11px] text-gray-500 mb-1">指定用户名 (可选，默认当前用户)</label>
+                        <input type="text" v-model="config.targetUsername" class="w-full text-xs border-gray-200 rounded-md bg-white" placeholder="留空代表当前登录账号">
+                    </div>
+                </div>
+
+                <!-- Token 模式表单 -->
+                <div v-else class="space-y-2">
+                    <div class="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-xs flex items-start gap-2 text-rose-700">
+                        <svg class="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div class="leading-relaxed">
+                            <span class="font-semibold text-rose-800">兼容模式（不推荐在生产使用）：</span>
+                            直接向前端传递长期 API Key 存在泄露风险，仅供存量旧系统兼容调试。新集成强烈建议切换为 <strong>⭐ Ticket 模式</strong>。
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 gap-2">
+                        <label class="block text-xs text-gray-600 font-medium">API Token (长期 Key)</label>
+                        <input type="text" v-model="config.token" class="w-full text-sm border-gray-300 rounded-md" placeholder="eyJ... 或 sk-...">
+                    </div>
+                </div>
+
                 <div class="grid grid-cols-1 gap-2">
                     <label class="block text-xs">Agent ID</label>
                     <input type="text" v-model="config.agentId" class="w-full text-sm border-gray-300 rounded-md" placeholder="(空则自动路由)">
@@ -50,7 +99,14 @@
                         </div>
                     </div>
                 </div>
-                <button @click="sendInit" class="w-full py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700">发送 INIT_CONFIG</button>
+                <button
+                    @click="sendInit"
+                    :disabled="isSubmittingInit"
+                    class="w-full py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+                >
+                    <span v-if="isSubmittingInit">正在签发 Ticket 并发送...</span>
+                    <span v-else>发送 INIT_CONFIG {{ config.authMode === 'ticket' ? '(Ticket 换票)' : '' }}</span>
+                </button>
             </section>
 
             <hr class="border-gray-100">
@@ -135,6 +191,17 @@
               </button>
             </div>
 
+            <!-- 顶部红色安全提示条 -->
+            <div class="mx-5 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs flex items-start gap-2.5 text-rose-700">
+              <svg class="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div class="leading-relaxed">
+                <span class="font-bold text-rose-800">安全规范提示：</span>
+                旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性门票，前端免密兑换并支持滑动续期）。
+              </div>
+            </div>
+
             <div class="border-b border-gray-100 px-4 overflow-x-auto shrink-0">
               <div class="flex items-center gap-1 min-w-max h-12">
                 <button
@@ -150,74 +217,101 @@
             </div>
 
             <div class="flex-1 overflow-y-auto p-5 bg-gray-50">
-              <div class="mb-5 bg-white border border-gray-200 rounded-lg p-4">
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div class="min-w-0">
-                    <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">当前域名</div>
-                    <div class="font-mono text-xs text-gray-700 truncate bg-gray-50 border border-gray-100 rounded-md px-2 py-2">{{ integrationHost }}</div>
+              <!-- Markdown 完整文档专属视图 -->
+              <div v-if="activeIntegrationTab === 'markdown_docs'" class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 bg-white flex items-center justify-between gap-4 sticky top-0 z-10">
+                  <div>
+                    <h3 class="text-base font-bold text-gray-900"> NanZi 智能体平台嵌入式组件集成指南 (EmbedChat)</h3>
+                    <p class="text-xs text-gray-500 mt-0.5">官方完整技术白皮书：涵盖架构时序、Ticket 签发、多语言后端/前端范例、PostMessage 协议与 FAQ</p>
                   </div>
-                  <div class="min-w-0">
-                    <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">API Key</div>
-                    <div
-                      class="font-mono text-xs truncate border rounded-md px-2 py-2"
-                      :class="integrationHasRealApiKey ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-amber-700 bg-amber-50 border-amber-100'"
-                      :title="integrationHasRealApiKey ? integrationApiKey : '当前浏览器未读取到登录 API Key，将使用占位值'"
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      @click="copyGuideCode"
+                      class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-sm"
                     >
-                      {{ integrationHasRealApiKey ? maskApiKey(integrationApiKey) : integrationApiKey }}
-                    </div>
-                  </div>
-                  <div class="min-w-0 lg:col-span-2">
-                    <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">智能体模式</div>
-                    <div class="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)] gap-2">
-                      <select v-model="integrationAgentMode" class="w-full min-w-0 text-xs border-gray-300 rounded-md h-9">
-                        <option value="auto">自动路由</option>
-                        <option value="agent">指定智能体</option>
-                      </select>
-                      <select
-                        v-model="selectedIntegrationAgentId"
-                        class="w-full min-w-0 max-w-full text-xs border-gray-300 rounded-md h-9 truncate"
-                        :disabled="integrationAgentMode === 'auto' || integrationAgents.length === 0"
-                      >
-                        <option v-if="integrationAgents.length === 0" value="">暂无可用智能体</option>
-                        <option v-for="agent in integrationAgents" :key="agent.id" :value="agent.id">
-                          {{ agent.display_name || agent.name }} ({{ agent.id }})
-                        </option>
-                      </select>
-                    </div>
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      复制 Markdown 全文
+                    </button>
                   </div>
                 </div>
-                <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                  <span class="px-2 py-1 rounded bg-gray-50 border border-gray-100">当前生成：{{ integrationAgentMode === 'auto' ? '不传 agent_id，由平台自动路由' : `指定 ${selectedIntegrationAgentLabel}` }}</span>
-                  <span v-if="!integrationHasRealApiKey" class="px-2 py-1 rounded bg-amber-50 border border-amber-100 text-amber-700">未读到本地 API Key，复制前请先登录或手动替换占位值</span>
-                </div>
+                <div
+                  class="p-6 text-sm text-gray-800 leading-relaxed font-sans prose prose-slate max-w-none select-text"
+                  v-html="renderedMarkdownDoc"
+                ></div>
               </div>
-              <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-5">
-                <aside class="space-y-3">
-                  <div class="bg-white border border-gray-200 rounded-lg p-4">
-                    <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-2">适用场景</div>
-                    <p class="text-sm text-gray-700 leading-relaxed">{{ activeIntegrationTabData.summary }}</p>
+
+              <!-- 其他代码生成器 Tabs 视图 -->
+              <template v-else>
+                <div class="mb-5 bg-white border border-gray-200 rounded-lg p-4">
+                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="min-w-0">
+                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">当前域名</div>
+                      <div class="font-mono text-xs text-gray-700 truncate bg-gray-50 border border-gray-100 rounded-md px-2 py-2">{{ integrationHost }}</div>
+                    </div>
+                    <div class="min-w-0">
+                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">API Key</div>
+                      <div
+                        class="font-mono text-xs truncate border rounded-md px-2 py-2"
+                        :class="integrationHasRealApiKey ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-amber-700 bg-amber-50 border-amber-100'"
+                        :title="integrationHasRealApiKey ? integrationApiKey : '当前浏览器未读取到登录 API Key，将使用占位值'"
+                      >
+                        {{ integrationHasRealApiKey ? maskApiKey(integrationApiKey) : integrationApiKey }}
+                      </div>
+                    </div>
+                    <div class="min-w-0 lg:col-span-2">
+                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">智能体模式</div>
+                      <div class="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)] gap-2">
+                        <select v-model="integrationAgentMode" class="w-full min-w-0 text-xs border-gray-300 rounded-md h-9">
+                          <option value="auto">自动路由</option>
+                          <option value="agent">指定智能体</option>
+                        </select>
+                        <select
+                          v-model="selectedIntegrationAgentId"
+                          class="w-full min-w-0 max-w-full text-xs border-gray-300 rounded-md h-9 truncate"
+                          :disabled="integrationAgentMode === 'auto' || integrationAgents.length === 0"
+                        >
+                          <option v-if="integrationAgents.length === 0" value="">暂无可用智能体</option>
+                          <option v-for="agent in integrationAgents" :key="agent.id" :value="agent.id">
+                            {{ agent.display_name || agent.name }} ({{ agent.id }})
+                          </option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                    <div class="text-xs font-black text-blue-500 uppercase tracking-wider mb-2">关键点</div>
-                    <ul class="space-y-2 text-sm text-blue-900">
-                      <li v-for="point in activeIntegrationTabData.points" :key="point" class="flex gap-2 leading-relaxed">
-                        <span class="mt-2 h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0"></span>
-                        <span>{{ point }}</span>
-                      </li>
-                    </ul>
+                  <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                    <span class="px-2 py-1 rounded bg-gray-50 border border-gray-100">当前生成：{{ integrationAgentMode === 'auto' ? '不传 agent_id，由平台自动路由' : `指定 ${selectedIntegrationAgentLabel}` }}</span>
+                    <span v-if="!integrationHasRealApiKey" class="px-2 py-1 rounded bg-amber-50 border border-amber-100 text-amber-700">未读到本地 API Key，复制前请先登录或手动替换占位值</span>
                   </div>
-                </aside>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-5">
+                  <aside class="space-y-3">
+                    <div class="bg-white border border-gray-200 rounded-lg p-4">
+                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-2">适用场景</div>
+                      <p class="text-sm text-gray-700 leading-relaxed">{{ activeIntegrationTabData.summary }}</p>
+                    </div>
+                    <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                      <div class="text-xs font-black text-blue-500 uppercase tracking-wider mb-2">关键点</div>
+                      <ul class="space-y-2 text-sm text-blue-900">
+                        <li v-for="point in activeIntegrationTabData.points" :key="point" class="flex gap-2 leading-relaxed">
+                          <span class="mt-2 h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0"></span>
+                          <span>{{ point }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </aside>
 
 	                <section class="bg-white border border-gray-200 rounded-lg overflow-hidden min-w-0">
 	                  <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 bg-white">
-                    <div class="min-w-0">
-                      <h3 class="font-black text-gray-900 truncate">{{ activeIntegrationTabData.title }}</h3>
-                      <p class="text-xs text-gray-500 mt-0.5">{{ activeIntegrationTabData.caption }}</p>
-                    </div>
-                    <button
-                      @click="copyGuideCode"
-                      class="px-3 py-1.5 rounded-md text-xs font-bold bg-gray-900 text-white hover:bg-black transition-colors flex-shrink-0"
-                    >
+                      <div class="min-w-0">
+                        <h3 class="font-black text-gray-900 truncate">{{ activeIntegrationTabData.title }}</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">{{ activeIntegrationTabData.caption }}</p>
+                      </div>
+                      <button
+                        @click="copyGuideCode"
+                        class="px-3 py-1.5 rounded-md text-xs font-bold bg-gray-900 text-white hover:bg-black transition-colors flex-shrink-0"
+                      >
 	                      复制代码
 	                    </button>
 	                  </div>
@@ -304,13 +398,16 @@
                                 <div class="h-14 rounded-lg border border-amber-100 bg-amber-50"></div>
                               </div>
                             </div>
-                            <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-full bg-slate-900 text-white text-[10px] font-bold shadow">UPDATE_CONTEXT</div>
                           </template>
                         </div>
                       </div>
-	                  <pre class="m-0 p-4 bg-gray-950 text-gray-100 text-xs leading-relaxed overflow-auto max-h-[52vh]"><code>{{ activeIntegrationTabData.code }}</code></pre>
+
+	                  <div class="p-4 bg-slate-950 overflow-x-auto">
+	                    <pre class="font-mono text-xs text-slate-100 leading-relaxed"><code>{{ activeIntegrationTabData.code }}</code></pre>
+	                  </div>
 	                </section>
-              </div>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -322,6 +419,7 @@
     import axios from '../utils/axios';
     import { useToast } from '../composables/useToast';
     import { copyToClipboard } from '../utils/clipboard';
+    import { renderSafeMarkdownPreview } from '../utils/safeMarkdown';
 
     interface IntegrationTab {
         id: string;
@@ -343,15 +441,19 @@
 	const logs = ref<string[]>([]);
 	const iframeUrl = ref('');
     const showIntegrationGuide = ref(false);
-    const activeIntegrationTab = ref('iframe');
+    const activeIntegrationTab = ref('markdown_docs');
     const { showToast } = useToast();
 
 const config = reactive({
+    authMode: 'ticket' as 'ticket' | 'token',
+    targetUsername: '',
     token: '',
     agentId: '',
     theme: 'light',
     primaryColor: '#3b82f6',
 });
+
+const isSubmittingInit = ref(false);
 
 const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-1001",\n    "current_page": "ticket-detail"\n  }\n}');
 	const commandInput = ref('/new');
@@ -407,16 +509,129 @@ const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-10
 
         return [
         {
-            id: 'iframe',
-            label: '快速 IFrame',
-            title: '直接通过 URL 参数嵌入',
-            caption: '适合内网测试、Demo 页面或快速验证 Agent 能否打开。',
-            summary: integrationAgentMode.value === 'auto'
-                ? '把 /embed/chat 放进 iframe，仅传 token 和 theme，由平台自动路由智能体。'
-                : '把 /embed/chat 放进 iframe，通过 URL 参数传递 token、agent_id、theme。',
-            points: ['实现最快', tokenPoint, integrationAgentMode.value === 'auto' ? '不传 agent_id 时自动路由' : '已传入当前选中的真实 Agent ID', '生产环境不推荐在 URL 中暴露 Token'],
-            code: `<iframe
-  src="${host}/embed/chat?token=${encodedToken}${agentQueryParam}&theme=${encodeURIComponent(theme)}"
+            id: 'markdown_docs',
+            label: '📖 完整接入开发文档 (Markdown)',
+            title: ' NanZi 智能体平台嵌入式组件集成指南 (EmbedChat)',
+            caption: '官方完整技术白皮书：涵盖架构时序、Ticket 签发、多语言后端/前端范例、PostMessage 协议与 FAQ。',
+            summary: '包含完整的 Markdown 技术规格说明书，可直接在线浏览或全文复制。',
+            points: ['包含 Java/Python/Go/Node.js 服务端 Ticket 签发范例', '包含 Vue 3 / React / 原生 HTML 前端接入代码', '包含 PostMessage 指令与事件完整协议速查', '包含常见报错与排错 FAQ'],
+            code: `# NanZi 智能体平台嵌入式组件集成指南 (EmbedChat Integration Guide)
+
+本文档旨在指导第三方业务系统（如 OA、CRM、ERP、门户系统等）如何安全、高效、深度地集成 NanZi AI Agent 对话组件（EmbedChat）。
+
+---
+
+## 一、集成架构与认证原理 (Embed Ticket 模式)
+
+在企业级生产环境中，**强烈推荐使用 Embed Ticket 临时票据体系**。该架构实现了**长期主 API Key 零泄露**与**用户代客身份（Impersonation）安全绑定**。
+
+### 1. 三步标准交互时序
+1. **宿主后端 (Server-to-Server)**：在企业内网调用 \`POST ${host}/api/v1/embed/tickets\` 为当前登录员工申请 5 分钟一次性 Ticket（长期主 Key 留在宿主后端环境变量，绝不出内网）；
+2. **前端 IFrame 接入与自动兑换**：前端加载 \`<iframe src="${host}/embed/chat?ticket=emt_xxx">\`，组件内部自动核销 Ticket 并换取 2 小时短期 Session Token；
+3. **活跃滑动自动续期 (Sliding TTL)**：只要用户在持续聊天发消息，服务端自动将有效时间重新顺延 2 小时；闲置超 2 小时后自动释放。若超时断开，前端监听到 \`INIT_FAILURE\` 事件后，重新申请 Ticket 发送 \`RESET_SESSION\` 即可达成无感自动重连。
+
+---
+
+## 二、服务端 Ticket 签发接口规范
+
+- **请求方式**：\`POST ${host}/api/v1/embed/tickets\`
+- **请求头**：
+  \`\`\`http
+  Content-Type: application/json
+  X-API-Key: ${encodedToken}
+  \`\`\`
+- **请求参数 (JSON Body)**：
+  \`\`\`json
+  {
+    "username": "zhangsan",                   // 必填：目标业务员工用户名（代表谁提问）
+    "agent_id": "${buildAgentInitValue() || 'sys-agent-chatbi'}", // 可选：指定智能体 ID
+    "expires_in": 300                         // 可选：Ticket 有效期（秒，默认 300，一次性核销）
+  }
+  \`\`\`
+- **响应示例 (JSON)**：
+  \`\`\`json
+  {
+    "code": 200,
+    "message": "success",
+    "data": {
+      "ticket": "emt_a8f9c2d1e0b3456789abcdef",
+      "expires_in": 300,
+      "target_user": {
+        "user_id": 102,
+        "user_name": "zhangsan",
+        "real_name": "张三"
+      }
+    }
+  }
+  \`\`\`
+
+---
+
+## 三、多语言后端签发 Ticket 示例
+
+### 1. Java (Spring Boot)
+\`\`\`java
+@GetMapping("/embed-ticket")
+public ResponseEntity<?> getEmbedTicket(@RequestAttribute("user") String username) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("X-API-Key", "${escapeJsString(token)}");
+
+    Map<String, Object> body = new HashMap<>();
+    body.put("username", username);
+    body.put("agent_id", "${escapeJsString(buildAgentInitValue() || 'sys-agent-chatbi')}");
+    body.put("expires_in", 300);
+
+    HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+    ResponseEntity<Map> resp = restTemplate.postForEntity("${host}/api/v1/embed/tickets", request, Map.class);
+    return ResponseEntity.ok(resp.getBody().get("data"));
+}
+\`\`\`
+
+### 2. Python (FastAPI / Requests)
+\`\`\`python
+@router.get("/embed-ticket")
+async def get_ai_embed_ticket(username: str = "zhangsan"):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "${host}/api/v1/embed/tickets",
+            headers={"X-API-Key": "${escapeJsString(token)}"},
+            json={"username": username, "agent_id": "${escapeJsString(buildAgentInitValue() || 'sys-agent-chatbi')}", "expires_in": 300}
+        )
+        return resp.json()["data"]
+\`\`\`
+
+---
+
+## 四、前端双向通信协议 (PostMessage)
+
+### 1. 下行指令 (Host -> Widget)
+- \`INIT_CONFIG\`: \`{ ticket: 'emt_xxx', theme: 'light', business_context: { ... } }\`
+- \`RESET_SESSION\`: \`{ ticket: 'emt_new_xxx' }\` (超时重连续签)
+- \`UPDATE_CONTEXT\`: \`{ payload: { ... } }\` (动态同步业务对象)
+
+### 2. 上行事件 (Widget -> Host)
+- \`NANZI_WIDGET_READY\`: 组件就绪
+- \`INIT_SUCCESS\`: 鉴权成功并就绪 (携带 user 信息)
+- \`INIT_FAILURE\`: \`{ reason: 'invalid_ticket' }\` (会话过期，需重新申请 ticket 续期)
+- \`USER_FEEDBACK\`: \`{ feedback: 'up' | 'down' }\` (用户点赞点踩)`,
+        },
+        {
+            id: 'ticket',
+            label: '⭐ 快速 Ticket IFrame (生产推荐)',
+            title: '服务端生成 Ticket，前端 URL 嵌入',
+            caption: '企业级生产推荐：长期 API Key 留在宿主后端，前端仅使用一次性短时 Ticket，自动滑动续期。',
+            summary: '宿主后端代表用户调用 /api/v1/embed/tickets 获得 ticket，前端仅传 ticket 即可完成安全鉴权。',
+            points: ['长期 API Key 永不暴露给浏览器', 'Ticket 5分钟有效且一次性核销（阅后即焚）', '会话活跃自动滑动延长 2 小时 TTL', '支持超时自动静默重连'],
+            code: `<!-- 1. 宿主后端 (Node.js/Java/Python/Go)：代表登录员工向南孜申请一次性 Ticket -->
+// POST ${host}/api/v1/embed/tickets
+// Headers: { "X-API-Key": "YOUR_SERVER_SYSTEM_KEY" }
+// Body: { "username": "zhangsan"${agentInitLine ? ',' + agentInitLine.trim() : ''} }
+// Response: { "data": { "ticket": "emt_xxx..." } }
+
+<!-- 2. 宿主前端 HTML：直接传入 ticket 渲染 IFrame -->
+<iframe
+  src="${host}/embed/chat?ticket=YOUR_SERVER_OBTAINED_TICKET&theme=${encodeURIComponent(theme)}"
   width="100%"
   height="640"
   frameborder="0"
@@ -425,42 +640,48 @@ const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-10
         },
         {
             id: 'postmessage',
-            label: 'PostMessage 推荐',
-            title: '安全初始化和双向通信',
-            caption: '推荐生产使用：iframe src 不带敏感 token，等组件 ready 后发送 INIT_CONFIG。',
-            summary: '宿主页面监听 NANZI_WIDGET_READY，再通过 postMessage 发送鉴权、智能体和业务上下文。',
-            points: ['Token 不进入 URL', tokenPoint, integrationAgentMode.value === 'auto' ? 'INIT_CONFIG 不传 agent_id 时自动路由' : 'INIT_CONFIG 指定当前选中的智能体', '可以响应组件 resize、过期、连接状态事件'],
+            label: '⭐ PostMessage 交互 (推荐)',
+            title: 'PostMessage 结合 Ticket 初始化与双向通信',
+            caption: '推荐生产使用：iframe src 干净无参，宿主通过 postMessage 传递 Ticket 与业务上下文，并支持超时自动重连。',
+            summary: '宿主页面监听 NANZI_WIDGET_READY 后传入 Ticket；监听 INIT_FAILURE 实现会话超时静默自动续期。',
+            points: ['URL 不带任何敏感参数', '通过 Ticket 安全鉴权', '监听 INIT_FAILURE 实现静默续期', '支持注入 business_context 业务上下文'],
             code: `<iframe
   id="nanzi-agent-frame"
   src="${host}/embed/chat?instance_id=ops-assistant"
   width="100%"
   height="640"
   frameborder="0"
+  style="border:0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);"
 ></iframe>
 
 <script>
 const frame = document.getElementById('nanzi-agent-frame');
 const targetOrigin = '${host}';
 
-window.addEventListener('message', (event) => {
+// 1. 从宿主后端获取一次性 Ticket
+async function getTicketFromHost() {
+  const res = await fetch('/api/my-host/get-embed-ticket');
+  const data = await res.json();
+  return data.ticket;
+}
+
+window.addEventListener('message', async (event) => {
   if (event.origin !== targetOrigin) return;
   const data = event.data || {};
   if (data.source !== 'nanzi-agent-embed') return;
 
+  // 2. 组件就绪时，发送 Ticket 进行免密安全鉴权
   if (data.type === 'NANZI_WIDGET_READY') {
+    const ticket = await getTicketFromHost();
     frame.contentWindow.postMessage({
       type: 'INIT_CONFIG',
       instance_id: 'ops-assistant',
-      token: '${escapeJsString(token)}',${agentInitLine}
+      ticket: ticket,${agentInitLine}
       theme: '${escapeJsString(theme)}',
       business_context: {
         current_page: '容量看板',
         business_object: 'capacity-overview',
         operator_label: '张三'
-      },
-      page_info: {
-        current_page: '容量看板',
-        system: 'ops-portal'
       },
       styleVars: {
         '--primary-color': '#1677ff'
@@ -468,25 +689,31 @@ window.addEventListener('message', (event) => {
     }, targetOrigin);
   }
 
-  if (data.type === 'REQUEST_RESIZE') {
-    frame.style.height = data.expanded ? '720px' : '64px';
+  // 3. 会话空闲超时后，静默申请新 Ticket 进行重连
+  if (data.type === 'INIT_FAILURE' && (data.reason === 'invalid_ticket' || data.reason === 'invalid_token')) {
+    console.warn('会话已超时，正在静默获取新 Ticket 续期...');
+    const newTicket = await getTicketFromHost();
+    frame.contentWindow.postMessage({
+      type: 'RESET_SESSION',
+      ticket: newTicket
+    }, targetOrigin);
   }
 });
 <\/script>`,
         },
         {
             id: 'floating',
-            label: '悬浮按钮模式',
-            title: '右下角悬浮助手',
-            caption: '适合接入已有业务系统，默认收起，点击后展开完整对话窗口。',
-            summary: '宿主系统控制 iframe 容器的展开/收起，让助手像客服入口一样固定在页面右下角。',
-            points: ['不占用业务页面主布局', tokenPoint, '展开后可点击收起按钮恢复悬浮入口', integrationAgentMode.value === 'auto' ? '展开后仍由平台自动路由' : '展开后固定进入指定智能体'],
+            label: '⭐ 悬浮助手模式',
+            title: '右下角悬浮展开助手 (Ticket 模式)',
+            caption: '适合接入已有业务系统，默认收起为右下角悬浮球，点击后换票展开对话。',
+            summary: '点击悬浮入口时从后端获取一次性 Ticket 并渲染对话窗口，兼顾整洁与安全。',
+            points: ['不占用业务主布局', '点击展开时按需换票', '支持一键收起恢复气泡', 'URL 干净无长期 Key'],
             code: `<div id="nanzi-widget-shell" class="nanzi-widget-shell collapsed">
-  <button id="nanzi-widget-toggle" class="nanzi-widget-toggle">AI</button>
+  <button id="nanzi-widget-toggle" class="nanzi-widget-toggle">💬 AI 助手</button>
   <button id="nanzi-widget-collapse" class="nanzi-widget-collapse" title="收起助手" aria-label="收起助手">−</button>
   <iframe
     id="nanzi-agent-frame"
-    src="${host}/embed/chat?instance_id=floating-ai"
+    src="about:blank"
     frameborder="0"
   ></iframe>
 </div>
@@ -503,20 +730,15 @@ window.addEventListener('message', (event) => {
   overflow: hidden;
   box-shadow: 0 18px 48px rgba(15,23,42,.24);
   background: #fff;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .nanzi-widget-shell.collapsed {
   width: 56px;
   height: 56px;
   border-radius: 999px;
 }
-.nanzi-widget-shell iframe {
-  width: 100%;
-  height: 100%;
-  border: 0;
-}
-.nanzi-widget-shell.collapsed iframe {
-  display: none;
-}
+.nanzi-widget-shell iframe { width: 100%; height: 100%; border: 0; }
+.nanzi-widget-shell.collapsed iframe { display: none; }
 .nanzi-widget-collapse {
   position: absolute;
   top: 12px;
@@ -532,9 +754,7 @@ window.addEventListener('message', (event) => {
   line-height: 28px;
   cursor: pointer;
 }
-.nanzi-widget-shell.collapsed .nanzi-widget-collapse {
-  display: none;
-}
+.nanzi-widget-shell.collapsed .nanzi-widget-collapse { display: none; }
 .nanzi-widget-toggle {
   display: none;
   width: 100%;
@@ -632,6 +852,11 @@ function resetAgentSession(newToken) {
         return integrationTabs.value.find((tab) => tab.id === activeIntegrationTab.value) || integrationTabs.value[0]!;
     });
 
+    const renderedMarkdownDoc = computed(() => {
+        const mdTab = integrationTabs.value.find((tab) => tab.id === 'markdown_docs');
+        return renderSafeMarkdownPreview(mdTab?.code || '');
+    });
+
 // Simulate Host Size control
 const frameWidth = ref('100%');
 const frameHeight = ref('100%');
@@ -695,7 +920,40 @@ const postMsg = (type: string, payload: any = {}) => {
     log(`TX: ${type}`);
 };
 
-const sendInit = () => {
+const sendInit = async () => {
+    if (config.authMode === 'ticket') {
+        isSubmittingInit.value = true;
+        try {
+            log('正在调用 /api/v1/embed/tickets 签发一次性 Ticket...');
+            const ticketRes = await axios.post('/api/v1/embed/tickets', {
+                username: config.targetUsername.trim() || undefined,
+                agent_id: config.agentId.trim() || undefined,
+                expires_in: 300,
+            });
+            if (ticketRes.data?.code === 200 && ticketRes.data.data?.ticket) {
+                const ticket = ticketRes.data.data.ticket;
+                log(`Ticket 签发成功: ${ticket} (有效时长 300 秒)`);
+                postMsg('INIT_CONFIG', {
+                    ticket,
+                    agent_id: config.agentId.trim() || undefined,
+                    theme: config.theme,
+                    styleVars: {
+                        '--primary-color': config.primaryColor
+                    }
+                });
+                return;
+            }
+            throw new Error(ticketRes.data?.message || '签发失败');
+        } catch (err: any) {
+            const errMsg = err.response?.data?.detail || err.message || 'Ticket 签发异常';
+            log(`Error: 签发 Ticket 失败: ${errMsg}`);
+            showToast(`签发 Ticket 失败: ${errMsg}`, 'error');
+        } finally {
+            isSubmittingInit.value = false;
+        }
+        return;
+    }
+
     const token = config.token.trim();
     if (!token) {
         log('Error: 必须填写 API Token');
@@ -722,7 +980,25 @@ const sendContext = () => {
     }
 };
 
-const resetSession = () => {
+const resetSession = async () => {
+    if (config.authMode === 'ticket') {
+        try {
+            log('正在为重置会话申请新 Ticket...');
+            const res = await axios.post('/api/v1/embed/tickets', {
+                username: config.targetUsername.trim() || undefined,
+                agent_id: config.agentId.trim() || undefined,
+                expires_in: 300,
+            });
+            if (res.data?.code === 200 && res.data.data?.ticket) {
+                const newTicket = res.data.data.ticket;
+                log(`新 Ticket 已签发: ${newTicket}`);
+                postMsg('RESET_SESSION', { ticket: newTicket });
+                return;
+            }
+        } catch (err: any) {
+            log(`Warning: 自动续签 Ticket 失败，直接发送基础重置`);
+        }
+    }
     postMsg('RESET_SESSION');
 };
 
@@ -748,8 +1024,14 @@ const handleMessage = (event: MessageEvent) => {
     const data = event.data;
     if (data.source === 'nanzi-agent-embed') {
         if (data.type === 'INIT_SUCCESS') {
-            log('RX: INIT_SUCCESS — Token 校验通过');
-            showToast('Token 校验通过', 'success');
+            const user = data.user;
+            const displayName = user?.real_name || user?.user_name;
+            const userLabel = displayName
+                ? (user.user_name && user.real_name && user.user_name !== user.real_name ? `${user.real_name} (${user.user_name})` : displayName)
+                : '';
+            const successMsg = userLabel ? `已以 [${userLabel}] 身份登录就绪` : 'Token 校验通过';
+            log(`RX: INIT_SUCCESS — ${successMsg}`);
+            showToast(successMsg, 'success');
             return;
         }
         if (data.type === 'INIT_FAILURE') {

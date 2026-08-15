@@ -4910,6 +4910,46 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
     );
   }
 };
+
+const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
+  try {
+    const res = await axios.post("/api/v1/embed/tickets/exchange", { ticket: ticket.trim() });
+    if (res.data && res.data.code === 200 && res.data.data?.session_token) {
+      const sessionData = res.data.data;
+      config.token = sessionData.session_token;
+      axios.defaults.headers.common["Authorization"] = `Bearer ${sessionData.session_token}`;
+      axios.defaults.headers.common["X-API-Key"] = sessionData.session_token;
+      if (sessionData.user_info) {
+        currentUser.value = {
+          ...currentUser.value,
+          ...sessionData.user_info,
+        };
+      }
+      if (sessionData.agent_id && !config.agentId) {
+        config.agentId = sessionData.agent_id;
+        urlPinnedAgentKey.value = sessionData.agent_id;
+      }
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error("[EmbedTicket] Failed to exchange ticket:", err);
+    return false;
+  }
+};
+
+const postInitSuccess = () => {
+  postMessageToHost({
+    type: "INIT_SUCCESS",
+    user: {
+      user_name: currentUser.value.user_name || undefined,
+      real_name: currentUser.value.real_name || undefined,
+      user_id: currentUser.value.user_id || undefined,
+      role: currentUser.value.role || undefined,
+    },
+  });
+};
+
 const handleInitConfig = async (data: Record<string, any>) => {
   initConfigReceived = true;
   conversationInitializationGeneration += 1;
@@ -4921,6 +4961,7 @@ const handleInitConfig = async (data: Record<string, any>) => {
     "Received INIT_CONFIG payload:",
     JSON.stringify({
       ...logData,
+      ticket: logData.ticket ? "***" : undefined,
       token: logData.token ? "***" : "MISSING",
       api_key: logData.api_key ? "***" : "MISSING",
       apikey: logData.apikey ? "***" : "MISSING",
@@ -4930,9 +4971,26 @@ const handleInitConfig = async (data: Record<string, any>) => {
   if (strict) {
     strictTokenValidation.value = true;
   }
+
+  // 1. 优先使用临时 Ticket 换票
+  if (data.ticket) {
+    const ticketOk = await exchangeTicketAndApply(String(data.ticket));
+    if (!ticketOk) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      return;
+    }
+    hasPermission.value = true;
+    applyInitConfigPayload(data);
+    postInitSuccess();
+    await initChat({ skipAuth: true });
+    return;
+  }
+
+  // 2. 兼容传统的 API Key 模式
   const incomingToken = data.token || data.api_key || data.apikey;
   if (!incomingToken) {
-    console.warn("INIT_CONFIG received but no token/api_key found in payload!");
+    console.warn("INIT_CONFIG received but no token/api_key/ticket found in payload!");
     if (strict) {
       hasPermission.value = false;
       postMessageToHost({ type: "INIT_FAILURE", reason: "missing_token" });
@@ -4952,14 +5010,14 @@ const handleInitConfig = async (data: Record<string, any>) => {
     }
     hasPermission.value = true;
     applyInitConfigPayload(data);
-    postMessageToHost({ type: "INIT_SUCCESS" });
+    postInitSuccess();
     await initChat({ skipAuth: true });
     return;
   }
 
   hasPermission.value = true;
   applyInitConfigPayload(data);
-  postMessageToHost({ type: "INIT_SUCCESS" });
+  postInitSuccess();
   initChat();
 };
 const handlePostMessage = (event: MessageEvent) => {
@@ -5005,7 +5063,7 @@ const handlePostMessage = (event: MessageEvent) => {
       resetSession();
       break;
     case "RESET_SESSION":
-      resetSession(data.new_token);
+      void resetSession(data.new_token || data.token, data.ticket);
       break;
     case "SEND_COMMAND":
       if (data.command) {
@@ -5027,11 +5085,19 @@ const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
     });
   }
 };
-const resetSession = (newToken?: string) => {
+const resetSession = async (newToken?: string, ticket?: string) => {
   messages.value = [];
   config.enableGrounding = true; // 新会话恢复默认开启
   generateNewConversation();
-  if (newToken) {
+  if (ticket) {
+    const ticketOk = await exchangeTicketAndApply(ticket);
+    if (!ticketOk) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      return;
+    }
+    hasPermission.value = true;
+  } else if (newToken) {
     config.token = newToken;
     axios.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
     axios.defaults.headers.common["X-API-Key"] = newToken;
@@ -6994,7 +7060,24 @@ onMounted(() => {
     strictTokenValidation.value = true;
     console.log("[LifeCycle] Strict token validation enabled (debug mode).");
   }
-  if (query.get("token")) {
+  const ticketFromUrl = query.get("ticket");
+  if (ticketFromUrl) {
+    console.log("[LifeCycle] Ticket found in URL. Exchanging for session token...");
+    void (async () => {
+      const ok = await exchangeTicketAndApply(ticketFromUrl);
+      if (ok) {
+        hasPermission.value = true;
+        postInitSuccess();
+        scheduleUrlTokenInitialization();
+        fetchUserInfo();
+        fetchAllowedAgents();
+        fetchSlashCommands();
+      } else {
+        hasPermission.value = false;
+        postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      }
+    })();
+  } else if (query.get("token")) {
     const token = query.get("token")!;
     // 仅设置内存中的 config.token 参与校验；校验通过后再 syncValidatedCredentials，避免脏 URL 覆盖 localStorage
     config.token = token;
@@ -7008,7 +7091,7 @@ onMounted(() => {
   }
   if (query.get("theme")) applyTheme(query.get("theme")!);
   postMessageToHost({ type: "NANZI_WIDGET_READY" });
-  if (config.token) {
+  if (config.token && !ticketFromUrl) {
     console.log("[LifeCycle] Initializing chat from existing token...");
     scheduleUrlTokenInitialization();
     fetchUserInfo(); // Add explicit user fetch

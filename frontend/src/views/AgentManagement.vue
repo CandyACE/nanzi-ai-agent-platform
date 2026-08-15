@@ -1663,10 +1663,24 @@ const toggleAgentStatus = (agent: AIAgent) => {
   };
 };
 
-const openPreview = (agent: AIAgent) => {
-  const token = localStorage.getItem("api_key") || "";
-  const url = `/embed/chat?token=${token}&agent_id=${agent.name || agent.id}&theme=light`;
-  window.open(url, "_blank");
+const openPreview = async (agent: AIAgent) => {
+  const agentKey = agent.name || agent.id;
+  try {
+    const res = await axios.post("/api/v1/embed/tickets", {
+      agent_id: agentKey,
+      expires_in: 300,
+    });
+    if (res.data?.code === 200 && res.data.data?.ticket) {
+      const ticket = res.data.data.ticket;
+      const url = `/embed/chat?ticket=${encodeURIComponent(ticket)}&agent_id=${encodeURIComponent(agentKey)}&theme=light`;
+      window.open(url, "_blank");
+      return;
+    }
+  } catch (e) {
+    console.warn("Failed to generate embed ticket for preview, falling back to chat route", e);
+  }
+  // 降级兜底：在平台内部对话路由打开
+  window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agentKey)}`, "_blank");
 };
 
 const createExternalEngineAgent = async () => {
