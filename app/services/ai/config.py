@@ -36,7 +36,7 @@ class RuntimeModelInfo:
     supported_reasoning_efforts: tuple[str, ...] = ()
 
     def public_dict(self) -> Dict[str, object]:
-        return {
+        payload: Dict[str, object] = {
             "configured_model": self.configured_model,
             "effective_model_id": self.effective_model_id,
             "source": self.source,
@@ -44,6 +44,34 @@ class RuntimeModelInfo:
             "is_fallback": self.is_fallback,
             "resolution_status": self.resolution_status,
         }
+        has_extended_runtime_metadata = any(
+            (
+                self.context_size is not None,
+                self.max_output_tokens is not None,
+                self.provider is not None,
+                self.thinking_enable,
+                self.thinking_capable,
+                self.reasoning_effort is not None,
+                self.thinking_only,
+                not self.allow_disable_thinking,
+                bool(self.supported_reasoning_efforts),
+            )
+        )
+        if has_extended_runtime_metadata:
+            payload.update(
+                {
+                    "context_size": self.context_size,
+                    "max_output_tokens": self.max_output_tokens,
+                    "provider": self.provider,
+                    "thinking_enable": self.thinking_enable,
+                    "thinking_capable": self.thinking_capable,
+                    "reasoning_effort": self.reasoning_effort,
+                    "thinking_only": self.thinking_only,
+                    "allow_disable_thinking": self.allow_disable_thinking,
+                    "supported_reasoning_efforts": list(self.supported_reasoning_efforts),
+                }
+            )
+        return payload
 
 
 async def _lookup_registered_model(model: str):

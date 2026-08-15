@@ -41,6 +41,7 @@ from app.services.ai.tools.resource_catalog_tools import (
 )
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
+from app.services.ai.tools.session_status import session_status
 from app.services.ai.tools.agent_delegate_tool import sub_agent_call
 from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
@@ -111,6 +112,7 @@ TOOL_EVIDENCE_TYPES = {
     "fetch_user_long_term_memory": frozenset({EvidenceType.CONVERSATION_MEMORY}),
     "get_myinfo": frozenset({EvidenceType.INTERNAL_DATA}),
     "request_user_confirmation": frozenset({EvidenceType.RUNTIME_STATE}),
+    "session_status": frozenset({EvidenceType.RUNTIME_STATE}),
 }
 
 # 工具取证策略：
@@ -242,6 +244,7 @@ class ToolRegistry:
         "update_dashboard_context": update_dashboard_context,
         "system_http_request": system_http_request,
         "get_current_model": get_current_model,
+        "session_status": session_status,
         "search_knowledge_base": search_knowledge_base,
         "search_qa_examples": search_qa_examples,
         # Register Task Manager Tools
@@ -815,6 +818,7 @@ class ToolRegistry:
             list_accessible_knowledge_bases,
             get_myinfo,
             request_user_confirmation,
+            session_status,
             create_skills,
             list_available_skills,
             read_skill_instruction,

@@ -158,7 +158,7 @@ def discover_platform_skill_paths(
     return paths
 
 
-async def resolve_workspace_root() -> str:
+async def resolve_workspace_root(*, ensure_exists: bool = True) -> str:
     try:
         from app.services.config_service import ConfigService
 
@@ -168,7 +168,8 @@ async def resolve_workspace_root() -> str:
     except Exception as exc:
         logger.warning("[workspace] Failed to load agentscope_workspace_root: %s", exc)
     root = default_workspace_root()
-    os.makedirs(root, exist_ok=True)
+    if ensure_exists:
+        os.makedirs(root, exist_ok=True)
     return root
 
 

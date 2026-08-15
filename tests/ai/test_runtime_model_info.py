@@ -33,6 +33,31 @@ def test_runtime_model_info_public_payload_contains_no_secrets():
     assert "base_url" not in payload
 
 
+def test_runtime_model_info_public_payload_includes_safe_capacity_metadata():
+    info = RuntimeModelInfo(
+        configured_model="团队默认模型",
+        effective_model_id="deepseek-chat",
+        source="agent_config",
+        context_size=131072,
+        max_output_tokens=8192,
+        provider="openai-compatible",
+        thinking_enable=True,
+        thinking_capable=True,
+        reasoning_effort="medium",
+    )
+
+    payload = info.public_dict()
+
+    assert payload["context_size"] == 131072
+    assert payload["max_output_tokens"] == 8192
+    assert payload["provider"] == "openai-compatible"
+    assert payload["thinking_enable"] is True
+    assert payload["thinking_capable"] is True
+    assert payload["reasoning_effort"] == "medium"
+    assert "api_key" not in payload
+    assert "base_url" not in payload
+
+
 @pytest.mark.asyncio
 async def test_resolve_runtime_model_info_prefers_debug_override():
     config = SimpleNamespace(model_name="agent-model")
