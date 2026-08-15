@@ -615,11 +615,22 @@ const isSelectedModelMultimodal = computed(() => {
 const showModelDropdown = ref(false);
 const modelDropdownRef = ref<HTMLElement | null>(null);
 const modelDropdownTriggerRef = ref<HTMLButtonElement | null>(null);
+const modelListScrollRef = ref<HTMLElement | null>(null);
 const modelDropdownPosition = reactive({
   bottom: 12,
   left: 12,
   width: 0,
 });
+
+const scrollSelectedModelIntoView = () => {
+  const list = modelListScrollRef.value;
+  if (!list) return;
+  const selected = list.querySelector('[data-model-current="true"]') as HTMLElement | null;
+  if (!selected) return;
+  const listRect = list.getBoundingClientRect();
+  const itemRect = selected.getBoundingClientRect();
+  list.scrollTop += itemRect.top - listRect.top - (list.clientHeight - itemRect.height) / 2;
+};
 
 const updateModelDropdownPosition = () => {
   const el = modelDropdownTriggerRef.value;
@@ -644,7 +655,12 @@ const toggleModelDropdown = () => {
     modelSearchQuery.value = "";
   }
   showModelDropdown.value = willOpen;
-  if (willOpen && isMobileViewport.value) nextTick(updateModelDropdownPosition);
+  if (willOpen) {
+    nextTick(() => {
+      if (isMobileViewport.value) updateModelDropdownPosition();
+      scrollSelectedModelIntoView();
+    });
+  }
 };
 
 const activeApprovalMode = computed(
@@ -2056,10 +2072,11 @@ defineExpose({
                                     @click.stop
                                   />
                                 </div>
-                                <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 custom-scrollbar touch-pan-y">
+                                <div ref="modelListScrollRef" class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 custom-scrollbar touch-pan-y">
                                 <button
                                   @click="resetModelSelection"
                                   class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between"
+                                  :data-model-current="!selectedModel ? 'true' : undefined"
                                   :class="
                                     !selectedModel
                                       ? 'bg-primary/5 text-primary font-bold'
@@ -2075,6 +2092,7 @@ defineExpose({
                                   :key="model.id || model.model_id"
                                   type="button"
                                   class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between mt-0.5"
+                                  :data-model-current="selectedModel === model.model_id ? 'true' : undefined"
                                   :class="
                                     selectedModel === model.model_id
                                       ? 'bg-primary/5 text-primary font-bold'

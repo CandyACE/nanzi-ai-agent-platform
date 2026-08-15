@@ -29,6 +29,7 @@ class RuntimeModelInfo:
     max_output_tokens: Optional[int] = None
     provider: Optional[str] = None
     thinking_enable: bool = False
+    thinking_capable: bool = False
     reasoning_effort: str | None = None
     thinking_only: bool = False
     allow_disable_thinking: bool = True
@@ -108,8 +109,9 @@ async def resolve_runtime_model_info(
             )
             for key in ("thinking_enable", "reasoning_effort")
         }
+        thinking_capable = bool(getattr(registered, "thinking_enable", False))
         reasoning_defaults = resolve_reasoning_settings(
-            thinking_enable=bool(getattr(registered, "thinking_enable", False)),
+            thinking_enable=thinking_capable,
             reasoning_effort=getattr(registered, "reasoning_effort", None),
             thinking_only=bool(getattr(registered, "thinking_only", False)),
             allow_disable_thinking=bool(getattr(registered, "allow_disable_thinking", True)),
@@ -129,6 +131,7 @@ async def resolve_runtime_model_info(
             max_output_tokens=getattr(registered, "max_output_tokens", None),
             provider=getattr(registered, "provider", None),
             thinking_enable=reasoning_defaults.thinking_enable,
+            thinking_capable=thinking_capable,
             reasoning_effort=reasoning_defaults.reasoning_effort,
             thinking_only=bool(getattr(registered, "thinking_only", False)),
             allow_disable_thinking=bool(getattr(registered, "allow_disable_thinking", True)),
@@ -221,6 +224,7 @@ class AgentConfigProvider:
         if runtime_model_info.max_output_tokens is not None:
             llm_kwargs["max_output_tokens"] = runtime_model_info.max_output_tokens
         llm_kwargs["thinking_enable"] = runtime_model_info.thinking_enable
+        llm_kwargs["thinking_capable"] = runtime_model_info.thinking_capable
         llm_kwargs["reasoning_effort"] = runtime_model_info.reasoning_effort
 
         return get_llm(**llm_kwargs)

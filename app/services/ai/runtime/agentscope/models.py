@@ -16,15 +16,23 @@ class AgentScopeModelConfig:
     max_output_tokens: int | None = None
     provider: str | None = None
     thinking_enable: bool = False
+    thinking_capable: bool = False
     reasoning_effort: str | None = None
 
 
 def _chat_template_kwargs(config: AgentScopeModelConfig) -> dict[str, Any] | None:
-    """Build provider-specific thinking controls for OpenAI-compatible APIs."""
-    if not config.thinking_enable:
+    """Build provider-specific thinking controls for OpenAI-compatible APIs.
+
+    Thinking-capable models that default to reasoning still need an explicit
+    ``false`` so omitting the field does not leave thinking on.
+    """
+    if not config.thinking_enable and not config.thinking_capable:
         return None
-    kwargs: dict[str, Any] = {"thinking": True}
-    if config.reasoning_effort is not None:
+    kwargs: dict[str, Any] = {
+        "thinking": bool(config.thinking_enable),
+        "enable_thinking": bool(config.thinking_enable),
+    }
+    if config.thinking_enable and config.reasoning_effort is not None:
         kwargs["reasoning_effort"] = config.reasoning_effort
     return kwargs
 

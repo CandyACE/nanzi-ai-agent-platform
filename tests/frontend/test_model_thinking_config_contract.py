@@ -32,10 +32,11 @@ def test_model_api_declares_thinking_configuration():
 def test_model_registry_shows_dependent_thinking_controls():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
 
-    assert "思考模式" in source
+    assert "思考模式配置" in source
     assert "默认思考模式" in source
-    assert "模型默认以思考模式运行" in source
+    assert "新会话默认开思考" in source
     assert "允许关闭思考" in source
+    assert "用户可在会话里关掉思考" in source
     assert "默认思考强度" in source
     assert "支持的思考强度" in source
     assert "thinking_enable" in source
@@ -44,6 +45,14 @@ def test_model_registry_shows_dependent_thinking_controls():
     assert "reasoning_effort" in source
     assert "thinking_only" in source
     assert "allow_disable_thinking" in source
+    assert source.count("thinking-mode-capsule") >= 3
+    assert 'v-model="modelForm.thinking_only"' in source
+    assert 'v-model="modelForm.allow_disable_thinking"' in source
+    assert "modelForm.thinking_only ? '开启' : '关闭'" in source
+    assert "modelForm.allow_disable_thinking ? '开启' : '关闭'" in source
+    assert "thinking-option-card" in source
+    assert "22 163 74" in source
+    assert "min-width: 4.5rem" in source
 
 
 def test_model_registry_preserves_hidden_values_and_sends_configuration():
@@ -67,9 +76,9 @@ def test_model_registry_places_thinking_section_above_context_section():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
     template = source[source.index("<template>"):]
 
-    assert "思考模式" in template
+    assert "思考模式配置" in template
     assert "上下文与输出" in template
-    assert template.index("思考模式") < template.index("上下文与输出")
+    assert template.index("思考模式配置") < template.index("上下文与输出")
     assert "thinking-mode-section" in template
     assert "advanced-context-section" in template
 
@@ -125,6 +134,20 @@ def test_embedchat_and_agentdebug_send_session_reasoning_overrides():
         assert "update:thinking-enable-override" in source
         assert "update:reasoning-effort-override" in source
         assert "reset" in source and "ThinkingOverrides" in source
+
+
+def test_chat_input_scrolls_to_selected_model_when_menu_opens():
+    source = CHAT_INPUT.read_text(encoding="utf-8")
+
+    assert "scrollSelectedModelIntoView" in source
+    assert "modelListScrollRef" in source
+    assert 'data-model-current' in source
+    assert "list.scrollTop" in source
+    assert "toggleModelDropdown" in source
+    toggle_idx = source.index("const toggleModelDropdown")
+    next_fn = source.find("\nconst ", toggle_idx + 1)
+    toggle_body = source[toggle_idx:next_fn if next_fn != -1 else toggle_idx + 800]
+    assert "scrollSelectedModelIntoView" in toggle_body
 
 
 def test_chat_input_keeps_model_menu_compact_and_surfaces_current_thinking_mode():

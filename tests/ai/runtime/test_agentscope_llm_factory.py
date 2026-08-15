@@ -171,16 +171,19 @@ def test_create_openai_chat_model_uses_agentscope_reasoning_parameters():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("thinking_enable", "reasoning_effort", "expected_template"),
+    ("thinking_enable", "thinking_capable", "reasoning_effort", "expected_template"),
     [
-        (True, "high", {"thinking": True, "reasoning_effort": "high"}),
-        (True, None, {"thinking": True}),
-        (False, None, None),
+        (True, False, "high", {"thinking": True, "enable_thinking": True, "reasoning_effort": "high"}),
+        (True, True, None, {"thinking": True, "enable_thinking": True}),
+        (False, False, None, None),
+        (False, True, None, {"thinking": False, "enable_thinking": False}),
+        (False, True, "high", {"thinking": False, "enable_thinking": False}),
     ],
 )
 async def test_openai_chat_model_injects_chat_template_kwargs(
     monkeypatch,
     thinking_enable,
+    thinking_capable,
     reasoning_effort,
     expected_template,
 ):
@@ -210,6 +213,7 @@ async def test_openai_chat_model_injects_chat_template_kwargs(
             model="thinking-model",
             streaming=False,
             thinking_enable=thinking_enable,
+            thinking_capable=thinking_capable,
             reasoning_effort=reasoning_effort,
         )
     )

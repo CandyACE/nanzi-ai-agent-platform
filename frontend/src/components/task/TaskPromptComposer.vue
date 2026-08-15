@@ -88,6 +88,7 @@ const APPROVAL_OPTIONS: { value: TaskApprovalMode; label: string; description: s
 const activePanel = ref<PanelKey>(null)
 const barRef = ref<HTMLElement | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
+const modelListScrollRef = ref<HTMLElement | null>(null)
 const triggerRefs = ref<Partial<Record<Exclude<PanelKey, null>, HTMLElement | null>>>({})
 
 const setTriggerRef = (panel: Exclude<PanelKey, null>, el: unknown) => {
@@ -430,6 +431,16 @@ const closePanel = () => {
   showThinkingPanel.value = false
 }
 
+const scrollSelectedModelIntoView = () => {
+  const list = modelListScrollRef.value
+  if (!list) return
+  const selected = list.querySelector('[data-model-current="true"]') as HTMLElement | null
+  if (!selected) return
+  const listRect = list.getBoundingClientRect()
+  const itemRect = selected.getBoundingClientRect()
+  list.scrollTop += itemRect.top - listRect.top - (list.clientHeight - itemRect.height) / 2
+}
+
 const scheduleClose = (event?: PointerEvent) => {
   // 触摸设备抬手即触发 pointerleave，会导致点开就自动收起，只对鼠标生效
   if (event && event.pointerType !== 'mouse') return
@@ -459,6 +470,7 @@ const togglePanel = (panel: PanelKey) => {
       ),
     )
   }
+  if (next === 'model') nextTick(scrollSelectedModelIntoView)
 }
 
 const selectModel = (modelId: string) => {
@@ -790,11 +802,12 @@ watch(
           </button>
         </div>
         <div class="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <div class="min-h-0 min-w-0 flex-1 overflow-y-auto p-1">
+          <div ref="modelListScrollRef" class="min-h-0 min-w-0 flex-1 overflow-y-auto p-1">
             <button
               type="button"
               class="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs"
               :class="!model ? 'bg-primary/5 font-bold text-primary' : 'text-gray-700 hover:bg-gray-50'"
+              :data-model-current="!model ? 'true' : undefined"
               @click="selectModel('')"
             >
               <span>使用智能体默认模型</span>
@@ -806,6 +819,7 @@ watch(
               type="button"
               class="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs"
               :class="model === item.model_id ? 'bg-primary/5 font-bold text-primary' : 'text-gray-700 hover:bg-gray-50'"
+              :data-model-current="model === item.model_id ? 'true' : undefined"
               @click="selectModelOption(item)"
             >
               <span class="min-w-0 flex-1">

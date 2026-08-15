@@ -40,6 +40,9 @@ def test_task_prompt_composer_exposes_model_approval_and_resources():
     assert "reasoning_effort" in text
     assert "openThinkingSettings" in text
     assert "showThinkingPanel" in text
+    assert "scrollSelectedModelIntoView" in text
+    assert "modelListScrollRef" in text
+    assert 'data-model-current' in text
     assert "默认思考" in text or "已开启" in text
     assert "关闭本次任务思考" in text
     assert "({{ option.value }})" not in text

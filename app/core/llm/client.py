@@ -112,6 +112,7 @@ class LLMFactory:
         context_size: int | None = None,
         max_output_tokens: int | None = None,
         thinking_enable: bool = False,
+        thinking_capable: bool = False,
         reasoning_effort: str | None = None,
     ) -> AgentScopeLLMHandle:
         final_api_key = api_key or (settings.LLM_API_KEY if settings.LLM_API_KEY else None)
@@ -146,6 +147,7 @@ class LLMFactory:
                 context_size=context_size,
                 max_output_tokens=max_output_tokens,
                 thinking_enable=thinking_enable,
+                thinking_capable=thinking_capable,
                 reasoning_effort=reasoning_effort,
             )
         )
@@ -184,6 +186,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
     max_output_tokens = kwargs.get("max_output_tokens")
     provider = kwargs.get("provider")
     thinking_enable = kwargs.get("thinking_enable")
+    thinking_capable = kwargs.get("thinking_capable")
     reasoning_effort = kwargs.get("reasoning_effort")
 
     lookup_result = _lookup_ai_model_record(model)
@@ -204,6 +207,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
             else getattr(ai_model, "max_output_tokens", None)
         )
         registered_thinking_enable = bool(getattr(ai_model, "thinking_enable", False))
+        thinking_capable = registered_thinking_enable
         registered_reasoning_effort = getattr(ai_model, "reasoning_effort", None)
         reasoning_settings = resolve_reasoning_settings(
             thinking_enable=registered_thinking_enable,
@@ -266,6 +270,8 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         factory_kwargs["max_output_tokens"] = max_output_tokens
     if thinking_enable is not None:
         factory_kwargs["thinking_enable"] = thinking_enable
+    if thinking_capable is not None:
+        factory_kwargs["thinking_capable"] = thinking_capable
     if reasoning_effort is not None:
         factory_kwargs["reasoning_effort"] = reasoning_effort
 

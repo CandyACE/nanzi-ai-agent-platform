@@ -821,7 +821,7 @@ onBeforeUnmount(() => {
                               <section class="thinking-mode-section">
                                   <div class="advanced-section-heading">
                                       <div>
-                                          <h4 class="advanced-section-title">思考模式</h4>
+                                          <h4 class="advanced-section-title">思考模式配置</h4>
                                           <p class="advanced-section-description">将该模型标记为思考模型，开启后显示相关配置。</p>
                                       </div>
                                       <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
@@ -834,20 +834,32 @@ onBeforeUnmount(() => {
                                   </div>
                                   <div v-if="modelForm.thinking_enable">
                                       <div class="thinking-options-grid">
-                                          <label class="thinking-option-card">
-                                              <input v-model="modelForm.thinking_only" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                          <div class="thinking-option-card">
                                               <span>
                                                   <span class="block text-sm font-medium text-gray-700">默认思考模式</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">模型默认以思考模式运行。</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">新会话默认开思考；不传覆盖时后端按此执行。</span>
                                               </span>
-                                          </label>
-                                          <label class="thinking-option-card">
-                                              <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                                              <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_only }">
+                                                  <input v-model="modelForm.thinking_only" type="checkbox" class="sr-only" />
+                                                  <span class="thinking-mode-capsule-track">
+                                                      <span class="thinking-mode-capsule-thumb"></span>
+                                                      <span>{{ modelForm.thinking_only ? '开启' : '关闭' }}</span>
+                                                  </span>
+                                              </label>
+                                          </div>
+                                          <div class="thinking-option-card">
                                               <span>
                                                   <span class="block text-sm font-medium text-gray-700">允许关闭思考</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">允许用户关闭思考模式。</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">开启后，用户可在会话里关掉思考。</span>
                                               </span>
-                                          </label>
+                                              <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.allow_disable_thinking }">
+                                                  <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="sr-only" />
+                                                  <span class="thinking-mode-capsule-track">
+                                                      <span class="thinking-mode-capsule-thumb"></span>
+                                                      <span>{{ modelForm.allow_disable_thinking ? '开启' : '关闭' }}</span>
+                                                  </span>
+                                              </label>
+                                          </div>
                                       </div>
                                       <div class="default-reasoning-effort-row">
                                           <div class="default-reasoning-effort-field">
@@ -1173,38 +1185,61 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 5.75rem;
-  min-height: 2rem;
+  min-width: 4.5rem;
+  min-height: 1.625rem;
   border-radius: 9999px;
   background: rgb(226 232 240);
-  padding: 0.25rem 0.45rem 0.25rem 2.15rem;
+  padding: 0.15rem 0.4rem 0.15rem 1.75rem;
   color: rgb(71 85 105);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 600;
+  line-height: 1;
   transition: background-color 150ms, color 150ms;
 }
 
 .thinking-mode-capsule-thumb {
   position: absolute;
-  left: 0.25rem;
-  width: 1.5rem;
-  height: 1.5rem;
+  left: 0.1875rem;
+  width: 1.25rem;
+  height: 1.25rem;
   border-radius: 9999px;
   background: white;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
   transition: left 150ms;
 }
 
 .thinking-mode-capsule-on .thinking-mode-capsule-track {
-  background: rgb(37 99 235);
+  background: rgb(22 163 74);
   color: white;
   justify-content: flex-start;
-  padding-right: 2.15rem;
-  padding-left: 0.45rem;
+  padding-right: 1.75rem;
+  padding-left: 0.4rem;
 }
 
 .thinking-mode-capsule-on .thinking-mode-capsule-thumb {
-  left: calc(100% - 1.75rem);
+  left: calc(100% - 1.4375rem);
+}
+
+.thinking-option-card .thinking-mode-capsule-track {
+  min-width: 3.85rem;
+  min-height: 1.375rem;
+  padding: 0.125rem 0.32rem 0.125rem 1.45rem;
+  font-size: 0.625rem;
+}
+
+.thinking-option-card .thinking-mode-capsule-thumb {
+  left: 0.15rem;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.thinking-option-card .thinking-mode-capsule-on .thinking-mode-capsule-track {
+  padding-right: 1.45rem;
+  padding-left: 0.32rem;
+}
+
+.thinking-option-card .thinking-mode-capsule-on .thinking-mode-capsule-thumb {
+  left: calc(100% - 1.2rem);
 }
 
 .thinking-options-grid {
@@ -1230,11 +1265,17 @@ onBeforeUnmount(() => {
 
 .thinking-option-card {
   display: flex;
-  align-items: flex-start;
-  gap: 0.55rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   border: 1px solid rgb(226 232 240);
-  border-radius: 0.6rem;
-  padding: 0.7rem;
+  border-radius: 0.75rem;
+  background: white;
+  padding: 0.75rem 0.85rem;
+}
+
+.thinking-option-card .thinking-mode-capsule {
+  flex-shrink: 0;
 }
 
 .thinking-effort-options {
@@ -1283,6 +1324,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
+  .thinking-options-grid,
   .thinking-effort-options {
     grid-template-columns: 1fr;
   }

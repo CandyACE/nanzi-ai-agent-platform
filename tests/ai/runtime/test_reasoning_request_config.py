@@ -104,7 +104,42 @@ async def test_runtime_model_info_carries_registered_reasoning_configuration(mon
     info = await config_module.resolve_runtime_model_info(model_override="registered-model")
 
     assert info.thinking_enable is True
+    assert info.thinking_capable is True
     assert info.reasoning_effort == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_runtime_model_info_keeps_thinking_capable_when_default_thinking_is_off(monkeypatch):
+    from app.services.ai import config as config_module
+
+    monkeypatch.setattr(
+        config_module.ConfigService,
+        "get_all_from_db",
+        AsyncMock(return_value={}),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_lookup_registered_model",
+        AsyncMock(return_value=SimpleNamespace(
+            model_id="thinking-model",
+            api_key=None,
+            api_base_url=None,
+            context_size=None,
+            max_output_tokens=None,
+            provider="openai",
+            thinking_enable=True,
+            thinking_only=False,
+            allow_disable_thinking=True,
+            reasoning_effort="high",
+            supported_reasoning_efforts=["low", "high"],
+        )),
+    )
+
+    info = await config_module.resolve_runtime_model_info(model_override="thinking-model")
+
+    assert info.thinking_enable is False
+    assert info.thinking_capable is True
+    assert info.reasoning_effort is None
 
 
 @pytest.mark.asyncio
@@ -164,6 +199,7 @@ def test_llm_factory_carries_native_reasoning_parameters_into_model_config(monke
     )
 
     assert captured["config"].thinking_enable is True
+    assert captured["config"].thinking_capable is False
     assert captured["config"].reasoning_effort == "xhigh"
 
 
@@ -201,6 +237,7 @@ async def test_get_llm_async_reads_reasoning_configuration_from_registered_model
 
     assert await client.get_llm_async(streaming=False) == "handle"
     assert captured["thinking_enable"] is True
+    assert captured["thinking_capable"] is True
     assert captured["reasoning_effort"] == "xhigh"
 
 
@@ -244,6 +281,7 @@ async def test_get_llm_async_applies_request_reasoning_override_to_auxiliary_cal
 
     assert await client.get_llm_async(streaming=False) == "handle"
     assert captured["thinking_enable"] is False
+    assert captured["thinking_capable"] is True
     assert "reasoning_effort" not in captured
 
 
@@ -332,6 +370,7 @@ async def test_configured_llm_passes_reasoning_configuration_to_shared_factory(m
         model_override="registered-model",
     ) == "handle"
     assert captured["thinking_enable"] is True
+    assert captured["thinking_capable"] is True
     assert captured["reasoning_effort"] == "low"
 
 
@@ -383,6 +422,7 @@ async def test_request_reasoning_override_applies_only_when_registered_model_all
     )
 
     assert captured["thinking_enable"] is False
+    assert captured["thinking_capable"] is True
     assert captured["reasoning_effort"] is None
 
 
