@@ -46,3 +46,15 @@ def test_widget_debugger_floating_guide_can_collapse_after_opening():
     assert "nanzi-widget-collapse" in source
     assert "shell.classList.add('collapsed')" in source
     assert "收起助手" in source
+
+
+def test_widget_debugger_supports_strict_token_validation():
+    source = _source("frontend/src/views/WidgetDebugger.vue")
+    embed_source = _source("frontend/src/views/EmbedChat.vue")
+
+    assert "/embed/chat?strict_token=1" in source
+    assert "strict_token: true" in source
+    assert "INIT_FAILURE" in source
+    assert "strict_token" in embed_source
+    assert "INIT_FAILURE" in embed_source
+    assert "strictTokenValidation" in embed_source

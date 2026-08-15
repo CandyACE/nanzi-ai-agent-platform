@@ -680,9 +680,8 @@ const isExpanded = ref(true);
     };
 
 const connect = () => {
-    // Start without params to simulate full handshake
-    iframeUrl.value = '/embed/chat'; 
-    log('Loading IFrame...');
+    iframeUrl.value = '/embed/chat?strict_token=1';
+    log('Loading IFrame (strict token mode)...');
 };
 
 const disconnect = () => {
@@ -702,8 +701,15 @@ const postMsg = (type: string, payload: any = {}) => {
 };
 
 const sendInit = () => {
+    const token = config.token.trim();
+    if (!token) {
+        log('Error: 必须填写 API Token');
+        showToast('必须填写 API Token', 'error');
+        return;
+    }
     postMsg('INIT_CONFIG', {
-        token: config.token || 'TEST_TOKEN', 
+        token,
+        strict_token: true,
         agent_id: config.agentId,
         theme: config.theme,
         styleVars: {
@@ -746,17 +752,21 @@ const toggleExpand = () => {
 const handleMessage = (event: MessageEvent) => {
     const data = event.data;
     if (data.source === 'nanzi-agent-embed') {
+        if (data.type === 'INIT_SUCCESS') {
+            log('RX: INIT_SUCCESS — Token 校验通过');
+            showToast('Token 校验通过', 'success');
+            return;
+        }
+        if (data.type === 'INIT_FAILURE') {
+            const reason = data.reason === 'missing_token' ? '未提供 Token' : 'Token 无效';
+            log(`RX: INIT_FAILURE — ${reason}`);
+            showToast(`Token 校验失败：${reason}`, 'error');
+            return;
+        }
         log(`RX: ${data.type}`);
         
         if (data.type === 'NANZI_WIDGET_READY') {
-            log('Widget Ready! Sending Init...');
-            // Optional: Auto init not always desired in debug if we want to test manual init
-            // But let's keep it for convenience or add a checkbox "Auto Init" later?
-            // For now, let's remove auto-init to let user click button as they might want to change config first.
-            // Or only auto init if token is present?
-            // User said "how to fill token", so they want manual control.
-            // I'll remove auto-setTimeout init so they can fill form first.
-            log('(Auto-init disabled, please click Send INIT_CONFIG)');
+            log('Widget Ready — 请配置 Token 后点击「发送 INIT_CONFIG」');
         }
     }
 };

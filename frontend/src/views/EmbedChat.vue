@@ -4728,6 +4728,101 @@ const openSavedReportFromHost = (target: any) => {
   };
   setTimeout(() => openPortalDrawer(), 0);
 };
+const applyInitConfigPayload = (data: Record<string, any>) => {
+  void loadWorkbenchHome();
+  if (data.agent_id) {
+    const agentId = String(data.agent_id);
+    config.agentId = agentId;
+    void loadWelcomeCards(agentId);
+    switchToExpert(agentId);
+    if (!data.conversation_id) {
+      messages.value = [];
+      generateNewConversation();
+      requestedConversationId = conversationId.value;
+    }
+  }
+  if (data.conversation_id) {
+    requestedConversationId = String(data.conversation_id);
+    conversationId.value = requestedConversationId;
+    localStorage.setItem("yovole_embed_conv_id", requestedConversationId);
+  } else if (!data.agent_id) {
+    requestedConversationId = "";
+  }
+  if (data.instance_id) config.instanceId = data.instance_id;
+  if (data.theme) applyTheme(data.theme, data.styleVars);
+  if (data.welcome_message_override) config.welcomeMessage = data.welcome_message_override;
+  if (data.user_avatar) config.userAvatar = data.user_avatar;
+  if (data.user_info || data.user) {
+    const u = data.user_info || data.user;
+    currentUser.value = u;
+    injectedContext.value = {
+      ...injectedContext.value,
+      user_name: u.real_name || u.user_name,
+      user_role: u.role === "admin" ? "系统管理员" : "普通用户",
+      user_id: u.user_id,
+    };
+  }
+  if (data.page_info) {
+    injectedContext.value = { ...injectedContext.value, ...data.page_info };
+  }
+  openSavedReportFromHost(data.open_saved_report);
+  if (data.portal_question?.query) {
+    setTimeout(
+      () =>
+        handlePortalQuickQuestion(
+          String(data.portal_question.query),
+          data.portal_question.action === "fill" ? "fill" : "send",
+        ),
+      0,
+    );
+  }
+};
+const handleInitConfig = async (data: Record<string, any>) => {
+  console.log(
+    "Received INIT_CONFIG payload:",
+    JSON.stringify({
+      ...data,
+      token: data.token ? "***" : "MISSING",
+      api_key: data.api_key ? "***" : "MISSING",
+      apikey: data.apikey ? "***" : "MISSING",
+    }),
+  );
+  const strict = data.strict_token === true;
+  if (strict) {
+    strictTokenValidation.value = true;
+  }
+  const incomingToken = data.token || data.api_key || data.apikey;
+  if (!incomingToken) {
+    console.warn("INIT_CONFIG received but no token/api_key found in payload!");
+    if (strict) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "missing_token" });
+    }
+    return;
+  }
+  config.token = incomingToken;
+  axios.defaults.headers.common["Authorization"] = `Bearer ${incomingToken}`;
+  axios.defaults.headers.common["X-API-Key"] = incomingToken;
+
+  if (strict) {
+    const isValid = await validateToken({ strict: true });
+    if (!isValid) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_token" });
+      return;
+    }
+    hasPermission.value = true;
+    applyInitConfigPayload(data);
+    postMessageToHost({ type: "INIT_SUCCESS" });
+    await initChat({ skipAuth: true });
+    return;
+  }
+
+  hasPermission.value = true;
+  applyInitConfigPayload(data);
+  postMessageToHost({ type: "INIT_SUCCESS" });
+  initChat();
+};
 const handlePostMessage = (event: MessageEvent) => {
   // Security check logic here in production
   const data = event.data;
@@ -4740,73 +4835,7 @@ const handlePostMessage = (event: MessageEvent) => {
   }
   switch (data.type) {
     case "INIT_CONFIG":
-      console.log("Received INIT_CONFIG payload:", JSON.stringify({ ...data, token: data.token ? "***" : "MISSING", api_key: data.api_key ? "***" : "MISSING", apikey: data.apikey ? "***" : "MISSING" }));
-      const incomingToken = data.token || data.api_key || data.apikey;
-      if (incomingToken) {
-        config.token = incomingToken;
-        hasPermission.value = true; // Reset permission state to try again
-        // Configure axios defaults immediately
-        axios.defaults.headers.common["Authorization"] = `Bearer ${incomingToken}`;
-        axios.defaults.headers.common["X-API-Key"] = incomingToken;
-        void loadWorkbenchHome();
-        if (data.agent_id) {
-          const agentId = String(data.agent_id);
-          config.agentId = agentId;
-          void loadWelcomeCards(agentId);
-          // 工作台 / 门户指定助手时，切到专家模式并选中该助手
-          switchToExpert(agentId);
-          if (!data.conversation_id) {
-            // 未指定会话：新开对话，避免仍停在上一会话内容
-            messages.value = [];
-            generateNewConversation();
-            // 钉住本次新会话，供紧随其后的 initChat 加载空历史（而非服务端旧 active）
-            requestedConversationId = conversationId.value;
-          }
-        }
-        if (data.conversation_id) {
-          requestedConversationId = String(data.conversation_id);
-          conversationId.value = requestedConversationId;
-          localStorage.setItem("yovole_embed_conv_id", requestedConversationId);
-        } else if (!data.agent_id) {
-          // 父页已取消会话钉选时，勿保留陈旧 resume id
-          requestedConversationId = "";
-        }
-        if (data.instance_id) config.instanceId = data.instance_id;
-        if (data.theme) applyTheme(data.theme, data.styleVars);
-        if (data.welcome_message_override)
-          config.welcomeMessage = data.welcome_message_override;
-        if (data.user_avatar) config.userAvatar = data.user_avatar;
-              // Handle injected user info
-              if (data.user_info || data.user) {
-                const u = data.user_info || data.user;
-                currentUser.value = u;
-                // Inject identity into context so AI knows who the user is
-                injectedContext.value = {
-                  ...injectedContext.value,
-                  user_name: u.real_name || u.user_name,
-                  user_role: u.role === 'admin' ? '系统管理员' : '普通用户',
-                  user_id: u.user_id
-                };
-              }
-        // Store initial page info if provided
-        if (data.page_info) {
-          injectedContext.value = { ...injectedContext.value, ...data.page_info };
-        }
-        openSavedReportFromHost(data.open_saved_report);
-        if (data.portal_question?.query) {
-          setTimeout(
-            () => handlePortalQuickQuestion(
-              String(data.portal_question.query),
-              data.portal_question.action === "fill" ? "fill" : "send",
-            ),
-            0,
-          );
-        }
-        postMessageToHost({ type: "INIT_SUCCESS" });
-        initChat(); // Only init if token exists
-      } else {
-        console.warn("INIT_CONFIG received but no token/api_key found in payload!");
-      }
+      void handleInitConfig(data);
       break;
     case "OPEN_SAVED_REPORT":
       openSavedReportFromHost(data.open_saved_report);
@@ -4976,6 +5005,8 @@ const fetchAccountInfo = async () => {
 };
 // State
 const hasPermission = ref(true); // Default to true, strictly controlled by validateToken
+/** 调试台 strict_token 模式：仅校验 INIT_CONFIG 传入的 token，不走 localStorage / Cookie 兜底。 */
+const strictTokenValidation = ref(false);
 
 /** 仅在服务端校验通过后写入，避免 URL 里陈旧的 ?token= 覆盖刚登录写入的 api_key（父页 Chat.vue postMessage 会读 localStorage）。 */
 const syncValidatedCredentials = (apiKey: string) => {
@@ -4986,7 +5017,8 @@ const syncValidatedCredentials = (apiKey: string) => {
   axios.defaults.headers.common["X-API-Key"] = apiKey;
 };
 
-const validateToken = async (): Promise<boolean> => {
+const validateToken = async (options?: { strict?: boolean }): Promise<boolean> => {
+  const strict = options?.strict ?? strictTokenValidation.value;
   const attachUser = (data: Record<string, unknown>) => {
     accountInfo.value = data as typeof accountInfo.value;
     currentUser.value = data as typeof currentUser.value;
@@ -5001,6 +5033,30 @@ const validateToken = async (): Promise<boolean> => {
     return false;
   };
 
+  const authHeaders = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+    "X-API-Key": token,
+  });
+
+  if (strict) {
+    const token = config.token?.trim();
+    if (!token) return false;
+    try {
+      const ok = await tryOnce(authHeaders(token));
+      if (ok) {
+        config.token = token;
+        axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+        axios.defaults.headers.common["X-API-Key"] = token;
+        console.log("[Auth] Strict validation success:", accountInfo.value?.user_name);
+        return true;
+      }
+    } catch (error: any) {
+      const status = error.response?.status;
+      console.warn("[Auth] Strict validation failed:", status || error.message);
+    }
+    return false;
+  }
+
   const candidates: string[] = [];
   const add = (t?: string | null) => {
     const s = t?.trim();
@@ -5009,11 +5065,6 @@ const validateToken = async (): Promise<boolean> => {
   add(config.token);
   add(localStorage.getItem("api_key"));
   add(localStorage.getItem("yovole_token"));
-
-  const authHeaders = (token: string) => ({
-    Authorization: `Bearer ${token}`,
-    "X-API-Key": token,
-  });
 
   console.log("[Auth] Starting validation, candidates:", candidates.length);
 
@@ -5058,15 +5109,17 @@ const validateToken = async (): Promise<boolean> => {
 
   return false;
 };
-const initChat = async () => {
+const initChat = async (options?: { skipAuth?: boolean }) => {
   isInitialLoading.value = true;
   try {
     // 1. Validate Token First (The only blocking step)
-    const isValid = await validateToken();
-    if (!isValid) {
-      hasPermission.value = false;
-      isInitialLoading.value = false;
-      return;
+    if (!options?.skipAuth) {
+      const isValid = await validateToken();
+      if (!isValid) {
+        hasPermission.value = false;
+        isInitialLoading.value = false;
+        return;
+      }
     }
     hasPermission.value = true;
     // 2. Clear skeleton as soon as auth is confirmed
@@ -6784,6 +6837,10 @@ onMounted(() => {
     config.hideMessageBorder = savedHideMessageBorder === "1";
   }
   const query = new URLSearchParams(window.location.search);
+  if (query.get("strict_token") === "1") {
+    strictTokenValidation.value = true;
+    console.log("[LifeCycle] Strict token validation enabled (debug mode).");
+  }
   if (query.get("token")) {
     const token = query.get("token")!;
     // 仅设置内存中的 config.token 参与校验；校验通过后再 syncValidatedCredentials，避免脏 URL 覆盖 localStorage
