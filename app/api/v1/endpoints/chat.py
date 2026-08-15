@@ -20,6 +20,7 @@ from app.utils.fs_access import get_user_uploads_dir
 from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
+from app.services.ai.business_context import sanitize_injected_context
 import logging
 
 
@@ -643,6 +644,10 @@ async def create_chat_completion(
     effective_debug_options = dict(completion_request.debug_options or {})
     # 资源范围只能由服务端会话快照决定，禁止客户端通过 debug_options 注入范围。
     effective_debug_options.pop("resource_scope", None)
+    if "injected_context" in effective_debug_options:
+        effective_debug_options["injected_context"] = sanitize_injected_context(
+            effective_debug_options["injected_context"]
+        )
     if completion_request.grounding_action:
         effective_debug_options["grounding_action"] = dict(
             completion_request.grounding_action

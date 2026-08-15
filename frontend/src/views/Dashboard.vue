@@ -726,7 +726,7 @@ const filteredMenuGroups = computed(() => {
       <!-- Main Scrollable Content -->
       <main 
         ref="dashboardContentRef"
-        class="flex-1 overflow-y-auto bg-gray-100 custom-scrollbar"
+        class="flex-1 overflow-y-auto overflow-x-hidden min-w-0 w-full max-w-full bg-gray-100 custom-scrollbar"
         :class="dashboardContentSpacing"
       >
         <router-view v-slot="{ Component }">

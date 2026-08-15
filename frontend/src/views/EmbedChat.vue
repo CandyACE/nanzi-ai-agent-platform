@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex h-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans overflow-hidden relative"
+    class="flex h-full w-full max-w-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans overflow-hidden relative min-w-0"
   >
     <!-- Sidebar (Desktop/Mobile) -->
     <ChatHistorySidebar
@@ -34,7 +34,7 @@
     </div>
 
     <div
-      class="flex-1 flex flex-col h-full relative z-10 min-w-0 transition-[margin] duration-300 overflow-hidden"
+      class="flex-1 flex flex-col h-full relative z-10 min-w-0 transition-[margin] duration-300 overflow-hidden w-full max-w-full"
       :style="pinnedDrawerMarginStyle"
     >
       <!-- Dynamic Header Status (New) -->
@@ -144,7 +144,7 @@
 
       <!-- Main Chat Area -->
       <div
-        class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 sm:space-y-6"
+        class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-4 sm:space-y-6 w-full max-w-full min-w-0"
         ref="messagesContainer"
         @scroll="handleScroll"
       >
@@ -734,6 +734,7 @@
                                                                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                                                                   :content="visibleStreamBody(msg)"
                                                                   :theme="config.markdownTheme"
+                                                                  :conversation-id="conversationId"
                                                                   :hide-quick-buttons="!!msg.businessConfirmation"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
@@ -1287,7 +1288,11 @@
                                 <div>
                                     <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
                                     <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm leading-relaxed">
-                                        <MessageRenderer :content="turn.summary || 'N/A'" :theme="config.markdownTheme" />
+                                        <MessageRenderer
+                                          :content="turn.summary || 'N/A'"
+                                          :theme="config.markdownTheme"
+                                          :conversation-id="conversationId"
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -3309,6 +3314,49 @@ const saveResourceScope = async () => {
 
 let requestedConversationId = "";
 let resourceScopeLoadSequence = 0;
+let initConfigReceived = false;
+let pendingUrlTokenInitTimer: number | null = null;
+let conversationInitializationGeneration = 0;
+const LEGACY_CONVERSATION_STORAGE_KEY = "yovole_embed_conv_id";
+const INSTANCE_CONVERSATION_STORAGE_PREFIX = "yovole_embed_conv_id:";
+
+const normalizeEmbedInstanceId = (value: unknown): string => {
+  const normalized = String(value ?? "").trim();
+  return normalized;
+};
+
+const conversationStorageKey = () =>
+  config.instanceId
+    ? `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${encodeURIComponent(config.instanceId)}`
+    : LEGACY_CONVERSATION_STORAGE_KEY;
+
+const readStoredConversationId = () => localStorage.getItem(conversationStorageKey());
+
+const persistConversationId = (cid: string) => {
+  if (cid) localStorage.setItem(conversationStorageKey(), cid);
+};
+
+const shouldUseServerActiveConversation = () => !config.instanceId;
+
+const cancelPendingUrlTokenInitialization = () => {
+  if (pendingUrlTokenInitTimer === null) return;
+  window.clearTimeout(pendingUrlTokenInitTimer);
+  pendingUrlTokenInitTimer = null;
+};
+
+const scheduleUrlTokenInitialization = () => {
+  if (!config.token || initConfigReceived) return;
+  cancelPendingUrlTokenInitialization();
+  if (config.instanceId) {
+    void initChat();
+    return;
+  }
+  // 给父页面一个握手窗口，让 INIT_CONFIG 中的 instance_id 先于 URL token 初始化生效。
+  pendingUrlTokenInitTimer = window.setTimeout(() => {
+    pendingUrlTokenInitTimer = null;
+    if (!initConfigReceived && config.token) void initChat();
+  }, 250);
+};
 
 const embedAuthHeaders = (): Record<string, string> | undefined => {
   if (!config.token) return undefined;
@@ -3324,6 +3372,7 @@ const finalizeConversationInBackground = (cid: string) => {
 
 const updateActiveConversationOnServer = async (cid: string) => {
   if (!config.token) return;
+  if (!shouldUseServerActiveConversation()) return;
   try {
     await axios.post("/api/v1/chat/active", {
       conversation_id: cid
@@ -3352,7 +3401,7 @@ const generateNewConversation = () => {
   conversationId.value = createConversationId();
   resourceScope.value = emptyResourceScopeState();
   Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
-  localStorage.setItem("yovole_embed_conv_id", conversationId.value);
+  persistConversationId(conversationId.value);
   updateActiveConversationOnServer(conversationId.value);
   loadResourceScope();
 };
@@ -3522,6 +3571,87 @@ const handleReorderCommands = async (reorderData: any[]) => {
 };
 // Context
 const injectedContext = ref<Record<string, any>>({});
+const BUSINESS_CONTEXT_RESERVED_KEYS = new Set([
+  "user_id",
+  "user_name",
+  "username",
+  "real_name",
+  "user_role",
+  "role",
+  "role_name",
+  "is_admin",
+  "account_id",
+  "department",
+  "dept_name",
+  "dept_code",
+  "org_path",
+  "user_dimensions",
+  "user_info",
+  "user",
+  "current_user",
+  "authenticated_user",
+  "auth_user",
+  "permissions",
+  "permission",
+  "permission_ids",
+  "tenant_id",
+  "tenant",
+  "tenant_name",
+  "org_id",
+  "organization_id",
+  "organization",
+  "is_superuser",
+  "is_staff",
+  "auth_id",
+  "auth_user_id",
+  "api_key",
+  "token",
+  "access_token",
+  "authorization",
+]);
+const BUSINESS_CONTEXT_RUNTIME_KEYS = new Set(["device_type", "display_hint"]);
+const isContextRecord = (value: unknown): value is Record<string, any> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const sanitizeBusinessValue = (value: any): any => {
+  if (Array.isArray(value)) return value.map(sanitizeBusinessValue);
+  if (!isContextRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !BUSINESS_CONTEXT_RESERVED_KEYS.has(key.trim().toLowerCase()))
+      .map(([key, item]) => [key, sanitizeBusinessValue(item)]),
+  );
+};
+const mergeBusinessContext = (rawContext: unknown) => {
+  if (!isContextRecord(rawContext)) return;
+  const nestedContext = isContextRecord(rawContext.business_context)
+    ? rawContext.business_context
+    : {};
+  const directContext = Object.fromEntries(
+    Object.entries(rawContext).filter(
+      ([key]) => key !== "business_context" && !BUSINESS_CONTEXT_RUNTIME_KEYS.has(key),
+    ),
+  );
+  const nextBusinessContext = {
+    ...(isContextRecord(injectedContext.value.business_context)
+      ? injectedContext.value.business_context
+      : {}),
+    ...nestedContext,
+    ...directContext,
+  };
+  const sanitizedBusinessContext = sanitizeBusinessValue(nextBusinessContext);
+  const nextContext = Object.fromEntries(
+    Object.entries(injectedContext.value).filter(
+      ([key]) => key !== "business_context" && !BUSINESS_CONTEXT_RESERVED_KEYS.has(key),
+    ),
+  );
+  for (const key of BUSINESS_CONTEXT_RUNTIME_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(rawContext, key)) {
+      nextContext[key] = rawContext[key];
+    }
+  }
+  nextContext.business_context = sanitizedBusinessContext;
+  injectedContext.value = nextContext;
+};
 // Network
 const connectionStatus = ref<"connected" | "disconnected" | "reconnecting">(
   "connected"
@@ -3719,7 +3849,7 @@ const handleHistoryClick = (item: any) => {
     // Switch to this conversation
     resetEmbedThinkingOverrides();
     conversationId.value = item.conversation_id;
-    localStorage.setItem("yovole_embed_conv_id", item.conversation_id);
+    persistConversationId(item.conversation_id);
     updateActiveConversationOnServer(item.conversation_id);
 
     // Reset message list and history state
@@ -4728,85 +4858,182 @@ const openSavedReportFromHost = (target: any) => {
   };
   setTimeout(() => openPortalDrawer(), 0);
 };
+const applyInitConfigPayload = (data: Record<string, any>) => {
+  void loadWorkbenchHome();
+  const incomingInstanceId = normalizeEmbedInstanceId(data.instance_id);
+  const instanceChanged = Boolean(incomingInstanceId) && incomingInstanceId !== config.instanceId;
+  if (incomingInstanceId) config.instanceId = incomingInstanceId;
+  if (instanceChanged) {
+    requestedConversationId = "";
+    conversationId.value = "";
+    messages.value = [];
+    resourceScope.value = emptyResourceScopeState();
+    historyRequestSequence += 1;
+    historyOffset.value = 0;
+    hasMoreHistory.value = true;
+    isLoadingHistory.value = false;
+  }
+  if (data.agent_id) {
+    const agentId = String(data.agent_id);
+    config.agentId = agentId;
+    void loadWelcomeCards(agentId);
+    switchToExpert(agentId);
+    if (!data.conversation_id) {
+      messages.value = [];
+      generateNewConversation();
+      requestedConversationId = conversationId.value;
+    }
+  }
+  if (data.conversation_id) {
+    requestedConversationId = String(data.conversation_id);
+    conversationId.value = requestedConversationId;
+    persistConversationId(requestedConversationId);
+  } else if (!data.agent_id) {
+    requestedConversationId = "";
+  }
+  if (data.theme) applyTheme(data.theme, data.styleVars);
+  if (data.welcome_message_override) config.welcomeMessage = data.welcome_message_override;
+  if (data.user_avatar) config.userAvatar = data.user_avatar;
+  if (data.business_context) mergeBusinessContext(data.business_context);
+  if (data.page_info) {
+    mergeBusinessContext(data.page_info);
+  }
+  openSavedReportFromHost(data.open_saved_report);
+  if (data.portal_question?.query) {
+    setTimeout(
+      () =>
+        handlePortalQuickQuestion(
+          String(data.portal_question.query),
+          data.portal_question.action === "fill" ? "fill" : "send",
+        ),
+      0,
+    );
+  }
+};
+
+const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
+  try {
+    const res = await axios.post("/api/v1/embed/tickets/exchange", { ticket: ticket.trim() });
+    if (res.data && res.data.code === 200 && res.data.data?.session_token) {
+      const sessionData = res.data.data;
+      config.token = sessionData.session_token;
+      axios.defaults.headers.common["Authorization"] = `Bearer ${sessionData.session_token}`;
+      axios.defaults.headers.common["X-API-Key"] = sessionData.session_token;
+      if (sessionData.user_info) {
+        currentUser.value = {
+          ...currentUser.value,
+          ...sessionData.user_info,
+        };
+      }
+      if (sessionData.agent_id && !config.agentId) {
+        config.agentId = sessionData.agent_id;
+        urlPinnedAgentKey.value = sessionData.agent_id;
+      }
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error("[EmbedTicket] Failed to exchange ticket:", err);
+    return false;
+  }
+};
+
+const postInitSuccess = () => {
+  postMessageToHost({
+    type: "INIT_SUCCESS",
+    user: {
+      user_name: currentUser.value.user_name || undefined,
+      real_name: currentUser.value.real_name || undefined,
+      user_id: currentUser.value.user_id || undefined,
+      role: currentUser.value.role || undefined,
+    },
+  });
+};
+
+const handleInitConfig = async (data: Record<string, any>) => {
+  initConfigReceived = true;
+  conversationInitializationGeneration += 1;
+  cancelPendingUrlTokenInitialization();
+  const logData = { ...data };
+  delete logData.user_info;
+  delete logData.user;
+  console.log(
+    "Received INIT_CONFIG payload:",
+    JSON.stringify({
+      ...logData,
+      ticket: logData.ticket ? "***" : undefined,
+      token: logData.token ? "***" : "MISSING",
+      api_key: logData.api_key ? "***" : "MISSING",
+      apikey: logData.apikey ? "***" : "MISSING",
+    }),
+  );
+  const strict = data.strict_token === true;
+  if (strict) {
+    strictTokenValidation.value = true;
+  }
+
+  // 1. 优先使用临时 Ticket 换票
+  if (data.ticket) {
+    const ticketOk = await exchangeTicketAndApply(String(data.ticket));
+    if (!ticketOk) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      return;
+    }
+    hasPermission.value = true;
+    applyInitConfigPayload(data);
+    postInitSuccess();
+    await initChat({ skipAuth: true });
+    return;
+  }
+
+  // 2. 兼容传统的 API Key 模式
+  const incomingToken = data.token || data.api_key || data.apikey;
+  if (!incomingToken) {
+    console.warn("INIT_CONFIG received but no token/api_key/ticket found in payload!");
+    if (strict) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "missing_token" });
+    }
+    return;
+  }
+  config.token = incomingToken;
+  axios.defaults.headers.common["Authorization"] = `Bearer ${incomingToken}`;
+  axios.defaults.headers.common["X-API-Key"] = incomingToken;
+
+  if (strict) {
+    const isValid = await validateToken({ strict: true });
+    if (!isValid) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_token" });
+      return;
+    }
+    hasPermission.value = true;
+    applyInitConfigPayload(data);
+    postInitSuccess();
+    await initChat({ skipAuth: true });
+    return;
+  }
+
+  hasPermission.value = true;
+  applyInitConfigPayload(data);
+  postInitSuccess();
+  initChat();
+};
 const handlePostMessage = (event: MessageEvent) => {
   // Security check logic here in production
   const data = event.data;
+  const messageInstanceId = normalizeEmbedInstanceId(data.instance_id);
   if (
-    data.instance_id &&
+    messageInstanceId &&
     config.instanceId &&
-    data.instance_id !== config.instanceId
+    messageInstanceId !== config.instanceId
   ) {
     return; // Ignore messages for other instances
   }
   switch (data.type) {
     case "INIT_CONFIG":
-      console.log("Received INIT_CONFIG payload:", JSON.stringify({ ...data, token: data.token ? "***" : "MISSING", api_key: data.api_key ? "***" : "MISSING", apikey: data.apikey ? "***" : "MISSING" }));
-      const incomingToken = data.token || data.api_key || data.apikey;
-      if (incomingToken) {
-        config.token = incomingToken;
-        hasPermission.value = true; // Reset permission state to try again
-        // Configure axios defaults immediately
-        axios.defaults.headers.common["Authorization"] = `Bearer ${incomingToken}`;
-        axios.defaults.headers.common["X-API-Key"] = incomingToken;
-        void loadWorkbenchHome();
-        if (data.agent_id) {
-          const agentId = String(data.agent_id);
-          config.agentId = agentId;
-          void loadWelcomeCards(agentId);
-          // 工作台 / 门户指定助手时，切到专家模式并选中该助手
-          switchToExpert(agentId);
-          if (!data.conversation_id) {
-            // 未指定会话：新开对话，避免仍停在上一会话内容
-            messages.value = [];
-            generateNewConversation();
-            // 钉住本次新会话，供紧随其后的 initChat 加载空历史（而非服务端旧 active）
-            requestedConversationId = conversationId.value;
-          }
-        }
-        if (data.conversation_id) {
-          requestedConversationId = String(data.conversation_id);
-          conversationId.value = requestedConversationId;
-          localStorage.setItem("yovole_embed_conv_id", requestedConversationId);
-        } else if (!data.agent_id) {
-          // 父页已取消会话钉选时，勿保留陈旧 resume id
-          requestedConversationId = "";
-        }
-        if (data.instance_id) config.instanceId = data.instance_id;
-        if (data.theme) applyTheme(data.theme, data.styleVars);
-        if (data.welcome_message_override)
-          config.welcomeMessage = data.welcome_message_override;
-        if (data.user_avatar) config.userAvatar = data.user_avatar;
-              // Handle injected user info
-              if (data.user_info || data.user) {
-                const u = data.user_info || data.user;
-                currentUser.value = u;
-                // Inject identity into context so AI knows who the user is
-                injectedContext.value = {
-                  ...injectedContext.value,
-                  user_name: u.real_name || u.user_name,
-                  user_role: u.role === 'admin' ? '系统管理员' : '普通用户',
-                  user_id: u.user_id
-                };
-              }
-        // Store initial page info if provided
-        if (data.page_info) {
-          injectedContext.value = { ...injectedContext.value, ...data.page_info };
-        }
-        openSavedReportFromHost(data.open_saved_report);
-        if (data.portal_question?.query) {
-          setTimeout(
-            () => handlePortalQuickQuestion(
-              String(data.portal_question.query),
-              data.portal_question.action === "fill" ? "fill" : "send",
-            ),
-            0,
-          );
-        }
-        postMessageToHost({ type: "INIT_SUCCESS" });
-        initChat(); // Only init if token exists
-      } else {
-        console.warn("INIT_CONFIG received but no token/api_key found in payload!");
-      }
+      void handleInitConfig(data);
       break;
     case "OPEN_SAVED_REPORT":
       openSavedReportFromHost(data.open_saved_report);
@@ -4814,29 +5041,15 @@ const handlePostMessage = (event: MessageEvent) => {
     case "SYNC_STATE":
       // Host syncing page state (e.g. current URL, selected item)
       if (data.payload) {
-        injectedContext.value = { ...injectedContext.value, ...data.payload };
-        // Also update user info if present in payload
-        if (data.payload.user_info || data.payload.user) {
-          const u = data.payload.user_info || data.payload.user;
-          currentUser.value = u;
-          injectedContext.value.user_name = u.real_name || u.user_name;
-          injectedContext.value.user_role = u.role === 'admin' ? '系统管理员' : '普通用户';
-        }
-        console.log("State synced from host:", data.payload);
+        mergeBusinessContext(data.payload);
+        console.log("State synced from host:", injectedContext.value.business_context);
       }
       break;
     case "UPDATE_CONTEXT":
       const newContext = data.payload || data.context;
       if (newContext) {
-        injectedContext.value = { ...injectedContext.value, ...newContext };
-        // Also update user info if present
-        if (newContext.user_info || newContext.user) {
-          const u = newContext.user_info || newContext.user;
-          currentUser.value = u;
-          injectedContext.value.user_name = u.real_name || u.user_name;
-          injectedContext.value.user_role = u.role === 'admin' ? '系统管理员' : '普通用户';
-        }
-        console.log("Context updated:", injectedContext.value);
+        mergeBusinessContext(newContext);
+        console.log("Context updated:", injectedContext.value.business_context);
       }
       break;
     case "SET_THEME":
@@ -4850,7 +5063,7 @@ const handlePostMessage = (event: MessageEvent) => {
       resetSession();
       break;
     case "RESET_SESSION":
-      resetSession(data.new_token);
+      void resetSession(data.new_token || data.token, data.ticket);
       break;
     case "SEND_COMMAND":
       if (data.command) {
@@ -4872,11 +5085,19 @@ const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
     });
   }
 };
-const resetSession = (newToken?: string) => {
+const resetSession = async (newToken?: string, ticket?: string) => {
   messages.value = [];
   config.enableGrounding = true; // 新会话恢复默认开启
   generateNewConversation();
-  if (newToken) {
+  if (ticket) {
+    const ticketOk = await exchangeTicketAndApply(ticket);
+    if (!ticketOk) {
+      hasPermission.value = false;
+      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      return;
+    }
+    hasPermission.value = true;
+  } else if (newToken) {
     config.token = newToken;
     axios.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
     axios.defaults.headers.common["X-API-Key"] = newToken;
@@ -4976,6 +5197,8 @@ const fetchAccountInfo = async () => {
 };
 // State
 const hasPermission = ref(true); // Default to true, strictly controlled by validateToken
+/** 调试台 strict_token 模式：仅校验 INIT_CONFIG 传入的 token，不走 localStorage / Cookie 兜底。 */
+const strictTokenValidation = ref(false);
 
 /** 仅在服务端校验通过后写入，避免 URL 里陈旧的 ?token= 覆盖刚登录写入的 api_key（父页 Chat.vue postMessage 会读 localStorage）。 */
 const syncValidatedCredentials = (apiKey: string) => {
@@ -4986,7 +5209,8 @@ const syncValidatedCredentials = (apiKey: string) => {
   axios.defaults.headers.common["X-API-Key"] = apiKey;
 };
 
-const validateToken = async (): Promise<boolean> => {
+const validateToken = async (options?: { strict?: boolean }): Promise<boolean> => {
+  const strict = options?.strict ?? strictTokenValidation.value;
   const attachUser = (data: Record<string, unknown>) => {
     accountInfo.value = data as typeof accountInfo.value;
     currentUser.value = data as typeof currentUser.value;
@@ -5001,6 +5225,30 @@ const validateToken = async (): Promise<boolean> => {
     return false;
   };
 
+  const authHeaders = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+    "X-API-Key": token,
+  });
+
+  if (strict) {
+    const token = config.token?.trim();
+    if (!token) return false;
+    try {
+      const ok = await tryOnce(authHeaders(token));
+      if (ok) {
+        config.token = token;
+        axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+        axios.defaults.headers.common["X-API-Key"] = token;
+        console.log("[Auth] Strict validation success:", accountInfo.value?.user_name);
+        return true;
+      }
+    } catch (error: any) {
+      const status = error.response?.status;
+      console.warn("[Auth] Strict validation failed:", status || error.message);
+    }
+    return false;
+  }
+
   const candidates: string[] = [];
   const add = (t?: string | null) => {
     const s = t?.trim();
@@ -5009,11 +5257,6 @@ const validateToken = async (): Promise<boolean> => {
   add(config.token);
   add(localStorage.getItem("api_key"));
   add(localStorage.getItem("yovole_token"));
-
-  const authHeaders = (token: string) => ({
-    Authorization: `Bearer ${token}`,
-    "X-API-Key": token,
-  });
 
   console.log("[Auth] Starting validation, candidates:", candidates.length);
 
@@ -5058,16 +5301,21 @@ const validateToken = async (): Promise<boolean> => {
 
   return false;
 };
-const initChat = async () => {
+const initChat = async (options?: { skipAuth?: boolean }) => {
+  const initGeneration = conversationInitializationGeneration;
   isInitialLoading.value = true;
   try {
     // 1. Validate Token First (The only blocking step)
-    const isValid = await validateToken();
-    if (!isValid) {
-      hasPermission.value = false;
-      isInitialLoading.value = false;
-      return;
+    if (!options?.skipAuth) {
+      const isValid = await validateToken();
+      if (initGeneration !== conversationInitializationGeneration) return;
+      if (!isValid) {
+        hasPermission.value = false;
+        isInitialLoading.value = false;
+        return;
+      }
     }
+    if (initGeneration !== conversationInitializationGeneration) return;
     hasPermission.value = true;
     // 2. Clear skeleton as soon as auth is confirmed
     isInitialLoading.value = false;
@@ -5086,6 +5334,7 @@ const initChat = async () => {
     // 5. Preload Agents & Validate Expert Mode / URL agent lock
     if (urlPinnedAgentKey.value) {
       const ok = await resolveUrlPinnedAgent();
+      if (initGeneration !== conversationInitializationGeneration) return;
       if (!ok) {
         isInitialLoading.value = false;
         return;
@@ -5110,26 +5359,33 @@ const initChat = async () => {
         }
     }).catch(e => console.warn("Failed to preload agents", e));
     // 6. Workbench/host explicit resume wins; otherwise fetch the active conversation.
+    if (initGeneration !== conversationInitializationGeneration) return;
     let loadedCid = false;
     if (requestedConversationId) {
       conversationId.value = requestedConversationId;
-      localStorage.setItem("yovole_embed_conv_id", requestedConversationId);
+      persistConversationId(requestedConversationId);
       updateActiveConversationOnServer(requestedConversationId);
       loadedCid = true;
     } else {
-      try {
-        const activeRes = await axios.get("/api/v1/chat/active", {
-          headers: embedAuthHeaders()
-        });
-        if (activeRes.data?.status === "success" && activeRes.data?.data?.conversation_id) {
-          conversationId.value = activeRes.data.data.conversation_id;
-          localStorage.setItem("yovole_embed_conv_id", conversationId.value);
-          loadedCid = true;
+      const savedId = readStoredConversationId();
+      if (savedId) conversationId.value = savedId;
+      if (shouldUseServerActiveConversation()) {
+        try {
+          const activeRes = await axios.get("/api/v1/chat/active", {
+            headers: embedAuthHeaders()
+          });
+          if (initGeneration !== conversationInitializationGeneration) return;
+          if (activeRes.data?.status === "success" && activeRes.data?.data?.conversation_id) {
+            conversationId.value = activeRes.data.data.conversation_id;
+            persistConversationId(conversationId.value);
+            loadedCid = true;
+          }
+        } catch (e: any) {
+          console.warn("[Init] Failed to fetch active conversation from server:", e);
         }
-      } catch (e: any) {
-        console.warn("[Init] Failed to fetch active conversation from server:", e);
       }
     }
+    if (initGeneration !== conversationInitializationGeneration) return;
 
     if (!loadedCid) {
       if (!conversationId.value) {
@@ -5141,7 +5397,7 @@ const initChat = async () => {
 
     // 7. Load history if exists
     if (conversationId.value) {
-      fetchConversationHistory(false).catch(e => console.error("[Init] History load failed:", e));
+      fetchConversationHistory(false, initGeneration).catch(e => console.error("[Init] History load failed:", e));
     }
   } catch (e) {
     console.error("Init chat failed", e);
@@ -5153,10 +5409,16 @@ const historyOffset = ref(0);
 const hasMoreHistory = ref(true);
 const HISTORY_LIMIT = 20;
 const isLoadingHistory = ref(false);
-const fetchConversationHistory = async (isLoadMore = false) => {
+let historyRequestSequence = 0;
+const fetchConversationHistory = async (
+  isLoadMore = false,
+  expectedInitializationGeneration = conversationInitializationGeneration,
+) => {
   if (!conversationId.value) return;
   if (isLoadMore && !hasMoreHistory.value) return;
   if (isLoadingHistory.value) return;
+  const requestSequence = ++historyRequestSequence;
+  const historyConversationId = conversationId.value;
   isLoadingHistory.value = true;
   // Save current scroll height to maintain position after loading
   const container = messagesContainer.value;
@@ -5172,10 +5434,15 @@ const fetchConversationHistory = async (isLoadMore = false) => {
     const res = await axios.get(
       `/api/v1/chat/history`,
       {
-          params: { conversation_id: conversationId.value, page: page, page_size: HISTORY_LIMIT },
+          params: { conversation_id: historyConversationId, page: page, page_size: HISTORY_LIMIT },
           headers
       }
     );
+    if (
+      requestSequence !== historyRequestSequence ||
+      expectedInitializationGeneration !== conversationInitializationGeneration ||
+      conversationId.value !== historyConversationId
+    ) return;
     if (res.data?.data && Array.isArray(res.data.data.items)) {
       const rawItems = res.data.data.items;
       // Update offset and check if more
@@ -5225,11 +5492,21 @@ const fetchConversationHistory = async (isLoadMore = false) => {
           }
       });
       if (newHistoryBatch.length > 0) {
+        if (
+          requestSequence !== historyRequestSequence ||
+          expectedInitializationGeneration !== conversationInitializationGeneration ||
+          conversationId.value !== historyConversationId
+        ) return;
         if (isLoadMore) {
            // Prepend to messages (remove existing "History Start" separator if it exists)
            messages.value = [...newHistoryBatch, ...messages.value.filter(m => m.role !== 'system' || m.content !== '以上是历史会话，可以重置会话清除')];
            // Restore scroll position
            await nextTick();
+           if (
+             requestSequence !== historyRequestSequence ||
+             expectedInitializationGeneration !== conversationInitializationGeneration ||
+             conversationId.value !== historyConversationId
+           ) return;
            if (container) {
              const newScrollHeight = container.scrollHeight;
              const heightAdded = newScrollHeight - oldScrollHeight;
@@ -5269,7 +5546,7 @@ const fetchConversationHistory = async (isLoadMore = false) => {
   } catch (e) {
     console.warn("Failed to load session history", e);
   } finally {
-    isLoadingHistory.value = false;
+    if (requestSequence === historyRequestSequence) isLoadingHistory.value = false;
   }
 };
 
@@ -5908,7 +6185,7 @@ const workspaceDrawerWidthPx = computed(() => {
 });
 
 const totalPinnedDrawerPx = computed(() => {
-  if (isMobile.value) return 0;
+  if (isMobile.value || windowWidth.value < 768) return 0;
   let px = 0;
   px += portalDrawerWidthPx.value;
   px += knowledgeDrawerWidthPx.value;
@@ -6737,13 +7014,6 @@ onMounted(() => {
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
-  // Initialize or Retrieve Conversation ID
-  const savedId = localStorage.getItem("yovole_embed_conv_id");
-  if (savedId) {
-    conversationId.value = savedId;
-  } else {
-    generateNewConversation();
-  }
   // Load Routing Settings
   const savedMode = localStorage.getItem("yovole_routing_mode");
   if (savedMode) config.routingMode = savedMode;
@@ -6784,7 +7054,30 @@ onMounted(() => {
     config.hideMessageBorder = savedHideMessageBorder === "1";
   }
   const query = new URLSearchParams(window.location.search);
-  if (query.get("token")) {
+  const queryInstanceId = normalizeEmbedInstanceId(query.get("instance_id"));
+  if (queryInstanceId) config.instanceId = queryInstanceId;
+  if (query.get("strict_token") === "1") {
+    strictTokenValidation.value = true;
+    console.log("[LifeCycle] Strict token validation enabled (debug mode).");
+  }
+  const ticketFromUrl = query.get("ticket");
+  if (ticketFromUrl) {
+    console.log("[LifeCycle] Ticket found in URL. Exchanging for session token...");
+    void (async () => {
+      const ok = await exchangeTicketAndApply(ticketFromUrl);
+      if (ok) {
+        hasPermission.value = true;
+        postInitSuccess();
+        scheduleUrlTokenInitialization();
+        fetchUserInfo();
+        fetchAllowedAgents();
+        fetchSlashCommands();
+      } else {
+        hasPermission.value = false;
+        postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      }
+    })();
+  } else if (query.get("token")) {
     const token = query.get("token")!;
     // 仅设置内存中的 config.token 参与校验；校验通过后再 syncValidatedCredentials，避免脏 URL 覆盖 localStorage
     config.token = token;
@@ -6798,9 +7091,9 @@ onMounted(() => {
   }
   if (query.get("theme")) applyTheme(query.get("theme")!);
   postMessageToHost({ type: "NANZI_WIDGET_READY" });
-  if (config.token) {
+  if (config.token && !ticketFromUrl) {
     console.log("[LifeCycle] Initializing chat from existing token...");
-    initChat();
+    scheduleUrlTokenInitialization();
     fetchUserInfo(); // Add explicit user fetch
     fetchAllowedAgents();
     fetchSlashCommands();
@@ -6810,6 +7103,7 @@ onMounted(() => {
   (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline };
 });
 onUnmounted(() => {
+  cancelPendingUrlTokenInitialization();
   window.removeEventListener("resize", updateWidth);
   window.removeEventListener("fullscreenchange", updateFullScreenStatus);
   const handlers = (onUnmountHandlers as any).value;

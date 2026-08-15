@@ -37,6 +37,7 @@ from app.services.ai.request_decision import (
     RequestSource,
 )
 from app.services.ai.intent_service import looks_like_current_model_query
+from app.services.ai.business_context import sanitize_injected_context
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +570,11 @@ class AgentService:
         """
         Main entry point for streaming chat.
         """
+        debug_options = dict(debug_options or {})
+        if "injected_context" in debug_options:
+            debug_options["injected_context"] = sanitize_injected_context(
+                debug_options["injected_context"]
+            )
         from app.utils.context import current_user_info
         current_user_info.set(user_info)
 
@@ -1806,12 +1812,16 @@ class AgentService:
                     }
 
                 if debug_options.get("injected_context"):
-                    context_data = debug_options["injected_context"]
+                    context_data = sanitize_injected_context(debug_options["injected_context"])
                     logger.info(f"[Debug] Injecting Context: {context_data}")
                     ctx_lines = []
                     for k, v in context_data.items():
-                        if k not in ["device_type", "display_hint"]:
+                        if k not in ["device_type", "display_hint", "business_context"]:
                             ctx_lines.append(f"- **{k}**: {v}")
+                    business_context = context_data.get("business_context")
+                    if isinstance(business_context, dict):
+                        for k, v in business_context.items():
+                            ctx_lines.append(f"- **business_context.{k}**: {v}")
                     device_type = context_data.get("device_type", "Unknown")
                     ui_instr = ""
                     if "移动端" in device_type or "小屏幕" in device_type:
