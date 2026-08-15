@@ -59,6 +59,9 @@
                     <div>
                         <label class="block text-[11px] text-gray-500 mb-1">指定用户名 (可选，默认当前用户)</label>
                         <input type="text" v-model="config.targetUsername" class="w-full text-xs border-gray-200 rounded-md bg-white" placeholder="留空代表当前登录账号">
+                        <p class="text-[10px] text-amber-700/90 mt-1">
+                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或「获取用户画像」权限。
+                        </p>
                     </div>
                 </div>
 
@@ -945,7 +948,11 @@ const sendInit = async () => {
             }
             throw new Error(ticketRes.data?.message || '签发失败');
         } catch (err: any) {
-            const errMsg = err.response?.data?.detail || err.message || 'Ticket 签发异常';
+            const rawDetail = err.response?.data?.detail;
+            const errMsg = (typeof rawDetail === 'string' ? rawDetail : '') ||
+                (typeof err.response?.data?.message === 'string' ? err.response.data.message : '') ||
+                err.message ||
+                'Ticket 签发异常';
             log(`Error: 签发 Ticket 失败: ${errMsg}`);
             showToast(`签发 Ticket 失败: ${errMsg}`, 'error');
         } finally {

@@ -11,7 +11,7 @@ ASSIGNABLE_V1_API_RESOURCES: list[dict[str, str]] = [
     {
         "id": "GET:/api/v1/users/profile",
         "name": "获取用户画像",
-        "description": "获取当前或指定用户的详细信息（包括角色和权限）。",
+        "description": "获取当前或指定用户的详细信息（包括角色和权限），并允许代表他人签发嵌入式 Ticket。",
         "group": "V1 用户服务",
         "method": "GET",
         "path": "/api/v1/users/profile",
@@ -111,6 +111,8 @@ def is_v1_api_whitelisted(path: str) -> bool:
     if "/chat" in path and not path.startswith(f"{V1_API_PREFIX}/chatbi"):
         return True
     if "/tasks" in path:
+        return True
+    if "/embed" in path:
         return True
     return False
 

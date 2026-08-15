@@ -42,11 +42,17 @@ class EmbedService:
 
         # 1. 确定目标用户
         target_user: Optional[User] = None
+        is_specifying_other = False
+
         if target_user_id is not None:
+            if str(target_user_id) != str(operator_user.get("user_id")):
+                is_specifying_other = True
             stmt = select(User).where(User.id == int(target_user_id))
             result = await db.execute(stmt)
             target_user = result.scalar_one_or_none()
         elif target_username:
+            if str(target_username).strip() != str(operator_user.get("user_name")):
+                is_specifying_other = True
             stmt = select(User).where(User.user_name == str(target_username).strip())
             result = await db.execute(stmt)
             target_user = result.scalar_one_or_none()
@@ -58,10 +64,26 @@ class EmbedService:
             target_user = result.scalar_one_or_none()
 
         if not target_user:
-            raise ValueError("Target user not found")
+            raise ValueError("目标用户不存在，请核对用户名或用户ID")
 
         if target_user.status != 1:
-            raise PermissionError("Target user account is disabled")
+            raise PermissionError("目标用户账号已被禁用，无法签发嵌入凭证")
+
+        # 代客身份安全拦截：若指定他人，必须是 admin 或具备 GET:/api/v1/users/profile API 权限
+        if is_specifying_other:
+            if operator_user.get("role") != "admin":
+                from app.services.permission_service import PermissionService
+                perm_service = PermissionService(db)
+                op_uid = int(operator_user.get("user_id", 0))
+                has_perm = await perm_service.check_permission(
+                    op_uid,
+                    "api",
+                    "GET:/api/v1/users/profile",
+                )
+                if not has_perm:
+                    raise PermissionError(
+                        "无权代他人签发 Ticket：仅管理员或具备「GET:/api/v1/users/profile（获取用户画像）」权限的账号允许代表其他用户签发凭证。普通用户请留空或填写自己。"
+                    )
 
         # 2. 生成高熵 Ticket 字符串
         ticket_id = f"emt_{secrets.token_urlsafe(24)}"

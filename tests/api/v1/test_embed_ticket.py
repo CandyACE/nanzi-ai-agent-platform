@@ -94,24 +94,11 @@ async def test_embed_ticket_lifecycle(client: AsyncClient, db_session):
 async def test_embed_ticket_invalid_user_and_token(client: AsyncClient, db_session):
     """
     测试边界与异常场景：
-    - 未授权的普通用户调用签发接口报错 403
     - 管理员调用但目标用户不存在时报错 404
     - 伪造 ticket 兑换报错 400
     """
+    # 1. 管理员调用但目标用户不存在，应返回 404
     suffix = uuid.uuid4().hex[:8]
-    # 1. 普通用户默认无 V1 接口权限，应返回 403
-    op_name = f"ticket_op_{suffix}"
-    op_key = await AuthService.generate_api_key(
-        user_name=op_name, role="user", db=db_session
-    )
-    unauth_resp = await client.post(
-        "/api/v1/embed/tickets",
-        json={"username": "non_existent_user_999"},
-        headers={"X-API-Key": op_key},
-    )
-    assert unauth_resp.status_code == 403
-
-    # 2. 管理员调用但目标用户不存在，应返回 404
     admin_name = f"ticket_adm404_{suffix}"
     admin_key = await AuthService.generate_api_key(
         user_name=admin_name, role="admin", db=db_session
@@ -123,9 +110,82 @@ async def test_embed_ticket_invalid_user_and_token(client: AsyncClient, db_sessi
     )
     assert not_found_resp.status_code == 404
 
-    # 3. 伪造 Ticket 兑换，应返回 400
+    # 2. 伪造 Ticket 兑换，应返回 400
     bad_resp = await client.post(
         "/api/v1/embed/tickets/exchange",
         json={"ticket": "emt_fake_ticket_123"},
     )
     assert bad_resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_session):
+    """
+    测试代客签发 (Impersonation) 权限边界：
+    1. 普通用户为自身签发 Ticket -> 200 成功
+    2. 普通用户不传参数签发 Ticket (默认自身) -> 200 成功
+    3. 普通用户尝试为他人签发 (无 GET:/api/v1/users/profile 权限) -> 403 拒绝
+    4. 普通用户获得 GET:/api/v1/users/profile 权限后代他人签发 -> 200 成功
+    """
+    from app.services.permission_service import PermissionService
+    from app.schemas.permission import PermissionUpdate
+
+    suffix = uuid.uuid4().hex[:8]
+    # 创建两个普通用户和一个管理员
+    user_a_name = f"user_a_{suffix}"
+    user_a_key = await AuthService.generate_api_key(
+        user_name=user_a_name, role="user", db=db_session
+    )
+
+    user_b_name = f"user_b_{suffix}"
+    user_b_key = await AuthService.generate_api_key(
+        user_name=user_b_name, role="user", db=db_session
+    )
+
+    # 获取 user_a 的实际 ID
+    user_a_info = await AuthService.verify_api_key(user_a_key, db=db_session)
+    user_a_id = int(user_a_info["user_id"])
+
+    # 1. user_a 为自己签发 (传自己用户名) -> 应该 200 成功
+    self_resp1 = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": user_a_name},
+        headers={"X-API-Key": user_a_key},
+    )
+    assert self_resp1.status_code == 200
+    assert self_resp1.json()["data"]["target_user"]["user_name"] == user_a_name
+
+    # 2. user_a 为自己签发 (不传 username/user_id，默认自身) -> 应该 200 成功
+    self_resp2 = await client.post(
+        "/api/v1/embed/tickets",
+        json={},
+        headers={"X-API-Key": user_a_key},
+    )
+    assert self_resp2.status_code == 200
+    assert self_resp2.json()["data"]["target_user"]["user_name"] == user_a_name
+
+    # 3. user_a 试图为 user_b 代客签发（此时 user_a 无 GET:/api/v1/users/profile 权限）-> 应该 403 拒绝
+    impersonate_resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": user_b_name},
+        headers={"X-API-Key": user_a_key},
+    )
+    assert impersonate_resp.status_code == 403
+    assert "permission denied" in impersonate_resp.text.lower() or "GET:/api/v1/users/profile" in impersonate_resp.text
+
+    # 4. 授予 user_a 'GET:/api/v1/users/profile' API 权限
+    perm_service = PermissionService(db_session)
+    await perm_service.update_user_permissions(
+        user_id=user_a_id,
+        permissions=PermissionUpdate(apis=["GET:/api/v1/users/profile"]),
+    )
+
+    # 5. user_a 再次为 user_b 代客签发 -> 应该 200 成功
+    authorized_impersonate_resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": user_b_name},
+        headers={"X-API-Key": user_a_key},
+    )
+    assert authorized_impersonate_resp.status_code == 200
+    assert authorized_impersonate_resp.json()["data"]["target_user"]["user_name"] == user_b_name
+

@@ -517,8 +517,8 @@ frame.contentWindow.postMessage({
 - **解决方案**：前端每次重新加载或刷新页面时，应通过宿主后端接口重新申请一张崭新的 Ticket。
 
 ### Q2: 宿主后端调用 `/api/v1/embed/tickets` 报 `403 Forbidden`？
-- **解答**：调用接口的 API Key 权限不足。
-- **解决方案**：请确保调用该接口的服务账号具备管理员权限或已开通 `POST /api/v1/embed/tickets` 接口权限。
+- **解答**：若在请求体中指定了其他用户的 `username` 或 `user_id` 进行代客签发（Impersonation），调用方必须具备代客权限。
+- **解决方案**：请确保调用该接口的服务账号具备管理员权限（`admin`）或在权限管理中已分配 `GET:/api/v1/users/profile`（获取用户画像）API 权限。普通用户若未获授权只能为自身签发 Ticket。
 
 ### Q3: 报错 `404 Target user not found`？
 - **解答**：传给 `username` 的用户在南孜平台尚不存在。
