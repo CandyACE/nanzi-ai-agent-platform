@@ -98,10 +98,11 @@ class AuthService:
                  if cached_user.get("status") != "1":
                      pass # Fall through to DB
                  else:
-                     # 自动滑动续期：若是 embed session token，只要活跃调用就延长 2 小时有效时间
+                     # 自动滑动续期：若是 embed session token，只要活跃调用就延长 24 小时有效时间
                      if cached_user.get("session_type") == "embed":
                          try:
-                             await redis.expire(cache_key, 7200)
+                             from app.services.embed_service import SESSION_TOKEN_TTL_SECONDS
+                             await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
                          except Exception:
                              pass
                      return cached_user

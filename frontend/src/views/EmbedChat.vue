@@ -4942,10 +4942,10 @@ const postInitSuccess = () => {
   postMessageToHost({
     type: "INIT_SUCCESS",
     user: {
-      user_name: currentUser.value.user_name || undefined,
-      real_name: currentUser.value.real_name || undefined,
-      user_id: currentUser.value.user_id || undefined,
-      role: currentUser.value.role || undefined,
+      user_name: currentUser.value?.user_name || undefined,
+      real_name: currentUser.value?.real_name || undefined,
+      user_id: currentUser.value?.user_id || undefined,
+      role: currentUser.value?.role || undefined,
     },
   });
 };

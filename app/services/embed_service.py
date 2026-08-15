@@ -11,7 +11,7 @@ from app.utils.encryption import get_api_key_manager
 logger = logging.getLogger(__name__)
 
 TICKET_TTL_SECONDS = 300  # Ticket 一次性有效时长：5 分钟
-SESSION_TOKEN_TTL_SECONDS = 7200  # Session Token 初始时长：2 小时 (滑动续期)
+SESSION_TOKEN_TTL_SECONDS = 86400  # Session Token 初始时长：24 小时 (滑动续期)
 
 
 class EmbedService:
@@ -165,7 +165,7 @@ class EmbedService:
             "created_by_user_id": ticket_data.get("created_by_user_id", ""),
         }
 
-        # 4. 写入鉴权缓存，设置 2 小时 TTL (请求时会自动滑动续期)
+        # 4. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
         await redis.hset(cache_key, mapping=user_session_data)
         await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
 

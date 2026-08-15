@@ -39,7 +39,7 @@ sequenceDiagram
 
     Note over H, W: 3. 组件加载与自动兑换 (Ticket Exchange)
     W->>A: POST /api/v1/embed/tickets/exchange { "ticket": "emt_9f8a2c..." }
-    Note over A: 原子核销 Ticket (防重放)<br/>签发短期 Session Token (2小时有效)
+    Note over A: 原子核销 Ticket (防重放)<br/>签发短期 Session Token (24小时有效)
     A-->>W: 返回 { "session_token": "emb_ses_...", "user_info": {...} }
     W-->>H: 发送 INIT_SUCCESS (初始化完成通知)
 
@@ -58,7 +58,7 @@ sequenceDiagram
 |---|---|---|
 | **安全性** | ⭐️⭐️⭐️⭐️⭐️ **最高**。长期 Key 永不离开内网服务器，浏览器仅接触 5 分钟一次性门票。 | ⭐️⭐️ **较低**。长期 Key 直接暴露在浏览器 URL 或 JavaScript 内存中。 |
 | **防盗链/防重放** | **支持**。Ticket 兑换后立即原子删除（`GETDEL` 阅后即焚），他人无法盗用链接。 | **不支持**。复制 URL 即可被他人打开或长期利用。 |
-| **会话续期** | **活跃滑动续期 (Sliding TTL)**。持续交互自动维持 2 小时有效时间，闲置自动释放。 | 永久有效（除非手动重置 Key）。 |
+| **会话续期** | **活跃滑动续期 (Sliding TTL)**。持续交互自动维持 24 小时有效时间，闲置自动释放。 | 永久有效（除非手动重置 Key）。 |
 | **适用场景** | 企业内网/外网生产系统、多租户门户、移动端 H5 嵌入。 | 本地 MVP 原型验证、内网快速临时调试。 |
 
 ---
@@ -473,12 +473,12 @@ document.getElementById('nanzi-close-btn').onclick = () => {
       ▼ (下发给前端)
 [IFrame] 调用 exchange 兑换
       │
-      ├─▶ [成功] Ticket 立即原子销毁 (GETDEL) ──▶ 生成 Session Token (初始 TTL=2小时)
+      ├─▶ [成功] Ticket 立即原子销毁 (GETDEL) ──▶ 生成 Session Token (初始 TTL=24小时)
       │                                                │
       │                                                ▼ (用户发送消息/持续交互)
-      │                                       【每次请求自动拉满 2小时 TTL】
+      │                                       【每次请求自动拉满 24小时 TTL】
       │                                                │
-      │                                                ▼ (用户闲置挂机超 2小时)
+      │                                                ▼ (用户闲置挂机超 24小时)
       │                                        Session Token 自然失效
       │                                                │
       └─▶ [失效/超时] 触发 INIT_FAILURE ◀──────────────┘

@@ -79,7 +79,7 @@ async def test_embed_ticket_lifecycle(client: AsyncClient, db_session):
     assert me_data["data"]["user_name"] == target_user_name
     assert me_data["data"]["real_name"] == "测试员工张三"
 
-    # 6. 验证滑动续期：请求后 Redis TTL 应被维持在 ~7200 秒
+    # 6. 验证滑动续期：请求后 Redis TTL 应被维持在 ~86400 秒 (24 小时)
     r = await get_redis()
     if r:
         from app.utils.encryption import get_api_key_manager
@@ -87,7 +87,7 @@ async def test_embed_ticket_lifecycle(client: AsyncClient, db_session):
         manager = get_api_key_manager()
         h = manager.hash_api_key(session_token)
         ttl = await r.ttl(f"auth:api_key:{h}")
-        assert ttl > 7000  # 接近 7200 秒
+        assert ttl > 80000  # 接近 86400 秒 (24 小时)
 
 
 @pytest.mark.asyncio
