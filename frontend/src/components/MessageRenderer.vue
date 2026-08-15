@@ -53,6 +53,8 @@ use([
 const props = withDefaults(defineProps<{
   content: string;
   theme?: 'default' | 'minimal' | 'academic' | 'apple' | 'warm' | 'compact';
+  /** EmbedChat 传入当前会话，避免文件预览回退到其他实例的 legacy 会话。 */
+  conversationId?: string;
   /** 为 true 时不渲染 quick 按钮（例如同条消息已有业务确认卡） */
   hideQuickButtons?: boolean;
 }>(), {
@@ -180,7 +182,9 @@ interface ContentSegment {
           !val.startsWith('/static/') &&
           !val.startsWith('/api/') &&
           !val.startsWith('/assets/')) {
-        const convId = localStorage.getItem("yovole_embed_conv_id") || "";
+        const convId = props.conversationId === undefined
+          ? localStorage.getItem("yovole_embed_conv_id") || ""
+          : props.conversationId || "";
         const convParam = convId ? `&conversation_id=${encodeURIComponent(convId)}` : "";
         const newVal = `/api/v1/chat/fs/preview?path=${encodeURIComponent(val)}${convParam}`;
         return `${attr}="${newVal}"`;

@@ -1,16 +1,15 @@
 <template>
-  <div class="h-full flex flex-col bg-white overflow-hidden relative">
+  <div class="h-full w-full max-w-full flex flex-col bg-white overflow-hidden relative min-w-0">
     <!-- Header Decor Removed for full-screen look -->
     
-    <div class="flex-1 relative">
+    <div class="flex-1 relative w-full max-w-full min-w-0 overflow-hidden">
         <iframe 
             v-if="iframeUrl"
             ref="chatFrame"
             :src="iframeUrl"
-            width="100%"
-            height="100%"
             frameborder="0"
-            class="w-full h-full"
+            class="w-full h-full min-w-full block"
+            style="width: 100%; min-width: 100%; max-width: 100%; height: 100%; border: none;"
         ></iframe>
         
         <!-- Loading State -->
@@ -78,50 +77,32 @@ const initChat = () => {
 };
 
 const sendInitConfig = () => {
-    const userInfoStr = localStorage.getItem('user_info');
     const apiKey = localStorage.getItem('api_key');
     
-    if (userInfoStr && chatFrame.value?.contentWindow) {
-        try {
-            const userInfo = JSON.parse(userInfoStr);
+    if (apiKey && chatFrame.value?.contentWindow) {
+        chatFrame.value.contentWindow.postMessage({
+            type: 'INIT_CONFIG',
+            token: apiKey,
+            conversation_id: route.query.conversation_id ? String(route.query.conversation_id) : null,
+            agent_id: route.query.agent_id ? String(route.query.agent_id) : null,
+            open_saved_report: route.query.report_id ? {
+                report_id: String(route.query.report_id),
+                run_id: String(route.query.run_id || ''),
+                request_id: String(route.query.open_request_id || ''),
+                ...(parseSavedReportDetailTab(route.query.report_detail_tab)
+                  ? { detail_tab: parseSavedReportDetailTab(route.query.report_detail_tab) }
+                  : {}),
+            } : null,
+            portal_question: route.query.portal_question ? {
+                query: String(route.query.portal_question),
+                action: route.query.portal_action === 'fill' ? 'fill' : 'send'
+            } : null
+        }, '*');
             
-            // 发送初始化配置，注入当前登录用户的 User ID 和 Name
-            const displayName = userInfo.real_name || userInfo.user_name;
-            chatFrame.value.contentWindow.postMessage({
-                type: 'INIT_CONFIG',
-                token: apiKey,
-                user_info: {
-                    user_id: userInfo.user_id,
-                    user_name: userInfo.user_name,
-                    real_name: userInfo.real_name,
-                    role: userInfo.role
-                },
-                conversation_id: route.query.conversation_id ? String(route.query.conversation_id) : null,
-                agent_id: route.query.agent_id ? String(route.query.agent_id) : null,
-                // 可以设置一些 Portal 特有的欢迎语
-                welcome_message_override: `您好，${displayName}！我是您的智能助手，已为您准备就绪。`,
-                open_saved_report: route.query.report_id ? {
-                    report_id: String(route.query.report_id),
-                    run_id: String(route.query.run_id || ''),
-                    request_id: String(route.query.open_request_id || ''),
-                    ...(parseSavedReportDetailTab(route.query.report_detail_tab)
-                      ? { detail_tab: parseSavedReportDetailTab(route.query.report_detail_tab) }
-                      : {}),
-                } : null,
-                portal_question: route.query.portal_question ? {
-                    query: String(route.query.portal_question),
-                    action: route.query.portal_action === 'fill' ? 'fill' : 'send'
-                } : null
-            }, '*');
-            
-            // 发送成功后，稍微延迟关闭 loading，以确保子页面有时间渲染
-            setTimeout(() => {
-                loading.value = false;
-            }, 500);
-            
-        } catch (e) {
-            console.error("Failed to parse user info for chat injection", e);
-        }
+        // 发送成功后，稍微延迟关闭 loading，以确保子页面有时间渲染
+        setTimeout(() => {
+            loading.value = false;
+        }, 500);
     }
 };
 

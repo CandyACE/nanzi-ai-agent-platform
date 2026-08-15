@@ -19,15 +19,16 @@ sequenceDiagram
     Note over H, W: 2. 组件加载与初始化 (Handshake)
     H->>W: 加载 IFrame (src 不带敏感 Token)
     W-->>H: 发送 NANZI_WIDGET_READY
-    H->>W: 发送 INIT_CONFIG (携带 Token, user_info)
+    H->>W: 发送 INIT_CONFIG (携带 Token, business_context)
     W->>A: 验证 Token
-    A-->>W: 验证成功
+    A-->>W: 验证成功并注入认证用户身份
     W-->>H: 发送 INIT_SUCCESS
 
     Note over H, W: 3. 持续交互 (Interaction)
     H->>W: UPDATE_CONTEXT (同步业务状态)
-    W-->>H: REQUEST_RESIZE (调整宽高)
     H->>W: SEND_COMMAND (触发指令)
+    W-->>H: CONVERSATION_CHANGED (会话切换/新建通知)
+    W-->>H: USER_FEEDBACK (点赞/点踩反馈)
 ```
 
 ## 0. 获取认证 Token (Authentication)
@@ -116,8 +117,8 @@ sequenceDiagram
 
 1. 宿主加载 IFrame（src 不带敏感 token）。
 2. 组件加载完成，向父窗口发送 `NANZI_WIDGET_READY`。
-3. 宿主收到就绪信号，发送 `INIT_CONFIG`（携带 Token、用户信息、业务上下文等）。
-4. 组件鉴权成功并完成初始化，返回 `INIT_SUCCESS`。
+3. 宿主收到就绪信号，发送 `INIT_CONFIG`（携带 Token 和业务上下文）。
+4. 组件鉴权成功后，由服务端注入认证用户身份并完成初始化，返回 `INIT_SUCCESS`。
 
 ### 3.3 协议详解
 
@@ -125,9 +126,9 @@ sequenceDiagram
 
 | 指令类型 (Type) | 关键参数 | 说明 |
 |---|---|---|
-| `INIT_CONFIG` | `token`, `agent_id`, `user_info`, `page_info`, `styleVars`, `welcome_message_override` | **核心初始化指令**。<br>1. `token`: 支持 `token`/`api_key`/`apikey` 三种键名。<br>2. `user_info`: 注入用户信息（如 `real_name`, `role`），让 AI 感知用户身份。<br>3. `page_info`: 注入当前页面元数据。<br>4. `user_avatar`: 自定义用户头像 URL。 |
-| `UPDATE_CONTEXT`| `payload` (Object) | 实时更新业务上下文。常用于同步当前用户正在操作的数据对象。 |
-| `SYNC_STATE` | `payload` (Object) | 实时同步页面状态，逻辑同 `UPDATE_CONTEXT`。 |
+| `INIT_CONFIG` | `token`, `agent_id`, `business_context`, `page_info`（兼容）, `styleVars`, `welcome_message_override` | **核心初始化指令**。<br>1. `token`: 支持 `token`/`api_key`/`apikey` 三种键名，服务端据此确定认证用户。<br>2. `business_context`: 宿主页面、工单、报表等业务数据，组件会以 `injected_context.business_context` 传入运行时。<br>3. `page_info`: 兼容旧版本的页面元数据入口，会按业务上下文处理。<br>4. `user_avatar`: 自定义用户头像 URL。宿主不得通过 `user_info` 或 `user` 传入、覆盖用户身份。 |
+| `UPDATE_CONTEXT`| `payload.business_context` (Object) | 实时更新业务上下文。常用于同步当前用户正在操作的数据对象。 |
+| `SYNC_STATE` | `payload.business_context` (Object) | 实时同步页面状态，逻辑同 `UPDATE_CONTEXT`。 |
 | `SET_THEME` | `theme`, `styleVars` | 动态切换主题颜色，无需重新加载页面。 |
 | `STOP_GENERATION` | - | 强制停止 AI 正在生成的回复。 |
 | `CLEAR_SESSION` | - | 清空当前对话记录，开启新会话。 |
@@ -138,12 +139,38 @@ sequenceDiagram
 
 | 事件类型 (Type) | 关键参数 | 说明 |
 |---|---|---|
-| `NANZI_WIDGET_READY` | - | 组件代码加载完成，等待初始化配置。 |
-| `INIT_SUCCESS` | - | 组件已成功完成 Token 校验和资源加载。 |
-| `CONNECTION_STATUS` | `status` | 网络连接状态通知（`connected` / `disconnected` / `reconnecting`）。 |
-| `REQUEST_RESIZE` | `width`, `height`, `expanded` | 组件请求调整容器大小（通常由内部的展开/收起按钮触发）。 |
-| `GENERATION_STOPPED` | - | 确认已响应停止生成指令。 |
-| `TOKEN_EXPIRED` | - | Token 过期提醒，宿主应重新获取 Token 并发送 `RESET_SESSION`。 |
+| `NANZI_WIDGET_READY` | - | 组件代码与 DOM 加载就绪，等待宿主发送 `INIT_CONFIG`。 |
+| `INIT_SUCCESS` | - | 组件已成功完成 Token 校验和会话资源加载。 |
+| `INIT_FAILURE` | `reason` (`"missing_token"` \| `"invalid_token"`) | 初始化鉴权失败（Token 缺失或鉴权接口未通过）。 |
+| `GENERATION_STOPPED` | - | 确认已响应并停止当轮 AI 回复生成。 |
+| `CONVERSATION_CHANGED` | `conversation_id`, `clear_host_conversation_pin` (Boolean) | 会话切换、重置（`/new`）或新建项目会话通知。宿主可据此同步当前会话 ID 或清除 URL 中的会话钉选。 |
+| `USER_FEEDBACK` | `message_id`, `trace_id`, `feedback` (`"up"` \| `"down"` \| `null`) | 用户对某条 AI 消息点击点赞、点踩或取消反馈时同步给宿主。 |
+| `OPEN_DATA_PORTAL_FULL` | - | 用户在欢迎页点击数据门户资源卡片，请求宿主导航至完整数据门户页面（如 `/dashboard/personal?tab=data`）。 |
+
+### 3.4 认证身份与业务上下文边界
+
+两类数据的信任边界不同，宿主只能维护业务上下文，不能维护组件用户身份：
+
+| 数据 | 来源 | 宿主是否可修改 | 用途 |
+|---|---|---:|---|
+| `currentUser` / 认证用户 | 服务端 API Key 校验、`/api/portal/auth/me` | 否 | 页面显示、权限、服务端用户上下文和记忆 |
+| `business_context` | `INIT_CONFIG` / `SYNC_STATE` / `UPDATE_CONTEXT` | 是 | 当前页面、业务对象、工单、报表等业务信息 |
+
+以下字段不能放入业务上下文来伪造身份，组件和服务端会忽略：`user_id`、`user_name`、`username`、`real_name`、`role`、`is_admin`、`tenant_id`、`permissions`、`token`、`api_key` 等。旧协议中的 `INIT_CONFIG.user_info` / `user` 不再用于身份注入。
+
+推荐迁移方式：
+
+```javascript
+// 旧：不要再传 user_info / user
+// user_info: { user_id: 'U123', real_name: '张三', role: 'admin' }
+
+// 新：只传业务上下文，用户身份由 token 对应的服务端账号决定
+business_context: {
+  current_page: '销售看板',
+  report_id: 'REP_001',
+  selected_dimension: '区域'
+}
+```
 
 ---
 
@@ -169,22 +196,17 @@ window.addEventListener('message', (event) => {
 
   switch (data.type) {
     case 'NANZI_WIDGET_READY':
-      // 发送初始化配置
+      // 1. 收到就绪信号后发送初始化配置
       widgetFrame.contentWindow.postMessage({
         type: 'INIT_CONFIG',
         token: 'YOUR_JWT_TOKEN',
         agent_id: 'sys-agent-chatbi',
-        user_info: {
-          user_id: 'U123',
-          real_name: '张三',
-          role: 'admin'
-        },
-        page_info: {
+        business_context: {
           current_page: '销售看板',
           report_id: 'REP_001'
         },
         styleVars: {
-          '--primary-color': '#ff4d4f' // 使用红色品牌色
+          '--primary-color': '#ff4d4f' // 使用品牌色
         }
       }, '*');
       break;
@@ -192,11 +214,23 @@ window.addEventListener('message', (event) => {
     case 'INIT_SUCCESS':
       console.log('南孜智能体已就绪');
       break;
-      
-    case 'REQUEST_RESIZE':
-      // 宿主控制组件容器的展开/收起
-      widgetFrame.style.width = data.expanded ? '400px' : '60px';
-      widgetFrame.style.height = data.expanded ? '600px' : '60px';
+
+    case 'INIT_FAILURE':
+      console.error('智能体初始化鉴权失败:', data.reason);
+      break;
+
+    case 'CONVERSATION_CHANGED':
+      console.log('会话已变更:', data.conversation_id);
+      // 宿主可选择同步更新当前 URL 或保存 conversation_id
+      break;
+
+    case 'USER_FEEDBACK':
+      console.log('收到用户反馈:', data.feedback, 'Trace ID:', data.trace_id);
+      break;
+
+    case 'OPEN_DATA_PORTAL_FULL':
+      // 宿主路由跳转至数据门户
+      window.location.href = '/dashboard/personal?tab=data';
       break;
   }
 });
@@ -204,14 +238,16 @@ window.addEventListener('message', (event) => {
 
 ---
 
-## 5. 最佳实践
+## 6. 最佳实践
 
-### 用户身份感知
-通过 `INIT_CONFIG` 中的 `user_info` 注入用户真实姓名后，AI 的欢迎语会自动调整（例如：“您好，张三，我是您的销售数据助手...”），且在多轮对话中 AI 将始终知晓对话者的身份和权限。
+### 用户身份与业务上下文
+组件会根据 `token` 对应的服务端认证账号显示用户信息，并在需要时将认证身份注入 AI 运行时。宿主不能通过 `INIT_CONFIG`、`SYNC_STATE` 或 `UPDATE_CONTEXT` 修改 `currentUser`，也不应再传 `user_info` / `user`。
 
-### Z-Index 与全屏管理
-*   **悬浮模式**：建议 `z-index` 设置为 `9999`。
-*   **移动端**：捕获 `REQUEST_RESIZE` 事件，当 `expanded` 为 true 时，将 IFrame 设置为 `fixed`顶层全屏覆盖，以获得最佳交互体验。
+宿主如果要让 AI 感知当前页面或业务对象，请使用 `business_context`，例如 `ticket_id`、`report_id`、`current_page`、`selected_dimension`。其中的身份形字段会被过滤，不能覆盖服务端认证身份。
+
+### 视口与全屏管理
+*   **抽屉/面板嵌入**：建议作为侧边抽屉或固定面板嵌入宿主系统，并设置 `width: 100%; height: 100%;`。
+*   **移动端全屏**：在移动端 H5 宿主中，建议将 IFrame 容器设置为 `fixed inset-0 w-full h-full` 顶层全屏覆盖，以获得原生 App 级的沉浸式交互体验。
 
 ### 多实例隔离
 如果页面上有多个助手（例如“全局助手”和“代码助手”），请务必在 URL 和所有指令中保持 `instance_id` 一致，否则指令可能会被错误的组件实例接收。

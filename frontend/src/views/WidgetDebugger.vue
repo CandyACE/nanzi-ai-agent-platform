@@ -59,7 +59,7 @@
             <section class="space-y-3">
                 <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider">2. 注入上下文</h3>
                 <div class="grid grid-cols-1 gap-2">
-                    <textarea v-model="contextPayload" rows="3" class="w-full text-xs font-mono border-gray-300 rounded-md" placeholder='{"user_dept": "IT", "current_url": "/home"}'></textarea>
+                    <textarea v-model="contextPayload" rows="3" class="w-full text-xs font-mono border-gray-300 rounded-md" placeholder='{"business_context": {"ticket_id": "INC-1001", "current_url": "/home"}}'></textarea>
                 </div>
                 <button @click="sendContext" class="w-full py-2 bg-gray-600 text-white rounded-md text-sm hover:bg-gray-700">注入 UPDATE_CONTEXT</button>
             </section>
@@ -353,7 +353,7 @@ const config = reactive({
     primaryColor: '#3b82f6',
 });
 
-const contextPayload = ref('{\n  "user_name": "陈小龙",\n  "user_dept": "数字化转型部",\n  "user_role": "系统管理员"\n}');
+const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-1001",\n    "current_page": "ticket-detail"\n  }\n}');
 	const commandInput = ref('/new');
 
     const integrationAgentMode = ref<'auto' | 'agent'>('auto');
@@ -379,14 +379,7 @@ const contextPayload = ref('{\n  "user_name": "陈小龙",\n  "user_dept": "数�
         return `${key.slice(0, 6)}...${key.slice(-4)}`;
     };
     const resolveStoredApiKey = () => {
-        const directKey = localStorage.getItem('api_key') || localStorage.getItem('yovole_token');
-        if (directKey) return directKey;
-        try {
-            const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}') as { api_key?: string };
-            return userInfo.api_key || '';
-        } catch {
-            return '';
-        }
+        return localStorage.getItem('api_key') || localStorage.getItem('yovole_token') || '';
     };
 
     const escapeJsString = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -435,7 +428,7 @@ const contextPayload = ref('{\n  "user_name": "陈小龙",\n  "user_dept": "数�
             label: 'PostMessage 推荐',
             title: '安全初始化和双向通信',
             caption: '推荐生产使用：iframe src 不带敏感 token，等组件 ready 后发送 INIT_CONFIG。',
-            summary: '宿主页面监听 NANZI_WIDGET_READY，再通过 postMessage 发送鉴权、智能体、用户和页面上下文。',
+            summary: '宿主页面监听 NANZI_WIDGET_READY，再通过 postMessage 发送鉴权、智能体和业务上下文。',
             points: ['Token 不进入 URL', tokenPoint, integrationAgentMode.value === 'auto' ? 'INIT_CONFIG 不传 agent_id 时自动路由' : 'INIT_CONFIG 指定当前选中的智能体', '可以响应组件 resize、过期、连接状态事件'],
             code: `<iframe
   id="nanzi-agent-frame"
@@ -460,10 +453,10 @@ window.addEventListener('message', (event) => {
       instance_id: 'ops-assistant',
       token: '${escapeJsString(token)}',${agentInitLine}
       theme: '${escapeJsString(theme)}',
-      user_info: {
-        user_id: 'U10001',
-        real_name: '张三',
-        role: 'operator'
+      business_context: {
+        current_page: '容量看板',
+        business_object: 'capacity-overview',
+        operator_label: '张三'
       },
       page_info: {
         current_page: '容量看板',
@@ -607,11 +600,13 @@ function syncTicketContext(ticket) {
   postToAgent({
     type: 'UPDATE_CONTEXT',
     payload: {
-      current_page: 'ticket-detail',
-      ticket_id: ticket.id,
-      title: ticket.title,
-      priority: ticket.priority,
-      owner_dept: ticket.ownerDept
+      business_context: {
+        current_page: 'ticket-detail',
+        ticket_id: ticket.id,
+        title: ticket.title,
+        priority: ticket.priority,
+        owner_dept: ticket.ownerDept
+      }
     }
   });
 }
