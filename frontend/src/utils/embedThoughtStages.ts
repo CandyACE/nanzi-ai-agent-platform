@@ -139,7 +139,7 @@ export function getEmbedThoughtSummaryTitle(input: {
     if (input.logs?.length) return progress;
     return custom || progress;
   }
-  return "思考完成";
+  return "执行完成";
 }
 
 export function formatEmbedStageDuration(durationMs: number | null | undefined): string {

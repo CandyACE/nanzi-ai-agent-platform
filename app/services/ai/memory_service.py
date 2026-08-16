@@ -1,6 +1,7 @@
 import json
 import logging
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote
 from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -349,12 +350,27 @@ class MemoryService:
             return False
         return bool(await redis.exists(self._get_key(user_id, conversation_id)))
 
-    async def get_active_conversation(self, user_id: str) -> Optional[str]:
+    def _get_active_conversation_key(
+        self,
+        user_id: str,
+        instance_id: Optional[str] = None,
+    ) -> str:
+        uid = str(user_id) if user_id else "anonymous"
+        normalized_instance_id = str(instance_id or "").strip()
+        if not normalized_instance_id:
+            return f"{self.KEY_PREFIX}:{uid}:active"
+        encoded_instance_id = quote(normalized_instance_id, safe="")
+        return f"{self.KEY_PREFIX}:{uid}:active:{encoded_instance_id}"
+
+    async def get_active_conversation(
+        self,
+        user_id: str,
+        instance_id: Optional[str] = None,
+    ) -> Optional[str]:
         redis = await get_redis()
         if not redis:
             return None
-        uid = str(user_id) if user_id else "anonymous"
-        key = f"conversation:{uid}:active"
+        key = self._get_active_conversation_key(user_id, instance_id)
         try:
             val = await redis.get(key)
             if isinstance(val, bytes):
@@ -364,12 +380,16 @@ class MemoryService:
             logger.error(f"[MemoryService] Failed to get active conversation: {e}")
             return None
 
-    async def set_active_conversation(self, user_id: str, conversation_id: str):
+    async def set_active_conversation(
+        self,
+        user_id: str,
+        conversation_id: str,
+        instance_id: Optional[str] = None,
+    ):
         redis = await get_redis()
         if not redis:
             return
-        uid = str(user_id) if user_id else "anonymous"
-        key = f"conversation:{uid}:active"
+        key = self._get_active_conversation_key(user_id, instance_id)
         try:
             await redis.set(key, conversation_id)
             logger.info(f"[MemoryService] Set active conversation for key {key} to {conversation_id}")

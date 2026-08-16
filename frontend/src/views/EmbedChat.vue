@@ -73,7 +73,7 @@
                     <template v-else-if="headerExpertLabel">
                         <span class="text-gray-400 normal-case tracking-normal">准备就绪</span>
                         <button
-                            v-if="!isUrlAgentPinned"
+                            v-if="!isRoutingSettingsLocked"
                             type="button"
                             @click.stop="switchToAuto"
                             class="text-gray-400 hover:text-red-500 normal-case tracking-normal font-bold transition-colors shrink-0"
@@ -1054,7 +1054,7 @@
         :routing-mode="config.routingMode"
         :expert-agent-id="config.expertAgentId"
         :is-loading-agents="isLoadingAgents"
-        :lock-expert-agent="isUrlAgentPinned"
+        :lock-expert-agent="isRoutingSettingsLocked"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
         @update:selected-model="handleEmbedModelSelection"
         @update:thinking-enable-override="thinkingEnableOverride = $event"
@@ -1415,9 +1415,12 @@
       v-model:visible="showSettings"
       :config="config"
       :allowed-agents="allowedAgents"
+      :routing-locked="isRoutingSettingsLocked"
       @set-theme="setTheme"
       @set-color="setColor"
       @mode-change="onModeChange"
+      @switch-to-auto="switchToAuto"
+      @switch-to-expert="switchToExpert"
       @save-settings="saveRoutingSettings"
       @reset-session="resetSession"
     />
@@ -2632,6 +2635,8 @@ const showConfirmModal = ref(false);
 
 /** URL ?agent_id= 深链锁定：禁止切换专家 / 自动路由 / @提及 */
 const urlPinnedAgentKey = ref("");
+/** 集成方指定的 agent_id：URL、INIT_CONFIG、Ticket 均使用同一实例锁定状态。 */
+const integrationAgentLockId = ref("");
 const pinnedAgent = ref<any | null>(null);
 const pinnedAgentId = ref("");
 const pinnedAgentCapabilities = ref<string[]>([]);
@@ -2644,6 +2649,18 @@ const urlAgentAccessError = ref<null | {
 const isUrlAgentPinned = computed(
   () => Boolean(urlPinnedAgentKey.value) && !urlAgentAccessError.value && Boolean(pinnedAgentId.value),
 );
+const isRoutingSettingsLocked = computed(
+  () => Boolean(integrationAgentLockId.value) && !urlAgentAccessError.value,
+);
+const applyIntegrationAgentLock = (agentId: string) => {
+  const normalizedAgentId = String(agentId || "").trim();
+  if (!normalizedAgentId) return;
+  integrationAgentLockId.value = normalizedAgentId;
+  config.agentId = normalizedAgentId;
+  config.expertAgentId = normalizedAgentId;
+  config.routingMode = "expert";
+  config.overrideAgentId = "";
+};
 const pinnedAgentLabel = computed(() => {
   const agent = pinnedAgent.value;
   return String(agent?.display_name || agent?.name || urlPinnedAgentKey.value || "").trim();
@@ -2660,13 +2677,18 @@ const headerExpertLabel = computed(() => {
   return "";
 });
 const agentHasCapability = (cap: string) => {
-  const caps = pinnedAgentCapabilities.value;
+  const lockedAgent = allowedAgents.value.find(
+    (agent: any) => String(agent?.id || "") === integrationAgentLockId.value,
+  );
+  const caps = pinnedAgentCapabilities.value.length
+    ? pinnedAgentCapabilities.value
+    : (Array.isArray(lockedAgent?.capabilities) ? lockedAgent.capabilities : []);
   if (!Array.isArray(caps) || caps.length === 0) return false;
   return caps.includes(cap);
 };
 const effectiveSlashCommands = computed(() => {
   const list = slashCommands.value || [];
-  if (!isUrlAgentPinned.value) return list;
+  if (!isRoutingSettingsLocked.value) return list;
   return list.filter((cmd: any) => {
     if (cmd.id === DATASET_PORTAL_SYSTEM_COMMAND_ID) {
       return agentHasCapability("data_query");
@@ -2696,8 +2718,7 @@ const resolveUrlPinnedAgent = async (): Promise<boolean> => {
     urlAgentAccessError.value = null;
     config.agentId = pinnedAgentId.value || key;
     void loadWelcomeCards(config.agentId);
-    config.overrideAgentId = "";
-    switchToExpert(pinnedAgentId.value || key);
+    applyIntegrationAgentLock(pinnedAgentId.value || key);
     return true;
   } catch (e: any) {
     const status = e?.response?.status;
@@ -2721,13 +2742,12 @@ const resolveUrlPinnedAgent = async (): Promise<boolean> => {
     pinnedAgent.value = null;
     pinnedAgentId.value = "";
     pinnedAgentCapabilities.value = [];
+    integrationAgentLockId.value = "";
     return false;
   }
 };
 
 const saveRoutingSettings = () => {
-    localStorage.setItem("yovole_routing_mode", config.routingMode);
-    localStorage.setItem("yovole_expert_agent_id", config.expertAgentId || "");
     localStorage.setItem("yovole_enable_multi_agent", config.enableMultiAgent ? "1" : "0");
     localStorage.setItem("yovole_show_shortcuts", config.showShortcuts ? "1" : "0");
     localStorage.setItem("yovole_enable_sql_plan", config.enableSqlPlan ? "1" : "0");
@@ -2737,6 +2757,19 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+};
+const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
+    if (isRoutingSettingsLocked.value) return;
+    const normalizedAgentId = mode === "expert" ? String(agentId || "").trim() : "";
+    try {
+        await axios.put("/api/portal/portal-prefs/routing", {
+            routing_mode: mode,
+            expert_agent_id: normalizedAgentId,
+        });
+    } catch (error) {
+        console.error("Failed to save routing preference to Redis", error);
+        showToast("路由偏好保存失败，请稍后重试", "error");
+    }
 };
 const handleEmbedModelSelection = (model: string) => {
     config.overrideModel = model;
@@ -2749,25 +2782,28 @@ const resetEmbedThinkingOverrides = () => {
     reasoningEffortOverride.value = null;
 };
 const switchToAuto = () => {
-    if (isUrlAgentPinned.value) {
+    if (isRoutingSettingsLocked.value) {
       showToast("当前链接已锁定指定智能体，无法切换到自动路由", "warning");
       return;
     }
     config.routingMode = "auto";
-    saveRoutingSettings();
+    config.expertAgentId = "";
+    void saveRoutingPreference("auto");
     showToast("已切换为自动路由模式", "success");
 };
 const switchToExpert = (agentId: string) => {
-    if (isUrlAgentPinned.value && pinnedAgentId.value && agentId !== pinnedAgentId.value) {
+    if (isRoutingSettingsLocked.value) {
       showToast("当前链接已锁定指定智能体，无法切换其他专家", "warning");
       return;
     }
-    config.expertAgentId = agentId;
+    const normalizedAgentId = String(agentId || "").trim();
+    if (!normalizedAgentId) return;
+    config.expertAgentId = normalizedAgentId;
     config.routingMode = "expert";
-    saveRoutingSettings();
+    void saveRoutingPreference("expert", normalizedAgentId);
     // URL 深链锁定初始化时不提示，避免首屏弹出
-    if (!isUrlAgentPinned.value) {
-      const agent = allowedAgents.value.find((a: any) => a.id === agentId) || pinnedAgent.value;
+    if (!isRoutingSettingsLocked.value) {
+      const agent = allowedAgents.value.find((a: any) => a.id === normalizedAgentId) || pinnedAgent.value;
       const name = agent?.display_name || agent?.name || "专家";
       showToast(`已切换至专家：${name}`, "success");
     }
@@ -3336,7 +3372,10 @@ const persistConversationId = (cid: string) => {
   if (cid) localStorage.setItem(conversationStorageKey(), cid);
 };
 
-const shouldUseServerActiveConversation = () => !config.instanceId;
+const shouldUseServerActiveConversation = () => Boolean(config.token);
+const activeConversationRequestParams = () => (
+  config.instanceId ? { instance_id: config.instanceId } : undefined
+);
 
 const cancelPendingUrlTokenInitialization = () => {
   if (pendingUrlTokenInitTimer === null) return;
@@ -3377,6 +3416,7 @@ const updateActiveConversationOnServer = async (cid: string) => {
     await axios.post("/api/v1/chat/active", {
       conversation_id: cid
     }, {
+      params: activeConversationRequestParams(),
       headers: embedAuthHeaders()
     });
   } catch (e: any) {
@@ -3409,17 +3449,41 @@ const generateNewConversation = () => {
 // const showMentionList = ref(false); // Removed
 // const mentionKeyword = ref(""); // Removed
 // const mentionPosition = reactive({ top: 0, left: 0 }); // Removed
-const fetchUserMarkdownThemePreference = async () => {
+type RoutingMode = "auto" | "expert";
+type RoutingPreference = {
+  routing_mode: RoutingMode;
+  expert_agent_id: string;
+  routing_configured: boolean;
+};
+const savedRoutingPreference = ref<RoutingPreference>({
+  routing_mode: "auto",
+  expert_agent_id: "",
+  routing_configured: false,
+});
+
+const fetchUserPortalPreferences = async () => {
     try {
         const res = await axios.get("/api/portal/portal-prefs");
-        if (res.data?.data?.markdown_theme) {
-            config.markdownTheme = res.data.data.markdown_theme;
+        const prefs = res.data?.data || {};
+        if (prefs.markdown_theme) {
+            config.markdownTheme = prefs.markdown_theme;
             localStorage.setItem("user_has_custom_theme", "true");
         } else {
             localStorage.removeItem("user_has_custom_theme");
         }
+        const routingMode: RoutingMode = prefs.routing_mode === "expert" ? "expert" : "auto";
+        savedRoutingPreference.value = {
+        routing_mode: routingMode,
+        expert_agent_id: String(prefs.expert_agent_id || "").trim(),
+        routing_configured: prefs.routing_configured === true,
+      };
     } catch (error) {
-        console.warn("Failed to fetch user markdown theme preference from Redis", error);
+        console.warn("Failed to fetch user portal preferences from Redis", error);
+        savedRoutingPreference.value = {
+          routing_mode: "auto",
+          expert_agent_id: "",
+          routing_configured: false,
+        };
     }
 };
 
@@ -3440,13 +3504,35 @@ const fetchAllowedAgents = async (force = false) => {
     if (hasFetchedAgents.value && !force) return;
     isLoadingAgents.value = true;
     try {
-        // 先获取用户在后端持久化的排版样式偏好
-        await fetchUserMarkdownThemePreference();
+        // 先获取用户在后端 Redis 持久化的排版与路由偏好
+        await fetchUserPortalPreferences();
 
         const res = await axios.get("/api/portal/agents/allowed");
         if (res.data) {
             allowedAgents.value = res.data; // Already filtered by backend
             hasFetchedAgents.value = true;
+
+            // 集成锁定优先于用户 Redis 偏好；普通 Embed 只应用当前用户有权限的默认智能体。
+            if (!isRoutingSettingsLocked.value) {
+                const saved = savedRoutingPreference.value;
+                const savedAgentAllowed = saved.expert_agent_id
+                    && res.data.some((agent: any) => String(agent.id) === saved.expert_agent_id);
+                const mainAgent = res.data.find((agent: any) => {
+                    const agentId = String(agent?.id || "").trim().toLowerCase();
+                    const agentName = String(agent?.name || "").trim().toLowerCase();
+                    return agentId === "main" || agentName === "main";
+                });
+                if (saved.routing_configured && saved.routing_mode === "expert" && savedAgentAllowed) {
+                    config.routingMode = "expert";
+                    config.expertAgentId = saved.expert_agent_id;
+                } else if (!saved.routing_configured && mainAgent) {
+                    config.routingMode = "expert";
+                    config.expertAgentId = String(mainAgent.id);
+                } else {
+                    config.routingMode = "auto";
+                    config.expertAgentId = "";
+                }
+            }
             
             // 自动应用当前激活智能体推荐的排版风格
             if (config.expertAgentId) {
@@ -3513,7 +3599,7 @@ watch(() => config.expertAgentId, (newAgentId) => {
 }, { immediate: true });
 
 const handleSwitchMode = (agent: any) => {
-    if (isUrlAgentPinned.value) {
+    if (isRoutingSettingsLocked.value) {
       showToast("当前链接已锁定指定智能体，无法切换其他专家", "warning");
       return;
     }
@@ -3547,7 +3633,7 @@ const resolvePreferredDataQueryAgentId = () => {
   return first?.id ? String(first.id) : "";
 };
 const armDataQueryAgentForFollowup = () => {
-  if (isUrlAgentPinned.value) return;
+  if (isRoutingSettingsLocked.value) return false;
   const agentId = resolvePreferredDataQueryAgentId();
   if (!agentId) {
     showToast("未找到可用的数据查询智能体，无法继续可视化分析", "warning");
@@ -4875,9 +4961,8 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
   }
   if (data.agent_id) {
     const agentId = String(data.agent_id);
-    config.agentId = agentId;
+    applyIntegrationAgentLock(agentId);
     void loadWelcomeCards(agentId);
-    switchToExpert(agentId);
     if (!data.conversation_id) {
       messages.value = [];
       generateNewConversation();
@@ -4925,9 +5010,9 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
           ...sessionData.user_info,
         };
       }
-      if (sessionData.agent_id && !config.agentId) {
-        config.agentId = sessionData.agent_id;
+      if (sessionData.agent_id) {
         urlPinnedAgentKey.value = sessionData.agent_id;
+        applyIntegrationAgentLock(sessionData.agent_id);
       }
       return true;
     }
@@ -5341,12 +5426,10 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       }
     }
     fetchAllowedAgents().then(() => {
-        if (isUrlAgentPinned.value) {
-            // 锁定模式下保持 URL 指定专家，不因列表时序降级到自动路由
-            if (pinnedAgentId.value) {
-              config.expertAgentId = pinnedAgentId.value;
-              config.routingMode = "expert";
-              saveRoutingSettings();
+        if (isRoutingSettingsLocked.value) {
+            // 集成锁定时不写入用户偏好，避免覆盖用户自己的默认智能体。
+            if (integrationAgentLockId.value) {
+              applyIntegrationAgentLock(integrationAgentLockId.value);
             }
             return;
         }
@@ -5372,6 +5455,7 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       if (shouldUseServerActiveConversation()) {
         try {
           const activeRes = await axios.get("/api/v1/chat/active", {
+            params: activeConversationRequestParams(),
             headers: embedAuthHeaders()
           });
           if (initGeneration !== conversationInitializationGeneration) return;
@@ -5576,7 +5660,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   const normalizedCmd = normalizeAgentSwitchCommand(cmd, allowedAgents.value);
   if (isDatasetPortalSlashCommand(normalizedCmd)) {
     userInput.value = "";
-    if (isUrlAgentPinned.value && !agentHasCapability("data_query")) {
+    if (isRoutingSettingsLocked.value && !agentHasCapability("data_query")) {
       showToast("当前智能体不支持数据查询，无法打开数据门户", "warning");
       return true;
     }
@@ -5594,7 +5678,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   }
   if (isKnowledgePortalSlashCommand(normalizedCmd)) {
     userInput.value = "";
-    if (isUrlAgentPinned.value && !agentHasCapability("knowledge_base")) {
+    if (isRoutingSettingsLocked.value && !agentHasCapability("knowledge_base")) {
       showToast("当前智能体不支持知识库能力，无法打开知识库中心", "warning");
       return true;
     }
@@ -5607,7 +5691,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   }
   if (normalizedCmd === "/switch_to_auto" || normalizedCmd === "/switch_agent_auto") {
     userInput.value = "";
-    if (isUrlAgentPinned.value) {
+    if (isRoutingSettingsLocked.value) {
       showToast("当前链接已锁定指定智能体，无法切换到自动路由", "warning");
       return true;
     }
@@ -5618,7 +5702,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     userInput.value = "";
     const agentId = normalizedCmd.split("?agent_id=")[1];
     if (agentId) {
-      if (isUrlAgentPinned.value && pinnedAgentId.value && agentId !== pinnedAgentId.value) {
+      if (isRoutingSettingsLocked.value) {
         showToast("当前链接已锁定指定智能体，无法切换其他专家", "warning");
         return true;
       }
@@ -6069,7 +6153,7 @@ const {
 });
 
 const openPortalDrawer = async () => {
-  if (isUrlAgentPinned.value && !agentHasCapability("data_query")) {
+  if (isRoutingSettingsLocked.value && !agentHasCapability("data_query")) {
     showToast("当前智能体不支持数据查询，无法打开数据门户", "warning");
     return;
   }
@@ -6112,7 +6196,7 @@ const {
 });
 
 const openKnowledgePortal = async () => {
-  if (isUrlAgentPinned.value && !agentHasCapability("knowledge_base")) {
+  if (isRoutingSettingsLocked.value && !agentHasCapability("knowledge_base")) {
     showToast("当前智能体不支持知识库能力，无法打开知识库中心", "warning");
     return;
   }
@@ -7015,10 +7099,6 @@ onMounted(() => {
   window.addEventListener("offline", onOffline);
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
   // Load Routing Settings
-  const savedMode = localStorage.getItem("yovole_routing_mode");
-  if (savedMode) config.routingMode = savedMode;
-  const savedExpert = localStorage.getItem("yovole_expert_agent_id");
-  if (savedExpert) config.expertAgentId = savedExpert;
   const savedMulti = localStorage.getItem("yovole_enable_multi_agent");
   if (savedMulti !== null) config.enableMultiAgent = savedMulti === "1";
   const savedShortcuts = localStorage.getItem("yovole_show_shortcuts");

@@ -216,7 +216,7 @@ def test_reasoning_panel_is_collapsible_and_uses_light_quote_style():
 
 def test_reasoning_panel_uses_model_inference_label():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
-    assert 'props.hasAnswer ? "思考完成" : "执行过程"' in timeline
+    assert 'props.hasAnswer ? "执行完成" : "执行过程"' in timeline
     assert "深度思考" in timeline
     assert "item.textKind === 'reasoning'" in timeline
     assert "💭" in timeline

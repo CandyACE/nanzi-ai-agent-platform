@@ -5,7 +5,7 @@ import uuid
 import re
 import asyncio
 from typing import List, Optional, AsyncGenerator, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1338,22 +1338,28 @@ class ActiveConversationRequest(BaseModel):
 
 @router.get("/active", summary="获取当前活跃的会话 ID")
 async def get_active_conversation(
-    user_info: dict = Depends(require_api_key)
+    user_info: dict = Depends(require_api_key),
+    instance_id: Optional[str] = Query(default=None, max_length=128),
 ):
     from app.services.ai.memory_service import memory_service
     user_id = user_info.get("user_id")
-    conv_id = await memory_service.get_active_conversation(user_id)
+    conv_id = await memory_service.get_active_conversation(user_id, instance_id=instance_id)
     return StandardResponse(data={"conversation_id": conv_id})
 
 
 @router.post("/active", summary="设置当前活跃的会话 ID")
 async def set_active_conversation(
     body: ActiveConversationRequest,
-    user_info: dict = Depends(require_api_key)
+    user_info: dict = Depends(require_api_key),
+    instance_id: Optional[str] = Query(default=None, max_length=128),
 ):
     from app.services.ai.memory_service import memory_service
     user_id = user_info.get("user_id")
-    await memory_service.set_active_conversation(user_id, body.conversation_id)
+    await memory_service.set_active_conversation(
+        user_id,
+        body.conversation_id,
+        instance_id=instance_id,
+    )
     return StandardResponse(data={"status": "success"})
 
 

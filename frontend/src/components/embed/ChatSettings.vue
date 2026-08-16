@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import GroundingHelpPopover from '@/components/GroundingHelpPopover.vue';
 import Switch from '@/components/Switch.vue';
@@ -10,6 +10,7 @@ const props = defineProps<{
   visible: boolean;
   config: any;
   allowedAgents: any[];
+  routingLocked?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -20,10 +21,14 @@ const emit = defineEmits<{
   (e: 'set-theme', theme: string): void;
   (e: 'set-color', color: string): void;
   (e: 'mode-change', mode: string): void;
+  (e: 'switch-to-auto'): void;
+  (e: 'switch-to-expert', agentId: string): void;
 }>();
 
 const router = useRouter();
 const { showToast } = useToast();
+type RoutingMode = 'auto' | 'expert';
+const routingMode = ref<RoutingMode>(props.config.routingMode === 'expert' ? 'expert' : 'auto');
 const activeColor = ref("#1677ff");
 const presetColors = [
   "#1677ff",
@@ -38,6 +43,12 @@ const presetColors = [
 ];
 
 const close = () => emit('update:visible', false);
+
+watch(() => props.visible, (visible) => {
+  if (visible) {
+    routingMode.value = props.config.routingMode === 'expert' ? 'expert' : 'auto';
+  }
+});
 
 const saveAndClose = () => {
   emit('save-settings');
@@ -57,6 +68,25 @@ const handleSetColor = (color: string) => {
 
 const handleColorInput = (e: any) => {
     handleSetColor(e.target.value);
+};
+
+const handleSetRoutingMode = (mode: 'auto' | 'expert') => {
+    if (props.routingLocked) return;
+    if (mode === 'auto') {
+        routingMode.value = 'auto';
+        emit('switch-to-auto');
+        return;
+    }
+    // 先停留在默认智能体页，等用户明确选中下拉项后再提交并关闭。
+    routingMode.value = 'expert';
+};
+
+const handleSetExpertAgent = (event: Event) => {
+    if (props.routingLocked) return;
+    const agentId = String((event.target as HTMLSelectElement)?.value || '').trim();
+    if (!agentId) return;
+    emit('switch-to-expert', agentId);
+    saveAndClose();
 };
 
 const handleSetMultiAgent = (enabled: boolean) => {
@@ -412,7 +442,60 @@ const handleLogout = () => {
             </div>
           </div>
 
-          <!-- Group 2: 智能特性 (Intelligent Features with Switches) -->
+          <!-- Group 2: 智能体路由 -->
+          <div v-if="!routingLocked" class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-4">
+            <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
+              <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 7h8M8 12h8M8 17h5M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">智能体路由 / Routing</h4>
+            </div>
+
+            <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+              <button
+                type="button"
+                @click="handleSetRoutingMode('auto')"
+                class="flex-1 py-1.5 text-xs rounded-md font-medium transition-all"
+                :class="routingMode === 'auto'
+                  ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm font-black'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
+              >
+                自动路由
+              </button>
+              <button
+                type="button"
+                @click="handleSetRoutingMode('expert')"
+                class="flex-1 py-1.5 text-xs rounded-md font-medium transition-all"
+                :class="routingMode === 'expert'
+                  ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm font-black'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
+              >
+                默认智能体
+              </button>
+            </div>
+
+            <p v-if="routingMode === 'auto'" class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal">
+              自动路由会先识别问题意图，再选择合适的主智能体，适合多业务场景；部分请求可能增加一次路由判断耗时。
+            </p>
+
+            <div v-if="routingMode === 'expert'" class="space-y-1.5">
+              <label class="block text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider">选择默认智能体</label>
+              <select
+                :value="config.expertAgentId"
+                :disabled="allowedAgents.length === 0"
+                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/40 disabled:opacity-50"
+                @change="handleSetExpertAgent"
+              >
+                <option v-if="allowedAgents.length === 0" value="">暂无可用智能体</option>
+                <option v-for="agent in allowedAgents" :key="agent.id" :value="agent.id">
+                  {{ agent.display_name || agent.name }}
+                </option>
+              </select>
+              <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal">
+                默认智能体优先处理当前问题；主智能体仍可按任务需要调用其他智能体，适合明确主责领域的场景。
+              </p>
+            </div>
+          </div>
+
+          <!-- Group 3: 智能特性 (Intelligent Features with Switches) -->
           <div class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-4">
             <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
               <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>

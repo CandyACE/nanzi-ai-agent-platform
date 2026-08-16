@@ -4,7 +4,7 @@
 
 **Goal:** Make EmbedChat sessions isolated per `instance_id` while preserving the existing legacy and mainline conversation behavior.
 
-**Architecture:** Keep a dual-track session policy inside `EmbedChat.vue`. Legacy callers continue to use the fixed localStorage key and server active-conversation endpoint; callers with `instance_id` use an encoded instance-specific key and never call the server active-conversation endpoint. Explicit `conversation_id` remains authoritative in both tracks.
+**Architecture:** Keep a dual-track session policy inside `EmbedChat.vue`. Legacy callers continue to use the fixed localStorage key and user-level server active-conversation endpoint; callers with `instance_id` use an encoded instance-specific localStorage key and an instance-scoped server active-conversation endpoint. Explicit `conversation_id` remains authoritative in both tracks.
 
 **Tech Stack:** Vue 3 + TypeScript, browser localStorage, FastAPI conversation APIs, pytest source-contract tests.
 
@@ -36,9 +36,9 @@
 - Modify: `frontend/src/views/EmbedChat.vue`
 
 1. Replace direct legacy-key writes in new-session creation, history selection, explicit initialization, and active-conversation restoration with the selected storage helper.
-2. Prevent isolated instances from reading or updating `/api/v1/chat/active`.
+2. Pass `instance_id` to `/api/v1/chat/active` so isolated instances can recover the same conversation across machines without sharing pointers with other instances.
 3. Preserve legacy fallback order: explicit conversation ID, persisted legacy ID, server active conversation, then new conversation.
-4. Preserve isolated fallback order: explicit conversation ID, instance-scoped persisted ID, then new conversation.
+4. Preserve isolated fallback order: explicit conversation ID, instance-scoped local ID, instance-scoped server active ID, then new conversation.
 
 ## Task 4: Verify focused behavior and regressions
 

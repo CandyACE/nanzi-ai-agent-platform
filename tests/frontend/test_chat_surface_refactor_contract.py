@@ -178,7 +178,7 @@ def test_both_chat_surfaces_use_shared_thinking_header_component():
         assert "appendAssistantBodyDelta" in source
         assert ':skill-badges="getSkillFlowBadgesForMessage(msg, messages)"' in source
     assert ":title=\"headerTitle\"" in timeline
-    assert '"思考完成"' in timeline
+    assert '"执行完成"' in timeline
     assert "resolveTimelineCurrentStep" in timeline
     assert "timelineHasPending" in timeline
     assert ':is-thinking="!hasAnswer && (isThinking || hasPending)"' in timeline

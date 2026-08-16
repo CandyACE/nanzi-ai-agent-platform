@@ -25,7 +25,7 @@ def test_embedchat_defines_dual_track_conversation_storage_policy():
     assert "const conversationStorageKey = () =>" in source
     assert "const readStoredConversationId = () =>" in source
     assert "const persistConversationId = (cid: string) =>" in source
-    assert "const shouldUseServerActiveConversation = () => !config.instanceId;" in source
+    assert "const shouldUseServerActiveConversation = () => Boolean(config.token);" in source
     assert 'localStorage.setItem("yovole_embed_conv_id",' not in source
 
 
@@ -46,7 +46,7 @@ def test_embedchat_resolves_instance_before_restoring_a_conversation():
     assert "expectedInitializationGeneration !== conversationInitializationGeneration" in source
 
 
-def test_embedchat_only_uses_server_active_conversation_in_legacy_mode():
+def test_embedchat_uses_server_active_conversation_when_authenticated():
     source = _source(EMBED_CHAT)
     active_update = source[source.index("const updateActiveConversationOnServer"):source.index("watch(conversationId")]
     init_chat = source[source.index("const initChat = async"):source.index("// History State")]
@@ -54,6 +54,17 @@ def test_embedchat_only_uses_server_active_conversation_in_legacy_mode():
     assert "if (!shouldUseServerActiveConversation()) return;" in active_update
     assert "if (shouldUseServerActiveConversation())" in init_chat
     assert 'axios.get("/api/v1/chat/active"' in init_chat
+
+
+def test_embedchat_scopes_server_active_conversation_by_instance_id():
+    source = _source(EMBED_CHAT)
+    active_update = source[source.index("const updateActiveConversationOnServer"):source.index("watch(conversationId")]
+    init_chat = source[source.index("const initChat = async"):source.index("// History State")]
+
+    assert "const activeConversationRequestParams = () =>" in source
+    assert "instance_id: config.instanceId" in source
+    assert "params: activeConversationRequestParams()" in active_update
+    assert "params: activeConversationRequestParams()" in init_chat
 
 
 def test_embedchat_passes_current_conversation_to_message_renderer():

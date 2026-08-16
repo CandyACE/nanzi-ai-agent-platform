@@ -239,7 +239,7 @@ const items = computed(() => props.timeline.length
 
 const hasPending = computed(() => timelineHasPending(items.value));
 
-const headerTitle = computed(() => props.hasAnswer ? "思考完成" : "执行过程");
+const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
 const currentStep = computed(() => resolveTimelineCurrentStep(
   items.value,
   Boolean(!props.hasAnswer && (props.isThinking || hasPending.value)),

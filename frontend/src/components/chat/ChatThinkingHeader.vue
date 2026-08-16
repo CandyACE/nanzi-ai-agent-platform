@@ -15,48 +15,51 @@
       </svg>
     </div>
 
-    <div class="flex min-w-0 flex-1 items-center justify-between gap-1">
-      <div class="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2">
-        <span class="truncate text-xs font-semibold text-gray-700" :class="{ 'dark:text-gray-300': darkMode }">{{ title }}</span>
-        <span
-          v-if="stepCount > 0"
-          class="flex-shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500"
-          :class="{ 'dark:bg-gray-700': darkMode }"
-          :title="stepBadgeTitle"
-        >
-          <span class="sm:hidden">{{ stepCount }}</span>
-          <span class="hidden sm:inline">
-            {{ stepCount }} 步骤<template v-if="hiddenStepCount > 0"> · 已折叠 {{ hiddenStepCount }}</template>
-          </span>
+    <div class="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2" :class="{ 'flex-1': expanded }">
+      <span class="truncate text-xs font-semibold text-gray-700" :class="{ 'dark:text-gray-300': darkMode }">{{ title }}</span>
+      <span
+        v-if="stepCount > 0"
+        class="flex-shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500"
+        :class="{ 'dark:bg-gray-700': darkMode }"
+        :title="stepBadgeTitle"
+      >
+        <span class="sm:hidden">{{ stepCount }}</span>
+        <span class="hidden sm:inline">
+          {{ stepCount }} 步骤<template v-if="hiddenStepCount > 0"> · 已折叠 {{ hiddenStepCount }}</template>
         </span>
-        <span
-          v-if="skillSummary"
-          class="hidden max-w-[9rem] shrink-0 truncate rounded-full border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 sm:inline-flex sm:items-center sm:gap-0.5"
-          :class="{ 'dark:border-purple-900/30 dark:bg-purple-950/40 dark:text-purple-400': darkMode }"
-          :title="skillSummary"
-        >
-          ⚡ {{ skillSummary }}
-        </span>
-        <span
-          v-if="currentStep && !expanded"
-          class="min-w-0 flex-1 truncate text-[10px] font-normal text-gray-400"
-          :title="currentStep"
-        >
-          {{ currentStep }}
-        </span>
-      </div>
-      <span class="ml-1 flex-shrink-0 font-mono text-[10px] text-gray-400 sm:ml-2">{{ duration ? `${duration}s` : "" }}</span>
+      </span>
+      <span
+        v-if="skillSummary"
+        class="hidden max-w-[9rem] shrink-0 truncate rounded-full border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 sm:inline-flex sm:items-center sm:gap-0.5"
+        :class="{ 'dark:border-purple-900/30 dark:bg-purple-950/40 dark:text-purple-400': darkMode }"
+        :title="skillSummary"
+      >
+        ⚡ {{ skillSummary }}
+      </span>
+      <span
+        v-if="currentStep && !expanded"
+        class="min-w-0 flex-1 truncate text-[10px] font-normal text-gray-400"
+        :title="currentStep"
+      >
+        {{ currentStep }}
+      </span>
     </div>
 
-    <svg
-      class="h-4 w-4 flex-shrink-0 transform text-gray-400 transition-transform duration-200"
-      :class="{ 'rotate-180': expanded }"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
+    <div
+      class="flex shrink-0 items-center gap-1 text-gray-400"
+      :class="expanded ? 'ml-auto sm:gap-1.5' : 'gap-1'"
     >
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-    </svg>
+      <span v-if="duration" class="font-mono text-[10px]">{{ `${duration}s` }}</span>
+      <svg
+        class="h-4 w-4 shrink-0 transform transition-transform duration-200"
+        :class="{ 'rotate-180': expanded }"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+      </svg>
+    </div>
   </button>
 </template>
 

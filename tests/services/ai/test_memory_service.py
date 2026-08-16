@@ -46,6 +46,33 @@ async def test_memory_service_get_key():
     key_anon = service._get_key(None, "conv789")
     assert "anonymous" in key_anon
 
+
+@pytest.mark.asyncio
+async def test_memory_service_scopes_active_conversation_by_instance():
+    service = MemoryService()
+
+    assert service._get_active_conversation_key("user123") == "conversation:user123:active"
+    assert (
+        service._get_active_conversation_key("user123", "ops-assistant")
+        == "conversation:user123:active:ops-assistant"
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_service_reads_and_writes_instance_active_conversation(mock_redis):
+    service = MemoryService()
+    mock_redis.get.return_value = "conv-1"
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+
+        current = await service.get_active_conversation("u1", "ops-assistant")
+        await service.set_active_conversation("u1", "conv-2", "ops-assistant")
+
+    assert current == "conv-1"
+    mock_redis.get.assert_awaited_once_with("conversation:u1:active:ops-assistant")
+    mock_redis.set.assert_awaited_once_with("conversation:u1:active:ops-assistant", "conv-2")
+
 @pytest.mark.asyncio
 async def test_memory_service_add_message(mock_redis):
     """测试添加消息（使用 Pipeline）"""

@@ -156,7 +156,7 @@ def test_process_narration_handler_is_shared_across_chat_surfaces():
     assert "syncProcessTimelineLog" in debug
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
     assert ':title="headerTitle"' in timeline
-    assert '"思考完成"' in timeline
+    assert '"执行完成"' in timeline
     assert "resolveTimelineCurrentStep" in timeline
     assert "timelineHasPending" in timeline
     assert "item.kind === 'text'" in timeline

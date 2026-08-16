@@ -62,7 +62,7 @@ return {{
         "正在生成回答…",
         "思考中…",
     }
-    assert result["done"] == "思考完成"
+    assert result["done"] == "执行完成"
     assert result["emptyThinking"] == "思考中…"
 
 
@@ -80,4 +80,4 @@ def test_embed_thought_summary_lives_in_shared_timeline_header():
     assert 'step-label="阶段"' not in embed
     assert "getEmbedThoughtSummaryTitle" not in debug
     assert "buildEmbedThoughtStages" not in debug
-    assert 'props.hasAnswer ? "思考完成" : "执行过程"' in timeline
+    assert 'props.hasAnswer ? "执行完成" : "执行过程"' in timeline
