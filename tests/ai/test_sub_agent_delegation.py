@@ -274,7 +274,9 @@ def test_finalize_delegation_result_keeps_typed_status_and_metadata():
         "content_chars": 4,
         "run_id": None,
         "parent_trace_id": None,
+        "parent_conversation_id": None,
         "child_trace_id": None,
+        "child_session_id": None,
         "stop_reason": "completed",
         "structured": False,
     }
@@ -649,6 +651,7 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         agent_name="MainAgent",
         delegation_depth=0,
         trace_id="trace-main",
+        conversation_id="conversation-parent",
         dataset_ids=[ID_MAIN_KB],
         knowledge_dataset_ids=[ID_FRONTEND_KB],
         user_id=100,
@@ -687,7 +690,12 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         from app.core.context import get_current_agent_context
 
         current_ctx = get_current_agent_context()
+        assert history == [{"role": "user", "content": "查询数据"}]
         assert current_ctx is not None
+        assert current_ctx.conversation_id.startswith("child_session_")
+        assert current_ctx.conversation_id != "conversation-parent"
+        assert current_ctx.parent_conversation_id == "conversation-parent"
+        assert current_ctx.child_session_id == current_ctx.conversation_id
         assert set(current_ctx.dataset_ids) == {ID_MAIN_KB, ID_SUB_KB}
         assert current_ctx.knowledge_dataset_ids == [ID_FRONTEND_KB]
         assert current_ctx.agent_dataset_ids == [ID_SUB_KB]
@@ -713,6 +721,8 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         assert "Data output" in res
         patched_dispatch.assert_called_once()
         kwargs = patched_dispatch.call_args.kwargs
+        assert kwargs["conversation_id"].startswith("child_session_")
+        assert kwargs["conversation_id"] != "conversation-parent"
         assert kwargs["user_info"] == {
             "user_id": 100,
             "role": "user",

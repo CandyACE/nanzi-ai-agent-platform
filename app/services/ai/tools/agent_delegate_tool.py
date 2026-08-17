@@ -364,7 +364,9 @@ def finalize_delegation_result(
     max_chars: int = DEFAULT_DELEGATION_RESULT_MAX_CHARS,
     run_id: str | None = None,
     parent_trace_id: str | None = None,
+    parent_conversation_id: str | None = None,
     child_trace_id: str | None = None,
+    child_session_id: str | None = None,
     structured: dict[str, Any] | None = None,
 ) -> SubAgentResult:
     """Create a typed result after output cleaning and size limiting."""
@@ -381,7 +383,9 @@ def finalize_delegation_result(
                 capability=capability,
                 run_id=run_id,
                 parent_trace_id=parent_trace_id,
+                parent_conversation_id=parent_conversation_id,
                 child_trace_id=child_trace_id,
+                child_session_id=child_session_id,
             )
     if len(cleaned_output) > max_chars:
         cleaned_output = (
@@ -397,7 +401,9 @@ def finalize_delegation_result(
             capability=capability,
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=parent_conversation_id,
             child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
             structured=structured,
         )
     return SubAgentResult(
@@ -408,7 +414,9 @@ def finalize_delegation_result(
         capability=capability,
         run_id=run_id,
         parent_trace_id=parent_trace_id,
+        parent_conversation_id=parent_conversation_id,
         child_trace_id=child_trace_id,
+        child_session_id=child_session_id,
         structured=structured,
     )
 
@@ -522,6 +530,7 @@ async def sub_agent_call(
         ),
         run_id=run_id,
         parent_trace_id=parent_trace_id,
+        parent_conversation_id=main_ctx.conversation_id,
         max_depth=max_depth,
         tool_filter=list(tool_filter) if tool_filter is not None else None,
         output_schema=output_schema,
@@ -538,6 +547,7 @@ async def sub_agent_call(
             ),
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
             error_code=depth_error,
         ).to_tool_text()
 
@@ -549,6 +559,7 @@ async def sub_agent_call(
             content=f"错误：output_schema 无效：{schema_error}。",
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
             error_code="invalid_schema",
         ).to_tool_text()
 
@@ -568,6 +579,7 @@ async def sub_agent_call(
                     content="错误：主智能体无法委派调用自身。",
                     run_id=run_id,
                     parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
                     error_code="self_delegation",
                 ).to_tool_text()
 
@@ -605,6 +617,7 @@ async def sub_agent_call(
                     content="错误：主智能体无法委派调用自身。",
                     run_id=run_id,
                     parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
                     error_code="self_delegation",
                 ).to_tool_text()
 
@@ -625,6 +638,7 @@ async def sub_agent_call(
                     ),
                     run_id=run_id,
                     parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
                     error_code="agent_not_ready",
                 ).to_tool_text()
             # 无论如何都找不到，只列出当前用户可委派的候选，供模型自我纠错
@@ -641,6 +655,7 @@ async def sub_agent_call(
                 ),
                 run_id=run_id,
                 parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
                 error_code="agent_not_found",
             ).to_tool_text()
 
@@ -663,6 +678,7 @@ async def sub_agent_call(
             content="错误：tool_filter 只能选择目标智能体已配置且可用的工具。",
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
             error_code=filter_error,
         ).to_tool_text()
 
@@ -674,6 +690,8 @@ async def sub_agent_call(
     )
     if repeat_error:
         return repeat_error
+
+    child_session_id = f"child_session_{run_id}"
 
     # [CR Fix] 继承主上下文已生效的知识库 ID，并与子智能体引擎自身配置的 IDs 合并
     from app.services.ai.knowledge_utils import merge_dataset_id_sources
@@ -704,6 +722,8 @@ async def sub_agent_call(
         "run_id": run_id,
         "parent_trace_id": parent_trace_id,
         "child_trace_id": child_trace_id,
+        "parent_conversation_id": main_ctx.conversation_id,
+        "child_session_id": child_session_id,
         "tool_filter": list(resolved_tool_filter) if resolved_tool_filter is not None else None,
     }
     _put_subagent_lifecycle_log(
@@ -726,7 +746,9 @@ async def sub_agent_call(
         engine_type=target_config.engine_type or "LOCAL",
         engine_config=sub_engine_config,
         user_id=main_ctx.user_id,
-        conversation_id=main_ctx.conversation_id,
+        conversation_id=child_session_id,
+        parent_conversation_id=main_ctx.conversation_id,
+        child_session_id=child_session_id,
         is_admin=main_ctx.is_admin,
         api_key=main_ctx.api_key,
         user_dimensions=main_ctx.user_dimensions,
@@ -784,6 +806,8 @@ async def sub_agent_call(
         timeout_seconds=delegation_timeout,
         run_id=run_id,
         parent_trace_id=parent_trace_id,
+        parent_conversation_id=main_ctx.conversation_id,
+        child_session_id=child_session_id,
         max_depth=max_depth,
         tool_filter=list(resolved_tool_filter) if resolved_tool_filter is not None else None,
         output_schema=output_schema,
@@ -797,7 +821,7 @@ async def sub_agent_call(
         trace_buffer=main_ctx.trace_buffer,
         permission_options=sub_permission_options,
         user_info=user_info,
-        conversation_id=main_ctx.conversation_id,
+        conversation_id=child_session_id,
         turn_decision=TurnDecision.for_direct_agent_selection(target_config),
     )
 
@@ -858,7 +882,9 @@ async def sub_agent_call(
             capability=delegation_request.capability,
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
             child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
         ).to_tool_text()
     except asyncio.CancelledError:
         _put_subagent_lifecycle_log(
@@ -901,7 +927,9 @@ async def sub_agent_call(
             capability=delegation_request.capability,
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
             child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
         ).to_tool_text()
     finally:
         if sub_stream and inspect.isasyncgen(sub_stream):
@@ -952,7 +980,9 @@ async def sub_agent_call(
             capability=delegation_request.capability,
             run_id=run_id,
             parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
             child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
             stop_reason=interrupt_reason,
         ).to_tool_text()
 
@@ -985,7 +1015,9 @@ async def sub_agent_call(
                 capability=delegation_request.capability,
                 run_id=run_id,
                 parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
                 child_trace_id=child_trace_id,
+                child_session_id=child_session_id,
                 stop_reason=SubAgentStopReason.INVALID_OUTPUT,
             ).to_tool_text()
 
@@ -997,7 +1029,9 @@ async def sub_agent_call(
         capability=delegation_request.capability,
         run_id=run_id,
         parent_trace_id=parent_trace_id,
+        parent_conversation_id=main_ctx.conversation_id,
         child_trace_id=child_trace_id,
+        child_session_id=child_session_id,
         structured=structured if isinstance(structured, dict) else None,
     )
     _annotate_subagent_trace(

@@ -50,13 +50,30 @@ def test_subagent_request_metadata_keeps_run_controls_without_raw_values():
     assert "如何开启辅助驾驶" not in str(metadata)
 
 
+def test_subagent_request_metadata_keeps_parent_and_child_session_lineage():
+    request = SubAgentRequest(
+        target_agent_name="knowledge-agent",
+        query="如何开启辅助驾驶",
+        parent_conversation_id="conversation-parent",
+        child_session_id="child-session-1",
+    )
+
+    metadata = request.to_metadata()
+
+    assert metadata["parent_conversation_id"] == "conversation-parent"
+    assert metadata["child_session_id"] == "child-session-1"
+    assert "如何开启辅助驾驶" not in str(metadata)
+
+
 def test_subagent_result_exposes_stop_reason_lineage_and_structured_output():
     result = SubAgentResult(
         status=SubAgentResultStatus.COMPLETED,
         stop_reason="completed",
         run_id="run-123",
         parent_trace_id="trace-main",
+        parent_conversation_id="conversation-parent",
         child_trace_id="trace-child",
+        child_session_id="child-session-1",
         structured={"answer": "请在车辆设置中开启"},
         content="请在车辆设置中开启",
     )
@@ -65,7 +82,9 @@ def test_subagent_result_exposes_stop_reason_lineage_and_structured_output():
 
     assert metadata["run_id"] == "run-123"
     assert metadata["parent_trace_id"] == "trace-main"
+    assert metadata["parent_conversation_id"] == "conversation-parent"
     assert metadata["child_trace_id"] == "trace-child"
+    assert metadata["child_session_id"] == "child-session-1"
     assert metadata["stop_reason"] == "completed"
     assert metadata["structured"] is True
 

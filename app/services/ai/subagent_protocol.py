@@ -65,6 +65,8 @@ class SubAgentRequest:
     background: bool = False
     run_id: str | None = None
     parent_trace_id: str | None = None
+    parent_conversation_id: str | None = None
+    child_session_id: str | None = None
     max_depth: int | None = None
     tool_filter: list[str] | None = None
     output_schema: dict[str, Any] | None = None
@@ -84,6 +86,8 @@ class SubAgentRequest:
             "background": self.background,
             "run_id": self.run_id,
             "parent_trace_id": self.parent_trace_id,
+            "parent_conversation_id": self.parent_conversation_id,
+            "child_session_id": self.child_session_id,
             "max_depth": self.max_depth,
             "tool_filter": (
                 list(self.tool_filter)
@@ -116,7 +120,9 @@ class SubAgentResult:
     artifacts: list[str] = field(default_factory=list)
     run_id: str | None = None
     parent_trace_id: str | None = None
+    parent_conversation_id: str | None = None
     child_trace_id: str | None = None
+    child_session_id: str | None = None
     stop_reason: SubAgentStopReason | str | None = None
     structured: dict[str, Any] | None = None
 
@@ -151,7 +157,9 @@ class SubAgentResult:
             "content_chars": len(self.content),
             "run_id": self.run_id,
             "parent_trace_id": self.parent_trace_id,
+            "parent_conversation_id": self.parent_conversation_id,
             "child_trace_id": self.child_trace_id,
+            "child_session_id": self.child_session_id,
             "stop_reason": (
                 self.stop_reason.value
                 if isinstance(self.stop_reason, SubAgentStopReason)

@@ -159,3 +159,7 @@
 - `vue-tsc -b` remains blocked by pre-existing frontend type errors and the sandbox cannot create `frontend/node_modules/.tmp`; no new errors were reported for the added subagent utility or timeline/trace templates before the existing baseline diagnostics.
 - The combined command that also included `tests/ai/test_tool_runtime_config.py` reached the repository database fixture and reported six setup errors because MySQL was unavailable at `localhost:3306`; this is an environment prerequisite failure, not an assertion failure from this change.
 - The implementation does not add durable child-session persistence, background continuation, or a cold-resume protocol.
+
+## Follow-up: independent child-session namespace
+
+The first independent-session phase is implemented in `2026-08-17-independent-subagent-session-plan.md`. Accepted delegations now receive a unique `child_session_id`; the child `AgentContext` and `AgentDispatcher` use it as `conversation_id`, while `parent_conversation_id` preserves the parent relationship. The child still receives only the explicit delegation query, and parent permissions, dataset scope, live trace/event forwarding, and the grounding ledger remain unchanged. Durable child transcripts, replay, and cold resume remain out of scope.
