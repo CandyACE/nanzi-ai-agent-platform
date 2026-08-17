@@ -2028,7 +2028,9 @@ interface LogEntry {
   status: "pending" | "success" | "error";
   isExpanded: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'default';
+  tool_name?: string;
+  resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
@@ -6375,6 +6377,8 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       subagent: data.subagent !== undefined
         ? normalizeSubagentTraceMeta(data.subagent)
         : currentLog.subagent,
+      tool_name: data.tool_name ?? currentLog.tool_name,
+      resolution_status: data.resolution_status ?? currentLog.resolution_status,
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,
     };
     syncProcessTimelineLog(msg, {
@@ -6397,6 +6401,8 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     elapsed_time_ms: data.elapsed_time_ms ?? null,
     started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
     subagent: normalizeSubagentTraceMeta(data.subagent),
+    tool_name: data.tool_name,
+    resolution_status: data.resolution_status,
     rowFilterApplied: data.row_filter_applied === true,
   });
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);

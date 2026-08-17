@@ -29,6 +29,15 @@ class BaseExecutor(ABC):
         self.user_info = user_info
         self.conversation_id = conversation_id
         self.step_counter = 0
+        self._last_tool_resolution = None
+
+    def _tool_resolution_log_events(self) -> list[Dict[str, Any]]:
+        """Return safe UI events for the latest runtime-tool resolution."""
+        if self._last_tool_resolution is None:
+            return []
+        from app.services.ai.tool_capability import build_tool_resolution_log_events
+
+        return build_tool_resolution_log_events(self._last_tool_resolution)
 
     def _grounding_enabled(self) -> bool:
         """Return whether this request explicitly enabled grounding audits."""

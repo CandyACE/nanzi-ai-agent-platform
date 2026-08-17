@@ -1185,7 +1185,9 @@ interface LogEntry {
   isExpanded: boolean;
   isDebug?: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
+  tool_name?: string;
+  resolution_status?: 'disabled' | 'missing' | 'filtered';
   model?: string;
   temperature?: number;
   subagent?: SubagentTraceMeta;
@@ -3335,6 +3337,8 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.isRouter !== undefined) existingLog.isRouter = data.isRouter;
     if (data.category !== undefined) existingLog.category = data.category as any;
     if (data.subagent !== undefined) existingLog.subagent = normalizeSubagentTraceMeta(data.subagent);
+    if (data.tool_name !== undefined) existingLog.tool_name = data.tool_name;
+    if (data.resolution_status !== undefined) existingLog.resolution_status = data.resolution_status;
     if (data.row_filter_applied === true) existingLog.rowFilterApplied = true;
     syncProcessTimelineLog(msg, { ...data, id: logId }, existingLog.category);
   } else {
@@ -3363,6 +3367,8 @@ const addRealLog = (msg: Message, data: any) => {
       model: data.model,
       temperature: data.temperature,
       subagent: normalizeSubagentTraceMeta(data.subagent),
+      tool_name: data.tool_name,
+      resolution_status: data.resolution_status,
       rowFilterApplied: data.row_filter_applied === true,
     };
     msg.logs.push(log);

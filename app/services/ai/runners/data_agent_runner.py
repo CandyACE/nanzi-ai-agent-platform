@@ -41,6 +41,7 @@ from app.services.ai.runtime.agentscope.workspace import get_local_workspace
 from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage, SystemMessage
 from app.services.ai.runtime.agentscope.data_runtime import DATA_QUERY_MAX_STEPS_CAP
 from app.services.ai.runtime.agentscope.data_tools import build_chatbi_toolkit
+from app.services.ai.runtime.agentscope.errors import RuntimeConfigurationError
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, build_toolkit, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 from app.services.ai.tools.registry import ToolRegistry
@@ -680,7 +681,19 @@ class DataAgentRunner(BaseExecutor):
             async for chunk in chatbi_turn_handlers.dispatch_early_turn(self, turn_cls=turn_cls, history=history, runtime_messages=runtime_messages, user_question=user_question, last_data_result_for_turn=last_data_result_for_turn):
                 yield chunk
             return
-        tools = await self._resolve_runtime_tools_from_config()
+        try:
+            tools = await self._resolve_runtime_tools_from_config()
+        except RuntimeConfigurationError as exc:
+            for event in self._tool_resolution_log_events():
+                yield event
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": str(exc),
+            }
+            return
+        for event in self._tool_resolution_log_events():
+            yield event
         max_steps = await self._resolve_max_steps()
         self._standalone_query = user_question
         if turn_cls.requires_fresh_data:

@@ -23,9 +23,9 @@ from app.services.metadata_rag_service import MetadataRagService
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage, AIMessage
 from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
-    apply_delegation_tool_filter,
     runtime_tool_spec_from_legacy_tool,
 )
+from app.services.ai.tool_capability import RegistryToolProvider, resolve_tool_capabilities
 from app.services.ai.knowledge_utils import (
     NO_KNOWLEDGE_DATASET_MESSAGE,
     KNOWLEDGE_BASE_DISABLED_USER_MESSAGE,
@@ -152,22 +152,17 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
 
     async def _resolve_knowledge_tools(self) -> List[RuntimeToolSpec]:
         configured_tools = self.config.tools or []
-        tools: List[RuntimeToolSpec] = []
-        if configured_tools:
-            tools = await ToolRegistry.get_runtime_tools(configured_tools)
-
         system_tools = ToolRegistry.get_system_implicit_tools()
-        if system_tools:
-            seen = {spec.name for spec in tools}
-            for tool in system_tools:
-                name = str(getattr(tool, "name", "") or "")
-                if not name or name in seen:
-                    continue
-                spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
-                tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
-                seen.add(name)
-
-        return apply_delegation_tool_filter(tools)
+        resolved = await resolve_tool_capabilities(
+            configured_tools,
+            implicit_tools=system_tools,
+            provider=RegistryToolProvider(
+                legacy_converter=runtime_tool_spec_from_legacy_tool,
+                evidence_attacher=ToolRegistry._attach_evidence_metadata,
+            ),
+        )
+        self._last_tool_resolution = resolved
+        return list(resolved.specs)
 
     async def _auto_invoke_search_knowledge_base(
         self,
@@ -443,6 +438,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 return
 
         tools = await self._resolve_knowledge_tools()
+        for event in self._tool_resolution_log_events():
+            yield event
         if not tools_include_named(tools, "search_knowledge_base"):
             yield {
                 "type": "error",

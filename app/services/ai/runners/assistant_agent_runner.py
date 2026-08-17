@@ -88,10 +88,14 @@ from app.services.ai.runtime.agentscope.workspace import (
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
-    apply_delegation_tool_filter,
     runtime_tool_spec_from_legacy_tool,
 )
 from app.services.ai.runtime.agentscope.tools import build_toolkit
+from app.services.ai.tool_capability import (
+    AgentScopeToolConsumer,
+    RegistryToolProvider,
+    resolve_tool_capabilities,
+)
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 from app.services.ai.time_anchor import filter_redundant_time_tools
 
@@ -780,6 +784,8 @@ class AssistantAgentRunner(BaseExecutor):
 
         # 1. Prepare LLM
         tools = await self._resolve_runtime_tools_from_config()
+        for event in self._tool_resolution_log_events():
+            yield event
 
         # 2. Build Messages
         system_content = self.config.system_prompt or ""
@@ -1358,7 +1364,7 @@ class AssistantAgentRunner(BaseExecutor):
         )
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(workspace, tools)
-        toolkit = build_toolkit(
+        toolkit = AgentScopeToolConsumer(builder=build_toolkit).consume_specs(
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
             loop_detector=loop_detector,
@@ -1871,21 +1877,22 @@ class AssistantAgentRunner(BaseExecutor):
 
     async def _resolve_runtime_tools_from_config(self) -> List[RuntimeToolSpec]:
         configured_tools = self.config.tools or []
-        tools: List[RuntimeToolSpec] = []
-        if configured_tools:
-            tools = await ToolRegistry.get_runtime_tools(configured_tools)
-
+        provider = RegistryToolProvider(
+            legacy_converter=runtime_tool_spec_from_legacy_tool,
+            evidence_attacher=ToolRegistry._attach_evidence_metadata,
+        )
         system_tools = list(ToolRegistry.get_system_implicit_tools())
         if is_main_general_agent(self.config):
-            sub_agent_tool = await ToolRegistry.get_tool("sub_agent_call")
+            sub_agent_tool = await provider.get_implicit_tool("sub_agent_call")
             if sub_agent_tool:
                 system_tools.append(sub_agent_tool)
-
-        if system_tools:
-            for tool in system_tools:
-                spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
-                tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
-        return apply_delegation_tool_filter(tools)
+        resolved = await resolve_tool_capabilities(
+            configured_tools,
+            implicit_tools=system_tools,
+            provider=provider,
+        )
+        self._last_tool_resolution = resolved
+        return list(resolved.specs)
 
     @staticmethod
     def _record_external_execution_evidence(

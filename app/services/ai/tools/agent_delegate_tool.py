@@ -174,20 +174,25 @@ def _put_subagent_lifecycle_log(
     status: str,
     details: str,
     started_at: int,
+    execution_time_ms: int | None = None,
 ) -> None:
     """Expose one compact delegation lifecycle event to the live thought card."""
     if not ctx.event_queue:
         return
-    ctx.event_queue.put_nowait({
+    display_name = metadata.get("display_name") or metadata.get("agent_name") or "子代理"
+    payload = {
         "type": "log",
         "id": log_id,
-        "title": "调用子代理",
+        "title": f"调用子代理: {display_name}",
         "details": details,
         "status": status,
         "category": "agent",
         "started_at": started_at,
         "subagent": dict(metadata),
-    })
+    }
+    if execution_time_ms is not None:
+        payload["execution_time_ms"] = execution_time_ms
+    ctx.event_queue.put_nowait(payload)
 
 
 def _normalize_agent_name(value: str | None) -> str:
@@ -1011,6 +1016,7 @@ async def sub_agent_call(
         status="success",
         details="子代理已完成委派任务。",
         started_at=lifecycle_started_at,
+        execution_time_ms=int(time.time() * 1000) - lifecycle_started_at,
     )
     logger.info(
         "[Delegation] target=%s status=%s chars=%s truncated=%s",
