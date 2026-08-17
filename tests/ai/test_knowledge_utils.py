@@ -14,6 +14,7 @@ from app.services.ai.knowledge_utils import (
     has_knowledge_context_in_messages,
     knowledge_prefetch_had_citations,
     merge_request_knowledge_dataset_ids,
+    resolve_bound_dataset_ids,
     resolve_knowledge_dataset_ids,
     resolve_rag_retrieval_params,
 )
@@ -33,6 +34,28 @@ def test_format_dataset_ids_for_tool():
     rid_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     assert format_dataset_ids_for_tool([rid_a]) == rid_a
     assert rid_a in format_dataset_ids_for_tool([rid_a, rid_b])
+
+
+def test_resolve_bound_dataset_ids_uses_merged_effective_context():
+    agent_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    user_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    set_agent_context(
+        AgentContext(
+            agent_id="kb",
+            agent_name="knowledge-base",
+            dataset_ids=[agent_id, user_id],
+            agent_dataset_ids=[agent_id],
+        )
+    )
+    try:
+        assert resolve_bound_dataset_ids() == [agent_id, user_id]
+    finally:
+        set_agent_context(
+            AgentContext(
+                agent_id="test-reset",
+                agent_name="test-reset",
+            )
+        )
 
 
 def test_format_knowledge_tool_log_display_before_truncation():

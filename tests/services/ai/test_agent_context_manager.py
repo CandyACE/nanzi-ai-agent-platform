@@ -117,8 +117,8 @@ async def test_setup_context_keeps_authorized_attachment_paths():
     assert ctx.current_turn_attachment_paths == ["/app/data/uploads/current.xlsx"]
 
 @pytest.mark.asyncio
-async def test_setup_context_fallback_user_permissions():
-    # 未显式选择时，智能体绑定知识库作为公开默认范围，不扩展到用户全部可访问知识库
+async def test_setup_context_merges_agent_binding_with_user_permissions():
+    # 未显式选择时，智能体绑定知识库与用户可访问知识库合并为检索范围
     config = ChatConfig(
         agent_id="test-agent",
         agent_name="Test Agent",
@@ -150,11 +150,15 @@ async def test_setup_context_fallback_user_permissions():
 
     ctx = get_current_agent_context()
     assert ctx is not None
-    # 不再扩展到用户全部可访问知识库，避免场景 Agent 被放大检索范围
-    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1}
+    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1, ID_USER_PERM_1, ID_USER_PERM_2}
     assert ctx.agent_dataset_ids == [ID_AGENT_BOUND_1]
     assert ctx.knowledge_dataset_ids == []
-    assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1}
+    assert set(config.engine_config.get("dataset_ids")) == {
+        ID_AGENT_BOUND_1,
+        ID_USER_PERM_1,
+        ID_USER_PERM_2,
+    }
+    mock_get.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -245,7 +249,7 @@ async def test_setup_context_preserves_agent_grant_across_reinitialization():
 
 @pytest.mark.asyncio
 async def test_setup_context_admin_user():
-    # 测试前端未传，管理员用户：智能体已有绑定时不再扩展到数据库全部知识库
+    # 测试前端未传，管理员用户：智能体绑定知识库与管理员可访问知识库合并
     config = ChatConfig(
         agent_id="test-agent",
         agent_name="Test Agent",
@@ -283,6 +287,11 @@ async def test_setup_context_admin_user():
 
     ctx = get_current_agent_context()
     assert ctx is not None
-    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1}
+    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1, ID_DB_ALL_1, ID_DB_ALL_2}
     assert ctx.knowledge_dataset_ids == []
-    assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1}
+    assert set(config.engine_config.get("dataset_ids")) == {
+        ID_AGENT_BOUND_1,
+        ID_DB_ALL_1,
+        ID_DB_ALL_2,
+    }
+    mock_get.assert_awaited_once()

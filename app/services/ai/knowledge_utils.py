@@ -399,6 +399,8 @@ def resolve_bound_dataset_ids(
         return explicit_ids
     if ctx and ctx.knowledge_dataset_ids:
         return list(ctx.knowledge_dataset_ids)
+    if ctx and ctx.dataset_ids:
+        return list(ctx.dataset_ids)
     if ctx and ctx.agent_dataset_ids:
         return list(ctx.agent_dataset_ids)
     return merge_dataset_id_sources(

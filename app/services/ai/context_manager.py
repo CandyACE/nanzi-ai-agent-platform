@@ -292,10 +292,8 @@ class AgentContextManager:
         if request_dataset_ids:
             # 用户显式选择是硬范围，不能被智能体默认知识库扩展。
             effective_dataset_ids = request_dataset_ids
-        elif configured_agent_dataset_ids:
-            # 智能体绑定知识库对该智能体用户默认开放，作为无显式选择时的范围。
-            effective_dataset_ids = configured_agent_dataset_ids
         else:
+            # 无显式选择时，智能体绑定知识库与当前用户可访问知识库合并。
             user_permitted_ids = []
             if u_id_val is not None:
                 from app.services.permission_service import PermissionService
@@ -315,7 +313,10 @@ class AgentContextManager:
                         user_permitted_ids = [row for row in rows if row]
                     else:
                         user_permitted_ids = list(access.get("accessible_ids") or [])
-            effective_dataset_ids = merge_dataset_id_sources(user_permitted_ids)
+            effective_dataset_ids = merge_dataset_id_sources(
+                configured_agent_dataset_ids,
+                user_permitted_ids,
+            )
 
         # Sync effective_dataset_ids back to config's engine_config to support context re-generation
         if config.engine_config is None:
