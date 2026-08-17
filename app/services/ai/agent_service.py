@@ -1626,6 +1626,32 @@ class AgentService:
                 id_msg = await self._build_user_context_msg(user_info)
                 user_profile = id_msg.get("content")
 
+            accessible_resources = (
+                getattr(turn_decision, "accessible_resources", None)
+                if early_turn_kind != "data_query"
+                else None
+            )
+            if early_turn_kind != "data_query" and not accessible_resources and user_info:
+                from app.services.ai.accessible_resource_catalog import (
+                    build_accessible_resource_catalog,
+                )
+
+                raw_resource_user_id = user_info.get("user_id") or user_info.get("id")
+                resource_user_id = None
+                if raw_resource_user_id is not None:
+                    try:
+                        resource_user_id = int(raw_resource_user_id)
+                    except (TypeError, ValueError):
+                        resource_user_id = None
+                accessible_resources = await build_accessible_resource_catalog(
+                    user_id=resource_user_id,
+                    user_name=(
+                        user_info.get("user_name")
+                        or user_info.get("username")
+                    ),
+                    is_admin=user_info.get("role") == "admin",
+                )
+
             # --- 主助手：动态专家清单 + sub_agent_call 通讯录 ---
             agent_system_prompt = agent_config.system_prompt
             sub_agents_context = None
@@ -1675,6 +1701,7 @@ class AgentService:
                     memory_recall_hint=memory_recall_hint,
                     preloaded_memories=preloaded_memories_text,
                     user_profile=user_profile,
+                    accessible_resources=accessible_resources,
                     cache_boundary_enabled=cache_boundary_enabled,
                     cache_reorder_enabled=cache_reorder_enabled,
                     sub_agents_context=sub_agents_context,

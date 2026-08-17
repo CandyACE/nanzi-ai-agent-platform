@@ -34,6 +34,7 @@ class PromptAssemblyInput:
     memory_recall_hint: Optional[str] = None
     preloaded_memories: Optional[str] = None
     user_profile: Optional[str] = None
+    accessible_resources: Optional[str] = None
     cache_boundary_enabled: bool = False
     cache_reorder_enabled: bool = False
     sub_agents_context: Optional[str] = None
@@ -140,6 +141,7 @@ def _build_stack_without_platform(params: PromptAssemblyInput) -> str:
     prompt = _prepend_block(prompt, params.ltm_profile)
     prompt = _prepend_block(prompt, params.memory_recall_hint)
     prompt = _prepend_block(prompt, params.preloaded_memories)
+    prompt = _prepend_block(prompt, params.accessible_resources)
     prompt = _prepend_block(prompt, params.user_profile)
     prompt = _prepend_block(
         prompt,
@@ -177,6 +179,7 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
         for index, (name, text) in enumerate(
             (
                 ("turn_decision", AgentServicePrompts.turn_decision_context(params.turn_decision)),
+                ("accessible_resources", params.accessible_resources),
                 ("preloaded_memories", params.preloaded_memories),
                 ("memory_recall", params.memory_recall_hint),
                 ("ltm_profile", params.ltm_profile),
@@ -203,6 +206,12 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
             source="router",
         ),
         PromptSection("user_profile", 20, params.user_profile, source="user_context"),
+        PromptSection(
+            "accessible_resources",
+            25,
+            params.accessible_resources,
+            source="resource_catalog",
+        ),
         PromptSection("preloaded_memories", 30, params.preloaded_memories, source="memory"),
         PromptSection("memory_recall", 40, params.memory_recall_hint, source="memory"),
         PromptSection("ltm_profile", 50, params.ltm_profile, source="memory"),

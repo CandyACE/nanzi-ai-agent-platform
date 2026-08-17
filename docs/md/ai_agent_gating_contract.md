@@ -42,6 +42,12 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 `TurnDecision` 只描述本轮路由意图，不授予权限。`route_status` 未解析、数据 capability 不匹配或数据资格未通过时，禁止进入 `DataQueryExecutor`；进入 ChatBI 后，`DataQueryTurnClassifier` 只负责数据域内部的新查询、追问、结果复用和结果动作分类。
 
+### 可访问资源摘要
+
+路由前由 `app/services/ai/accessible_resource_catalog.py` 按当前用户权限读取知识库和数据集的目录级名称及短描述，作为 RouterService 的 `accessible_resources_context` 动态提示词 Section。路由完成后，非 ChatBI 轮次将同一摘要传给 PromptAssembler 的 `accessible_resources` Section，位置在用户画像之后、记忆和技能之前。
+
+该摘要只用于来源判断和语义关联，不包含表结构、字段、指标、文档正文、知识库备注或负责人信息，也不替代 `search_knowledge_base`、数据工具和服务端权限校验。资源查询失败时只移除提示摘要，不能因此放宽任何访问权限。
+
 ## 门控矩阵
 
 | Agent 类型 | 路由/意图门控 | 工具权限门控 | 外部执行挂起 | 数据/知识真实性门控 | SQL 安全门控 | 输出安全/反幻觉 | 中断恢复 | 当前契约状态 |

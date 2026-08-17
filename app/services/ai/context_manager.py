@@ -96,10 +96,12 @@ class AgentContextManager:
                         )
                 route_user_id = None
                 route_is_admin = False
+                route_user_name = None
                 if user_info:
                     raw_user_id = user_info.get("user_id") or user_info.get("id")
                     route_user_id = int(raw_user_id) if raw_user_id else None
                     route_is_admin = user_info.get("role") == "admin"
+                    route_user_name = user_info.get("user_name") or user_info.get("username")
 
                 # Routing Logic
                 # Extract last user message and history for routing
@@ -127,6 +129,7 @@ class AgentContextManager:
                         user_id=route_user_id,
                         is_admin=route_is_admin,
                         last_agent_name=last_agent_name,
+                        user_name=route_user_name,
                     )
                     route_details = route_result
 

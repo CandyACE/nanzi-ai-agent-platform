@@ -257,3 +257,25 @@ def test_prompt_includes_normalized_turn_context_without_replacing_agent_prompt(
     assert assembled.full_text.index("本轮执行上下文") < assembled.full_text.index("Agent DB prompt")
     assert "turn_decision" in assembled.section_names
     assert assembled.section_char_counts["turn_decision"] > 0
+
+
+def test_prompt_includes_accessible_resources_as_a_separate_dynamic_section():
+    assembled = assemble_system_prompt(
+        _params(
+            user_profile="<USER_PROFILE>\n- Account Name: alice\n</USER_PROFILE>",
+            accessible_resources=(
+                "## 当前用户可访问的内部资源摘要\n"
+                "### 知识库\n"
+                "- 蔚来汽车手册：辅助驾驶和车辆使用说明"
+            ),
+        )
+    )
+
+    assert "蔚来汽车手册" in assembled.full_text
+    assert assembled.section_names.index("user_profile") < assembled.section_names.index(
+        "accessible_resources"
+    )
+    assert assembled.section_names.index("accessible_resources") < assembled.section_names.index(
+        "agent_system_prompt"
+    )
+    assert assembled.section_char_counts["accessible_resources"] > 0

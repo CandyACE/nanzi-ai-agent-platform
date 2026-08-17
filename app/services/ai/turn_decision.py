@@ -124,6 +124,7 @@ class TurnDecision(BaseModel):
     chatbi_evidence_level: str = "none"
     chatbi_reason: Optional[str] = None
     matched_dataset_ids: list[int] = Field(default_factory=list)
+    accessible_resources: Optional[str] = None
     turn_labels: list[str] = Field(default_factory=list)
     relation_to_previous: str = "unknown"
     user_action_type: str = "unknown"
