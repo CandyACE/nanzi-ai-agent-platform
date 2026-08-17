@@ -91,6 +91,7 @@ import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vu
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
+import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
 import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
 import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
@@ -4535,7 +4536,7 @@ onUnmounted(() => {
 
               <!-- Agent Message Bubble (Unified Card Style) -->
               <div
-                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || msg.content || msg.reasoningContent || msg.processNarration || msg.processNarrationPending || msg.isThinking || (msg.citations && msg.citations.length > 0)"
+                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || (msg.processTimeline && msg.processTimeline.length > 0) || msg.content || msg.reasoningContent || msg.processNarration || msg.processNarrationPending || msg.isThinking || (msg.citations && msg.citations.length > 0)"
                 :class="msg.content || (msg.citations && msg.citations.length) || msg.chatbiInsight
                   ? 'bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-900/20 dark:to-gray-800 rounded-2xl rounded-tl-none border border-gray-200 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 shadow-sm p-4 overflow-hidden'
                   : 'overflow-visible bg-transparent'"
@@ -4555,6 +4556,7 @@ onUnmounted(() => {
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 bordered
               />
+              <ChatTodoCard :timeline="msg.processTimeline" />
 
               <!-- Tool Permission Confirmation -->
               <div

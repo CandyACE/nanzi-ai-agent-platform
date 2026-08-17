@@ -77,6 +77,15 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="no",
         nudge_mode="explicit",
     ),
+    "todo_write": ToolMetadata(
+        capability="task_planning",
+        source="platform_control",
+        freshness="current_turn",
+        side_effect="session_state",
+        confirmation="none",
+        idempotent="yes",
+        nudge_mode="explicit",
+    ),
     "memory_search": ToolMetadata(
         capability="memory_search",
         source="conversation_context",

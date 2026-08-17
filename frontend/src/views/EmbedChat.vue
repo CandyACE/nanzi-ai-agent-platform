@@ -566,7 +566,7 @@
               :class="[
                 `markdown-theme-${config.markdownTheme || 'default'}`,
                 { 'message-borderless': config.hideMessageBorder },
-                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation || msg.userQuestion
+                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation || msg.userQuestion || (msg.processTimeline && msg.processTimeline.length > 0)
                   ? [
                       'px-4 py-3 rounded-2xl rounded-tl-sm shadow-none border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 min-h-[46px]',
                       msg.isThinking
@@ -591,6 +591,7 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 dark-mode
               />
+              <ChatTodoCard :timeline="msg.processTimeline" />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -1937,6 +1938,7 @@ import ConfirmModal from "@/components/ConfirmModal.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
+import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";

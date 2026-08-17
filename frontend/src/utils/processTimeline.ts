@@ -2,6 +2,7 @@ import type { SubagentTraceMeta } from "./subagentTrace";
 
 export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning";
 export type ToolResolutionStatus = "disabled" | "missing" | "filtered";
+export type ProcessTimelineTodoStatus = "pending" | "in_progress" | "completed";
 
 export type ProcessTimelineTextItem = {
   kind: "text";
@@ -37,13 +38,29 @@ export type ProcessTimelineLogItem = {
   childrenExpanded?: boolean;
 };
 
-export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem;
+export type ProcessTimelineTodo = {
+  content: string;
+  status: ProcessTimelineTodoStatus;
+};
+
+export type ProcessTimelineTodoItem = {
+  kind: "todo";
+  id: string;
+  title: string;
+  todos: ProcessTimelineTodo[];
+  counts: Record<ProcessTimelineTodoStatus, number>;
+};
+
+export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem | ProcessTimelineTodoItem;
 
 export function timelineHasPending(items: ProcessTimelineItem[] | undefined): boolean {
   return (items || []).some((item) => {
     if (item.kind === "log") {
       if (item.status === "pending") return true;
       return (item.children || []).some((child) => child.status === "pending");
+    }
+    if (item.kind === "todo") {
+      return item.todos.some((todo) => todo.status === "pending" || todo.status === "in_progress");
     }
     if (item.pending) return true;
     return (item.children || []).some((child) => {
@@ -70,6 +87,11 @@ export function resolveTimelineCurrentStep(
       if (pendingSub) return `${pendingSub.title} · 进行中`;
       if (item.status === "pending") return `${item.title} · 进行中`;
     }
+    if (item.kind === "todo") {
+      const current = item.todos.find((todo) => todo.status === "in_progress")
+        || item.todos.find((todo) => todo.status === "pending");
+      if (current) return `${current.content} · 进行中`;
+    }
     if (item.kind === "text" && item.pending && item.content.trim()) {
       const pendingChild = [...(item.children || [])].reverse().find((child) => child.status === "pending");
       if (pendingChild) {
@@ -94,6 +116,64 @@ export function resolveTimelineCurrentStep(
 export type ProcessTimelineTarget = {
   processTimeline?: ProcessTimelineItem[];
 };
+
+function normalizeTodoItems(rawTodos: unknown): ProcessTimelineTodo[] | undefined {
+  if (!Array.isArray(rawTodos)) return undefined;
+  const seen = new Set<string>();
+  const todos: ProcessTimelineTodo[] = [];
+  for (const rawTodo of rawTodos) {
+    if (!rawTodo || typeof rawTodo !== "object") return undefined;
+    const content = String((rawTodo as { content?: unknown }).content || "").trim();
+    const status = (rawTodo as { status?: unknown }).status;
+    if (!content || (status !== "pending" && status !== "in_progress" && status !== "completed")) {
+      return undefined;
+    }
+    if (seen.has(content)) return undefined;
+    seen.add(content);
+    todos.push({ content, status });
+  }
+  return todos;
+}
+
+function todoCounts(todos: ProcessTimelineTodo[]): Record<ProcessTimelineTodoStatus, number> {
+  return {
+    pending: todos.filter((todo) => todo.status === "pending").length,
+    in_progress: todos.filter((todo) => todo.status === "in_progress").length,
+    completed: todos.filter((todo) => todo.status === "completed").length,
+  };
+}
+
+/** Replace the current main-agent checklist while keeping it as a timeline sibling. */
+export function upsertTimelineTodo(
+  target: ProcessTimelineTarget,
+  data: { todos: unknown; title?: unknown },
+): void {
+  const todos = normalizeTodoItems(data.todos);
+  if (!todos) return;
+  if (!target.processTimeline) target.processTimeline = [];
+  const items = target.processTimeline;
+  const indexes = items
+    .map((item, index) => item.kind === "todo" ? index : -1)
+    .filter((index) => index >= 0);
+  if (!todos.length) {
+    for (const index of indexes.reverse()) items.splice(index, 1);
+    return;
+  }
+
+  const todo: ProcessTimelineTodoItem = {
+    kind: "todo",
+    id: "todo_current",
+    title: String(data.title || "任务清单"),
+    todos,
+    counts: todoCounts(todos),
+  };
+  if (indexes.length) {
+    items[indexes[0]] = todo;
+    for (const index of indexes.slice(1).reverse()) items.splice(index, 1);
+    return;
+  }
+  items.push(todo);
+}
 
 let textSequence = 0;
 
@@ -634,7 +714,7 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
       continue;
     }
 
-    if (isContainer(item)) {
+    if (item.kind === "log" && isContainer(item)) {
       if (activeContainer) {
         activeContainer.execution_time_ms = item.execution_time_ms || activeContainer.execution_time_ms;
         activeContainer.status = item.status || activeContainer.status;
@@ -655,7 +735,7 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
       continue;
     }
 
-    if (isInnerSubagentStep(item)) {
+    if (item.kind === "log" && isInnerSubagentStep(item)) {
       if (activeContainer) {
         activeContainer.children ||= [];
         activeContainer.children.push(item);
@@ -701,8 +781,19 @@ export function hydrateHistoryProcessTimeline(
         children: (item.children || []).map(mapLog),
       };
     }
+    if (item.kind === "todo") {
+      const todos = normalizeTodoItems(item.todos);
+      if (!todos?.length) return null;
+      return {
+        kind: "todo",
+        id: item.id || "todo_current",
+        title: item.title || "任务清单",
+        todos,
+        counts: todoCounts(todos),
+      } satisfies ProcessTimelineTodoItem;
+    }
     return mapLog(item);
-  });
+  }).filter((item): item is ProcessTimelineItem => item !== null);
 
   const items = reorganizeSubagentItems(rawItems);
 

@@ -125,6 +125,7 @@ class AgentServicePrompts:
         "ask_user_question": "缺少关键输入或存在业务分支时，向用户展示选项提问并等待【用户回答】回执",
         "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
         "sub_agent_batch_call": "并行委派多个彼此独立的子智能体任务，并按请求顺序返回结果",
+        "todo_write": "记录和更新多步骤任务的结构化执行清单",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
         "search_knowledge_base": "知识库文档检索",
@@ -342,6 +343,7 @@ class AgentServicePrompts:
                 if is_main_general_agent(agent_config):
                     tool_names.add("sub_agent_call")
                     tool_names.add("sub_agent_batch_call")
+                    tool_names.add("todo_write")
             except Exception:
                 pass
 
@@ -415,6 +417,9 @@ class AgentServicePrompts:
 
         if "sub_agent_batch_call" in tool_names:
             table_rows.append("| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |")
+
+        if "todo_write" in tool_names:
+            table_rows.append("| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |")
 
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")

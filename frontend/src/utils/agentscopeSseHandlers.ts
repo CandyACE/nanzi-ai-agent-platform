@@ -19,6 +19,7 @@ import {
   normalizeProcessNarrationText,
   promoteTimelineNarration,
   upsertTimelineLog,
+  upsertTimelineTodo,
   type ProcessTimelineItem,
 } from "./processTimeline";
 import {
@@ -644,6 +645,16 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
   });
 }
 
+export function syncProcessTimelineTodo<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+): void {
+  upsertTimelineTodo(msg, {
+    todos: data.todos,
+    title: data.title,
+  });
+}
+
 export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
@@ -782,6 +793,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
         finishTimelineReasoning(msg);
       }
       if (data.status === "continuing" && !assistantBodyHasStarted(msg)) msg.isThinking = true;
+      return true;
+    case "todo_update":
+      syncProcessTimelineTodo(msg, data);
       return true;
     case "reasoning_content": {
       const reasoningDelta = String(data.content || "");

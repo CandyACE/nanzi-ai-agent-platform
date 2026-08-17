@@ -106,6 +106,81 @@ def test_sub_agent_call_nudge_for_data_query():
     assert "`finance-expense`" in nudge.message
 
 
+def test_multi_step_request_prioritizes_todo_write_before_semantic_data_delegation():
+    tools = [
+        _tool("todo_write", "记录和更新多步骤任务的结构化执行清单"),
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "请先查询销售数据集，再按区域汇总，最后生成一份 Excel 报告",
+        tools,
+        available_sub_agent_names={"chat-bi"},
+        sub_agent_candidates_by_capability={"data_query": ["chat-bi"]},
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.94,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "todo_write"
+    assert nudge.should_force_first_call is True
+    assert "todo_write" in nudge.message
+    assert "继续执行" in nudge.message
+
+
+def test_single_step_data_query_still_prioritizes_sub_agent_call():
+    tools = [
+        _tool("todo_write", "记录和更新多步骤任务的结构化执行清单"),
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "帮我查一下设备资产列表",
+        tools,
+        available_sub_agent_names={"chat-bi"},
+        sub_agent_candidates_by_capability={"data_query": ["chat-bi"]},
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.94,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+
+
+def test_generic_multi_step_request_prioritizes_todo_write_without_data_intent():
+    tools = [
+        _tool("todo_write", "记录和更新多步骤任务的结构化执行清单"),
+        _tool("Read", "读取文件内容"),
+        _tool("Bash", "执行命令并运行测试"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "先读取 README，再修改配置，最后运行测试",
+        tools,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "todo_write"
+    assert nudge.should_force_first_call is True
+
+
+def test_explicit_sub_agent_request_keeps_priority_over_todo_write():
+    tools = [
+        _tool("todo_write", "记录和更新多步骤任务的结构化执行清单"),
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "先调用 chat-bi 查询销售数据，再生成 Excel 报告",
+        tools,
+        available_sub_agent_names={"chat-bi"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+    assert "agent_name='chat-bi'" in nudge.message
+
+
 def test_current_user_profile_nudge_precedes_data_sub_agent():
     tools = [
         _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
@@ -706,3 +781,80 @@ def test_tool_nudge_attaches_neutral_or_registered_metadata():
     assert nudge is not None
     assert nudge.metadata is not None
     assert nudge.metadata.capability == "unknown"
+
+
+def test_explicit_multi_sub_agents_nudges_batch_call():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("sub_agent_batch_call", "并行委派 1-4 个彼此独立的子智能体任务"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "调用 chat-bi 和 knowledge-base 子代理查一下设备和手册",
+        tools,
+        available_sub_agent_names={"chat-bi", "knowledge-base"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_batch_call"
+    assert nudge.score == 1.0
+    assert nudge.should_force_first_call is True
+    assert "'chat-bi'" in nudge.message
+    assert "'knowledge-base'" in nudge.message
+    assert "sub_agent_batch_call" in nudge.message
+
+
+def test_parallel_keyword_with_sub_agents_nudges_batch_call():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("sub_agent_batch_call", "并行委派 1-4 个彼此独立的子智能体任务"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "你并行同时调用一下知识库和数据查询智能体呢",
+        tools,
+        available_sub_agent_names={"知识库", "数据查询"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_batch_call"
+    assert nudge.score == 1.0
+    assert nudge.should_force_first_call is True
+    assert "'知识库'" in nudge.message
+    assert "'数据查询'" in nudge.message
+
+
+def test_single_sub_agent_with_parallel_keyword_nudges_batch_call():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("sub_agent_batch_call", "并行委派 1-4 个彼此独立的子智能体任务"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "并行调用知识库助手",
+        tools,
+        available_sub_agent_names={"知识库助手"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_batch_call"
+    assert nudge.score == 1.0
+    assert nudge.should_force_first_call is True
+    assert "'知识库助手'" in nudge.message
+
+
+def test_multi_sub_agents_fallback_to_single_when_batch_tool_missing():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "调用 chat-bi 和 knowledge-base 子代理",
+        tools,
+        available_sub_agent_names={"chat-bi", "knowledge-base"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+    assert nudge.score == 1.0
+    assert "agent_name='chat-bi'" in nudge.message

@@ -128,6 +128,49 @@ return { consumed, content: msg.content, isThinking: msg.isThinking };
     }
 
 
+def test_agentscope_stream_dispatcher_keeps_todo_as_a_timeline_sibling():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [] };
+const consumed = api.dispatchAgentscopeStreamEvent(
+  msg,
+  { type: 'todo_update', todos: [
+    { content: '检索知识库', status: 'in_progress' },
+    { content: '整理答案', status: 'pending' },
+  ] },
+  () => {}
+);
+return {
+  consumed,
+  kinds: msg.processTimeline.map(item => item.kind),
+  todo: msg.processTimeline[0],
+};
+""",
+    )
+
+    assert result["consumed"] is True
+    assert result["kinds"] == ["todo"]
+    assert result["todo"]["counts"] == {"pending": 1, "in_progress": 1, "completed": 0}
+
+
+def test_agentscope_stream_dispatcher_clears_todo_card_on_empty_update():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [] };
+api.dispatchAgentscopeStreamEvent(msg, {
+  type: 'todo_update',
+  todos: [{ content: '执行任务', status: 'in_progress' }],
+}, () => {});
+api.dispatchAgentscopeStreamEvent(msg, { type: 'todo_update', todos: [] }, () => {});
+return msg.processTimeline;
+""",
+    )
+
+    assert result == []
+
+
 def test_process_narration_handler_is_shared_across_chat_surfaces():
     handlers = (ROOT / "frontend/src/utils/agentscopeSseHandlers.ts").read_text(encoding="utf-8")
     embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
@@ -182,6 +225,30 @@ def test_process_narration_handler_is_shared_across_chat_surfaces():
     assert "shrink-0 truncate rounded-full border border-purple-100 bg-purple-50" in (
         ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue"
     ).read_text(encoding="utf-8")
+
+
+def test_todo_card_follows_thought_timeline_on_both_chat_surfaces():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    for source in (embed, debug):
+        timeline_at = source.find("<ChatExecutionTimeline")
+        todo_at = source.find("<ChatTodoCard")
+        assert timeline_at >= 0
+        assert todo_at > timeline_at
+
+
+def test_todo_card_supports_collapse_close_and_auto_collapse_when_completed():
+    source = (ROOT / "frontend/src/components/chat/ChatTodoCard.vue").read_text(encoding="utf-8")
+
+    assert "ref(true)" in source
+    assert "aria-expanded" in source
+    assert "折叠任务清单" in source
+    assert "展开任务清单" in source
+    assert "关闭任务清单" in source
+    assert "watch(" in source
+    assert "  todo," in source
+    assert "next.counts.completed === next.todos.length" in source
 
 
 def test_embed_chat_treats_every_parsed_sse_event_as_stream_activity():

@@ -1,9 +1,77 @@
 import assert from "node:assert/strict";
 import {
   hydrateHistoryProcessTimeline,
+  timelineHasPending,
+  upsertTimelineTodo,
   upsertTimelineLog,
   type ProcessTimelineTarget,
 } from "../src/utils/processTimeline.ts";
+
+function testTodoTimelineSiblingAndReplacement() {
+  const target: ProcessTimelineTarget = {
+    processTimeline: [
+      {
+        kind: "text",
+        id: "narration_1",
+        textKind: "narration",
+        content: "开始执行",
+        pending: false,
+        children: [],
+      },
+    ],
+  };
+
+  upsertTimelineTodo(target, {
+    todos: [
+      { content: "检索知识库", status: "in_progress" },
+      { content: "整理答案", status: "pending" },
+    ],
+  });
+  assert.equal(target.processTimeline?.length, 2);
+  assert.equal(target.processTimeline?.[1].kind, "todo");
+  assert.equal(timelineHasPending(target.processTimeline), true);
+
+  upsertTimelineTodo(target, {
+    todos: [
+      { content: "检索知识库", status: "completed" },
+      { content: "整理答案", status: "in_progress" },
+    ],
+  });
+  assert.equal(target.processTimeline?.length, 2);
+  const todo = target.processTimeline?.[1];
+  assert.equal(todo?.kind, "todo");
+  assert.equal(todo?.todos[0].status, "completed");
+  assert.equal(todo?.todos[1].status, "in_progress");
+  assert.deepEqual(todo?.counts, { pending: 0, in_progress: 1, completed: 1 });
+
+  upsertTimelineTodo(target, { todos: [] });
+  assert.equal(target.processTimeline?.length, 1);
+  assert.equal(target.processTimeline?.[0].kind, "text");
+}
+
+function testTodoHistoryRemainsIndependent() {
+  const hydrated = hydrateHistoryProcessTimeline([
+    {
+      kind: "todo",
+      id: "todo_current",
+      title: "任务清单",
+      todos: [{ content: "生成报告", status: "completed" }],
+      counts: { pending: 0, in_progress: 0, completed: 1 },
+    },
+    {
+      kind: "text",
+      id: "narration_1",
+      textKind: "narration",
+      content: "已完成",
+      pending: false,
+    },
+  ]);
+
+  assert.equal(hydrated.length, 2);
+  assert.equal(hydrated[0].kind, "todo");
+  assert.equal(hydrated[1].kind, "text");
+  assert.equal(timelineHasPending(hydrated), false);
+}
 
 function testSubagentNesting() {
   const target: ProcessTimelineTarget = {
@@ -208,4 +276,5 @@ function testHydrateHistoryReorganization() {
 
 testSubagentNesting();
 testHydrateHistoryReorganization();
-
+testTodoTimelineSiblingAndReplacement();
+testTodoHistoryRemainsIndependent();

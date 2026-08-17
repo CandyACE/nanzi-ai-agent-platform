@@ -120,6 +120,17 @@ def test_platform_prompt_keeps_existing_sensitive_tool_confirmation():
     assert "不得声称已执行" in prompt
 
 
+def test_platform_prompt_guides_todo_for_multi_step_work():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names=["todo_write"],
+    )
+
+    assert "todo_write" in prompt
+    assert "多个执行步骤" in prompt
+    assert "单步问答、单次检索和单次查询不要调用" in prompt
+
+
 def test_platform_prompt_inventory_uses_effective_runtime_tool_names():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,

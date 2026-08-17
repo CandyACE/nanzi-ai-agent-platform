@@ -10,6 +10,7 @@
 - **不新增 LLM 调用**：相关度用字符级 bigram 重叠（无第三方分词依赖，中英通用）。
 - **门禁过滤**：问候 / 元操作 / 过短问题不促发；记忆类有专门的 memory_search 便签。
 - **命中至多一条**：取相关度最高的工具，避免 prompt 噪声与误触发。
+- **计划预检**：运行时存在 `todo_write` 时，结构化多步骤请求首轮优先写入任务清单，之后恢复正常工具选择。
 """
 from __future__ import annotations
 
@@ -99,6 +100,32 @@ def should_consider_tool_nudge(user_query: str) -> bool:
     if looks_like_greeting(query) or looks_like_meta_action(query):
         return False
     return True
+
+
+_MULTI_STEP_SEQUENCE_MARKERS = (
+    "首先", "先", "第一步", "然后", "再", "最后", "接着", "随后", "之后", "完成后",
+)
+_MULTI_STEP_CONNECTORS = ("并", "同时", "以及", "分别")
+_MULTI_STEP_OUTPUT_MARKERS = (
+    "生成", "导出", "保存", "报告", "文件", "excel", "word", "pdf", "markdown",
+)
+
+
+def _looks_like_multi_step_request(query: str) -> bool:
+    """识别带有多个动作的请求，不判断业务意图或具体工具。"""
+    normalized = _normalize(query)
+    sequence_count = sum(marker in normalized for marker in _MULTI_STEP_SEQUENCE_MARKERS)
+    if sequence_count >= 2:
+        return True
+
+    clauses = [part for part in re.split(r"[，,；;。.!！？?\n]+", normalized) if part]
+    if len(clauses) >= 3 and _contains_any(normalized, _MULTI_STEP_SEQUENCE_MARKERS):
+        return True
+
+    return (
+        _contains_any(normalized, _MULTI_STEP_CONNECTORS)
+        and _contains_any(normalized, _MULTI_STEP_OUTPUT_MARKERS)
+    )
 
 
 # 相关度 ≥ 该阈值时，hard 模式可直接强制调用「该具体工具」；介于 min 与此之间则强制
@@ -199,6 +226,10 @@ _EXPLICIT_SUB_AGENT_ACTION_TERMS = (
     "call", "delegate", "ask",
 )
 
+_BATCH_DELEGATION_TERMS = (
+    "并行", "同时", "分别", "批量", "一起", "concurrent", "batch", "parallel",
+)
+
 _SELF_AGENT_NAMES = frozenset({
     "main",
     "assistant",
@@ -233,37 +264,57 @@ def _contains_sub_agent_alias(query: str, alias: str) -> bool:
     return alias in query
 
 
-def _resolve_explicit_sub_agent_target(
+def _resolve_explicit_sub_agent_targets(
     query: str,
     available_sub_agent_names: Optional[Set[str]],
-) -> Optional[str]:
-    """用户点名某个可用子代理时，返回其规范名称。"""
+) -> List[str]:
+    """用户点名一个或多个可用子代理时，按其在 query 中的出现顺序返回规范名称列表。"""
     if not available_sub_agent_names:
-        return None
+        return []
 
     normalized_query = (query or "").strip().lower()
     if not _contains_any(normalized_query, _EXPLICIT_SUB_AGENT_ACTION_TERMS):
-        return None
+        return []
 
     query_variants = {
         normalized_query,
         normalized_query.replace("_", "-"),
         normalized_query.replace("-", "_"),
     }
+
+    matched_targets: List[tuple[int, str]] = []
+    seen: Set[str] = set()
+
     for candidate in sorted(available_sub_agent_names, key=lambda item: len(str(item)), reverse=True):
         canonical = str(candidate or "").strip()
-        if not canonical:
+        if not canonical or canonical in seen:
             continue
         if canonical.lower() in _SELF_AGENT_NAMES:
             continue
         aliases = _sub_agent_aliases(canonical)
-        if any(
-            _contains_sub_agent_alias(query_variant, alias)
-            for query_variant in query_variants
-            for alias in aliases
-        ):
-            return canonical
-    return None
+
+        min_pos = -1
+        for query_variant in query_variants:
+            for alias in aliases:
+                if _contains_sub_agent_alias(query_variant, alias):
+                    pos = query_variant.find(alias)
+                    if pos != -1 and (min_pos == -1 or pos < min_pos):
+                        min_pos = pos
+        if min_pos != -1:
+            matched_targets.append((min_pos, canonical))
+            seen.add(canonical)
+
+    matched_targets.sort(key=lambda x: x[0])
+    return [target for _, target in matched_targets]
+
+
+def _resolve_explicit_sub_agent_target(
+    query: str,
+    available_sub_agent_names: Optional[Set[str]],
+) -> Optional[str]:
+    """用户点名某个可用子代理时，返回其规范名称（兼容单目标）。"""
+    targets = _resolve_explicit_sub_agent_targets(query, available_sub_agent_names)
+    return targets[0] if targets else None
 
 
 def _build_explicit_sub_agent_message(target_agent_name: str) -> str:
@@ -273,6 +324,26 @@ def _build_explicit_sub_agent_message(target_agent_name: str) -> str:
         f"委派给该子代理处理，拿到结果后再回答；"
         f"不要改派给其他子代理，也不要在未调用工具前自行完成该任务；"
         f"若工具返回为空或失败，如实说明。"
+    )
+
+
+def _build_explicit_sub_agent_batch_message(targets: Sequence[str]) -> str:
+    target_names = "、".join(f"'{name}'" for name in targets)
+    calls_example = ", ".join(f'{{"agent_name": "{name}", "query": "..."}}' for name in targets) if targets else '{"agent_name": "...", "query": "..."}'
+    return (
+        f"【本轮工具优先】用户明确要求并行/批量调用子智能体 {target_names}。"
+        f"你必须优先调用 sub_agent_batch_call(calls=[{calls_example}]) "
+        f"并行委派给这些子智能体处理，按顺序收集结果后再回答；"
+        f"不要串行逐个调用，也不要在未调用工具前自行完成该任务；"
+        f"若部分或全部子智能体返回为空或失败，如实说明。"
+    )
+
+
+def _build_todo_write_message() -> str:
+    return (
+        "【本轮工具优先】用户请求包含多个连续步骤。"
+        "请先调用 todo_write 写入完整、可执行的任务清单，再继续调用后续工具或子代理完成清单中的步骤；"
+        "todo_write 返回后必须继续执行，不要只输出计划，也不要把任务清单当作最终答案。"
     )
 
 
@@ -475,21 +546,47 @@ def resolve_tool_nudge(
         for capability, raw in sub_agent_targets_by_capability.items():
             capability_candidates.setdefault(str(capability), raw)
 
-    # 特殊规则：对于强查数或强知识库检索意图，若绑定了 sub_agent_call，优先做静默子代理委派
+    # 特殊规则：对于显式点名子代理或多子代理批量委派
     sub_agent_tool = next((t for t in (tools or []) if getattr(t, "name", "") == "sub_agent_call"), None)
-    if sub_agent_tool:
-        explicit_sub_agent = _resolve_explicit_sub_agent_target(query, available_sub_agent_names)
-        if explicit_sub_agent:
+    batch_sub_agent_tool = next((t for t in (tools or []) if getattr(t, "name", "") == "sub_agent_batch_call"), None)
+    if sub_agent_tool or batch_sub_agent_tool:
+        explicit_sub_agents = _resolve_explicit_sub_agent_targets(query, available_sub_agent_names)
+        has_batch_terms = _contains_any((query or "").strip().lower(), _BATCH_DELEGATION_TERMS)
+        if (len(explicit_sub_agents) >= 2 or (len(explicit_sub_agents) >= 1 and has_batch_terms)) and batch_sub_agent_tool:
+            return ToolNudge(
+                tool_name="sub_agent_batch_call",
+                score=1.0,
+                message=_build_explicit_sub_agent_batch_message(explicit_sub_agents),
+                force_first_call=True,
+                metadata=resolve_tool_metadata(
+                    batch_sub_agent_tool,
+                    metadata_by_name=tool_metadata,
+                ),
+            )
+        elif explicit_sub_agents and sub_agent_tool:
             return ToolNudge(
                 tool_name="sub_agent_call",
                 score=1.0,
-                message=_build_explicit_sub_agent_message(explicit_sub_agent),
+                message=_build_explicit_sub_agent_message(explicit_sub_agents[0]),
                 force_first_call=True,
                 metadata=resolve_tool_metadata(
                     sub_agent_tool,
                     metadata_by_name=tool_metadata,
                 ),
             )
+
+    todo_tool = next((t for t in (tools or []) if getattr(t, "name", "") == "todo_write"), None)
+    if todo_tool is not None and _looks_like_multi_step_request(query):
+        return ToolNudge(
+            tool_name="todo_write",
+            score=1.0,
+            message=_build_todo_write_message(),
+            force_first_call=True,
+            metadata=resolve_tool_metadata(
+                todo_tool,
+                metadata_by_name=tool_metadata,
+            ),
+        )
 
     current_user_profile_nudge = _resolve_current_user_profile_nudge(query, tools)
     if current_user_profile_nudge is not None:
@@ -581,6 +678,7 @@ def resolve_tool_nudge(
 
     excluded = set(_NUDGE_EXCLUDED_TOOLS)
     excluded.add("sub_agent_call")
+    excluded.add("sub_agent_batch_call")
     if exclude_tools:
         excluded |= {str(name) for name in exclude_tools}
 

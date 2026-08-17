@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 DETAILS_MAX_CHARS = 2000
+TODO_STATUSES = {"pending", "in_progress", "completed"}
 
 
 def _normalize_text(text: str, trim_boundary: bool = False) -> str:
@@ -159,12 +160,66 @@ def _format_duration_ms(duration_ms: Any) -> str:
     return str(int(round(value)))
 
 
+def _normalize_todo_update(chunk: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    raw_todos = chunk.get("todos")
+    if not isinstance(raw_todos, list):
+        return None
+
+    todos: List[Dict[str, str]] = []
+    seen = set()
+    for raw_todo in raw_todos:
+        if not isinstance(raw_todo, dict):
+            return None
+        content = raw_todo.get("content")
+        status = raw_todo.get("status")
+        if not isinstance(content, str) or not content.strip() or status not in TODO_STATUSES:
+            return None
+        normalized_content = content.strip()
+        if normalized_content in seen:
+            return None
+        seen.add(normalized_content)
+        todos.append({"content": normalized_content, "status": status})
+
+    counts = {status: sum(todo["status"] == status for todo in todos) for status in TODO_STATUSES}
+    return {"todos": todos, "counts": counts}
+
+
+def _apply_todo_update(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
+    normalized = _normalize_todo_update(chunk)
+    if normalized is None:
+        return
+
+    todo_indexes = [index for index, item in enumerate(state) if item.get("kind") == "todo"]
+    if not normalized["todos"]:
+        for index in reversed(todo_indexes):
+            state.pop(index)
+        return
+
+    todo_item = {
+        "kind": "todo",
+        "id": "todo_current",
+        "title": "任务清单",
+        "todos": normalized["todos"],
+        "counts": normalized["counts"],
+    }
+    if todo_indexes:
+        state[todo_indexes[0]] = todo_item
+        for index in reversed(todo_indexes[1:]):
+            state.pop(index)
+        return
+    state.append(todo_item)
+
+
 def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
     """Mutate ``state`` with one user-visible thinking-card event."""
     if not isinstance(chunk, dict):
         return
     event_type = str(chunk.get("type") or "")
     source_id = _source_id(chunk)
+
+    if event_type == "todo_update":
+        _apply_todo_update(state, chunk)
+        return
 
     if event_type == "process_narration":
         piece = str(chunk.get("content") or "")
@@ -400,6 +455,18 @@ def finalize_process_timeline(state: Optional[List[Dict[str, Any]]]) -> Optional
             if copied.get("status") == "pending" and copied.get("category") == "model":
                 copied["status"] = "success"
             items.append(copied)
+            continue
+        if item.get("kind") == "todo":
+            normalized = _normalize_todo_update(item)
+            if normalized is None or not normalized["todos"]:
+                continue
+            items.append({
+                "kind": "todo",
+                "id": item.get("id") or "todo_current",
+                "title": str(item.get("title") or "任务清单"),
+                "todos": normalized["todos"],
+                "counts": normalized["counts"],
+            })
             continue
         if item.get("kind") != "text":
             continue

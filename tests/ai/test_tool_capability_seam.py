@@ -85,6 +85,32 @@ async def test_registry_provider_resolves_batch_delegation_tool():
 
 
 @pytest.mark.asyncio
+async def test_registry_provider_resolves_todo_tool():
+    from app.services.ai.tool_capability import RegistryToolProvider
+
+    class LegacyTool:
+        name = "todo_write"
+        description = "task list"
+        is_read_only = True
+
+    class FakeRegistry:
+        @classmethod
+        async def get_tool(cls, name):
+            assert name == "todo_write"
+            return LegacyTool()
+
+        @staticmethod
+        def _attach_evidence_metadata(name, spec):
+            return spec
+
+    provider = RegistryToolProvider(registry=FakeRegistry)
+
+    tool = await provider.get_implicit_tool("todo_write")
+
+    assert tool.name == "todo_write"
+
+
+@pytest.mark.asyncio
 async def test_assistant_resolves_main_subagent_through_provider(monkeypatch):
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 
@@ -110,8 +136,15 @@ async def test_assistant_resolves_main_subagent_through_provider(monkeypatch):
     class BatchLegacyTool(LegacyTool):
         name = "sub_agent_batch_call"
 
+    class TodoLegacyTool(LegacyTool):
+        name = "todo_write"
+
     async def lookup(name):
-        return LegacyTool() if name == "sub_agent_call" else BatchLegacyTool()
+        if name == "sub_agent_call":
+            return LegacyTool()
+        if name == "sub_agent_batch_call":
+            return BatchLegacyTool()
+        return TodoLegacyTool()
 
     provider_lookup = AsyncMock(side_effect=lookup)
 
@@ -138,8 +171,13 @@ async def test_assistant_resolves_main_subagent_through_provider(monkeypatch):
     assert [call.args[0] for call in provider_lookup.await_args_list] == [
         "sub_agent_call",
         "sub_agent_batch_call",
+        "todo_write",
     ]
-    assert [tool.name for tool in tools] == ["sub_agent_call", "sub_agent_batch_call"]
+    assert [tool.name for tool in tools] == [
+        "sub_agent_call",
+        "sub_agent_batch_call",
+        "todo_write",
+    ]
 
 
 @pytest.mark.asyncio

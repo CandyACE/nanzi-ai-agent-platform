@@ -325,9 +325,9 @@ const props = withDefaults(defineProps<{
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 
-const items = computed(() => props.timeline.length
+const items = computed(() => (props.timeline.length
   ? mergeTimelineLogs(props.timeline, props.logs)
-  : buildLegacyProcessTimeline(props));
+  : buildLegacyProcessTimeline(props)).filter((item) => item.kind !== "todo"));
 
 const hasPending = computed(() => timelineHasPending(items.value));
 

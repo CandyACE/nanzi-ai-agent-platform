@@ -83,6 +83,7 @@ READ_ONLY_TOOL_NAMES = {
     "system_http_request",
     "sub_agent_call",
     "sub_agent_batch_call",
+    "todo_write",
 }
 NATIVE_TOOL_EVIDENCE_TYPES = {
     "Bash": frozenset({EvidenceType.RUNTIME_STATE}),

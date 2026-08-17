@@ -141,6 +141,70 @@ def test_model_call_start_and_end_merge_into_one_timeline_step():
     assert items[1]["textKind"] == "narration"
 
 
+def test_todo_update_keeps_only_the_latest_complete_checklist():
+    items = _run(
+        [
+            {
+                "type": "todo_update",
+                "todos": [
+                    {"content": "检索知识库", "status": "in_progress"},
+                    {"content": "整理答案", "status": "pending"},
+                ],
+                "counts": {"pending": 1, "in_progress": 1, "completed": 0},
+            },
+            {
+                "type": "todo_update",
+                "todos": [
+                    {"content": "检索知识库", "status": "completed"},
+                    {"content": "整理答案", "status": "in_progress"},
+                ],
+                "counts": {"pending": 0, "in_progress": 1, "completed": 1},
+            },
+        ]
+    )
+
+    todo_items = [item for item in items if item.get("kind") == "todo"]
+    assert len(todo_items) == 1
+    assert todo_items[0]["todos"][0]["status"] == "completed"
+    assert todo_items[0]["todos"][1]["status"] == "in_progress"
+    assert todo_items[0]["counts"] == {"pending": 0, "in_progress": 1, "completed": 1}
+
+
+def test_empty_todo_update_removes_the_current_checklist():
+    items = _run(
+        [
+            {
+                "type": "todo_update",
+                "todos": [{"content": "检索知识库", "status": "in_progress"}],
+                "counts": {"pending": 0, "in_progress": 1, "completed": 0},
+            },
+            {"type": "todo_update", "todos": [], "counts": {"pending": 0, "in_progress": 0, "completed": 0}},
+        ]
+    )
+
+    assert items is None
+
+
+def test_malformed_todo_update_does_not_corrupt_other_timeline_items():
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "tool_1",
+                "title": "调用工具: search_knowledge_base",
+                "details": "ok",
+                "status": "success",
+                "category": "tool",
+            },
+            {"type": "todo_update", "todos": [{"content": "缺少状态"}]},
+        ]
+    )
+
+    assert len(items) == 1
+    assert items[0]["kind"] == "log"
+    assert items[0]["title"] == "调用工具: search_knowledge_base"
+
+
 def test_history_persistence_contract_covers_redis_audit_and_api():
     from pathlib import Path
 
