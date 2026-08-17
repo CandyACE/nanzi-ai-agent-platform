@@ -55,8 +55,8 @@ const filters = ref({
 })
 
 const selectedId = ref<number | string | null>(null)
+const activeDetailTab = ref<'conversation' | 'trace'>('conversation')
 const replyViewMode = ref<'render' | 'source'>('render')
-const showTracePanel = ref(false)
 const traceDetail = ref<any>(null)
 const traceLoading = ref(false)
 const exporting = ref(false)
@@ -225,6 +225,18 @@ const formatStepPayload = (value: unknown) => {
   }
 }
 
+const formatStepTime = (iso?: string) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
 const fetchAllTurnsForExport = async (log: AgentExecutionHistory) => {
   const conversationId = log.conversation_id?.trim()
   if (!conversationId) {
@@ -305,7 +317,6 @@ const exportSession = async (log: AgentExecutionHistory) => {
 
 watch(selectedLog, (log) => {
   replyViewMode.value = 'render'
-  showTracePanel.value = false
   void loadTrace(log?.trace_id)
 })
 
@@ -605,7 +616,58 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5 space-y-4">
+          <!-- Detail Tabs Header -->
+          <div class="shrink-0 px-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/40">
+            <div class="flex items-center gap-6">
+              <button
+                type="button"
+                class="py-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5"
+                :class="activeDetailTab === 'conversation'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'"
+                @click="activeDetailTab = 'conversation'"
+              >
+                <ChatBubbleLeftRightIcon class="w-4 h-4" />
+                对话
+              </button>
+              <button
+                type="button"
+                class="py-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5"
+                :class="activeDetailTab === 'trace'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'"
+                @click="activeDetailTab = 'trace'"
+              >
+                <ClockIcon class="w-4 h-4" />
+                轨迹
+                <span
+                  v-if="traceDetail?.steps?.length"
+                  class="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none"
+                  :class="activeDetailTab === 'trace' ? 'bg-primary/10 text-primary' : 'bg-gray-200/80 text-gray-600'"
+                >
+                  {{ traceDetail.steps.length }}
+                </span>
+              </button>
+            </div>
+            <div v-if="activeDetailTab === 'trace' && selectedLog.trace_id" class="flex items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-primary transition-colors"
+                @click="loadTrace(selectedLog.trace_id)"
+                :disabled="traceLoading"
+                title="重新加载链路"
+              >
+                <ArrowPathIcon class="w-3.5 h-3.5" :class="{ 'animate-spin': traceLoading }" />
+                刷新链路
+              </button>
+            </div>
+          </div>
+
+          <!-- Tab 1: Conversation Content -->
+          <div
+            v-show="activeDetailTab === 'conversation'"
+            class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5 space-y-4"
+          >
             <!-- User query -->
             <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 relative group">
               <div class="flex items-center justify-between gap-2 mb-2">
@@ -675,108 +737,102 @@ onMounted(() => {
                 class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
               >{{ selectedLog.summary }}</pre>
             </div>
+          </div>
 
-            <!-- Trace panel -->
-            <div class="rounded-xl border border-gray-200 overflow-hidden">
-              <button
-                type="button"
-                class="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-50 transition-colors"
-                @click="showTracePanel = !showTracePanel"
+          <!-- Tab 2: Trace Content -->
+          <div
+            v-show="activeDetailTab === 'trace'"
+            class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5"
+          >
+            <div v-if="traceLoading" class="py-20 text-center text-sm text-gray-400">
+              <ArrowPathIcon class="w-6 h-6 animate-spin mx-auto mb-2 text-primary" />
+              正在加载执行链路...
+            </div>
+            <div
+              v-else-if="!traceDetail?.steps?.length"
+              class="py-16 text-center text-sm text-gray-400"
+            >
+              <ClockIcon class="w-8 h-8 text-gray-200 mx-auto mb-2" />
+              暂无执行链路数据
+            </div>
+            <div v-else class="relative space-y-8 pb-4 max-w-4xl mx-auto">
+              <div class="absolute left-[83px] top-2 bottom-2 w-0.5 bg-gray-100" />
+              <div
+                v-for="(step, idx) in traceDetail.steps"
+                :key="idx"
+                class="relative flex items-start"
               >
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-bold text-gray-700">执行链路</span>
-                  <span
-                    v-if="traceDetail?.steps?.length"
-                    class="text-[10px] font-mono text-gray-400"
-                  >{{ traceDetail.steps.length }} steps</span>
+                <!-- Step Timestamp (Left) -->
+                <div class="w-[72px] shrink-0 pt-0.5 text-right pr-2">
+                  <span class="text-[11px] font-mono font-medium text-gray-400 whitespace-nowrap">
+                    {{ formatStepTime(step.timestamp) || '-' }}
+                  </span>
                 </div>
-                <ChevronDownIcon
-                  class="w-4 h-4 text-gray-400 transition-transform"
-                  :class="{ 'rotate-180': showTracePanel }"
-                />
-              </button>
 
-              <div v-show="showTracePanel" class="border-t border-gray-100 p-4 bg-white">
-                <div v-if="traceLoading" class="py-10 text-center text-sm text-gray-400">
-                  <ArrowPathIcon class="w-5 h-5 animate-spin mx-auto mb-2 text-primary" />
-                  加载链路中...
-                </div>
-                <div
-                  v-else-if="!traceDetail?.steps?.length"
-                  class="py-8 text-center text-sm text-gray-400"
-                >
-                  暂无执行链路
-                </div>
-                <div v-else class="relative space-y-8 pb-2">
-                  <div class="absolute left-[11px] top-2 bottom-2 w-0.5 bg-gray-100" />
+                <!-- Node Dot (Center) -->
+                <div class="relative w-[22px] flex justify-center shrink-0 pt-1">
                   <div
-                    v-for="(step, idx) in traceDetail.steps"
-                    :key="idx"
-                    class="relative pl-10"
+                    class="w-3 h-3 rounded-full ring-4 ring-white border-2 bg-white z-10"
+                    :class="step.status === 'success' ? 'border-primary' : 'border-red-500'"
                   >
-                    <div class="absolute left-0 top-1 w-[22px] flex justify-center">
-                      <div
-                        class="w-3 h-3 rounded-full ring-4 ring-white border-2 bg-white z-10"
-                        :class="step.status === 'success' ? 'border-primary' : 'border-red-500'"
-                      >
-                        <div
-                          class="w-full h-full rounded-full scale-50"
-                          :class="step.status === 'success' ? 'bg-primary' : 'bg-red-500'"
-                        />
-                      </div>
-                    </div>
-                    <div class="space-y-3">
-                      <div class="flex items-center flex-wrap gap-2">
-                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                          Step {{ step.step_number ?? idx + 1 }}
-                        </span>
-                        <span
-                          class="px-2 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wider"
-                          :class="{
-                            'bg-blue-50 text-blue-600 border-blue-100': step.event_type === 'thought',
-                            'bg-amber-50 text-amber-600 border-amber-100': step.event_type === 'tool_call',
-                            'bg-green-50 text-green-600 border-green-100': step.event_type === 'tool_result' || step.event_type === 'final_answer',
-                            'bg-red-50 text-red-600 border-red-100': step.event_type === 'error',
-                            'bg-gray-50 text-gray-600 border-gray-200': !['thought', 'tool_call', 'tool_result', 'final_answer', 'error'].includes(step.event_type),
-                          }"
-                        >
-                          {{ step.event_type }}
-                        </span>
-                        <span
-                          v-if="step.execution_time_ms"
-                          class="text-[10px] text-gray-400 inline-flex items-center"
-                        >
-                          <ClockIcon class="w-3 h-3 mr-0.5" />
-                          {{ Number(step.execution_time_ms).toFixed(0) }}ms
-                        </span>
-                      </div>
+                    <div
+                      class="w-full h-full rounded-full scale-50"
+                      :class="step.status === 'success' ? 'bg-primary' : 'bg-red-500'"
+                    />
+                  </div>
+                </div>
 
-                      <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
-                        <div v-if="step.tool_name" class="text-xs font-bold text-gray-700">
-                          <code class="px-2 py-0.5 bg-white border border-gray-200 rounded-md font-mono text-primary text-[11px]">
-                            {{ step.tool_name }}
-                          </code>
-                        </div>
-                        <div v-if="step.tool_input">
-                          <label class="text-[9px] font-bold text-gray-400 uppercase mb-1.5 block tracking-wider">
-                            Params / Thought
-                          </label>
-                          <pre class="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed bg-white border border-gray-100 rounded-lg p-3 overflow-x-auto">{{ formatStepPayload(step.tool_input) }}</pre>
-                        </div>
-                        <div v-if="step.tool_output">
-                          <label class="text-[9px] font-bold text-gray-400 uppercase mb-1.5 block tracking-wider">
-                            Result / Answer
-                          </label>
-                          <pre class="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed bg-white border border-gray-100 rounded-lg p-3 overflow-x-auto">{{ formatStepPayload(step.tool_output) }}</pre>
-                        </div>
-                        <div
-                          v-if="step.error_message"
-                          class="flex items-start gap-2 bg-red-50/60 border border-red-100 rounded-lg p-3 text-red-600"
-                        >
-                          <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5" />
-                          <p class="text-[11px] font-medium leading-relaxed">{{ step.error_message }}</p>
-                        </div>
-                      </div>
+                <!-- Step Content (Right) -->
+                <div class="flex-1 min-w-0 pl-3 space-y-3">
+                  <div class="flex items-center flex-wrap gap-2">
+                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      Step {{ step.step_number ?? idx + 1 }}
+                    </span>
+                    <span
+                      class="px-2 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wider"
+                      :class="{
+                        'bg-blue-50 text-blue-600 border-blue-100': step.event_type === 'thought',
+                        'bg-amber-50 text-amber-600 border-amber-100': step.event_type === 'tool_call',
+                        'bg-green-50 text-green-600 border-green-100': step.event_type === 'tool_result' || step.event_type === 'final_answer',
+                        'bg-red-50 text-red-600 border-red-100': step.event_type === 'error',
+                        'bg-gray-50 text-gray-600 border-gray-200': !['thought', 'tool_call', 'tool_result', 'final_answer', 'error'].includes(step.event_type),
+                      }"
+                    >
+                      {{ step.event_type }}
+                    </span>
+                    <span
+                      v-if="step.execution_time_ms"
+                      class="text-[10px] text-gray-400 inline-flex items-center"
+                    >
+                      <ClockIcon class="w-3 h-3 mr-0.5" />
+                      {{ Number(step.execution_time_ms).toFixed(0) }}ms
+                    </span>
+                  </div>
+
+                  <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
+                    <div v-if="step.tool_name" class="text-xs font-bold text-gray-700">
+                      <code class="px-2 py-0.5 bg-white border border-gray-200 rounded-md font-mono text-primary text-[11px]">
+                        {{ step.tool_name }}
+                      </code>
+                    </div>
+                    <div v-if="step.tool_input">
+                      <label class="text-[9px] font-bold text-gray-400 uppercase mb-1.5 block tracking-wider">
+                        Params / Thought
+                      </label>
+                      <pre class="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed bg-white border border-gray-100 rounded-lg p-3 overflow-x-auto">{{ formatStepPayload(step.tool_input) }}</pre>
+                    </div>
+                    <div v-if="step.tool_output">
+                      <label class="text-[9px] font-bold text-gray-400 uppercase mb-1.5 block tracking-wider">
+                        Result / Answer
+                      </label>
+                      <pre class="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed bg-white border border-gray-100 rounded-lg p-3 overflow-x-auto">{{ formatStepPayload(step.tool_output) }}</pre>
+                    </div>
+                    <div
+                      v-if="step.error_message"
+                      class="flex items-start gap-2 bg-red-50/60 border border-red-100 rounded-lg p-3 text-red-600"
+                    >
+                      <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5" />
+                      <p class="text-[11px] font-medium leading-relaxed">{{ step.error_message }}</p>
                     </div>
                   </div>
                 </div>

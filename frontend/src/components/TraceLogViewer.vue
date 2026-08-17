@@ -201,6 +201,18 @@ const localizeToolName = (name: string) => {
   };
   return map[name] || name;
 };
+
+const formatStepTime = (iso?: string) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+};
 </script>
 
 <template>
@@ -411,7 +423,18 @@ const localizeToolName = (name: string) => {
                     </span>
                   </div>
 
-                  <div class="flex items-center space-x-3">
+                  <div class="flex items-center space-x-2.5">
+                    <span
+                      v-if="formatStepTime(step.timestamp || step.created_at)"
+                      class="text-xs text-gray-400 font-mono font-medium"
+                      :title="step.timestamp || step.created_at"
+                    >
+                      {{ formatStepTime(step.timestamp || step.created_at) }}
+                    </span>
+                    <span
+                      v-if="formatStepTime(step.timestamp || step.created_at) && step.execution_time_ms"
+                      class="text-gray-300 text-xs"
+                    >·</span>
                     <div v-if="step.status === 'pending'" class="flex items-center space-x-1 text-amber-500">
                       <div class="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping"></div>
                       <span class="text-[10px] font-bold uppercase tracking-widest">Processing</span>
@@ -573,6 +596,12 @@ const localizeToolName = (name: string) => {
                     :title="localizeToolName(step.tool_name)"
                   >
                     {{ localizeToolName(step.tool_name) }}
+                  </div>
+                  <div
+                    v-if="formatStepTime(step.timestamp || step.created_at)"
+                    class="text-[10px] text-gray-400 font-mono pl-3"
+                  >
+                    {{ formatStepTime(step.timestamp || step.created_at) }}
                   </div>
                 </div>
 
