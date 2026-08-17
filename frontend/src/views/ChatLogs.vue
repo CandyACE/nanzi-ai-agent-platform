@@ -12,7 +12,6 @@ import {
   ExclamationCircleIcon,
   UserIcon,
   SparklesIcon,
-  ChevronDownIcon,
   ArrowDownTrayIcon,
 } from '@heroicons/vue/24/outline'
 import { format } from 'date-fns'
@@ -27,6 +26,11 @@ import {
   type ChatTraceDetail,
 } from '@/utils/chatSessionExport'
 import { copyToClipboard } from '@/utils/clipboard'
+import {
+  formatSubagentTraceSummary,
+  normalizeSubagentTraceMeta,
+  subagentDisplayName,
+} from '@/utils/subagentTrace'
 
 const { showToast } = useToast()
 const { hasPermission } = useUser()
@@ -55,8 +59,8 @@ const filters = ref({
 })
 
 const selectedId = ref<number | string | null>(null)
+const activeDetailTab = ref<'conversation' | 'trace'>('conversation')
 const replyViewMode = ref<'render' | 'source'>('render')
-const showTracePanel = ref(false)
 const traceDetail = ref<any>(null)
 const traceLoading = ref(false)
 const exporting = ref(false)
@@ -215,14 +219,132 @@ const copyText = async (text: string, label = '内容') => {
   }
 }
 
+const stepViewModes = ref<Record<string, 'json' | 'render'>>({})
+
+const toggleStepViewMode = (key: string, mode: 'json' | 'render') => {
+  stepViewModes.value[key] = mode
+}
+
+const getStepViewMode = (key: string, defaultMode: 'json' | 'render' = 'json') => {
+  return stepViewModes.value[key] || defaultMode
+}
+
+const escapeHtml = (unsafe: unknown): string => {
+  return String(unsafe ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+const parsePayloadObject = (value: unknown): { isObject: boolean; obj: any; textContent: string | null; hasMarkdown: boolean } => {
+  if (value == null) return { isObject: false, obj: null, textContent: null, hasMarkdown: false }
+  let target = value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        target = JSON.parse(trimmed)
+      } catch {
+        // keep as string
+      }
+    }
+  }
+
+  if (typeof target === 'object' && target !== null) {
+    const candidate = (target as any).content || (target as any).thought || (target as any).answer || (target as any).summary || (target as any).response || (target as any).query
+    const textContent = typeof candidate === 'string' && candidate.length > 20 ? candidate : null
+    const hasMarkdown = !!textContent && (textContent.includes('\n') || textContent.includes('#') || textContent.includes('*') || textContent.includes('`'))
+    return { isObject: true, obj: target, textContent, hasMarkdown }
+  }
+
+  const text = String(target)
+  const hasMarkdown = text.length > 20 && (text.includes('\n') || text.includes('#') || text.includes('*'))
+  return { isObject: false, obj: target, textContent: hasMarkdown ? text : null, hasMarkdown }
+}
+
 const formatStepPayload = (value: unknown) => {
   if (value == null) return ''
-  if (typeof value === 'string') return value
+  let obj = value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        obj = JSON.parse(trimmed)
+      } catch {
+        return value
+      }
+    } else {
+      return value
+    }
+  }
   try {
-    return JSON.stringify(value, null, 2)
+    return JSON.stringify(obj, null, 2)
   } catch {
     return String(value)
   }
+}
+
+const highlightJsonHtml = (val: unknown): string => {
+  if (val == null) return '<span class="text-slate-400">null</span>'
+  let obj = val
+  if (typeof val === 'string') {
+    const trimmed = val.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        obj = JSON.parse(trimmed)
+      } catch {
+        return escapeHtml(val)
+      }
+    } else {
+      return escapeHtml(val)
+    }
+  }
+
+  const jsonStr = JSON.stringify(obj, null, 2)
+  const escaped = escapeHtml(jsonStr)
+  return escaped.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (match) => {
+      let cls = 'text-amber-300' // number
+      if (/^&quot;/.test(match) || /^"/.test(match)) {
+        if (/:$/.test(match) || /&quot;:$/.test(match)) {
+          cls = 'text-cyan-300 font-semibold' // key
+        } else {
+          cls = 'text-emerald-300' // string
+        }
+      } else if (/true|false/.test(match)) {
+        cls = 'text-purple-300 font-semibold' // boolean
+      } else if (/null/.test(match)) {
+        cls = 'text-slate-500 italic' // null
+      }
+      return `<span class="${cls}">${match}</span>`
+    }
+  )
+}
+
+const renderPayloadMarkdown = (text: string) => {
+  try {
+    return renderMarkdown(text)
+  } catch {
+    return escapeHtml(text)
+  }
+}
+
+const getSubagentMeta = (step: { meta_info?: Record<string, unknown> | null }) =>
+  normalizeSubagentTraceMeta(step.meta_info?.subagent)
+
+const formatStepTime = (iso?: string) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
 }
 
 const fetchAllTurnsForExport = async (log: AgentExecutionHistory) => {
@@ -305,7 +427,6 @@ const exportSession = async (log: AgentExecutionHistory) => {
 
 watch(selectedLog, (log) => {
   replyViewMode.value = 'render'
-  showTracePanel.value = false
   void loadTrace(log?.trace_id)
 })
 
@@ -605,7 +726,58 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5 space-y-4">
+          <!-- Detail Tabs Header -->
+          <div class="shrink-0 px-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/40">
+            <div class="flex items-center gap-6">
+              <button
+                type="button"
+                class="py-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5"
+                :class="activeDetailTab === 'conversation'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'"
+                @click="activeDetailTab = 'conversation'"
+              >
+                <ChatBubbleLeftRightIcon class="w-4 h-4" />
+                对话
+              </button>
+              <button
+                type="button"
+                class="py-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5"
+                :class="activeDetailTab === 'trace'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'"
+                @click="activeDetailTab = 'trace'"
+              >
+                <ClockIcon class="w-4 h-4" />
+                轨迹
+                <span
+                  v-if="traceDetail?.steps?.length"
+                  class="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none"
+                  :class="activeDetailTab === 'trace' ? 'bg-primary/10 text-primary' : 'bg-gray-200/80 text-gray-600'"
+                >
+                  {{ traceDetail.steps.length }}
+                </span>
+              </button>
+            </div>
+            <div v-if="activeDetailTab === 'trace' && selectedLog.trace_id" class="flex items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-primary transition-colors"
+                @click="loadTrace(selectedLog.trace_id)"
+                :disabled="traceLoading"
+                title="重新加载链路"
+              >
+                <ArrowPathIcon class="w-3.5 h-3.5" :class="{ 'animate-spin': traceLoading }" />
+                刷新链路
+              </button>
+            </div>
+          </div>
+
+          <!-- Tab 1: Conversation Content -->
+          <div
+            v-show="activeDetailTab === 'conversation'"
+            class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5 space-y-4"
+          >
             <!-- User query -->
             <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 relative group">
               <div class="flex items-center justify-between gap-2 mb-2">
@@ -675,108 +847,237 @@ onMounted(() => {
                 class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
               >{{ selectedLog.summary }}</pre>
             </div>
+          </div>
 
-            <!-- Trace panel -->
-            <div class="rounded-xl border border-gray-200 overflow-hidden">
-              <button
-                type="button"
-                class="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-50 transition-colors"
-                @click="showTracePanel = !showTracePanel"
+          <!-- Tab 2: Trace Content -->
+          <div
+            v-show="activeDetailTab === 'trace'"
+            class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5"
+          >
+            <div v-if="traceLoading" class="py-20 text-center text-sm text-gray-400">
+              <ArrowPathIcon class="w-6 h-6 animate-spin mx-auto mb-2 text-primary" />
+              正在加载执行链路...
+            </div>
+            <div
+              v-else-if="!traceDetail?.steps?.length"
+              class="py-16 text-center text-sm text-gray-400"
+            >
+              <ClockIcon class="w-8 h-8 text-gray-200 mx-auto mb-2" />
+              暂无执行链路数据
+            </div>
+            <div v-else class="relative space-y-8 pb-4 max-w-4xl mx-auto">
+              <div class="absolute left-[83px] top-2 bottom-2 w-0.5 bg-gray-100" />
+              <div
+                v-for="(step, idx) in traceDetail.steps"
+                :key="idx"
+                class="relative flex items-start"
               >
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-bold text-gray-700">执行链路</span>
-                  <span
-                    v-if="traceDetail?.steps?.length"
-                    class="text-[10px] font-mono text-gray-400"
-                  >{{ traceDetail.steps.length }} steps</span>
+                <!-- Step Timestamp (Left) -->
+                <div class="w-[72px] shrink-0 pt-0.5 text-right pr-2">
+                  <span class="text-[11px] font-mono font-medium text-gray-400 whitespace-nowrap">
+                    {{ formatStepTime(step.timestamp) || '-' }}
+                  </span>
                 </div>
-                <ChevronDownIcon
-                  class="w-4 h-4 text-gray-400 transition-transform"
-                  :class="{ 'rotate-180': showTracePanel }"
-                />
-              </button>
 
-              <div v-show="showTracePanel" class="border-t border-gray-100 p-4 bg-white">
-                <div v-if="traceLoading" class="py-10 text-center text-sm text-gray-400">
-                  <ArrowPathIcon class="w-5 h-5 animate-spin mx-auto mb-2 text-primary" />
-                  加载链路中...
-                </div>
-                <div
-                  v-else-if="!traceDetail?.steps?.length"
-                  class="py-8 text-center text-sm text-gray-400"
-                >
-                  暂无执行链路
-                </div>
-                <div v-else class="relative space-y-8 pb-2">
-                  <div class="absolute left-[11px] top-2 bottom-2 w-0.5 bg-gray-100" />
+                <!-- Node Dot (Center) -->
+                <div class="relative w-[22px] flex justify-center shrink-0 pt-1">
                   <div
-                    v-for="(step, idx) in traceDetail.steps"
-                    :key="idx"
-                    class="relative pl-10"
+                    class="w-3 h-3 rounded-full ring-4 ring-white border-2 bg-white z-10"
+                    :class="step.status === 'success' ? 'border-primary' : 'border-red-500'"
                   >
-                    <div class="absolute left-0 top-1 w-[22px] flex justify-center">
-                      <div
-                        class="w-3 h-3 rounded-full ring-4 ring-white border-2 bg-white z-10"
-                        :class="step.status === 'success' ? 'border-primary' : 'border-red-500'"
-                      >
-                        <div
-                          class="w-full h-full rounded-full scale-50"
-                          :class="step.status === 'success' ? 'bg-primary' : 'bg-red-500'"
-                        />
+                    <div
+                      class="w-full h-full rounded-full scale-50"
+                      :class="step.status === 'success' ? 'bg-primary' : 'bg-red-500'"
+                    />
+                  </div>
+                </div>
+
+                <!-- Step Content (Right) -->
+                <div class="flex-1 min-w-0 pl-3 space-y-3">
+                  <div class="flex items-center flex-wrap gap-2">
+                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      Step {{ step.step_number ?? (idx + 1) }}
+                    </span>
+                    <span
+                      class="px-2 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wider"
+                      :class="{
+                        'bg-blue-50 text-blue-600 border-blue-100': step.event_type === 'thought',
+                        'bg-amber-50 text-amber-600 border-amber-100': step.event_type === 'tool_call',
+                        'bg-green-50 text-green-600 border-green-100': step.event_type === 'tool_result' || step.event_type === 'final_answer',
+                        'bg-red-50 text-red-600 border-red-100': step.event_type === 'error',
+                        'bg-gray-50 text-gray-600 border-gray-200': !['thought', 'tool_call', 'tool_result', 'final_answer', 'error'].includes(step.event_type),
+                      }"
+                    >
+                      {{ step.event_type }}
+                    </span>
+                    <span
+                      v-if="step.execution_time_ms"
+                      class="text-[10px] text-gray-400 inline-flex items-center"
+                    >
+                      <ClockIcon class="w-3 h-3 mr-0.5" />
+                      {{ Number(step.execution_time_ms).toFixed(0) }}ms
+                    </span>
+                    <span
+                      v-if="getSubagentMeta(step)"
+                      class="px-2 py-0.5 rounded-full text-[10px] font-semibold border border-indigo-100 bg-indigo-50 text-indigo-600"
+                      :title="formatSubagentTraceSummary(getSubagentMeta(step))"
+                    >
+                      子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}
+                    </span>
+                  </div>
+
+                  <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
+                    <div
+                      v-if="getSubagentMeta(step)"
+                      class="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 space-y-2"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs font-bold text-indigo-700">子代理委派</span>
+                        <span class="text-[10px] text-indigo-500">
+                          {{ formatSubagentTraceSummary(getSubagentMeta(step)) }}
+                        </span>
                       </div>
+                      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-indigo-900/70">
+                        <template v-if="getSubagentMeta(step)?.run_id">
+                          <dt class="font-semibold">Run ID</dt>
+                          <dd class="font-mono break-all">{{ getSubagentMeta(step)?.run_id }}</dd>
+                        </template>
+                        <template v-if="getSubagentMeta(step)?.parent_trace_id">
+                          <dt class="font-semibold">父 Trace</dt>
+                          <dd class="font-mono break-all">{{ getSubagentMeta(step)?.parent_trace_id }}</dd>
+                        </template>
+                        <template v-if="getSubagentMeta(step)?.child_trace_id">
+                          <dt class="font-semibold">子 Trace</dt>
+                          <dd class="font-mono break-all">{{ getSubagentMeta(step)?.child_trace_id }}</dd>
+                        </template>
+                        <template v-if="getSubagentMeta(step)?.stop_reason">
+                          <dt class="font-semibold">停止原因</dt>
+                          <dd>{{ getSubagentMeta(step)?.stop_reason }}</dd>
+                        </template>
+                        <template v-if="getSubagentMeta(step)?.tool_filter?.length">
+                          <dt class="font-semibold">工具过滤</dt>
+                          <dd class="break-all">{{ getSubagentMeta(step)?.tool_filter?.join('、') }}</dd>
+                        </template>
+                      </dl>
                     </div>
-                    <div class="space-y-3">
-                      <div class="flex items-center flex-wrap gap-2">
-                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                          Step {{ step.step_number ?? idx + 1 }}
-                        </span>
-                        <span
-                          class="px-2 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wider"
-                          :class="{
-                            'bg-blue-50 text-blue-600 border-blue-100': step.event_type === 'thought',
-                            'bg-amber-50 text-amber-600 border-amber-100': step.event_type === 'tool_call',
-                            'bg-green-50 text-green-600 border-green-100': step.event_type === 'tool_result' || step.event_type === 'final_answer',
-                            'bg-red-50 text-red-600 border-red-100': step.event_type === 'error',
-                            'bg-gray-50 text-gray-600 border-gray-200': !['thought', 'tool_call', 'tool_result', 'final_answer', 'error'].includes(step.event_type),
-                          }"
-                        >
-                          {{ step.event_type }}
-                        </span>
-                        <span
-                          v-if="step.execution_time_ms"
-                          class="text-[10px] text-gray-400 inline-flex items-center"
-                        >
-                          <ClockIcon class="w-3 h-3 mr-0.5" />
-                          {{ Number(step.execution_time_ms).toFixed(0) }}ms
-                        </span>
+                    <div v-if="step.tool_name" class="text-xs font-bold text-gray-700">
+                      <code class="px-2 py-0.5 bg-white border border-gray-200 rounded-md font-mono text-primary text-[11px]">
+                        {{ step.tool_name }}
+                      </code>
+                    </div>
+                    <div v-if="step.tool_input" class="space-y-1.5">
+                      <div class="flex items-center justify-between gap-2">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                          Params / Thought
+                        </label>
+                        <div class="flex items-center gap-1.5">
+                          <div
+                            v-if="parsePayloadObject(step.tool_input).hasMarkdown"
+                            class="inline-flex rounded-md border border-gray-200 bg-white p-0.5 text-[10px]"
+                          >
+                            <button
+                              type="button"
+                              class="px-1.5 py-0.5 rounded transition-colors"
+                              :class="getStepViewMode(`input-${idx}`) === 'json'
+                                ? 'bg-gray-800 text-white font-medium shadow-sm'
+                                : 'text-gray-500 hover:text-gray-800'"
+                              @click="toggleStepViewMode(`input-${idx}`, 'json')"
+                            >
+                              JSON
+                            </button>
+                            <button
+                              type="button"
+                              class="px-1.5 py-0.5 rounded transition-colors"
+                              :class="getStepViewMode(`input-${idx}`) === 'render'
+                                ? 'bg-primary text-white font-medium shadow-sm'
+                                : 'text-gray-500 hover:text-primary'"
+                              @click="toggleStepViewMode(`input-${idx}`, 'render')"
+                            >
+                              渲染预览
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            class="text-[11px] text-gray-400 hover:text-primary transition-colors focus:outline-none"
+                            @click="copyText(formatStepPayload(step.tool_input), '参数内容')"
+                            title="复制原始参数"
+                          >
+                            复制
+                          </button>
+                        </div>
                       </div>
 
-                      <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
-                        <div v-if="step.tool_name" class="text-xs font-bold text-gray-700">
-                          <code class="px-2 py-0.5 bg-white border border-gray-200 rounded-md font-mono text-primary text-[11px]">
-                            {{ step.tool_name }}
-                          </code>
-                        </div>
-                        <div v-if="step.tool_input">
-                          <label class="text-[9px] font-bold text-gray-400 uppercase mb-1.5 block tracking-wider">
-                            Params / Thought
-                          </label>
-                          <pre class="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed bg-white border border-gray-100 rounded-lg p-3 overflow-x-auto">{{ formatStepPayload(step.tool_input) }}</pre>
-                        </div>
-                        <div v-if="step.tool_output">
-                          <label class="text-[9px] font-bold text-gray-400 uppercase mb-1.5 block tracking-wider">
-                            Result / Answer
-                          </label>
-                          <pre class="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed bg-white border border-gray-100 rounded-lg p-3 overflow-x-auto">{{ formatStepPayload(step.tool_output) }}</pre>
-                        </div>
-                        <div
-                          v-if="step.error_message"
-                          class="flex items-start gap-2 bg-red-50/60 border border-red-100 rounded-lg p-3 text-red-600"
-                        >
-                          <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5" />
-                          <p class="text-[11px] font-medium leading-relaxed">{{ step.error_message }}</p>
+                      <div
+                        v-if="getStepViewMode(`input-${idx}`) === 'render' && parsePayloadObject(step.tool_input).textContent"
+                        class="markdown-body prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
+                        v-html="renderPayloadMarkdown(parsePayloadObject(step.tool_input).textContent!)"
+                      />
+                      <pre
+                        v-else
+                        class="text-xs text-slate-100 leading-relaxed font-mono bg-[#0d1117] border border-gray-800 rounded-lg p-3.5 overflow-x-auto"
+                        v-html="highlightJsonHtml(step.tool_input)"
+                      />
+                    </div>
+
+                    <div v-if="step.tool_output" class="space-y-1.5">
+                      <div class="flex items-center justify-between gap-2">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                          Result / Answer
+                        </label>
+                        <div class="flex items-center gap-1.5">
+                          <div
+                            v-if="parsePayloadObject(step.tool_output).hasMarkdown"
+                            class="inline-flex rounded-md border border-gray-200 bg-white p-0.5 text-[10px]"
+                          >
+                            <button
+                              type="button"
+                              class="px-1.5 py-0.5 rounded transition-colors"
+                              :class="getStepViewMode(`output-${idx}`) === 'json'
+                                ? 'bg-gray-800 text-white font-medium shadow-sm'
+                                : 'text-gray-500 hover:text-gray-800'"
+                              @click="toggleStepViewMode(`output-${idx}`, 'json')"
+                            >
+                              JSON
+                            </button>
+                            <button
+                              type="button"
+                              class="px-1.5 py-0.5 rounded transition-colors"
+                              :class="getStepViewMode(`output-${idx}`) === 'render'
+                                ? 'bg-primary text-white font-medium shadow-sm'
+                                : 'text-gray-500 hover:text-primary'"
+                              @click="toggleStepViewMode(`output-${idx}`, 'render')"
+                            >
+                              渲染预览
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            class="text-[11px] text-gray-400 hover:text-primary transition-colors focus:outline-none"
+                            @click="copyText(formatStepPayload(step.tool_output), '返回结果')"
+                            title="复制原始结果"
+                          >
+                            复制
+                          </button>
                         </div>
                       </div>
+
+                      <div
+                        v-if="getStepViewMode(`output-${idx}`) === 'render' && parsePayloadObject(step.tool_output).textContent"
+                        class="markdown-body prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
+                        v-html="renderPayloadMarkdown(parsePayloadObject(step.tool_output).textContent!)"
+                      />
+                      <pre
+                        v-else
+                        class="text-xs text-slate-100 leading-relaxed font-mono bg-[#0d1117] border border-gray-800 rounded-lg p-3.5 overflow-x-auto"
+                        v-html="highlightJsonHtml(step.tool_output)"
+                      />
+                    </div>
+                    <div
+                      v-if="step.error_message"
+                      class="flex items-start gap-2 bg-red-50/60 border border-red-100 rounded-lg p-3 text-red-600"
+                    >
+                      <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5" />
+                      <p class="text-[11px] font-medium leading-relaxed">{{ step.error_message }}</p>
                     </div>
                   </div>
                 </div>

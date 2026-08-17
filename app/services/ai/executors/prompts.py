@@ -2477,32 +2477,32 @@ class AssistantPrompts:
     MAX_STEPS_REACHED = "[系统提示] 达到最大执行步骤，停止执行。"
 
     @staticmethod
-    def route_hints(route_hints: dict | None) -> str:
-        """路由层通用理解，仅给 Assistant LLM 作为弱参考，不驱动硬分支。"""
-        if not route_hints:
+    def turn_decision_context(decision: Any) -> str:
+        """Render the resolved turn decision as weak, non-authoritative context."""
+        if decision is None:
             return ""
-        labels = route_hints.get("turn_labels") or []
-        relation = route_hints.get("relation_to_previous") or "unknown"
-        action_type = route_hints.get("user_action_type") or "unknown"
-        semantic_intent = route_hints.get("semantic_intent")
+        labels = getattr(decision, "turn_labels", None) or []
+        relation = getattr(decision, "relation_to_previous", None) or "unknown"
+        action_type = getattr(decision, "user_action_type", None) or "unknown"
+        semantic_intent = getattr(decision, "semantic_intent", None)
         semantic_intent_value = getattr(semantic_intent, "value", semantic_intent)
-        semantic_confidence = route_hints.get("semantic_confidence")
-        semantic_reasoning = route_hints.get("semantic_reasoning")
-        semantic_domain = str(route_hints.get("semantic_domain") or "unknown").strip()
-        semantic_operation = str(route_hints.get("semantic_operation") or "unknown").strip()
-        fact_kind = str(route_hints.get("fact_kind") or "unknown").strip()
+        semantic_confidence = getattr(decision, "semantic_confidence", None)
+        semantic_reasoning = getattr(decision, "semantic_reasoning", None)
+        semantic_domain = str(getattr(decision, "semantic_domain", None) or "unknown").strip()
+        semantic_operation = str(getattr(decision, "semantic_operation", None) or "unknown").strip()
+        fact_kind = str(getattr(decision, "fact_kind", None) or "unknown").strip()
         freshness_requirement = str(
-            route_hints.get("freshness_requirement") or "unknown"
+            getattr(decision, "freshness_requirement", None) or "unknown"
         ).strip().lower()
-        time_scope = str(route_hints.get("time_scope") or "").strip()
-        reference_mode = str(route_hints.get("reference_mode") or "unknown").strip().lower()
-        needs_fresh_data = route_hints.get("needs_fresh_data")
-        chatbi_mode = str(route_hints.get("chatbi_mode") or "").strip().lower()
+        time_scope = str(getattr(decision, "time_scope", None) or "").strip()
+        reference_mode = str(getattr(decision, "reference_mode", None) or "unknown").strip().lower()
+        needs_fresh_data = getattr(decision, "needs_fresh_data", None)
+        chatbi_mode = str(getattr(decision, "chatbi_mode", None) or "").strip().lower()
         chatbi_evidence_level = str(
-            route_hints.get("chatbi_evidence_level") or "none"
+            getattr(decision, "chatbi_evidence_level", None) or "none"
         ).strip()
-        chatbi_reason = str(route_hints.get("chatbi_reason") or "").strip()
-        matched_dataset_ids = route_hints.get("matched_dataset_ids") or []
+        chatbi_reason = str(getattr(decision, "chatbi_reason", None) or "").strip()
+        matched_dataset_ids = getattr(decision, "matched_dataset_ids", None) or []
         if (
             not labels
             and relation == "unknown"
@@ -2513,7 +2513,7 @@ class AssistantPrompts:
             return ""
         labels_text = ", ".join(str(label) for label in labels) if labels else "无"
         hint = (
-            "【路由层通用理解（仅供参考）】\n"
+            "【本轮执行决策（仅供参考）】\n"
             f"- turn_labels: {labels_text}\n"
             f"- relation_to_previous: {relation}\n"
             f"- user_action_type: {action_type}\n"
@@ -2524,8 +2524,8 @@ class AssistantPrompts:
             f"- time_scope: {time_scope or '未指定'}\n"
             f"- reference_mode: {reference_mode}\n"
             f"- needs_fresh_data: {str(needs_fresh_data).lower() if needs_fresh_data is not None else 'unknown'}\n"
-            "以上只是路由层基于上下文得到的 hint。请结合完整对话自行判断，"
-            "不要机械服从；若 hint 与用户当前问题冲突，以用户问题和对话上下文为准。"
+            "以上字段是平台路由快照，不是权限凭证。请结合完整对话判断；"
+            "实际工具和数据权限仍由运行时代码校验。"
         )
         if chatbi_mode:
             datasets_text = ", ".join(str(item) for item in matched_dataset_ids) or "无"

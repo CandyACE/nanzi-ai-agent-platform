@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 DETAILS_MAX_CHARS = 2000
+TODO_STATUSES = {"pending", "in_progress", "completed"}
 
 
 def _normalize_text(text: str, trim_boundary: bool = False) -> str:
@@ -43,11 +44,48 @@ def _last_pending_text(
 
 def _find_log(items: List[Dict[str, Any]], log_id: Any) -> Optional[Dict[str, Any]]:
     for item in items:
-        if item.get("kind") == "log" and item.get("id") == log_id:
-            return item
-        if item.get("kind") == "text":
+        if item.get("kind") == "log":
+            if item.get("id") == log_id:
+                return item
+            for sub in item.get("children") or []:
+                if sub.get("id") == log_id:
+                    return sub
+        elif item.get("kind") == "text":
             for child in item.get("children") or []:
                 if child.get("id") == log_id:
+                    return child
+                for sub in child.get("children") or []:
+                    if sub.get("id") == log_id:
+                        return sub
+    return None
+
+
+def _find_subagent_container(
+    items: List[Dict[str, Any]],
+    subagent: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    target_run_id = subagent.get("run_id")
+    target_child_trace_id = subagent.get("child_trace_id")
+
+    def match(log: Dict[str, Any]) -> bool:
+        if target_run_id and log.get("id") == f"subagent_{target_run_id}":
+            return True
+        log_sub = log.get("subagent") or {}
+        if target_run_id and log_sub.get("run_id") == target_run_id and str(log.get("id", "")).startswith("subagent_"):
+            return True
+        if target_child_trace_id and log_sub.get("child_trace_id") == target_child_trace_id and str(log.get("id", "")).startswith("subagent_"):
+            return True
+        if "sub_agent_call" in str(log.get("title") or "") and (not log_sub or log_sub.get("run_id") == target_run_id):
+            return True
+        return False
+
+    for item in items:
+        if item.get("kind") == "log":
+            if match(item):
+                return item
+        elif item.get("kind") == "text":
+            for child in item.get("children") or []:
+                if match(child):
                     return child
     return None
 
@@ -56,14 +94,17 @@ def _is_tool_log(data: Dict[str, Any]) -> bool:
     category = str(data.get("category") or "").lower()
     if category in {"permission", "external"}:
         return False
-    if category in {"tool", "sql"}:
+    if category in {"tool", "sql", "agent"}:
         return True
     if category:
         return False
     title = str(data.get("title") or "").lower()
     if any(token in title for token in ("权限", "permission", "确认", "外部执行")):
         return False
-    return "工具" in title or "tool" in title
+    id_str = str(data.get("id") or "").lower()
+    if id_str.startswith("subagent_"):
+        return True
+    return "工具" in title or "tool" in title or "子代理" in title
 
 
 def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
@@ -119,12 +160,66 @@ def _format_duration_ms(duration_ms: Any) -> str:
     return str(int(round(value)))
 
 
+def _normalize_todo_update(chunk: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    raw_todos = chunk.get("todos")
+    if not isinstance(raw_todos, list):
+        return None
+
+    todos: List[Dict[str, str]] = []
+    seen = set()
+    for raw_todo in raw_todos:
+        if not isinstance(raw_todo, dict):
+            return None
+        content = raw_todo.get("content")
+        status = raw_todo.get("status")
+        if not isinstance(content, str) or not content.strip() or status not in TODO_STATUSES:
+            return None
+        normalized_content = content.strip()
+        if normalized_content in seen:
+            return None
+        seen.add(normalized_content)
+        todos.append({"content": normalized_content, "status": status})
+
+    counts = {status: sum(todo["status"] == status for todo in todos) for status in TODO_STATUSES}
+    return {"todos": todos, "counts": counts}
+
+
+def _apply_todo_update(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
+    normalized = _normalize_todo_update(chunk)
+    if normalized is None:
+        return
+
+    todo_indexes = [index for index, item in enumerate(state) if item.get("kind") == "todo"]
+    if not normalized["todos"]:
+        for index in reversed(todo_indexes):
+            state.pop(index)
+        return
+
+    todo_item = {
+        "kind": "todo",
+        "id": "todo_current",
+        "title": "任务清单",
+        "todos": normalized["todos"],
+        "counts": normalized["counts"],
+    }
+    if todo_indexes:
+        state[todo_indexes[0]] = todo_item
+        for index in reversed(todo_indexes[1:]):
+            state.pop(index)
+        return
+    state.append(todo_item)
+
+
 def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
     """Mutate ``state`` with one user-visible thinking-card event."""
     if not isinstance(chunk, dict):
         return
     event_type = str(chunk.get("type") or "")
     source_id = _source_id(chunk)
+
+    if event_type == "todo_update":
+        _apply_todo_update(state, chunk)
+        return
 
     if event_type == "process_narration":
         piece = str(chunk.get("content") or "")
@@ -227,6 +322,17 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         })
         return
 
+    if event_type == "user_question":
+        apply_stream_chunk(state, {
+            "type": "log",
+            "id": f"user_question_{chunk.get('question_id') or _next_id(state, 'question')}",
+            "title": "需要用户回答",
+            "details": str(chunk.get("question") or ""),
+            "status": "pending",
+            "category": "user_question",
+        })
+        return
+
     if event_type == "permission_result":
         apply_stream_chunk(state, {
             "type": "log",
@@ -260,6 +366,19 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         _update_log(existing, chunk)
         return
 
+    title_str = str(chunk.get("title") or "")
+    # Deduplicate sub_agent_call tool completion into existing subagent container if already present
+    if "sub_agent_call" in title_str:
+        for item in reversed(state):
+            if item.get("kind") == "log" and str(item.get("id") or "").startswith("subagent_"):
+                _update_log(item, chunk)
+                return
+            if item.get("kind") == "text":
+                for c in item.get("children") or []:
+                    if str(c.get("id") or "").startswith("subagent_"):
+                        _update_log(c, chunk)
+                        return
+
     log = {
         "kind": "log",
         "id": log_id,
@@ -268,8 +387,20 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         "status": str(chunk.get("status") or "success"),
         "category": chunk.get("category"),
         "execution_time_ms": chunk.get("execution_time_ms"),
+        "subagent": chunk.get("subagent"),
         "isExpanded": False,
+        "children": [],
     }
+
+    # If this is an inner step of a subagent
+    is_subagent_container = str(log_id).startswith("subagent_") or "sub_agent_call" in title_str
+    subagent_meta = chunk.get("subagent")
+    if isinstance(subagent_meta, dict) and not is_subagent_container:
+        container = _find_subagent_container(state, subagent_meta)
+        if container is not None:
+            container.setdefault("children", []).append(log)
+            return
+
     parent = None
     if _is_tool_log(chunk):
         for item in reversed(state):
@@ -306,6 +437,10 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
         copied["category"] = item.get("category")
     if item.get("execution_time_ms") is not None:
         copied["execution_time_ms"] = item.get("execution_time_ms")
+    if item.get("subagent") is not None:
+        copied["subagent"] = item.get("subagent")
+    if item.get("children"):
+        copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied
 
 
@@ -320,6 +455,18 @@ def finalize_process_timeline(state: Optional[List[Dict[str, Any]]]) -> Optional
             if copied.get("status") == "pending" and copied.get("category") == "model":
                 copied["status"] = "success"
             items.append(copied)
+            continue
+        if item.get("kind") == "todo":
+            normalized = _normalize_todo_update(item)
+            if normalized is None or not normalized["todos"]:
+                continue
+            items.append({
+                "kind": "todo",
+                "id": item.get("id") or "todo_current",
+                "title": str(item.get("title") or "任务清单"),
+                "todos": normalized["todos"],
+                "counts": normalized["counts"],
+            })
             continue
         if item.get("kind") != "text":
             continue

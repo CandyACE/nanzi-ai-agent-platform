@@ -1,27 +1,51 @@
 import logging
 import asyncio
+import json
 import re
 import uuid
 import inspect
+import time
+from dataclasses import replace
 from typing import Optional, Dict, Any, List, Tuple, Iterable
+from pydantic import BaseModel, Field, field_validator
 from app.services.ai.tools.tool_compat import tool
+from app.services.ai.tools.tool_compat import BaseTool
 from app.core.context import get_current_agent_context, AgentContext, set_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.permission_service import PermissionService
+from app.services.ai.subagent_protocol import (
+    EMPTY_SUB_AGENT_RESULT_MESSAGE,
+    SubAgentRequest,
+    SubAgentResult,
+    SubAgentResultStatus,
+    SubAgentStopReason,
+    validate_structured_schema,
+    validate_structured_output,
+)
+from app.services.ai.turn_decision import TurnDecision
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DELEGATION_TIMEOUT_SECONDS = 120.0
 DEFAULT_DELEGATION_RESULT_MAX_CHARS = 8000
 MAX_DELEGATION_CALLS_PER_AGENT = 2
+MAX_DELEGATION_DEPTH = 1
+MAX_BATCH_DELEGATION_CALLS = 4
 
 INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required"})
 
-EMPTY_DELEGATION_RESULT_MESSAGE = (
-    "子智能体已执行完成，但未产生可交付正文（可能仅有内部进度日志或工具中间结果）。"
-    "请勿使用相同参数重复委派；请根据上述情况向用户说明，或建议其直接打开对应子智能体对话。"
-)
+EMPTY_DELEGATION_RESULT_MESSAGE = EMPTY_SUB_AGENT_RESULT_MESSAGE
+
+
+def _batch_result_status(content: str) -> str:
+    """Classify the backward-compatible single-call text for batch counters."""
+    normalized = str(content or "").strip()
+    if normalized.startswith(("错误：", "错误:")):
+        return "failed"
+    if normalized.startswith(EMPTY_DELEGATION_RESULT_MESSAGE):
+        return "failed"
+    return "completed"
 
 DELEGATION_INTERRUPT_MESSAGES = {
     "permission_required": (
@@ -61,6 +85,127 @@ def resolve_delegation_permission_options(
     options = dict(main_options or {})
     options.setdefault("approval_mode", "ask")
     return options
+
+
+def resolve_delegation_depth(
+    current_depth: int,
+    requested_max_depth: int | None,
+) -> tuple[int, str | None]:
+    """Resolve one child depth without allowing a caller to widen the platform cap."""
+    child_depth = int(current_depth) + 1
+    if requested_max_depth is not None and (
+        isinstance(requested_max_depth, bool)
+        or not isinstance(requested_max_depth, int)
+        or requested_max_depth < 0
+    ):
+        return child_depth, "depth_exceeded"
+    effective_max_depth = MAX_DELEGATION_DEPTH
+    if requested_max_depth is not None:
+        effective_max_depth = min(effective_max_depth, requested_max_depth)
+    if child_depth > effective_max_depth:
+        return child_depth, "depth_exceeded"
+    return child_depth, None
+
+
+def _configured_tool_name(item: Any) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        return str(item.get("name") or "").strip()
+    return str(getattr(item, "name", "") or "").strip()
+
+
+def _canonical_tool_name(name: str) -> str:
+    from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
+
+    return AGENTSCOPE_BUILTIN_TOOL_ALIASES.get(name, name)
+
+
+def resolve_delegation_tool_filter(
+    configured_tools: Iterable[Any],
+    requested_filter: Iterable[str] | None,
+) -> tuple[list[str] | None, str | None]:
+    """Return a request-scoped tool allowlist that can only narrow configured tools."""
+    if requested_filter is None:
+        return None, None
+
+    available = {
+        _canonical_tool_name(name)
+        for name in (_configured_tool_name(item) for item in configured_tools)
+        if name
+    }
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw_name in requested_filter:
+        name = _canonical_tool_name(str(raw_name or "").strip())
+        if not name:
+            return None, "unknown_tool"
+        if name not in available:
+            return None, "unknown_tool"
+        if name not in seen:
+            resolved.append(name)
+            seen.add(name)
+    return resolved, None
+
+
+def _structured_from_text(text: str) -> Any:
+    candidate = str(text or "").strip()
+    if candidate.startswith("```") and candidate.endswith("```"):
+        lines = candidate.splitlines()
+        candidate = "\n".join(lines[1:-1]).strip()
+    try:
+        return json.loads(candidate)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _annotate_subagent_trace(
+    trace_buffer: List[Any],
+    start_index: int,
+    *,
+    metadata: Dict[str, Any],
+    stop_reason: str,
+) -> None:
+    """Attach non-sensitive parent/child metadata to steps emitted by one child run."""
+    annotated_metadata = {**metadata, "stop_reason": stop_reason}
+    for step in list(trace_buffer)[start_index:]:
+        if isinstance(step, dict):
+            step_meta = dict(step.get("meta_info") or {})
+            step_meta["subagent"] = annotated_metadata
+            step["meta_info"] = step_meta
+            continue
+        step_meta = dict(getattr(step, "meta_info", None) or {})
+        step_meta["subagent"] = annotated_metadata
+        step.meta_info = step_meta
+
+
+def _put_subagent_lifecycle_log(
+    ctx: AgentContext,
+    *,
+    log_id: str,
+    metadata: Dict[str, Any],
+    status: str,
+    details: str,
+    started_at: int,
+    execution_time_ms: int | None = None,
+) -> None:
+    """Expose one compact delegation lifecycle event to the live thought card."""
+    if not ctx.event_queue:
+        return
+    display_name = metadata.get("display_name") or metadata.get("agent_name") or "子代理"
+    payload = {
+        "type": "log",
+        "id": log_id,
+        "title": f"调用子代理: {display_name}",
+        "details": details,
+        "status": status,
+        "category": "agent",
+        "started_at": started_at,
+        "subagent": dict(metadata),
+    }
+    if execution_time_ms is not None:
+        payload["execution_time_ms"] = execution_time_ms
+    ctx.event_queue.put_nowait(payload)
 
 
 def _normalize_agent_name(value: str | None) -> str:
@@ -220,15 +365,73 @@ def finalize_delegation_output(
     *,
     max_chars: int = DEFAULT_DELEGATION_RESULT_MAX_CHARS,
 ) -> str:
+    return finalize_delegation_result(full_output, max_chars=max_chars).to_tool_text()
+
+
+def finalize_delegation_result(
+    full_output: str,
+    *,
+    target_agent_id: str | None = None,
+    target_agent_name: str | None = None,
+    capability: str | None = None,
+    max_chars: int = DEFAULT_DELEGATION_RESULT_MAX_CHARS,
+    run_id: str | None = None,
+    parent_trace_id: str | None = None,
+    parent_conversation_id: str | None = None,
+    child_trace_id: str | None = None,
+    child_session_id: str | None = None,
+    structured: dict[str, Any] | None = None,
+) -> SubAgentResult:
+    """Create a typed result after output cleaning and size limiting."""
     cleaned_output = clean_sub_agent_output(full_output)
     if not cleaned_output.strip():
-        return EMPTY_DELEGATION_RESULT_MESSAGE
+        if structured is not None:
+            cleaned_output = json.dumps(structured, ensure_ascii=False)
+        else:
+            return SubAgentResult(
+                status=SubAgentResultStatus.EMPTY,
+                target_agent_id=target_agent_id,
+                target_agent_name=target_agent_name,
+                content=EMPTY_DELEGATION_RESULT_MESSAGE,
+                capability=capability,
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=parent_conversation_id,
+                child_trace_id=child_trace_id,
+                child_session_id=child_session_id,
+            )
     if len(cleaned_output) > max_chars:
         cleaned_output = (
             cleaned_output[:max_chars]
             + "\n\n...[因数据量过大，子代理回复已被系统自动截断]"
         )
-    return cleaned_output
+        return SubAgentResult(
+            status=SubAgentResultStatus.COMPLETED,
+            target_agent_id=target_agent_id,
+            target_agent_name=target_agent_name,
+            content=cleaned_output,
+            truncated=True,
+            capability=capability,
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=parent_conversation_id,
+            child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
+            structured=structured,
+        )
+    return SubAgentResult(
+        status=SubAgentResultStatus.COMPLETED,
+        target_agent_id=target_agent_id,
+        target_agent_name=target_agent_name,
+        content=cleaned_output,
+        capability=capability,
+        run_id=run_id,
+        parent_trace_id=parent_trace_id,
+        parent_conversation_id=parent_conversation_id,
+        child_trace_id=child_trace_id,
+        child_session_id=child_session_id,
+        structured=structured,
+    )
 
 
 async def _resolve_delegation_timeout_seconds() -> float:
@@ -262,6 +465,8 @@ async def _consume_sub_agent_stream(
     *,
     main_ctx: AgentContext,
     sub_display_name: str,
+    structured_result: Dict[str, Any] | None = None,
+    subagent_metadata: Dict[str, Any] | None = None,
 ) -> Tuple[str, str | None]:
     """消费子代理流，返回 (正文, 中断类型或 None)。"""
     full_output = ""
@@ -269,6 +474,8 @@ async def _consume_sub_agent_stream(
 
     async for chunk in sub_stream:
         chunk_type = str(chunk.get("type") or "")
+        if structured_result is not None and isinstance(chunk.get("structured"), dict):
+            structured_result["value"] = chunk["structured"]
         if chunk_type in INTERRUPT_SSE_TYPES:
             interrupt_type = chunk_type
             logger.warning(
@@ -294,13 +501,21 @@ async def _consume_sub_agent_stream(
         elif chunk_type == "log" and main_ctx.event_queue:
             title = chunk.get("title", "")
             chunk["title"] = f"[{sub_display_name}] {title}"
+            if subagent_metadata is not None:
+                chunk["subagent"] = dict(subagent_metadata)
             await main_ctx.event_queue.put(chunk)
 
     return full_output, interrupt_type
 
 
 @tool
-async def sub_agent_call(agent_name: str, query: str) -> str:
+async def sub_agent_call(
+    agent_name: str,
+    query: str,
+    max_depth: int | None = None,
+    tool_filter: list[str] | None = None,
+    output_schema: dict[str, Any] | None = None,
+) -> str:
     """委派其他专有子智能体执行特定任务（如查数、查手册）。禁止未调用本工具就编造数据或流程。
 
     Args:
@@ -311,9 +526,55 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
     if not main_ctx:
         return "错误：无法获取当前执行上下文，委派失败。"
 
+    run_id = f"subrun_{uuid.uuid4().hex}"
+    parent_trace_id = getattr(main_ctx, "trace_id", None)
+    child_depth, depth_error = resolve_delegation_depth(
+        main_ctx.delegation_depth,
+        max_depth,
+    )
+    delegation_request = SubAgentRequest(
+        target_agent_name=(agent_name or "").strip(),
+        query=_normalize_delegation_query(query),
+        caller_agent_id=str(main_ctx.agent_id),
+        caller_agent_name=str(main_ctx.agent_name),
+        delegation_depth=main_ctx.delegation_depth,
+        approval_mode=str(
+            (main_ctx.permission_options or {}).get("approval_mode") or "ask"
+        ),
+        run_id=run_id,
+        parent_trace_id=parent_trace_id,
+        parent_conversation_id=main_ctx.conversation_id,
+        max_depth=max_depth,
+        tool_filter=list(tool_filter) if tool_filter is not None else None,
+        output_schema=output_schema,
+    )
+
     # 1. 嵌套深度检查 (Depth Check)
-    if main_ctx.delegation_depth >= 1:
-        return f"错误：检测到多级智能体嵌套委派调用（当前深度 {main_ctx.delegation_depth}），拒绝执行以防死循环。"
+    if depth_error:
+        return SubAgentResult(
+            status=SubAgentResultStatus.DEPTH_EXCEEDED,
+            target_agent_name=(agent_name or "").strip() or None,
+            content=(
+                f"错误：检测到多级智能体嵌套委派调用（当前深度 {main_ctx.delegation_depth}），"
+                "拒绝执行以防死循环。"
+            ),
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
+            error_code=depth_error,
+        ).to_tool_text()
+
+    schema_error = validate_structured_schema(output_schema) if output_schema is not None else None
+    if schema_error:
+        return SubAgentResult(
+            status=SubAgentResultStatus.INVALID_OUTPUT,
+            target_agent_name=(agent_name or "").strip() or None,
+            content=f"错误：output_schema 无效：{schema_error}。",
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
+            error_code="invalid_schema",
+        ).to_tool_text()
 
     # 2. 校验目标智能体是否存在并加载配置
     target_config = None
@@ -325,7 +586,15 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         all_active_system = (await session.execute(stmt)).scalars().all()
         for a in all_active_system:
             if str(getattr(a, "id", "") or "") == str(main_ctx.agent_id) and _matches_requested_agent(a, agent_name):
-                return "错误：主智能体无法委派调用自身。"
+                return SubAgentResult(
+                    status=SubAgentResultStatus.FAILED,
+                    target_agent_name=(agent_name or "").strip() or None,
+                    content="错误：主智能体无法委派调用自身。",
+                    run_id=run_id,
+                    parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
+                    error_code="self_delegation",
+                ).to_tool_text()
 
         permitted_agents = await filter_delegable_system_agents(
             session,
@@ -355,7 +624,15 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
 
             # [CR Fix] 阻止自委派 (matched_agent.id == main_ctx.agent_id)
             if target_config and str(target_config.agent_id) == str(main_ctx.agent_id):
-                return "错误：主智能体无法委派调用自身。"
+                return SubAgentResult(
+                    status=SubAgentResultStatus.FAILED,
+                    target_agent_name=(agent_name or "").strip() or None,
+                    content="错误：主智能体无法委派调用自身。",
+                    run_id=run_id,
+                    parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
+                    error_code="self_delegation",
+                ).to_tool_text()
 
         if not target_config:
             unavailable_match = next(
@@ -363,32 +640,71 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
                 None,
             )
             if unavailable_match is not None:
-                return (
-                    f"错误：智能体 `{unavailable_match.name}`（{unavailable_match.display_name or unavailable_match.name}）"
-                    "当前尚未就绪，缺少可加载的发布版本或主类型所需的资源/工具。"
-                    "请完成配置并发布后重试。"
-                )
+                return SubAgentResult(
+                    status=SubAgentResultStatus.FAILED,
+                    target_agent_id=str(getattr(unavailable_match, "id", "") or "") or None,
+                    target_agent_name=str(getattr(unavailable_match, "display_name", None) or unavailable_match.name),
+                    content=(
+                        f"错误：智能体 `{unavailable_match.name}`（{unavailable_match.display_name or unavailable_match.name}）"
+                        "当前尚未就绪，缺少可加载的发布版本或主类型所需的资源/工具。"
+                        "请完成配置并发布后重试。"
+                    ),
+                    run_id=run_id,
+                    parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
+                    error_code="agent_not_ready",
+                ).to_tool_text()
             # 无论如何都找不到，只列出当前用户可委派的候选，供模型自我纠错
             candidates = [
                 f"`{a.name}` ({a.display_name or a.name})"
                 for a in delegable_agents
             ]
             candidates_str = ", ".join(candidates)
-            return (
-                f"错误：未找到名为 '{agent_name}' 的启用系统智能体。请重新反思问题，并只能从以下当前已启用的系统内置候选智能体列表中选择正确的英文标识 (agent_name) 进行 `sub_agent_call` 调用：{candidates_str}"
-            )
+            return SubAgentResult(
+                status=SubAgentResultStatus.FAILED,
+                target_agent_name=(agent_name or "").strip() or None,
+                content=(
+                    f"错误：未找到名为 '{agent_name}' 的启用系统智能体。请重新反思问题，并只能从以下当前已启用的系统内置候选智能体列表中选择正确的英文标识 (agent_name) 进行 `sub_agent_call` 调用：{candidates_str}"
+                ),
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
+                error_code="agent_not_found",
+            ).to_tool_text()
 
     # 4. 构造子代理独立上下文 (Sandbox Isolation)
-    sub_history = [{"role": "user", "content": query}]
+    sub_history = [{"role": "user", "content": delegation_request.query}]
     sub_display_name = target_config.agent_display_name or target_config.agent_name or agent_name
+    from app.services.ai.tools.registry import ToolRegistry
+
+    available_tools = list(target_config.tools or [])
+    available_tools.extend(ToolRegistry.get_system_implicit_tools())
+    resolved_tool_filter, filter_error = resolve_delegation_tool_filter(
+        available_tools,
+        tool_filter,
+    )
+    if filter_error:
+        return SubAgentResult(
+            status=SubAgentResultStatus.PERMISSION_DENIED,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content="错误：tool_filter 只能选择目标智能体已配置且可用的工具。",
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
+            error_code=filter_error,
+        ).to_tool_text()
+
     repeat_error = _record_delegation_attempt(
         main_ctx,
-        agent_name=target_config.agent_name or agent_name,
+        agent_name=target_config.agent_name or delegation_request.target_agent_name,
         display_name=sub_display_name,
-        query=query,
+        query=delegation_request.query,
     )
     if repeat_error:
         return repeat_error
+
+    child_session_id = f"child_session_{run_id}"
 
     # [CR Fix] 继承主上下文已生效的知识库 ID，并与子智能体引擎自身配置的 IDs 合并
     from app.services.ai.knowledge_utils import merge_dataset_id_sources
@@ -406,6 +722,31 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
     sub_engine_config["dataset_ids"] = effective_dataset_ids
 
     sub_permission_options = resolve_delegation_permission_options(main_ctx.permission_options)
+    if resolved_tool_filter is not None:
+        sub_permission_options["delegation_tool_filter"] = list(resolved_tool_filter)
+
+    child_trace_id = f"sub_{uuid.uuid4().hex[:8]}"
+    trace_start_index = len(main_ctx.trace_buffer or [])
+    lifecycle_log_id = f"subagent_{run_id}"
+    lifecycle_started_at = int(time.time() * 1000)
+    subagent_metadata = {
+        "display_name": sub_display_name,
+        "agent_name": target_config.agent_name or agent_name,
+        "run_id": run_id,
+        "parent_trace_id": parent_trace_id,
+        "child_trace_id": child_trace_id,
+        "parent_conversation_id": main_ctx.conversation_id,
+        "child_session_id": child_session_id,
+        "tool_filter": list(resolved_tool_filter) if resolved_tool_filter is not None else None,
+    }
+    _put_subagent_lifecycle_log(
+        main_ctx,
+        log_id=lifecycle_log_id,
+        metadata=subagent_metadata,
+        status="pending",
+        details="正在委派子代理处理请求。",
+        started_at=lifecycle_started_at,
+    )
 
     # 创建一个专属子上下文，隔离历史，但保留用户信息和 API Key 供子工具鉴权
     sub_ctx = AgentContext(
@@ -418,11 +759,21 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         engine_type=target_config.engine_type or "LOCAL",
         engine_config=sub_engine_config,
         user_id=main_ctx.user_id,
-        conversation_id=main_ctx.conversation_id,
+        conversation_id=child_session_id,
+        parent_conversation_id=main_ctx.conversation_id,
+        child_session_id=child_session_id,
         is_admin=main_ctx.is_admin,
         api_key=main_ctx.api_key,
         user_dimensions=main_ctx.user_dimensions,
         delegation_depth=main_ctx.delegation_depth + 1,  # 深度加 1
+        trace_id=child_trace_id,
+        parent_trace_id=parent_trace_id,
+        delegation_run_id=run_id,
+        delegation_tool_filter=(
+            list(resolved_tool_filter)
+            if resolved_tool_filter is not None
+            else None
+        ),
         trace_buffer=main_ctx.trace_buffer,  # 共用 trace 收集物理步骤
         event_queue=main_ctx.event_queue,  # 传递 event_queue 用于流式穿透
         permission_options=sub_permission_options,
@@ -455,16 +806,36 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
 
     delegation_timeout = await _resolve_delegation_timeout_seconds()
     result_max_chars = await _resolve_delegation_result_max_chars()
+    delegation_request = replace(
+        delegation_request,
+        capability=next(
+            (
+                str(capability)
+                for capability in (getattr(target_config, "capabilities", None) or [])
+                if str(capability) in {"data_query", "knowledge_base"}
+            ),
+            None,
+        ),
+        timeout_seconds=delegation_timeout,
+        run_id=run_id,
+        parent_trace_id=parent_trace_id,
+        parent_conversation_id=main_ctx.conversation_id,
+        child_session_id=child_session_id,
+        max_depth=max_depth,
+        tool_filter=list(resolved_tool_filter) if resolved_tool_filter is not None else None,
+        output_schema=output_schema,
+    )
 
     sub_executor = await _dispatch_sub_agent_executor(
         target_config,
-        query,
+        delegation_request.query,
         sub_history,
-        trace_id=f"sub_{uuid.uuid4().hex[:8]}",
+        trace_id=child_trace_id,
         trace_buffer=main_ctx.trace_buffer,
         permission_options=sub_permission_options,
         user_info=user_info,
-        conversation_id=main_ctx.conversation_id,
+        conversation_id=child_session_id,
+        turn_decision=TurnDecision.for_direct_agent_selection(target_config),
     )
 
     # 临时切换到子 Context 运行
@@ -472,6 +843,7 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
     set_agent_context(sub_ctx)
 
     full_output = ""
+    structured_holder: Dict[str, Any] = {}
     sub_stream = None
     interrupt_type: str | None = None
 
@@ -484,27 +856,94 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
                 sub_stream,
                 main_ctx=main_ctx,
                 sub_display_name=sub_display_name,
+                structured_result=structured_holder,
+                subagent_metadata=subagent_metadata,
             )
 
         await asyncio.wait_for(consume_stream(), timeout=delegation_timeout)
 
     except asyncio.TimeoutError:
+        timeout_message = (
+            f"错误：调用子智能体 '{sub_display_name}' 响应超时（已达 {int(delegation_timeout)} 秒限制）。"
+        )
         logger.warning(
             "[Delegation] Sub-agent '%s' timed out after %.0f seconds.",
             agent_name,
             delegation_timeout,
         )
         if main_ctx.event_queue:
-            await main_ctx.event_queue.put({
-                "type": "log",
-                "title": f"[{sub_display_name}] 调用超时",
-                "details": f"子智能体未能在 {int(delegation_timeout)} 秒内返回数据，强制中断并释放资源。",
-                "status": "error"
-            })
-        return f"错误：调用子智能体 '{sub_display_name}' 响应超时（已达 {int(delegation_timeout)} 秒限制）。"
+            _put_subagent_lifecycle_log(
+                main_ctx,
+                log_id=lifecycle_log_id,
+                metadata=subagent_metadata,
+                status="error",
+                details=f"子智能体未能在 {int(delegation_timeout)} 秒内返回数据，强制中断并释放资源。",
+                started_at=lifecycle_started_at,
+            )
+        _annotate_subagent_trace(
+            main_ctx.trace_buffer or [],
+            trace_start_index,
+            metadata=subagent_metadata,
+            stop_reason=SubAgentStopReason.TIMEOUT.value,
+        )
+        return SubAgentResult(
+            status=SubAgentResultStatus.TIMEOUT,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content=timeout_message,
+            error_code="timeout",
+            capability=delegation_request.capability,
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
+            child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
+        ).to_tool_text()
+    except asyncio.CancelledError:
+        _put_subagent_lifecycle_log(
+            main_ctx,
+            log_id=lifecycle_log_id,
+            metadata=subagent_metadata,
+            status="error",
+            details="子代理执行已取消。",
+            started_at=lifecycle_started_at,
+        )
+        _annotate_subagent_trace(
+            main_ctx.trace_buffer or [],
+            trace_start_index,
+            metadata=subagent_metadata,
+            stop_reason=SubAgentStopReason.CANCELLED.value,
+        )
+        raise
     except Exception as e:
         logger.error(f"[Delegation] Error executing sub-agent '{agent_name}': {e}", exc_info=True)
-        return f"错误：调用子智能体 '{sub_display_name}' 时发生异常：{str(e)}"
+        _put_subagent_lifecycle_log(
+            main_ctx,
+            log_id=lifecycle_log_id,
+            metadata=subagent_metadata,
+            status="error",
+            details=f"子智能体执行失败：{str(e)}",
+            started_at=lifecycle_started_at,
+        )
+        _annotate_subagent_trace(
+            main_ctx.trace_buffer or [],
+            trace_start_index,
+            metadata=subagent_metadata,
+            stop_reason=SubAgentStopReason.FAILED.value,
+        )
+        return SubAgentResult(
+            status=SubAgentResultStatus.FAILED,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content=f"错误：调用子智能体 '{sub_display_name}' 时发生异常：{str(e)}",
+            error_code="execution_error",
+            capability=delegation_request.capability,
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
+            child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
+        ).to_tool_text()
     finally:
         if sub_stream and inspect.isasyncgen(sub_stream):
             try:
@@ -514,12 +953,257 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         set_agent_context(original_ctx)
 
     if interrupt_type:
-        return DELEGATION_INTERRUPT_MESSAGES.get(
-            interrupt_type,
-            f"错误：子智能体 '{sub_display_name}' 执行被中断（{interrupt_type}），委派未完成。",
+        interrupt_status = (
+            SubAgentResultStatus.PERMISSION_DENIED
+            if interrupt_type == "permission_required"
+            else SubAgentResultStatus.INTERRUPTED
+        )
+        interrupt_reason = (
+            SubAgentStopReason.PERMISSION_DENIED
+            if interrupt_type == "permission_required"
+            else SubAgentStopReason.INTERRUPTED
+        )
+        _annotate_subagent_trace(
+            main_ctx.trace_buffer or [],
+            trace_start_index,
+            metadata=subagent_metadata,
+            stop_reason=interrupt_reason.value,
+        )
+        _put_subagent_lifecycle_log(
+            main_ctx,
+            log_id=lifecycle_log_id,
+            metadata=subagent_metadata,
+            status="error",
+            details=DELEGATION_INTERRUPT_MESSAGES.get(
+                interrupt_type,
+                f"子智能体执行被中断（{interrupt_type}）。",
+            ),
+            started_at=lifecycle_started_at,
+        )
+        return SubAgentResult(
+            status=interrupt_status,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content=DELEGATION_INTERRUPT_MESSAGES.get(
+                interrupt_type,
+                f"错误：子智能体 '{sub_display_name}' 执行被中断（{interrupt_type}），委派未完成。",
+            ),
+            error_code="interrupted",
+            interrupt_type=interrupt_type,
+            capability=delegation_request.capability,
+            run_id=run_id,
+            parent_trace_id=parent_trace_id,
+            parent_conversation_id=main_ctx.conversation_id,
+            child_trace_id=child_trace_id,
+            child_session_id=child_session_id,
+            stop_reason=interrupt_reason,
+        ).to_tool_text()
+
+    structured = structured_holder.get("value")
+    if output_schema is not None and structured is None:
+        structured = _structured_from_text(clean_sub_agent_output(full_output))
+    if output_schema is not None:
+        valid, reason = validate_structured_output(structured, output_schema)
+        if not valid:
+            _annotate_subagent_trace(
+                main_ctx.trace_buffer or [],
+                trace_start_index,
+                metadata=subagent_metadata,
+                stop_reason=SubAgentStopReason.INVALID_OUTPUT.value,
+            )
+            _put_subagent_lifecycle_log(
+                main_ctx,
+                log_id=lifecycle_log_id,
+                metadata=subagent_metadata,
+                status="error",
+                details=f"子智能体结构化输出不符合约定：{reason}",
+                started_at=lifecycle_started_at,
+            )
+            return SubAgentResult(
+                status=SubAgentResultStatus.INVALID_OUTPUT,
+                target_agent_id=str(target_config.agent_id),
+                target_agent_name=sub_display_name,
+                content=f"错误：子智能体结构化输出不符合约定：{reason}",
+                error_code="invalid_output",
+                capability=delegation_request.capability,
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
+                child_trace_id=child_trace_id,
+                child_session_id=child_session_id,
+                stop_reason=SubAgentStopReason.INVALID_OUTPUT,
+            ).to_tool_text()
+
+    result = finalize_delegation_result(
+        full_output,
+        target_agent_id=str(target_config.agent_id),
+        target_agent_name=sub_display_name,
+        max_chars=result_max_chars,
+        capability=delegation_request.capability,
+        run_id=run_id,
+        parent_trace_id=parent_trace_id,
+        parent_conversation_id=main_ctx.conversation_id,
+        child_trace_id=child_trace_id,
+        child_session_id=child_session_id,
+        structured=structured if isinstance(structured, dict) else None,
+    )
+    _annotate_subagent_trace(
+        main_ctx.trace_buffer or [],
+        trace_start_index,
+        metadata=subagent_metadata,
+        stop_reason=result.stop_reason.value if result.stop_reason else SubAgentStopReason.COMPLETED.value,
+    )
+    _put_subagent_lifecycle_log(
+        main_ctx,
+        log_id=lifecycle_log_id,
+        metadata={
+            **subagent_metadata,
+            "stop_reason": result.stop_reason.value if result.stop_reason else SubAgentStopReason.COMPLETED.value,
+        },
+        status="success",
+        details="子代理已完成委派任务。",
+        started_at=lifecycle_started_at,
+        execution_time_ms=int(time.time() * 1000) - lifecycle_started_at,
+    )
+    logger.info(
+        "[Delegation] target=%s status=%s chars=%s truncated=%s",
+        sub_display_name,
+        result.status.value,
+        len(result.content),
+        result.truncated,
+    )
+    return result.to_tool_text()
+
+
+class BatchSubAgentCall(BaseModel):
+    """One independent item in a batch delegation request."""
+
+    agent_name: str = Field(description="目标子智能体名称")
+    query: str = Field(description="交给子智能体的独立任务")
+    max_depth: int | None = Field(default=None, description="可选的最大委派深度")
+    tool_filter: list[str] | None = Field(default=None, description="可选的子代理工具白名单")
+    output_schema: dict[str, Any] | None = Field(default=None, description="可选的结构化输出约束")
+
+    @field_validator("agent_name", "query")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("agent_name/query 不能为空")
+        return normalized
+
+
+class BatchSubAgentArgs(BaseModel):
+    """Arguments accepted by the parallel delegation tool."""
+
+    calls: list[BatchSubAgentCall] = Field(
+        description="彼此独立、可以并行执行的子代理任务，最多 4 个"
+    )
+
+    @field_validator("calls")
+    @classmethod
+    def _bounded_calls(cls, value: list[BatchSubAgentCall]) -> list[BatchSubAgentCall]:
+        if not value:
+            raise ValueError("calls 不能为空")
+        if len(value) > MAX_BATCH_DELEGATION_CALLS:
+            raise ValueError(f"calls 最多 {MAX_BATCH_DELEGATION_CALLS} 个")
+        return value
+
+
+class BatchSubAgentTool(BaseTool):
+    """Run independent one-shot delegations concurrently and return ordered results."""
+
+    name = "sub_agent_batch_call"
+    description = (
+        "并行委派 1-4 个彼此独立的子智能体任务。"
+        "仅用于任务之间互不依赖的场景；有先后依赖时逐次调用 sub_agent_call。"
+        "结果按 calls 输入顺序返回，单个任务失败不会丢弃其他结果。"
+    )
+    args_schema = BatchSubAgentArgs
+
+    async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
+        try:
+            args = BatchSubAgentArgs.model_validate(arguments or {})
+        except Exception as exc:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"批量委派入参无效: {exc}",
+                },
+                ensure_ascii=False,
+            )
+
+        main_ctx = get_current_agent_context()
+        if not main_ctx:
+            return json.dumps(
+                {"status": "error", "error": "错误：无法获取当前执行上下文，批量委派失败。"},
+                ensure_ascii=False,
+            )
+
+        async def run_one(index: int, call: BatchSubAgentCall) -> dict[str, Any]:
+            task_ctx = main_ctx.model_copy(deep=False, update={"trace_buffer": []})
+            original_ctx = get_current_agent_context()
+            set_agent_context(task_ctx)
+            try:
+                content = await sub_agent_call.func(
+                    **call.model_dump(exclude_none=True)
+                )
+                return {
+                    "index": index,
+                    "agent_name": call.agent_name,
+                    "status": _batch_result_status(str(content or "")),
+                    "content": str(content or ""),
+                    "trace_buffer": task_ctx.trace_buffer,
+                }
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "[Delegation] Batch item failed: agent=%s index=%s",
+                    call.agent_name,
+                    index,
+                )
+                return {
+                    "index": index,
+                    "agent_name": call.agent_name,
+                    "status": "failed",
+                    "content": f"错误：批量委派子智能体 '{call.agent_name}' 失败：{exc}",
+                    "trace_buffer": task_ctx.trace_buffer,
+                }
+            finally:
+                set_agent_context(original_ctx)
+
+        tasks = [
+            asyncio.create_task(run_one(index, call))
+            for index, call in enumerate(args.calls)
+        ]
+        try:
+            raw_results = await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        results: list[dict[str, Any]] = []
+        for item in raw_results:
+            main_ctx.trace_buffer.extend(item.pop("trace_buffer", []))
+            results.append(item)
+
+        failed_count = sum(item["status"] != "completed" for item in results)
+        return json.dumps(
+            {
+                "status": "completed",
+                "results": results,
+                "completed_count": len(results) - failed_count,
+                "failed_count": failed_count,
+            },
+            ensure_ascii=False,
         )
 
-    return finalize_delegation_output(full_output, max_chars=result_max_chars)
+
+sub_agent_batch_call = BatchSubAgentTool()
 
 
 async def _dispatch_sub_agent_executor(
@@ -532,6 +1216,7 @@ async def _dispatch_sub_agent_executor(
     permission_options: Dict[str, Any],
     user_info: Dict[str, Any] | None,
     conversation_id: str | None,
+    turn_decision: TurnDecision,
 ) -> Any:
     from app.services.ai.dispatcher import AgentDispatcher
 
@@ -545,4 +1230,5 @@ async def _dispatch_sub_agent_executor(
         permission_options=permission_options,
         user_info=user_info,
         conversation_id=conversation_id,
+        turn_decision=turn_decision,
     )

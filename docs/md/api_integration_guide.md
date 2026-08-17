@@ -144,13 +144,19 @@ ChatBI 会话亲和性为三态（`DataSessionAffinity`）：
 4. **决策 (复合意图)**:
    - LLM 返回最匹配的 `agent_name` (Primary)。
    - 若 `enable_multi_agent` 且问题跨域，可返回 `secondary_agents`。
-   - 附带 `turn_labels`、`relation_to_previous`、`user_action_type` 作为 executor 弱 hint。
+   - 路由服务将语义证据和能力资格固化为一个 `TurnDecision`，`turn_kind` 直接决定外层 Executor。
 5. **Fallback 机制**:
    - LLM 解析失败（最多重试 1 次）、置信度低或异常时，降级到 `sys-agent-chat`（通用对话助手）。
 
 ### 4.3 专家直选
 
-传 `agent_id` / `agent_name` 或 Embed **专家模式** 时：**跳过** Router LLM，并设置 `route_hints.direct_agent_selection=true`（主助手数据反幻觉 Guard 不启用）。
+传 `agent_id` / `agent_name` 或 Embed **专家模式** 时：**跳过** Router LLM，并创建 `TurnDecision(provenance=direct_agent_selection)`（主助手数据反幻觉 Guard 不启用）。
+
+### 4.4 外层路由与 ChatBI 内部分类
+
+外层路由只负责确定本轮是否进入普通对话、知识库或 DataQuery Executor；`TurnDecision` 是从路由传递到执行器的唯一外层决策。进入 DataQuery 后，才由 `DataQueryTurnClassifier` 继续判断新查询、数据追问、结果复用、结果分析或上下文动作。该内部分类不会替代或回写外层 `TurnDecision`。
+
+当 `route_status` 未解析、当前 Agent 没有 `data_query` capability，或 `allows_data_route=false` 时，系统不会因为 Agent 配置或模型输出而强行进入 DataQuery，而是按安全规则回退到通用执行路径。
 
 ---
 

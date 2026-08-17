@@ -3,6 +3,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
+from app.services.ai.turn_decision import TurnDecision
 
 
 class KnowledgeExecutor(BaseExecutor):
@@ -17,6 +18,7 @@ class KnowledgeExecutor(BaseExecutor):
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
+        turn_decision: Optional[TurnDecision] = None,
     ):
         super().__init__(
             config,
@@ -27,9 +29,7 @@ class KnowledgeExecutor(BaseExecutor):
             conversation_id,
             permission_options,
         )
-        self.intent_info = None
-        self.intent_elapsed_ms = 0.0
-        self.turn_classification = None
+        self.turn_decision = turn_decision
 
     async def execute(
         self,
@@ -43,16 +43,11 @@ class KnowledgeExecutor(BaseExecutor):
             permission_options=self.permission_options,
             user_info=self.user_info,
             conversation_id=self.conversation_id,
+            turn_decision=self.turn_decision,
         )
-        runner.intent_info = self.intent_info
-        runner.intent_elapsed_ms = self.intent_elapsed_ms
-        runner.turn_classification = self.turn_classification
         runner.step_counter = self.step_counter
 
         async for chunk in runner.execute(history):
             yield chunk
 
         self.step_counter = runner.step_counter
-        self.intent_info = runner.intent_info
-        self.intent_elapsed_ms = runner.intent_elapsed_ms
-        self.turn_classification = runner.turn_classification

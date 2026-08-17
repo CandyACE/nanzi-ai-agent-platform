@@ -29,6 +29,15 @@ class BaseExecutor(ABC):
         self.user_info = user_info
         self.conversation_id = conversation_id
         self.step_counter = 0
+        self._last_tool_resolution = None
+
+    def _tool_resolution_log_events(self) -> list[Dict[str, Any]]:
+        """Return safe UI events for the latest runtime-tool resolution."""
+        if self._last_tool_resolution is None:
+            return []
+        from app.services.ai.tool_capability import build_tool_resolution_log_events
+
+        return build_tool_resolution_log_events(self._last_tool_resolution)
 
     def _grounding_enabled(self) -> bool:
         """Return whether this request explicitly enabled grounding audits."""
@@ -89,6 +98,7 @@ class BaseExecutor(ABC):
         }
 
     def _apply_user_identity_to_context(self, ctx: Any, identity: Dict[str, Any]) -> None:
+        ctx.trace_id = self.trace_id
         u_id_val = identity.get("u_id_val")
         if u_id_val is None:
             return
@@ -134,6 +144,7 @@ class BaseExecutor(ABC):
             is_admin=is_admin_val,
             api_key=self.user_info.get("api_key") if self.user_info else None,
             user_dimensions=user_dims,
+            trace_id=self.trace_id,
             trace_buffer=self.trace_buffer or [],
             delegation_depth=0,
             permission_options=dict(self.permission_options or {}),

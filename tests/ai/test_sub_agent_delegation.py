@@ -1,5 +1,7 @@
 import pytest
 import asyncio
+import json
+import app.services.ai.tools.agent_delegate_tool as delegation_tool
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -7,13 +9,14 @@ from app.services.ai.tools.agent_delegate_tool import (
     sub_agent_call,
     clean_sub_agent_output,
     _extract_delegation_text,
+    finalize_delegation_result,
     finalize_delegation_output,
     resolve_delegation_permission_options,
     filter_delegable_system_agents,
     resolve_runnable_delegable_system_agents,
     delegable_agent_name_aliases,
     EMPTY_DELEGATION_RESULT_MESSAGE,
-    DELEGATION_INTERRUPT_MESSAGES,
+DELEGATION_INTERRUPT_MESSAGES,
 )
 from app.core.context import AgentContext, set_agent_context
 from app.schemas.agent import ChatConfig
@@ -26,6 +29,57 @@ _DISPATCH_PATCH = "app.services.ai.tools.agent_delegate_tool._dispatch_sub_agent
 ID_MAIN_KB = "11111111111111111111111111111111"
 ID_SUB_KB = "22222222222222222222222222222222"
 ID_FRONTEND_KB = "33333333333333333333333333333333"
+
+
+def test_resolve_delegation_depth_never_exceeds_platform_limit():
+    resolver = getattr(delegation_tool, "resolve_delegation_depth", lambda *_: (None, "missing"))
+    assert resolver(0, None) == (1, None)
+    assert resolver(0, 1) == (1, None)
+    assert resolver(0, 2) == (1, None)
+    assert resolver(1, 2)[1] == "depth_exceeded"
+
+
+def test_resolve_delegation_tool_filter_only_narrows_configured_tools():
+    resolver = getattr(delegation_tool, "resolve_delegation_tool_filter", lambda *_: (None, "missing"))
+    filtered, error = resolver(
+        ["search_knowledge_base", "read_file"],
+        ["search_knowledge_base"],
+    )
+
+    assert filtered == ["search_knowledge_base"]
+    assert error is None
+
+
+def test_resolve_delegation_tool_filter_rejects_unknown_tools():
+    resolver = getattr(delegation_tool, "resolve_delegation_tool_filter", lambda *_: (None, "missing"))
+    filtered, error = resolver(
+        ["search_knowledge_base"],
+        ["Bash"],
+    )
+
+    assert filtered is None
+    assert error == "unknown_tool"
+
+
+def test_apply_delegation_tool_filter_controls_visible_and_runnable_specs():
+    from app.services.ai.runtime.agentscope.tools import apply_delegation_tool_filter
+
+    tools = [
+        SimpleNamespace(name="search_knowledge_base"),
+        SimpleNamespace(name="read_file"),
+    ]
+
+    filtered = apply_delegation_tool_filter(tools, ["search_knowledge_base"])
+
+    assert filtered == [tools[0]]
+
+
+def test_apply_delegation_tool_filter_empty_allowlist_hides_all_specs():
+    from app.services.ai.runtime.agentscope.tools import apply_delegation_tool_filter
+
+    tools = [SimpleNamespace(name="search_knowledge_base")]
+
+    assert apply_delegation_tool_filter(tools, []) == []
 
 
 @contextmanager
@@ -119,6 +173,34 @@ async def test_consume_sub_agent_stream_keeps_only_final_answer():
 
 
 @pytest.mark.asyncio
+async def test_consume_sub_agent_stream_marks_forwarded_logs_with_subagent_metadata():
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    async def sub_stream():
+        yield {"type": "log", "title": "检索知识库", "status": "pending"}
+
+    eq = asyncio.Queue()
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent", event_queue=eq)
+    await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="知识库助手",
+        subagent_metadata={
+            "display_name": "知识库助手",
+            "run_id": "subrun_test",
+            "child_trace_id": "sub_child",
+        },
+    )
+
+    forwarded = await eq.get()
+    assert forwarded["subagent"] == {
+        "display_name": "知识库助手",
+        "run_id": "subrun_test",
+        "child_trace_id": "sub_child",
+    }
+
+
+@pytest.mark.asyncio
 async def test_consume_sub_agent_stream_retraction_replaces_accumulated_text():
     """retraction 用新正文整体替换已积累内容，而不是追加。"""
     from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
@@ -169,6 +251,54 @@ def test_finalize_delegation_output_truncation():
     result = finalize_delegation_output(long_text, max_chars=100)
     assert len(result) < 200
     assert "截断" in result
+
+
+def test_finalize_delegation_result_keeps_typed_status_and_metadata():
+    result = finalize_delegation_result(
+        "查询结果",
+        target_agent_id="agent-1",
+        target_agent_name="数据助手",
+    )
+
+    assert result.status.value == "completed"
+    assert result.to_tool_text() == "查询结果"
+    assert result.to_metadata() == {
+        "status": "completed",
+        "target_agent_id": "agent-1",
+        "target_agent_name": "数据助手",
+        "error_code": None,
+        "interrupt_type": None,
+        "truncated": False,
+        "capability": None,
+        "evidence_count": 0,
+        "artifact_count": 0,
+        "content_chars": 4,
+        "run_id": None,
+        "parent_trace_id": None,
+        "parent_conversation_id": None,
+        "child_trace_id": None,
+        "child_session_id": None,
+        "stop_reason": "completed",
+        "structured": False,
+    }
+
+
+def test_sub_agent_request_metadata_has_no_credentials_or_raw_query():
+    from app.services.ai.subagent_protocol import SubAgentRequest
+
+    request = SubAgentRequest(
+        target_agent_name="data-agent",
+        query="查询订单金额",
+        caller_agent_id="main-agent",
+        caller_agent_name="主助手",
+        delegation_depth=0,
+    )
+
+    metadata = request.to_metadata()
+
+    assert metadata["target_agent_name"] == "data-agent"
+    assert metadata["query_chars"] == len("查询订单金额")
+    assert "查询订单金额" not in str(metadata)
 
 
 def test_resolve_delegation_permission_options_preserves_main_approval_boundary():
@@ -292,6 +422,82 @@ async def test_sub_agent_call_depth_check():
         set_agent_context(None)
 
 
+def test_sub_agent_call_tool_schema_exposes_optional_protocol_controls():
+    fields = sub_agent_call.args_schema.model_fields
+
+    assert {"agent_name", "query", "max_depth", "tool_filter", "output_schema"} <= set(fields)
+
+
+def test_sub_agent_batch_call_exposes_bounded_batch_protocol():
+    batch_tool = getattr(delegation_tool, "sub_agent_batch_call", None)
+    assert batch_tool is not None
+    assert "calls" in batch_tool.args_schema.model_fields
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_batch_call_runs_items_concurrently_and_keeps_input_order(monkeypatch):
+    batch_tool = getattr(delegation_tool, "sub_agent_batch_call", None)
+    assert batch_tool is not None
+
+    main_ctx = AgentContext(
+        agent_id="main",
+        agent_name="MainAgent",
+        delegation_depth=0,
+        trace_buffer=[],
+    )
+    set_agent_context(main_ctx)
+    active = 0
+    max_active = 0
+
+    async def fake_sub_agent_call(**kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.03 if kwargs["agent_name"] == "slow" else 0.01)
+        active -= 1
+        return f"result:{kwargs['agent_name']}"
+
+    monkeypatch.setattr(delegation_tool.sub_agent_call, "func", fake_sub_agent_call)
+
+    try:
+        raw = await batch_tool.ainvoke(
+            {
+                "calls": [
+                    {"agent_name": "slow", "query": "任务一"},
+                    {"agent_name": "fast", "query": "任务二"},
+                ]
+            }
+        )
+    finally:
+        set_agent_context(None)
+
+    payload = json.loads(raw)
+    assert payload["status"] == "completed"
+    assert max_active == 2
+    assert [item["agent_name"] for item in payload["results"]] == ["slow", "fast"]
+    assert [item["content"] for item in payload["results"]] == [
+        "result:slow",
+        "result:fast",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_batch_call_rejects_more_than_four_items():
+    batch_tool = getattr(delegation_tool, "sub_agent_batch_call", None)
+    assert batch_tool is not None
+    raw = await batch_tool.ainvoke(
+        {
+            "calls": [
+                {"agent_name": f"agent-{index}", "query": "任务"}
+                for index in range(5)
+            ]
+        }
+    )
+    payload = json.loads(raw)
+    assert payload["status"] == "error"
+    assert "最多 4 个" in payload["error"]
+
+
 @pytest.mark.asyncio
 async def test_sub_agent_call_normal_execution_and_log_forwarding():
     eq = asyncio.Queue()
@@ -343,10 +549,132 @@ async def test_sub_agent_call_normal_execution_and_log_forwarding():
             log_chunks.append(await eq.get())
             eq.task_done()
 
-        assert len(log_chunks) == 1
-        assert log_chunks[0]["type"] == "log"
-        assert log_chunks[0]["title"] == "[数据查询助手] Executing SQL query"
+        assert len(log_chunks) == 3
+        forwarded = next(chunk for chunk in log_chunks if chunk["title"] == "[数据查询助手] Executing SQL query")
+        assert forwarded["type"] == "log"
+        assert forwarded["subagent"]["display_name"] == "数据查询助手"
+        lifecycle = [
+            chunk for chunk in log_chunks
+            if str(chunk.get("id", "")).startswith("subagent_")
+        ]
+        assert [chunk["status"] for chunk in lifecycle] == ["pending", "success"]
+        assert lifecycle[-1]["subagent"]["stop_reason"] == "completed"
 
+    set_agent_context(None)
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_call_applies_tool_filter_and_validates_structured_output():
+    main_ctx = AgentContext(
+        agent_id="main",
+        agent_name="MainAgent",
+        delegation_depth=0,
+        trace_id="trace-main",
+        trace_buffer=[],
+    )
+    set_agent_context(main_ctx)
+
+    async def mock_execute(history):
+        from app.core.context import get_current_agent_context
+
+        current_ctx = get_current_agent_context()
+        assert current_ctx.delegation_tool_filter == ["execute_sql_query"]
+        yield {"structured": {"answer": "100"}, "content": "查询结果：100"}
+
+    mock_executor = MagicMock()
+    mock_executor.execute = mock_execute
+    sub_config = ChatConfig(
+        agent_id="sub-123",
+        agent_name="chat-bi",
+        agent_display_name="数据查询助手",
+        system_prompt="sub",
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
+        model_name="test",
+        temperature=0.0,
+    )
+    mock_agent = _make_system_agent(agent_id="sub-123", name="chat-bi", display_name="数据查询助手")
+
+    with _mock_delegation_runtime_config(), \
+         _mock_system_agents_session([mock_agent]), \
+         patch("app.services.ai.agent_manager.AgentManagerService.get_active_agent_config", AsyncMock(return_value=sub_config)), \
+         patch(_DISPATCH_PATCH, AsyncMock(return_value=mock_executor)), \
+         patch("app.services.permission_service.PermissionService.check_permission", AsyncMock(return_value=True)):
+        result = await sub_agent_call.func(
+            agent_name="chat-bi",
+            query="查询数据",
+            tool_filter=["execute_sql_query"],
+            output_schema={
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            },
+        )
+
+    assert result == "查询结果：100"
+    set_agent_context(None)
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_call_rejects_invalid_structured_output():
+    main_ctx = AgentContext(agent_id="main", agent_name="MainAgent", delegation_depth=0)
+    set_agent_context(main_ctx)
+
+    async def mock_execute(history):
+        yield {"structured": {"answer": 100}, "content": "查询结果：100"}
+
+    mock_executor = MagicMock()
+    mock_executor.execute = mock_execute
+    sub_config = ChatConfig(
+        agent_id="sub-123",
+        agent_name="chat-bi",
+        agent_display_name="数据查询助手",
+        system_prompt="sub",
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
+        model_name="test",
+        temperature=0.0,
+    )
+    mock_agent = _make_system_agent(agent_id="sub-123", name="chat-bi", display_name="数据查询助手")
+
+    with _mock_delegation_runtime_config(), \
+         _mock_system_agents_session([mock_agent]), \
+         patch("app.services.ai.agent_manager.AgentManagerService.get_active_agent_config", AsyncMock(return_value=sub_config)), \
+         patch(_DISPATCH_PATCH, AsyncMock(return_value=mock_executor)), \
+         patch("app.services.permission_service.PermissionService.check_permission", AsyncMock(return_value=True)):
+        result = await sub_agent_call.func(
+            agent_name="chat-bi",
+            query="查询数据",
+            output_schema={
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            },
+        )
+
+    assert "结构化输出不符合约定" in result
+    assert "property 'answer' must be a string" in result
+    set_agent_context(None)
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_call_rejects_invalid_schema_before_dispatch():
+    main_ctx = AgentContext(agent_id="main", agent_name="MainAgent", delegation_depth=0)
+    set_agent_context(main_ctx)
+    mock_dispatch = AsyncMock()
+
+    with patch(_DISPATCH_PATCH, mock_dispatch):
+        result = await sub_agent_call.func(
+            agent_name="chat-bi",
+            query="查询数据",
+            output_schema={"type": "array"},
+        )
+
+    assert "output_schema 无效" in result
+    assert "schema root must be an object" in result
+    mock_dispatch.assert_not_called()
     set_agent_context(None)
 
 
@@ -393,6 +721,8 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         agent_id="main-agent-id",
         agent_name="MainAgent",
         delegation_depth=0,
+        trace_id="trace-main",
+        conversation_id="conversation-parent",
         dataset_ids=[ID_MAIN_KB],
         knowledge_dataset_ids=[ID_FRONTEND_KB],
         user_id=100,
@@ -431,12 +761,20 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         from app.core.context import get_current_agent_context
 
         current_ctx = get_current_agent_context()
+        assert history == [{"role": "user", "content": "查询数据"}]
         assert current_ctx is not None
+        assert current_ctx.conversation_id.startswith("child_session_")
+        assert current_ctx.conversation_id != "conversation-parent"
+        assert current_ctx.parent_conversation_id == "conversation-parent"
+        assert current_ctx.child_session_id == current_ctx.conversation_id
         assert set(current_ctx.dataset_ids) == {ID_MAIN_KB, ID_SUB_KB}
         assert current_ctx.knowledge_dataset_ids == [ID_FRONTEND_KB]
         assert current_ctx.agent_dataset_ids == [ID_SUB_KB]
         assert set(current_ctx.engine_config.get("dataset_ids")) == {ID_MAIN_KB, ID_SUB_KB}
         assert current_ctx.delegation_depth == 1
+        assert current_ctx.trace_id.startswith("sub_")
+        assert current_ctx.parent_trace_id == "trace-main"
+        assert current_ctx.delegation_run_id.startswith("subrun_")
         assert current_ctx.grounding_evidence_ledger is shared_ledger
         yield {"content": "Data output"}
 
@@ -454,6 +792,8 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         assert "Data output" in res
         patched_dispatch.assert_called_once()
         kwargs = patched_dispatch.call_args.kwargs
+        assert kwargs["conversation_id"].startswith("child_session_")
+        assert kwargs["conversation_id"] != "conversation-parent"
         assert kwargs["user_info"] == {
             "user_id": 100,
             "role": "user",

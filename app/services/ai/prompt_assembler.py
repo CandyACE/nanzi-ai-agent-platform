@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from typing import Any, Iterable, List, Optional
 
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.prompt_sections import PromptSection, render_prompt_sections
+from app.services.ai.turn_decision import TurnDecision
 
 NANZI_PROMPT_CACHE_BOUNDARY = "\n<!-- NANZI_CACHE_BOUNDARY -->\n"
 
@@ -16,6 +18,8 @@ class AssembledSystemPrompt:
     dynamic_suffix: str
     cache_boundary_enabled: bool
     cache_reorder_enabled: bool
+    section_names: tuple[str, ...] = ()
+    section_char_counts: dict[str, int] | None = None
 
 
 @dataclass
@@ -30,11 +34,13 @@ class PromptAssemblyInput:
     memory_recall_hint: Optional[str] = None
     preloaded_memories: Optional[str] = None
     user_profile: Optional[str] = None
+    accessible_resources: Optional[str] = None
     cache_boundary_enabled: bool = False
     cache_reorder_enabled: bool = False
     sub_agents_context: Optional[str] = None
     quick_suggestions_forbidden: bool = False
     runtime_tool_names: Optional[Iterable[str]] = None
+    turn_decision: Optional[TurnDecision] = None
 
 
 def resolve_effective_prompt_tool_names(
@@ -135,7 +141,12 @@ def _build_stack_without_platform(params: PromptAssemblyInput) -> str:
     prompt = _prepend_block(prompt, params.ltm_profile)
     prompt = _prepend_block(prompt, params.memory_recall_hint)
     prompt = _prepend_block(prompt, params.preloaded_memories)
+    prompt = _prepend_block(prompt, params.accessible_resources)
     prompt = _prepend_block(prompt, params.user_profile)
+    prompt = _prepend_block(
+        prompt,
+        AgentServicePrompts.turn_decision_context(params.turn_decision),
+    )
     return prompt
 
 
@@ -157,21 +168,75 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
         platform_global = _join_blocks([platform_global, params.sub_agents_context])
     agent_db = (params.agent_system_prompt or "").strip()
 
-    dynamic_blocks = [
-        block
-        for block in [
-            params.preloaded_memories,
-            params.memory_recall_hint,
-            params.ltm_profile,
+    dynamic_sections = [
+        PromptSection(
+            name=name,
+            order=index,
+            text=text,
+            stability="dynamic",
+            source="runtime",
+        )
+        for index, (name, text) in enumerate(
+            (
+                ("turn_decision", AgentServicePrompts.turn_decision_context(params.turn_decision)),
+                ("accessible_resources", params.accessible_resources),
+                ("preloaded_memories", params.preloaded_memories),
+                ("memory_recall", params.memory_recall_hint),
+                ("ltm_profile", params.ltm_profile),
+                (
+                    "skills",
+                    _skills_or_discovery_block(
+                        skills_injection=params.skills_injection,
+                        skills_already_loaded=params.skills_already_loaded,
+                        skills_dir=params.skills_dir,
+                    ),
+                ),
+            )
+        )
+        if text and text.strip()
+    ]
+    dynamic_suffix = render_prompt_sections(dynamic_sections)
+
+    section_blocks = [
+        PromptSection("platform_global", 0, platform_global, stability="stable", source="platform"),
+        PromptSection(
+            "turn_decision",
+            10,
+            AgentServicePrompts.turn_decision_context(params.turn_decision),
+            source="router",
+        ),
+        PromptSection("user_profile", 20, params.user_profile, source="user_context"),
+        PromptSection(
+            "accessible_resources",
+            25,
+            params.accessible_resources,
+            source="resource_catalog",
+        ),
+        PromptSection("preloaded_memories", 30, params.preloaded_memories, source="memory"),
+        PromptSection("memory_recall", 40, params.memory_recall_hint, source="memory"),
+        PromptSection("ltm_profile", 50, params.ltm_profile, source="memory"),
+        PromptSection(
+            "skills",
+            60,
             _skills_or_discovery_block(
                 skills_injection=params.skills_injection,
                 skills_already_loaded=params.skills_already_loaded,
                 skills_dir=params.skills_dir,
             ),
-        ]
-        if block and block.strip()
+            source="skill",
+        ),
+        PromptSection("agent_system_prompt", 70, params.agent_system_prompt, stability="stable", source="agent"),
     ]
-    dynamic_suffix = _join_blocks(dynamic_blocks)
+    section_names = tuple(
+        section.name
+        for section in sorted(section_blocks, key=lambda item: (item.order, item.name))
+        if section.enabled and section.text and section.text.strip()
+    )
+    section_char_counts = {
+        section.name: len(section.text.strip())
+        for section in section_blocks
+        if section.enabled and section.text and section.text.strip()
+    }
 
     if params.cache_reorder_enabled:
         stable_prefix = _join_blocks([part for part in [platform_global, params.user_profile, agent_db] if part])
@@ -187,6 +252,8 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
             dynamic_suffix=dynamic_suffix,
             cache_boundary_enabled=params.cache_boundary_enabled,
             cache_reorder_enabled=True,
+            section_names=section_names,
+            section_char_counts=section_char_counts,
         )
 
     if (params.engine_type or "LOCAL") == "LOCAL":
@@ -209,4 +276,6 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
         dynamic_suffix=dynamic_suffix,
         cache_boundary_enabled=params.cache_boundary_enabled,
         cache_reorder_enabled=False,
+        section_names=section_names,
+        section_char_counts=section_char_counts,
     )

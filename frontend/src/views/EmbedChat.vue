@@ -566,7 +566,7 @@
               :class="[
                 `markdown-theme-${config.markdownTheme || 'default'}`,
                 { 'message-borderless': config.hideMessageBorder },
-                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation
+                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation || msg.userQuestion || (msg.processTimeline && msg.processTimeline.length > 0)
                   ? [
                       'px-4 py-3 rounded-2xl rounded-tl-sm shadow-none border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 min-h-[46px]',
                       msg.isThinking
@@ -591,6 +591,7 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 dark-mode
               />
+              <ChatTodoCard :timeline="msg.processTimeline" />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -735,7 +736,7 @@
                                                                   :content="visibleStreamBody(msg)"
                                                                   :theme="config.markdownTheme"
                                                                   :conversation-id="conversationId"
-                                                                  :hide-quick-buttons="!!msg.businessConfirmation"
+                                                                  :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
@@ -762,6 +763,13 @@
                 :payload="msg.businessConfirmation"
                 :disabled="isProcessing"
                 @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
+
+              <UserQuestionCard
+                v-if="msg.userQuestion"
+                :payload="msg.userQuestion"
+                :disabled="isProcessing"
+                @submit="(payload) => submitUserQuestion(msg, payload)"
               />
 
                                 <!-- AI Stalled Thinking Prompt (Moved out to be sibling to msg.content) -->
@@ -1905,6 +1913,7 @@ const showToast = toast.showToast;
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
+import UserQuestionCard from "@/components/UserQuestionCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
@@ -1929,6 +1938,7 @@ import ConfirmModal from "@/components/ConfirmModal.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
+import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -2013,11 +2023,16 @@ import {
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
 import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
+import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
   type BusinessConfirmationField,
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
+import {
+  buildUserQuestionUserMessage,
+  type UserQuestionState,
+} from "@/utils/userQuestion";
 // --- Types ---
 interface LogEntry {
   id: number | string;
@@ -2027,10 +2042,13 @@ interface LogEntry {
   status: "pending" | "success" | "error";
   isExpanded: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'default';
+  tool_name?: string;
+  resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
+  subagent?: SubagentTraceMeta;
   rowFilterApplied?: boolean;
 }
 
@@ -2147,6 +2165,7 @@ interface Message {
   permissionNotice?: PermissionNotice;
   groundingBlocked?: GroundingBlockedPayload;
   businessConfirmation?: BusinessConfirmationState;
+  userQuestion?: UserQuestionState;
   _hasSilentlyRefreshed?: boolean;
 }
 // Helper: Check Role
@@ -5566,7 +5585,7 @@ const fetchConversationHistory = async (
                   isThinking: false,
                   feedback: null,
                   agentName: item.agent_name ?? undefined,
-                  agentDisplayName: item.agent_display_name ?? undefined,
+                  agentDisplayName: item.agent_display_name || (String(item.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
                   agentType: item.agent_type ?? undefined,
                   prompt_tokens: item.prompt_tokens ?? undefined,
                   completion_tokens: item.completion_tokens ?? undefined,
@@ -6370,6 +6389,11 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
       elapsed_time_ms: data.elapsed_time_ms ?? currentLog.elapsed_time_ms,
       started_at: currentLog.started_at ?? (data.status === "pending" ? Date.now() : data.started_at),
+      subagent: data.subagent !== undefined
+        ? normalizeSubagentTraceMeta(data.subagent)
+        : currentLog.subagent,
+      tool_name: data.tool_name ?? currentLog.tool_name,
+      resolution_status: data.resolution_status ?? currentLog.resolution_status,
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,
     };
     syncProcessTimelineLog(msg, {
@@ -6391,6 +6415,9 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     execution_time_ms: data.execution_time_ms ?? null,
     elapsed_time_ms: data.elapsed_time_ms ?? null,
     started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
+    subagent: normalizeSubagentTraceMeta(data.subagent),
+    tool_name: data.tool_name,
+    resolution_status: data.resolution_status,
     rowFilterApplied: data.row_filter_applied === true,
   });
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);
@@ -6398,6 +6425,8 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
   applyStreamTraceId(msg, data);
+  if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
+  if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
 
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
@@ -6527,6 +6556,27 @@ const submitBusinessConfirmation = async (
   card.fields = payload.fields.map((field) => ({ ...field }));
   card.status = "submitted";
   card.decision = payload.confirmed ? "confirmed" : "cancelled";
+  userInput.value = content;
+  await sendMessage();
+};
+
+const submitUserQuestion = async (
+  msg: Message,
+  payload: { selectedOptionIds: string[]; customInput: string; cancelled: boolean },
+) => {
+  const card = msg.userQuestion;
+  if (!card || card.status !== "pending" || isProcessing.value) return;
+  const content = buildUserQuestionUserMessage(
+    card.question_id,
+    payload.selectedOptionIds,
+    payload.customInput,
+    payload.cancelled,
+    card.question,
+    card.options,
+  );
+  card.selected_option_ids = [...payload.selectedOptionIds];
+  card.custom_input = payload.customInput;
+  card.status = payload.cancelled ? "cancelled" : "submitted";
   userInput.value = content;
   await sendMessage();
 };

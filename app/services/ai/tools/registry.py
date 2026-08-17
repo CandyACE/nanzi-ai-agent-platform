@@ -24,7 +24,7 @@ from app.services.ai.tools.notification_tools import (
 # Import Jira Tools
 from app.services.ai.tools.jira_tools import JiraSearchTool, JiraCreateIssueTool, JiraGetProjectsTool
 from app.services.ai.tools.system_executive_tools import (
-    read_file, write_file, search_text, exec_command, manage_process, list_process,
+    read_file, read_image, write_file, search_text, exec_command, manage_process, list_process,
     create_skills, list_available_skills, read_skill_instruction
 )
 from app.services.ai.tools.advanced_auxiliary_tools import (
@@ -41,8 +41,10 @@ from app.services.ai.tools.resource_catalog_tools import (
 )
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
+from app.services.ai.tools.user_question_tools import ask_user_question
 from app.services.ai.tools.session_status import session_status
-from app.services.ai.tools.agent_delegate_tool import sub_agent_call
+from app.services.ai.tools.agent_delegate_tool import sub_agent_call, sub_agent_batch_call
+from app.services.ai.tools.todo_tools import todo_write
 from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
 from app.models.tool import SysApiTool
@@ -105,6 +107,7 @@ TOOL_EVIDENCE_TYPES = {
     "manage_process": frozenset({EvidenceType.RUNTIME_STATE}),
     "exec_command": frozenset({EvidenceType.RUNTIME_STATE}),
     "read_file": frozenset({EvidenceType.USER_FILE}),
+    "read_image": frozenset({EvidenceType.USER_FILE}),
     "search_text": frozenset({EvidenceType.USER_FILE}),
     "excel_document_read": frozenset({EvidenceType.USER_FILE}),
     "word_document_read": frozenset({EvidenceType.USER_FILE}),
@@ -112,6 +115,7 @@ TOOL_EVIDENCE_TYPES = {
     "fetch_user_long_term_memory": frozenset({EvidenceType.CONVERSATION_MEMORY}),
     "get_myinfo": frozenset({EvidenceType.INTERNAL_DATA}),
     "request_user_confirmation": frozenset({EvidenceType.RUNTIME_STATE}),
+    "ask_user_question": frozenset({EvidenceType.RUNTIME_STATE}),
     "session_status": frozenset({EvidenceType.RUNTIME_STATE}),
 }
 
@@ -128,10 +132,12 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     "fetch_user_long_term_memory": "allow_empty_success",
     "get_myinfo": "allow_empty_success",
     "request_user_confirmation": "allow_empty_success",
+    "ask_user_question": "allow_empty_success",
     "search_knowledge_base": "allow_empty_success",
     "search_qa_examples": "allow_empty_success",
     "jira_search": "allow_empty_success",
     "read_file": "allow_empty_success",
+    "read_image": "allow_empty_success",
     "search_text": "allow_empty_success",
     "excel_document_read": "allow_empty_success",
     "word_document_read": "allow_empty_success",
@@ -264,6 +270,7 @@ class ToolRegistry:
         "jira_get_projects": _jira_get_projects,
         # Register System Executive Tools
         "read_file": read_file,
+        "read_image": read_image,
         "write_file": write_file,
         "search_text": search_text,
         "exec_command": exec_command,
@@ -290,7 +297,10 @@ class ToolRegistry:
         "list_accessible_knowledge_bases": list_accessible_knowledge_bases,
         "get_myinfo": get_myinfo,
         "request_user_confirmation": request_user_confirmation,
+        "ask_user_question": ask_user_question,
         "sub_agent_call": sub_agent_call,
+        "sub_agent_batch_call": sub_agent_batch_call,
+        "todo_write": todo_write,
         "excel_document_read": excel_document_read,
         "excel_document_write": excel_document_write,
         "word_document_read": word_document_read,
@@ -818,6 +828,7 @@ class ToolRegistry:
             list_accessible_knowledge_bases,
             get_myinfo,
             request_user_confirmation,
+            ask_user_question,
             session_status,
             create_skills,
             list_available_skills,

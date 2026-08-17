@@ -60,11 +60,15 @@ READ_ONLY_TOOL_NAMES = {
     "memory_search",
     "fetch_user_long_term_memory",
     "get_myinfo",
+    "list_accessible_datasets",
+    "list_accessible_knowledge_bases",
     "request_user_confirmation",
+    "ask_user_question",
     "get_my_tasks",
     "jira_search",
     "jira_get_projects",
     "read_file",
+    "read_image",
     "search_text",
     "list_process",
     "list_available_skills",
@@ -78,6 +82,8 @@ READ_ONLY_TOOL_NAMES = {
     "web_search_baidu",
     "system_http_request",
     "sub_agent_call",
+    "sub_agent_batch_call",
+    "todo_write",
 }
 NATIVE_TOOL_EVIDENCE_TYPES = {
     "Bash": frozenset({EvidenceType.RUNTIME_STATE}),
@@ -224,6 +230,22 @@ class RuntimeToolSpec:
         result = self.audit_callback(event)
         if inspect.isawaitable(result):
             await result
+
+
+def apply_delegation_tool_filter(
+    tools: list[RuntimeToolSpec],
+    allowed_names: list[str] | None = None,
+) -> list[RuntimeToolSpec]:
+    """Apply the current sub-agent allowlist to visible and executable tools."""
+    if allowed_names is None:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+        allowed_names = getattr(context, "delegation_tool_filter", None)
+    if allowed_names is None:
+        return list(tools)
+    allowed = {str(name) for name in allowed_names}
+    return [tool for tool in tools if str(tool.name) in allowed]
 
 
 class AgentScopeRuntimeTool:

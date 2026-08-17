@@ -16,6 +16,11 @@ import {
   ListBulletIcon,
 } from "@heroicons/vue/24/outline";
 import { copyToClipboard as copyText } from "@/utils/clipboard";
+import {
+  formatSubagentTraceSummary,
+  normalizeSubagentTraceMeta,
+  subagentDisplayName,
+} from "@/utils/subagentTrace";
 
 const props = defineProps<{
   traceId: string;
@@ -155,13 +160,74 @@ const totalExecutionTime = computed(() => {
   return maxTime - minTime;
 });
 
+const escapeHtml = (unsafe: unknown): string => {
+  return String(unsafe ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
 const formatJson = (data: any) => {
-  try {
-    return JSON.stringify(data, null, 2);
-  } catch (e) {
-    return String(data);
+  if (data == null) return ''
+  let obj = data
+  if (typeof data === 'string') {
+    const trimmed = data.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        obj = JSON.parse(trimmed)
+      } catch {
+        return data
+      }
+    } else {
+      return data
+    }
   }
-};
+  try {
+    return JSON.stringify(obj, null, 2)
+  } catch (e) {
+    return String(data)
+  }
+}
+
+const highlightJsonHtml = (val: unknown): string => {
+  if (val == null) return '<span class="text-slate-400">null</span>'
+  let obj = val
+  if (typeof val === 'string') {
+    const trimmed = val.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        obj = JSON.parse(trimmed)
+      } catch {
+        return escapeHtml(val)
+      }
+    } else {
+      return escapeHtml(val)
+    }
+  }
+
+  const jsonStr = JSON.stringify(obj, null, 2)
+  const escaped = escapeHtml(jsonStr)
+  return escaped.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (match) => {
+      let cls = 'text-amber-300' // number
+      if (/^&quot;/.test(match) || /^"/.test(match)) {
+        if (/:$/.test(match) || /&quot;:$/.test(match)) {
+          cls = 'text-cyan-300 font-semibold' // key
+        } else {
+          cls = 'text-emerald-300' // string
+        }
+      } else if (/true|false/.test(match)) {
+        cls = 'text-purple-300 font-semibold' // boolean
+      } else if (/null/.test(match)) {
+        cls = 'text-slate-500 italic' // null
+      }
+      return `<span class="${cls}">${match}</span>`
+    }
+  )
+}
 
 const getEventIcon = (type: string) => {
   switch (type) {
@@ -201,6 +267,21 @@ const localizeToolName = (name: string) => {
   };
   return map[name] || name;
 };
+
+const formatStepTime = (iso?: string) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+};
+
+const getSubagentMeta = (step: any) =>
+  normalizeSubagentTraceMeta(step?.meta_info?.subagent);
 </script>
 
 <template>
@@ -402,6 +483,14 @@ const localizeToolName = (name: string) => {
                       <span>{{ localizeToolName(step.tool_name) }}</span>
                     </span>
 
+                    <span
+                      v-if="getSubagentMeta(step)"
+                      class="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-indigo-50 text-indigo-600 border-indigo-100"
+                      :title="formatSubagentTraceSummary(getSubagentMeta(step))"
+                    >
+                      <span>子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}</span>
+                    </span>
+
                     <!-- Model Badge -->
                     <span
                       v-if="step.model"
@@ -411,7 +500,18 @@ const localizeToolName = (name: string) => {
                     </span>
                   </div>
 
-                  <div class="flex items-center space-x-3">
+                  <div class="flex items-center space-x-2.5">
+                    <span
+                      v-if="formatStepTime(step.timestamp || step.created_at)"
+                      class="text-xs text-gray-400 font-mono font-medium"
+                      :title="step.timestamp || step.created_at"
+                    >
+                      {{ formatStepTime(step.timestamp || step.created_at) }}
+                    </span>
+                    <span
+                      v-if="formatStepTime(step.timestamp || step.created_at) && step.execution_time_ms"
+                      class="text-gray-300 text-xs"
+                    >·</span>
                     <div v-if="step.status === 'pending'" class="flex items-center space-x-1 text-amber-500">
                       <div class="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping"></div>
                       <span class="text-[10px] font-bold uppercase tracking-widest">Processing</span>
@@ -427,6 +527,39 @@ const localizeToolName = (name: string) => {
 
                 <!-- Card Body -->
                 <div class="p-5 space-y-4">
+                  <div
+                    v-if="getSubagentMeta(step)"
+                    class="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 space-y-2"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <p class="text-xs font-bold text-indigo-700">子代理委派</p>
+                      <span class="text-[10px] text-indigo-500">
+                        {{ formatSubagentTraceSummary(getSubagentMeta(step)) }}
+                      </span>
+                    </div>
+                    <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-indigo-900/70">
+                      <template v-if="getSubagentMeta(step)?.run_id">
+                        <dt class="font-semibold">Run ID</dt>
+                        <dd class="font-mono break-all">{{ getSubagentMeta(step)?.run_id }}</dd>
+                      </template>
+                      <template v-if="getSubagentMeta(step)?.parent_trace_id">
+                        <dt class="font-semibold">父 Trace</dt>
+                        <dd class="font-mono break-all">{{ getSubagentMeta(step)?.parent_trace_id }}</dd>
+                      </template>
+                      <template v-if="getSubagentMeta(step)?.child_trace_id">
+                        <dt class="font-semibold">子 Trace</dt>
+                        <dd class="font-mono break-all">{{ getSubagentMeta(step)?.child_trace_id }}</dd>
+                      </template>
+                      <template v-if="getSubagentMeta(step)?.stop_reason">
+                        <dt class="font-semibold">停止原因</dt>
+                        <dd>{{ getSubagentMeta(step)?.stop_reason }}</dd>
+                      </template>
+                      <template v-if="getSubagentMeta(step)?.tool_filter?.length">
+                        <dt class="font-semibold">工具过滤</dt>
+                        <dd class="break-all">{{ getSubagentMeta(step)?.tool_filter?.join('、') }}</dd>
+                      </template>
+                    </dl>
+                  </div>
                   <!-- Tool Input -->
                   <div v-if="step.tool_input" class="space-y-2">
                     <div
@@ -448,8 +581,8 @@ const localizeToolName = (name: string) => {
                       </button>
                     </div>
 
-                    <div v-if="expandedSteps[`input-${index}`]" class="rounded-lg overflow-hidden border border-gray-100">
-                      <pre class="text-[11px] font-mono bg-gray-50/50 p-3 text-slate-600 overflow-x-auto leading-relaxed">{{ formatJson(step.tool_input) }}</pre>
+                    <div v-if="expandedSteps[`input-${index}`]" class="rounded-lg overflow-hidden border border-gray-900 bg-[#0d1117]">
+                      <pre class="text-[11px] font-mono p-3 text-slate-100 overflow-x-auto leading-relaxed" v-html="highlightJsonHtml(step.tool_input)" />
                     </div>
                   </div>
 
@@ -475,7 +608,7 @@ const localizeToolName = (name: string) => {
                     </div>
 
                     <div v-if="expandedSteps[`output-${index}`]" class="rounded-lg overflow-hidden border border-gray-900 bg-[#0d1117] shadow-inner relative group">
-                      <pre class="text-[11px] font-mono p-4 text-emerald-400 overflow-x-auto max-h-[400px] leading-relaxed custom-dark-scrollbar">{{ formatJson(step.tool_output) }}</pre>
+                      <pre class="text-[11px] font-mono p-4 text-slate-100 overflow-x-auto max-h-[400px] leading-relaxed custom-dark-scrollbar" v-html="highlightJsonHtml(step.tool_output)" />
                       <!-- Subtle dark overlay on top/bottom for long content -->
                       <div class="absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-[#0d1117] to-transparent pointer-events-none opacity-50"></div>
                       <div class="absolute inset-x-0 bottom-0 h-4 bg-gradient-to-t from-[#0d1117] to-transparent pointer-events-none opacity-50"></div>
@@ -573,6 +706,19 @@ const localizeToolName = (name: string) => {
                     :title="localizeToolName(step.tool_name)"
                   >
                     {{ localizeToolName(step.tool_name) }}
+                  </div>
+                  <div
+                    v-if="getSubagentMeta(step)"
+                    class="text-[10px] text-indigo-600 truncate pl-3"
+                    :title="formatSubagentTraceSummary(getSubagentMeta(step))"
+                  >
+                    子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}
+                  </div>
+                  <div
+                    v-if="formatStepTime(step.timestamp || step.created_at)"
+                    class="text-[10px] text-gray-400 font-mono pl-3"
+                  >
+                    {{ formatStepTime(step.timestamp || step.created_at) }}
                   </div>
                 </div>
 

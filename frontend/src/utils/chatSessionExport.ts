@@ -1,4 +1,5 @@
 import type { AgentExecutionHistory } from '@/api/agent'
+import { formatSubagentTraceSummary, normalizeSubagentTraceMeta } from './subagentTrace.ts'
 
 export interface TraceStep {
   step_number?: number
@@ -9,6 +10,7 @@ export interface TraceStep {
   execution_time_ms?: number
   status?: string
   error_message?: string
+  meta_info?: Record<string, unknown> | null
 }
 
 export interface ChatTraceDetail {
@@ -58,6 +60,11 @@ const formatTraceStepsMarkdown = (steps: TraceStep[] | undefined): string => {
     if (step.tool_name) {
       lines.push('')
       lines.push(`- **工具:** \`${step.tool_name}\``)
+    }
+    const subagent = normalizeSubagentTraceMeta(step.meta_info?.subagent)
+    if (subagent) {
+      lines.push('')
+      lines.push(`- **子代理:** ${formatSubagentTraceSummary(subagent)}`)
     }
     if (step.tool_input != null && formatStepPayload(step.tool_input)) {
       lines.push('')

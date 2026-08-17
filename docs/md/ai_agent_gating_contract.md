@@ -30,12 +30,32 @@
 
 Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`；KnowledgeAgent 保留独立 NLI 反思，但通过同一服务生成最终消息内提示。原始 API 会话只有显式传入布尔值 `debug_options.grounding_enabled=true` 才启用这些审核；EmbedChat 新会话默认发送 `true`，AgentDebug 默认发送 `false`，显式 `false` 始终关闭。关闭不影响 Runner 流式输出、常规工具调用、KnowledgeAgent 检索或 ChatBI SQL/Schema 安全门禁。
 
+## 外层路由执行流程
+
+每个用户轮次只生成一个外层 `TurnDecision`。自动路由由 `RouterService` 生成，专家直选或 `@` 提及由 `TurnDecision.for_direct_agent_selection()` 生成；之后由 `AgentDispatcher` 根据 `turn_kind`、Agent capability 和安全资格选择 Executor。Prompt、工具预检、Grounding、子代理和 Runner 都消费同一个决策快照，不再从独立字典或会话分类结果重新推导外层路由。
+
+```text
+用户消息 → RouterService / 专家直选 → TurnDecision
+  → 权限与能力校验 → PromptAssembler → AgentDispatcher
+  → Assistant / Knowledge / DataQuery / 外部引擎 Executor
+```
+
+`TurnDecision` 只描述本轮路由意图，不授予权限。`route_status` 未解析、数据 capability 不匹配或数据资格未通过时，禁止进入 `DataQueryExecutor`；进入 ChatBI 后，`DataQueryTurnClassifier` 只负责数据域内部的新查询、追问、结果复用和结果动作分类。
+
+### 可访问资源摘要
+
+路由前由 `app/services/ai/accessible_resource_catalog.py` 按当前用户权限读取知识库和数据集的目录级名称及短描述，作为 RouterService 的 `accessible_resources_context` 动态提示词 Section。路由完成后，非 ChatBI 轮次将同一摘要传给 PromptAssembler 的 `accessible_resources` Section，位置在用户画像之后、记忆和技能之前。
+
+该摘要只用于来源判断和语义关联，不包含表结构、字段、指标、文档正文、知识库备注或负责人信息，也不替代 `search_knowledge_base`、数据工具和服务端权限校验。资源查询失败时只移除提示摘要，不能因此放宽任何访问权限。
+
+其中 `chatbi-example-meta` 是 ChatBI 案例样本库，虽然在元数据表中以知识库记录存在，但不属于知识库问答来源；它不会进入提示词的“知识库”目录区块，仍可作为案例数据集使用。
+
 ## 门控矩阵
 
 | Agent 类型 | 路由/意图门控 | 工具权限门控 | 外部执行挂起 | 数据/知识真实性门控 | SQL 安全门控 | 输出安全/反幻觉 | 中断恢复 | 当前契约状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ChatBI / DataQuery | 必须。外层只选 DataQuery，内部以 `DataQueryTurnClassifier` 为最终判定 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。schema、few-shot、结果复用、空结果、异常结果均需可观测 | 必须。只读 SQL、schema-before-sql、静态风险、重复 SQL、修复轮次、最终 guard | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后最终文字超出成功数据结果时保留正文并追加风险提示 | 必须。pending snapshot 保存 data run state | 基本完整，需收口测试和少数边界顺序 |
-| General Assistant | 必须。使用会话级通用分类；GENERAL 路由提示若与用户明确的公网/运行状态意图冲突，以统一请求决策升级证据要求 | 必须。AgentScope runtime tool scope 统一处理；可选工具预检（`agent_tool_preflight_mode`） | 必须。支持 `external_execution_required` | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后普通 GENERAL 直接流式；明确来源请求和旧查数 Guard 才进入事实审核 | 不适用 | 柔性。开启时保留正文并按证据匹配结果追加来源或风险提示，不再发送阻断卡片 | 必须。AgentScope pending 恢复后遵循本轮开关 | 基础完整，不等同 ChatBI 强门控 |
+| ChatBI / DataQuery | 必须。外层只有在 `TurnDecision.turn_kind=data_query`、Agent 具备 `data_query` capability 且 `allows_data_route=true` 时进入 DataQuery；进入后以 `DataQueryTurnClassifier` 判定内部动作 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。schema、few-shot、结果复用、空结果、异常结果均需可观测 | 必须。只读 SQL、schema-before-sql、静态风险、重复 SQL、修复轮次、最终 guard | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后最终文字超出成功数据结果时保留正文并追加风险提示 | 必须。pending snapshot 保存 data run state | 基本完整，需收口测试和少数边界顺序 |
+| General Assistant | 必须。使用 RouterService 生成的 `TurnDecision`；GENERAL 路由若与用户明确的公网/运行状态意图冲突，以权限边界内的请求决策投影升级证据要求 | 必须。AgentScope runtime tool scope 统一处理；可选工具预检（`agent_tool_preflight_mode`） | 必须。支持 `external_execution_required` | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后普通 GENERAL 直接流式；明确来源请求和旧查数 Guard 才进入事实审核 | 不适用 | 柔性。开启时保留正文并按证据匹配结果追加来源或风险提示，不再发送阻断卡片 | 必须。AgentScope pending 恢复后遵循本轮开关 | 基础完整，不等同 ChatBI 强门控 |
 | Knowledge Agent | 必须。知识库问答可优先于普通对话 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。dataset 范围、自动检索、空召回、引用约束 | 不适用 | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后先反思重写；最终仍不一致时保留最后回答并追加风险提示 | 必须。AgentScope pending 恢复 | 基本完整，需明确 dataset 缺失与后续反幻觉测试关系 |
 | RAGFlow 外部引擎 | 弱。适配器内只做查询提取和日志 | 不适用。外部引擎不走本地 AgentScope 工具权限 | 不适用。当前无统一挂起恢复 | 依赖 RAGFlow 返回引用和错误 | 不适用 | 弱。无本地二次反幻觉审计 | 不适用 | 非统一门控路径，需明确为外部引擎自管或补统一适配 |
 | OpenClaw 外部引擎 | 弱。主要交给 OpenClaw 处理 | 不适用。外部引擎不走本地 AgentScope 工具权限 | 不适用。当前无统一挂起恢复 | 部分。透传用户可访问 dataset 给外部引擎 | 不适用 | 必须。输入和输出安全审计可配置 | 不适用 | 有安全审计，但非统一 AgentScope 门控 |
@@ -136,7 +156,7 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 ### 测试映射
 
-- `tests/ai/test_turn_classifier.py`
+- `tests/ai/test_single_track_routing_contract.py`
 - `tests/ai/runners/test_data_agent_runner.py`
 - `tests/ai/test_sql_query_binding.py`
 - `tests/ai/tools/test_data_api.py`
@@ -146,12 +166,12 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 ## General Assistant 契约
 
-1. General Assistant 必须使用会话级通用分类结果，包括 data query 降级、knowledge、context action、skill execution、meta action、general。
+1. General Assistant 必须使用 RouterService 生成的 `TurnDecision`，由其中的 `turn_kind` 表达 general、knowledge、data query 或 context action。
 2. 如果当前 Agent 无 `data_query` capability，但用户问题被识别为数据查询，必须按通用助手处理，并保留降级语义。
 3. General Assistant 不得连接 ChatBI 数据库，也不得编造内部业务数据。
 4. **数据反幻觉 Guard**（`AssistantAgentRunner.execute`）仅在以下条件**同时**满足时启用：
    - 当前智能体为 **主通用助手**（`is_main_general_agent()`）；
-   - **非**专家直选 / `@` 提及 / 显式 `agent_id`（`route_hints.direct_agent_selection`）；
+   - **非**专家直选 / `@` 提及 / 显式 `agent_id`（`TurnDecision.provenance=direct_agent_selection`）；
    - 用户问题**非**联网/外部搜索（`looks_like_web_search_query`）；
    - 轮次分类或意图为 `DATA_QUERY`，或问题含**强内部业务查数信号**（`looks_like_strong_business_data_request`）。
 5. 高风险提示条件（须本轮**未**发起/待确认工具调用，且输出命中以下之一）：

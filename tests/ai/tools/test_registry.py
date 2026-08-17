@@ -113,6 +113,15 @@ def test_dynamic_register():
     assert ToolRegistry._registry["custom_tool"] == mock_tool
 
 
+@pytest.mark.asyncio
+async def test_static_registry_resolves_todo_write():
+    tool = await ToolRegistry.get_tool("todo_write")
+
+    assert tool is not None
+    assert tool.name == "todo_write"
+    assert tool.is_read_only is True
+
+
 def test_system_executive_tool_names_are_current():
     assert "read_file" in ToolRegistry._registry
     assert "write_file" in ToolRegistry._registry

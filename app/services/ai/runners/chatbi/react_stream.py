@@ -332,6 +332,7 @@ async def stream_agentscope_events(
         yield log_payload
 
         from app.services.ai.business_confirmation import build_business_confirmation_sse
+        from app.services.ai.user_question import build_user_question_sse, persist_user_question_event
 
         if not is_error:
             confirmation_event = build_business_confirmation_sse(
@@ -341,6 +342,27 @@ async def stream_agentscope_events(
             )
             if confirmation_event:
                 yield confirmation_event
+            question_event = build_user_question_sse(
+                tool_name=tool_name,
+                tool_output=output,
+                tool_call_id=tool_id,
+            )
+            if question_event:
+                try:
+                    await persist_user_question_event(
+                        event=question_event,
+                        user_id=runner._runtime_user_id() or "anonymous",
+                        conversation_id=runner.conversation_id or "",
+                    )
+                except Exception:
+                    logger.exception("Failed to persist pending user question")
+                    yield {
+                        "type": "error",
+                        "status": "error",
+                        "content": "无法保存待回答问题，请稍后重试。",
+                    }
+                    return
+                yield question_event
 
     def track_sql_plan_delta(delta: str) -> None:
         state.text_window = (state.text_window + delta)[-4000:]

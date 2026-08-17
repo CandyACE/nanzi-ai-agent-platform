@@ -297,6 +297,87 @@ def read_file(path: str, offset: int = 0, limit: int = 262144, tail: bool = Fals
     except Exception as e:
         return f"读取文件失败: {str(e)}"
 
+
+@tool
+async def read_image(path: str, question: str = "") -> str:
+    """
+    读取并解析本地安全沙箱或工作区中的图片文件（PNG/JPEG/WEBP/GIF/BMP 等）。
+    当用户或智能体需要查看、检查、识别本地图片、提取图中文字/表格、分析图表曲线、查看代码生成的图片产物或进行视觉问答时，应触发本工具。
+    系统将使用配置的默认多模态视觉模型对图片进行深度理解。
+
+    Args:
+        path: 图片文件的物理或相对路径 (如 data/uploads/screenshot.png 或 data/agent_workspaces/.../chart.png)。
+        question: 可选针对该图片的具体问题或提取指令 (如 '提取图中的表格数据'、'检查折线图是否有异常'；留空时提取完整图文描述)。
+    """
+    try:
+        abs_path = validate_safe_path(path)
+        if not os.path.exists(abs_path):
+            return f"错误：图片文件 {path} 不存在。"
+        if os.path.isdir(abs_path):
+            return f"错误：{path} 是一个目录，不是图片文件。"
+
+        ext = os.path.splitext(abs_path)[1].lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+            return f"错误：文件 {path} 不是支持的图片格式（仅支持 .png, .jpg, .jpeg, .webp, .gif, .bmp）。"
+
+        file_size = os.path.getsize(abs_path)
+        if file_size > 20 * 1024 * 1024:
+            return f"错误：图片文件过大（{file_size / (1024 * 1024):.1f}MB），最大支持 20MB。"
+
+        from app.services.ai.multimodal_support import resolve_default_multimodal_model_name
+
+        vision_model = await resolve_default_multimodal_model_name()
+        if not vision_model:
+            return "错误：系统未配置或未启用默认多模态模型（multimodal_model_name），无法执行图片解析。"
+
+        import base64
+
+        with open(abs_path, "rb") as f:
+            raw_bytes = f.read()
+        mime_subtype = ext.lstrip(".")
+        if mime_subtype == "jpg":
+            mime_subtype = "jpeg"
+        data_url = f"data:image/{mime_subtype};base64,{base64.b64encode(raw_bytes).decode('utf-8')}"
+
+        prompt_text = (
+            f"请针对以下图片回答问题或提供详细分析。\n用户指令/问题：{question.strip()}"
+            if question and question.strip()
+            else "请详细描述此图片的内容，并提取其中的关键文字、图表数据及核心信息。"
+        )
+
+        from app.services.ai.config import AgentConfigProvider
+        from app.services.ai.runtime.agentscope.compat import HumanMessage
+
+        human = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]
+        )
+
+        llm = await AgentConfigProvider.get_configured_llm(
+            streaming=False,
+            model_override=vision_model,
+            temp_override=0.0,
+        )
+        response = await llm.ainvoke([human])
+
+        res_content = getattr(response, "content", None)
+        if isinstance(res_content, list):
+            parts = [str(item.get("text") if isinstance(item, dict) else item) for item in res_content]
+            text = "".join(parts).strip()
+        else:
+            text = str(res_content or response or "").strip()
+
+        if not text:
+            return f"提示：多模态模型 {vision_model} 未能识别出图片有效内容。"
+
+        return f"[图片解析成功 ({os.path.basename(path)} · 模型: {vision_model})]\n{text}"
+    except Exception as e:
+        logger.warning("read_image execution failed for %s: %s", path, e, exc_info=True)
+        return f"解析图片失败: {str(e)}"
+
+
 @tool
 def write_file(path: str, content: str) -> str:
     """

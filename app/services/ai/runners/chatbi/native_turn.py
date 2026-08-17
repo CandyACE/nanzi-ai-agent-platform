@@ -15,6 +15,7 @@ from app.services.ai.runtime.agentscope.compat import HumanMessage, AIMessage
 from app.services.ai.runners.chatbi.constants import DATA_REPAIR_BUDGETS, MAX_DATA_REPAIR_ROUNDS
 from app.services.ai.runners.chatbi.forced_tool_choice import ForcedFirstToolChoiceModel
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.runners.chatbi.repair_controller import ChatBIRepairController
 from app.services.ai.runners.chatbi.insight_meta import take_chatbi_insight_meta_event
 from app.services.ai.runners.chatbi.sql_result_compact import (
     mark_deferred_continue_query,
@@ -440,24 +441,35 @@ async def run_native_agent_turn(
         return
 
     max_repair_rounds = max(sum(DATA_REPAIR_BUDGETS.values()), MAX_DATA_REPAIR_ROUNDS)
+    repair_controller = (
+        runner._repair_controller(state)
+        if hasattr(runner, "_repair_controller")
+        else ChatBIRepairController(
+            state,
+            semantic_intent=getattr(runner, "_semantic_intent", None),
+        )
+    )
     for _ in range(max_repair_rounds):
         if state.sql_fatal_error:
             break
-        if runner._repair_budget_exhausted(state):
+        repair_decision = repair_controller.decide()
+        if repair_decision is None:
             break
-        repair_message = runner._build_repair_message(state)
-        if not repair_message:
+        if not repair_decision.message:
             break
-        repair_tool_choice = runner._resolve_repair_tool_choice(state)
         yield {
             "type": "log",
             "id": f"data_repair_{uuid.uuid4().hex[:8]}",
-            "title": runner._build_repair_title(state),
-            "details": repair_message,
+            "title": repair_decision.title,
+            "details": repair_decision.message,
             "status": "warning",
+            "repair_kind": repair_decision.kind,
+            "repair_attempt": repair_decision.attempt + 1,
+            "repair_budget": repair_decision.budget,
         }
-        runner._record_repair_attempt(state)
-        runner._reset_state_for_repair(state)
+        repair_controller.begin(repair_decision)
+        repair_message = repair_decision.message
+        repair_tool_choice = repair_decision.tool_choice
         repair_inputs = to_agentscope_messages(compat_to_runtime_messages(repair_message))
         original_model = agent.model
         if repair_tool_choice is not None:

@@ -2,7 +2,8 @@ import pytest
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.services.ai.router_service import RouterService, RouteResult
+from app.services.ai.router_service import RouterService
+from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.chatbi_qualification import DatasetCandidate
 from app.services.ai.intent_service import (
     DataSessionAffinity,
@@ -147,18 +148,17 @@ async def test_route_query_high_confidence(mock_agents_metadata):
         
         result = await service.route_query("Show me user count")
         
-        assert isinstance(result, RouteResult)
+        assert isinstance(result, TurnDecision)
         assert result.agent_id == "agent-chatbi"
         assert result.confidence == 0.95
         assert result.reasoning == "Query asks for data table."
         assert result.turn_labels == []
         assert result.relation_to_previous == "unknown"
         assert result.user_action_type == "unknown"
-        assert result.intent_info is not None
-        assert result.intent_info.intent == IntentType.DATA_QUERY
-        assert result.intent_info.domain == "chatbi_business_data"
-        assert result.intent_info.confidence != result.confidence
-        assert result.intent_info.reasoning != result.reasoning
+        assert result.semantic_intent == IntentType.DATA_QUERY.value
+        assert result.semantic_domain == "chatbi_business_data"
+        assert result.semantic_confidence != result.confidence
+        assert result.semantic_reasoning != result.reasoning
         mock_identify.assert_not_called()
         assert mock_get_llm.call_count == 1
         assert mock_get_llm.call_args.kwargs["ignore_session_reasoning_overrides"] is True
@@ -245,11 +245,10 @@ async def test_route_query_retry_recovers_business_data_intent(mock_agents_metad
         result = await service.route_query("列出某个系统中的全部记录")
 
     assert result.agent_id == "agent-chatbi"
-    assert result.intent_info is not None
-    assert result.intent_info.intent == IntentType.DATA_QUERY
-    assert result.intent_info.domain == "chatbi_business_data"
-    assert result.intent_info.confidence == pytest.approx(0.88)
-    assert result.intent_info.reasoning == "系统结构化记录查询"
+    assert result.semantic_intent == IntentType.DATA_QUERY.value
+    assert result.semantic_domain == "chatbi_business_data"
+    assert result.semantic_confidence == pytest.approx(0.88)
+    assert result.semantic_reasoning == "系统结构化记录查询"
     mock_identify.assert_not_called()
     assert mock_chat.generate_text.await_count == 2
     retry_prompt = mock_chat.generate_text.await_args_list[1].args[0][0].content[0].text
@@ -286,7 +285,7 @@ async def test_route_query_retry_placeholder_general_does_not_block_chatbi(mock_
         result = await service.route_query("列出某个系统中的全部记录")
 
     assert result.agent_id == "agent-chatbi"
-    assert result.intent_info is None
+    assert result.semantic_intent is None
     mock_identify.assert_not_called()
 
 
@@ -319,7 +318,7 @@ async def test_route_query_placeholder_general_fails_closed_for_ambiguous_query(
         result = await service.route_query("帮我看看这个")
 
     assert result.agent_id == "agent-general"
-    assert result.intent_info is None
+    assert result.semantic_intent is None
     mock_identify.assert_not_called()
 
 
@@ -460,8 +459,8 @@ async def test_route_query_local_file_domain_blocks_chatbi_even_when_llm_selects
 
     assert result.agent_id == "agent-general"
     assert result.chatbi_mode == "deny"
-    assert result.request_should_delegate is False
-    assert result.request_capability == "answer"
+    assert result.should_delegate is False
+    assert result.capability == "answer"
     assert result.semantic_domain == "local_file"
     assert result.reference_mode == "new_query"
     assert result.needs_fresh_data is True
@@ -782,9 +781,8 @@ async def test_route_query_constrains_candidates_for_high_confidence_data_intent
         result = await service.route_query("列出某个系统中的全部记录")
 
     assert result.agent_id == "agent-chatbi"
-    assert result.intent_info is not None
-    assert result.intent_info.intent == IntentType.DATA_QUERY
-    assert result.intent_info.domain == "chatbi_business_data"
+    assert result.semantic_intent == IntentType.DATA_QUERY.value
+    assert result.semantic_domain == "chatbi_business_data"
     mock_identify.assert_not_called()
     routed_messages = mock_chat.generate_text.call_args.args[0]
     system_prompt = routed_messages[0].content[0].text
@@ -816,8 +814,8 @@ async def test_route_query_public_company_lookup_not_forced_to_data_agent(mock_a
         result = await service.route_query("查一下有孚网络公司信息")
 
     assert result.agent_id == "agent-general"
-    assert result.intent_info is not None
-    assert result.intent_info.domain == "public_web"
+    assert result.semantic_intent == IntentType.DATA_QUERY.value
+    assert result.semantic_domain == "public_web"
     assert "without internal structured-data source" in result.reasoning
     mock_identify.assert_not_called()
 
@@ -851,9 +849,8 @@ async def test_route_query_data_evidence_survives_invalid_constrained_route(mock
         result = await service.route_query("列出某个系统中的全部记录")
 
     assert result.agent_id == "agent-general"
-    assert result.intent_info is not None
-    assert result.intent_info.intent == IntentType.DATA_QUERY
-    assert result.intent_info.domain == "chatbi_business_data"
+    assert result.semantic_intent == IntentType.DATA_QUERY.value
+    assert result.semantic_domain == "chatbi_business_data"
     mock_identify.assert_not_called()
 
 
@@ -928,6 +925,42 @@ async def test_route_query_business_confirmation_receipt_sticky_skips_llm(
     assert result.confidence >= 0.99
     assert "业务确认回执" in result.reasoning
     assert "business_confirmation_receipt" in result.turn_labels
+    assert result.relation_to_previous == "follow_up"
+    mock_get_llm.assert_not_called()
+    mock_identify.assert_not_called()
+    mock_chat.generate_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_query_user_question_receipt_sticky_skips_llm(mock_agents_metadata):
+    """AI 提问回执沿用上一轮智能体，避免回答被重新分到通用/联网路径。"""
+    service = RouterService()
+    mock_chat = _mock_chat_client("{}")
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.intent_service.intent_service.identify_intent", new_callable=AsyncMock) as mock_identify, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+        mock_fetch.return_value = mock_agents_metadata
+        mock_identify.return_value = IntentResponse(
+            intent=IntentType.GENERAL,
+            confidence=0.5,
+            reasoning="should not be used",
+            entities=[],
+        )
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query(
+            "【用户回答】\ninteraction_type: question\nquestion_id: uq_1\n"
+            'selected_option_ids: ["monthly"]\ncustom_input: 排除退款',
+            last_agent_name="ChatBI",
+        )
+
+    assert result is not None
+    assert result.agent_id == "agent-chatbi"
+    assert "AI 提问回执" in result.reasoning
+    assert "user_question_receipt" in result.turn_labels
     assert result.relation_to_previous == "follow_up"
     mock_get_llm.assert_not_called()
     mock_identify.assert_not_called()

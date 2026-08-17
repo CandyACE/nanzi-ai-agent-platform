@@ -46,6 +46,7 @@ function classifyLog(log: EmbedThoughtLogLike): EmbedThoughtStageId {
   if (
     category === "tool" ||
     category === "sql" ||
+    category === "tool_resolution" ||
     title.includes("工具") ||
     title.includes("schema") ||
     title.includes("sql") ||

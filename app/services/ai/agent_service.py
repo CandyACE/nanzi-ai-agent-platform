@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 import uuid
@@ -14,7 +13,6 @@ from app.services.ai.context_manager import AgentContextManager
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.agent_prompts import AgentServicePrompts
-from app.services.ai.agent_readiness import has_knowledge_binding
 from app.services.ai.agent_types import AgentType
 from app.services.ai.prompt_assembler import (
     PromptAssemblyInput,
@@ -36,12 +34,23 @@ from app.services.ai.request_decision import (
     RequestDecision,
     RequestSource,
 )
+from app.services.ai.turn_decision import (
+    TurnDecision,
+    default_thought_expanded,
+    should_inject_ltm,
+    should_inject_memory_recall_hint,
+    should_inject_user_context,
+    should_run_active_memory_preload,
+    turn_kind_label,
+)
 from app.services.ai.intent_service import looks_like_current_model_query
 from app.services.ai.business_context import sanitize_injected_context
 
 logger = logging.getLogger(__name__)
 
-AWAITING_RESUME_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
+AWAITING_RESUME_STATUSES = frozenset(
+    {"awaiting_permission", "awaiting_external_execution", "awaiting_user"}
+)
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
 
 
@@ -132,6 +141,8 @@ def _turn_status_signal(chunk: Dict[str, Any]) -> Optional[str]:
         return "awaiting_permission"
     if chunk_type == "external_execution_required":
         return "awaiting_external_execution"
+    if chunk_type == "user_question":
+        return "awaiting_user"
     if chunk_type == "error":
         return "error"
     if chunk_type:
@@ -583,6 +594,7 @@ class AgentService:
         agent_config = None
         user_query = ""
         full_response_content = ""
+        user_question_cancelled = False
         shared_state = {
             "agent_config": None,
             "execution_status": "success",
@@ -616,6 +628,60 @@ class AgentService:
                 from app.services.ai.executors.common import sanitize_client_messages_for_identity
 
                 messages = sanitize_client_messages_for_identity(messages)
+
+                # AI 提问卡的回执必须先由服务端按 user/conversation/question 校验，
+                # 不能把客户端拼接的选项直接交给模型自行解释。
+                incoming_user_message = messages[-1] if messages else None
+                incoming_content = (
+                    incoming_user_message.get("content")
+                    if isinstance(incoming_user_message, dict)
+                    else None
+                )
+                from app.services.ai.user_question import (
+                    is_user_question_receipt_message,
+                    parse_user_question_receipt,
+                )
+
+                if is_user_question_receipt_message(incoming_content):
+                    receipt = parse_user_question_receipt(incoming_content)
+                    if not receipt or not conversation_id:
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": "用户回答格式无效或当前会话无法恢复问题，请重新发起问题。",
+                            "trace_id": trace_id,
+                        }
+                        return
+                    from app.services.ai.user_question_store import UserQuestionStore
+
+                    try:
+                        question_store = await UserQuestionStore.from_runtime()
+                        await question_store.submit_answer(
+                            user_id=lane_user_id or "anonymous",
+                            conversation_id=conversation_id,
+                            question_id=receipt["question_id"],
+                            selected_option_ids=receipt["selected_option_ids"],
+                            custom_input=receipt["custom_input"],
+                            cancelled=receipt["cancelled"],
+                        )
+                        user_question_cancelled = bool(receipt["cancelled"])
+                    except (PermissionError, ValueError) as exc:
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": f"用户回答未通过校验：{exc}",
+                            "trace_id": trace_id,
+                        }
+                        return
+                    except Exception:
+                        logger.exception("Failed to validate user-question receipt")
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": "当前无法验证用户回答，请稍后重试。",
+                            "trace_id": trace_id,
+                        }
+                        return
 
                 # --- Memory Integration ---
                 # If conversation_id is provided, we use server-side history
@@ -668,6 +734,41 @@ class AgentService:
                 enrich_messages_with_skill_meta(messages)
 
                 user_query = messages[-1]["content"] if messages else ""
+
+                if user_question_cancelled:
+                    cancellation_message = "已取消本次提问，本次任务已停止。"
+                    full_response_content = cancellation_message
+                    execution_status = "cancelled"
+                    shared_state["execution_status"] = "cancelled"
+                    resolved_agent_name = "sys_question_cancel"
+                    resolved_display_name = "系统助手"
+                    if conversation_id:
+                        u_id = lane_user_id
+                        asyncio.create_task(
+                            memory_service.add_message(
+                                u_id,
+                                conversation_id,
+                                "assistant",
+                                cancellation_message,
+                                trace_id=trace_id,
+                                agent_name=resolved_agent_name,
+                                process_timeline=_final_process_timeline(
+                                    shared_state.get("process_timeline")
+                                ),
+                            )
+                        )
+                    yield {
+                        "type": "meta",
+                        "agent_name": resolved_agent_name,
+                        "agent_display_name": resolved_display_name,
+                        "agent_type": "system",
+                    }
+                    yield {
+                        "content": cancellation_message,
+                        "status": "success",
+                        "trace_id": trace_id,
+                    }
+                    return
 
                 # --- Handle explicit @mention in text ---
                 import re
@@ -821,41 +922,24 @@ class AgentService:
             r_turn_labels = getattr(route_details, "turn_labels", []) or []
             r_relation = getattr(route_details, "relation_to_previous", "unknown")
             r_action_type = getattr(route_details, "user_action_type", "unknown")
-            r_intent_info = getattr(route_details, "intent_info", None)
-            r_request_source = getattr(route_details, "request_source", None)
-            r_request_capability = getattr(route_details, "request_capability", None)
+            r_semantic_intent = getattr(route_details, "semantic_intent", None)
+            r_semantic_confidence = getattr(route_details, "semantic_confidence", None)
+            r_semantic_reasoning = getattr(route_details, "semantic_reasoning", None)
+            r_request_source = getattr(route_details, "source", None)
+            r_request_capability = getattr(route_details, "capability", None)
             r_request_reasoning = getattr(route_details, "request_reasoning", None)
             r_chatbi_mode = getattr(route_details, "chatbi_mode", None)
             r_chatbi_evidence_level = getattr(route_details, "chatbi_evidence_level", "none")
             r_chatbi_reason = getattr(route_details, "chatbi_reason", None)
             r_matched_dataset_ids = getattr(route_details, "matched_dataset_ids", []) or []
-            r_semantic_domain = getattr(
-                route_details, "semantic_domain", getattr(r_intent_info, "domain", None)
-            )
-            r_semantic_operation = getattr(
-                route_details, "semantic_operation", getattr(r_intent_info, "operation", None)
-            )
-            r_fact_kind = getattr(
-                route_details, "fact_kind", getattr(r_intent_info, "fact_kind", None)
-            )
-            r_freshness_requirement = getattr(
-                route_details,
-                "freshness_requirement",
-                getattr(r_intent_info, "freshness_requirement", "unknown"),
-            )
-            r_time_scope = getattr(
-                route_details, "time_scope", getattr(r_intent_info, "time_scope", None)
-            )
-            r_reference_mode = getattr(
-                route_details,
-                "reference_mode",
-                getattr(r_intent_info, "reference_mode", "unknown"),
-            )
-            r_needs_fresh_data = getattr(
-                route_details,
-                "needs_fresh_data",
-                getattr(r_intent_info, "needs_fresh_data", False),
-            )
+            r_semantic_domain = getattr(route_details, "semantic_domain", "unknown")
+            r_semantic_operation = getattr(route_details, "semantic_operation", "unknown")
+            r_fact_kind = getattr(route_details, "fact_kind", "unknown")
+            r_freshness_requirement = getattr(route_details, "freshness_requirement", "unknown")
+            r_time_scope = getattr(route_details, "time_scope", None)
+            r_reference_mode = getattr(route_details, "reference_mode", "unknown")
+            r_needs_fresh_data = getattr(route_details, "needs_fresh_data", False)
+            decision_snapshot = route_details
 
             trace_buffer.append(AgentExecutionStep(
                 step_number=0,
@@ -871,9 +955,9 @@ class AgentService:
                     "turn_labels": r_turn_labels,
                     "relation_to_previous": r_relation,
                     "user_action_type": r_action_type,
-                    "semantic_intent": getattr(r_intent_info, "intent", None),
-                    "semantic_confidence": getattr(r_intent_info, "confidence", None),
-                    "semantic_reasoning": getattr(r_intent_info, "reasoning", None),
+                    "semantic_intent": r_semantic_intent,
+                    "semantic_confidence": r_semantic_confidence,
+                    "semantic_reasoning": r_semantic_reasoning,
                     "semantic_domain": r_semantic_domain,
                     "semantic_operation": r_semantic_operation,
                     "fact_kind": r_fact_kind,
@@ -888,6 +972,7 @@ class AgentService:
                     "chatbi_evidence_level": r_chatbi_evidence_level,
                     "chatbi_reason": r_chatbi_reason,
                     "matched_dataset_ids": r_matched_dataset_ids,
+                    "decision_trace": decision_snapshot.trace_payload(),
                 },
                 status="success",
                 execution_time_ms=route_elapsed_ms
@@ -1237,7 +1322,7 @@ class AgentService:
         self,
         *,
         user_info: Optional[dict[str, Any]],
-        early_turn_type: Any,
+        early_turn_kind: str,
         debug_options: Optional[dict[str, Any]],
         user_query: str,
     ) -> tuple[Optional[str], Optional[dict], Optional[str], Optional[str]]:
@@ -1250,13 +1335,7 @@ class AgentService:
         if debug_options and debug_options.get("ignore_ltm"):
             ignore_ltm = True
 
-        from app.services.ai.turn_classifier import (
-            should_inject_ltm,
-            should_inject_memory_recall_hint,
-            should_run_active_memory_preload,
-        )
-
-        if not ignore_ltm and should_inject_ltm(early_turn_type) and user_info:
+        if not ignore_ltm and should_inject_ltm(early_turn_kind) and user_info:
             u_id = user_info.get("user_id", user_info.get("id"))
             if u_id:
                 try:
@@ -1272,7 +1351,7 @@ class AgentService:
                     logger.warning(f"[LTM] Failed to inject long-term memory for user {u_id}: {ltm_err}")
 
         memory_recall_hint: Optional[str] = None
-        if should_inject_memory_recall_hint(early_turn_type):
+        if should_inject_memory_recall_hint(early_turn_kind):
             try:
                 from app.services.memory_config_service import MemoryConfigService
                 from app.services.ai.memory_recall_policy import CROSS_SESSION_MEMORY_SYSTEM_HINT
@@ -1283,7 +1362,7 @@ class AgentService:
                 logger.warning("[Memory] Failed to inject cross-session recall hint: %s", mem_hint_err)
 
         preloaded_memories_text: Optional[str] = None
-        if should_run_active_memory_preload(early_turn_type) and user_info and user_query:
+        if should_run_active_memory_preload(early_turn_kind) and user_info and user_query:
             u_id = user_info.get("user_id", user_info.get("id"))
             if u_id:
                 try:
@@ -1347,8 +1426,7 @@ class AgentService:
         permission_options: Optional[dict[str, Any]],
         user_info: Optional[dict[str, Any]],
         conversation_id: Optional[str],
-        session_turn: Optional[tuple],
-        route_hints: Optional[dict],
+        turn_decision: Optional[TurnDecision] = None,
     ) -> Any:
         """调度并返回执行器实例。"""
         executor = await AgentDispatcher.dispatch(
@@ -1361,8 +1439,7 @@ class AgentService:
             permission_options,
             user_info,
             conversation_id,
-            shared_turn=session_turn,
-            route_hints=route_hints,
+            turn_decision=turn_decision,
         )
         return executor
 
@@ -1456,10 +1533,28 @@ class AgentService:
                 return
 
             direct_agent_selection = bool(agent_id or agent_name or version_id)
-            route_hints = None
-            route_intent_evidence = None
-            if direct_agent_selection:
-                route_hints = {"direct_agent_selection": True}
+            if route_details is not None:
+                if not isinstance(route_details, TurnDecision):
+                    raise TypeError("AgentContextManager must return TurnDecision route details")
+                turn_decision = route_details.model_copy(
+                    update={
+                        "stage_timings_ms": {
+                            **route_details.stage_timings_ms,
+                            "route_resolution": route_elapsed_ms,
+                        }
+                    }
+                )
+            elif direct_agent_selection:
+                turn_decision = TurnDecision.for_direct_agent_selection(
+                    agent_config,
+                    stage_timings_ms={"route_resolution": route_elapsed_ms},
+                )
+            else:
+                turn_decision = TurnDecision(
+                    route_status="failed",
+                    provenance="router_failure",
+                    stage_timings_ms={"route_resolution": route_elapsed_ms},
+                )
 
             if route_details:
                 r_thought = getattr(route_details, "reasoning", "No reasoning")
@@ -1468,73 +1563,32 @@ class AgentService:
                 r_turn_labels = getattr(route_details, "turn_labels", []) or []
                 r_relation = getattr(route_details, "relation_to_previous", "unknown")
                 r_action_type = getattr(route_details, "user_action_type", "unknown")
-                route_intent_evidence = getattr(route_details, "intent_info", None)
-                r_request_source = getattr(route_details, "request_source", None)
-                r_request_capability = getattr(route_details, "request_capability", None)
+                r_semantic_intent = getattr(route_details, "semantic_intent", None)
+                r_semantic_confidence = getattr(route_details, "semantic_confidence", None)
+                r_semantic_reasoning = getattr(route_details, "semantic_reasoning", None)
+                r_request_source = getattr(route_details, "source", None)
+                r_request_capability = getattr(route_details, "capability", None)
                 r_request_reasoning = getattr(route_details, "request_reasoning", None)
                 r_chatbi_mode = getattr(route_details, "chatbi_mode", None)
                 r_chatbi_evidence_level = getattr(route_details, "chatbi_evidence_level", "none")
                 r_chatbi_reason = getattr(route_details, "chatbi_reason", None)
                 r_matched_dataset_ids = getattr(route_details, "matched_dataset_ids", []) or []
-                r_semantic_domain = getattr(
-                    route_details, "semantic_domain", getattr(route_intent_evidence, "domain", None)
-                )
-                r_semantic_operation = getattr(
-                    route_details, "semantic_operation", getattr(route_intent_evidence, "operation", None)
-                )
-                r_fact_kind = getattr(
-                    route_details, "fact_kind", getattr(route_intent_evidence, "fact_kind", None)
-                )
-                r_freshness_requirement = getattr(
-                    route_details,
-                    "freshness_requirement",
-                    getattr(route_intent_evidence, "freshness_requirement", "unknown"),
-                )
-                r_time_scope = getattr(
-                    route_details, "time_scope", getattr(route_intent_evidence, "time_scope", None)
-                )
-                r_reference_mode = getattr(
-                    route_details,
-                    "reference_mode",
-                    getattr(route_intent_evidence, "reference_mode", "unknown"),
-                )
-                r_needs_fresh_data = getattr(
-                    route_details,
-                    "needs_fresh_data",
-                    getattr(route_intent_evidence, "needs_fresh_data", False),
-                )
+                r_semantic_domain = getattr(route_details, "semantic_domain", "unknown")
+                r_semantic_operation = getattr(route_details, "semantic_operation", "unknown")
+                r_fact_kind = getattr(route_details, "fact_kind", "unknown")
+                r_freshness_requirement = getattr(route_details, "freshness_requirement", "unknown")
+                r_time_scope = getattr(route_details, "time_scope", None)
+                r_reference_mode = getattr(route_details, "reference_mode", "unknown")
+                r_needs_fresh_data = getattr(route_details, "needs_fresh_data", False)
                 route_grounding_metadata = _build_route_grounding_metadata(
                     request_source=r_request_source,
                     request_capability=r_request_capability,
                     confidence=r_conf,
-                    semantic_intent=getattr(route_intent_evidence, "intent", None),
-                    semantic_confidence=getattr(route_intent_evidence, "confidence", None),
+                    semantic_intent=r_semantic_intent,
+                    semantic_confidence=r_semantic_confidence,
                     semantic_domain=r_semantic_domain,
                     fact_kind=r_fact_kind,
                 )
-                route_hints = {
-                    "turn_labels": r_turn_labels,
-                    "relation_to_previous": r_relation,
-                    "user_action_type": r_action_type,
-                    "semantic_intent": getattr(route_intent_evidence, "intent", None),
-                    "semantic_confidence": getattr(route_intent_evidence, "confidence", None),
-                    "semantic_reasoning": getattr(route_intent_evidence, "reasoning", None),
-                    "semantic_domain": r_semantic_domain,
-                    "semantic_operation": r_semantic_operation,
-                    "fact_kind": r_fact_kind,
-                    "freshness_requirement": r_freshness_requirement,
-                    "time_scope": r_time_scope,
-                    "reference_mode": r_reference_mode,
-                    "needs_fresh_data": r_needs_fresh_data,
-                    "request_source": r_request_source,
-                    "request_capability": r_request_capability,
-                    "request_reasoning": r_request_reasoning,
-                    "chatbi_mode": r_chatbi_mode,
-                    "chatbi_evidence_level": r_chatbi_evidence_level,
-                    "chatbi_reason": r_chatbi_reason,
-                    "matched_dataset_ids": r_matched_dataset_ids,
-                    "grounding_decision": route_grounding_metadata,
-                }
                 yield {
                     "type": "router_log",
                     "thought": r_thought,
@@ -1543,9 +1597,9 @@ class AgentService:
                     "turn_labels": r_turn_labels,
                     "relation_to_previous": r_relation,
                     "user_action_type": r_action_type,
-                    "semantic_intent": getattr(route_intent_evidence, "intent", None),
-                    "semantic_confidence": getattr(route_intent_evidence, "confidence", None),
-                    "semantic_reasoning": getattr(route_intent_evidence, "reasoning", None),
+                    "semantic_intent": r_semantic_intent,
+                    "semantic_confidence": r_semantic_confidence,
+                    "semantic_reasoning": r_semantic_reasoning,
                     "semantic_domain": r_semantic_domain,
                     "semantic_operation": r_semantic_operation,
                     "fact_kind": r_fact_kind,
@@ -1562,7 +1616,8 @@ class AgentService:
                     "matched_dataset_ids": r_matched_dataset_ids,
                     "grounding_decision": route_grounding_metadata,
                     "status": "success",
-                    "execution_time_ms": route_elapsed_ms
+                    "execution_time_ms": route_elapsed_ms,
+                    "decision_trace": turn_decision.trace_payload(),
                 }
 
             if err_msg:
@@ -1572,8 +1627,6 @@ class AgentService:
 
             from app.services.ai.knowledge_utils import (
                 build_rag_retrieval_debug_meta,
-                collect_current_turn_knowledge_dataset_ids_from_messages,
-                has_knowledge_context_in_messages,
                 merge_request_knowledge_dataset_ids,
             )
 
@@ -1584,13 +1637,6 @@ class AgentService:
             configured_agent_dataset_ids = list(
                 (agent_config.engine_config or {}).get("dataset_ids") or []
             )
-            # 会话范围/历史附件只代表“可复用”，不能单独触发本轮知识检索。
-            # 当前轮显式附件才是本轮的 knowledge evidence。
-            current_turn_knowledge_dataset_ids = (
-                collect_current_turn_knowledge_dataset_ids_from_messages(messages)
-            )
-            has_knowledge_history = has_knowledge_context_in_messages(messages)
-
             await AgentContextManager.setup_context(
                 config=agent_config,
                 debug_options=debug_options,
@@ -1623,74 +1669,16 @@ class AgentService:
             for skill_id, skill_name, details_msg in matched_skills_to_log:
                 yield self._build_skill_log_chunk(skill_id, skill_name, details_msg)
 
-            from app.services.ai.turn_classifier import (
-                TurnType,
-                TurnClassification,
-                resolve_turn_for_session,
-                should_inject_ltm,
-                should_inject_memory_recall_hint,
-                should_inject_user_context,
-                should_run_active_memory_preload,
-                turn_type_label,
-                default_thought_expanded,
-            )
-            from app.services.ai.intent_service import IntentType
+            early_turn_kind = turn_decision.turn_kind
+            turn_intent_elapsed_ms = 0.0
+            dispatch_turn_decision = turn_decision
 
-            can_do_data = "data_query" in (agent_config.capabilities or [])
-            agent_engine_config = agent_config.engine_config or {}
-            agent_bound_dataset_ids = agent_engine_config.get("dataset_ids") or []
-            
-            agent_has_knowledge_binding = has_knowledge_binding(
-                capabilities=agent_config.capabilities,
-                engine_config={"dataset_ids": agent_bound_dataset_ids},
-                tools=agent_config.tools,
-            )
-            turn_kwargs = {
-                "user_query": user_query,
-                "messages": messages,
-                "user_info": user_info,
-                "conversation_id": conversation_id,
-                "knowledge_dataset_ids": current_turn_knowledge_dataset_ids or None,
-                "agent_has_knowledge_binding": agent_has_knowledge_binding,
-                "has_explicit_knowledge_context": bool(current_turn_knowledge_dataset_ids),
-                "has_knowledge_history": has_knowledge_history,
-                "intent_evidence": route_intent_evidence,
-                "direct_agent_selection": direct_agent_selection,
-            }
-            knowledge_context_available = bool(
-                current_turn_knowledge_dataset_ids or agent_has_knowledge_binding
-                or request_knowledge_dataset_ids
-            )
-            if can_do_data and not knowledge_context_available:
-                turn_classification = TurnClassification(
-                    turn_type=TurnType.DATA_QUERY_REQUEST,
-                    reasoning="ChatBI 轮次由 DataQueryExecutor 内部请求类别分析器最终判定",
-                    skip_intent_llm=True,
-                    intent=IntentType.DATA_QUERY,
-                )
-                turn_intent_info = None
-                turn_intent_elapsed_ms = 0.0
-                session_turn = None
-            elif can_do_data:
-                turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
-                    **turn_kwargs,
-                    can_do_data=True,
-                )
-                session_turn = (turn_classification, turn_intent_info, turn_intent_elapsed_ms)
-            else:
-                turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
-                    **turn_kwargs,
-                    can_do_data=False,
-                )
-                session_turn = (turn_classification, turn_intent_info, turn_intent_elapsed_ms)
-
-            early_turn_type = turn_classification.turn_type
-            if can_do_data and turn_classification.turn_type == TurnType.DATA_QUERY_REQUEST:
+            if turn_decision.turn_kind == "data_query":
                 turn_display_label = "ChatBI 请求类别分析"
             else:
-                turn_display_label = turn_type_label(turn_classification.turn_type)
+                turn_display_label = turn_kind_label(turn_decision.turn_kind)
 
-            if turn_classification.turn_type == TurnType.KNOWLEDGE:
+            if turn_decision.turn_kind == "knowledge":
                 agent_config = await AgentContextManager.enrich_for_knowledge_turn(
                     agent_config,
                     user_query=user_query,
@@ -1722,15 +1710,41 @@ class AgentService:
             # 3. Load Memory Context
             ltm_profile, ltm_loaded_data, memory_recall_hint, preloaded_memories_text = await self._load_memory_context(
                 user_info=user_info,
-                early_turn_type=early_turn_type,
+                early_turn_kind=early_turn_kind,
                 debug_options=debug_options,
                 user_query=user_query,
             )
 
             user_profile = None
-            if user_info and should_inject_user_context(early_turn_type):
+            if user_info and should_inject_user_context(early_turn_kind):
                 id_msg = await self._build_user_context_msg(user_info)
                 user_profile = id_msg.get("content")
+
+            accessible_resources = (
+                getattr(turn_decision, "accessible_resources", None)
+                if early_turn_kind != "data_query"
+                else None
+            )
+            if early_turn_kind != "data_query" and not accessible_resources and user_info:
+                from app.services.ai.accessible_resource_catalog import (
+                    build_accessible_resource_catalog,
+                )
+
+                raw_resource_user_id = user_info.get("user_id") or user_info.get("id")
+                resource_user_id = None
+                if raw_resource_user_id is not None:
+                    try:
+                        resource_user_id = int(raw_resource_user_id)
+                    except (TypeError, ValueError):
+                        resource_user_id = None
+                accessible_resources = await build_accessible_resource_catalog(
+                    user_id=resource_user_id,
+                    user_name=(
+                        user_info.get("user_name")
+                        or user_info.get("username")
+                    ),
+                    is_admin=user_info.get("role") == "admin",
+                )
 
             # --- 主助手：动态专家清单 + sub_agent_call 通讯录 ---
             agent_system_prompt = agent_config.system_prompt
@@ -1781,11 +1795,13 @@ class AgentService:
                     memory_recall_hint=memory_recall_hint,
                     preloaded_memories=preloaded_memories_text,
                     user_profile=user_profile,
+                    accessible_resources=accessible_resources,
                     cache_boundary_enabled=cache_boundary_enabled,
                     cache_reorder_enabled=cache_reorder_enabled,
                     sub_agents_context=sub_agents_context,
                     quick_suggestions_forbidden=self._should_forbid_quick_suggestions(user_info),
                     runtime_tool_names=effective_prompt_tool_names,
+                    turn_decision=turn_decision,
                 )
             )
             agent_config.system_prompt = assembled_prompt.full_text
@@ -1796,6 +1812,8 @@ class AgentService:
                     "dynamic_chars": len(assembled_prompt.dynamic_suffix),
                     "cache_boundary_enabled": assembled_prompt.cache_boundary_enabled,
                     "cache_reorder_enabled": assembled_prompt.cache_reorder_enabled,
+                    "section_names": list(assembled_prompt.section_names),
+                    "section_char_counts": assembled_prompt.section_char_counts or {},
                 }
 
             # --- Debug Overrides ---
@@ -1856,15 +1874,19 @@ class AgentService:
                 "effective_model_id": runtime_model_info.effective_model_id,
                 "model_source": runtime_model_info.source,
                 "model_resolution_status": runtime_model_info.resolution_status,
-                "turn_type": turn_classification.turn_type.value,
+                "turn_type": turn_decision.turn_kind,
                 "turn_type_label": turn_display_label,
-                "thought_expanded_default": default_thought_expanded(turn_classification.turn_type),
+                "thought_expanded_default": default_thought_expanded(turn_decision.turn_kind),
+                "decision_trace": turn_decision.trace_payload(
+                    stage_timings_ms={"intent_resolution": turn_intent_elapsed_ms},
+                    executor=_public_agent_type(agent_config),
+                ),
             }
             if ltm_profile and ltm_loaded_data:
                 meta_event["ltm_applied"] = True
                 meta_event["ltm_data"] = ltm_loaded_data
             if (
-                turn_classification.turn_type == TurnType.KNOWLEDGE
+                turn_decision.turn_kind == "knowledge"
                 or request_knowledge_dataset_ids
                 or (agent_config.engine_config or {}).get("dataset_ids")
             ):
@@ -1890,8 +1912,7 @@ class AgentService:
                     user_info,
                     api_key,
                     conversation_id,
-                    session_turn,
-                    route_hints,
+                    dispatch_turn_decision,
                 ):
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
@@ -1908,17 +1929,19 @@ class AgentService:
                     permission_options=permission_options,
                     user_info=user_info,
                     conversation_id=conversation_id,
-                    session_turn=session_turn,
-                    route_hints=route_hints,
+                    turn_decision=dispatch_turn_decision,
                 )
 
                 yield {
                     "type": "log",
                     "title": "分析用户请求并进行意图识别",
-                    "details": f"{turn_display_label}。{turn_classification.reasoning}",
+                    "details": (
+                        f"{turn_display_label}。"
+                        f"{turn_decision.request_reasoning or turn_decision.reasoning or '复用统一轮次决策'}"
+                    ),
                     "status": "success",
                     "category": "intent",
-                    "turn_type": turn_classification.turn_type.value,
+                    "turn_type": turn_decision.turn_kind,
                     "execution_time_ms": turn_intent_elapsed_ms,
                 }
 
@@ -2560,26 +2583,11 @@ class AgentService:
         user_info: Optional[Dict[str, Any]],
         api_key: Optional[str],
         conversation_id: Optional[str] = None,
-        session_turn=None,
-        route_hints: Optional[Dict[str, Any]] = None,
+        turn_decision: Optional[TurnDecision] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Executes primary and secondary agents in parallel and yields combined results.
         """
-        from app.services.ai.turn_classifier import turn_type_label
-
-        if session_turn:
-            tc, _, tc_elapsed = session_turn
-            yield {
-                "type": "log",
-                "title": "分析用户请求并进行意图识别",
-                "details": f"{turn_type_label(tc.turn_type)}。{tc.reasoning}",
-                "status": "success",
-                "category": "intent",
-                "turn_type": tc.turn_type.value,
-                "execution_time_ms": tc_elapsed,
-            }
-
         # 1. Resolve Secondary Configs
         secondary_configs = []
         async with AsyncSessionLocal() as session:
@@ -2602,8 +2610,7 @@ class AgentService:
                 permission_options,
                 user_info,
                 conversation_id,
-                shared_turn=session_turn,
-                route_hints=route_hints,
+                turn_decision=turn_decision,
             )
             executors.append(exec)
 

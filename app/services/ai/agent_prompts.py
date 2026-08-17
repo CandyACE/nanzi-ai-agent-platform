@@ -108,6 +108,13 @@ class AgentServicePrompts:
 - 收到「【业务确认】用户已取消」：**立即终止本次录入/变更流程**；禁止调用写入类工具；**禁止再次调用 request_user_confirmation**（不得重新弹确认卡）。只可用自然语言简短确认已取消，并询问用户是否要修改后重试或彻底放弃；仅当用户随后明确提供新的/修改后的业务数据并要求继续录入时，才允许重新调用 request_user_confirmation。
 - 业务数据确认（字段对不对）与工具执行确认（允许/拒绝工具调用）是两层能力，不要混淆。"""
 
+    _PLATFORM_USER_QUESTION_SECTION = """## 主动向用户提问
+- 当继续执行确实缺少一个或多个关键输入，或用户明确面对多个业务分支时，调用 **ask_user_question** 主动提问；问题必须具体，选项应互斥、可理解，并尽量提供必要的补充输入入口。
+- 只在回答无法可靠完成时提问，不要为了寒暄、已知信息或可由工具查到的信息提问；能通过当前工具、会话上下文或用户画像确定的内容，不要重复询问。
+- 调用后必须停止本轮生成，等待用户回答卡；不得在同一轮继续调用工具、输出结论或追加 quick 建议。
+- 收到「【用户回答】」回执后，按回执中的选项和补充说明继续原问题；不要把回执当作新的独立问题，也不要再次询问已经回答的字段。
+- 收到 `cancelled=true` 的「【用户回答】」回执后，立即停止当前任务，不调用任何查询或写入工具，只简短确认已取消；除非用户提出新的明确任务，不得再次询问同一问题。"""
+
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
@@ -115,7 +122,10 @@ class AgentServicePrompts:
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "get_myinfo": "读取当前用户本人的基本信息、扩展信息、详情信息、角色与权限",
         "request_user_confirmation": "录入/修改/删除业务数据前，向用户展示可编辑确认卡并等待【业务确认】回执",
+        "ask_user_question": "缺少关键输入或存在业务分支时，向用户展示选项提问并等待【用户回答】回执",
         "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
+        "sub_agent_batch_call": "并行委派多个彼此独立的子智能体任务，并按请求顺序返回结果",
+        "todo_write": "记录和更新多步骤任务的结构化执行清单",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
         "search_knowledge_base": "知识库文档检索",
@@ -271,6 +281,34 @@ class AgentServicePrompts:
         return "\n".join(lines)
 
     @staticmethod
+    def turn_decision_context(decision: Any) -> str:
+        """Render the normalized turn decision as non-authoritative model context."""
+        if decision is None:
+            return ""
+
+        def _text(value: Any, default: str = "未知") -> str:
+            text = str(value or "").strip()
+            return text or default
+
+        lines = [
+            "## 本轮执行上下文（平台路由快照）",
+            "以下字段是平台在进入执行器前生成的路由提示，用于帮助组织下一步；它不是权限凭证，实际工具和数据权限仍由运行时代码校验。",
+            f"- 请求来源：{_text(getattr(decision, 'source', None))}",
+            f"- 建议能力：{_text(getattr(decision, 'capability', None))}",
+            f"- 语义意图：{_text(getattr(decision, 'semantic_intent', None))}",
+            f"- 与上一轮关系：{_text(getattr(decision, 'relation_to_previous', None))}",
+            f"- 参考模式：{_text(getattr(decision, 'reference_mode', None))}",
+            f"- 新鲜度要求：{_text(getattr(decision, 'freshness_requirement', None))}",
+        ]
+        if bool(getattr(decision, "needs_fresh_data", False)):
+            lines.append("- 本轮需要基于可验证的最新事实，不要用记忆或常识替代工具结果。")
+        if bool(getattr(decision, "requires_knowledge_search", False)):
+            lines.append("- 本轮需要先检索可用的内部知识来源，再组织回答。")
+        if bool(getattr(decision, "allows_data_route", False)):
+            lines.append("- 路由层已允许进入结构化业务数据能力；具体数据集与操作仍以权限校验和工具返回为准。")
+        return "\n".join(lines)
+
+    @staticmethod
     def prepend_platform_global_system_prompt(
         system_prompt: Optional[str],
         agent_config: Any = None,
@@ -304,6 +342,8 @@ class AgentServicePrompts:
 
                 if is_main_general_agent(agent_config):
                     tool_names.add("sub_agent_call")
+                    tool_names.add("sub_agent_batch_call")
+                    tool_names.add("todo_write")
             except Exception:
                 pass
 
@@ -375,6 +415,12 @@ class AgentServicePrompts:
         if "sub_agent_call" in tool_names:
             table_rows.append("| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |")
 
+        if "sub_agent_batch_call" in tool_names:
+            table_rows.append("| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |")
+
+        if "todo_write" in tool_names:
+            table_rows.append("| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |")
+
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
 
@@ -389,6 +435,9 @@ class AgentServicePrompts:
 
         if "request_user_confirmation" in tool_names:
             table_rows.append("| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |")
+
+        if "ask_user_question" in tool_names:
+            table_rows.append("| 缺少继续处理所需的关键输入，或存在需要用户选择的业务分支 | 调用 **ask_user_question** 展示 2-12 个清晰选项；等待「【用户回答】」回执后继续，禁止在本轮自行猜测或继续执行 |")
             
         if "fetch_user_long_term_memory" in tool_names:
             table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")
@@ -422,6 +471,9 @@ class AgentServicePrompts:
 
         if "request_user_confirmation" in tool_names:
             prompt_parts.append(AgentServicePrompts._PLATFORM_BUSINESS_CONFIRMATION_SECTION)
+
+        if "ask_user_question" in tool_names:
+            prompt_parts.append(AgentServicePrompts._PLATFORM_USER_QUESTION_SECTION)
             
         if quick_suggestions_forbidden:
             interaction_section = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。

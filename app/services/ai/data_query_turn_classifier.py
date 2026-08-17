@@ -23,11 +23,30 @@ from app.services.ai.intent_service import (
 )
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import system_user_prompt_messages
-from app.services.ai.turn_classifier import (
-    load_last_data_result,
-)
-
 logger = logging.getLogger(__name__)
+
+
+async def load_last_data_result(
+    user_info: Optional[Dict],
+    conversation_id: str,
+) -> Optional[Dict]:
+    """Load the latest structured result for ChatBI's internal classifier."""
+    if not user_info:
+        return None
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    if not raw_user_id:
+        return None
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        from app.services.ai.memory_service import memory_service
+
+        return await memory_service.get_last_data_result(user_id, conversation_id)
+    except Exception as e:
+        logger.warning("[DataQueryTurnClassifier] Failed to load last data result: %s", e)
+        return None
 
 
 class DataQueryTurnType(str, Enum):

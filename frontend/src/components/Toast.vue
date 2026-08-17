@@ -1,45 +1,68 @@
 <template>
   <div
     v-if="visible"
-    class="px-6 py-3 rounded-xl border shadow-lg flex items-center space-x-3 transition-all duration-300 ease-out toast-bounce-in"
+    class="px-4 py-2 rounded-2xl border flex items-center space-x-2.5 transition-all duration-300 ease-out backdrop-blur-md"
     :class="[
-      inline ? '' : 'fixed top-8 left-1/2 -translate-x-1/2 z-[9999]',
-      visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2',
+      inline ? '' : 'fixed top-6 left-1/2 -translate-x-1/2 z-[9999]',
+      visible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-95',
       type === 'success'
-        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        ? 'bg-gradient-to-r from-emerald-50/90 via-white/95 to-emerald-50/60 dark:from-emerald-950/40 dark:via-zinc-900/95 dark:to-emerald-950/30 border-emerald-200/80 dark:border-emerald-800/60 shadow-lg shadow-emerald-500/10 dark:shadow-emerald-950/40'
         : type === 'warning'
-          ? 'bg-amber-50 text-amber-700 border-amber-200'
+          ? 'bg-gradient-to-r from-amber-50/90 via-white/95 to-amber-50/60 dark:from-amber-950/40 dark:via-zinc-900/95 dark:to-amber-950/30 border-amber-200/80 dark:border-amber-800/60 shadow-lg shadow-amber-500/10 dark:shadow-amber-950/40'
           : type === 'error'
-            ? 'bg-red-50 text-red-700 border-red-200'
-            : 'bg-blue-50 text-blue-700 border-blue-200',
+            ? 'bg-gradient-to-r from-rose-50/90 via-white/95 to-rose-50/60 dark:from-rose-950/40 dark:via-zinc-900/95 dark:to-rose-950/30 border-rose-200/80 dark:border-rose-800/60 shadow-lg shadow-rose-500/10 dark:shadow-rose-950/40'
+            : 'bg-gradient-to-r from-sky-50/90 via-white/95 to-sky-50/60 dark:from-sky-950/40 dark:via-zinc-900/95 dark:to-sky-950/30 border-sky-200/80 dark:border-sky-800/60 shadow-lg shadow-sky-500/10 dark:shadow-sky-950/40',
     ]"
   >
-    <!-- Success -->
-    <svg v-if="type === 'success'" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-    <!-- Error -->
-    <svg v-else-if="type === 'error'" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-    <!-- Warning -->
-    <svg v-else-if="type === 'warning'" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-    </svg>
-    <!-- Info -->
-    <svg v-else class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
+    <!-- Success Icon -->
+    <div v-if="type === 'success'" class="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-sm shadow-emerald-500/30">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    </div>
+    <!-- Error Icon -->
+    <div v-else-if="type === 'error'" class="w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center shrink-0 shadow-sm shadow-rose-500/30">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </div>
+    <!-- Warning Icon -->
+    <div v-else-if="type === 'warning'" class="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm shadow-amber-500/30">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01" />
+      </svg>
+    </div>
+    <!-- Info Icon -->
+    <div v-else class="w-5 h-5 rounded-full bg-sky-500 text-white flex items-center justify-center shrink-0 shadow-sm shadow-sky-500/30">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01" />
+      </svg>
+    </div>
 
-    <span class="font-bold text-sm">{{ message }}</span>
+    <!-- Message -->
+    <span
+      class="font-medium text-xs sm:text-sm select-none tracking-tight"
+      :class="[
+        type === 'success'
+          ? 'text-emerald-950 dark:text-emerald-100'
+          : type === 'warning'
+            ? 'text-amber-950 dark:text-amber-100'
+            : type === 'error'
+              ? 'text-rose-950 dark:text-rose-100'
+              : 'text-sky-950 dark:text-sky-100',
+      ]"
+    >
+      {{ message }}
+    </span>
 
+    <!-- Close Button -->
     <button
       type="button"
       @click="close"
-      class="ml-1 -mr-1 inline-flex rounded-md p-0.5 opacity-80 hover:opacity-100 focus:outline-none"
+      class="ml-1 -mr-0.5 p-1 rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors focus:outline-none"
       aria-label="关闭"
     >
-      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
       </svg>
     </button>
@@ -85,22 +108,3 @@ onMounted(() => {
   }
 })
 </script>
-
-<style scoped>
-@keyframes toast-bounce-in {
-  0% {
-    transform: translateY(-10px);
-    opacity: 0;
-  }
-  60% {
-    transform: translateY(4px);
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-.toast-bounce-in {
-  animation: toast-bounce-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-</style>

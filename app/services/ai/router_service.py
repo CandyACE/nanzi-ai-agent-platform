@@ -21,38 +21,17 @@ from app.services.ai.chatbi_qualification import (
     qualify_chatbi_request,
     resolve_authorized_dataset_candidates,
 )
+from app.services.ai.accessible_resource_catalog import (
+    build_accessible_resource_catalog,
+)
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
-from app.services.ai.turn_classifier import AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD
+from app.services.ai.turn_decision import TurnDecision
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-class RouteResult(BaseModel):
-    agent_id: str
-    secondary_agents: List[str] = []
-    confidence: float
-    reasoning: str
-    intent_info: Optional[IntentResponse] = None
-    turn_labels: List[str] = []
-    relation_to_previous: str = "unknown"
-    user_action_type: str = "unknown"
-    request_source: Optional[str] = None
-    request_capability: Optional[str] = None
-    request_should_delegate: bool = False
-    request_delegate_capability: Optional[str] = None
-    request_reasoning: Optional[str] = None
-    semantic_domain: Optional[str] = None
-    semantic_operation: Optional[str] = None
-    fact_kind: Optional[str] = None
-    freshness_requirement: str = "unknown"
-    time_scope: Optional[str] = None
-    reference_mode: str = "unknown"
-    needs_fresh_data: bool = False
-    chatbi_mode: Optional[str] = None
-    chatbi_evidence_level: str = "none"
-    chatbi_reason: Optional[str] = None
-    matched_dataset_ids: List[int] = []
+AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD = 0.65
 
 class LLMRouterResponse(BaseModel):
     """Internal structure for LLM output. thought 放最后，降低截断重伤概率。"""
@@ -86,10 +65,18 @@ class RouterService:
 ## 1. 可用智能体清单 (唯一可选范围)
 {agents_context}
 
-## 2. 对话历史与上一轮路由
+## 2. 当前用户可访问的内部资源摘要
+{accessible_resources_context}
+
+该摘要只用于辅助判断用户问题是否可能属于内部知识库或结构化数据；
+不能据此直接回答，也不能代替工具调用和服务端权限校验。
+- 若问题与某个知识库名称或摘要有明确语义关联，且问题属于手册、流程、规范或怎么操作，优先选择知识库智能体并标记 `internal_docs`。
+- 只有弱关键词重合、或问题明确询问公网/外部系统时，不能因为摘要存在就强行走内部资源。
+
+## 3. 对话历史与上一轮路由
 {history_context}
 
-## 3. 决策步骤 (Reasoning Steps)
+## 4. 决策步骤 (Reasoning Steps)
 
 ### Step 1 指代消解 (Coreference Resolution)
 - 若输入含"它/这个/那个/刚才/上面/列表里第一个/继续/再/还有/也"等指代或省略主语，先结合历史还原其真实意图，再判断。
@@ -144,12 +131,12 @@ class RouterService:
 - 难以区分时 intent=GENERAL、domain=general，不要为了安全感强行标 DATA_QUERY。
 - intent_confidence / intent_reasoning 只描述来源意图，禁止复用主智能体选择的 confidence / thought。
 
-## 4. 硬性约束 (Hard Constraints)
+## 5. 硬性约束 (Hard Constraints)
 - agent_name 与 secondary_agents 中的每个值，【必须】与清单中某个智能体的 name 字段完全一致（英文 slug，如 chat-bi）。严禁使用中文名、领域名或清单里不存在的名称。
 - 当没有任何业务智能体明显匹配（纯打招呼/闲聊/无法归类）时，选择兜底智能体 {fallback_agent_name}。
 - confidence 表示你对"主智能体选择"的把握：能明确匹配某业务智能体时应 >= 0.7；只有完全无法归类时才走 {fallback_agent_name} 并给较低分。
 
-## 5. 输出格式 (Output Format)
+## 6. 输出格式 (Output Format)
 必须返回纯 JSON，严禁包含 Markdown 标记或额外文字。
 【关键】字段顺序必须如下，且 thought 不超过 40 个汉字，避免输出被截断：
 {
@@ -172,7 +159,7 @@ class RouterService:
   "thought": "一句话理由"
 }
 
-## 6. 示例 (名称以"清单"为准，下例仅示意格式)
+## 7. 示例 (名称以"清单"为准，下例仅示意格式)
 - 用户："你好" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.9, "secondary_agents": [], "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat", "intent": "GENERAL", "domain": "general", "operation": "explain", "thought": "纯打招呼"}
 - 上一轮由 data-agent 处理，用户："那再画个柱状图" -> {"agent_name": "data-agent", "confidence": 0.92, "secondary_agents": [], "turn_labels": ["continuation_followup", "business_related", "same_topic"], "relation_to_previous": "followup", "user_action_type": "transform_context", "intent": "DATA_QUERY", "domain": "conversation_context", "operation": "visualize", "thought": "数据结果追问，沿用上一轮"}
 - 用户："我有哪些数据集/知识库" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.93, "secondary_agents": [], "turn_labels": ["meta_action", "general_chat"], "relation_to_previous": "standalone", "user_action_type": "manage_agent_or_skill", "intent": "GENERAL", "domain": "general", "operation": "explain", "thought": "权限内资源目录，走通用助手工具"}
@@ -223,7 +210,8 @@ class RouterService:
         user_id: Optional[int] = None,
         is_admin: bool = False,
         last_agent_name: Optional[str] = None,
-    ) -> Optional[RouteResult]:
+        user_name: Optional[str] = None,
+    ) -> Optional[TurnDecision]:
         """
         Use LLM to select the most appropriate agent(s) for the user query.
 
@@ -285,8 +273,9 @@ class RouterService:
                     "Greeting shortcut: routing to %s without LLM",
                     fallback_agent["name"],
                 )
-                return RouteResult(
+                return TurnDecision.from_router_components(
                     agent_id=fallback_agent["id"],
+                    agent_name=fallback_agent.get("name"),
                     confidence=0.95,
                     reasoning="纯问候/寒暄，启发式短路至通用助手（跳过路由 LLM）",
                     turn_labels=["general_chat"],
@@ -301,8 +290,9 @@ class RouterService:
                     "Resource catalog shortcut: routing to %s without LLM",
                     fallback_agent["name"],
                 )
-                return RouteResult(
+                return TurnDecision.from_router_components(
                     agent_id=fallback_agent["id"],
+                    agent_name=fallback_agent.get("name"),
                     confidence=0.94,
                     reasoning="权限内数据集/知识库资源目录询问，启发式短路至通用助手（跳过路由 LLM）",
                     turn_labels=["meta_action", "general_chat"],
@@ -317,8 +307,9 @@ class RouterService:
                     "Web search shortcut: routing to %s without LLM",
                     fallback_agent["name"],
                 )
-                return RouteResult(
+                return TurnDecision.from_router_components(
                     agent_id=fallback_agent["id"],
+                    agent_name=fallback_agent.get("name"),
                     confidence=0.92,
                     reasoning="联网/外部公网检索请求，启发式短路至通用助手",
                     turn_labels=["topic_switch", "general_chat"],
@@ -336,13 +327,33 @@ class RouterService:
                     "Business confirmation receipt shortcut: sticky route to %s without LLM",
                     sticky_agent["name"],
                 )
-                return RouteResult(
+                return TurnDecision.from_router_components(
                     agent_id=sticky_agent["id"],
+                    agent_name=sticky_agent.get("name"),
                     confidence=0.99,
                     reasoning=(
                         "业务确认回执（确定/取消），会话粘性沿用上一轮智能体（跳过路由 LLM）"
                     ),
                     turn_labels=["business_confirmation_receipt", "follow_up"],
+                    relation_to_previous="follow_up",
+                    user_action_type="chat",
+                )
+
+        from app.services.ai.user_question import is_user_question_receipt_message
+
+        if last_agent_name and is_user_question_receipt_message(user_input):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent:
+                logger.info(
+                    "User question receipt shortcut: sticky route to %s without LLM",
+                    sticky_agent["name"],
+                )
+                return TurnDecision.from_router_components(
+                    agent_id=sticky_agent["id"],
+                    agent_name=sticky_agent.get("name"),
+                    confidence=0.99,
+                    reasoning="AI 提问回执沿用上一轮智能体（跳过路由 LLM）",
+                    turn_labels=["user_question_receipt", "follow_up"],
                     relation_to_previous="follow_up",
                     user_action_type="chat",
                 )
@@ -359,8 +370,9 @@ class RouterService:
                     fallback_agent["name"],
                     last_agent_name,
                 )
-                return RouteResult(
+                return TurnDecision.from_router_components(
                     agent_id=fallback_agent["id"],
+                    agent_name=fallback_agent.get("name"),
                     confidence=0.9,
                     reasoning=(
                         "上一轮虽由数据智能体处理，但本轮不再具备内部业务库查数或数据追问信号，"
@@ -450,6 +462,11 @@ class RouterService:
         # 避免运营在配置页误改导致路由失准。
         system_prompt = self.DEFAULT_SYSTEM_PROMPT
         agents_str = self._build_agents_context(routing_agents)
+        accessible_resources_context = await build_accessible_resource_catalog(
+            user_id=user_id,
+            user_name=user_name,
+            is_admin=is_admin,
+        )
         history_str = self._build_history_context(
             history,
             last_agent_name,
@@ -461,6 +478,10 @@ class RouterService:
         formatted_prompt = (
             system_prompt
             .replace("{agents_context}", agents_str)
+            .replace(
+                "{accessible_resources_context}",
+                accessible_resources_context or "（当前没有可展示的资源摘要）",
+            )
             .replace("{history_context}", history_str)
             .replace("{fallback_agent_name}", fallback_agent_name)
         )
@@ -501,6 +522,10 @@ class RouterService:
                         "internal_docs/general/conversation_context/unknown。"
                         "intent_confidence 是来源意图把握，不是 agent_name 的 confidence。"
                         f"\n可用智能体：\n{agents_str}"
+                        f"\n当前用户可访问的内部资源摘要：\n"
+                        f"{accessible_resources_context or '（当前没有可展示的资源摘要）'}\n"
+                        "如果问题明确匹配知识库名称或摘要，优先标记 internal_docs；"
+                        "弱关键词重合时不要强行改路由。"
                     )
                     attempt_messages = [
                         RuntimeMessage(
@@ -549,7 +574,7 @@ class RouterService:
                     user_id=user_id,
                     is_admin=is_admin,
                 )
-                route_result = self._build_route_result(
+                decision = self._build_turn_decision(
                     result_json,
                     routing_agents,
                     enable_multi_agent,
@@ -559,25 +584,37 @@ class RouterService:
                     request_decision=request_decision,
                     data_route_allowed=bool(data_route_allowed),
                 )
-                if route_result is not None:
-                    return route_result
-                return self._fallback_to_general(
+                if decision is not None:
+                    return decision.model_copy(
+                        update={"accessible_resources": accessible_resources_context or None}
+                    )
+                fallback_decision = self._fallback_to_general(
                     agents_metadata,
                     "Router returned no eligible candidate",
                     intent_info=intent_info,
                     request_decision=request_decision,
                 )
+                if fallback_decision is not None:
+                    return fallback_decision.model_copy(
+                        update={"accessible_resources": accessible_resources_context or None}
+                    )
+                return None
             except Exception as e:  # noqa: BLE001 - retry then fall back
                 last_error = e
                 logger.warning(f"Routing attempt {attempt + 1} failed: {e}")
 
         logger.error(f"Routing failed after retries: {last_error}. Falling back to General Chat.")
-        return self._fallback_to_general(
+        fallback_decision = self._fallback_to_general(
             agents_metadata,
             f"Routing exception ({str(last_error)})",
             intent_info=intent_info,
             request_decision=request_decision,
         )
+        if fallback_decision is not None:
+            return fallback_decision.model_copy(
+                update={"accessible_resources": accessible_resources_context or None}
+            )
+        return None
 
     @staticmethod
     def _request_decision_from_intent(
@@ -1016,7 +1053,7 @@ class RouterService:
             reasoning=decision.reasoning,
         )
 
-    def _build_route_result(
+    def _build_turn_decision(
         self,
         result_json: dict,
         agents_metadata: List[dict],
@@ -1027,7 +1064,7 @@ class RouterService:
         source_frame: Optional[IntentSourceFrame] = None,
         request_decision: Optional[RequestDecision] = None,
         data_route_allowed: bool = True,
-    ) -> Optional[RouteResult]:
+    ) -> Optional[TurnDecision]:
         confidence = result_json.get("confidence", 0.5)
         target_name = result_json.get("agent_name")
         secondary_names = result_json.get("secondary_agents", []) or []
@@ -1102,38 +1139,22 @@ class RouterService:
                         continue
                     resolved_secondaries.append(s_agent["id"])
 
-        return RouteResult(
+        return TurnDecision.from_router_components(
             agent_id=target_agent["id"],
+            agent_name=target_agent.get("name"),
             secondary_agents=resolved_secondaries,
             confidence=confidence,
             reasoning=reasoning,
             intent_info=intent_info,
+            request_decision=request_decision,
             turn_labels=turn_labels,
             relation_to_previous=relation_to_previous,
             user_action_type=user_action_type,
-            request_source=(request_decision.source.value if request_decision else None),
-            request_capability=(request_decision.capability.value if request_decision else None),
-            request_should_delegate=bool(request_decision.should_delegate) if request_decision else False,
-            request_delegate_capability=(
-                request_decision.delegate_capability if request_decision else None
-            ),
-            request_reasoning=(request_decision.reasoning if request_decision else None),
-            semantic_domain=(request_decision.semantic_domain if request_decision else None),
-            semantic_operation=(request_decision.semantic_operation if request_decision else None),
-            fact_kind=(request_decision.fact_kind if request_decision else None),
-            freshness_requirement=(
-                request_decision.freshness_requirement if request_decision else "unknown"
-            ),
-            time_scope=(request_decision.time_scope if request_decision else None),
-            reference_mode=(request_decision.reference_mode if request_decision else "unknown"),
-            needs_fresh_data=(request_decision.needs_fresh_data if request_decision else False),
-            chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
-            chatbi_evidence_level=(
-                request_decision.chatbi_evidence_level if request_decision else "none"
-            ),
-            chatbi_reason=(request_decision.chatbi_reason if request_decision else None),
-            matched_dataset_ids=(
-                list(request_decision.matched_dataset_ids) if request_decision else []
+            turn_kind=(
+                "data_query"
+                if self._is_data_query_agent(agents_metadata, target_agent.get("name"))
+                and data_route_allowed
+                else None
             ),
         )
 
@@ -1237,40 +1258,18 @@ class RouterService:
         turn_labels: Optional[List[str]] = None,
         relation_to_previous: str = "unknown",
         user_action_type: str = "chat",
-    ) -> RouteResult:
+    ) -> TurnDecision:
         """Route directly when structural filtering left exactly one agent."""
-        return RouteResult(
+        return TurnDecision.from_router_components(
             agent_id=str(agent["id"]),
+            agent_name=agent.get("name"),
             confidence=0.98,
             reasoning=reasoning,
             intent_info=intent_info,
+            request_decision=request_decision,
             turn_labels=turn_labels or ["sole_candidate"],
             relation_to_previous=relation_to_previous,
             user_action_type=user_action_type,
-            request_source=(request_decision.source.value if request_decision else None),
-            request_capability=(request_decision.capability.value if request_decision else None),
-            request_should_delegate=bool(request_decision.should_delegate) if request_decision else False,
-            request_delegate_capability=(
-                request_decision.delegate_capability if request_decision else None
-            ),
-            request_reasoning=(request_decision.reasoning if request_decision else None),
-            semantic_domain=(request_decision.semantic_domain if request_decision else None),
-            semantic_operation=(request_decision.semantic_operation if request_decision else None),
-            fact_kind=(request_decision.fact_kind if request_decision else None),
-            freshness_requirement=(
-                request_decision.freshness_requirement if request_decision else "unknown"
-            ),
-            time_scope=(request_decision.time_scope if request_decision else None),
-            reference_mode=(request_decision.reference_mode if request_decision else "unknown"),
-            needs_fresh_data=(request_decision.needs_fresh_data if request_decision else False),
-            chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
-            chatbi_evidence_level=(
-                request_decision.chatbi_evidence_level if request_decision else "none"
-            ),
-            chatbi_reason=(request_decision.chatbi_reason if request_decision else None),
-            matched_dataset_ids=(
-                list(request_decision.matched_dataset_ids) if request_decision else []
-            ),
         )
 
     def _fallback_to_general(
@@ -1280,41 +1279,20 @@ class RouterService:
         *,
         intent_info: Optional[IntentResponse] = None,
         request_decision: Optional[RequestDecision] = None,
-    ) -> Optional[RouteResult]:
+    ) -> Optional[TurnDecision]:
         fallback_agent = self._find_fallback_agent(agents)
         if fallback_agent:
-            return RouteResult(
+            return TurnDecision.from_router_components(
                 agent_id=fallback_agent['id'],
+                agent_name=fallback_agent.get("name"),
                 confidence=0.1,
                 reasoning=f"Fallback: {reason}",
                 intent_info=intent_info,
+                request_decision=request_decision,
                 turn_labels=["ambiguous"],
                 relation_to_previous="unknown",
                 user_action_type="unknown",
-                request_source=(request_decision.source.value if request_decision else None),
-                request_capability=(request_decision.capability.value if request_decision else None),
-                request_should_delegate=bool(request_decision.should_delegate) if request_decision else False,
-                request_delegate_capability=(
-                    request_decision.delegate_capability if request_decision else None
-                ),
-                request_reasoning=(request_decision.reasoning if request_decision else None),
-                semantic_domain=(request_decision.semantic_domain if request_decision else None),
-                semantic_operation=(request_decision.semantic_operation if request_decision else None),
-                fact_kind=(request_decision.fact_kind if request_decision else None),
-                freshness_requirement=(
-                    request_decision.freshness_requirement if request_decision else "unknown"
-                ),
-                time_scope=(request_decision.time_scope if request_decision else None),
-                reference_mode=(request_decision.reference_mode if request_decision else "unknown"),
-                needs_fresh_data=(request_decision.needs_fresh_data if request_decision else False),
-                chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
-                chatbi_evidence_level=(
-                    request_decision.chatbi_evidence_level if request_decision else "none"
-                ),
-                chatbi_reason=(request_decision.chatbi_reason if request_decision else None),
-                matched_dataset_ids=(
-                    list(request_decision.matched_dataset_ids) if request_decision else []
-                ),
+                turn_kind="general",
             )
         return None
 

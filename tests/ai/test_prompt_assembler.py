@@ -9,6 +9,7 @@ from app.services.ai.prompt_assembler import (
     resolve_effective_prompt_tool_names,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.turn_decision import TurnDecision
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -117,6 +118,17 @@ def test_platform_prompt_keeps_existing_sensitive_tool_confirmation():
     assert "## 任务能力缺口与临时方案" in prompt
     assert "## 工具确认" in prompt
     assert "不得声称已执行" in prompt
+
+
+def test_platform_prompt_guides_todo_for_multi_step_work():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names=["todo_write"],
+    )
+
+    assert "todo_write" in prompt
+    assert "多个执行步骤" in prompt
+    assert "单步问答、单次检索和单次查询不要调用" in prompt
 
 
 def test_platform_prompt_inventory_uses_effective_runtime_tool_names():
@@ -232,3 +244,49 @@ def test_skill_prompt_keeps_workflow_below_platform_permissions():
 
     assert "不扩大平台权限" in prompt
     assert "工具门禁" in prompt
+
+
+def test_prompt_includes_normalized_turn_context_without_replacing_agent_prompt():
+    assembled = assemble_system_prompt(
+        _params(
+            turn_decision=TurnDecision(
+                source="internal_structured_data",
+                capability="data_query",
+                semantic_intent="DATA_QUERY",
+                relation_to_previous="new_topic",
+                reference_mode="new_query",
+                freshness_requirement="realtime",
+                needs_fresh_data=True,
+                allows_data_route=True,
+            )
+        )
+    )
+
+    assert "## 本轮执行上下文（平台路由快照）" in assembled.full_text
+    assert "请求来源：internal_structured_data" in assembled.full_text
+    assert "路由层已允许进入结构化业务数据能力" in assembled.full_text
+    assert assembled.full_text.index("本轮执行上下文") < assembled.full_text.index("Agent DB prompt")
+    assert "turn_decision" in assembled.section_names
+    assert assembled.section_char_counts["turn_decision"] > 0
+
+
+def test_prompt_includes_accessible_resources_as_a_separate_dynamic_section():
+    assembled = assemble_system_prompt(
+        _params(
+            user_profile="<USER_PROFILE>\n- Account Name: alice\n</USER_PROFILE>",
+            accessible_resources=(
+                "## 当前用户可访问的内部资源摘要\n"
+                "### 知识库\n"
+                "- 蔚来汽车手册：辅助驾驶和车辆使用说明"
+            ),
+        )
+    )
+
+    assert "蔚来汽车手册" in assembled.full_text
+    assert assembled.section_names.index("user_profile") < assembled.section_names.index(
+        "accessible_resources"
+    )
+    assert assembled.section_names.index("accessible_resources") < assembled.section_names.index(
+        "agent_system_prompt"
+    )
+    assert assembled.section_char_counts["accessible_resources"] > 0

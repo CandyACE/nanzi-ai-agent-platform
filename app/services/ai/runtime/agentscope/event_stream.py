@@ -88,6 +88,7 @@ def is_interrupt_sse_chunk(chunk: Dict[str, Any]) -> bool:
     return chunk.get("type") in {
         "permission_required",
         "external_execution_required",
+        "user_question",
         "error",
     }
 

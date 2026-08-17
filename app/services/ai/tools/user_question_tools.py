@@ -1,0 +1,106 @@
+"""Platform tool for AI-initiated clarification questions."""
+from __future__ import annotations
+
+import json
+import secrets
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.ai.tools.tool_compat import BaseTool
+
+
+class QuestionOption(BaseModel):
+    id: str = Field(description="选项稳定标识，回传时使用")
+    label: str = Field(description="展示给用户的选项名称")
+    description: str | None = Field(default=None, description="选项补充说明")
+
+    @field_validator("id", "label")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("选项 id/label 不能为空")
+        return text
+
+
+class AskUserQuestionArgs(BaseModel):
+    question: str = Field(description="向用户提出的核心问题")
+    options: list[QuestionOption] = Field(description="供用户选择的选项列表，至少两项")
+    is_multi_select: bool = Field(default=False, description="是否支持多选")
+    allow_custom_input: bool = Field(default=True, description="是否允许用户补充说明")
+    context: str | None = Field(default=None, description="问题背景说明")
+
+    @field_validator("question")
+    @classmethod
+    def _question_non_empty(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("question 不能为空")
+        if len(text) > 500:
+            raise ValueError("question 不能超过 500 个字符")
+        return text
+
+    @field_validator("options")
+    @classmethod
+    def _options_valid(cls, value: list[QuestionOption]) -> list[QuestionOption]:
+        if len(value) < 2:
+            raise ValueError("options 至少需要两项")
+        if len(value) > 12:
+            raise ValueError("options 不能超过 12 项")
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("options 的 id 必须唯一")
+        if any(len(item.label) > 200 for item in value):
+            raise ValueError("选项 label 不能超过 200 个字符")
+        return value
+
+    @field_validator("context")
+    @classmethod
+    def _context_limited(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if len(text) > 1000:
+            raise ValueError("context 不能超过 1000 个字符")
+        return text or None
+
+
+class AskUserQuestionTool(BaseTool):
+    name = "ask_user_question"
+    description = (
+        "当缺少会实质改变结果的条件，或存在多个同等合理的执行分支时，主动向用户提问。"
+        "支持单选、多选和补充输入；调用后必须停止当前执行并等待【用户回答】回执。"
+        "能够依据上下文安全推断时不要重复提问；每轮最多提出一个问题。"
+    )
+    args_schema = AskUserQuestionArgs
+
+    async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
+        try:
+            args = AskUserQuestionArgs.model_validate(arguments or {})
+        except Exception as exc:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"入参无效: {exc}",
+                    "hint": "请提供非空 question，以及至少两项 id 唯一的 options",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "status": "awaiting_user",
+                "interaction_type": "question",
+                "question_id": f"uq_{secrets.token_hex(8)}",
+                "message": "已向用户展示提问卡，请等待用户回答后再继续执行。",
+                "question": args.question,
+                "options": [option.model_dump(mode="json") for option in args.options],
+                "is_multi_select": args.is_multi_select,
+                "allow_custom_input": args.allow_custom_input,
+                "context": args.context or "",
+            },
+            ensure_ascii=False,
+        )
+
+
+ask_user_question = AskUserQuestionTool()

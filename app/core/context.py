@@ -44,6 +44,8 @@ class AgentContext(BaseModel):
     # User session info for permission enforcement in tools/services
     user_id: Optional[int] = None
     conversation_id: Optional[str] = None
+    parent_conversation_id: Optional[str] = None
+    child_session_id: Optional[str] = None
     is_admin: bool = False
     api_key: Optional[str] = None
     user_dimensions: Dict[str, Any] = Field(default_factory=dict)
@@ -55,11 +57,15 @@ class AgentContext(BaseModel):
     )
     
     # Execution details for tracing (displayed in frontend)
+    trace_id: Optional[str] = None
+    parent_trace_id: Optional[str] = None
     trace_logs: List[str] = Field(default_factory=list)
     trace_buffer: List[Any] = Field(default_factory=list, description="物理执行步骤审计 buffer 引用")
 
     # Delegation control
     delegation_depth: int = 0
+    delegation_run_id: Optional[str] = None
+    delegation_tool_filter: Optional[List[str]] = None
     delegation_call_counts: Dict[str, int] = Field(default_factory=dict)
     delegation_agent_call_counts: Dict[str, int] = Field(default_factory=dict)
 

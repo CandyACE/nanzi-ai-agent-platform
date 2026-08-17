@@ -5,6 +5,11 @@ import {
   shouldSuppressBusinessConfirmation,
 } from "./businessConfirmation";
 import {
+  markOtherUserQuestionsStale,
+  parseUserQuestionEvent,
+  type UserQuestionState,
+} from "./userQuestion";
+import {
   appendTimelineNarrationDelta,
   appendProcessNarrationText,
   appendTimelineReasoningDelta,
@@ -14,8 +19,13 @@ import {
   normalizeProcessNarrationText,
   promoteTimelineNarration,
   upsertTimelineLog,
+  upsertTimelineTodo,
   type ProcessTimelineItem,
 } from "./processTimeline";
+import {
+  normalizeSubagentTraceMeta,
+  type SubagentTraceMeta,
+} from "./subagentTrace";
 
 /**
  * AgentScope 运行时 SSE 事件处理（permission / external / observability）
@@ -85,10 +95,13 @@ export interface AgentStreamLog {
   status: "pending" | "success" | "error" | "warning";
   isExpanded?: boolean;
   category?: string;
+  tool_name?: string;
+  resolution_status?: "disabled" | "missing" | "filtered";
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
   isRouter?: boolean;
+  subagent?: SubagentTraceMeta;
 }
 
 export interface AgentStreamMessage {
@@ -114,6 +127,7 @@ export interface AgentStreamMessage {
   toolResultData?: Record<string, ToolResultDataBlock[]>;
   groundingBlocked?: GroundingBlockedPayload;
   businessConfirmation?: BusinessConfirmationState;
+  userQuestion?: UserQuestionState;
 }
 
 export type AddStreamLogFn<T extends AgentStreamMessage = AgentStreamMessage> = (
@@ -518,6 +532,25 @@ export function handleBusinessConfirmation<T extends AgentStreamMessage>(
   });
 }
 
+export function handleUserQuestion<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+  addLog: AddStreamLogFn<T>,
+  allMessages?: Array<{ role?: string; content?: string; userQuestion?: UserQuestionState }>,
+) {
+  const parsed = parseUserQuestionEvent(data);
+  if (!parsed) return;
+  if (allMessages) markOtherUserQuestionsStale(allMessages, parsed.question_id);
+  msg.userQuestion = parsed;
+  addLog(msg, {
+    id: `user_question_${parsed.question_id}`,
+    title: "需要用户回答",
+    details: parsed.question,
+    status: "pending",
+    category: "user_question",
+  });
+}
+
 export function collapseSecondaryFoldsOnBody<T extends AgentStreamMessage>(msg: T): void {
   msg.isProcessNarrationExpanded = false;
   msg.isReasoningExpanded = false;
@@ -603,9 +636,22 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     details: data.details === undefined ? undefined : String(data.details),
     status: data.status as "pending" | "success" | "error" | "warning" | undefined,
     category: category || (data.category ? String(data.category) : undefined),
+    tool_name: data.tool_name === undefined ? undefined : String(data.tool_name),
+    resolution_status: data.resolution_status as "disabled" | "missing" | "filtered" | undefined,
     execution_time_ms:
       data.execution_time_ms === undefined ? undefined : Number(data.execution_time_ms),
     started_at: data.started_at === undefined ? undefined : Number(data.started_at),
+    subagent: normalizeSubagentTraceMeta(data.subagent),
+  });
+}
+
+export function syncProcessTimelineTodo<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+): void {
+  upsertTimelineTodo(msg, {
+    todos: data.todos,
+    title: data.title,
   });
 }
 
@@ -663,7 +709,12 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
   addLog: AddStreamLogFn<T>,
-  allMessages?: Array<{ role?: string; content?: string; businessConfirmation?: BusinessConfirmationState }>,
+  allMessages?: Array<{
+    role?: string;
+    content?: string;
+    businessConfirmation?: BusinessConfirmationState;
+    userQuestion?: UserQuestionState;
+  }>,
 ): boolean {
   switch (data.type) {
     case "permission_required":
@@ -674,6 +725,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "business_confirmation":
       handleBusinessConfirmation(msg, data, addLog, allMessages);
+      return true;
+    case "user_question":
+      handleUserQuestion(msg, data, addLog, allMessages);
       return true;
     case "external_execution_result":
       if (msg.pendingExternalExecution) {
@@ -739,6 +793,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
         finishTimelineReasoning(msg);
       }
       if (data.status === "continuing" && !assistantBodyHasStarted(msg)) msg.isThinking = true;
+      return true;
+    case "todo_update":
+      syncProcessTimelineTodo(msg, data);
       return true;
     case "reasoning_content": {
       const reasoningDelta = String(data.content || "");

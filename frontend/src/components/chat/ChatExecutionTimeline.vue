@@ -111,19 +111,63 @@
                   <button
                     type="button"
                     class="flex w-full items-center gap-2 text-left"
-                    :aria-expanded="child.isExpanded === true"
-                    @click="child.details ? child.isExpanded = !child.isExpanded : undefined"
+                    :aria-expanded="child.children?.length ? child.childrenExpanded !== false : child.isExpanded === true"
+                    @click="child.children?.length ? (child.childrenExpanded = child.childrenExpanded === false) : (child.details ? child.isExpanded = !child.isExpanded : undefined)"
                   >
                     <span v-if="child.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                     <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(child) }}</span>
-                    <span class="min-w-0 flex-1 truncate" :title="child.title">{{ child.title }}</span>
-                    <span v-if="child.status === 'error'" class="shrink-0 text-[10px]">失败</span>
+                    <span class="min-w-0 flex-1 truncate" :title="child.title">
+                      <span
+                        v-if="child.subagent && !child.children?.length"
+                        :title="formatSubagentTraceSummary(child.subagent)"
+                      >子代理 · </span>
+                      <span>{{ child.title }}</span>
+                    </span>
+                    <span
+                      v-if="child.subagent && subagentStatusLabel(child.status)"
+                      class="shrink-0 text-[10px]"
+                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400'"
+                    >
+                      {{ subagentStatusLabel(child.status) }}
+                    </span>
+                    <span v-if="child.status === 'error' && !child.subagent" class="shrink-0 text-[10px]">失败</span>
                     <span v-if="formatDuration(child.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(child.execution_time_ms) }}</span>
-                    <svg v-if="child.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': child.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg v-if="child.details || child.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': child.children?.length ? (child.childrenExpanded !== false) : child.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
-                  <pre v-if="child.details && child.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ child.details }}</pre>
+                  <pre v-if="child.details && child.isExpanded && !child.children?.length" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ child.details }}</pre>
+
+                  <!-- 嵌套展示子代理内部步骤 -->
+                  <div v-if="child.children?.length && child.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+                    <div
+                      v-for="subStep in child.children"
+                      :key="subStep.id"
+                      class="rounded-md px-1 py-0.5 text-[11px] leading-5 transition-colors"
+                      :class="{
+                        'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': subStep.status === 'error',
+                        'text-gray-600 dark:text-gray-300': subStep.status === 'pending',
+                        'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': subStep.status !== 'pending' && subStep.status !== 'error',
+                      }"
+                    >
+                      <button
+                        type="button"
+                        class="flex w-full items-center gap-2 text-left"
+                        :aria-expanded="subStep.isExpanded === true"
+                        @click="subStep.details ? subStep.isExpanded = !subStep.isExpanded : undefined"
+                      >
+                        <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
+                        <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
+                        <span class="min-w-0 flex-1 truncate" :title="subStep.title">{{ subStep.title }}</span>
+                        <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
+                        <span v-if="formatDuration(subStep.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(subStep.execution_time_ms) }}</span>
+                        <svg v-if="subStep.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                        </svg>
+                      </button>
+                      <pre v-if="subStep.details && subStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ subStep.details }}</pre>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -141,20 +185,33 @@
             <button
               type="button"
               class="flex w-full items-center gap-2 text-left"
-              :aria-expanded="item.isExpanded === true"
-              @click="item.details ? item.isExpanded = !item.isExpanded : undefined"
+              :aria-expanded="item.children?.length ? item.childrenExpanded !== false : item.isExpanded === true"
+              @click="item.children?.length ? (item.childrenExpanded = item.childrenExpanded === false) : (item.details ? item.isExpanded = !item.isExpanded : undefined)"
             >
               <span v-if="item.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
               <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(item) }}</span>
-              <span class="min-w-0 flex-1 truncate" :title="item.title">{{ item.title }}</span>
-              <span v-if="item.status === 'error'" class="shrink-0 text-[10px]">失败</span>
+              <span class="min-w-0 flex-1 truncate" :title="item.title">
+                <span
+                  v-if="item.subagent && !item.children?.length"
+                  :title="formatSubagentTraceSummary(item.subagent)"
+                >子代理 · </span>
+                <span>{{ item.title }}</span>
+              </span>
+              <span
+                v-if="item.subagent && subagentStatusLabel(item.status)"
+                class="shrink-0 text-[10px]"
+                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400'"
+              >
+                {{ subagentStatusLabel(item.status) }}
+              </span>
+              <span v-if="item.status === 'error' && !item.subagent" class="shrink-0 text-[10px]">失败</span>
               <span v-if="formatDuration(item.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">
                 {{ formatDuration(item.execution_time_ms) }}
               </span>
               <svg
-                v-if="item.details"
+                v-if="item.details || item.children?.length"
                 class="h-3 w-3 shrink-0 text-gray-400 transition-transform"
-                :class="{ 'rotate-180': item.isExpanded }"
+                :class="{ 'rotate-180': item.children?.length ? (item.childrenExpanded !== false) : item.isExpanded }"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -162,7 +219,38 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
               </svg>
             </button>
-            <pre v-if="item.details && item.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ item.details }}</pre>
+            <pre v-if="item.details && item.isExpanded && !item.children?.length" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ item.details }}</pre>
+
+            <!-- 嵌套展示根级别子代理内部步骤 -->
+            <div v-if="item.children?.length && item.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+              <div
+                v-for="subStep in item.children"
+                :key="subStep.id"
+                class="rounded-md px-1 py-0.5 text-[11px] leading-5 transition-colors"
+                :class="{
+                  'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': subStep.status === 'error',
+                  'text-gray-600 dark:text-gray-300': subStep.status === 'pending',
+                  'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': subStep.status !== 'pending' && subStep.status !== 'error',
+                }"
+              >
+                <button
+                  type="button"
+                  class="flex w-full items-center gap-2 text-left"
+                  :aria-expanded="subStep.isExpanded === true"
+                  @click="subStep.details ? subStep.isExpanded = !subStep.isExpanded : undefined"
+                >
+                  <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
+                  <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
+                  <span class="min-w-0 flex-1 truncate" :title="subStep.title">{{ subStep.title }}</span>
+                  <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
+                  <span v-if="formatDuration(subStep.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(subStep.execution_time_ms) }}</span>
+                  <svg v-if="subStep.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                  </svg>
+                </button>
+                <pre v-if="subStep.details && subStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ subStep.details }}</pre>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -192,6 +280,9 @@ import {
   type ProcessTimelineLogItem,
   type ProcessTimelineTextItem,
 } from "@/utils/processTimeline";
+import {
+  formatSubagentTraceSummary,
+} from "@/utils/subagentTrace";
 
 const props = withDefaults(defineProps<{
   timeline?: ProcessTimelineItem[];
@@ -203,6 +294,7 @@ const props = withDefaults(defineProps<{
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    subagent?: ProcessTimelineLogItem["subagent"];
   }>;
   reasoningContent?: string;
   processNarration?: string;
@@ -233,9 +325,9 @@ const props = withDefaults(defineProps<{
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 
-const items = computed(() => props.timeline.length
+const items = computed(() => (props.timeline.length
   ? mergeTimelineLogs(props.timeline, props.logs)
-  : buildLegacyProcessTimeline(props));
+  : buildLegacyProcessTimeline(props)).filter((item) => item.kind !== "todo"));
 
 const hasPending = computed(() => timelineHasPending(items.value));
 
@@ -264,7 +356,9 @@ function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
 }
 
 function iconFor(item: ProcessTimelineLogItem): string {
+  if (item.category === "tool_resolution") return item.status === "error" ? "⚠️" : "🧭";
   if (item.status === "error") return "⚠️";
+  if (item.subagent || item.category === "agent") return "🤖";
   if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return "🔧";
   if (item.category === "model" || item.title.includes("模型")) return "✦";
   if (
@@ -275,6 +369,12 @@ function iconFor(item: ProcessTimelineLogItem): string {
   ) return "🧠";
   if (item.category === "permission") return "🔒";
   return "•";
+}
+
+function subagentStatusLabel(status: ProcessTimelineLogItem["status"]): string {
+  if (status === "pending") return "进行中";
+  if (status === "error") return "失败";
+  return "已完成";
 }
 
 function formatDuration(duration?: number | null): string {

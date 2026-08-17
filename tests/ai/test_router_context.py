@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
-from app.services.ai.router_service import RouterService, RouteResult
+from app.services.ai.router_service import RouterService
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -21,6 +21,77 @@ def test_router_prompt_documents_general_and_knowledge_boundaries():
     assert "chatbi_business_data" in prompt
     assert "local_file" in prompt
     assert "thought 不超过 40 个汉字" in prompt
+    assert "accessible_resources_context" in prompt
+    assert "明确语义关联" in prompt
+
+
+@pytest.mark.asyncio
+async def test_router_injects_authorized_resource_catalog_before_semantic_routing():
+    router = RouterService()
+    agents = [
+        {
+            "id": "data-agent",
+            "name": "chat-bi",
+            "description": "结构化业务数据查询",
+            "capabilities": ["data_query"],
+        },
+        {
+            "id": "knowledge-agent",
+            "name": "knowledge-base",
+            "description": "内部知识库和文档问答",
+            "capabilities": ["knowledge_base"],
+        },
+        {
+            "id": "general-agent",
+            "name": "general-chat",
+            "description": "通用问答",
+            "capabilities": ["chat"],
+        },
+    ]
+    mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = None
+    mock_chat.generate_text.return_value = (
+        '{"agent_name":"knowledge-base","confidence":0.93,'
+        '"secondary_agents":[],"intent":"KNOWLEDGE_BASE",'
+        '"domain":"internal_docs","intent_confidence":0.91,'
+        '"intent_reasoning":"匹配用户可访问的车辆手册","thought":"命中内部知识库"}'
+    )
+    resource_catalog = (
+        "## 当前用户可访问的内部资源摘要\n"
+        "### 知识库\n"
+        "- 蔚来汽车手册：车辆功能、辅助驾驶和使用说明"
+    )
+
+    with patch.object(router, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+        patch.object(router, "_filter_agents_for_user", new_callable=AsyncMock) as mock_filter, \
+        patch(
+            "app.services.ai.router_service.build_accessible_resource_catalog",
+            new_callable=AsyncMock,
+        ) as mock_catalog, \
+        patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+        patch("app.services.ai.router_service.chat_client_from_handle") as mock_factory:
+        mock_fetch.return_value = agents
+        mock_filter.return_value = agents
+        mock_catalog.return_value = resource_catalog
+        mock_get_llm.return_value = object()
+        mock_factory.return_value = mock_chat
+
+        result = await router.route_query(
+            "如何开启辅助驾驶功能",
+            user_id=7,
+            is_admin=False,
+        )
+
+    assert result is not None
+    assert result.agent_id == "knowledge-agent"
+    mock_catalog.assert_awaited_once_with(
+        user_id=7,
+        user_name=None,
+        is_admin=False,
+    )
+    system_prompt = mock_chat.generate_text.call_args.args[0][0].content[0].text
+    assert "当前用户可访问的内部资源摘要" in system_prompt
+    assert "蔚来汽车手册" in system_prompt
 
 
 @pytest.mark.asyncio

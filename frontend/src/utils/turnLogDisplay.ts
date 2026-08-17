@@ -77,7 +77,7 @@ function isDataPipelineStep(log: TurnLogLike): boolean {
 }
 
 function isAlwaysVisible(log: TurnLogLike): boolean {
-  if (log.category === "intent" || log.category === "router") return true;
+  if (log.category === "intent" || log.category === "router" || log.category === "tool_resolution") return true;
   return matchesAny(log.title || "", ALWAYS_VISIBLE_KEYWORDS);
 }
 

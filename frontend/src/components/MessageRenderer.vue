@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { normalizeGeneratedFileHref } from '@/utils/generatedFileUrl';
+import { linkifyGeneratedFileUrls, resolveGeneratedFileHref } from '@/utils/generatedFileUrl';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
 import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from '@/utils/quickButtons';
@@ -162,9 +162,9 @@ interface ContentSegment {
 
     // 智能将服务器物理绝对路径重映射为可加载的网络相对路径（uploads 转静态托管，其他绝对路径转 fs 预览 API）
     res = res.replace(/(src|href)=["']([^"']*)["']/gi, (match, attr, val) => {
-      const normalizedGeneratedFileHref = normalizeGeneratedFileHref(val);
-      if (normalizedGeneratedFileHref !== val) {
-        return `${attr}="${normalizedGeneratedFileHref}"`;
+      const resolvedGeneratedFileHref = resolveGeneratedFileHref(val);
+      if (resolvedGeneratedFileHref !== val) {
+        return `${attr}="${resolvedGeneratedFileHref}"`;
       }
       if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
         return match;
@@ -205,16 +205,25 @@ interface ContentSegment {
     );
 
     // 安全识别本地绝对或相对路径（排除标签内部属性，如 href, src），并在后方渲染一键在画布打开的 [打开] 链接
+    const links: string[] = [];
+    let textWithPlaceholders = res.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, (match) => {
+      links.push(match);
+      return `###HTML_LINK_PLACEHOLDER_${links.length - 1}###`;
+    });
     const tags: string[] = [];
-    let textWithPlaceholders = res.replace(/<[^>]+>/g, (match) => {
+    textWithPlaceholders = textWithPlaceholders.replace(/<[^>]+>/g, (match) => {
       tags.push(match);
       return `###HTML_TAG_PLACEHOLDER_${tags.length - 1}###`;
     });
 
+    textWithPlaceholders = linkifyGeneratedFileUrls(textWithPlaceholders);
     textWithPlaceholders = injectOpenLinksForPaths(textWithPlaceholders);
 
     res = textWithPlaceholders.replace(/###HTML_TAG_PLACEHOLDER_(\d+)###/g, (_match, idx) => {
       return tags[parseInt(idx, 10)] ?? "";
+    });
+    res = res.replace(/###HTML_LINK_PLACEHOLDER_(\d+)###/g, (_match, idx) => {
+      return links[parseInt(idx, 10)] ?? "";
     });
 
     // 兜底：Markdown 反引号会把路径包进 <code>，上面占位符还原后再处理一次 code 内文本

@@ -18,6 +18,7 @@ async def stream_to_routed_assistant(
     """Route and execute the same request without asking the user to re-submit it."""
     from app.services.ai.context_manager import AgentContextManager
     from app.services.ai.dispatcher import AgentDispatcher
+    from app.services.ai.turn_decision import TurnDecision
 
     messages = list(history or [])
     if not messages or messages[-1].get("role") != "user" or messages[-1].get("content") != user_question:
@@ -69,11 +70,11 @@ async def stream_to_routed_assistant(
         runner.permission_options,
         runner.user_info,
         runner.conversation_id,
-        route_hints={
-            "handoff_from": from_name,
-            "handoff_reason": reason,
-            "route_reasoning": getattr(route_details, "reasoning", None),
-        },
+        turn_decision=(
+            route_details
+            if isinstance(route_details, TurnDecision)
+            else TurnDecision.for_direct_agent_selection(config)
+        ),
     )
     async for chunk in executor.execute(messages):
         yield chunk

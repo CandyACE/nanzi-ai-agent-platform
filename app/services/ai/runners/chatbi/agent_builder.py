@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
+from app.services.ai.runtime.agentscope.tools import (
+    RuntimeToolSpec,
+)
+from app.services.ai.tool_capability import AgentScopeToolConsumer
 from app.services.ai.tools.registry import ToolRegistry
 
 
@@ -17,19 +20,18 @@ def _runner_module():
 
 async def resolve_runtime_tools_from_config(runner: Any) -> list[RuntimeToolSpec]:
     dar = _runner_module()
-    _, specs = await dar.build_chatbi_toolkit(runner.config.tools)
-    tools = list(specs)
-    seen = {spec.name for spec in tools}
     system_tools = ToolRegistry.get_system_implicit_tools()
-    if system_tools:
-        for tool in system_tools:
-            spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
-            if spec.name in seen:
-                continue
-            tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
-            seen.add(spec.name)
+    runner._last_tool_resolution = None
 
-    return tools
+    def capture_resolution(resolved: Any) -> None:
+        runner._last_tool_resolution = resolved
+
+    _, specs = await dar.build_chatbi_toolkit(
+        runner.config.tools,
+        implicit_tools=system_tools,
+        on_resolved=capture_resolution,
+    )
+    return list(specs)
 
 
 async def build_native_agent(
@@ -57,7 +59,11 @@ async def build_native_agent(
     from app.services.ai.runtime.agentscope.workspace import bind_configured_tools_to_workspace
 
     tools = await bind_configured_tools_to_workspace(workspace, tools)
-    toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"), user_id=runner._current_user_id())
+    toolkit = AgentScopeToolConsumer(builder=dar.build_toolkit).consume_specs(
+        tools,
+        approval_mode=runner.permission_options.get("approval_mode"),
+        user_id=runner._current_user_id(),
+    )
     from app.services.ai.runtime.agentscope.agent_runtime import (
         build_runtime_middlewares,
         load_injection_config,

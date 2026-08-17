@@ -111,8 +111,7 @@ async def test_general_turn_exposes_configured_knowledge_search_tool(monkeypatch
     from app.schemas.agent import ChatConfig
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
-    from app.services.ai.turn_classifier import TurnClassification, TurnType
-    from app.services.ai.intent_service import IntentType
+    from app.services.ai.turn_decision import TurnDecision
 
     config = ChatConfig(
         agent_id="general-agent-id",
@@ -128,11 +127,12 @@ async def test_general_turn_exposes_configured_knowledge_search_tool(monkeypatch
         trace_id="trace-general-tool-gate",
         trace_buffer=[],
         conversation_id="conv-1",
-    )
-    runner.turn_classification = TurnClassification(
-        turn_type=TurnType.GENERAL,
-        reasoning="unrelated common question",
-        intent=IntentType.GENERAL,
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            turn_kind="general",
+            source="general",
+            capability="answer",
+        ),
     )
 
     captured_tool_names = []
