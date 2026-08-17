@@ -24,6 +24,7 @@ _CATALOG_NOTICE = (
     "具体内容必须通过对应工具获取，资源名称不代表绕过服务端权限校验。"
 )
 _TRUNCATED_NOTICE = "- 更多资源未展示，请按需调用资源目录工具。"
+_NON_KNOWLEDGE_BASE_RESOURCE_NAMES = frozenset({"chatbi-example-meta"})
 
 
 def _clean_catalog_value(value: Any) -> str:
@@ -82,6 +83,16 @@ def _append_section(
     return len(source_rows) > max_items
 
 
+def _knowledge_bases_for_prompt(rows: Iterable[Any]) -> list[Any]:
+    """Exclude resources reserved for structured-data examples from the KB catalog."""
+    return [
+        row
+        for row in rows
+        if _clean_catalog_value(getattr(row, "name", None))
+        not in _NON_KNOWLEDGE_BASE_RESOURCE_NAMES
+    ]
+
+
 def render_accessible_resource_catalog(
     *,
     datasets: Iterable[Any],
@@ -96,7 +107,7 @@ def render_accessible_resource_catalog(
     truncated = _append_section(
         sections,
         title="### 知识库",
-        rows=knowledge_bases,
+        rows=_knowledge_bases_for_prompt(knowledge_bases),
         resource_type="knowledge_base",
         max_items=item_limit,
     )

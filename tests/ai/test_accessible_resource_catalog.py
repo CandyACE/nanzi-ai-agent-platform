@@ -42,6 +42,32 @@ def test_render_accessible_resource_catalog_keeps_only_safe_directory_metadata()
     assert "权限校验" in rendered
 
 
+def test_render_accessible_resource_catalog_excludes_chatbi_example_kb_but_keeps_dataset():
+    rendered = render_accessible_resource_catalog(
+        datasets=[
+            SimpleNamespace(
+                name="chatbi-example-meta",
+                display_name="ChatBI 案例数据集",
+                description="给 ChatBI 提供案例样本",
+            )
+        ],
+        knowledge_bases=[
+            SimpleNamespace(
+                name="chatbi-example-meta",
+                description="ChatBI 案例样本库，不是知识库问答来源",
+            ),
+            SimpleNamespace(
+                name="蔚来汽车手册",
+                description="车辆功能和使用说明",
+            ),
+        ],
+    )
+
+    assert "### 知识库\n- chatbi-example-meta" not in rendered
+    assert "- 蔚来汽车手册：车辆功能和使用说明" in rendered
+    assert "### 数据集\n- ChatBI 案例数据集（chatbi-example-meta）：给 ChatBI 提供案例样本" in rendered
+
+
 def test_render_accessible_resource_catalog_sanitizes_lines_and_applies_budget():
     rendered = render_accessible_resource_catalog(
         datasets=[
