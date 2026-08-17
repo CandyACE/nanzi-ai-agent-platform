@@ -53,14 +53,16 @@ const parsed = api.parseUserQuestionEvent({
 });
 return {
   parsed,
-  receipt: api.buildUserQuestionUserMessage('uq_1', ['monthly'], '排除退款'),
-  cancelledReceipt: api.buildUserQuestionUserMessage('uq_1', [], '', true),
+  receipt: api.buildUserQuestionUserMessage('uq_1', ['monthly'], '排除退款', false, '按什么维度统计？', [{ id: 'daily', label: '按天' }, { id: 'monthly', label: '按月' }]),
+  cancelledReceipt: api.buildUserQuestionUserMessage('uq_1', [], '', true, '按什么维度统计？'),
 };
 """,
     )
     assert result["parsed"]["question_id"] == "uq_1"
     assert result["parsed"]["options"][1]["id"] == "monthly"
     assert result["receipt"].startswith("【用户回答】")
+    assert "问题: 按什么维度统计？" in result["receipt"]
+    assert "所选选项: 按月 (monthly)" in result["receipt"]
     assert "question_id: uq_1" in result["receipt"]
     assert 'selected_option_ids: ["monthly"]' in result["receipt"]
     assert "排除退款" in result["receipt"]

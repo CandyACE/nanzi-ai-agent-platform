@@ -740,6 +740,8 @@ class AgentService:
                     full_response_content = cancellation_message
                     execution_status = "cancelled"
                     shared_state["execution_status"] = "cancelled"
+                    resolved_agent_name = "sys_question_cancel"
+                    resolved_display_name = "系统助手"
                     if conversation_id:
                         u_id = lane_user_id
                         asyncio.create_task(
@@ -749,11 +751,18 @@ class AgentService:
                                 "assistant",
                                 cancellation_message,
                                 trace_id=trace_id,
+                                agent_name=resolved_agent_name,
                                 process_timeline=_final_process_timeline(
                                     shared_state.get("process_timeline")
                                 ),
                             )
                         )
+                    yield {
+                        "type": "meta",
+                        "agent_name": resolved_agent_name,
+                        "agent_display_name": resolved_display_name,
+                        "agent_type": "system",
+                    }
                     yield {
                         "content": cancellation_message,
                         "status": "success",

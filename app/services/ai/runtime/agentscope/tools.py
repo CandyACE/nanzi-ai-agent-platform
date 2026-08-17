@@ -82,6 +82,7 @@ READ_ONLY_TOOL_NAMES = {
     "web_search_baidu",
     "system_http_request",
     "sub_agent_call",
+    "sub_agent_batch_call",
 }
 NATIVE_TOOL_EVIDENCE_TYPES = {
     "Bash": frozenset({EvidenceType.RUNTIME_STATE}),

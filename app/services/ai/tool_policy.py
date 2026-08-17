@@ -68,6 +68,15 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="no",
         nudge_mode="explicit",
     ),
+    "sub_agent_batch_call": ToolMetadata(
+        capability="delegation",
+        source="internal_agent",
+        freshness="dynamic",
+        side_effect="delegate",
+        confirmation="inherited",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "memory_search": ToolMetadata(
         capability="memory_search",
         source="conversation_context",

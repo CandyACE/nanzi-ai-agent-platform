@@ -30,6 +30,8 @@ NanZi 已有 `SubAgentRequest`、`SubAgentResult`、目标智能体权限检查�
 
 模型工具参数增加对应的可选参数，但原有只传 `agent_name` 和 `query` 的调用继续有效。
 
+批量委派新增独立工具 `sub_agent_batch_call`，参数为 1-4 个调用项；每个调用项复用上述目标、深度、工具过滤和结构化输出约束。批量工具只适用于互不依赖的任务，结果按输入顺序返回；存在前后依赖时仍使用单次 `sub_agent_call`。
+
 ### 结果
 
 `SubAgentResult` 增加：
@@ -49,6 +51,8 @@ NanZi 已有 `SubAgentRequest`、`SubAgentResult`、目标智能体权限检查�
 5. 创建子上下文和 Executor 时传入收窄后的工具范围、`run_id`、父 Trace 和父会话信息；子 Executor 使用 `child_session_id` 作为 `conversation_id`。
 6. 用可取消的运行信号包裹子流；超时、取消、权限中断和异常分别转换为明确 `stop_reason`。
 7. 子流结束后生成带运行关联字段的结果，并继续向主模型提供兼容文本。
+
+批量调用在工具层创建并发任务。每个任务使用独立的 `child_session_id` 和临时 Trace buffer，完成后按输入顺序合并到父 Trace；单项失败、超时或拒绝只标记该项，父调用取消时取消所有未完成项。
 
 ### 工具过滤
 
@@ -97,6 +101,7 @@ NanZi 已有 `SubAgentRequest`、`SubAgentResult`、目标智能体权限检查�
 - 不让子代理获得父代理未配置的工具。
 - 不把结构化输出作为所有现有子代理的强制返回格式。
 - 不将取消转换为普通失败文本后继续执行。
+- 不改变现有 `sub_agent_call` 的单次串行行为，也不让批量工具承担有依赖关系的任务编排。
 
 ## 验收标准
 
@@ -110,3 +115,4 @@ NanZi 已有 `SubAgentRequest`、`SubAgentResult`、目标智能体权限检查�
 - 超时、取消、权限中断、深度拒绝和普通异常有不同 `stop_reason`。
 - 合法 `output_schema` 可返回结构化对象；非法或不匹配结果不会伪装成成功。
 - 现有子代理委派回归测试和原有文本结果契约保持通过。
+- `sub_agent_batch_call` 最多接受 4 项，实际并发执行且按输入顺序返回；一个批量项失败不影响其他项。

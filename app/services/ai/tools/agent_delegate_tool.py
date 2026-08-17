@@ -7,7 +7,9 @@ import inspect
 import time
 from dataclasses import replace
 from typing import Optional, Dict, Any, List, Tuple, Iterable
+from pydantic import BaseModel, Field, field_validator
 from app.services.ai.tools.tool_compat import tool
+from app.services.ai.tools.tool_compat import BaseTool
 from app.core.context import get_current_agent_context, AgentContext, set_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
@@ -29,10 +31,21 @@ DEFAULT_DELEGATION_TIMEOUT_SECONDS = 120.0
 DEFAULT_DELEGATION_RESULT_MAX_CHARS = 8000
 MAX_DELEGATION_CALLS_PER_AGENT = 2
 MAX_DELEGATION_DEPTH = 1
+MAX_BATCH_DELEGATION_CALLS = 4
 
 INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required"})
 
 EMPTY_DELEGATION_RESULT_MESSAGE = EMPTY_SUB_AGENT_RESULT_MESSAGE
+
+
+def _batch_result_status(content: str) -> str:
+    """Classify the backward-compatible single-call text for batch counters."""
+    normalized = str(content or "").strip()
+    if normalized.startswith(("错误：", "错误:")):
+        return "failed"
+    if normalized.startswith(EMPTY_DELEGATION_RESULT_MESSAGE):
+        return "failed"
+    return "completed"
 
 DELEGATION_INTERRUPT_MESSAGES = {
     "permission_required": (
@@ -1060,6 +1073,137 @@ async def sub_agent_call(
         result.truncated,
     )
     return result.to_tool_text()
+
+
+class BatchSubAgentCall(BaseModel):
+    """One independent item in a batch delegation request."""
+
+    agent_name: str = Field(description="目标子智能体名称")
+    query: str = Field(description="交给子智能体的独立任务")
+    max_depth: int | None = Field(default=None, description="可选的最大委派深度")
+    tool_filter: list[str] | None = Field(default=None, description="可选的子代理工具白名单")
+    output_schema: dict[str, Any] | None = Field(default=None, description="可选的结构化输出约束")
+
+    @field_validator("agent_name", "query")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("agent_name/query 不能为空")
+        return normalized
+
+
+class BatchSubAgentArgs(BaseModel):
+    """Arguments accepted by the parallel delegation tool."""
+
+    calls: list[BatchSubAgentCall] = Field(
+        description="彼此独立、可以并行执行的子代理任务，最多 4 个"
+    )
+
+    @field_validator("calls")
+    @classmethod
+    def _bounded_calls(cls, value: list[BatchSubAgentCall]) -> list[BatchSubAgentCall]:
+        if not value:
+            raise ValueError("calls 不能为空")
+        if len(value) > MAX_BATCH_DELEGATION_CALLS:
+            raise ValueError(f"calls 最多 {MAX_BATCH_DELEGATION_CALLS} 个")
+        return value
+
+
+class BatchSubAgentTool(BaseTool):
+    """Run independent one-shot delegations concurrently and return ordered results."""
+
+    name = "sub_agent_batch_call"
+    description = (
+        "并行委派 1-4 个彼此独立的子智能体任务。"
+        "仅用于任务之间互不依赖的场景；有先后依赖时逐次调用 sub_agent_call。"
+        "结果按 calls 输入顺序返回，单个任务失败不会丢弃其他结果。"
+    )
+    args_schema = BatchSubAgentArgs
+
+    async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
+        try:
+            args = BatchSubAgentArgs.model_validate(arguments or {})
+        except Exception as exc:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"批量委派入参无效: {exc}",
+                },
+                ensure_ascii=False,
+            )
+
+        main_ctx = get_current_agent_context()
+        if not main_ctx:
+            return json.dumps(
+                {"status": "error", "error": "错误：无法获取当前执行上下文，批量委派失败。"},
+                ensure_ascii=False,
+            )
+
+        async def run_one(index: int, call: BatchSubAgentCall) -> dict[str, Any]:
+            task_ctx = main_ctx.model_copy(deep=False, update={"trace_buffer": []})
+            original_ctx = get_current_agent_context()
+            set_agent_context(task_ctx)
+            try:
+                content = await sub_agent_call.func(
+                    **call.model_dump(exclude_none=True)
+                )
+                return {
+                    "index": index,
+                    "agent_name": call.agent_name,
+                    "status": _batch_result_status(str(content or "")),
+                    "content": str(content or ""),
+                    "trace_buffer": task_ctx.trace_buffer,
+                }
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "[Delegation] Batch item failed: agent=%s index=%s",
+                    call.agent_name,
+                    index,
+                )
+                return {
+                    "index": index,
+                    "agent_name": call.agent_name,
+                    "status": "failed",
+                    "content": f"错误：批量委派子智能体 '{call.agent_name}' 失败：{exc}",
+                    "trace_buffer": task_ctx.trace_buffer,
+                }
+            finally:
+                set_agent_context(original_ctx)
+
+        tasks = [
+            asyncio.create_task(run_one(index, call))
+            for index, call in enumerate(args.calls)
+        ]
+        try:
+            raw_results = await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        results: list[dict[str, Any]] = []
+        for item in raw_results:
+            main_ctx.trace_buffer.extend(item.pop("trace_buffer", []))
+            results.append(item)
+
+        failed_count = sum(item["status"] != "completed" for item in results)
+        return json.dumps(
+            {
+                "status": "completed",
+                "results": results,
+                "completed_count": len(results) - failed_count,
+                "failed_count": failed_count,
+            },
+            ensure_ascii=False,
+        )
+
+
+sub_agent_batch_call = BatchSubAgentTool()
 
 
 async def _dispatch_sub_agent_executor(

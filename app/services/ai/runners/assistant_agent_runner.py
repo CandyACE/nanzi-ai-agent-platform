@@ -1905,6 +1905,9 @@ class AssistantAgentRunner(BaseExecutor):
             sub_agent_tool = await provider.get_implicit_tool("sub_agent_call")
             if sub_agent_tool:
                 system_tools.append(sub_agent_tool)
+                batch_sub_agent_tool = await provider.get_implicit_tool("sub_agent_batch_call")
+                if batch_sub_agent_tool:
+                    system_tools.append(batch_sub_agent_tool)
         resolved = await resolve_tool_capabilities(
             configured_tools,
             implicit_tools=system_tools,

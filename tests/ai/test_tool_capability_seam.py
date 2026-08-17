@@ -60,6 +60,31 @@ async def test_registry_provider_resolves_named_implicit_tool_for_runner():
 
 
 @pytest.mark.asyncio
+async def test_registry_provider_resolves_batch_delegation_tool():
+    from app.services.ai.tool_capability import RegistryToolProvider
+
+    class LegacyTool:
+        name = "sub_agent_batch_call"
+        description = "batch delegate"
+
+    class FakeRegistry:
+        @classmethod
+        async def get_tool(cls, name):
+            assert name == "sub_agent_batch_call"
+            return LegacyTool()
+
+        @staticmethod
+        def _attach_evidence_metadata(name, spec):
+            return spec
+
+    provider = RegistryToolProvider(registry=FakeRegistry)
+
+    tool = await provider.get_implicit_tool("sub_agent_batch_call")
+
+    assert tool.name == "sub_agent_batch_call"
+
+
+@pytest.mark.asyncio
 async def test_assistant_resolves_main_subagent_through_provider(monkeypatch):
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 
@@ -82,7 +107,14 @@ async def test_assistant_resolves_main_subagent_through_provider(monkeypatch):
         trace_id="trace-capability-provider",
         trace_buffer=[],
     )
-    provider_lookup = AsyncMock(return_value=LegacyTool())
+    class BatchLegacyTool(LegacyTool):
+        name = "sub_agent_batch_call"
+
+    async def lookup(name):
+        return LegacyTool() if name == "sub_agent_call" else BatchLegacyTool()
+
+    provider_lookup = AsyncMock(side_effect=lookup)
+
     registry_lookup = AsyncMock(side_effect=AssertionError("runner called ToolRegistry directly"))
     monkeypatch.setattr(
         "app.services.ai.runners.assistant_agent_runner.RegistryToolProvider.get_implicit_tool",
@@ -103,8 +135,11 @@ async def test_assistant_resolves_main_subagent_through_provider(monkeypatch):
 
     tools = await runner._resolve_runtime_tools_from_config()
 
-    provider_lookup.assert_awaited_once_with("sub_agent_call")
-    assert [tool.name for tool in tools] == ["sub_agent_call"]
+    assert [call.args[0] for call in provider_lookup.await_args_list] == [
+        "sub_agent_call",
+        "sub_agent_batch_call",
+    ]
+    assert [tool.name for tool in tools] == ["sub_agent_call", "sub_agent_batch_call"]
 
 
 @pytest.mark.asyncio

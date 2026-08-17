@@ -5583,7 +5583,7 @@ const fetchConversationHistory = async (
                   isThinking: false,
                   feedback: null,
                   agentName: item.agent_name ?? undefined,
-                  agentDisplayName: item.agent_display_name ?? undefined,
+                  agentDisplayName: item.agent_display_name || (String(item.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
                   agentType: item.agent_type ?? undefined,
                   prompt_tokens: item.prompt_tokens ?? undefined,
                   completion_tokens: item.completion_tokens ?? undefined,
@@ -6423,6 +6423,8 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
   applyStreamTraceId(msg, data);
+  if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
+  if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
 
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
@@ -6567,6 +6569,8 @@ const submitUserQuestion = async (
     payload.selectedOptionIds,
     payload.customInput,
     payload.cancelled,
+    card.question,
+    card.options,
   );
   card.selected_option_ids = [...payload.selectedOptionIds];
   card.custom_input = payload.customInput;

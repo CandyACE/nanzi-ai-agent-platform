@@ -60,14 +60,29 @@ export function buildUserQuestionUserMessage(
   selectedOptionIds: string[],
   customInput = "",
   cancelled = false,
+  question = "",
+  options: UserQuestionOption[] = [],
 ): string {
-  const lines = [
-    USER_QUESTION_MESSAGE_PREFIX,
+  const lines = [USER_QUESTION_MESSAGE_PREFIX];
+  if (question && question.trim()) {
+    lines.push(`问题: ${question.trim()}`);
+  }
+  if (!cancelled && selectedOptionIds.length > 0) {
+    const selectedLabels = selectedOptionIds.map((id) => {
+      const opt = options.find((o) => o.id === id);
+      return opt ? `${opt.label} (${id})` : id;
+    });
+    lines.push(`所选选项: ${selectedLabels.join("、")}`);
+  }
+  if (customInput && customInput.trim()) {
+    lines.push(`补充说明: ${customInput.trim()}`);
+  }
+  lines.push(
     "interaction_type: question",
     `question_id: ${questionId.trim() || "unknown"}`,
     `selected_option_ids: ${JSON.stringify(selectedOptionIds)}`,
     `custom_input: ${customInput.trim()}`,
-  ];
+  );
   if (cancelled) {
     lines.push("cancelled: true", "用户取消了本次提问，请停止当前任务，不要再次询问同一个问题。");
   } else {

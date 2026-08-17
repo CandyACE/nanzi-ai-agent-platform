@@ -575,7 +575,7 @@ const loadSessionHistory = async (id: string) => {
           isHistory: true, // Mark as history
           feedback: m.feedback,
           agentName: m.agent_name || undefined,
-          agentDisplayName: m.agent_display_name || undefined,
+          agentDisplayName: m.agent_display_name || (String(m.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
           agentType: m.agent_type || undefined,
         })
       );
@@ -3425,12 +3425,93 @@ const submitPendingExternalExecution = async (msg: Message) => {
 };
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
-  applyStreamTraceId(msg, data);
+  if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
+  if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
 
-  if (dispatchAgentscopeStreamEvent(msg, data, addRealLog, messages.value)) {
-    if (data.type === "error") {
+  if (applyStreamTraceId(msg, data)) {
+
+    if (dispatchAgentscopeStreamEvent(msg, data, addRealLog, messages.value)) {
+      if (data.type === "error") {
+        if (msg.pendingPermission) msg.pendingPermission.status = "error";
+        if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
+        msg.isThinking = false;
+        msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
+      } else if (
+        data.content &&
+        data.type !== "reasoning_content" &&
+        data.type !== "process_narration" &&
+        data.type !== "process_narration_commit" &&
+        data.type !== "process_narration_promote" &&
+        data.type !== "answer_delta" &&
+        data.type !== "retraction"
+      ) {
+        const piece = sanitizeStreamContent(String(data.content));
+        if (piece) {
+          if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
+          appendAssistantBodyDelta(msg, piece);
+          if (msg.isThinking) {
+            msg.isThinking = false;
+            if (thoughtTimer) {
+              clearInterval(thoughtTimer);
+              thoughtTimer = null;
+            }
+          }
+        }
+      }
+      if (data.status === "generating" && msg.content) msg.isThinking = false;
+      else if (data.status === "error") {
+        msg.isThinking = false;
+        const errText = String(data.content || data.message || "未知错误").trim();
+        msg.content += `\n\n> ❌ **服务异常**: ${errText}`;
+      }
+      if (data.intent) msg.intent = data.intent;
+      return;
+    }
+
+    if (data.type === "log") {
+      addRealLog(msg, data);
+    } else if (data.type === "router_log") {
+      const thoughtText = data.thought || "No reasoning provided.";
+      const agentName = data.selected_agent || "Unknown";
+      const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
+      addRealLog(msg, {
+        title: "智能路由决策",
+        details: `**思考过程 (Chain of Thought):**\n${thoughtText}\n\n**最终选择:** ${agentName} ${conf}`,
+        status: "success",
+        isDebug: true,
+        isRouter: true,
+      });
+    } else if (data.type === "debug" && data.subtype === "raw_prompt") {
+      msg.rawPrompt = data.data;
+      addRealLog(msg, {
+        title: "Debug: Raw Prompt Captured",
+        details: 'Click "Raw Prompt" button to view.',
+        status: "success",
+        isDebug: true,
+      });
+    } else if (mergeStreamCitations(msg, data)) {
+      // Citations are merged and de-duplicated by the shared stream normalizer.
+    } else if (data.type === "context") {
+      addRealLog(msg, {
+        title: "✨ Context Updated",
+        details: JSON.stringify(data.data, null, 2),
+        status: "success",
+      });
+      if (data.data) {
+        agentContext.value = { ...agentContext.value, ...data.data };
+      }
+    } else if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) {
+      return;
+    } else if (data.type === "thinking" && data.status === "continuing") {
+      msg.isThinking = true;
+    } else if (data.type === "meta") {
+      if (data.agent_name) msg.agentName = data.agent_name;
+      if (data.agent_type) msg.agentType = data.agent_type;
+      if (data.agent_display_name) msg.agentDisplayName = data.agent_display_name;
+      if (data.rag_retrieval) ragRetrievalMeta.value = data.rag_retrieval;
+      if (data.permission_notice) msg.permissionNotice = data.permission_notice;
+    } else if (data.type === "error") {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
-      if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
       msg.isThinking = false;
       msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
     } else if (
@@ -3576,6 +3657,8 @@ const submitUserQuestion = async (
     payload.selectedOptionIds,
     payload.customInput,
     payload.cancelled,
+    card.question,
+    card.options,
   );
   card.selected_option_ids = [...payload.selectedOptionIds];
   card.custom_input = payload.customInput;

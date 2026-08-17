@@ -124,6 +124,7 @@ class AgentServicePrompts:
         "request_user_confirmation": "录入/修改/删除业务数据前，向用户展示可编辑确认卡并等待【业务确认】回执",
         "ask_user_question": "缺少关键输入或存在业务分支时，向用户展示选项提问并等待【用户回答】回执",
         "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
+        "sub_agent_batch_call": "并行委派多个彼此独立的子智能体任务，并按请求顺序返回结果",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
         "search_knowledge_base": "知识库文档检索",
@@ -340,6 +341,7 @@ class AgentServicePrompts:
 
                 if is_main_general_agent(agent_config):
                     tool_names.add("sub_agent_call")
+                    tool_names.add("sub_agent_batch_call")
             except Exception:
                 pass
 
@@ -410,6 +412,9 @@ class AgentServicePrompts:
         table_rows = []
         if "sub_agent_call" in tool_names:
             table_rows.append("| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |")
+
+        if "sub_agent_batch_call" in tool_names:
+            table_rows.append("| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |")
 
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")

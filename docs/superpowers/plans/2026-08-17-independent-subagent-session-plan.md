@@ -4,6 +4,8 @@
 
 **Goal:** 为一次性 `sub_agent_call` 创建独立的子会话命名空间，隔离会话级读取/写入，同时保留显式任务、权限、数据集和父子追踪关联。
 
+批量委派中的每个调用项复用同一独立子会话规则；批量工具本身不共享子代理会话历史。
+
 **Architecture:** 每次通过目标检查和重复委派检查的子代理生成唯一 `child_session_id`。子 Executor 使用该 ID 作为 `conversation_id`，父会话 ID 保存在 `parent_conversation_id` 中；父子仍共享实时 trace/event queue 和 grounding ledger，以保持现有主页面展示和证据回流。
 
 **Tech Stack:** Python 3.11+, Pydantic 2, pytest, AgentContext, AgentDispatcher, Redis-backed conversation services.

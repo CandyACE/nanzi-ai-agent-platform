@@ -43,7 +43,7 @@ from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
 from app.services.ai.tools.user_question_tools import ask_user_question
 from app.services.ai.tools.session_status import session_status
-from app.services.ai.tools.agent_delegate_tool import sub_agent_call
+from app.services.ai.tools.agent_delegate_tool import sub_agent_call, sub_agent_batch_call
 from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
 from app.models.tool import SysApiTool
@@ -298,6 +298,7 @@ class ToolRegistry:
         "request_user_confirmation": request_user_confirmation,
         "ask_user_question": ask_user_question,
         "sub_agent_call": sub_agent_call,
+        "sub_agent_batch_call": sub_agent_batch_call,
         "excel_document_read": excel_document_read,
         "excel_document_write": excel_document_write,
         "word_document_read": word_document_read,

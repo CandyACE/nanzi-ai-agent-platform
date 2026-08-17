@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import json
 import app.services.ai.tools.agent_delegate_tool as delegation_tool
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ from app.services.ai.tools.agent_delegate_tool import (
     resolve_runnable_delegable_system_agents,
     delegable_agent_name_aliases,
     EMPTY_DELEGATION_RESULT_MESSAGE,
-    DELEGATION_INTERRUPT_MESSAGES,
+DELEGATION_INTERRUPT_MESSAGES,
 )
 from app.core.context import AgentContext, set_agent_context
 from app.schemas.agent import ChatConfig
@@ -425,6 +426,76 @@ def test_sub_agent_call_tool_schema_exposes_optional_protocol_controls():
     fields = sub_agent_call.args_schema.model_fields
 
     assert {"agent_name", "query", "max_depth", "tool_filter", "output_schema"} <= set(fields)
+
+
+def test_sub_agent_batch_call_exposes_bounded_batch_protocol():
+    batch_tool = getattr(delegation_tool, "sub_agent_batch_call", None)
+    assert batch_tool is not None
+    assert "calls" in batch_tool.args_schema.model_fields
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_batch_call_runs_items_concurrently_and_keeps_input_order(monkeypatch):
+    batch_tool = getattr(delegation_tool, "sub_agent_batch_call", None)
+    assert batch_tool is not None
+
+    main_ctx = AgentContext(
+        agent_id="main",
+        agent_name="MainAgent",
+        delegation_depth=0,
+        trace_buffer=[],
+    )
+    set_agent_context(main_ctx)
+    active = 0
+    max_active = 0
+
+    async def fake_sub_agent_call(**kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.03 if kwargs["agent_name"] == "slow" else 0.01)
+        active -= 1
+        return f"result:{kwargs['agent_name']}"
+
+    monkeypatch.setattr(delegation_tool.sub_agent_call, "func", fake_sub_agent_call)
+
+    try:
+        raw = await batch_tool.ainvoke(
+            {
+                "calls": [
+                    {"agent_name": "slow", "query": "任务一"},
+                    {"agent_name": "fast", "query": "任务二"},
+                ]
+            }
+        )
+    finally:
+        set_agent_context(None)
+
+    payload = json.loads(raw)
+    assert payload["status"] == "completed"
+    assert max_active == 2
+    assert [item["agent_name"] for item in payload["results"]] == ["slow", "fast"]
+    assert [item["content"] for item in payload["results"]] == [
+        "result:slow",
+        "result:fast",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_batch_call_rejects_more_than_four_items():
+    batch_tool = getattr(delegation_tool, "sub_agent_batch_call", None)
+    assert batch_tool is not None
+    raw = await batch_tool.ainvoke(
+        {
+            "calls": [
+                {"agent_name": f"agent-{index}", "query": "任务"}
+                for index in range(5)
+            ]
+        }
+    )
+    payload = json.loads(raw)
+    assert payload["status"] == "error"
+    assert "最多 4 个" in payload["error"]
 
 
 @pytest.mark.asyncio
