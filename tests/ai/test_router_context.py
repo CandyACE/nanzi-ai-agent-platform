@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
-from app.services.ai.router_service import RouterService, RouteResult
+from app.services.ai.router_service import RouterService
 
 
 pytestmark = pytest.mark.no_infrastructure

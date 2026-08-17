@@ -4,22 +4,18 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.ai.agent_service import AgentService
 from app.schemas.agent import ChatConfig, AgentExecutionStep
-from app.services.ai.turn_classifier import TurnClassification, TurnType
-from app.services.ai.intent_service import IntentType
+from app.services.ai.turn_decision import TurnDecision
 
 
 pytestmark = pytest.mark.no_infrastructure
 
 
-SESSION_TURN = (
-    TurnClassification(
-        turn_type=TurnType.GENERAL,
-        reasoning="测试",
-        skip_intent_llm=True,
-        intent=IntentType.GENERAL,
-    ),
-    None,
-    0.0,
+TURN_DECISION = TurnDecision(
+    route_status="resolved",
+    turn_kind="general",
+    source="general",
+    capability="answer",
+    provenance="router",
 )
 
 @pytest.mark.asyncio
@@ -74,7 +70,7 @@ async def test_execute_multi_agent_parallel():
                     None,
                     None,
                     None,
-                    SESSION_TURN,
+                    TURN_DECISION,
                 ):
                     chunks.append(chunk)
                 
@@ -122,10 +118,10 @@ async def test_execute_multi_agent_parallel():
                 # Verify final content
                 assert any(c.get("content") == "Final Combined Answer" for c in chunks)
 
-                # shared_turn 应传给每次 dispatch（2 个 agent）
+                # 同一轮 typed decision 应传给每次 dispatch（2 个 agent）
                 assert mock_dispatch.call_count == 2
                 for call in mock_dispatch.call_args_list:
-                    assert call.kwargs.get("shared_turn") is not None
+                    assert call.kwargs.get("turn_decision") is TURN_DECISION
 
 @pytest.mark.asyncio
 async def test_multi_agent_error_handling():
@@ -162,7 +158,7 @@ async def test_multi_agent_error_handling():
             with patch.object(AgentService, '_synthesize_multi_agent_results', side_effect=mock_synthesis):
                 chunks = []
                 async for chunk in service._execute_multi_agent(
-                    primary_config, ["secondary-id"], "hello", [], "trace-1", [], {}, None, None, None, SESSION_TURN
+                    primary_config, ["secondary-id"], "hello", [], "trace-1", [], {}, None, None, None, TURN_DECISION
                 ):
                     chunks.append(chunk)
                 

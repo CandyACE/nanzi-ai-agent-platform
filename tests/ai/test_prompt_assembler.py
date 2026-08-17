@@ -9,6 +9,7 @@ from app.services.ai.prompt_assembler import (
     resolve_effective_prompt_tool_names,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.turn_decision import TurnDecision
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -232,3 +233,27 @@ def test_skill_prompt_keeps_workflow_below_platform_permissions():
 
     assert "不扩大平台权限" in prompt
     assert "工具门禁" in prompt
+
+
+def test_prompt_includes_normalized_turn_context_without_replacing_agent_prompt():
+    assembled = assemble_system_prompt(
+        _params(
+            turn_decision=TurnDecision(
+                source="internal_structured_data",
+                capability="data_query",
+                semantic_intent="DATA_QUERY",
+                relation_to_previous="new_topic",
+                reference_mode="new_query",
+                freshness_requirement="realtime",
+                needs_fresh_data=True,
+                allows_data_route=True,
+            )
+        )
+    )
+
+    assert "## 本轮执行上下文（平台路由快照）" in assembled.full_text
+    assert "请求来源：internal_structured_data" in assembled.full_text
+    assert "路由层已允许进入结构化业务数据能力" in assembled.full_text
+    assert assembled.full_text.index("本轮执行上下文") < assembled.full_text.index("Agent DB prompt")
+    assert "turn_decision" in assembled.section_names
+    assert assembled.section_char_counts["turn_decision"] > 0

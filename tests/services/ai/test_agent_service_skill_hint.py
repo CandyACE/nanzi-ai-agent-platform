@@ -7,7 +7,7 @@ import pytest
 from app.schemas.agent import ChatConfig
 from app.services.ai.context_compaction import COMPACTION_MARKER
 from app.services.ai.agent_service import AgentService
-from app.services.ai.turn_classifier import TurnClassification, TurnType
+from app.services.ai.turn_decision import TurnDecision
 
 
 class _NoopExecutor:
@@ -509,14 +509,6 @@ async def test_chat_stream_injects_skill_discovery_hint_into_system_prompt():
             AsyncMock(return_value="20"),
         ),
         patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
-        ),
-        patch(
             "app.services.ai.agent_service.AgentDispatcher.dispatch",
             side_effect=fake_dispatch,
         ),
@@ -544,7 +536,7 @@ async def test_chat_stream_injects_skill_discovery_hint_into_system_prompt():
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
-async def test_chatbi_agent_defers_turn_classification_to_data_executor():
+async def test_chatbi_agent_keeps_domain_classification_inside_data_executor():
     service = AgentService()
     agent_config = ChatConfig(
         agent_id="agent-data",
@@ -560,7 +552,7 @@ async def test_chatbi_agent_defers_turn_classification_to_data_executor():
     captured = {}
 
     async def fake_dispatch(config, *args, **kwargs):
-        captured["shared_turn"] = kwargs.get("shared_turn")
+        captured["turn_decision"] = kwargs.get("turn_decision")
         return _NoopExecutor()
 
     with (
@@ -571,10 +563,6 @@ async def test_chatbi_agent_defers_turn_classification_to_data_executor():
         patch(
             "app.services.ai.context_manager.AgentContextManager.setup_context",
             AsyncMock(),
-        ),
-        patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(side_effect=AssertionError("ChatBI turn classification must stay inside DataQueryExecutor")),
         ),
         patch(
             "app.services.ai.agent_service.AgentDispatcher.dispatch",
@@ -598,9 +586,9 @@ async def test_chatbi_agent_defers_turn_classification_to_data_executor():
             chunks.append(chunk)
 
     meta = next(chunk for chunk in chunks if chunk.get("type") == "meta")
-    assert meta["turn_type"] == "data_query_request"
+    assert meta["turn_type"] == "data_query"
     assert meta["turn_type_label"] == "ChatBI 请求类别分析"
-    assert captured["shared_turn"] is None
+    assert captured["turn_decision"] is not None
 
 
 @pytest.mark.asyncio
@@ -652,14 +640,6 @@ async def test_chat_stream_awaits_audit_before_completion():
         patch(
             "app.services.config_service.ConfigService.get",
             AsyncMock(return_value="20"),
-        ),
-        patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
         ),
         patch(
             "app.services.ai.agent_service.AgentDispatcher.dispatch",
@@ -749,14 +729,6 @@ async def test_chat_stream_skips_audit_on_external_execution_required():
             AsyncMock(return_value="20"),
         ),
         patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
-        ),
-        patch(
             "app.services.ai.agent_service.conversation_run_lane.hold",
             _noop_lane_hold,
         ),
@@ -831,14 +803,6 @@ async def test_scheduled_chat_stream_audits_external_execution_required():
         patch(
             "app.services.config_service.ConfigService.get",
             AsyncMock(return_value="20"),
-        ),
-        patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
         ),
         patch(
             "app.services.ai.agent_service.conversation_run_lane.hold",
@@ -925,14 +889,6 @@ async def test_scheduled_chat_stream_marks_no_tool_execution_as_error():
             AsyncMock(return_value="20"),
         ),
         patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
-        ),
-        patch(
             "app.services.ai.agent_service.conversation_run_lane.hold",
             _noop_lane_hold,
         ),
@@ -981,7 +937,12 @@ async def test_scheduled_multi_agent_stream_audits_external_execution_status():
         system_prompt="Base prompt",
         tools=[],
     )
-    route_details = SimpleNamespace(
+    route_details = TurnDecision(
+        route_status="resolved",
+        turn_kind="general",
+        source="general",
+        capability="answer",
+        provenance="router",
         secondary_agents=["agent-2"],
         reasoning="multi agent route",
         confidence=1.0,
@@ -989,7 +950,6 @@ async def test_scheduled_multi_agent_stream_audits_external_execution_status():
         turn_labels=[],
         relation_to_previous="new_task",
         user_action_type="task",
-        intent_info=None,
     )
     audit_calls: list[tuple] = []
 
@@ -1031,14 +991,6 @@ async def test_scheduled_multi_agent_stream_audits_external_execution_status():
         patch(
             "app.services.config_service.ConfigService.get",
             AsyncMock(return_value="20"),
-        ),
-        patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
         ),
         patch(
             "app.services.ai.agent_service.conversation_run_lane.hold",
@@ -1177,14 +1129,6 @@ async def test_chat_stream_injects_compacted_overflow_without_persisting_digest(
         patch(
             "app.services.config_service.ConfigService.get",
             side_effect=fake_config_get,
-        ),
-        patch(
-            "app.services.ai.turn_classifier.resolve_turn_for_session",
-            AsyncMock(return_value=(
-                TurnClassification(turn_type=TurnType.GENERAL, reasoning="test"),
-                None,
-                0.0,
-            )),
         ),
         patch(
             "app.services.ai.memory_service.memory_service.get_history",

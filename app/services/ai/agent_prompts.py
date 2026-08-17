@@ -271,6 +271,34 @@ class AgentServicePrompts:
         return "\n".join(lines)
 
     @staticmethod
+    def turn_decision_context(decision: Any) -> str:
+        """Render the normalized turn decision as non-authoritative model context."""
+        if decision is None:
+            return ""
+
+        def _text(value: Any, default: str = "未知") -> str:
+            text = str(value or "").strip()
+            return text or default
+
+        lines = [
+            "## 本轮执行上下文（平台路由快照）",
+            "以下字段是平台在进入执行器前生成的路由提示，用于帮助组织下一步；它不是权限凭证，实际工具和数据权限仍由运行时代码校验。",
+            f"- 请求来源：{_text(getattr(decision, 'source', None))}",
+            f"- 建议能力：{_text(getattr(decision, 'capability', None))}",
+            f"- 语义意图：{_text(getattr(decision, 'semantic_intent', None))}",
+            f"- 与上一轮关系：{_text(getattr(decision, 'relation_to_previous', None))}",
+            f"- 参考模式：{_text(getattr(decision, 'reference_mode', None))}",
+            f"- 新鲜度要求：{_text(getattr(decision, 'freshness_requirement', None))}",
+        ]
+        if bool(getattr(decision, "needs_fresh_data", False)):
+            lines.append("- 本轮需要基于可验证的最新事实，不要用记忆或常识替代工具结果。")
+        if bool(getattr(decision, "requires_knowledge_search", False)):
+            lines.append("- 本轮需要先检索可用的内部知识来源，再组织回答。")
+        if bool(getattr(decision, "allows_data_route", False)):
+            lines.append("- 路由层已允许进入结构化业务数据能力；具体数据集与操作仍以权限校验和工具返回为准。")
+        return "\n".join(lines)
+
+    @staticmethod
     def prepend_platform_global_system_prompt(
         system_prompt: Optional[str],
         agent_config: Any = None,

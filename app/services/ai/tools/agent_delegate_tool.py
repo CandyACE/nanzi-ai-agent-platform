@@ -3,12 +3,20 @@ import asyncio
 import re
 import uuid
 import inspect
+from dataclasses import replace
 from typing import Optional, Dict, Any, List, Tuple, Iterable
 from app.services.ai.tools.tool_compat import tool
 from app.core.context import get_current_agent_context, AgentContext, set_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.permission_service import PermissionService
+from app.services.ai.subagent_protocol import (
+    EMPTY_SUB_AGENT_RESULT_MESSAGE,
+    SubAgentRequest,
+    SubAgentResult,
+    SubAgentResultStatus,
+)
+from app.services.ai.turn_decision import TurnDecision
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +26,7 @@ MAX_DELEGATION_CALLS_PER_AGENT = 2
 
 INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required"})
 
-EMPTY_DELEGATION_RESULT_MESSAGE = (
-    "子智能体已执行完成，但未产生可交付正文（可能仅有内部进度日志或工具中间结果）。"
-    "请勿使用相同参数重复委派；请根据上述情况向用户说明，或建议其直接打开对应子智能体对话。"
-)
+EMPTY_DELEGATION_RESULT_MESSAGE = EMPTY_SUB_AGENT_RESULT_MESSAGE
 
 DELEGATION_INTERRUPT_MESSAGES = {
     "permission_required": (
@@ -220,15 +225,47 @@ def finalize_delegation_output(
     *,
     max_chars: int = DEFAULT_DELEGATION_RESULT_MAX_CHARS,
 ) -> str:
+    return finalize_delegation_result(full_output, max_chars=max_chars).to_tool_text()
+
+
+def finalize_delegation_result(
+    full_output: str,
+    *,
+    target_agent_id: str | None = None,
+    target_agent_name: str | None = None,
+    capability: str | None = None,
+    max_chars: int = DEFAULT_DELEGATION_RESULT_MAX_CHARS,
+) -> SubAgentResult:
+    """Create a typed result after output cleaning and size limiting."""
     cleaned_output = clean_sub_agent_output(full_output)
     if not cleaned_output.strip():
-        return EMPTY_DELEGATION_RESULT_MESSAGE
+        return SubAgentResult(
+            status=SubAgentResultStatus.EMPTY,
+            target_agent_id=target_agent_id,
+            target_agent_name=target_agent_name,
+            content=EMPTY_DELEGATION_RESULT_MESSAGE,
+            capability=capability,
+        )
     if len(cleaned_output) > max_chars:
         cleaned_output = (
             cleaned_output[:max_chars]
             + "\n\n...[因数据量过大，子代理回复已被系统自动截断]"
         )
-    return cleaned_output
+        return SubAgentResult(
+            status=SubAgentResultStatus.COMPLETED,
+            target_agent_id=target_agent_id,
+            target_agent_name=target_agent_name,
+            content=cleaned_output,
+            truncated=True,
+            capability=capability,
+        )
+    return SubAgentResult(
+        status=SubAgentResultStatus.COMPLETED,
+        target_agent_id=target_agent_id,
+        target_agent_name=target_agent_name,
+        content=cleaned_output,
+        capability=capability,
+    )
 
 
 async def _resolve_delegation_timeout_seconds() -> float:
@@ -311,6 +348,17 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
     if not main_ctx:
         return "错误：无法获取当前执行上下文，委派失败。"
 
+    delegation_request = SubAgentRequest(
+        target_agent_name=(agent_name or "").strip(),
+        query=_normalize_delegation_query(query),
+        caller_agent_id=str(main_ctx.agent_id),
+        caller_agent_name=str(main_ctx.agent_name),
+        delegation_depth=main_ctx.delegation_depth,
+        approval_mode=str(
+            (main_ctx.permission_options or {}).get("approval_mode") or "ask"
+        ),
+    )
+
     # 1. 嵌套深度检查 (Depth Check)
     if main_ctx.delegation_depth >= 1:
         return f"错误：检测到多级智能体嵌套委派调用（当前深度 {main_ctx.delegation_depth}），拒绝执行以防死循环。"
@@ -379,13 +427,13 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
             )
 
     # 4. 构造子代理独立上下文 (Sandbox Isolation)
-    sub_history = [{"role": "user", "content": query}]
+    sub_history = [{"role": "user", "content": delegation_request.query}]
     sub_display_name = target_config.agent_display_name or target_config.agent_name or agent_name
     repeat_error = _record_delegation_attempt(
         main_ctx,
-        agent_name=target_config.agent_name or agent_name,
+        agent_name=target_config.agent_name or delegation_request.target_agent_name,
         display_name=sub_display_name,
-        query=query,
+        query=delegation_request.query,
     )
     if repeat_error:
         return repeat_error
@@ -455,16 +503,29 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
 
     delegation_timeout = await _resolve_delegation_timeout_seconds()
     result_max_chars = await _resolve_delegation_result_max_chars()
+    delegation_request = replace(
+        delegation_request,
+        capability=next(
+            (
+                str(capability)
+                for capability in (getattr(target_config, "capabilities", None) or [])
+                if str(capability) in {"data_query", "knowledge_base"}
+            ),
+            None,
+        ),
+        timeout_seconds=delegation_timeout,
+    )
 
     sub_executor = await _dispatch_sub_agent_executor(
         target_config,
-        query,
+        delegation_request.query,
         sub_history,
         trace_id=f"sub_{uuid.uuid4().hex[:8]}",
         trace_buffer=main_ctx.trace_buffer,
         permission_options=sub_permission_options,
         user_info=user_info,
         conversation_id=main_ctx.conversation_id,
+        turn_decision=TurnDecision.for_direct_agent_selection(target_config),
     )
 
     # 临时切换到子 Context 运行
@@ -489,6 +550,9 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         await asyncio.wait_for(consume_stream(), timeout=delegation_timeout)
 
     except asyncio.TimeoutError:
+        timeout_message = (
+            f"错误：调用子智能体 '{sub_display_name}' 响应超时（已达 {int(delegation_timeout)} 秒限制）。"
+        )
         logger.warning(
             "[Delegation] Sub-agent '%s' timed out after %.0f seconds.",
             agent_name,
@@ -501,10 +565,24 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
                 "details": f"子智能体未能在 {int(delegation_timeout)} 秒内返回数据，强制中断并释放资源。",
                 "status": "error"
             })
-        return f"错误：调用子智能体 '{sub_display_name}' 响应超时（已达 {int(delegation_timeout)} 秒限制）。"
+        return SubAgentResult(
+            status=SubAgentResultStatus.TIMEOUT,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content=timeout_message,
+            error_code="timeout",
+            capability=delegation_request.capability,
+        ).to_tool_text()
     except Exception as e:
         logger.error(f"[Delegation] Error executing sub-agent '{agent_name}': {e}", exc_info=True)
-        return f"错误：调用子智能体 '{sub_display_name}' 时发生异常：{str(e)}"
+        return SubAgentResult(
+            status=SubAgentResultStatus.FAILED,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content=f"错误：调用子智能体 '{sub_display_name}' 时发生异常：{str(e)}",
+            error_code="execution_error",
+            capability=delegation_request.capability,
+        ).to_tool_text()
     finally:
         if sub_stream and inspect.isasyncgen(sub_stream):
             try:
@@ -514,12 +592,34 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         set_agent_context(original_ctx)
 
     if interrupt_type:
-        return DELEGATION_INTERRUPT_MESSAGES.get(
-            interrupt_type,
-            f"错误：子智能体 '{sub_display_name}' 执行被中断（{interrupt_type}），委派未完成。",
-        )
+        return SubAgentResult(
+            status=SubAgentResultStatus.INTERRUPTED,
+            target_agent_id=str(target_config.agent_id),
+            target_agent_name=sub_display_name,
+            content=DELEGATION_INTERRUPT_MESSAGES.get(
+                interrupt_type,
+                f"错误：子智能体 '{sub_display_name}' 执行被中断（{interrupt_type}），委派未完成。",
+            ),
+            error_code="interrupted",
+            interrupt_type=interrupt_type,
+            capability=delegation_request.capability,
+        ).to_tool_text()
 
-    return finalize_delegation_output(full_output, max_chars=result_max_chars)
+    result = finalize_delegation_result(
+        full_output,
+        target_agent_id=str(target_config.agent_id),
+        target_agent_name=sub_display_name,
+        max_chars=result_max_chars,
+        capability=delegation_request.capability,
+    )
+    logger.info(
+        "[Delegation] target=%s status=%s chars=%s truncated=%s",
+        sub_display_name,
+        result.status.value,
+        len(result.content),
+        result.truncated,
+    )
+    return result.to_tool_text()
 
 
 async def _dispatch_sub_agent_executor(
@@ -532,6 +632,7 @@ async def _dispatch_sub_agent_executor(
     permission_options: Dict[str, Any],
     user_info: Dict[str, Any] | None,
     conversation_id: str | None,
+    turn_decision: TurnDecision,
 ) -> Any:
     from app.services.ai.dispatcher import AgentDispatcher
 
@@ -545,4 +646,5 @@ async def _dispatch_sub_agent_executor(
         permission_options=permission_options,
         user_info=user_info,
         conversation_id=conversation_id,
+        turn_decision=turn_decision,
     )

@@ -20,7 +20,7 @@ def build_data_query_state_hint(
     requires_fresh_data = bool(getattr(runner, "_requires_fresh_data", True))
     requires_sql_query = bool(getattr(runner, "_requires_sql_query", True))
     reusable_result = bool(context_action_result) and not requires_fresh_data
-    route_hints = getattr(runner, "route_hints", {}) or {}
+    turn_decision = getattr(runner, "turn_decision", None)
     evidence_metadata = getattr(runner, "_evidence_metadata", {}) or {}
     if not evidence_metadata and isinstance(context_action_result, dict):
         evidence_metadata = {
@@ -57,7 +57,7 @@ def build_data_query_state_hint(
         "reference_mode",
         "needs_fresh_data",
     ):
-        value = route_hints.get(key)
+        value = getattr(turn_decision, key, None)
         if value not in (None, "", "unknown"):
             lines.append(f"{key}: {str(value).lower()}")
     if requires_fresh_data:

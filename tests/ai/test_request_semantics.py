@@ -8,6 +8,7 @@ from app.services.ai.request_decision import (
     resolve_request_decision,
 )
 from app.services.ai.runners.chatbi.system_prompt import build_data_query_state_hint
+from app.services.ai.turn_decision import TurnDecision
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -122,15 +123,19 @@ def test_chatbi_state_hint_exposes_semantics_and_evidence_metadata():
         SimpleNamespace(
             _requires_fresh_data=True,
             _requires_sql_query=True,
-            route_hints={
-                "semantic_domain": "chatbi_business_data",
-                "semantic_operation": "aggregate",
-                "fact_kind": "business_metric",
-                "freshness_requirement": "dynamic",
-                "time_scope": "本周",
-                "reference_mode": "new_query",
-                "needs_fresh_data": True,
-            },
+            turn_decision=TurnDecision(
+                route_status="resolved",
+                turn_kind="data_query",
+                source="internal_structured_data",
+                capability="data_query",
+                semantic_domain="chatbi_business_data",
+                semantic_operation="aggregate",
+                fact_kind="business_metric",
+                freshness_requirement="dynamic",
+                time_scope="本周",
+                reference_mode="new_query",
+                needs_fresh_data=True,
+            ),
             _evidence_metadata={
                 "status": "success_non_empty",
                 "source_ref": "dataset://orders",

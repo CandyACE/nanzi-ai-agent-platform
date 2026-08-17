@@ -1,13 +1,12 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.ai.executors.knowledge_executor import KnowledgeExecutor
-from app.services.ai.intent_service import IntentResponse, IntentType
-from app.services.ai.turn_classifier import TurnClassification, TurnType, attach_turn_classification
-from app.services.ai.turn_classifier import (
+from app.services.ai.turn_decision import (
     should_inject_ltm,
     should_inject_memory_recall_hint,
     should_inject_user_context,
     should_run_active_memory_preload,
+    TurnDecision,
 )
 from app.schemas.agent import ChatConfig
 
@@ -47,16 +46,19 @@ async def test_knowledge_turn_forces_search_before_answer(chat_config):
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     executor = KnowledgeExecutor(
-        config=chat_config, trace_id="test-knowledge", trace_buffer=[], conversation_id="c1"
+        config=chat_config,
+        trace_id="test-knowledge",
+        trace_buffer=[],
+        conversation_id="c1",
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            turn_kind="knowledge",
+            source="internal_docs",
+            capability="knowledge_search",
+            requires_knowledge_search=True,
+        ),
     )
-    classification = TurnClassification(
-        turn_type=TurnType.KNOWLEDGE,
-        reasoning="SOP 问答",
-        requires_knowledge_search=True,
-        intent=IntentType.KNOWLEDGE_BASE,
-    )
-    attach_turn_classification(executor, classification)
-    assert executor.turn_classification.turn_type == TurnType.KNOWLEDGE
+    assert executor.turn_decision.turn_kind == "knowledge"
 
     invocations: list[str] = []
 
@@ -136,14 +138,13 @@ async def test_knowledge_turn_forces_search_before_answer(chat_config):
 
 
 def test_injection_profile_for_data_turns():
-    assert should_inject_ltm(TurnType.DATA_QUERY_REQUEST) is True
-    assert should_inject_ltm(TurnType.SKILL_EXECUTION) is True
-    assert should_inject_memory_recall_hint(TurnType.DATA_QUERY_REQUEST) is False
-    assert should_run_active_memory_preload(TurnType.DATA_QUERY_REQUEST) is False
-    assert should_inject_ltm(TurnType.CONTEXT_ACTION) is True
-    assert should_inject_memory_recall_hint(TurnType.KNOWLEDGE) is False
-    assert should_inject_user_context(TurnType.DATA_QUERY_REQUEST) is True
-    assert should_inject_user_context(TurnType.GENERAL) is True
+    assert should_inject_ltm("data_query") is True
+    assert should_inject_ltm("context_action") is True
+    assert should_inject_memory_recall_hint("data_query") is False
+    assert should_run_active_memory_preload("data_query") is False
+    assert should_inject_memory_recall_hint("knowledge") is False
+    assert should_inject_user_context("data_query") is True
+    assert should_inject_user_context("general") is True
 
 
 def test_prepend_platform_global_system_prompt_with_tool_config_items():
@@ -167,7 +168,7 @@ def test_prepend_platform_global_system_prompt_with_tool_config_items():
     )
 
     # 验证全局守则和业务提示词均被正确合并拼装
-    assert "[南孜智能体平台 · 全局守则]" in result
+    assert "[NanZi智能体平台 · 全局守则]" in result
     assert "My custom prompt" in result
     assert "## 执行倾向" in result
     assert "## 工具调用风格" in result

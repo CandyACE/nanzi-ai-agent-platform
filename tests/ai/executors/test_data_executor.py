@@ -4,6 +4,7 @@ import pytest
 
 from app.schemas.agent import ChatConfig
 from app.services.ai.executors.data_executor import DataQueryExecutor
+from app.services.ai.turn_decision import TurnDecision
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -32,11 +33,15 @@ async def test_data_executor_delegates_to_data_agent_runner(data_config):
         debug_options={"dry_run": True},
         user_info={"id": "u1"},
         conversation_id="c1",
-        route_hints={
-            "semantic_domain": "chatbi_business_data",
-            "reference_mode": "new_query",
-            "needs_fresh_data": True,
-        },
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            turn_kind="data_query",
+            source="internal_structured_data",
+            capability="data_query",
+            semantic_domain="chatbi_business_data",
+            reference_mode="new_query",
+            needs_fresh_data=True,
+        ),
     )
 
     runner_instance = MagicMock()
@@ -61,9 +66,7 @@ async def test_data_executor_delegates_to_data_agent_runner(data_config):
     assert kwargs["debug_options"] == {"dry_run": True}
     assert kwargs["user_info"] == {"id": "u1"}
     assert kwargs["conversation_id"] == "c1"
-    assert kwargs["route_hints"] == {
-        "semantic_domain": "chatbi_business_data",
-        "reference_mode": "new_query",
-        "needs_fresh_data": True,
-    }
+    assert kwargs["turn_decision"].semantic_domain == "chatbi_business_data"
+    assert kwargs["turn_decision"].reference_mode == "new_query"
+    assert kwargs["turn_decision"].needs_fresh_data is True
     assert executor.step_counter == 3

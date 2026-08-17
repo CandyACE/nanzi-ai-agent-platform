@@ -39,13 +39,13 @@ from app.services.ai.intent_service import (
     looks_like_web_search_query,
 )
 from app.services.ai.skill_resolver import is_main_general_agent
-from app.services.ai.turn_classifier import TurnType
 from app.services.ai.request_decision import (
     RequestCapability,
     RequestDecision,
     RequestSource,
     resolve_request_decision,
 )
+from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.executors.common import (
     convert_history_to_messages,
     extract_tokens_from_message,
@@ -145,13 +145,13 @@ class AssistantAgentRunner(BaseExecutor):
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
-        route_hints: Optional[Dict[str, Any]] = None,
+        turn_decision: Optional[TurnDecision] = None,
     ):
         super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
-        self.intent_info = None
-        self.intent_elapsed_ms = 0.0
-        self.turn_classification = None
-        self.route_hints = route_hints or {}
+        self.turn_decision = turn_decision or TurnDecision(
+            route_status="failed",
+            provenance="missing_turn_decision",
+        )
 
     def _runtime_user_id(self) -> str | None:
         if not self.user_info:
@@ -178,7 +178,11 @@ class AssistantAgentRunner(BaseExecutor):
             "permission_options": self.permission_options,
             "system_content": system_content,
             "max_steps": max_steps,
-            "route_hints": self.route_hints,
+            "turn_decision": (
+                self.turn_decision.model_dump(mode="json")
+                if self.turn_decision is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -200,7 +204,7 @@ class AssistantAgentRunner(BaseExecutor):
             permission_options=runner_context.get("permission_options"),
             user_info=user_info,
             conversation_id=conversation_id,
-            route_hints=runner_context.get("route_hints"),
+            turn_decision=TurnDecision.model_validate(runner_context["turn_decision"]),
         )
         return runner
 
@@ -213,7 +217,10 @@ class AssistantAgentRunner(BaseExecutor):
 
     def _is_direct_agent_selection(self) -> bool:
         """专家模式 / @提及 / 显式 agent_id 直达，不走自动路由。"""
-        return bool(self.route_hints.get("direct_agent_selection"))
+        return bool(
+            self.turn_decision is not None
+            and self.turn_decision.provenance == "direct_agent_selection"
+        )
 
     def _should_run_data_hallucination_guard(self, user_query: str) -> bool:
         """仅主助手 + 自动路由 + 明确查数诉求时启用，防止无 DB 连接时编造业务数据。"""
@@ -224,18 +231,15 @@ class AssistantAgentRunner(BaseExecutor):
         if looks_like_web_search_query(user_query):
             return False
 
-        if self.turn_classification is not None:
-            if self.turn_classification.turn_type == TurnType.DATA_QUERY_REQUEST:
-                return True
-            if self.turn_classification.intent == IntentType.DATA_QUERY:
-                return True
-            if (
-                self.turn_classification.turn_type == TurnType.GENERAL
-                and self.turn_classification.intent == IntentType.GENERAL
-            ):
-                return False
-        if self.intent_info is not None and self.intent_info.intent == IntentType.DATA_QUERY:
+        semantic_intent = str(self.turn_decision.semantic_intent or "").strip().upper()
+        if self.turn_decision.turn_kind == "data_query" or semantic_intent == IntentType.DATA_QUERY.value:
             return True
+        if self.turn_decision.turn_kind == "general" and semantic_intent in {
+            "",
+            IntentType.GENERAL.value,
+            IntentType.UNKNOWN.value,
+        }:
+            return False
         return looks_like_strong_business_data_request(user_query)
 
     @staticmethod
@@ -359,83 +363,40 @@ class AssistantAgentRunner(BaseExecutor):
         return names
 
     def _resolve_grounding_request_decision(self, user_query: str) -> RequestDecision:
-        source_value = str(self.route_hints.get("request_source") or "").strip()
-        capability_value = str(self.route_hints.get("request_capability") or "").strip()
-        try:
-            source = RequestSource(source_value)
-        except ValueError:
-            source = None
-        try:
-            capability = RequestCapability(capability_value)
-        except ValueError:
-            capability = None
-        semantic_intent = str(self.route_hints.get("semantic_intent") or "").strip().upper()
-        semantic_confidence = float(self.route_hints.get("semantic_confidence") or 0.0)
-        semantic_domain = self.route_hints.get("semantic_domain")
-        semantic_operation = self.route_hints.get("semantic_operation")
-        fact_kind = self.route_hints.get("fact_kind")
-        freshness_requirement = self.route_hints.get("freshness_requirement")
-        time_scope = self.route_hints.get("time_scope")
-        reference_mode = self.route_hints.get("reference_mode")
-        needs_fresh_data = self.route_hints.get("needs_fresh_data")
-        raw_dataset_ids = self.route_hints.get("matched_dataset_ids") or []
-        try:
-            matched_dataset_ids = tuple(int(value) for value in raw_dataset_ids)
-        except (TypeError, ValueError):
-            matched_dataset_ids = ()
-        if source == RequestSource.UNKNOWN and semantic_confidence >= 0.7:
-            if semantic_intent == IntentType.DATA_QUERY.value:
-                source = RequestSource.INTERNAL_STRUCTURED_DATA
-                capability = RequestCapability.DATA_QUERY
-            elif semantic_intent == IntentType.KNOWLEDGE_BASE.value:
-                source = RequestSource.INTERNAL_DOCS
-                capability = RequestCapability.KNOWLEDGE_SEARCH
-        inferred_decision = None
-        if source in {RequestSource.UNKNOWN, RequestSource.GENERAL}:
-            inferred_decision = resolve_request_decision(user_query)
-            if (
-                inferred_decision.source is not source
-                and inferred_decision.source is not RequestSource.UNKNOWN
-            ):
-                return inferred_decision
-        if source is not None and capability is not None:
-            routed_decision = RequestDecision(
-                source=source,
-                capability=capability,
-                confidence=semantic_confidence,
-                reasoning=str(self.route_hints.get("request_reasoning") or "router evidence contract"),
-                semantic_intent=self.route_hints.get("semantic_intent"),
-                semantic_confidence=semantic_confidence,
-                semantic_domain=semantic_domain,
-                semantic_operation=semantic_operation,
-                fact_kind=fact_kind,
-                freshness_requirement=freshness_requirement or "unknown",
-                time_scope=time_scope,
-                reference_mode=str(reference_mode or "unknown"),
-                needs_fresh_data=bool(needs_fresh_data),
-                chatbi_mode=self.route_hints.get("chatbi_mode"),
-                chatbi_evidence_level=str(
-                    self.route_hints.get("chatbi_evidence_level") or "none"
-                ),
-                chatbi_reason=self.route_hints.get("chatbi_reason"),
-                matched_dataset_ids=matched_dataset_ids,
+        if self.turn_decision is not None:
+            decision = self.turn_decision.to_request_decision()
+            if decision.source not in {RequestSource.UNKNOWN, RequestSource.GENERAL}:
+                return decision
+            inferred = resolve_request_decision(
+                user_query,
+                semantic_intent=self.turn_decision.semantic_intent,
+                semantic_confidence=self.turn_decision.semantic_confidence,
+                semantic_domain=self.turn_decision.semantic_domain,
+                semantic_operation=self.turn_decision.semantic_operation,
+                fact_kind=self.turn_decision.fact_kind,
+                freshness_requirement=self.turn_decision.freshness_requirement,
+                time_scope=self.turn_decision.time_scope,
+                reference_mode=self.turn_decision.reference_mode,
+                needs_fresh_data=self.turn_decision.needs_fresh_data,
+                max_age_seconds=self.turn_decision.max_age_seconds,
+                requires_source_timestamp=self.turn_decision.requires_source_timestamp,
             )
-            if source == RequestSource.GENERAL:
-                inferred_decision = inferred_decision or resolve_request_decision(user_query)
-                if resolve_fact_requirement(inferred_decision).required:
-                    return inferred_decision
-            return routed_decision
-        return resolve_request_decision(
-            user_query,
-            semantic_intent=self.route_hints.get("semantic_intent"),
-            semantic_confidence=self.route_hints.get("semantic_confidence"),
-            semantic_domain=semantic_domain,
-            semantic_operation=semantic_operation,
-            fact_kind=fact_kind,
-            freshness_requirement=freshness_requirement,
-            time_scope=time_scope,
-            reference_mode=reference_mode,
-            needs_fresh_data=needs_fresh_data,
+            if inferred.source is not RequestSource.UNKNOWN:
+                return inferred
+            if self._is_direct_agent_selection() and looks_like_strong_business_data_request(
+                user_query
+            ):
+                return resolve_request_decision(
+                    user_query,
+                    semantic_intent=IntentType.DATA_QUERY,
+                    semantic_confidence=1.0,
+                )
+            return decision
+        return RequestDecision(
+            source=RequestSource.UNKNOWN,
+            capability=RequestCapability.ANSWER,
+            confidence=0.0,
+            reasoning="missing turn decision",
         )
 
     @staticmethod
@@ -829,7 +790,7 @@ class AssistantAgentRunner(BaseExecutor):
                 "不得输出未经工具核实的具体数据、状态、排名或动态事实。\n\n"
                 f"{system_content}"
             )
-        route_hint = AssistantPrompts.route_hints(self.route_hints)
+        route_hint = AssistantPrompts.turn_decision_context(self.turn_decision)
         if route_hint:
             system_content = f"{route_hint}\n\n{system_content}"
 
@@ -1037,13 +998,11 @@ class AssistantAgentRunner(BaseExecutor):
                             tools,
                             available_sub_agent_names=available_sub_agent_names,
                             sub_agent_candidates_by_capability=sub_agent_candidates_by_capability,
-                            semantic_intent=self.route_hints.get("semantic_intent"),
-                            semantic_confidence=self.route_hints.get("semantic_confidence"),
-                            turn_intent=(
-                                getattr(self.turn_classification, "intent", None)
-                                or getattr(self.intent_info, "intent", None)
-                            ),
+                            semantic_intent=getattr(self.turn_decision, "semantic_intent", None),
+                            semantic_confidence=getattr(self.turn_decision, "semantic_confidence", None),
+                            turn_intent=self.turn_decision.semantic_intent,
                             request_decision=grounding_request_decision,
+                            turn_decision=self.turn_decision,
                         )
                     if tool_nudge is None and grounding_requires_tool:
                         capability_name = next(
@@ -1133,6 +1092,11 @@ class AssistantAgentRunner(BaseExecutor):
                             ),
                             "status": "success",
                             "category": "tool_preflight",
+                            "tool_metadata": (
+                                tool_nudge.metadata.to_dict()
+                                if tool_nudge.metadata is not None
+                                else None
+                            ),
                         }
         except Exception as preflight_err:
             logger.warning("[ToolPreflight] Failed to resolve tool preflight: %s", preflight_err)

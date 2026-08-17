@@ -13,6 +13,7 @@ from app.services.ai.grounding.service import GroundingService
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 from app.services.ai.runners import assistant_agent_runner as assistant_runner_module
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+from app.services.ai.turn_decision import TurnDecision
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -37,18 +38,21 @@ def _runner(*, request_source="unknown", debug_options=None) -> AssistantAgentRu
         trace_buffer=[],
         user_info={"user_id": "1", "role": "admin"},
         conversation_id="conv-1",
-        route_hints={
-            "request_source": request_source,
-            "request_capability": "answer",
-        },
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            source=request_source,
+            capability="answer",
+        ),
         debug_options=debug_options,
     )
 
 
 def test_unknown_router_source_uses_semantic_fact_intent_as_evidence_contract():
     runner = _runner()
-    runner.route_hints["semantic_intent"] = "DATA_QUERY"
-    runner.route_hints["semantic_confidence"] = 0.9
+    runner.turn_decision = runner.turn_decision.model_copy(update={
+        "semantic_intent": "DATA_QUERY",
+        "semantic_confidence": 0.9,
+    })
 
     decision = runner._resolve_grounding_request_decision("分析业绩")
 

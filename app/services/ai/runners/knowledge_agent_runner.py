@@ -16,6 +16,8 @@ from app.services.ai.executors.prompts import KnowledgeChatPrompts
 from app.services.ai.grounding.policy import GroundingRiskLevel
 from app.services.ai.grounding.service import GroundingService
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.metadata_rag_service import MetadataRagService
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage, AIMessage
@@ -456,6 +458,11 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
 
         system_content = self.config.system_prompt or ""
         system_content = f"{KnowledgeChatPrompts.TURN_SYSTEM_HINT}\n\n{system_content}"
+        decision_context = AgentServicePrompts.turn_decision_context(
+            self.turn_decision
+        )
+        if decision_context:
+            system_content = f"{decision_context}\n\n{system_content}"
 
         # RAG 分类与复用决策
         from app.services.ai.intent_service import looks_like_accessible_resource_catalog_query

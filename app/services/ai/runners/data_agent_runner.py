@@ -17,6 +17,7 @@ from app.services.ai.intent_service import IntentType
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.executors.common import convert_history_to_messages, normalize_messages_for_llm
+from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content, map_sql_tool_error_for_user
 from app.services.ai.data_query_semantic_intent import DataQuerySemanticIntent, format_empty_result_semantic_repair_context, semantic_intent_from_dict, semantic_intent_to_dict
 from app.services.ai.executors.prompts import DataQueryPrompts
@@ -82,9 +83,12 @@ class UpgradeToFederatedQuery(Exception):
 class DataAgentRunner(BaseExecutor):
     """AgentScope-native runner foundation for ChatBI/DataExecutor migration."""
 
-    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, route_hints: Optional[Dict[str, Any]]=None):
+    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, turn_decision: Optional[TurnDecision]=None):
         super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
-        self.route_hints = dict(route_hints or {})
+        self.turn_decision = turn_decision or TurnDecision(
+            route_status="failed",
+            provenance="missing_turn_decision",
+        )
         self._last_run_state: _DataRunState | None = None
         self.turn_classification = None
         self.intent_info = None
@@ -141,10 +145,11 @@ class DataAgentRunner(BaseExecutor):
         for a previous-result analysis, or a non-ChatBI fact entering the
         ChatBI executor at all.
         """
-        domain = str(self.route_hints.get("semantic_domain") or "").strip().lower()
-        reference_mode = str(self.route_hints.get("reference_mode") or "unknown").strip().lower()
-        needs_fresh_data = bool(self.route_hints.get("needs_fresh_data"))
-        confidence = float(self.route_hints.get("semantic_confidence") or 0.0)
+        decision = self.turn_decision
+        domain = str(getattr(decision, "semantic_domain", None) or "").strip().lower()
+        reference_mode = str(getattr(decision, "reference_mode", None) or "unknown").strip().lower()
+        needs_fresh_data = bool(getattr(decision, "needs_fresh_data", False))
+        confidence = float(getattr(decision, "semantic_confidence", 0.0) or 0.0)
 
         if confidence >= 0.7 and domain in {
             "local_file",
@@ -256,7 +261,7 @@ class DataAgentRunner(BaseExecutor):
         if not source_ref and result_dict.get("dataset_name"):
             source_ref = f"dataset://{result_dict['dataset_name']}"
         route_freshness = str(
-            self.route_hints.get("freshness_requirement") or "unknown"
+            getattr(self.turn_decision, "freshness_requirement", None) or "unknown"
         ).strip().lower()
         try:
             evidence_freshness = FactFreshness(route_freshness)
@@ -317,12 +322,12 @@ class DataAgentRunner(BaseExecutor):
         return name or None
 
     def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
-        return {'runner_type': 'data', 'config': self.config.model_dump(), 'debug_options': self.debug_options, 'permission_options': self.permission_options, 'route_hints': self.route_hints, 'evidence_metadata': self._evidence_metadata, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
+        return {'runner_type': 'data', 'config': self.config.model_dump(), 'debug_options': self.debug_options, 'permission_options': self.permission_options, 'turn_decision': self.turn_decision.model_dump(mode='json') if self.turn_decision is not None else None, 'evidence_metadata': self._evidence_metadata, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
 
     @classmethod
     def from_runner_context(cls, *, runner_context: Dict[str, Any], trace_id: str, trace_buffer: List[AgentExecutionStep] | None=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None) -> 'DataAgentRunner':
         config = ChatConfig(**runner_context['config'])
-        runner = cls(config=config, trace_id=trace_id, trace_buffer=trace_buffer or [], debug_options=runner_context.get('debug_options'), permission_options=runner_context.get('permission_options'), user_info=user_info, conversation_id=conversation_id, route_hints=runner_context.get('route_hints'))
+        runner = cls(config=config, trace_id=trace_id, trace_buffer=trace_buffer or [], debug_options=runner_context.get('debug_options'), permission_options=runner_context.get('permission_options'), user_info=user_info, conversation_id=conversation_id, turn_decision=TurnDecision.model_validate(runner_context['turn_decision']))
         runner._standalone_query = str(runner_context.get('standalone_query') or '')
         runner._schema_search_keywords = str(runner_context.get('schema_search_keywords') or '')
         runner._semantic_intent = semantic_intent_from_dict(runner_context.get('semantic_intent'))
@@ -865,6 +870,11 @@ class DataAgentRunner(BaseExecutor):
 
     def _build_repair_title(self, state: _DataRunState) -> str:
         return chatbi_repair.build_repair_title(state)
+
+    def _repair_controller(self, state: _DataRunState):
+        from app.services.ai.runners.chatbi.repair_controller import ChatBIRepairController
+
+        return ChatBIRepairController(state, semantic_intent=self._semantic_intent)
 
     def _has_sql_plan(self, text: str) -> bool:
         return chatbi_sql_gates.has_sql_plan(text)

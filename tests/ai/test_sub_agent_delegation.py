@@ -7,6 +7,7 @@ from app.services.ai.tools.agent_delegate_tool import (
     sub_agent_call,
     clean_sub_agent_output,
     _extract_delegation_text,
+    finalize_delegation_result,
     finalize_delegation_output,
     resolve_delegation_permission_options,
     filter_delegable_system_agents,
@@ -169,6 +170,47 @@ def test_finalize_delegation_output_truncation():
     result = finalize_delegation_output(long_text, max_chars=100)
     assert len(result) < 200
     assert "截断" in result
+
+
+def test_finalize_delegation_result_keeps_typed_status_and_metadata():
+    result = finalize_delegation_result(
+        "查询结果",
+        target_agent_id="agent-1",
+        target_agent_name="数据助手",
+    )
+
+    assert result.status.value == "completed"
+    assert result.to_tool_text() == "查询结果"
+    assert result.to_metadata() == {
+        "status": "completed",
+        "target_agent_id": "agent-1",
+        "target_agent_name": "数据助手",
+        "error_code": None,
+        "interrupt_type": None,
+        "truncated": False,
+        "capability": None,
+        "evidence_count": 0,
+        "artifact_count": 0,
+        "content_chars": 4,
+    }
+
+
+def test_sub_agent_request_metadata_has_no_credentials_or_raw_query():
+    from app.services.ai.subagent_protocol import SubAgentRequest
+
+    request = SubAgentRequest(
+        target_agent_name="data-agent",
+        query="查询订单金额",
+        caller_agent_id="main-agent",
+        caller_agent_name="主助手",
+        delegation_depth=0,
+    )
+
+    metadata = request.to_metadata()
+
+    assert metadata["target_agent_name"] == "data-agent"
+    assert metadata["query_chars"] == len("查询订单金额")
+    assert "查询订单金额" not in str(metadata)
 
 
 def test_resolve_delegation_permission_options_preserves_main_approval_boundary():

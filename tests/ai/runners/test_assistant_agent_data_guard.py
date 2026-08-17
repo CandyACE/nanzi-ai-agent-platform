@@ -5,6 +5,7 @@ import pytest
 
 from app.schemas.agent import ChatConfig
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+from app.services.ai.turn_decision import TurnDecision
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -90,7 +91,12 @@ async def test_expert_mode_still_uses_platform_grounding_gate(chat_config):
     )
     runner = _main_runner(
         chat_config,
-        route_hints={"direct_agent_selection": True},
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            source="general",
+            capability="answer",
+            provenance="direct_agent_selection",
+        ),
         debug_options={"grounding_enabled": True},
     )
 

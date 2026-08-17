@@ -1,5 +1,4 @@
 import logging
-from types import SimpleNamespace
 from typing import Optional, List, Dict, Any
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
@@ -12,6 +11,7 @@ from app.core.context import (
 )
 from app.schemas.agent import ChatConfig
 from app.services.ai.agent_prompts import ContextManagerPrompts
+from app.services.ai.turn_decision import TurnDecision
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +78,21 @@ class AgentContextManager:
                     )
                     if data_agent_id:
                         agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=data_agent_id)
-                        route_details = SimpleNamespace(
+                        route_details = TurnDecision(
+                            route_status="resolved",
+                            turn_kind="data_query",
                             agent_id=data_agent_id,
+                            agent_name=getattr(agent_config, "agent_name", None),
                             reasoning="检测到本轮元数据集限定，强制路由到数据查询智能体",
                             confidence=1.0,
-                            request_source="metadata_dataset_scope",
-                            request_capability="data_query",
+                            source="internal_structured_data",
+                            capability="data_query",
                             request_reasoning="metadata_dataset_ids 非空",
+                            allows_data_route=True,
                             chatbi_mode="forced_by_metadata_dataset_scope",
                             chatbi_evidence_level="explicit",
                             chatbi_reason="本轮已选择元数据集",
-                            matched_dataset_ids=[],
+                            provenance="metadata_dataset_scope",
                         )
                 route_user_id = None
                 route_is_admin = False

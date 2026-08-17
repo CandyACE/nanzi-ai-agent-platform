@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, List, Mapping, Optional, Sequence, Set
 
 from app.services.ai.request_decision import (
@@ -24,6 +24,8 @@ from app.services.ai.request_decision import (
     resolve_request_decision,
 )
 from app.services.ai.chatbi_qualification import ChatBIMode
+from app.services.ai.turn_decision import TurnDecision
+from app.services.ai.tool_policy import ToolMetadata, resolve_tool_metadata
 
 # 不主动促发的工具（写入/管理/记忆维护类）：避免推动模型产生副作用或与专门机制重复。
 _NUDGE_EXCLUDED_TOOLS = frozenset({
@@ -110,6 +112,7 @@ class ToolNudge:
     score: float
     message: str
     force_first_call: bool = False
+    metadata: Optional[ToolMetadata] = None
 
     def recommended_force_mode(self) -> str:
         """hard 模式下推荐 of ToolChoice.mode：高相关度锁定具体工具，否则 required。"""
@@ -120,6 +123,28 @@ class ToolNudge:
     @property
     def should_force_first_call(self) -> bool:
         return self.force_first_call
+
+
+def _attach_tool_metadata(
+    nudge: Optional[ToolNudge],
+    tools: List[Any],
+    metadata_by_name: Optional[Mapping[str, ToolMetadata]],
+) -> Optional[ToolNudge]:
+    """Attach descriptive metadata without changing the nudge decision."""
+    if nudge is None or nudge.metadata is not None:
+        return nudge
+    tool = next(
+        (
+            item
+            for item in tools or []
+            if str(getattr(item, "name", item) or "").strip() == nudge.tool_name
+        ),
+        nudge.tool_name,
+    )
+    return replace(
+        nudge,
+        metadata=resolve_tool_metadata(tool, metadata_by_name=metadata_by_name),
+    )
 
 
 def _short_capability(tool: Any) -> str:
@@ -419,6 +444,8 @@ def resolve_tool_nudge(
     semantic_confidence: Any = None,
     turn_intent: Any = None,
     request_decision: Optional[RequestDecision] = None,
+    turn_decision: Optional[TurnDecision] = None,
+    tool_metadata: Optional[Mapping[str, ToolMetadata]] = None,
 ) -> Optional[ToolNudge]:
     """解析本轮是否需要工具促发；返回相关度最高的一条便签或 None。
 
@@ -432,6 +459,8 @@ def resolve_tool_nudge(
     query = (user_query or "").strip()
     if not query or not should_consider_tool_nudge(query):
         return None
+    if request_decision is None and turn_decision is not None:
+        request_decision = turn_decision.to_request_decision()
     if request_decision is None:
         request_decision = resolve_request_decision(
             query,
@@ -456,11 +485,15 @@ def resolve_tool_nudge(
                 score=1.0,
                 message=_build_explicit_sub_agent_message(explicit_sub_agent),
                 force_first_call=True,
+                metadata=resolve_tool_metadata(
+                    sub_agent_tool,
+                    metadata_by_name=tool_metadata,
+                ),
             )
 
     current_user_profile_nudge = _resolve_current_user_profile_nudge(query, tools)
     if current_user_profile_nudge is not None:
-        return current_user_profile_nudge
+        return _attach_tool_metadata(current_user_profile_nudge, tools, tool_metadata)
 
     # data_query is a ChatBI capability in this platform, not a generic
     # "anything that looks like data" capability.  Only allow it when the
@@ -510,6 +543,10 @@ def resolve_tool_nudge(
                     intent_label="内部制度、SOP或操作规程查询",
                 ),
                 force_first_call=True,
+                metadata=resolve_tool_metadata(
+                    sub_agent_tool,
+                    metadata_by_name=tool_metadata,
+                ),
             )
         elif chatbi_route_allowed:
             candidates = _available_candidates_for("data_query")
@@ -524,15 +561,19 @@ def resolve_tool_nudge(
                     intent_label="内部数据、指标或资产查询",
                 ),
                 force_first_call=True,
+                metadata=resolve_tool_metadata(
+                    sub_agent_tool,
+                    metadata_by_name=tool_metadata,
+                ),
             )
 
     notification_nudge = _resolve_notification_nudge(query, tools)
     if notification_nudge is not None:
-        return notification_nudge
+        return _attach_tool_metadata(notification_nudge, tools, tool_metadata)
 
     catalog_nudge = _resolve_resource_catalog_nudge(query, tools)
     if catalog_nudge is not None:
-        return catalog_nudge
+        return _attach_tool_metadata(catalog_nudge, tools, tool_metadata)
 
     signals = _query_signals(query)
     if len(signals) < 2:
@@ -568,4 +609,8 @@ def resolve_tool_nudge(
         tool_name=tool_name,
         score=round(best_score, 3),
         message=_build_message(tool_name, _short_capability(best_tool)),
+        metadata=resolve_tool_metadata(
+            best_tool,
+            metadata_by_name=tool_metadata,
+        ),
     )

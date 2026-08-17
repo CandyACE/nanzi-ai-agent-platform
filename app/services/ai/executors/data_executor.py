@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List
 
-from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.runners.data_agent_runner import DataAgentRunner
 from app.services.ai.runtime.agentscope.data_runtime import DATA_QUERY_MAX_STEPS_CAP
+from app.services.ai.turn_decision import TurnDecision
 
 
 class DataQueryExecutor(BaseExecutor):
     """ChatBI/DataQuery executor backed by AgentScope native Agent + Toolkit."""
 
     def __init__(self, *args, **kwargs):
-        self.route_hints = kwargs.pop("route_hints", None) or {}
+        self.turn_decision: TurnDecision | None = kwargs.pop("turn_decision", None)
         super().__init__(*args, **kwargs)
         self._runner: DataAgentRunner | None = None
 
@@ -28,7 +28,7 @@ class DataQueryExecutor(BaseExecutor):
             permission_options=self.permission_options,
             user_info=self.user_info,
             conversation_id=self.conversation_id,
-            route_hints=self.route_hints,
+            turn_decision=self.turn_decision,
         )
         self._runner = runner
         async for chunk in runner.execute(history):

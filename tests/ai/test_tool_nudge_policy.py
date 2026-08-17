@@ -14,6 +14,7 @@ from app.services.ai.request_decision import (
     RequestSource,
     resolve_request_decision,
 )
+from app.services.ai.turn_decision import TurnDecision
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -669,3 +670,39 @@ def test_notification_keyword_nudge_for_dingtalk_send():
     assert nudge.tool_name == "send_dingtalk_message"
     assert nudge.score >= STRONG_FORCE_SCORE
     assert nudge.recommended_force_mode() == "send_dingtalk_message"
+
+
+def test_tool_nudge_can_reuse_turn_decision_without_reclassifying_query():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+    turn_decision = TurnDecision(
+        source="internal_structured_data",
+        capability="data_query",
+        should_delegate=True,
+        delegate_capability="data_query",
+        allows_data_route=True,
+        chatbi_mode="direct",
+    )
+
+    nudge = resolve_tool_nudge(
+        "查询本月订单金额",
+        tools,
+        available_sub_agent_names={"biz-data-agent"},
+        sub_agent_candidates_by_capability={"data_query": ["biz-data-agent"]},
+        turn_decision=turn_decision,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+
+
+def test_tool_nudge_attaches_neutral_or_registered_metadata():
+    nudge = resolve_tool_nudge(
+        "帮我看一下系统负载",
+        [_tool("exec_command", "执行 shell 命令查看系统负载与内存占用")],
+    )
+
+    assert nudge is not None
+    assert nudge.metadata is not None
+    assert nudge.metadata.capability == "unknown"

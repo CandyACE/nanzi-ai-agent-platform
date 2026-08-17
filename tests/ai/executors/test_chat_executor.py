@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from pydantic import BaseModel
 from app.services.ai.runtime.agentscope.compat import AIMessage
 from app.services.ai.executors.assistant_executor import AssistantExecutor
+from app.services.ai.turn_decision import TurnDecision
 from app.schemas.agent import ChatConfig
 
 
@@ -98,7 +99,12 @@ async def test_general_chat_executor_delegates_to_general_agent_runner(chat_conf
         debug_options={"return_raw_prompt": True},
         user_info={"id": "u1"},
         conversation_id="c1",
-        route_hints={"turn_labels": ["same_topic"]},
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            source="general",
+            capability="answer",
+            turn_labels=["same_topic"],
+        ),
     )
 
     runner_instance = MagicMock()
@@ -122,7 +128,7 @@ async def test_general_chat_executor_delegates_to_general_agent_runner(chat_conf
     assert kwargs["debug_options"] == {"return_raw_prompt": True}
     assert kwargs["user_info"] == {"id": "u1"}
     assert kwargs["conversation_id"] == "c1"
-    assert kwargs["route_hints"] == {"turn_labels": ["same_topic"]}
+    assert kwargs["turn_decision"].turn_labels == ["same_topic"]
     assert executor.step_counter == runner_instance.step_counter
 
 
@@ -153,7 +159,7 @@ async def test_simple_chat_no_tools(chat_config):
 
 
 @pytest.mark.asyncio
-async def test_general_chat_injects_route_hints_as_weak_system_hint(chat_config):
+async def test_general_chat_injects_turn_decision_as_weak_system_hint(chat_config):
     """General 可参考路由标签，但标签不作为硬分支。"""
     chat_config.tools = []
     captured = {}
@@ -167,11 +173,14 @@ async def test_general_chat_injects_route_hints_as_weak_system_hint(chat_config)
         config=chat_config,
         trace_id="test-route-hints",
         trace_buffer=[],
-        route_hints={
-            "turn_labels": ["continuation_followup", "same_topic"],
-            "relation_to_previous": "followup",
-            "user_action_type": "transform_context",
-        },
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            source="general",
+            capability="context_transform",
+            turn_labels=["continuation_followup", "same_topic"],
+            relation_to_previous="followup",
+            user_action_type="transform_context",
+        ),
     )
 
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=CaptureLLM())), \
@@ -181,43 +190,51 @@ async def test_general_chat_injects_route_hints_as_weak_system_hint(chat_config)
             events.append(chunk)
 
     system_content = captured["messages"][0].content
-    assert "路由层通用理解（仅供参考）" in system_content
+    assert "本轮执行决策（仅供参考）" in system_content
     assert "continuation_followup, same_topic" in system_content
     assert "relation_to_previous: followup" in system_content
     assert "user_action_type: transform_context" in system_content
-    assert "不要机械服从" in system_content
+    assert "实际工具和数据权限仍由运行时代码校验" in system_content
     assert any(chunk.get("content") == "ok" for chunk in events)
 
 
-def test_route_hints_expose_data_semantic_evidence_for_delegation():
+def test_turn_decision_exposes_data_semantic_evidence_for_delegation():
     """Main 应看到已复用的数据语义，并被要求走真实数据获取路径。"""
     from app.services.ai.executors.prompts import AssistantPrompts
     from app.services.ai.intent_service import IntentType
 
-    hint = AssistantPrompts.route_hints({
-        "semantic_intent": IntentType.DATA_QUERY,
-        "semantic_confidence": 0.91,
-        "semantic_reasoning": "请求系统结构化记录",
-    })
+    hint = AssistantPrompts.turn_decision_context(TurnDecision(
+        route_status="resolved",
+        turn_kind="data_query",
+        source="internal_structured_data",
+        capability="data_query",
+        semantic_intent=IntentType.DATA_QUERY.value,
+        semantic_confidence=0.91,
+        semantic_reasoning="请求系统结构化记录",
+    ))
 
     assert "semantic_intent: DATA_QUERY" in hint
     assert "0.91" in hint
     assert "sub_agent_call" in hint
 
 
-def test_route_hints_block_chatbi_delegation_for_local_file_domain():
+def test_turn_decision_blocks_chatbi_delegation_for_local_file_domain():
     from app.services.ai.executors.prompts import AssistantPrompts
     from app.services.ai.intent_service import IntentType
 
-    hint = AssistantPrompts.route_hints({
-        "semantic_intent": IntentType.DATA_QUERY,
-        "semantic_confidence": 0.96,
-        "semantic_domain": "local_file",
-        "semantic_operation": "aggregate",
-        "fact_kind": "file_count",
-        "reference_mode": "new_query",
-        "needs_fresh_data": True,
-    })
+    hint = AssistantPrompts.turn_decision_context(TurnDecision(
+        route_status="resolved",
+        turn_kind="general",
+        source="local_file",
+        capability="answer",
+        semantic_intent=IntentType.DATA_QUERY.value,
+        semantic_confidence=0.96,
+        semantic_domain="local_file",
+        semantic_operation="aggregate",
+        fact_kind="file_count",
+        reference_mode="new_query",
+        needs_fresh_data=True,
+    ))
 
     assert "不是 ChatBI 业务数据" in hint
     assert "禁止调用 data_query/ChatBI 子智能体" in hint
@@ -1570,9 +1587,8 @@ async def test_knowledge_runner_stops_on_service_unavailable(chat_config):
 @pytest.mark.asyncio
 async def test_general_runner_greeting_with_table_not_intercepted(chat_config):
     """纯问候语场景下，模型用表格做能力引导时不应误触反幻觉拦截。"""
-    from app.services.ai.intent_service import IntentType
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
-    from app.services.ai.turn_classifier import TurnClassification, TurnType
+    from app.services.ai.turn_decision import TurnDecision
 
     greeting_reply = (
         "您好！我是 NanZi · AI。\n"
@@ -1588,13 +1604,19 @@ async def test_general_runner_greeting_with_table_not_intercepted(chat_config):
                 content = greeting_reply
             yield Chunk()
 
-    runner = AssistantAgentRunner(config=chat_config, trace_id="test-greeting-table", trace_buffer=[])
-    runner.config.tools = []
-    runner.turn_classification = TurnClassification(
-        turn_type=TurnType.GENERAL,
-        reasoning="用户仅打招呼",
-        intent=IntentType.GENERAL,
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-greeting-table",
+        trace_buffer=[],
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            turn_kind="general",
+            source="general",
+            capability="answer",
+            semantic_intent="GENERAL",
+        ),
     )
+    runner.config.tools = []
 
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]):
@@ -1660,9 +1682,8 @@ async def test_general_runner_without_tools_intercepts_hallucination(chat_config
 @pytest.mark.asyncio
 async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(chat_config):
     """通用助手不能在无 data_query 能力时假装衔接 ChatBI 或检索数据集。"""
-    from app.services.ai.intent_service import IntentType
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
-    from app.services.ai.turn_classifier import TurnClassification, TurnType
+    from app.services.ai.turn_decision import TurnDecision
 
     fake_handoff_text = (
         "检测到您的需求涉及业务数据查询，我将自动为您衔接 ChatBI 数据分析专家的能力，"
@@ -1680,15 +1701,17 @@ async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(c
         trace_id="test-fake-chatbi-handoff",
         trace_buffer=[],
         user_info={"role": "admin", "user_id": "1"},
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            turn_kind="general",
+            source="general",
+            capability="answer",
+            semantic_intent="DATA_QUERY",
+        ),
     )
     runner.config.agent_id = "sys-agent-chat"
     runner.config.agent_name = "main"
     runner.config.tools = []
-    runner.turn_classification = TurnClassification(
-        turn_type=TurnType.GENERAL,
-        reasoning="识别为查数请求，但当前 Agent 无 data_query 能力",
-        intent=IntentType.DATA_QUERY,
-    )
 
     data_agent = SimpleNamespace(
         id="agent-data-custom",
@@ -1716,9 +1739,8 @@ async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(c
 @pytest.mark.asyncio
 async def test_general_runner_plain_chatbi_suggestions_without_hallucination_not_intercepted(chat_config):
     """仅口头建议切换 ChatBI、无编造数据特征时，反查数护栏不再误拦。"""
-    from app.services.ai.intent_service import IntentType
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
-    from app.services.ai.turn_classifier import TurnClassification, TurnType
+    from app.services.ai.turn_decision import TurnDecision
 
     plain_suggestion_text = (
         "作为通用全能助手，我无法直接访问您的内部业务数据库。"
@@ -1738,15 +1760,17 @@ async def test_general_runner_plain_chatbi_suggestions_without_hallucination_not
         trace_id="test-plain-chatbi-suggestions",
         trace_buffer=[],
         user_info={"role": "admin", "user_id": "1"},
+        turn_decision=TurnDecision(
+            route_status="resolved",
+            turn_kind="general",
+            source="general",
+            capability="answer",
+            semantic_intent="DATA_QUERY",
+        ),
     )
     runner.config.agent_id = "sys-agent-chat"
     runner.config.agent_name = "main"
     runner.config.tools = []
-    runner.turn_classification = TurnClassification(
-        turn_type=TurnType.GENERAL,
-        reasoning="识别为查数请求，但当前 Agent 无 data_query 能力",
-        intent=IntentType.DATA_QUERY,
-    )
 
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]):

@@ -1,0 +1,66 @@
+[
+  {
+    "name": "general_chat",
+    "config": {"capabilities": ["general_chat"], "engine_config": {}, "tools": []},
+    "decision": {"route_status": "resolved", "turn_kind": "general", "source": "general", "capability": "answer", "semantic_intent": "GENERAL", "semantic_confidence": 0.96, "provenance": "router"},
+    "expected": {"executor": "assistant", "turn_kind": "general"}
+  },
+  {
+    "name": "runtime_diagnostic",
+    "config": {"capabilities": ["general_chat"], "engine_config": {}, "tools": []},
+    "decision": {"route_status": "resolved", "turn_kind": "general", "source": "runtime_diagnostic", "capability": "runtime_tool", "semantic_intent": "GENERAL", "semantic_confidence": 0.91, "provenance": "router"},
+    "tool": "Bash",
+    "expected": {"executor": "assistant", "turn_kind": "general", "tool_capability": "runtime_tool"}
+  },
+  {
+    "name": "chatbi_new_query",
+    "config": {"capabilities": ["data_query"], "engine_config": {}, "tools": ["get_dataset_schema", "execute_sql_query"]},
+    "decision": {"route_status": "resolved", "turn_kind": "data_query", "source": "internal_structured_data", "capability": "data_query", "semantic_intent": "DATA_QUERY", "semantic_confidence": 0.94, "semantic_domain": "chatbi_business_data", "reference_mode": "new_query", "needs_fresh_data": true, "allows_data_route": true, "provenance": "router"},
+    "expected": {"executor": "data", "turn_kind": "data_query"}
+  },
+  {
+    "name": "chatbi_followup",
+    "config": {"capabilities": ["data_query"], "engine_config": {}, "tools": ["get_dataset_schema", "execute_sql_query"]},
+    "decision": {"route_status": "resolved", "turn_kind": "data_query", "source": "conversation_context", "capability": "data_query", "semantic_intent": "DATA_QUERY", "semantic_confidence": 0.9, "semantic_domain": "conversation_context", "reference_mode": "reuse_previous", "needs_fresh_data": false, "allows_data_route": true, "provenance": "router"},
+    "expected": {"executor": "data", "turn_kind": "data_query"}
+  },
+  {
+    "name": "internal_knowledge",
+    "config": {"capabilities": ["knowledge_base"], "engine_config": {"dataset_ids": [101]}, "tools": ["search_knowledge_base"]},
+    "decision": {"route_status": "resolved", "turn_kind": "knowledge", "source": "internal_docs", "capability": "knowledge_search", "semantic_intent": "KNOWLEDGE_BASE", "semantic_confidence": 0.93, "requires_knowledge_search": true, "provenance": "router"},
+    "expected": {"executor": "knowledge", "turn_kind": "knowledge"}
+  },
+  {
+    "name": "explicit_agent_selection",
+    "config": {"capabilities": ["general_chat"], "engine_config": {}, "tools": []},
+    "decision": {"route_status": "resolved", "turn_kind": "general", "source": "general", "capability": "answer", "provenance": "direct_agent_selection", "fast_path": "direct_agent_selection"},
+    "expected": {"executor": "assistant", "turn_kind": "general"}
+  },
+  {
+    "name": "tool_confirmation",
+    "config": {"capabilities": ["general_chat"], "engine_config": {}, "tools": []},
+    "decision": {"route_status": "resolved", "turn_kind": "general", "source": "general", "capability": "answer", "provenance": "router"},
+    "tool": "request_user_confirmation",
+    "expected": {"executor": "assistant", "turn_kind": "general", "tool_confirmation": "ask"}
+  },
+  {
+    "name": "subagent_delegation",
+    "config": {"capabilities": ["general_chat"], "engine_config": {}, "tools": ["sub_agent_call"]},
+    "decision": {"route_status": "resolved", "turn_kind": "general", "source": "general", "capability": "answer", "should_delegate": true, "delegate_capability": "data_query", "provenance": "router"},
+    "expected": {"executor": "assistant", "turn_kind": "general", "subagent_status": "completed"}
+  },
+  {
+    "name": "sql_repair",
+    "config": {"capabilities": ["data_query"], "engine_config": {}, "tools": ["get_dataset_schema", "execute_sql_query"]},
+    "decision": {"route_status": "resolved", "turn_kind": "data_query", "source": "internal_structured_data", "capability": "data_query", "semantic_intent": "DATA_QUERY", "semantic_confidence": 0.95, "allows_data_route": true, "provenance": "router"},
+    "repair": {"kind": "sql_before_schema", "tool": "get_dataset_schema"},
+    "expected": {"executor": "data", "turn_kind": "data_query", "repair_kind": "sql_before_schema"}
+  },
+  {
+    "name": "final_synthesis",
+    "config": {"capabilities": ["data_query"], "engine_config": {}, "tools": ["get_dataset_schema", "execute_sql_query"]},
+    "decision": {"route_status": "resolved", "turn_kind": "data_query", "source": "internal_structured_data", "capability": "data_query", "semantic_intent": "DATA_QUERY", "semantic_confidence": 0.95, "allows_data_route": true, "provenance": "router"},
+    "response": {"phase": "final_synthesis", "last_successful_sql": true, "last_sql_at": 2, "last_content_at": 1},
+    "expected": {"executor": "data", "turn_kind": "data_query", "response_phase": "final_synthesis"}
+  }
+]
