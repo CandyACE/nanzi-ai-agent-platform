@@ -1,0 +1,371 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.11
+  风格 v2：灰蓝编辑风（slate / blue-gray，少渐变、少彩虹色块、现代科技风）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图可在编辑器中自行上传替换
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#334155;line-height:1.85;letter-spacing:0.3px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
+
+  <!-- 标题区：实底灰蓝，无渐变光晕 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:#1e293b;border-radius:2px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#94a3b8;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.11</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#94a3b8;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">AgentScope 2.0.6 升级 · 业务数据确认卡 · 路由短路与意图合并 · 图片旁路解析 · Embed Ticket 体系</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#1e293b;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#1e293b;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习与打磨。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #1e293b;">
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#1e293b;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#334155;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 28px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0284c7;">v1.0.11</strong> 版本！本次迭代以 <strong>AgentScope 2.0.6 深度升级与通用业务数据确认卡（Human-in-the-Loop）</strong> 为核心领衔，并全面推进 <strong>双重路由优化与意图识别合并、非多模态模型图片旁路解析、思考卡过程话术入卡与时间线历史回放、Embed Ticket 临时嵌入凭证体系与 24h 滑动续期、ChatBI 明细/依据/引用多维交互与健壮性收口，以及工作空间与任务中心体验优化</strong>。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:2px;color:#334155;">89e88d49</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:2px;color:#334155;">2c8a3fbf</code>，共 <strong>53 个提交</strong>（45 个非 Merge 提交），变更 <strong>229 个文件</strong>。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1e293b;line-height:1.4;border-bottom:2px solid #0284c7;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 1. AgentScope 2.0.6 深度集成与内核优势 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. 🤖 AgentScope 2.0.6 深度集成与内核优势
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">原生结构化输出（Structured Output）</strong>：深度接入严格 JSON Schema 约束生成，替代松散正则提取，使 ChatBI 语义意图解析与多轮状态分类的解析准确率提升至接近 100%。</li>
+        <li><strong style="color:#0f172a;">洋葱圈架构中间件（Onion-chain Middleware）</strong>：利用 2.0.6 中间件钩子系统（<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">extra_agent_middlewares</code>），实现权限预检拦截与 Token 统计无侵入挂载，强化智能体执行安全与审计。</li>
+        <li><strong style="color:#0f172a;">流式聚合与 ReAct 轮次治理</strong>：以片段聚合（Fragment Joining）替代高频字符串拼接，彻底修复工具并发状态重置与推理轮次计数偏差，提升高并发流式输出稳定性。</li>
+        <li><strong style="color:#0f172a;">运行时状态注入（InjectionConfig）</strong>：新增系统配置 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">agentscope_inject_runtime_state</code> 与 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">agentscope_inject_time_interval_hours</code>，支持按需注入时间与上下文占用，时区跟随 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">platform_timezone</code>。</li>
+        <li><strong style="color:#0f172a;">会话事实工具与思考调优</strong>：新增平台只读 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">session_status</code> 工具；关闭思考时显式传递 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">false</code>，全面对齐厂商思考参数下发协议。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：AgentScope 2.0.6 运行时状态注入配置与 session_status 工具调用展示</p>
+      </section>
+    </section>
+
+    <!-- 2. 思考卡演进与时间线历史回放 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. ⏱️ 思考卡演进：过程话术入卡与时间线历史回放
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">过程话术入卡</strong>：模型在执行过程中的规划、反思、过渡语与工具步骤统一归入折叠思考卡，保持主消息正文纯净清爽。</li>
+        <li><strong style="color:#0f172a;">思考时间线快照</strong>：执行历史表增加 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">process_timeline</code> JSON 快照字段，刷新页面或加载历史会话时可完整回放思考卡与步骤时间线。</li>
+        <li><strong style="color:#0f172a;">真实生成中断</strong>：点击「停止」按钮真正向后端下发任务取消信号，立即终止 LLM 推理与工具执行。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：过程话术折叠思考卡与历史会话步骤时间线回放展示</p>
+      </section>
+    </section>
+
+    <!-- 3. Embed Ticket 凭证体系与滑动续期 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. 🎫 Embed Ticket 临时嵌入凭证与 24h 滑动续期
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">临时凭证体系</strong>：新增 Embed Ticket 临时嵌入凭证体系与服务端代客签发接口，支持白名单域名校验与权限隔离。</li>
+        <li><strong style="color:#0f172a;">兼容性与生产推荐</strong>：原有的静态 Token 验证集成方式兼容保留，现有对接代码无需改动；生产环境强烈推荐使用安全性更高的 Embed Ticket 代客签发方式。</li>
+        <li><strong style="color:#0f172a;">滑动续期机制</strong>：Session Token 滑动续期调整为 24 小时，保障长效嵌入会话的平滑交互体验。</li>
+        <li><strong style="color:#0f172a;">调试台升级</strong>：组件调试台支持 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">strict_token</code> 严格校验模式与 Token 必填校验，升级嵌入集成指南。</li>
+        <li><strong style="color:#0f172a;">移动端对齐</strong>：修复移动端 AIChat 横向溢出问题，对齐 EmbedChat 上行事件协议与会话数据隔离。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：Embed Ticket 代客签发、Widget 调试台与严格校验模式展示</p>
+      </section>
+    </section>
+
+    <!-- 4. 通用业务数据确认卡 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 📋 通用业务数据确认卡与人机协同治理
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">通用确认工具</strong>：新增平台通用只读确认工具 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">request_user_confirmation</code> 与 SSE 事件出卡机制。</li>
+        <li><strong style="color:#0f172a;">可交互编辑卡片</strong>：前端在 AI 消息正文下方渲染可交互确认卡片，支持用户直接修改关键业务字段并点击「确认执行」或「取消」。</li>
+        <li><strong style="color:#0f172a;">模型驱动回传</strong>：操作结果以【业务确认】+ 字段快照消息结构化回传模型继续驱动执行，与底层工具执行确认（Tool Approval）清晰解耦。</li>
+        <li><strong style="color:#0f172a;">防重复与硬拦截</strong>：有确认卡时自动收起 quick 引导；用户取消后前端硬拦截禁止再次弹出同一卡片。</li>
+        <li><strong style="color:#0f172a;">粘性路由短路</strong>：业务确认回执会话具备粘性（Sticky Routing），直接短路跳过路由 LLM。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：通用业务数据确认卡弹出、字段编辑修改与模型回传执行展示</p>
+      </section>
+    </section>
+
+    <!-- 5. 双重路由优化与意图识别合并 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        5. ⚡ 双重路由优化与意图识别合并
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">意图识别深度收敛</strong>：将原独立意图识别与意图分类收拢合并至单次路由 LLM 调用，大幅削减首字返回延迟与 Token 开销。</li>
+        <li><strong style="color:#0f172a;">结构短路直达</strong>：单一候选智能体或特定短路规则直接跳过路由 LLM，响应速度显著提升。</li>
+        <li><strong style="color:#0f172a;">偏好持久化与隔离</strong>：支持用户路由偏好持久化存储与会话级实例隔离。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：智能体单次路由合并与结构短路性能对比展示</p>
+      </section>
+    </section>
+
+    <!-- 6. 纯文本模型图片旁路解析 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        6. 👁️ 纯文本模型图片旁路解析
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">旁路多模态解析</strong>：新增系统配置 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">multimodal_model_name</code>；当会话使用的当前模型不支持视觉识图时，系统自动调用默认多模态模型旁路解析图片。</li>
+        <li><strong style="color:#0f172a;">无缝文字注入</strong>：将图片解析为结构化文字上下文后再交由主模型回答，彻底消除非多模态模型的图片理解断点。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：纯文本大模型通过旁路多模态模型无缝识图回答展示</p>
+      </section>
+    </section>
+
+    <!-- 7. ChatBI 健壮性与多维合一面板 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        7. 📊 ChatBI 健壮性与明细/依据/引用多维交互
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">合一展示面板</strong>：气泡下方聚合「明细数据 / 执行依据 / 引用来源」多维度合一面板，抽样阈值调整至 500 行。</li>
+        <li><strong style="color:#0f172a;">大结果集兜底</strong>：大结果集自动抽样兜底，彻底解决长查询半截回复与前端卡顿问题。</li>
+        <li><strong style="color:#0f172a;">自动缓存合成收口</strong>：纠正空结果误述，当 SQL 成功晚于可见正文时强制缓存合成收口，增强连续可视化分析体验。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：ChatBI 气泡下方明细/依据/引用合一面板与抽样图表展示</p>
+      </section>
+    </section>
+
+    <!-- 8. 工作空间、数据门户与体验优化 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        8. 🛠️ 工作空间、数据门户与任务调度体验优化
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">工作空间精简</strong>：快捷入口收拢为下拉菜单，类型筛选默认折叠；Bash 工具严格绑定到会话工作区目录执行。</li>
+        <li><strong style="color:#0f172a;">黄金报表与数据门户</strong>：运行参数新增「今年」预设范围；未启用数据集显式标记不可用并仅返回已启用项。</li>
+        <li><strong style="color:#0f172a;">任务调度与站内通知</strong>：提示词约束推送通知禁止夹带中间思考，修复定时器卸载泄漏；站内消息详情支持 Mermaid 与 ECharts 富文本渲染。</li>
+        <li><strong style="color:#0f172a;">菜单更名</strong>：原「智能体测评」更名为「智能体调试」（Agent Debug），未选模型时优雅显示「默认模型」。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：工作空间精简侧栏、数据门户状态标记与站内消息图表渲染展示</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 章节二：缺陷修复 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1e293b;line-height:1.4;border-bottom:2px solid #0284c7;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 缺陷修复与体验优化 (Bug Fixes)
+    </p>
+    <ul style="margin:0;padding-left:20px;font-size:14px;color:#334155;line-height:1.85;">
+      <li><strong>业务确认防重复</strong>：修复用户取消后可能再次弹出相同确认卡的问题，增加前端硬拦截机制。</li>
+      <li><strong>确认卡位置对齐</strong>：将确认卡调整到 AI 消息正文下方展示，并在存在确认卡时隐藏 quick 引导避免重复入口。</li>
+      <li><strong>非多模态报错</strong>：修复纯文本模型在用户发送图片时直接报错的问题，实现自动旁路多模态模型解析。</li>
+      <li><strong>真取消停止</strong>：修复点击「停止」按钮仅前端断开连接的问题，实现真正取消后端生成协程。</li>
+      <li><strong>Embed 鉴权加固</strong>：修复 EmbedChat 空用户信息报错，加固 Embed Ticket 代客签发权限校验与白名单支持。</li>
+      <li><strong>移动端横向溢出</strong>：修复移动端 AIChat 聊天容器宽度计算错误导致的横向滚动条溢出问题。</li>
+      <li><strong>SQL 收口延迟</strong>：修复 SQL 执行成功晚于可见正文时导致的回复截断与状态不一致问题，强制缓存合成收口。</li>
+      <li><strong>ChatBI 空结果误述</strong>：纠正 ChatBI 在平台自动重试成功后误报空结果的问题。</li>
+      <li><strong>任务中心通知正文</strong>：提示词强化约束调度任务，仅投递最终分析正文，彻底消除通知中夹带中间规划与思考内容。</li>
+      <li><strong>定时器卸载泄漏</strong>：修复任务中心窗口 resize 监听与 runNow 定时器在组件卸载时未正确清理导致的内存泄漏问题。</li>
+      <li><strong>工作区 Bash 绑定</strong>：修复已配置的 Bash 工具未绑定到会话目录执行的问题，严格锁定当前会话的工作区路径。</li>
+    </ul>
+  </section>
+
+  <!-- 章节三：破坏性变更与注意事项（表格） -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1e293b;line-height:1.4;border-bottom:2px solid #0284c7;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 破坏性变更与升级注意事项 (Breaking Changes)
+    </p>
+
+    <!-- 红色特别提醒卡片 -->
+    <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:2px;font-size:13px;color:#991b1b;line-height:1.75;">
+      <p style="margin:0;font-weight:bold;color:#b91c1c;">🚨 升级特别注意：</p>
+      <p style="margin:4px 0 0 0;">
+        1. <strong>必须执行数据库增量脚本</strong>：由于引入了运行时状态与多模态配置，升级后请务必执行 MySQL (<code style="background:#fee2e2;padding:1px 4px;border-radius:2px;">V119~V121</code>) 或 PostgreSQL (<code style="background:#fee2e2;padding:1px 4px;border-radius:2px;">V19~V21</code>)。<br>
+        2. <strong>嵌入鉴权演进</strong>：嵌入聊天已向下兼容旧 Token，但生产环境强烈建议迁移至更安全的 <strong>Embed Ticket</strong> 代客签发模式。
+      </p>
+    </section>
+
+    <p style="margin:0 0 12px 0;font-size:14px;color:#64748b;">
+      从 v1.0.10 升级至 v1.0.11 时，请特别注意以下变更：
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr style="background:#1e293b;color:#f8fafc;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1e293b;width:28%;">变更项目</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1e293b;">详细说明与迁移指引</th>
+        </tr>
+      </thead>
+      <tbody style="color:#334155;">
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;font-weight:bold;">AgentScope 运行时注入配置</td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">系统配置新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agentscope_inject_runtime_state</code> 与 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agentscope_inject_time_interval_hours</code>；需执行 MySQL <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">V119</code> 或 PG <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">V19</code> 升级。</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;font-weight:bold;">系统默认多模态模型配置</td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">系统配置新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">multimodal_model_name</code>，用于纯文本模型会话的图片旁路解析；需执行 MySQL <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">V120</code> 或 PG <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">V20</code> 升级。</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;font-weight:bold;">思考时间线快照字段</td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">执行历史表 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_agent_execution_history</code> 新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">process_timeline</code> JSON 字段；需执行 MySQL <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">V121</code> 或 PG <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">V21</code> 升级。</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;font-weight:bold;">菜单名称变更</td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">原「智能体测评」菜单正式更名为「智能体调试」（Agent Debug）。</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;font-weight:bold;">Embed 鉴权与 Ticket 机制</td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">引入 Embed Ticket 代客签发权限与域名白名单校验；原有的静态 Token 验证集成方式兼容保留，生产环境推荐迁移至更安全的 Ticket 方式。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 章节四：数据库迁移说明（表格） -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1e293b;line-height:1.4;border-bottom:2px solid #0284c7;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库增量升级说明 (Database Upgrades)
+    </p>
+
+    <p style="margin:0 0 12px 0;font-size:14px;color:#64748b;">
+      本版本在 MySQL（<code style="font-size:12px;background:#f1f5f9;padding:2px 5px;">db-prod/</code>）与 PostgreSQL（<code style="font-size:12px;background:#f1f5f9;padding:2px 5px;">db-prod-pg/</code>）双引擎下同步提供了 3 个对应的增量迁移脚本：
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr style="background:#1e293b;color:#f8fafc;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1e293b;width:24%;">MySQL 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1e293b;width:20%;">PG 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1e293b;">核心变更说明</th>
+        </tr>
+      </thead>
+      <tbody style="color:#334155;">
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;">V119</code></td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;">V19</code></td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">新增 AgentScope 运行时状态注入开关与时间间隔配置</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;">V120</code></td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;">V20</code></td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">新增系统默认多模态模型配置（用于纯文本模型图片旁路解析）</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;">V121</code></td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;">V21</code></td>
+          <td style="padding:8px 10px;border:1px solid #e2e8f0;">执行历史表增加 process_timeline 思考卡快照列</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 章节五：升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1e293b;line-height:1.4;border-bottom:2px solid #0284c7;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📦 快速升级指南 (Upgrade Guide)
+    </p>
+
+    <section style="margin:0 0 16px 0;padding:10px 14px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:2px;font-size:13px;color:#991b1b;">
+      ⚠️ <strong>升级前置提醒</strong>：无论采用源码还是 Docker 升级，请务必先备份数据库，并在服务启动前执行数据库升级脚本！
+    </section>
+
+    <!-- 方式一：源码直接升级 -->
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1e293b;">方式一：源码直接升级（本地 / 虚机部署）</p>
+    <section style="margin:0 0 16px 0;padding:14px;background:#1e293b;border-radius:2px;color:#e2e8f0;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#94a3b8;"># 1. 拉取最新代码</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">git fetch origin && git checkout main && git pull origin main</p>
+      <p style="margin:0;color:#94a3b8;"># 2. 更新 Python 依赖（升级至 AgentScope 2.0.6 等）</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">pip install -r requirements.txt</p>
+      <p style="margin:0;color:#94a3b8;"># 3. 执行数据库升级</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">./db-prod/apply-sql-native.sh  <span style="color:#94a3b8;"># PG: ./db-prod-pg/apply-sql.sh</span></p>
+      <p style="margin:0;color:#a8a29e;"># 4. 重新编译前端并启动</p>
+      <p style="margin:0;color:#fafaf9;">cd frontend && npm install && npm run build && cd .. && ./dev.sh</p>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1e293b;">方式二：Docker 容器化升级（生产环境 / 容器集群）</p>
+    
+    <!-- 场景 A: Release 镜像加载 -->
+    <p style="margin:0 0 6px 0;font-size:13px;color:#475569;"><strong>场景 A：从 Release 下载镜像离线加载（推荐）</strong></p>
+    <section style="margin:0 0 12px 0;padding:14px;background:#1e293b;border-radius:2px;color:#e2e8f0;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#94a3b8;"># 1. 下载并加载镜像归档（按架构选择）</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">docker load -i nanzi-ai-agent_1.0.11_linux-amd64_*.tar  <span style="color:#94a3b8;"># ARM: arm64_*.tar</span></p>
+      <p style="margin:0;color:#94a3b8;"># 2. 执行数据库升级</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">./db-prod/apply-sql-native.sh</p>
+      <p style="margin:0;color:#94a3b8;"># 3. 启动 / 重启容器</p>
+      <p style="margin:0;color:#f8fafc;">cd docker && ./start-nanzi-ai-agent.sh</p>
+    </section>
+
+    <!-- 场景 B: 自主构建镜像 -->
+    <p style="margin:0 0 6px 0;font-size:13px;color:#475569;"><strong>场景 B：本地 / 服务器自主构建镜像</strong></p>
+    <section style="margin:0 0 16px 0;padding:14px;background:#1e293b;border-radius:2px;color:#e2e8f0;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#94a3b8;"># 1. 拉取最新代码并执行数据库迁移</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">git pull origin main && ./db-prod/apply-sql-native.sh</p>
+      <p style="margin:0;color:#94a3b8;"># 2. 构建 v1.0.11 镜像并重启</p>
+      <p style="margin:0 0 6px 0;color:#f8fafc;">cd docker && ./build_linux_x86.sh 1.0.11  <span style="color:#94a3b8;"># ARM: ./build_linux_arm.sh 1.0.11</span></p>
+      <p style="margin:0;color:#f8fafc;">./start-nanzi-ai-agent.sh</p>
+    </section>
+  </section>
+
+  <!-- 章节六：资源资产与下载 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1e293b;line-height:1.4;border-bottom:2px solid #0284c7;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      💾 资产包下载 (Downloads / Assets)
+    </p>
+    <ul style="margin:0 0 14px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.85;">
+      <li>🐳 <strong>Docker Image (x86_64)</strong>：<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;">nanzi-ai-agent_1.0.11_linux-amd64_*.tar</code></li>
+      <li>🐳 <strong>Docker Image (arm64)</strong>：<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;">nanzi-ai-agent_1.0.11_linux-arm64_*.tar</code></li>
+      <li>⚙️ <strong>Compose 编排文件</strong>：<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;">docker-compose.ai-agent.yml</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;">docker-compose.yml</code></li>
+    </ul>
+    <section style="padding:12px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;text-align:center;">
+      <p style="margin:0;font-size:14px;color:#0f172a;">
+        🔗 <strong>发布页下载：</strong>
+        <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.11" style="color:#0284c7;font-weight:bold;text-decoration:underline;">GitHub Releases v1.0.11</a>
+      </p>
+    </section>
+  </section>
+
+  <!-- 页脚 -->
+  <section style="margin:36px 0 0 0;padding:20px 0 0 0;border-top:1px solid #e2e8f0;text-align:center;font-size:13px;color:#64748b;">
+    <p style="margin:0 0 4px 0;">感谢所有参与 v1.0.11 版本开发的贡献者！</p>
+    <p style="margin:0;">NanZi AI Agent Platform · 开源智能体平台</p>
+  </section>
+
+</section>
