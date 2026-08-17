@@ -60,6 +60,8 @@ READ_ONLY_TOOL_NAMES = {
     "memory_search",
     "fetch_user_long_term_memory",
     "get_myinfo",
+    "list_accessible_datasets",
+    "list_accessible_knowledge_bases",
     "request_user_confirmation",
     "get_my_tasks",
     "jira_search",

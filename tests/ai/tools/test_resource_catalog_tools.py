@@ -13,9 +13,18 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 def test_resource_catalog_tools_are_system_implicit():
+    from app.services.ai.runtime.agentscope.tools import (
+        READ_ONLY_TOOL_NAMES,
+        infer_runtime_permission_scope,
+    )
+
     tool_names = {getattr(tool, "name", "") for tool in ToolRegistry.get_system_implicit_tools()}
     assert "list_accessible_datasets" in tool_names
     assert "list_accessible_knowledge_bases" in tool_names
+    assert "list_accessible_datasets" in READ_ONLY_TOOL_NAMES
+    assert "list_accessible_knowledge_bases" in READ_ONLY_TOOL_NAMES
+    assert infer_runtime_permission_scope("list_accessible_datasets", "system") == "read"
+    assert infer_runtime_permission_scope("list_accessible_knowledge_bases", "system") == "read"
     assert ToolRegistry._registry["list_accessible_datasets"].name == "list_accessible_datasets"
     description = str(getattr(ToolRegistry._registry["list_accessible_datasets"], "description", "") or "")
     assert "已启用" in description
