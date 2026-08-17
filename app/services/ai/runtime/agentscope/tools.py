@@ -63,6 +63,7 @@ READ_ONLY_TOOL_NAMES = {
     "list_accessible_datasets",
     "list_accessible_knowledge_bases",
     "request_user_confirmation",
+    "ask_user_question",
     "get_my_tasks",
     "jira_search",
     "jira_get_projects",

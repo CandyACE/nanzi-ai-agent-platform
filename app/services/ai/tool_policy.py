@@ -86,6 +86,15 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="yes",
         nudge_mode="explicit",
     ),
+    "ask_user_question": ToolMetadata(
+        capability="user_question",
+        source="platform_control",
+        freshness="current_turn",
+        side_effect="control",
+        confirmation="none",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "Bash": ToolMetadata(
         capability="runtime_tool",
         source="runtime_environment",

@@ -267,6 +267,17 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         })
         return
 
+    if event_type == "user_question":
+        apply_stream_chunk(state, {
+            "type": "log",
+            "id": f"user_question_{chunk.get('question_id') or _next_id(state, 'question')}",
+            "title": "需要用户回答",
+            "details": str(chunk.get("question") or ""),
+            "status": "pending",
+            "category": "user_question",
+        })
+        return
+
     if event_type == "permission_result":
         apply_stream_chunk(state, {
             "type": "log",

@@ -126,7 +126,7 @@
                     <span
                       v-if="child.subagent && subagentStatusLabel(child.status)"
                       class="shrink-0 text-[10px]"
-                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-indigo-500' : 'text-gray-400'"
+                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400'"
                     >
                       {{ subagentStatusLabel(child.status) }}
                     </span>
@@ -200,7 +200,7 @@
               <span
                 v-if="item.subagent && subagentStatusLabel(item.status)"
                 class="shrink-0 text-[10px]"
-                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-indigo-500' : 'text-gray-400'"
+                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400'"
               >
                 {{ subagentStatusLabel(item.status) }}
               </span>

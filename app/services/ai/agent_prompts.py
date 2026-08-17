@@ -108,6 +108,13 @@ class AgentServicePrompts:
 - 收到「【业务确认】用户已取消」：**立即终止本次录入/变更流程**；禁止调用写入类工具；**禁止再次调用 request_user_confirmation**（不得重新弹确认卡）。只可用自然语言简短确认已取消，并询问用户是否要修改后重试或彻底放弃；仅当用户随后明确提供新的/修改后的业务数据并要求继续录入时，才允许重新调用 request_user_confirmation。
 - 业务数据确认（字段对不对）与工具执行确认（允许/拒绝工具调用）是两层能力，不要混淆。"""
 
+    _PLATFORM_USER_QUESTION_SECTION = """## 主动向用户提问
+- 当继续执行确实缺少一个或多个关键输入，或用户明确面对多个业务分支时，调用 **ask_user_question** 主动提问；问题必须具体，选项应互斥、可理解，并尽量提供必要的补充输入入口。
+- 只在回答无法可靠完成时提问，不要为了寒暄、已知信息或可由工具查到的信息提问；能通过当前工具、会话上下文或用户画像确定的内容，不要重复询问。
+- 调用后必须停止本轮生成，等待用户回答卡；不得在同一轮继续调用工具、输出结论或追加 quick 建议。
+- 收到「【用户回答】」回执后，按回执中的选项和补充说明继续原问题；不要把回执当作新的独立问题，也不要再次询问已经回答的字段。
+- 收到 `cancelled=true` 的「【用户回答】」回执后，立即停止当前任务，不调用任何查询或写入工具，只简短确认已取消；除非用户提出新的明确任务，不得再次询问同一问题。"""
+
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
@@ -115,6 +122,7 @@ class AgentServicePrompts:
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "get_myinfo": "读取当前用户本人的基本信息、扩展信息、详情信息、角色与权限",
         "request_user_confirmation": "录入/修改/删除业务数据前，向用户展示可编辑确认卡并等待【业务确认】回执",
+        "ask_user_question": "缺少关键输入或存在业务分支时，向用户展示选项提问并等待【用户回答】回执",
         "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
@@ -417,6 +425,9 @@ class AgentServicePrompts:
 
         if "request_user_confirmation" in tool_names:
             table_rows.append("| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |")
+
+        if "ask_user_question" in tool_names:
+            table_rows.append("| 缺少继续处理所需的关键输入，或存在需要用户选择的业务分支 | 调用 **ask_user_question** 展示 2-12 个清晰选项；等待「【用户回答】」回执后继续，禁止在本轮自行猜测或继续执行 |")
             
         if "fetch_user_long_term_memory" in tool_names:
             table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")
@@ -450,6 +461,9 @@ class AgentServicePrompts:
 
         if "request_user_confirmation" in tool_names:
             prompt_parts.append(AgentServicePrompts._PLATFORM_BUSINESS_CONFIRMATION_SECTION)
+
+        if "ask_user_question" in tool_names:
+            prompt_parts.append(AgentServicePrompts._PLATFORM_USER_QUESTION_SECTION)
             
         if quick_suggestions_forbidden:
             interaction_section = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。

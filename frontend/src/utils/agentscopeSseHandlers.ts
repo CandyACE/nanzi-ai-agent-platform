@@ -5,6 +5,11 @@ import {
   shouldSuppressBusinessConfirmation,
 } from "./businessConfirmation";
 import {
+  markOtherUserQuestionsStale,
+  parseUserQuestionEvent,
+  type UserQuestionState,
+} from "./userQuestion";
+import {
   appendTimelineNarrationDelta,
   appendProcessNarrationText,
   appendTimelineReasoningDelta,
@@ -121,6 +126,7 @@ export interface AgentStreamMessage {
   toolResultData?: Record<string, ToolResultDataBlock[]>;
   groundingBlocked?: GroundingBlockedPayload;
   businessConfirmation?: BusinessConfirmationState;
+  userQuestion?: UserQuestionState;
 }
 
 export type AddStreamLogFn<T extends AgentStreamMessage = AgentStreamMessage> = (
@@ -525,6 +531,25 @@ export function handleBusinessConfirmation<T extends AgentStreamMessage>(
   });
 }
 
+export function handleUserQuestion<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+  addLog: AddStreamLogFn<T>,
+  allMessages?: Array<{ role?: string; content?: string; userQuestion?: UserQuestionState }>,
+) {
+  const parsed = parseUserQuestionEvent(data);
+  if (!parsed) return;
+  if (allMessages) markOtherUserQuestionsStale(allMessages, parsed.question_id);
+  msg.userQuestion = parsed;
+  addLog(msg, {
+    id: `user_question_${parsed.question_id}`,
+    title: "需要用户回答",
+    details: parsed.question,
+    status: "pending",
+    category: "user_question",
+  });
+}
+
 export function collapseSecondaryFoldsOnBody<T extends AgentStreamMessage>(msg: T): void {
   msg.isProcessNarrationExpanded = false;
   msg.isReasoningExpanded = false;
@@ -673,7 +698,12 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
   addLog: AddStreamLogFn<T>,
-  allMessages?: Array<{ role?: string; content?: string; businessConfirmation?: BusinessConfirmationState }>,
+  allMessages?: Array<{
+    role?: string;
+    content?: string;
+    businessConfirmation?: BusinessConfirmationState;
+    userQuestion?: UserQuestionState;
+  }>,
 ): boolean {
   switch (data.type) {
     case "permission_required":
@@ -684,6 +714,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "business_confirmation":
       handleBusinessConfirmation(msg, data, addLog, allMessages);
+      return true;
+    case "user_question":
+      handleUserQuestion(msg, data, addLog, allMessages);
       return true;
     case "external_execution_result":
       if (msg.pendingExternalExecution) {

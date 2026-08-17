@@ -9,6 +9,7 @@ import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
+import UserQuestionCard from "@/components/UserQuestionCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
@@ -70,6 +71,10 @@ import {
   type BusinessConfirmationField,
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
+import {
+  buildUserQuestionUserMessage,
+  type UserQuestionState,
+} from "@/utils/userQuestion";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "@/composables/useTokenQuota";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
@@ -1311,6 +1316,7 @@ interface Message {
   agentHandoff?: AgentHandoffNoticeData;
   groundingBlocked?: GroundingBlockedPayload;
   businessConfirmation?: BusinessConfirmationState;
+  userQuestion?: UserQuestionState;
   prompt_tokens?: number;
   completion_tokens?: number;
 }
@@ -3559,6 +3565,25 @@ const submitBusinessConfirmation = async (
   await sendMessage();
 };
 
+const submitUserQuestion = async (
+  msg: Message,
+  payload: { selectedOptionIds: string[]; customInput: string; cancelled: boolean },
+) => {
+  const card = msg.userQuestion;
+  if (!card || card.status !== "pending" || isProcessing.value) return;
+  const content = buildUserQuestionUserMessage(
+    card.question_id,
+    payload.selectedOptionIds,
+    payload.customInput,
+    payload.cancelled,
+  );
+  card.selected_option_ids = [...payload.selectedOptionIds];
+  card.custom_input = payload.customInput;
+  card.status = payload.cancelled ? "cancelled" : "submitted";
+  userInput.value = content;
+  await sendMessage();
+};
+
 const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending") return;
@@ -4609,7 +4634,7 @@ onUnmounted(() => {
                 <MessageRenderer
                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                   :content="visibleStreamBody(msg)"
-                  :hide-quick-buttons="!!msg.businessConfirmation"
+                  :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                   @open-canvas="handleOpenCanvas"
@@ -4729,6 +4754,13 @@ onUnmounted(() => {
                 :payload="msg.businessConfirmation"
                 :disabled="isProcessing"
                 @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
+
+              <UserQuestionCard
+                v-if="msg.userQuestion"
+                :payload="msg.userQuestion"
+                :disabled="isProcessing"
+                @submit="(payload) => submitUserQuestion(msg, payload)"
               />
 
               <style scoped>

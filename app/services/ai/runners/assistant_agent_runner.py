@@ -1444,6 +1444,25 @@ class AssistantAgentRunner(BaseExecutor):
                 yield result["log"]
             if result.get("business_confirmation"):
                 yield result["business_confirmation"]
+            if result.get("user_question"):
+                from app.services.ai.user_question import persist_user_question_event
+
+                question_event = result["user_question"]
+                try:
+                    await persist_user_question_event(
+                        event=question_event,
+                        user_id=self._runtime_user_id() or "anonymous",
+                        conversation_id=self.conversation_id or "",
+                    )
+                except Exception:
+                    logger.exception("Failed to persist pending user question")
+                    yield {
+                        "type": "error",
+                        "status": "error",
+                        "content": "无法保存待回答问题，请稍后重试。",
+                    }
+                    return
+                yield question_event
             if result.get("citation"):
                 yield result["citation"]
             if result.get("trace"):
@@ -2241,6 +2260,7 @@ class AssistantAgentRunner(BaseExecutor):
                 logger.warning(f"Failed to extract citations from {tool_name}: {e}")
 
         from app.services.ai.business_confirmation import build_business_confirmation_sse
+        from app.services.ai.user_question import build_user_question_sse
 
         confirmation_output = tool_output
         if isinstance(tool_output, dict) and "text" in tool_output:
@@ -2255,6 +2275,13 @@ class AssistantAgentRunner(BaseExecutor):
             "business_confirmation": None
             if is_error
             else build_business_confirmation_sse(
+                tool_name=tool_name,
+                tool_output=confirmation_output,
+                tool_call_id=tool_id,
+            ),
+            "user_question": None
+            if is_error
+            else build_user_question_sse(
                 tool_name=tool_name,
                 tool_output=confirmation_output,
                 tool_call_id=tool_id,

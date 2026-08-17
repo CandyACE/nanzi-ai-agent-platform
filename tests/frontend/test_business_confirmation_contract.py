@@ -127,8 +127,8 @@ def test_business_confirmation_frontend_wiring_contract():
     assert "submitBusinessConfirmation" in debug
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)" in embed
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)" in debug
-    assert 'hide-quick-buttons="!!msg.businessConfirmation"' in embed
-    assert 'hide-quick-buttons="!!msg.businessConfirmation"' in debug
+    assert 'hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"' in embed
+    assert 'hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"' in debug
     assert "hideQuickButtons" in (ROOT / "frontend/src/components/MessageRenderer.vue").read_text(encoding="utf-8")
     assert "stripQuickButtons" in (ROOT / "frontend/src/utils/quickButtons.ts").read_text(encoding="utf-8")
 

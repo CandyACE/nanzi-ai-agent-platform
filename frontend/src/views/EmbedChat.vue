@@ -566,7 +566,7 @@
               :class="[
                 `markdown-theme-${config.markdownTheme || 'default'}`,
                 { 'message-borderless': config.hideMessageBorder },
-                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation
+                visibleStreamBody(msg) || msg.groundingBlocked || msg.businessConfirmation || msg.userQuestion
                   ? [
                       'px-4 py-3 rounded-2xl rounded-tl-sm shadow-none border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 min-h-[46px]',
                       msg.isThinking
@@ -735,7 +735,7 @@
                                                                   :content="visibleStreamBody(msg)"
                                                                   :theme="config.markdownTheme"
                                                                   :conversation-id="conversationId"
-                                                                  :hide-quick-buttons="!!msg.businessConfirmation"
+                                                                  :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
@@ -762,6 +762,13 @@
                 :payload="msg.businessConfirmation"
                 :disabled="isProcessing"
                 @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+              />
+
+              <UserQuestionCard
+                v-if="msg.userQuestion"
+                :payload="msg.userQuestion"
+                :disabled="isProcessing"
+                @submit="(payload) => submitUserQuestion(msg, payload)"
               />
 
                                 <!-- AI Stalled Thinking Prompt (Moved out to be sibling to msg.content) -->
@@ -1905,6 +1912,7 @@ const showToast = toast.showToast;
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
+import UserQuestionCard from "@/components/UserQuestionCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
@@ -2019,6 +2027,10 @@ import {
   type BusinessConfirmationField,
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
+import {
+  buildUserQuestionUserMessage,
+  type UserQuestionState,
+} from "@/utils/userQuestion";
 // --- Types ---
 interface LogEntry {
   id: number | string;
@@ -2028,7 +2040,7 @@ interface LogEntry {
   status: "pending" | "success" | "error";
   isExpanded: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'default';
   tool_name?: string;
   resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
@@ -2151,6 +2163,7 @@ interface Message {
   permissionNotice?: PermissionNotice;
   groundingBlocked?: GroundingBlockedPayload;
   businessConfirmation?: BusinessConfirmationState;
+  userQuestion?: UserQuestionState;
   _hasSilentlyRefreshed?: boolean;
 }
 // Helper: Check Role
@@ -6539,6 +6552,25 @@ const submitBusinessConfirmation = async (
   card.fields = payload.fields.map((field) => ({ ...field }));
   card.status = "submitted";
   card.decision = payload.confirmed ? "confirmed" : "cancelled";
+  userInput.value = content;
+  await sendMessage();
+};
+
+const submitUserQuestion = async (
+  msg: Message,
+  payload: { selectedOptionIds: string[]; customInput: string; cancelled: boolean },
+) => {
+  const card = msg.userQuestion;
+  if (!card || card.status !== "pending" || isProcessing.value) return;
+  const content = buildUserQuestionUserMessage(
+    card.question_id,
+    payload.selectedOptionIds,
+    payload.customInput,
+    payload.cancelled,
+  );
+  card.selected_option_ids = [...payload.selectedOptionIds];
+  card.custom_input = payload.customInput;
+  card.status = payload.cancelled ? "cancelled" : "submitted";
   userInput.value = content;
   await sendMessage();
 };

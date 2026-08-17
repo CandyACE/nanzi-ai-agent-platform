@@ -48,7 +48,9 @@ from app.services.ai.business_context import sanitize_injected_context
 
 logger = logging.getLogger(__name__)
 
-AWAITING_RESUME_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
+AWAITING_RESUME_STATUSES = frozenset(
+    {"awaiting_permission", "awaiting_external_execution", "awaiting_user"}
+)
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
 
 
@@ -139,6 +141,8 @@ def _turn_status_signal(chunk: Dict[str, Any]) -> Optional[str]:
         return "awaiting_permission"
     if chunk_type == "external_execution_required":
         return "awaiting_external_execution"
+    if chunk_type == "user_question":
+        return "awaiting_user"
     if chunk_type == "error":
         return "error"
     if chunk_type:
@@ -590,6 +594,7 @@ class AgentService:
         agent_config = None
         user_query = ""
         full_response_content = ""
+        user_question_cancelled = False
         shared_state = {
             "agent_config": None,
             "execution_status": "success",
@@ -623,6 +628,60 @@ class AgentService:
                 from app.services.ai.executors.common import sanitize_client_messages_for_identity
 
                 messages = sanitize_client_messages_for_identity(messages)
+
+                # AI 提问卡的回执必须先由服务端按 user/conversation/question 校验，
+                # 不能把客户端拼接的选项直接交给模型自行解释。
+                incoming_user_message = messages[-1] if messages else None
+                incoming_content = (
+                    incoming_user_message.get("content")
+                    if isinstance(incoming_user_message, dict)
+                    else None
+                )
+                from app.services.ai.user_question import (
+                    is_user_question_receipt_message,
+                    parse_user_question_receipt,
+                )
+
+                if is_user_question_receipt_message(incoming_content):
+                    receipt = parse_user_question_receipt(incoming_content)
+                    if not receipt or not conversation_id:
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": "用户回答格式无效或当前会话无法恢复问题，请重新发起问题。",
+                            "trace_id": trace_id,
+                        }
+                        return
+                    from app.services.ai.user_question_store import UserQuestionStore
+
+                    try:
+                        question_store = await UserQuestionStore.from_runtime()
+                        await question_store.submit_answer(
+                            user_id=lane_user_id or "anonymous",
+                            conversation_id=conversation_id,
+                            question_id=receipt["question_id"],
+                            selected_option_ids=receipt["selected_option_ids"],
+                            custom_input=receipt["custom_input"],
+                            cancelled=receipt["cancelled"],
+                        )
+                        user_question_cancelled = bool(receipt["cancelled"])
+                    except (PermissionError, ValueError) as exc:
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": f"用户回答未通过校验：{exc}",
+                            "trace_id": trace_id,
+                        }
+                        return
+                    except Exception:
+                        logger.exception("Failed to validate user-question receipt")
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": "当前无法验证用户回答，请稍后重试。",
+                            "trace_id": trace_id,
+                        }
+                        return
 
                 # --- Memory Integration ---
                 # If conversation_id is provided, we use server-side history
@@ -675,6 +734,32 @@ class AgentService:
                 enrich_messages_with_skill_meta(messages)
 
                 user_query = messages[-1]["content"] if messages else ""
+
+                if user_question_cancelled:
+                    cancellation_message = "已取消本次提问，本次任务已停止。"
+                    full_response_content = cancellation_message
+                    execution_status = "cancelled"
+                    shared_state["execution_status"] = "cancelled"
+                    if conversation_id:
+                        u_id = lane_user_id
+                        asyncio.create_task(
+                            memory_service.add_message(
+                                u_id,
+                                conversation_id,
+                                "assistant",
+                                cancellation_message,
+                                trace_id=trace_id,
+                                process_timeline=_final_process_timeline(
+                                    shared_state.get("process_timeline")
+                                ),
+                            )
+                        )
+                    yield {
+                        "content": cancellation_message,
+                        "status": "success",
+                        "trace_id": trace_id,
+                    }
+                    return
 
                 # --- Handle explicit @mention in text ---
                 import re

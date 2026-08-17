@@ -339,6 +339,25 @@ class RouterService:
                     user_action_type="chat",
                 )
 
+        from app.services.ai.user_question import is_user_question_receipt_message
+
+        if last_agent_name and is_user_question_receipt_message(user_input):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent:
+                logger.info(
+                    "User question receipt shortcut: sticky route to %s without LLM",
+                    sticky_agent["name"],
+                )
+                return TurnDecision.from_router_components(
+                    agent_id=sticky_agent["id"],
+                    agent_name=sticky_agent.get("name"),
+                    confidence=0.99,
+                    reasoning="AI 提问回执沿用上一轮智能体（跳过路由 LLM）",
+                    turn_labels=["user_question_receipt", "follow_up"],
+                    relation_to_previous="follow_up",
+                    user_action_type="chat",
+                )
+
         if (
             last_agent_name
             and self._is_data_query_agent(agents_metadata, last_agent_name)
