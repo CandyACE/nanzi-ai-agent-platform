@@ -116,8 +116,21 @@
                   >
                     <span v-if="child.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                     <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(child) }}</span>
-                    <span class="min-w-0 flex-1 truncate" :title="child.title">{{ child.title }}</span>
-                    <span v-if="child.status === 'error'" class="shrink-0 text-[10px]">失败</span>
+                    <span class="min-w-0 flex-1 truncate" :title="child.title">
+                      <span
+                        v-if="child.subagent"
+                        :title="formatSubagentTraceSummary(child.subagent)"
+                      >子代理 · </span>
+                      <span>{{ child.title }}</span>
+                    </span>
+                    <span
+                      v-if="child.subagent && subagentStatusLabel(child.status)"
+                      class="shrink-0 text-[10px]"
+                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-indigo-500' : 'text-gray-400'"
+                    >
+                      {{ subagentStatusLabel(child.status) }}
+                    </span>
+                    <span v-if="child.status === 'error' && !child.subagent" class="shrink-0 text-[10px]">失败</span>
                     <span v-if="formatDuration(child.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(child.execution_time_ms) }}</span>
                     <svg v-if="child.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': child.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
@@ -146,8 +159,21 @@
             >
               <span v-if="item.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
               <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(item) }}</span>
-              <span class="min-w-0 flex-1 truncate" :title="item.title">{{ item.title }}</span>
-              <span v-if="item.status === 'error'" class="shrink-0 text-[10px]">失败</span>
+              <span class="min-w-0 flex-1 truncate" :title="item.title">
+                <span
+                  v-if="item.subagent"
+                  :title="formatSubagentTraceSummary(item.subagent)"
+                >子代理 · </span>
+                <span>{{ item.title }}</span>
+              </span>
+              <span
+                v-if="item.subagent && subagentStatusLabel(item.status)"
+                class="shrink-0 text-[10px]"
+                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-indigo-500' : 'text-gray-400'"
+              >
+                {{ subagentStatusLabel(item.status) }}
+              </span>
+              <span v-if="item.status === 'error' && !item.subagent" class="shrink-0 text-[10px]">失败</span>
               <span v-if="formatDuration(item.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">
                 {{ formatDuration(item.execution_time_ms) }}
               </span>
@@ -192,6 +218,9 @@ import {
   type ProcessTimelineLogItem,
   type ProcessTimelineTextItem,
 } from "@/utils/processTimeline";
+import {
+  formatSubagentTraceSummary,
+} from "@/utils/subagentTrace";
 
 const props = withDefaults(defineProps<{
   timeline?: ProcessTimelineItem[];
@@ -203,6 +232,7 @@ const props = withDefaults(defineProps<{
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    subagent?: ProcessTimelineLogItem["subagent"];
   }>;
   reasoningContent?: string;
   processNarration?: string;
@@ -265,6 +295,7 @@ function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
 
 function iconFor(item: ProcessTimelineLogItem): string {
   if (item.status === "error") return "⚠️";
+  if (item.subagent || item.category === "agent") return "🤖";
   if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return "🔧";
   if (item.category === "model" || item.title.includes("模型")) return "✦";
   if (
@@ -275,6 +306,12 @@ function iconFor(item: ProcessTimelineLogItem): string {
   ) return "🧠";
   if (item.category === "permission") return "🔒";
   return "•";
+}
+
+function subagentStatusLabel(status: ProcessTimelineLogItem["status"]): string {
+  if (status === "pending") return "进行中";
+  if (status === "error") return "失败";
+  return "已完成";
 }
 
 function formatDuration(duration?: number | null): string {

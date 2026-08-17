@@ -86,7 +86,11 @@ from app.services.ai.runtime.agentscope.workspace import (
     get_local_workspace,
 )
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
-from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
+from app.services.ai.runtime.agentscope.tools import (
+    RuntimeToolSpec,
+    apply_delegation_tool_filter,
+    runtime_tool_spec_from_legacy_tool,
+)
 from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 from app.services.ai.time_anchor import filter_redundant_time_tools
@@ -1881,7 +1885,7 @@ class AssistantAgentRunner(BaseExecutor):
             for tool in system_tools:
                 spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
                 tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
-        return tools
+        return apply_delegation_tool_filter(tools)
 
     @staticmethod
     def _record_external_execution_evidence(

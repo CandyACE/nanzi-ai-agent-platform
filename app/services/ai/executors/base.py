@@ -89,6 +89,7 @@ class BaseExecutor(ABC):
         }
 
     def _apply_user_identity_to_context(self, ctx: Any, identity: Dict[str, Any]) -> None:
+        ctx.trace_id = self.trace_id
         u_id_val = identity.get("u_id_val")
         if u_id_val is None:
             return
@@ -134,6 +135,7 @@ class BaseExecutor(ABC):
             is_admin=is_admin_val,
             api_key=self.user_info.get("api_key") if self.user_info else None,
             user_dimensions=user_dims,
+            trace_id=self.trace_id,
             trace_buffer=self.trace_buffer or [],
             delegation_depth=0,
             permission_options=dict(self.permission_options or {}),

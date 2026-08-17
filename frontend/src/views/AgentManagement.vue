@@ -551,6 +551,11 @@ const availableTools = [
     isSystem: true,
   },
   {
+    name: "read_image",
+    description: "读取并深度解析本地沙箱/工作区中的图片文件（PNG/JPEG等），提取图文与图表细节",
+    isSystem: true,
+  },
+  {
     name: "search_qa_examples",
     description: "检索已验证的历史问答优质案例及 SQL",
     isSystem: true,

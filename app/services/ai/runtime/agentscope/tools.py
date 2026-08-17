@@ -67,6 +67,7 @@ READ_ONLY_TOOL_NAMES = {
     "jira_search",
     "jira_get_projects",
     "read_file",
+    "read_image",
     "search_text",
     "list_process",
     "list_available_skills",
@@ -226,6 +227,22 @@ class RuntimeToolSpec:
         result = self.audit_callback(event)
         if inspect.isawaitable(result):
             await result
+
+
+def apply_delegation_tool_filter(
+    tools: list[RuntimeToolSpec],
+    allowed_names: list[str] | None = None,
+) -> list[RuntimeToolSpec]:
+    """Apply the current sub-agent allowlist to visible and executable tools."""
+    if allowed_names is None:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+        allowed_names = getattr(context, "delegation_tool_filter", None)
+    if allowed_names is None:
+        return list(tools)
+    allowed = {str(name) for name in allowed_names}
+    return [tool for tool in tools if str(tool.name) in allowed]
 
 
 class AgentScopeRuntimeTool:

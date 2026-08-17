@@ -55,11 +55,15 @@ class AgentContext(BaseModel):
     )
     
     # Execution details for tracing (displayed in frontend)
+    trace_id: Optional[str] = None
+    parent_trace_id: Optional[str] = None
     trace_logs: List[str] = Field(default_factory=list)
     trace_buffer: List[Any] = Field(default_factory=list, description="物理执行步骤审计 buffer 引用")
 
     # Delegation control
     delegation_depth: int = 0
+    delegation_run_id: Optional[str] = None
+    delegation_tool_filter: Optional[List[str]] = None
     delegation_call_counts: Dict[str, int] = Field(default_factory=dict)
     delegation_agent_call_counts: Dict[str, int] = Field(default_factory=dict)
 

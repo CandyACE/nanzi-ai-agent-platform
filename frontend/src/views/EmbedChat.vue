@@ -2013,6 +2013,7 @@ import {
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
 import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
+import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
   type BusinessConfirmationField,
@@ -2031,6 +2032,7 @@ interface LogEntry {
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
+  subagent?: SubagentTraceMeta;
   rowFilterApplied?: boolean;
 }
 
@@ -6370,6 +6372,9 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
       elapsed_time_ms: data.elapsed_time_ms ?? currentLog.elapsed_time_ms,
       started_at: currentLog.started_at ?? (data.status === "pending" ? Date.now() : data.started_at),
+      subagent: data.subagent !== undefined
+        ? normalizeSubagentTraceMeta(data.subagent)
+        : currentLog.subagent,
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,
     };
     syncProcessTimelineLog(msg, {
@@ -6391,6 +6396,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     execution_time_ms: data.execution_time_ms ?? null,
     elapsed_time_ms: data.elapsed_time_ms ?? null,
     started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
+    subagent: normalizeSubagentTraceMeta(data.subagent),
     rowFilterApplied: data.row_filter_applied === true,
   });
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);

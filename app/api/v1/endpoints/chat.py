@@ -1200,7 +1200,10 @@ async def get_trace_logs(
             execution_time_ms=row.execution_time_ms,
             status=row.status,
             error_message=row.error_message,
-            timestamp=row.created_at
+            timestamp=row.created_at,
+            span_id=getattr(row, "span_id", None),
+            parent_span_id=getattr(row, "parent_span_id", None),
+            meta_info=getattr(row, "meta_info", None),
         ))
         
     return StandardResponse(data=TraceLogResponse(

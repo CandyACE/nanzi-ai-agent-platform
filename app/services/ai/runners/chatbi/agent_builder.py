@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
+from app.services.ai.runtime.agentscope.tools import (
+    RuntimeToolSpec,
+    apply_delegation_tool_filter,
+    runtime_tool_spec_from_legacy_tool,
+)
 from app.services.ai.tools.registry import ToolRegistry
 
 
@@ -29,7 +33,7 @@ async def resolve_runtime_tools_from_config(runner: Any) -> list[RuntimeToolSpec
             tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
             seen.add(spec.name)
 
-    return tools
+    return apply_delegation_tool_filter(tools)
 
 
 async def build_native_agent(

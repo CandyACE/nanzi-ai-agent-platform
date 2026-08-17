@@ -21,7 +21,11 @@ from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.metadata_rag_service import MetadataRagService
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage, AIMessage
-from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
+from app.services.ai.runtime.agentscope.tools import (
+    RuntimeToolSpec,
+    apply_delegation_tool_filter,
+    runtime_tool_spec_from_legacy_tool,
+)
 from app.services.ai.knowledge_utils import (
     NO_KNOWLEDGE_DATASET_MESSAGE,
     KNOWLEDGE_BASE_DISABLED_USER_MESSAGE,
@@ -163,7 +167,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
                 seen.add(name)
 
-        return tools
+        return apply_delegation_tool_filter(tools)
 
     async def _auto_invoke_search_knowledge_base(
         self,

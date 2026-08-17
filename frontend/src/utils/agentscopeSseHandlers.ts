@@ -16,6 +16,10 @@ import {
   upsertTimelineLog,
   type ProcessTimelineItem,
 } from "./processTimeline";
+import {
+  normalizeSubagentTraceMeta,
+  type SubagentTraceMeta,
+} from "./subagentTrace";
 
 /**
  * AgentScope 运行时 SSE 事件处理（permission / external / observability）
@@ -89,6 +93,7 @@ export interface AgentStreamLog {
   elapsed_time_ms?: number | null;
   started_at?: number | null;
   isRouter?: boolean;
+  subagent?: SubagentTraceMeta;
 }
 
 export interface AgentStreamMessage {
@@ -606,6 +611,7 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     execution_time_ms:
       data.execution_time_ms === undefined ? undefined : Number(data.execution_time_ms),
     started_at: data.started_at === undefined ? undefined : Number(data.started_at),
+    subagent: normalizeSubagentTraceMeta(data.subagent),
   });
 }
 

@@ -64,6 +64,7 @@ import {
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
 import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
+import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
   type BusinessConfirmationField,
@@ -1187,6 +1188,7 @@ interface LogEntry {
   category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
   model?: string;
   temperature?: number;
+  subagent?: SubagentTraceMeta;
   rowFilterApplied?: boolean;
 }
 
@@ -3332,6 +3334,7 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.isDebug !== undefined) existingLog.isDebug = data.isDebug;
     if (data.isRouter !== undefined) existingLog.isRouter = data.isRouter;
     if (data.category !== undefined) existingLog.category = data.category as any;
+    if (data.subagent !== undefined) existingLog.subagent = normalizeSubagentTraceMeta(data.subagent);
     if (data.row_filter_applied === true) existingLog.rowFilterApplied = true;
     syncProcessTimelineLog(msg, { ...data, id: logId }, existingLog.category);
   } else {
@@ -3359,6 +3362,7 @@ const addRealLog = (msg: Message, data: any) => {
       category: inferredCategory,
       model: data.model,
       temperature: data.temperature,
+      subagent: normalizeSubagentTraceMeta(data.subagent),
       rowFilterApplied: data.row_filter_applied === true,
     };
     msg.logs.push(log);

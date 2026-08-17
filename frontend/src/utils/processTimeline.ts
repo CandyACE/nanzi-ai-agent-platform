@@ -1,3 +1,5 @@
+import type { SubagentTraceMeta } from "./subagentTrace";
+
 export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning";
 
 export type ProcessTimelineTextItem = {
@@ -26,6 +28,7 @@ export type ProcessTimelineLogItem = {
   category?: string;
   execution_time_ms?: number | null;
   started_at?: number | null;
+  subagent?: SubagentTraceMeta;
   isExpanded?: boolean;
 };
 
@@ -305,6 +308,7 @@ export function upsertTimelineLog(
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    subagent?: SubagentTraceMeta;
   },
 ): void {
   if (!target.processTimeline) target.processTimeline = [];
@@ -316,6 +320,7 @@ export function upsertTimelineLog(
     if (data.category !== undefined) existing.category = data.category;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
+    if (data.subagent !== undefined) existing.subagent = data.subagent;
     return;
   }
   const log: ProcessTimelineLogItem = {
@@ -327,6 +332,7 @@ export function upsertTimelineLog(
     category: data.category,
     execution_time_ms: data.execution_time_ms,
     started_at: data.started_at,
+    subagent: data.subagent,
     isExpanded: false,
   };
   const parent = isToolLog(data)
@@ -360,6 +366,7 @@ export function mergeTimelineLogs(
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    subagent?: SubagentTraceMeta;
   }> | undefined,
 ): ProcessTimelineItem[] {
   const items = [...(timeline || [])];
@@ -384,6 +391,7 @@ export function mergeTimelineLogs(
         targetLog.category = log.category ?? targetLog.category;
         targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
         targetLog.started_at = log.started_at ?? targetLog.started_at;
+        targetLog.subagent = log.subagent ?? targetLog.subagent;
       }
       continue;
     }
@@ -402,6 +410,7 @@ export function buildLegacyProcessTimeline(input: {
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    subagent?: SubagentTraceMeta;
   }>;
   reasoningContent?: string;
   processNarration?: string;
@@ -447,7 +456,7 @@ export function hydrateHistoryProcessTimeline(
   stored: ProcessTimelineItem[] | undefined,
   reasoningContent?: string,
 ): ProcessTimelineItem[] {
-  const items = (Array.isArray(stored) ? stored : []).filter((item) => !(
+  const items: ProcessTimelineItem[] = (Array.isArray(stored) ? stored : []).filter((item) => !(
     item?.kind === "text" && item.textKind === "narration" && item.pending
   )).map((item) => {
     if (item.kind === "text") {

@@ -24,7 +24,7 @@ from app.services.ai.tools.notification_tools import (
 # Import Jira Tools
 from app.services.ai.tools.jira_tools import JiraSearchTool, JiraCreateIssueTool, JiraGetProjectsTool
 from app.services.ai.tools.system_executive_tools import (
-    read_file, write_file, search_text, exec_command, manage_process, list_process,
+    read_file, read_image, write_file, search_text, exec_command, manage_process, list_process,
     create_skills, list_available_skills, read_skill_instruction
 )
 from app.services.ai.tools.advanced_auxiliary_tools import (
@@ -105,6 +105,7 @@ TOOL_EVIDENCE_TYPES = {
     "manage_process": frozenset({EvidenceType.RUNTIME_STATE}),
     "exec_command": frozenset({EvidenceType.RUNTIME_STATE}),
     "read_file": frozenset({EvidenceType.USER_FILE}),
+    "read_image": frozenset({EvidenceType.USER_FILE}),
     "search_text": frozenset({EvidenceType.USER_FILE}),
     "excel_document_read": frozenset({EvidenceType.USER_FILE}),
     "word_document_read": frozenset({EvidenceType.USER_FILE}),
@@ -132,6 +133,7 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     "search_qa_examples": "allow_empty_success",
     "jira_search": "allow_empty_success",
     "read_file": "allow_empty_success",
+    "read_image": "allow_empty_success",
     "search_text": "allow_empty_success",
     "excel_document_read": "allow_empty_success",
     "word_document_read": "allow_empty_success",
@@ -264,6 +266,7 @@ class ToolRegistry:
         "jira_get_projects": _jira_get_projects,
         # Register System Executive Tools
         "read_file": read_file,
+        "read_image": read_image,
         "write_file": write_file,
         "search_text": search_text,
         "exec_command": exec_command,

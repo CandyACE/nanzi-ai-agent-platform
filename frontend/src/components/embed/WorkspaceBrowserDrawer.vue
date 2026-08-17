@@ -1977,6 +1977,15 @@ onUnmounted(() => {
                               </template>
                               <button
                                 type="button"
+                                class="text-gray-600 dark:text-gray-300 hover:text-primary transition-colors focus:outline-none whitespace-nowrap"
+                                title="复制文件在工作空间中的路径"
+                                @click="copyItemPath(item.path)"
+                              >
+                                复制路径
+                              </button>
+                              <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
+                              <button
+                                type="button"
                                 class="text-primary hover:text-primary/80 transition-colors focus:outline-none whitespace-nowrap"
                                 title="添加到 AI 会话，随下一条消息发送"
                                 @click="mountItemToSession(item)"
