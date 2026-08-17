@@ -960,6 +960,11 @@ class AssistantAgentRunner(BaseExecutor):
         # 模式 agent_tool_preflight_mode：off=关闭；soft=仅注入强约束便签；hard=便签+首步强制调用。
         preflight_tool_choice = None
         _preflight_user_query = self._extract_last_user_query(history)
+        from app.services.ai.tool_nudge_policy import (
+            is_automatic_delivery_context,
+            looks_like_explicit_user_question_request,
+        )
+
         _preflight_ctx = self._ensure_agent_context()
         grounding_request_decision = self._resolve_grounding_request_decision(_preflight_user_query)
         grounding_enabled = self._grounding_enabled()
@@ -976,12 +981,25 @@ class AssistantAgentRunner(BaseExecutor):
             if grounding_enabled
             else frozenset()
         )
+        interactive_question_allowed = not is_automatic_delivery_context(
+            self.user_info,
+            self.debug_options,
+        )
+        explicit_user_question_requested = (
+            interactive_question_allowed
+            and looks_like_explicit_user_question_request(_preflight_user_query)
+            and any(tool.name == "ask_user_question" for tool in tools)
+        )
         try:
-            if not recall_query_pending:
+            if explicit_user_question_requested or not recall_query_pending:
                 preflight_mode = str(
                     await ConfigService.get("agent_tool_preflight_mode", "soft") or "soft"
                 ).strip().lower()
-                if grounding_requires_tool or preflight_mode not in {"off", "false", "0", "none"}:
+                if (
+                    explicit_user_question_requested
+                    or grounding_requires_tool
+                    or preflight_mode not in {"off", "false", "0", "none"}
+                ):
                     from app.services.ai.tool_nudge_policy import ToolNudge, resolve_tool_nudge
 
                     (
@@ -1013,6 +1031,12 @@ class AssistantAgentRunner(BaseExecutor):
                             turn_intent=self.turn_decision.semantic_intent,
                             request_decision=grounding_request_decision,
                             turn_decision=self.turn_decision,
+                            exclude_tools=(
+                                {"ask_user_question"}
+                                if not interactive_question_allowed
+                                else None
+                            ),
+                            allow_explicit_question=interactive_question_allowed,
                         )
                     if tool_nudge is None and grounding_requires_tool:
                         capability_name = next(

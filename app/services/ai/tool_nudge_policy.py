@@ -38,6 +38,79 @@ _NUDGE_EXCLUDED_TOOLS = frozenset({
     "update_dashboard_context",
 })
 
+# 用户明确要求进入“你问我答/逐步引导”流程时，不应再等待模型自行判断
+# 当前任务是否已经阻塞。该信号只负责提升 ask_user_question，否定表达优先排除。
+_EXPLICIT_USER_QUESTION_REQUEST_TERMS = (
+    "随便问我",
+    "问我几个",
+    "问我一些",
+    "你问我答",
+    "考考我",
+    "测测我",
+    "考察我",
+    "测试我",
+    "测试一下我",
+    "给我做个小测验",
+    "给我做个测验",
+    "我不知道怎么提问",
+    "不知道怎么提问",
+    "不知道怎么问",
+    "你引导我",
+    "引导我提问",
+    "一步一步问我",
+    "一步步问我",
+    "逐个问我",
+    "一个一个问我",
+    "请你问我",
+    "你来问我",
+    "问我吧",
+    "向我提问",
+    "请向我提问",
+    "提问我",
+    "对我提问",
+    "请开始提问",
+    "开始提问",
+    "出题考我",
+    "问答互动",
+    "采访我",
+    "访谈我",
+    "让我做个小测验",
+    "让我做个测验",
+    "先问我",
+    "通过提问了解我",
+    "通过提问了解一下我的",
+    "先了解一下我的需求",
+    "先收集我的需求",
+    "需求访谈",
+    "让我回答",
+    "askmeafewquestions",
+    "askmequestions",
+    "quizme",
+    "interviewme",
+    "youaskianswer",
+)
+
+_EXPLICIT_USER_QUESTION_NEGATIONS = (
+    "不要问我",
+    "不用问我",
+    "别问我",
+    "不要提问",
+    "不用提问",
+    "无需提问",
+    "不需要提问",
+    "直接回答",
+    "直接给我答案",
+)
+
+_NON_INTERACTIVE_CONTEXT_MARKERS = (
+    "【自动化指令",
+    "quick_suggestions_forbidden=true",
+    "后台自动任务",
+    "定时任务",
+    "订阅任务",
+    "taskcenter自动任务",
+)
+
 # 计算相关度时剔除的高频泛化片段（出现在问题里但无区分度）。
 _STOP_FRAGMENTS = frozenset({
     "帮我", "帮忙", "一下", "一个", "请问", "可以", "怎么", "如何", "什么", "哪些",
@@ -51,6 +124,53 @@ _ALNUM_TOKEN = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{1,}")
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").lower())
+
+
+def looks_like_explicit_user_question_request(user_query: str) -> bool:
+    """识别用户是否明确要求进入交互式提问流程。
+
+    这是确定性工具促发信号，不替代模型对问题内容和选项的生成。
+    “列出几个问题”属于内容生成，不等于“问我几个问题”，因此不在正向词表中。
+    """
+    query = _normalize(user_query)
+    if not query or "【用户回答】" in query:
+        return False
+    if _contains_any(query, _NON_INTERACTIVE_CONTEXT_MARKERS):
+        return False
+    if _contains_any(query, _EXPLICIT_USER_QUESTION_NEGATIONS):
+        return False
+    if _contains_any(query, _EXPLICIT_USER_QUESTION_REQUEST_TERMS):
+        return True
+    return (
+        "提问" in query
+        and _contains_any(query, ("我", "用户"))
+        and _contains_any(query, ("先", "逐个", "一步", "引导", "通过"))
+    )
+
+
+def is_automatic_delivery_context(
+    user_info: Optional[Mapping[str, Any]] = None,
+    debug_options: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """识别无人值守交付上下文，避免主动提问卡等待不存在的用户。"""
+    def enabled(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    for context in (user_info, debug_options):
+        if not isinstance(context, Mapping):
+            continue
+        if any(
+            enabled(context.get(key))
+            for key in (
+                "quick_suggestions_forbidden",
+                "is_scheduled_task",
+                "is_subscription_task",
+            )
+        ):
+            return True
+    return False
 
 
 def _query_signals(query: str) -> Set[str]:
@@ -150,6 +270,37 @@ class ToolNudge:
     @property
     def should_force_first_call(self) -> bool:
         return self.force_first_call
+
+
+def _resolve_explicit_user_question_nudge(
+    query: str,
+    tools: List[Any],
+) -> Optional[ToolNudge]:
+    """为用户明确要求的互动提问生成首步强促发。"""
+    if not looks_like_explicit_user_question_request(query):
+        return None
+    question_tool = next(
+        (
+            tool
+            for tool in (tools or [])
+            if str(getattr(tool, "name", "") or "").strip()
+            == "ask_user_question"
+        ),
+        None,
+    )
+    if question_tool is None:
+        return None
+    return ToolNudge(
+        tool_name="ask_user_question",
+        score=1.0,
+        message=(
+            "【本轮互动提问】用户明确要求互动式提问，用于互动、引导或测验。"
+            "必须优先调用 ask_user_question，生成一个具体问题和 2-12 个清晰选项；"
+            "本轮调用后立即停止，等待用户回答。不要把问题列表作为普通文字直接输出。"
+        ),
+        force_first_call=True,
+        metadata=resolve_tool_metadata(question_tool),
+    )
 
 
 def _attach_tool_metadata(
@@ -517,6 +668,7 @@ def resolve_tool_nudge(
     request_decision: Optional[RequestDecision] = None,
     turn_decision: Optional[TurnDecision] = None,
     tool_metadata: Optional[Mapping[str, ToolMetadata]] = None,
+    allow_explicit_question: bool = True,
 ) -> Optional[ToolNudge]:
     """解析本轮是否需要工具促发；返回相关度最高的一条便签或 None。
 
@@ -528,8 +680,17 @@ def resolve_tool_nudge(
     ``sub_agent_targets_by_capability`` 仅为兼容旧调用方，等价于单元素候选。
     """
     query = (user_query or "").strip()
-    if not query or not should_consider_tool_nudge(query):
+    if not query:
         return None
+
+    if allow_explicit_question:
+        explicit_question_nudge = _resolve_explicit_user_question_nudge(query, tools)
+        if explicit_question_nudge is not None:
+            return explicit_question_nudge
+
+    if not should_consider_tool_nudge(query):
+        return None
+
     if request_decision is None and turn_decision is not None:
         request_decision = turn_decision.to_request_decision()
     if request_decision is None:

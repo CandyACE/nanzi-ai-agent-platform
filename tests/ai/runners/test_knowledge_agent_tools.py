@@ -116,3 +116,39 @@ async def test_resolve_knowledge_tools_keeps_all_implicit_tools():
     get_runtime_tool.assert_not_awaited()
     memory_tool = next(tool for tool in tools if tool.name == "memory_search")
     assert memory_tool.evidence_types == frozenset({EvidenceType.CONVERSATION_MEMORY})
+
+
+def test_knowledge_runner_resolves_explicit_interactive_question_nudge():
+    question_tool = MagicMock()
+    question_tool.name = "ask_user_question"
+    question_tool.description = "向用户展示选项提问并等待回答"
+
+    nudge = KnowledgeAgentRunner._resolve_explicit_question_nudge(
+        "随便问我几个问题",
+        [question_tool],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "ask_user_question"
+    assert nudge.should_force_first_call is True
+
+
+def test_knowledge_runner_skips_explicit_question_nudge_for_question_listing():
+    question_tool = MagicMock()
+    question_tool.name = "ask_user_question"
+
+    assert KnowledgeAgentRunner._resolve_explicit_question_nudge(
+        "给我列几个问题",
+        [question_tool],
+    ) is None
+
+
+def test_knowledge_runner_skips_explicit_question_nudge_for_automatic_delivery():
+    question_tool = MagicMock()
+    question_tool.name = "ask_user_question"
+
+    assert KnowledgeAgentRunner._resolve_explicit_question_nudge(
+        "考考我",
+        [question_tool],
+        allow_interactive_question=False,
+    ) is None

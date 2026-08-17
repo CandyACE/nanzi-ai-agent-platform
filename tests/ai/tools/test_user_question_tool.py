@@ -167,6 +167,15 @@ def test_user_question_receipt_parser_and_prompt_guidance():
     assert "cancelled=true" in AgentServicePrompts._PLATFORM_USER_QUESTION_SECTION
 
 
+def test_user_question_tool_and_prompt_support_explicit_interactive_requests():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+    from app.services.ai.tools.user_question_tools import ask_user_question
+
+    assert "明确要求互动式提问" in ask_user_question.description
+    assert "用户明确要求提问" in AgentServicePrompts._PLATFORM_USER_QUESTION_SECTION
+    assert "列出问题" in AgentServicePrompts._PLATFORM_USER_QUESTION_SECTION
+
+
 def test_user_question_event_is_an_execution_interrupt():
     from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk
 

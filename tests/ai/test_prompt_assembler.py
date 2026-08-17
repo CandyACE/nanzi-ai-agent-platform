@@ -214,6 +214,14 @@ def test_interactive_prompt_keeps_inspirational_quick_suggestions_by_default():
     assert "quick_suggestions_forbidden=true" not in assembled.full_text
 
 
+def test_platform_prompt_prioritizes_explicit_question_requests():
+    assembled = assemble_system_prompt(_params())
+
+    assert "用户明确要求提问" in assembled.full_text
+    assert "主动互动模式" in assembled.full_text
+    assert "列出问题" in assembled.full_text
+
+
 def test_automatic_delivery_prompt_forbids_quick_suggestions():
     assembled = assemble_system_prompt(_params(quick_suggestions_forbidden=True))
 

@@ -4,6 +4,8 @@ import pytest
 
 from app.services.ai.tool_nudge_policy import (
     STRONG_FORCE_SCORE,
+    is_automatic_delivery_context,
+    looks_like_explicit_user_question_request,
     resolve_tool_nudge,
     should_consider_tool_nudge,
 )
@@ -77,6 +79,96 @@ def test_plain_chat_does_not_nudge():
     ]
     nudge = resolve_tool_nudge("帮我把这段话润色一下", tools)
     assert nudge is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "随便问我几个问题",
+        "考考我",
+        "测测我",
+        "请开始提问",
+        "出题考我",
+        "ask me a few questions",
+        "请你问我几个问题",
+        "采访我一下，帮我梳理需求",
+        "我不知道怎么提问，你引导我",
+        "先问我几个问题再帮我规划",
+        "一个一个问我，不要一次问完",
+        "通过提问了解一下我的需求",
+    ],
+)
+def test_explicit_interactive_question_requests_are_detected(query):
+    assert looks_like_explicit_user_question_request(query) is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "给我列几个问题",
+        "不要问我，直接回答",
+        "不用提问，直接给结论",
+        "【用户回答】\ninteraction_type: question\nquestion_id: uq_1",
+    ],
+)
+def test_question_listing_negation_and_receipts_are_not_interactive_requests(query):
+    assert looks_like_explicit_user_question_request(query) is False
+
+
+def test_explicit_interactive_request_forces_ask_user_question_when_tool_is_available():
+    nudge = resolve_tool_nudge(
+        "随便问我几个问题",
+        [_tool("ask_user_question", "向用户展示选项提问并等待回答")],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "ask_user_question"
+    assert nudge.score == 1.0
+    assert nudge.should_force_first_call is True
+    assert "明确要求互动式提问" in nudge.message
+
+
+def test_short_explicit_interactive_request_bypasses_generic_nudge_length_gate():
+    nudge = resolve_tool_nudge(
+        "考考我",
+        [_tool("ask_user_question", "向用户展示选项提问并等待回答")],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "ask_user_question"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "【自动化指令】定时任务：随便问我几个问题",
+        "后台自动任务：考考我",
+        "quick_suggestions_forbidden=true；随便问我几个问题",
+        "【自动化指令任务内容：考考我",
+        "TaskCenter 自动任务：随便问我几个问题",
+    ],
+)
+def test_automatic_context_does_not_trigger_interactive_question(query):
+    assert resolve_tool_nudge(
+        query,
+        [_tool("ask_user_question", "向用户展示选项提问并等待回答")],
+    ) is None
+
+
+def test_automatic_delivery_flags_disable_explicit_question_nudge():
+    tools = [_tool("ask_user_question", "向用户展示选项提问并等待回答")]
+
+    assert is_automatic_delivery_context({"is_scheduled_task": True}) is True
+    assert resolve_tool_nudge(
+        "考考我",
+        tools,
+        exclude_tools={"ask_user_question"},
+        allow_explicit_question=False,
+    ) is None
+
+
+def test_explicit_interactive_request_does_not_nudge_without_question_tool():
+    assert resolve_tool_nudge("随便问我几个问题", [_tool("Bash", "执行命令")]) is None
 
 
 def test_sub_agent_call_nudge_for_data_query():

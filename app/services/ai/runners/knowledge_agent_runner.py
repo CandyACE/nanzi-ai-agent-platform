@@ -150,6 +150,33 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
     def _runtime_agent_name(self) -> str:
         return self.config.agent_name or "KnowledgeAgent"
 
+    @staticmethod
+    def _resolve_explicit_question_nudge(
+        user_question: str,
+        tools: List[RuntimeToolSpec],
+        *,
+        allow_interactive_question: bool = True,
+    ):
+        """解析知识库路径的主动互动提问信号。"""
+        from app.services.ai.tool_nudge_policy import (
+            looks_like_explicit_user_question_request,
+            resolve_tool_nudge,
+        )
+
+        if (
+            not allow_interactive_question
+            or not looks_like_explicit_user_question_request(user_question)
+        ):
+            return None
+        nudge = resolve_tool_nudge(
+            user_question,
+            tools,
+            allow_explicit_question=allow_interactive_question,
+        )
+        if nudge is None or nudge.tool_name != "ask_user_question":
+            return None
+        return nudge
+
     async def _resolve_knowledge_tools(self) -> List[RuntimeToolSpec]:
         configured_tools = self.config.tools or []
         system_tools = ToolRegistry.get_system_implicit_tools()
@@ -624,6 +651,37 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         # 强制调用约束时触发 AgentScope ToolNotFoundError。
         react_tools = tools
 
+        initial_tool_choice = None
+        from app.services.ai.tool_nudge_policy import is_automatic_delivery_context
+
+        question_nudge = self._resolve_explicit_question_nudge(
+            user_question,
+            react_tools,
+            allow_interactive_question=not is_automatic_delivery_context(
+                self.user_info,
+                self.debug_options,
+            ),
+        )
+        if question_nudge is not None:
+            native_system_content = (
+                f"{question_nudge.message}\n\n{native_system_content}"
+            )
+            initial_tool_choice = self._build_preflight_tool_choice(
+                question_nudge.recommended_force_mode()
+            )
+            yield {
+                "type": "log",
+                "id": f"tool_preflight_{uuid.uuid4().hex[:8]}",
+                "title": "工具预检：本轮优先调用工具",
+                "details": (
+                    "用户明确要求互动式提问，已要求模型首步调用 ask_user_question。"
+                ),
+                "status": "success",
+                "category": "tool_preflight",
+                "tool_name": "ask_user_question",
+                "force_first_call": initial_tool_choice is not None,
+            }
+
         if not all(isinstance(tool, RuntimeToolSpec) for tool in react_tools):
             yield {
                 "type": "error",
@@ -660,13 +718,17 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             chunks_buffer = []
             full_text = ""
             
-            async for chunk in self._execute_with_agentscope_native_agent(
-                native_model=native_model,
-                tools=react_tools,
-                system_content=current_system_content,
-                runtime_messages=current_messages,
-                max_steps=max_steps,
-            ):
+            execute_kwargs = {
+                "native_model": native_model,
+                "tools": react_tools,
+                "system_content": current_system_content,
+                "runtime_messages": current_messages,
+                "max_steps": max_steps,
+            }
+            if initial_tool_choice is not None:
+                execute_kwargs["initial_tool_choice"] = initial_tool_choice
+
+            async for chunk in self._execute_with_agentscope_native_agent(**execute_kwargs):
                 if "content" in chunk:
                     content = str(chunk.get("content") or "")
                     if self._valid_citation_ids:
