@@ -6,6 +6,7 @@ from typing import Any
 
 USER_QUESTION_TOOL_NAME = "ask_user_question"
 USER_QUESTION_MESSAGE_PREFIX = "【用户回答】"
+CHATBI_DATASET_SELECTION_PURPOSE = "chatbi_dataset_selection"
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
@@ -58,8 +59,37 @@ def build_user_question_sse(
         "is_multi_select": bool(payload.get("is_multi_select", False)),
         "allow_custom_input": bool(payload.get("allow_custom_input", True)),
         "context": str(payload.get("context") or ""),
+        "purpose": str(payload.get("purpose") or ""),
         "status": "pending",
     }
+
+
+def metadata_dataset_ids_from_user_question_record(record: Any) -> list[str] | None:
+    """只从服务端已校验的数据集选择卡回执恢复 metadata scope。"""
+    if not isinstance(record, dict):
+        return None
+    if record.get("status") != "submitted":
+        return None
+    if str(record.get("purpose") or "").strip() != CHATBI_DATASET_SELECTION_PURPOSE:
+        return None
+    selected = record.get("selected_option_ids")
+    options = record.get("options")
+    if not isinstance(selected, list) or not isinstance(options, list) or not selected:
+        return None
+    allowed = {
+        str(option.get("id") or "").strip()
+        for option in options
+        if isinstance(option, dict) and str(option.get("id") or "").strip()
+    }
+    normalized: list[str] = []
+    for item in selected:
+        value = str(item or "").strip()
+        if value not in allowed or not value.isdigit() or int(value) <= 0:
+            return None
+        canonical = str(int(value))
+        if canonical not in normalized:
+            normalized.append(canonical)
+    return normalized or None
 
 
 def build_user_question_receipt(
@@ -140,6 +170,7 @@ async def persist_user_question_event(
             "is_multi_select": bool(event.get("is_multi_select", False)),
             "allow_custom_input": bool(event.get("allow_custom_input", True)),
             "context": str(event.get("context") or ""),
+            "purpose": str(event.get("purpose") or ""),
             "tool_call_id": str(event.get("tool_call_id") or ""),
         },
     )

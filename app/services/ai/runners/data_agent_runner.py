@@ -952,6 +952,11 @@ class DataAgentRunner(BaseExecutor):
         return detect_schema_ambiguity(tool_output)
 
     @staticmethod
+    def _extract_schema_ambiguity_candidates(tool_output: Any) -> list[dict[str, str]]:
+        from app.services.schema_chunk_format import extract_schema_ambiguity_candidates
+        return extract_schema_ambiguity_candidates(tool_output)
+
+    @staticmethod
     def _is_diagnostic_sql(sql: str) -> bool:
         return chatbi_sql_gates.is_diagnostic_sql(sql)
 

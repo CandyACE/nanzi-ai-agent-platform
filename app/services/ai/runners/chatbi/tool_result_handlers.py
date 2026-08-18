@@ -246,6 +246,11 @@ def apply_schema_tool_result(runner: Any, state: DataRunState, output: Any) -> N
     state.schema_miss = runner._is_no_relevant_schema(output)
     state.schema_needs_refinement = runner._schema_needs_refinement(output, similarity_threshold=threshold)
     state.schema_ambiguous, state.schema_ambiguous_reason = runner._detect_schema_ambiguity(output)
+    state.schema_ambiguity_candidates = (
+        runner._extract_schema_ambiguity_candidates(output)
+        if state.schema_ambiguous
+        else []
+    )
     weak_or_miss = state.schema_miss or state.schema_needs_refinement
     if weak_or_miss:
         state.schema_miss_count += 1

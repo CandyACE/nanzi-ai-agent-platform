@@ -33,6 +33,7 @@ class DataRunState:
     schema_needs_refinement: bool = False
     schema_ambiguous: bool = False
     schema_ambiguous_reason: str = ""
+    schema_ambiguity_candidates: list[dict[str, str]] = field(default_factory=list)
     no_authorized_schema: bool = False
     empty_sql_result: bool = False
     empty_sql_reason: str = ""

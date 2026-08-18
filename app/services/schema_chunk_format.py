@@ -13,6 +13,7 @@ _SCHEMA_HEADER_RE = re.compile(
     r"(?:\s+dataset=([^\s]+))?"
     r"(?:\s+table=([^\s]+))?"
     r"(?:\s+score=([0-9]+(?:\.[0-9]+)?))?"
+    r"(?:\s+dataset_id=([^\s]+))?"
     r"\s*---",
     re.IGNORECASE,
 )
@@ -74,6 +75,7 @@ def format_schema_chunk(
     chunk_type: Optional[str] = None,
     table_name: Optional[str] = None,
     dataset: Optional[str] = None,
+    dataset_id: Optional[Any] = None,
 ) -> str:
     """将单段 YAML 正文包装为带分隔头的 Schema 检索块。"""
     body = str(content or "").strip()
@@ -95,6 +97,8 @@ def format_schema_chunk(
             parts.append(f"score={float(score):.2f}")
         except (TypeError, ValueError):
             pass
+    if dataset_id not in (None, ""):
+        parts.append(f"dataset_id={str(dataset_id).strip()}")
     header = " ".join(parts) + " ---"
     return f"{header}\n{body}"
 
@@ -115,6 +119,11 @@ def format_schema_hits(hits: List[Dict[str, Any]]) -> str:
             content,
             score=score,
             doc_name=str(hit.get("doc_name") or ""),
+            dataset_id=(
+                hit.get("metadata_dataset_id")
+                or hit.get("dataset_id")
+                or hit.get("rag_dataset_id")
+            ),
         )
         if formatted:
             chunks.append(formatted)
@@ -184,6 +193,70 @@ def _candidate_key(chunk_type: str, dataset: Optional[str], table: Optional[str]
     return source.strip().lower()
 
 
+def _new_schema_dataset_candidates(text: str) -> List[Dict[str, Any]]:
+    """按数据集聚合新格式 Schema 块，避免同一数据集多表重复算候选。"""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for match in _SCHEMA_HEADER_RE.finditer(text):
+        try:
+            score = float(match.group(5) or 0)
+        except ValueError:
+            continue
+        chunk_type = match.group(2) or "table"
+        dataset = (match.group(3) or "").strip()
+        table = (match.group(4) or "").strip()
+        dataset_id = (match.group(6) or "").strip()
+        source = f"schema_{match.group(1)}"
+        identity = dataset_id or dataset.casefold() or _candidate_key(chunk_type, dataset, table, source)
+        if not identity:
+            continue
+        item = grouped.setdefault(
+            identity,
+            {
+                "id": dataset_id or identity,
+                "label": dataset or dataset_id or table or source,
+                "tables": [],
+                "score": 0.0,
+            },
+        )
+        item["score"] = max(float(item["score"]), score)
+        if table and table not in item["tables"]:
+            item["tables"].append(table)
+
+    candidates = list(grouped.values())
+    candidates.sort(key=lambda item: float(item["score"]), reverse=True)
+    if not candidates or float(candidates[0]["score"]) < 0.75:
+        return []
+    top_score = float(candidates[0]["score"])
+    close = [
+        item
+        for item in candidates
+        if float(item["score"]) >= 0.75 and top_score - float(item["score"]) <= 0.08
+    ]
+    if len(close) < 2:
+        return []
+    for item in close:
+        tables = item["tables"]
+        table_text = f"相关表：{', '.join(tables[:4])}" if tables else ""
+        score_text = f"最高相关度：{float(item['score']):.2f}"
+        item["description"] = "；".join(part for part in (table_text, score_text) if part)
+    return close
+
+
+def extract_schema_ambiguity_candidates(tool_output: Any) -> List[Dict[str, str]]:
+    """提取可用于 ask_user_question 单选卡的数据集候选。"""
+    text = str(tool_output or "").strip()
+    if not text:
+        return []
+    return [
+        {
+            "id": str(item["id"]),
+            "label": str(item["label"]),
+            "description": str(item.get("description") or ""),
+        }
+        for item in _new_schema_dataset_candidates(text)
+    ]
+
+
 def detect_schema_ambiguity(tool_output: Any) -> Tuple[bool, str]:
     """
     检测多个高置信度 Schema 候选是否分数接近且指向不同对象。
@@ -193,19 +266,10 @@ def detect_schema_ambiguity(tool_output: Any) -> Tuple[bool, str]:
     if not text:
         return False, ""
 
-    candidates: List[Tuple[float, str]] = []
-
-    for match in _SCHEMA_HEADER_RE.finditer(text):
-        try:
-            score = float(match.group(5) or 0)
-        except ValueError:
-            continue
-        chunk_type = match.group(2) or "table"
-        dataset = match.group(3)
-        table = match.group(4)
-        key = _candidate_key(chunk_type, dataset, table, f"schema_{match.group(1)}")
-        if key:
-            candidates.append((score, key))
+    candidates: List[Tuple[float, str]] = [
+        (float(item["score"]), str(item["id"]))
+        for item in _new_schema_dataset_candidates(text)
+    ]
 
     for score_text, source in _LEGACY_BLOCK_RE.findall(text):
         try:

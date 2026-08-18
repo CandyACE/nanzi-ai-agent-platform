@@ -639,6 +639,7 @@ class AgentService:
                 )
                 from app.services.ai.user_question import (
                     is_user_question_receipt_message,
+                    metadata_dataset_ids_from_user_question_record,
                     parse_user_question_receipt,
                 )
 
@@ -656,7 +657,7 @@ class AgentService:
 
                     try:
                         question_store = await UserQuestionStore.from_runtime()
-                        await question_store.submit_answer(
+                        submitted_question = await question_store.submit_answer(
                             user_id=lane_user_id or "anonymous",
                             conversation_id=conversation_id,
                             question_id=receipt["question_id"],
@@ -665,6 +666,15 @@ class AgentService:
                             cancelled=receipt["cancelled"],
                         )
                         user_question_cancelled = bool(receipt["cancelled"])
+                        restored_dataset_ids = metadata_dataset_ids_from_user_question_record(
+                            submitted_question
+                        )
+                        if restored_dataset_ids:
+                            metadata_dataset_ids = restored_dataset_ids
+                            debug_options["metadata_dataset_scope"] = {
+                                "source": "user_question",
+                                "request_ids": restored_dataset_ids,
+                            }
                     except (PermissionError, ValueError) as exc:
                         yield {
                             "type": "error",

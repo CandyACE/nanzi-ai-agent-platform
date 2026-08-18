@@ -11,6 +11,7 @@ from app.services.ai.user_question import (
     USER_QUESTION_TOOL_NAME,
     build_user_question_sse,
     build_user_question_receipt,
+    metadata_dataset_ids_from_user_question_record,
     parse_user_question_receipt,
     parse_user_question_tool_output,
 )
@@ -59,6 +60,17 @@ async def test_ask_user_question_returns_structured_awaiting_user_payload():
 
 
 @pytest.mark.asyncio
+async def test_ask_user_question_preserves_controlled_purpose():
+    arguments = _question_args()
+    arguments["purpose"] = "chatbi_dataset_selection"
+
+    result = await ask_user_question.ainvoke(arguments)
+    payload = json.loads(result)
+
+    assert payload["purpose"] == "chatbi_dataset_selection"
+
+
+@pytest.mark.asyncio
 async def test_ask_user_question_rejects_invalid_options():
     result = await ask_user_question.ainvoke(
         {
@@ -91,6 +103,7 @@ def test_question_payload_builds_sse_event_and_validated_receipt():
             "is_multi_select": False,
             "allow_custom_input": True,
             "context": "当前数据集包含过去一年的交易明细",
+            "purpose": "chatbi_dataset_selection",
         },
         ensure_ascii=False,
     )
@@ -108,6 +121,7 @@ def test_question_payload_builds_sse_event_and_validated_receipt():
     assert event["type"] == "user_question"
     assert event["question_id"] == "uq_test"
     assert event["tool_call_id"] == "call_1"
+    assert event["purpose"] == "chatbi_dataset_selection"
 
     receipt = build_user_question_receipt(
         question_id="uq_test",
@@ -180,3 +194,16 @@ def test_user_question_event_is_an_execution_interrupt():
     from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk
 
     assert is_interrupt_sse_chunk({"type": "user_question", "status": "pending"})
+
+
+def test_dataset_question_record_can_restore_only_validated_numeric_ids():
+    record = {
+        "status": "submitted",
+        "purpose": "chatbi_dataset_selection",
+        "selected_option_ids": ["12"],
+        "options": [{"id": "12", "label": "门禁数据"}],
+    }
+    assert metadata_dataset_ids_from_user_question_record(record) == ["12"]
+    assert metadata_dataset_ids_from_user_question_record({**record, "purpose": "other"}) is None
+    assert metadata_dataset_ids_from_user_question_record({**record, "selected_option_ids": ["ds-name"]}) is None
+    assert metadata_dataset_ids_from_user_question_record({**record, "status": "cancelled"}) is None

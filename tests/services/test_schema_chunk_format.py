@@ -3,6 +3,7 @@ from app.services.schema_chunk_format import (
     count_schema_hits,
     detect_schema_ambiguity,
     estimate_text_tokens,
+    extract_schema_ambiguity_candidates,
     extract_schema_confidence_values,
     format_schema_chunk,
     format_schema_hit_summary,
@@ -53,17 +54,20 @@ def test_format_schema_hits_joins_chunks():
             "content": "table_name: t1\ndataset: ds1\n",
             "similarity": 0.9,
             "doc_name": "ds1.t1.txt",
+            "metadata_dataset_id": 1,
         },
         {
             "content": "table_name: t2\ndataset: ds1\n",
             "similarity": 0.8,
             "doc_name": "ds1.t2.txt",
+            "metadata_dataset_id": 1,
         },
     ])
     assert "--- [Schema:1]" in text
     assert "--- [Schema:2]" in text
     assert "score=0.90" in text
     assert "score=0.80" in text
+    assert "dataset_id=1" in text
 
 
 def test_extract_schema_confidence_values_new_and_legacy():
@@ -85,6 +89,33 @@ def test_detect_schema_ambiguity_new_format():
     ambiguous, reason = detect_schema_ambiguity(text)
     assert ambiguous is True
     assert "多个高置信度" in reason
+
+
+def test_same_dataset_multiple_tables_are_not_ambiguous():
+    text = (
+        "--- [Schema:1] type=table dataset=ds1 table=access_log score=0.88 dataset_id=1 ---\n"
+        "table_name: access_log\n"
+        "\n"
+        "--- [Schema:2] type=table dataset=ds1 table=audit_log score=0.86 dataset_id=1 ---\n"
+        "table_name: audit_log\n"
+    )
+    ambiguous, reason = detect_schema_ambiguity(text)
+    assert ambiguous is False
+    assert reason == ""
+
+
+def test_extract_schema_ambiguity_candidates_groups_by_dataset():
+    text = (
+        "--- [Schema:1] type=table dataset=门禁数据 table=entrance_log score=0.88 dataset_id=1 ---\n"
+        "table_name: entrance_log\n"
+        "\n"
+        "--- [Schema:2] type=table dataset=审计数据 table=audit_log score=0.86 dataset_id=2 ---\n"
+        "table_name: audit_log\n"
+    )
+    candidates = extract_schema_ambiguity_candidates(text)
+    assert [item["id"] for item in candidates] == ["1", "2"]
+    assert candidates[0]["label"] == "门禁数据"
+    assert "entrance_log" in candidates[0]["description"]
 
 
 def test_format_schema_hit_summary():
