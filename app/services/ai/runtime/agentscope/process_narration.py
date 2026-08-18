@@ -105,7 +105,7 @@ def accumulate_visible_answer(full: str, chunk: Dict[str, Any]) -> str:
     chunk_type = str(chunk.get("type") or "")
     if chunk_type == "retraction":
         return str(chunk.get("content") or "")
-    if chunk_type in {"process_narration_promote", "answer_delta"}:
+    if chunk_type in {"process_narration_promote", "answer_delta", "error", "external_execution_required"}:
         return full + str(chunk.get("content") or "")
     if chunk_type:
         return full

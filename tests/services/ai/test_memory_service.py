@@ -179,3 +179,24 @@ async def test_memory_service_update_last_user_message_content(mock_redis):
     assert stored["role"] == "user"
     assert "<vision_sidecar>" in stored["content"]
     assert stored["files"] == [{"url": "b.png"}]
+
+
+@pytest.mark.asyncio
+async def test_memory_service_truncate_history(mock_redis):
+    service = MemoryService()
+    mock_redis.ltrim = AsyncMock(return_value=True)
+    mock_redis.expire = AsyncMock(return_value=True)
+    mock_redis.delete = AsyncMock(return_value=1)
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+
+        # 截断到保留 2 条
+        success = await service.truncate_history("u1", "c1", 2)
+        assert success is True
+        mock_redis.ltrim.assert_awaited_once_with("conversation:u1:c1:history", 0, 1)
+
+        # 截断到 <= 0 时直接删除
+        success_del = await service.truncate_history("u1", "c1", 0)
+        assert success_del is True
+        mock_redis.delete.assert_awaited_with("conversation:u1:c1:history")

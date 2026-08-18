@@ -82,6 +82,23 @@ async def test_web_search_baidu_http_no_results():
 
     assert "未能检索到任何相关结果" in result
     assert "web_search_baidu" in result
+    assert "browser_open" in result
+    assert "https://www.baidu.com/s?wd=" in result
+    assert "不存在的词" in result or "%E4%B8%8D%E5%AD%98%E5%9C%A8%E7%9A%84%E8%AF%8D" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_baidu_http_exception_offers_shared_browser_fallback():
+    with patch(
+        "app.services.ai.tools.advanced_auxiliary_tools.web_search_baidu_http_raw",
+        new=AsyncMock(side_effect=RuntimeError("network blocked")),
+    ):
+        result = await web_search_baidu_http.ainvoke(
+            {"query": "网络异常查询", "max_results": 2}
+        )
+
+    assert "browser_open" in result
+    assert "https://www.baidu.com/s?wd=" in result
 
 
 @pytest.mark.asyncio
