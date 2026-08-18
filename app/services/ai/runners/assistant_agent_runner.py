@@ -373,6 +373,8 @@ class AssistantAgentRunner(BaseExecutor):
     def _resolve_grounding_request_decision(self, user_query: str) -> RequestDecision:
         if self.turn_decision is not None:
             decision = self.turn_decision.to_request_decision()
+            if getattr(decision, "knowledge_catalog_status", None):
+                return decision
             if decision.source not in {RequestSource.UNKNOWN, RequestSource.GENERAL}:
                 return decision
             inferred = resolve_request_decision(
@@ -784,6 +786,7 @@ class AssistantAgentRunner(BaseExecutor):
 
         # 1. Prepare LLM
         tools = await self._resolve_runtime_tools_from_config()
+        tools = self._apply_knowledge_fallback_budget(tools)
         for event in self._tool_resolution_log_events():
             yield event
 
@@ -1900,6 +1903,7 @@ class AssistantAgentRunner(BaseExecutor):
 
         ctx = pending.snapshot.runner_context
         tools = await self._resolve_runtime_tools_from_config()
+        tools = self._apply_knowledge_fallback_budget(tools)
         native_model_handle = await AgentConfigProvider.get_configured_llm(
             streaming=True,
             config=self.config,
@@ -1951,6 +1955,42 @@ class AssistantAgentRunner(BaseExecutor):
         )
         self._last_tool_resolution = resolved
         return list(resolved.specs)
+
+    def _apply_knowledge_fallback_budget(
+        self,
+        tools: List[RuntimeToolSpec],
+    ) -> List[RuntimeToolSpec]:
+        """对目录低置信兜底路径的知识库工具施加单轮一次调用预算。"""
+        if not bool(getattr(self.turn_decision, "knowledge_fallback_allowed", False)):
+            return tools
+
+        limited: List[RuntimeToolSpec] = []
+        used = False
+        for tool in tools or []:
+            if tool.name != "search_knowledge_base":
+                limited.append(tool)
+                continue
+
+            original_callable = tool.callable
+
+            async def invoke_once(
+                _original_callable=original_callable,
+                **kwargs: Any,
+            ) -> Any:
+                nonlocal used
+                if used:
+                    return (
+                        '{"status":"error","message":"本轮只允许调用一次 '
+                        'search_knowledge_base，已跳过重复检索。"}'
+                    )
+                used = True
+                result = _original_callable(**kwargs)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+
+            limited.append(replace(tool, callable=invoke_once))
+        return limited
 
     @staticmethod
     def _record_external_execution_evidence(

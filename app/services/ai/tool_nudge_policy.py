@@ -753,6 +753,34 @@ def resolve_tool_nudge(
     if current_user_profile_nudge is not None:
         return _attach_tool_metadata(current_user_profile_nudge, tools, tool_metadata)
 
+    # 目录未给出高置信匹配时，允许主助手做一次低成本直接检索兜底；
+    # 该路径必须先于知识库 sub_agent nudge，避免候选信号升级为委派。
+    if request_decision.knowledge_fallback_allowed:
+        direct_knowledge_tool = next(
+            (
+                tool
+                for tool in (tools or [])
+                if str(getattr(tool, "name", "") or "").strip()
+                == "search_knowledge_base"
+            ),
+            None,
+        )
+        if direct_knowledge_tool is not None:
+            return ToolNudge(
+                tool_name="search_knowledge_base",
+                score=0.9,
+                message=(
+                    "【知识库低置信兜底】授权目录没有确认本问题对应的知识库，"
+                    "本轮只允许直接调用一次 search_knowledge_base 试探；"
+                    "不要调用 sub_agent_call，也不要在本次结果后重复检索。"
+                ),
+                force_first_call=True,
+                metadata=resolve_tool_metadata(
+                    direct_knowledge_tool,
+                    metadata_by_name=tool_metadata,
+                ),
+            )
+
     # data_query is a ChatBI capability in this platform, not a generic
     # "anything that looks like data" capability.  Only allow it when the
     # canonical source decision explicitly permits the ChatBI route.  In

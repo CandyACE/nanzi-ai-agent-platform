@@ -55,8 +55,11 @@ def _plain_user_text(content: str) -> str:
     """历史轮次仅保留用户可见纯文字，剥离附件系统指令块，但保留图片旁路解析。"""
     raw = content or ""
     sidecar = extract_vision_sidecar_blocks(raw)
-    idx = raw.find(USER_MESSAGE_CONTEXT_DIVIDER)
-    visible = (raw[:idx] if idx != -1 else raw).strip()
+    divider_match = re.search(r"\n*\s*---\s*\n*", raw)
+    if divider_match:
+        visible = raw[:divider_match.start()].strip()
+    else:
+        visible = raw.strip()
     if sidecar and sidecar not in visible:
         return f"{visible}\n\n{sidecar}".strip()
     return visible
@@ -299,7 +302,7 @@ def _compress_markdown_tables(text: str) -> str:
     table_lines = []
 
     def do_compress(tbl: List[str]) -> List[str]:
-        if len(tbl) <= 8:
+        if len(tbl) <= 5:
             return tbl
         header = tbl[:2]
         data = tbl[2:5]

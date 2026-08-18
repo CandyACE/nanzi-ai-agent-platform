@@ -228,6 +228,34 @@ class MemoryService:
             return False
         return False
 
+    async def truncate_history(
+        self,
+        user_id: str,
+        conversation_id: str,
+        keep_count: int,
+    ) -> bool:
+        """
+        Truncate conversation history to keep only the first `keep_count` messages.
+        If keep_count <= 0, deletes the entire history key.
+        """
+        redis = await get_redis()
+        if not redis:
+            logger.warning("[MemoryService] Redis client not available for truncate_history")
+            return False
+        key = self._get_key(user_id, conversation_id)
+        try:
+            if keep_count <= 0:
+                await redis.delete(key)
+                logger.info(f"[MemoryService] Deleted history key: {key}")
+            else:
+                await redis.ltrim(key, 0, keep_count - 1)
+                await redis.expire(key, self.ttl)
+                logger.info(f"[MemoryService] Truncated history key: {key} to {keep_count} items")
+            return True
+        except Exception as e:
+            logger.error(f"[MemoryService] Failed to truncate history for key {key}: {e}")
+            return False
+
     async def get_last_data_result(self, user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve the latest structured SQL result for follow-up analysis/chart requests.

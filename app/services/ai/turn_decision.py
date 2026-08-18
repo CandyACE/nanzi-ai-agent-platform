@@ -124,6 +124,10 @@ class TurnDecision(BaseModel):
     chatbi_evidence_level: str = "none"
     chatbi_reason: Optional[str] = None
     matched_dataset_ids: list[int] = Field(default_factory=list)
+    knowledge_catalog_status: Optional[str] = None
+    knowledge_catalog_match_ids: list[str] = Field(default_factory=list)
+    knowledge_catalog_match_confidence: str = "none"
+    knowledge_fallback_allowed: bool = False
     accessible_resources: Optional[str] = None
     turn_labels: list[str] = Field(default_factory=list)
     relation_to_previous: str = "unknown"
@@ -288,6 +292,23 @@ class TurnDecision(BaseModel):
                 for value in matched_dataset_ids
                 if str(value).strip().lstrip("-").isdigit()
             ],
+            knowledge_catalog_status=_value(
+                getattr(request_decision, "knowledge_catalog_status", None)
+            ),
+            knowledge_catalog_match_ids=[
+                str(value)
+                for value in (
+                    getattr(request_decision, "knowledge_catalog_match_ids", ()) or ()
+                )
+                if str(value).strip()
+            ],
+            knowledge_catalog_match_confidence=_value(
+                getattr(request_decision, "knowledge_catalog_match_confidence", None),
+                "none",
+            ) or "none",
+            knowledge_fallback_allowed=bool(
+                getattr(request_decision, "knowledge_fallback_allowed", False)
+            ),
             turn_labels=[str(value) for value in (turn_labels or [])],
             relation_to_previous=_value(relation_to_previous, "unknown") or "unknown",
             user_action_type=action,
@@ -345,6 +366,10 @@ class TurnDecision(BaseModel):
             chatbi_evidence_level=self.chatbi_evidence_level,
             chatbi_reason=self.chatbi_reason,
             matched_dataset_ids=tuple(self.matched_dataset_ids),
+            knowledge_catalog_status=self.knowledge_catalog_status,
+            knowledge_catalog_match_ids=tuple(self.knowledge_catalog_match_ids),
+            knowledge_catalog_match_confidence=self.knowledge_catalog_match_confidence,
+            knowledge_fallback_allowed=bool(self.knowledge_fallback_allowed),
         )
 
     def trace_payload(
@@ -368,6 +393,10 @@ class TurnDecision(BaseModel):
             "route_source": self.source,
             "capability": self.capability,
             "semantic_intent": self.semantic_intent,
+            "knowledge_catalog_status": self.knowledge_catalog_status,
+            "knowledge_catalog_match_confidence": self.knowledge_catalog_match_confidence,
+            "knowledge_catalog_match_ids": list(self.knowledge_catalog_match_ids),
+            "knowledge_fallback_allowed": bool(self.knowledge_fallback_allowed),
             "evidence": list(self.evidence),
             "stage_timings_ms": timings,
         }

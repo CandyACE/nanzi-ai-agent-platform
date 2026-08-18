@@ -1322,6 +1322,12 @@ interface Message {
   completion_tokens?: number;
 }
 
+const isChatContextMessage = (message: Message): boolean => (
+  !message.isThinking &&
+  (message.role === "user" || message.role === "agent") &&
+  Boolean(message.content || message.files?.length)
+);
+
 // --- Debug Config State ---
 const showHistorySidebar = ref(false);
 const showConfigPanel = ref(true);
@@ -1607,6 +1613,22 @@ const updateSortOrders = async () => {
 const editingMsgId = ref<number | null>(null);
 const editContent = ref("");
 
+const truncateServerHistory = async (keepCount: number): Promise<boolean> => {
+  if (!conversationId.value) return true;
+  try {
+    const response = await axios.post(
+      "/api/v1/chat/history/truncate",
+      { conversation_id: conversationId.value, keep_count: keepCount },
+      { headers: debugAuthHeaders() },
+    );
+    return response.data?.data?.success !== false;
+  } catch (e) {
+    console.warn("Failed to truncate server history before resend", e);
+    showToast("同步会话历史失败，请稍后重试", "error");
+    return false;
+  }
+};
+
 const startEdit = (msg: Message) => {
   editingMsgId.value = msg.id;
   editContent.value = msg.content;
@@ -1626,8 +1648,13 @@ const saveAndResend = async () => {
   const newContent = editContent.value.trim();
   if (!newContent) return; // Don't allow empty
 
+  const remainingMessages = messages.value.slice(0, msgIndex);
+  const keepCount = remainingMessages.filter(isChatContextMessage).length;
+
+  if (!(await truncateServerHistory(keepCount))) return;
+
   // Truncate history: keep up to this message, and remove everything after
-  messages.value = messages.value.slice(0, msgIndex);
+  messages.value = remainingMessages;
 
   // Reset ID and state
   editingMsgId.value = null;
@@ -1649,16 +1676,11 @@ const regenerate = async (agentMsg: Message) => {
   const userMsg = messages.value[idx - 1];
   if (!userMsg || userMsg.role !== 'user') return;
 
-  // Remove this agent message
-  messages.value.splice(idx, 1);
+  const remainingMessages = messages.value.slice(0, idx - 1);
+  const keepCount = remainingMessages.filter(isChatContextMessage).length;
+  if (!(await truncateServerHistory(keepCount))) return;
+  messages.value = remainingMessages;
 
-  // Set user input to previous query and resend
-  // Need to avoid duplicate user message being added in sendMessage, so we manually trigger backend call or adjust sendMessage.
-  // Actually, easiest way: remove agent message, set userInput = userMsg.content, REMOVE userMsg as well (sendMessage adds it back)
-  // OR: Modify sendMessage to accept content and skip adding user msg if needed?
-  // Let's go with: Remove BOTH agent and user message, then sendMessage(userMsg.content)
-
-  messages.value.splice(idx - 1, 1); // Remove user message
   userInput.value = userMsg.content;
   await sendMessage();
 };
@@ -2946,7 +2968,19 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
   return false;
 };
 
+const sendInFlight = ref(false);
+
 const sendMessage = async () => {
+  if (sendInFlight.value) return;
+  sendInFlight.value = true;
+  try {
+    return await sendMessageInternal();
+  } finally {
+    sendInFlight.value = false;
+  }
+};
+
+const sendMessageInternal = async () => {
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
   const content = userInput.value.trim();
@@ -3080,7 +3114,7 @@ const sendMessage = async () => {
     const knowledgeDatasetIds = collectKnowledgeDatasetIds();
     const requestBody: Record<string, unknown> = {
         messages: (() => {
-          const sendable = messages.value.filter((m) => !m.isThinking && (m.content || m.files?.length));
+          const sendable = messages.value.filter(isChatContextMessage);
           const lastUserIdx = sendable.reduce(
             (last, m, i) => (m.role === "user" ? i : last),
             -1
@@ -4889,7 +4923,7 @@ onUnmounted(() => {
         <ChatInput
           ref="chatInputRef"
           v-model="userInput"
-          :is-processing="isProcessing"
+          :is-processing="isProcessing || sendInFlight"
           :show-shortcuts="debugConfig.showShortcuts"
           :slash-commands="slashCommands"
           :allowed-agents="agents"

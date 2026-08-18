@@ -6,10 +6,11 @@ import logging
 from collections.abc import Iterable
 from typing import Any, Optional
 
-from sqlalchemy import select
-
 from app.core.orm import AsyncSessionLocal
-from app.models.knowledge import KnowledgeBaseMetadata
+from app.services.ai.knowledge_catalog import (
+    AuthorizedKnowledgeCatalog,
+    fetch_authorized_knowledge_catalog,
+)
 from app.services.metadata_service import MetadataService
 from app.services.permission_service import PermissionService
 
@@ -157,6 +158,7 @@ async def build_accessible_resource_catalog(
     is_admin: bool = False,
     max_items: int = DEFAULT_MAX_ITEMS,
     max_chars: int = DEFAULT_MAX_CHARS,
+    knowledge_catalog: Optional[AuthorizedKnowledgeCatalog] = None,
 ) -> str:
     """Load and render the current user's authorized resource directory.
 
@@ -174,35 +176,18 @@ async def build_accessible_resource_catalog(
                 is_admin=is_admin,
                 status=1,
             )
-            access = await PermissionService(db).get_knowledge_base_access(
-                int(user_id),
-                user_name,
-            )
-            rows = list(
-                (
-                    await db.execute(
-                        select(KnowledgeBaseMetadata)
-                        .where(KnowledgeBaseMetadata.status != "deleted")
-                        .order_by(KnowledgeBaseMetadata.name.asc())
-                    )
+            if knowledge_catalog is None:
+                knowledge_catalog = await fetch_authorized_knowledge_catalog(
+                    db,
+                    user_id=user_id,
+                    user_name=user_name,
+                    is_admin=is_admin,
+                    permission_service=PermissionService(db),
                 )
-                .scalars()
-                .all()
-            )
-            allowed_ids = access.get("accessible_ids")
-            knowledge_bases = (
-                rows
-                if allowed_ids is None
-                else [
-                    row
-                    for row in rows
-                    if str(getattr(row, "ragflow_dataset_id", "") or "") in allowed_ids
-                ]
-            )
 
         return render_accessible_resource_catalog(
             datasets=datasets,
-            knowledge_bases=knowledge_bases,
+            knowledge_bases=knowledge_catalog.items,
             max_items=max_items,
             max_chars=max_chars,
         )

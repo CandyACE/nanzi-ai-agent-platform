@@ -1053,7 +1053,7 @@
       <ChatInput
         ref="chatInputRef"
         v-model="userInput"
-        :is-processing="isProcessing"
+        :is-processing="isProcessing || sendInFlight"
         :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="effectiveSlashCommands"
         :allowed-agents="allowedAgents"
@@ -2528,9 +2528,15 @@ const collectKnowledgeDatasetIds = (): string[] => {
   return ids;
 };
 
+const isChatContextMessage = (message: Message): boolean => (
+  !message.isThinking &&
+  (message.role === "user" || message.role === "agent") &&
+  Boolean(message.content || message.files?.length)
+);
+
 /** 发给 API 的消息：仅当前轮 user 保留附件，历史轮次只传纯文字 */
 const buildOutboundMessages = () => {
-  const sendable = messages.value.filter((m) => !m.isThinking && (m.content || m.files));
+  const sendable = messages.value.filter(isChatContextMessage);
   const lastUserIdx = sendable.reduce(
     (last, m, i) => (m.role === "user" ? i : last),
     -1,
@@ -4164,6 +4170,23 @@ const traceToDelete = ref<string | null>(null);
 // Edit & Resend State
 const editingMsgId = ref<number | null>(null);
 const editContent = ref("");
+
+const truncateServerHistory = async (keepCount: number): Promise<boolean> => {
+  if (!conversationId.value) return true;
+  try {
+    const response = await axios.post(
+      "/api/v1/chat/history/truncate",
+      { conversation_id: conversationId.value, keep_count: keepCount },
+      { headers: embedAuthHeaders() },
+    );
+    return response.data?.data?.success !== false;
+  } catch (e) {
+    console.warn("Failed to truncate server history before resend", e);
+    showToast("同步会话历史失败，请稍后重试", "error");
+    return false;
+  }
+};
+
 const startEdit = (msg: Message) => {
   editingMsgId.value = msg.id;
   editContent.value = splitUserMessageContent(msg.content).userPart;
@@ -4180,11 +4203,18 @@ const saveAndResend = async () => {
   if (!originalMsg) return;
   const newContent = editContent.value.trim();
   if (!newContent) return;
+
+  const remainingMessages = messages.value.slice(0, msgIndex);
+  const keepCount = remainingMessages.filter(isChatContextMessage).length;
+
+  if (!(await truncateServerHistory(keepCount))) return;
+
   // Truncate history: keep up to this message
-  messages.value = messages.value.slice(0, msgIndex);
+  messages.value = remainingMessages;
   // Reset
   editingMsgId.value = null;
   editContent.value = "";
+
   // Send
   userInput.value = newContent;
   if (originalMsg.files?.length && chatInputRef.value) {
@@ -5936,18 +5966,20 @@ const exportData = async (traceId: string, format = 'xlsx') => {
     showToast('导出失败：未找到可导出数据', 'error');
   }
 };
-const regenerate = () => {
+const regenerate = async () => {
   if (isProcessing.value) return;
   // Find last user message
   const lastUserMsg = [...messages.value]
     .reverse()
     .find((m) => m.role === "user");
   if (lastUserMsg) {
-    // Remove the last agent message if it was the response to this user message
-    const lastMsg = messages.value[messages.value.length - 1];
-    if (lastMsg && lastMsg.role === "agent") {
-      messages.value.pop();
-    }
+    const userIndex = messages.value.findIndex((message) => message.id === lastUserMsg.id);
+    const remainingMessages = userIndex >= 0
+      ? messages.value.slice(0, userIndex)
+      : [...messages.value];
+    const keepCount = remainingMessages.filter(isChatContextMessage).length;
+    if (!(await truncateServerHistory(keepCount))) return;
+    messages.value = remainingMessages;
     userInput.value = splitUserMessageContent(lastUserMsg.content).userPart;
     if (lastUserMsg.files?.length && chatInputRef.value) {
       chatInputRef.value.uploadedFiles = [...lastUserMsg.files];
@@ -6867,7 +6899,19 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
   return false;
 };
 
+const sendInFlight = ref(false);
+
 const sendMessage = async () => {
+  if (sendInFlight.value) return;
+  sendInFlight.value = true;
+  try {
+    return await sendMessageInternal();
+  } finally {
+    sendInFlight.value = false;
+  }
+};
+
+const sendMessageInternal = async () => {
   const content = userInput.value.trim();
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
   if ((!content && files.length === 0) || isProcessing.value) return;

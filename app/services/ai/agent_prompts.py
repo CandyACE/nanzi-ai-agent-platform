@@ -307,6 +307,28 @@ class AgentServicePrompts:
             lines.append("- 本轮需要基于可验证的最新事实，不要用记忆或常识替代工具结果。")
         if bool(getattr(decision, "requires_knowledge_search", False)):
             lines.append("- 本轮需要先检索可用的内部知识来源，再组织回答。")
+        catalog_status = str(
+            getattr(decision, "knowledge_catalog_status", None) or ""
+        ).strip()
+        if catalog_status:
+            lines.append(f"- 知识库授权目录状态：{catalog_status}。")
+        matched_catalog_ids = [
+            str(value).strip()
+            for value in (
+                getattr(decision, "knowledge_catalog_match_ids", None) or []
+            )
+            if str(value).strip()
+        ]
+        if matched_catalog_ids:
+            lines.append(
+                "- 本轮知识库目录高置信匹配范围："
+                + ", ".join(matched_catalog_ids)
+                + "；检索不得超出服务端最终权限。"
+            )
+        elif bool(getattr(decision, "knowledge_fallback_allowed", False)):
+            lines.append(
+                "- 本轮未确认具体知识库，最多直接检索一次；不要委派知识库子代理或重复检索。"
+            )
         if bool(getattr(decision, "allows_data_route", False)):
             lines.append("- 路由层已允许进入结构化业务数据能力；具体数据集与操作仍以权限校验和工具返回为准。")
         return "\n".join(lines)

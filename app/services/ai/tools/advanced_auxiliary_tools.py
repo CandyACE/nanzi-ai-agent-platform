@@ -289,6 +289,18 @@ def _baidu_search_url(query: str) -> str:
     return f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}"
 
 
+def _shared_browser_search_fallback(query: str, *, failed_channels: str) -> str:
+    """生成切换到右侧共享浏览器的明确下一步，保留现有会话与面板事件链路。"""
+    search_url = _baidu_search_url(query)
+    return (
+        f"未能检索到任何相关结果（{failed_channels}）。"
+        "请不要继续重复当前搜索；请改用右侧共享浏览器继续处理："
+        f"调用 browser_open，参数为 {{\"url\": {json.dumps(search_url, ensure_ascii=False)}}}。"
+        "打开后调用 browser_snapshot，根据快照中的 target_ref 使用 browser_fill 和 browser_click；"
+        "如果页面出现验证码，请暂停自动操作并交给人工接管。"
+    )
+
+
 def _parse_baidu_serp_html(html_content: str, max_results: int) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html_content, "html.parser")
     content_left = soup.find(id="content_left")
@@ -488,7 +500,7 @@ async def web_search_baidu_http(
     轻量百度联网搜索（httpx 直接抓取结果页，无需启动浏览器）。
     适合优先使用：延迟通常明显低于 Playwright 版 web_search_baidu。
     英文/国际资讯可改用 web_search_bing_http。
-    若本工具无结果或疑似被反爬拦截，再改用较慢的 web_search_baidu。
+    若本工具无结果或疑似被反爬拦截，先改用较慢的 web_search_baidu；仍失败时改用右侧共享浏览器的 browser_open。
     需要阅读某个结果正文时，可对真实 URL 调用 fetch_static_web_url。
 
     Args:
@@ -503,9 +515,9 @@ async def web_search_baidu_http(
             deep_fetch=deep_fetch,
         )
         if not parsed_results:
-            return (
-                "未能检索到任何相关结果，请尝试简化或更换关键词；"
-                "若仍失败可改用较慢的 Playwright 工具 web_search_baidu。"
+            return _shared_browser_search_fallback(
+                query,
+                failed_channels="百度 HTTP 搜索无结果，web_search_baidu 尚未尝试",
             )
         return _format_baidu_search_markdown(
             query,
@@ -513,7 +525,10 @@ async def web_search_baidu_http(
             title_prefix="百度 HTTP 搜索结果",
         )
     except Exception as e:
-        return f"百度 HTTP 网页检索异常失败: {str(e)}"
+        return _shared_browser_search_fallback(
+            query,
+            failed_channels=f"百度 HTTP 搜索异常：{str(e)}",
+        )
 
 
 @tool
@@ -521,6 +536,7 @@ async def web_search_baidu(query: str, max_results: int = 6) -> str:
     """
     通过 Playwright 无头浏览器访问百度做联网检索（较慢，适合 HTTP 轻量通道失败时的兜底）。
     优先尝试更快的 web_search_baidu_http；本工具会渲染结果页并对 Top-2 链接自动抽取正文。
+    若仍无结果或遇到验证码，改用右侧共享浏览器的 browser_open。
     不需要商业 API Key。
 
     Args:
@@ -530,14 +546,20 @@ async def web_search_baidu(query: str, max_results: int = 6) -> str:
     try:
         parsed_results = await web_search_baidu_raw(query, max_results=max_results)
         if not parsed_results:
-            return "未能检索到任何相关结果，请尝试简化或更换关键词。"
+            return _shared_browser_search_fallback(
+                query,
+                failed_channels="百度 HTTP 与 Playwright 搜索均无结果",
+            )
         return _format_baidu_search_markdown(
             query,
             parsed_results,
             title_prefix="百度搜索结果",
         )
     except Exception as e:
-        return f"百度网页检索异常失败: {str(e)}"
+        return _shared_browser_search_fallback(
+            query,
+            failed_channels=f"百度 HTTP 与 Playwright 搜索异常：{str(e)}",
+        )
 
 
 def _parse_bing_serp_html(html_content: str, max_results: int) -> List[Dict[str, Any]]:

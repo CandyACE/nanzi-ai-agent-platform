@@ -580,6 +580,7 @@ async def test_chatbi_agent_keeps_domain_classification_inside_data_executor():
         chunks = []
         async for chunk in service.chat_completion_stream(
             [{"role": "user", "content": "那本月呢"}],
+            agent_id="agent-data",
             user_info={"user_id": "1", "role": "admin", "user_name": "admin"},
             enable_multi_agent=False,
         ):

@@ -60,6 +60,56 @@ def test_unknown_router_source_uses_semantic_fact_intent_as_evidence_contract():
     assert decision.capability.value == "data_query"
 
 
+def test_grounding_keeps_catalog_fallback_decision_instead_of_reinferring_knowledge():
+    runner = _runner()
+    runner.turn_decision = runner.turn_decision.model_copy(
+        update={
+            "source": "general",
+            "semantic_intent": "KNOWLEDGE_BASE",
+            "semantic_domain": "internal_docs",
+            "knowledge_catalog_status": "available",
+            "knowledge_fallback_allowed": True,
+        }
+    )
+
+    decision = runner._resolve_grounding_request_decision(
+        "查看春秋航空9C6475航班的准点率和退改签政策"
+    )
+
+    assert decision.source.value == "general"
+    assert decision.should_delegate is False
+    assert decision.knowledge_fallback_allowed is True
+
+
+@pytest.mark.asyncio
+async def test_knowledge_fallback_search_tool_is_wrapped_to_one_call_per_turn():
+    runner = _runner()
+    runner.turn_decision = runner.turn_decision.model_copy(
+        update={"knowledge_fallback_allowed": True}
+    )
+    calls = []
+
+    async def search(**kwargs):
+        calls.append(kwargs)
+        return '{"status":"empty","citations":[]}'
+
+    tool = RuntimeToolSpec(
+        name="search_knowledge_base",
+        description="检索知识库",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=search,
+    )
+
+    limited_tools = runner._apply_knowledge_fallback_budget([tool])
+    first = await limited_tools[0].invoke({"query": "测试"})
+    second = await limited_tools[0].invoke({"query": "再次测试"})
+
+    assert len(calls) == 1
+    assert first.startswith('{"status":"empty"')
+    assert "本轮只允许调用一次" in second
+
+
 def _fabricated_ranking() -> str:
     return (
         "好的，我来调用 ChatBI 按维度分析。\n"

@@ -126,6 +126,16 @@ def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[st
     ]
 
 
+def _client_prefix_history_len(messages: List[Dict[str, Any]]) -> int:
+    """统计客户端提交的真实对话前缀，忽略 UI 分隔用的 system 消息。"""
+    return sum(
+        1
+        for message in messages[:-1]
+        if isinstance(message, dict)
+        and message.get("role") in {"user", "assistant"}
+    )
+
+
 def _trace_has_tool_call(trace_buffer: Optional[List[AgentExecutionStep]]) -> bool:
     return any(getattr(step, "event_type", None) == "tool_call" for step in (trace_buffer or []))
 
@@ -699,6 +709,14 @@ class AgentService:
                     u_id = lane_user_id
                     server_history = await memory_service.get_history(u_id, conversation_id)
                     user_msg = messages[-1] if messages else None
+
+                    # 检测客户端历史截断（如编辑重发或分支）：仅在客户端显式传递了前缀历史且短于服务端时裁剪对齐
+                    client_prefix_history_len = _client_prefix_history_len(messages)
+                    if len(messages) > 1 and server_history and len(server_history) > client_prefix_history_len:
+                        await memory_service.truncate_history(
+                            u_id, conversation_id, client_prefix_history_len
+                        )
+                        server_history = server_history[:client_prefix_history_len]
 
                     if user_msg and user_msg.get("role") == "user":
                         await memory_service.add_message(

@@ -1139,6 +1139,71 @@ async def batch_delete_history(
 
     return StandardResponse(data={"success": True})
 
+
+class TruncateHistoryRequest(BaseModel):
+    conversation_id: str = Field(..., description="会话ID")
+    keep_count: int = Field(..., ge=0, description="保留前 N 条消息数量")
+
+
+@router.post(
+    "/history/truncate",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="截断会话历史记录",
+    description="当用户编辑历史消息重发时，将服务端该会话的记忆与数据库记录截断至指定条数。",
+)
+async def truncate_history_endpoint(
+    payload: TruncateHistoryRequest,
+    request: Request,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from app.models.audit import AgentExecutionHistory, AgentExecutionTrace
+    from app.services.ai.memory_service import memory_service
+    from sqlalchemy import delete, select
+
+    user_id = user_info.get("user_id") or user_info.get("id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="缺少用户身份")
+
+    # 1. 截断 Redis 记忆
+    history_truncated = await memory_service.truncate_history(
+        user_id=str(user_id),
+        conversation_id=payload.conversation_id,
+        keep_count=payload.keep_count,
+    )
+    if not history_truncated:
+        raise HTTPException(
+            status_code=503,
+            detail="会话历史暂时无法同步，请稍后重试",
+        )
+
+    # 2. 如果保留数量对应的轮次之后的 DB 历史也可以同步裁剪
+    keep_turns = payload.keep_count // 2
+    stmt = (
+        select(AgentExecutionHistory)
+        .where(
+            AgentExecutionHistory.conversation_id == payload.conversation_id,
+            AgentExecutionHistory.username == user_info.get("user_name"),
+        )
+        .order_by(AgentExecutionHistory.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+    if len(rows) > keep_turns:
+        to_delete = rows[keep_turns:]
+        trace_ids = [r.trace_id for r in to_delete if r.trace_id]
+        if trace_ids:
+            await db.execute(
+                delete(AgentExecutionTrace).where(AgentExecutionTrace.trace_id.in_(trace_ids))
+            )
+        del_ids = [r.id for r in to_delete]
+        await db.execute(
+            delete(AgentExecutionHistory).where(AgentExecutionHistory.id.in_(del_ids))
+        )
+        await db.commit()
+
+    return StandardResponse(data={"success": True, "keep_count": payload.keep_count})
+
 @router.get("/logs/{trace_id}", 
     response_model=StandardResponse[TraceLogResponse],
     summary="获取执行链路",
