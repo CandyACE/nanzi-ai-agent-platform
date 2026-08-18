@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 import re
@@ -32,6 +33,7 @@ class BrowserActionConfirmationRequired(PermissionError):
 class BrowserPageInfo:
     url: str
     title: str
+    focused_input: bool = False
 
 
 @dataclass
@@ -51,6 +53,15 @@ async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _is_navigation_context_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return "Execution context was destroyed" in message and "navigation" in message
+
+
+def _is_navigation_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, TimeoutError) or exc.__class__.__name__ == "TimeoutError"
 
 
 class BrowserWorker:
@@ -127,10 +138,38 @@ class BrowserWorker:
         self._snapshots.pop(session_id, None)
         return await self._page_info(page)
 
-    async def _page_info(self, page: Any) -> BrowserPageInfo:
+    async def _page_info(self, page: Any, *, focused_input: bool = False) -> BrowserPageInfo:
         url = str(getattr(page, "url", "") or "")
         title = str(await _maybe_await(page.title()))
-        return BrowserPageInfo(url=url, title=title)
+        return BrowserPageInfo(url=url, title=title, focused_input=focused_input)
+
+    async def _has_focused_input(self, page: Any, *, x: float, y: float) -> bool:
+        evaluate = getattr(page, "evaluate", None)
+        if not callable(evaluate):
+            return False
+        try:
+            return bool(
+                await _maybe_await(
+                    evaluate(
+                        """
+                        ({x, y}) => {
+                          const isTextInput = (element) => {
+                            const candidate = element?.closest?.('textarea, [contenteditable="true"], input');
+                            if (!candidate) return false;
+                            if (candidate.matches('textarea, [contenteditable="true"]')) return true;
+                            return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'hidden']
+                              .includes((candidate.type || 'text').toLowerCase());
+                          };
+                          const target = document.elementFromPoint(x, y);
+                          return isTextInput(document.activeElement) && isTextInput(target);
+                        }
+                        """,
+                        {"x": x, "y": y},
+                    )
+                )
+            )
+        except Exception:
+            return False
 
     def _handle(self, session_id: str) -> _BrowserHandle:
         try:
@@ -157,6 +196,16 @@ class BrowserWorker:
         await _maybe_await(route_method("**/*", handle_route))
 
     async def snapshot(self, session_id: str) -> BrowserSnapshot:
+        for attempt in range(2):
+            try:
+                return await self._snapshot_once(session_id)
+            except Exception as exc:
+                if attempt == 0 and _is_navigation_context_error(exc):
+                    await asyncio.sleep(0.05)
+                    continue
+                raise
+
+    async def _snapshot_once(self, session_id: str) -> BrowserSnapshot:
         handle = self._handle(session_id)
         info = await self._page_info(handle.page)
         locator = handle.page.locator("button, input, textarea, select, a")
@@ -213,7 +262,18 @@ class BrowserWorker:
     async def navigate(self, session_id: str, url: str) -> BrowserPageInfo:
         handle = self._handle(session_id)
         self._url_validator(url)
-        await handle.page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        previous_url = str(getattr(handle.page, "url", "") or "")
+        try:
+            await handle.page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        except Exception as exc:
+            if not _is_navigation_timeout(exc):
+                raise
+            final_url = str(getattr(handle.page, "url", "") or "")
+            if not final_url or final_url == previous_url:
+                raise
+            self._url_validator(final_url)
+            self._snapshots.pop(session_id, None)
+            return await self._page_info(handle.page)
         final_url = str(getattr(handle.page, "url", url) or url)
         self._url_validator(final_url)
         self._snapshots.pop(session_id, None)
@@ -222,6 +282,7 @@ class BrowserWorker:
     async def manual_input(self, session_id: str, *, event: str, payload: dict[str, Any]) -> BrowserPageInfo:
         """转发面板的人工接管输入；不接受任意 JS，只转发有限的浏览器输入事件。"""
         handle = self._handle(session_id)
+        focused_input = False
         if event == "mouse_click":
             x = float(payload.get("x", 0))
             y = float(payload.get("y", 0))
@@ -247,6 +308,7 @@ class BrowserWorker:
                     except Exception:
                         # 点击可能触发长时间加载或下载；保留当前页面并继续刷新快照。
                         pass
+            focused_input = await self._has_focused_input(handle.page, x=x, y=y)
         elif event == "key":
             key = str(payload.get("key", ""))[:40]
             if not key:
@@ -255,6 +317,20 @@ class BrowserWorker:
         elif event == "text":
             text = str(payload.get("text", ""))[:2000]
             await _maybe_await(handle.page.keyboard.type(text))
+        elif event == "mouse_down":
+            x = float(payload.get("x", 0))
+            y = float(payload.get("y", 0))
+            await _maybe_await(handle.page.mouse.move(x, y))
+            await _maybe_await(handle.page.mouse.down())
+        elif event == "mouse_move":
+            x = float(payload.get("x", 0))
+            y = float(payload.get("y", 0))
+            await _maybe_await(handle.page.mouse.move(x, y))
+        elif event == "mouse_up":
+            x = float(payload.get("x", 0))
+            y = float(payload.get("y", 0))
+            await _maybe_await(handle.page.mouse.move(x, y))
+            await _maybe_await(handle.page.mouse.up())
         elif event == "scroll":
             delta_y = float(payload.get("delta_y", 0))
             delta_y = max(-2000.0, min(delta_y, 2000.0))
@@ -262,7 +338,7 @@ class BrowserWorker:
         else:
             raise ValueError("不支持的浏览器人工输入事件")
         self._snapshots.pop(session_id, None)
-        return await self._page_info(handle.page)
+        return await self._page_info(handle.page, focused_input=focused_input)
 
     async def _capture_screenshot(self, page: Any, session_id: str, snapshot_id: str) -> str | None:
         if not self._screenshot_dir:

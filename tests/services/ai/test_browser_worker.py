@@ -25,7 +25,17 @@ class FakePage:
     def __init__(self):
         self.url = "about:blank"
         self.role_calls = []
-        self.mouse = type("FakeMouse", (), {"click": AsyncMock(), "wheel": AsyncMock()})()
+        self.mouse = type(
+            "FakeMouse",
+            (),
+            {
+                "click": AsyncMock(),
+                "move": AsyncMock(),
+                "down": AsyncMock(),
+                "up": AsyncMock(),
+                "wheel": AsyncMock(),
+            },
+        )()
         self.locator_value = FakeLocator(
             self,
             [
@@ -58,6 +68,9 @@ class FakePage:
 
     async def title(self):
         return "百度一下"
+
+    async def evaluate(self, _script):
+        return False
 
     def locator(self, _selector):
         return self.locator_value
@@ -173,6 +186,133 @@ async def test_worker_adopts_new_tab_after_manual_mouse_click(tmp_path):
 
     assert info.url == popup.url
     assert worker._handles["bs-popup"].page is popup
+
+
+@pytest.mark.asyncio
+async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-focus-input",
+        profile_path=str(tmp_path / "profile-focus-input"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+    page.evaluate = AsyncMock(return_value=True)
+
+    info = await worker.manual_input(
+        "bs-focus-input",
+        event="mouse_click",
+        payload={"x": 300, "y": 200},
+    )
+
+    assert info.focused_input is True
+    page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_report_non_input_click_as_text_focus(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-focus-button",
+        profile_path=str(tmp_path / "profile-focus-button"),
+        url="https://example.com/",
+    )
+
+    info = await worker.manual_input(
+        "bs-focus-button",
+        event="mouse_click",
+        payload={"x": 300, "y": 36},
+    )
+
+    assert info.focused_input is False
+
+
+@pytest.mark.asyncio
+async def test_worker_forwards_human_drag_pointer_events(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-drag",
+        profile_path=str(tmp_path / "profile-drag"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+
+    await worker.manual_input("bs-drag", event="mouse_down", payload={"x": 100, "y": 200})
+    await worker.manual_input("bs-drag", event="mouse_move", payload={"x": 180, "y": 200})
+    await worker.manual_input("bs-drag", event="mouse_up", payload={"x": 180, "y": 200})
+
+    page.mouse.move.assert_any_await(100, 200)
+    page.mouse.move.assert_any_await(180, 200)
+    page.mouse.down.assert_awaited_once_with()
+    page.mouse.up.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_snapshot_after_navigation_context_is_destroyed(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-snapshot-retry",
+        profile_path=str(tmp_path / "profile-snapshot-retry"),
+        url="https://example.com/",
+    )
+    locator = fake_context_page(fake_playwright).locator_value
+    locator.evaluate_all = AsyncMock(
+        side_effect=[
+            RuntimeError("Execution context was destroyed, most likely because of a navigation"),
+            [],
+        ]
+    )
+
+    snapshot = await worker.snapshot("bs-snapshot-retry")
+
+    assert snapshot.url == "https://example.com/"
+    assert locator.evaluate_all.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_returns_current_page_after_navigation_timeout(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-navigation-timeout",
+        profile_path=str(tmp_path / "profile-navigation-timeout"),
+        url="https://www.baidu.com/",
+    )
+    page = fake_context_page(fake_playwright)
+
+    async def goto_with_timeout(url, **_kwargs):
+        page.url = url
+        raise TimeoutError("Page.goto: Timeout 25000ms exceeded")
+
+    page.goto = goto_with_timeout
+
+    info = await worker.navigate("bs-navigation-timeout", "https://www.baidu.com/s?wd=有孚")
+
+    assert info.url == "https://www.baidu.com/s?wd=有孚"
 
 
 @pytest.mark.asyncio

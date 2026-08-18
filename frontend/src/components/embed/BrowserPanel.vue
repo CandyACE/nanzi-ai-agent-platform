@@ -214,8 +214,13 @@
                 :key="snapshot.snapshot_id"
                 :src="screenshotUrl"
                 alt="远程浏览器画面"
-                class="block w-full cursor-crosshair rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700"
+                draggable="false"
+                class="block w-full cursor-crosshair select-none touch-none rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700"
                 @click="handleImageClick"
+                @pointerdown="handleImagePointerDown"
+                @pointermove="handleImagePointerMove"
+                @pointerup="handleImagePointerUp"
+                @pointercancel="handleImagePointerCancel"
               />
               <span
                 v-if="lastClickStyle"
@@ -227,23 +232,49 @@
             <div v-else class="flex h-full min-h-56 items-center justify-center text-xs text-gray-400">等待浏览器画面…</div>
           </div>
 
+          <div
+            v-if="showManualInput"
+            class="absolute bottom-14 left-3 right-3 z-40 sm:left-auto sm:w-80"
+            role="dialog"
+            aria-label="人工输入"
+          >
+            <div class="rounded-xl border border-blue-200 bg-white p-3 shadow-xl shadow-blue-900/10 dark:border-blue-800 dark:bg-gray-900">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="text-xs font-bold text-gray-800 dark:text-gray-100">人工输入</div>
+                  <div class="mt-0.5 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">已聚焦远程输入框，文字会发送到远程页面</div>
+                </div>
+                <button
+                  type="button"
+                  class="rounded p-0.5 text-base leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  aria-label="关闭人工输入"
+                  title="关闭人工输入"
+                  @click="showManualInput = false"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="mt-2 flex gap-2">
+                <input
+                  ref="manualInputRef"
+                  v-model="manualText"
+                  type="text"
+                  autocomplete="off"
+                  class="min-w-0 flex-1 rounded-md border border-blue-200 bg-blue-50/40 px-2 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:text-gray-200"
+                  placeholder="输入文字，回车发送"
+                  @keyup.enter="sendText"
+                />
+                <button class="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700" @click="sendText">发送</button>
+              </div>
+            </div>
+          </div>
+
           <footer class="shrink-0 border-t border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-900">
             <div class="mb-1 flex items-center justify-between text-[10px] text-gray-400">
               <span class="truncate">{{ snapshot?.title || '未加载页面' }}</span>
               <button class="shrink-0 text-blue-600 hover:underline dark:text-blue-300" @click="requestSnapshot">刷新画面</button>
             </div>
-            <div class="flex gap-2">
-              <input
-                v-model="manualText"
-                type="text"
-                autocomplete="off"
-                class="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                placeholder="人工输入（回车发送到远程页面）"
-                @keyup.enter="sendText"
-              />
-              <button class="rounded-md border border-gray-200 px-2.5 py-1.5 text-[10px] font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800" @click="sendText">输入</button>
-            </div>
-            <div class="mt-1 text-[10px] leading-relaxed text-gray-400">可直接点击截图、滚轮、输入文字或按键；智能体与人工操作共享此浏览器会话。</div>
+            <div class="text-[10px] leading-relaxed text-gray-400">可直接点击、拖拽截图，滚轮、输入文字或按键；点击输入框后会弹出人工输入，验证码请由人工完成。</div>
           </footer>
         </section>
       </aside>
@@ -271,6 +302,7 @@ type BrowserSnapshot = {
   screenshot_ref?: string | null;
   elements: BrowserElement[];
 };
+type RemotePoint = { x: number; y: number };
 
 const props = defineProps<{
   visible: boolean;
@@ -297,8 +329,15 @@ const snapshot = ref<BrowserSnapshot | null>(null);
 const errorMessage = ref('');
 const address = ref('');
 const manualText = ref('');
+const showManualInput = ref(false);
+const manualInputRef = ref<HTMLInputElement | null>(null);
 const remoteFocusMessage = ref('请先点击截图中的输入框，再使用下方人工输入');
 const lastClick = ref<{ x: number; y: number } | null>(null);
+const pointerDownPoint = ref<RemotePoint | null>(null);
+const lastPointerPoint = ref<RemotePoint | null>(null);
+const pointerDragging = ref(false);
+const suppressNextClick = ref(false);
+let lastPointerMoveAt = 0;
 const autoRefreshPaused = ref(false);
 const viewportRef = ref<HTMLElement | null>(null);
 const isMobile = ref(
@@ -410,6 +449,8 @@ const connect = async () => {
   closeSocket();
   snapshot.value = null;
   errorMessage.value = '';
+  showManualInput.value = false;
+  manualText.value = '';
   if (!props.visible || !props.sessionId || !props.viewerToken || typeof window === 'undefined') return;
   await nextTick();
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -422,19 +463,30 @@ const connect = async () => {
     startPolling();
   };
   client.onmessage = (event) => {
-    let payload: { type?: string; snapshot?: BrowserSnapshot; message?: string };
+    let payload: { type?: string; snapshot?: BrowserSnapshot; message?: string; focused_input?: boolean };
     try {
-      payload = JSON.parse(event.data) as { type?: string; snapshot?: BrowserSnapshot; message?: string };
+      payload = JSON.parse(event.data) as { type?: string; snapshot?: BrowserSnapshot; message?: string; focused_input?: boolean };
     } catch {
       errorMessage.value = '浏览器返回了无法识别的消息';
       return;
     }
-    if (payload.type === 'snapshot' && payload.snapshot) {
+    if (payload.type === 'focus') {
+      showManualInput.value = Boolean(payload.focused_input);
+      if (showManualInput.value) {
+        remoteFocusMessage.value = '已聚焦输入区域，请在弹框中输入文字';
+        void nextTick(() => manualInputRef.value?.focus());
+      } else {
+        manualText.value = '';
+        remoteFocusMessage.value = '当前点击的不是输入框';
+      }
+    } else if (payload.type === 'snapshot' && payload.snapshot) {
       const previousUrl = snapshot.value?.url;
       snapshot.value = payload.snapshot;
       address.value = payload.snapshot.url || address.value;
       if (previousUrl && previousUrl !== payload.snapshot.url) {
         lastClick.value = null;
+        showManualInput.value = false;
+        manualText.value = '';
         remoteFocusMessage.value = '页面已变化，请重新点击要输入的区域';
       }
     } else if (payload.type === 'error') {
@@ -483,20 +535,116 @@ const confirmCloseSession = () => {
   emit('close-session');
 };
 
-const handleImageClick = (event: MouseEvent) => {
+const remotePointFromEvent = (event: MouseEvent): RemotePoint | null => {
   const image = event.currentTarget as HTMLImageElement;
   const rect = image.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-  const x = ((event.clientX - rect.left) / rect.width) * 1280;
-  const y = ((event.clientY - rect.top) / rect.height) * 800;
-  lastClick.value = { x, y };
+  if (!rect.width || !rect.height) return null;
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * 1280,
+    y: ((event.clientY - rect.top) / rect.height) * 800,
+  };
+};
+
+const sendRemoteClick = (event: MouseEvent) => {
+  const point = remotePointFromEvent(event);
+  if (!point) return;
+  lastClick.value = point;
   remoteFocusMessage.value = '已聚焦远程页面，键盘输入将发送到当前焦点';
   viewportRef.value?.focus({ preventScroll: true });
   send({
     type: 'mouse_click',
-    x,
-    y,
+    ...point,
   });
+};
+
+const handleImageClick = (event: MouseEvent) => {
+  if (suppressNextClick.value) {
+    suppressNextClick.value = false;
+    return;
+  }
+  sendRemoteClick(event);
+};
+
+const suppressNativeClick = () => {
+  suppressNextClick.value = true;
+  if (typeof window !== 'undefined') {
+    window.setTimeout(() => {
+      suppressNextClick.value = false;
+    }, 0);
+  }
+};
+
+const releasePointerCapture = (event: PointerEvent) => {
+  const image = event.currentTarget as HTMLImageElement;
+  if (image.hasPointerCapture?.(event.pointerId)) {
+    image.releasePointerCapture(event.pointerId);
+  }
+};
+
+const handleImagePointerDown = (event: PointerEvent) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) return;
+  const point = remotePointFromEvent(event);
+  if (!point) return;
+  event.preventDefault();
+  const image = event.currentTarget as HTMLImageElement;
+  image.setPointerCapture?.(event.pointerId);
+  pointerDownPoint.value = point;
+  lastPointerPoint.value = point;
+  pointerDragging.value = false;
+  lastPointerMoveAt = 0;
+};
+
+const handleImagePointerMove = (event: PointerEvent) => {
+  const start = pointerDownPoint.value;
+  const point = remotePointFromEvent(event);
+  if (!start || !point) return;
+  lastPointerPoint.value = point;
+  const distance = Math.hypot(point.x - start.x, point.y - start.y);
+  if (!pointerDragging.value && distance < 3) return;
+  event.preventDefault();
+  if (!pointerDragging.value) {
+    pointerDragging.value = true;
+    remoteFocusMessage.value = '正在人工拖拽远程页面';
+    send({ type: 'mouse_down', ...start });
+  }
+  const now = Date.now();
+  if (now - lastPointerMoveAt < 16) return;
+  lastPointerMoveAt = now;
+  send({ type: 'mouse_move', ...point });
+};
+
+const handleImagePointerUp = (event: PointerEvent) => {
+  const start = pointerDownPoint.value;
+  const point = remotePointFromEvent(event) || lastPointerPoint.value;
+  if (!start || !point) return;
+  event.preventDefault();
+  suppressNativeClick();
+  if (pointerDragging.value) {
+    send({ type: 'mouse_move', ...point });
+    send({ type: 'mouse_up', ...point });
+    lastClick.value = point;
+    remoteFocusMessage.value = '人工拖拽已发送到远程页面';
+  } else {
+    sendRemoteClick(event);
+  }
+  releasePointerCapture(event);
+  pointerDownPoint.value = null;
+  lastPointerPoint.value = null;
+  pointerDragging.value = false;
+};
+
+const handleImagePointerCancel = (event: PointerEvent) => {
+  if (!pointerDownPoint.value) return;
+  event.preventDefault();
+  suppressNativeClick();
+  if (pointerDragging.value) {
+    const point = lastPointerPoint.value || pointerDownPoint.value;
+    send({ type: 'mouse_up', ...point });
+  }
+  releasePointerCapture(event);
+  pointerDownPoint.value = null;
+  lastPointerPoint.value = null;
+  pointerDragging.value = false;
 };
 
 const handleKeydown = (event: KeyboardEvent) => {
@@ -511,7 +659,7 @@ const handleWheel = (event: WheelEvent) => {
 
 const sendText = () => {
   if (!manualText.value) return;
-  if (!lastClick.value) {
+  if (!showManualInput.value) {
     remoteFocusMessage.value = '尚未点击远程输入区域，请先点击截图中的搜索框';
     return;
   }
@@ -524,6 +672,8 @@ const navigate = () => {
   const value = address.value.trim();
   if (!value) return;
   lastClick.value = null;
+  showManualInput.value = false;
+  manualText.value = '';
   remoteFocusMessage.value = '页面导航中，请等待加载后重新点击输入区域';
   send({ type: 'navigate', url: value });
 };
@@ -538,6 +688,8 @@ watch(
   () => props.visible,
   (visible) => {
     showCloseSessionConfirm.value = false;
+    showManualInput.value = false;
+    manualText.value = '';
     autoRefreshPaused.value = false;
     if (visible && !isMobile.value) pinned.value = true;
   },

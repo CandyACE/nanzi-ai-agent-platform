@@ -227,6 +227,7 @@ async def get_browser_screenshot(
     session_id: str,
     request: Request,
     token: str | None = Query(None, min_length=20),
+    snapshot_id: str | None = Query(None, min_length=8, max_length=128),
 ):
     viewer_token = token or request.cookies.get(_viewer_cookie_name(session_id))
     if not viewer_token:
@@ -236,10 +237,18 @@ async def get_browser_screenshot(
             session = await BrowserSessionService(db).resolve_viewer_token(viewer_token)
             if session.id != session_id:
                 raise BrowserAccessDenied("浏览器查看令牌与会话不匹配")
-            if not browser_runtime.has_session(session.id):
-                await browser_runtime.open_session(db, session)
-            snapshot = await browser_runtime.snapshot(session.id)
-            await db.commit()
+            if snapshot_id:
+                if not browser_runtime.has_session(session.id):
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图已过期，请刷新页面")
+                try:
+                    snapshot = browser_runtime.cached_snapshot(session.id, snapshot_id)
+                except ValueError as exc:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图已过期，请刷新页面") from exc
+            else:
+                if not browser_runtime.has_session(session.id):
+                    await browser_runtime.open_session(db, session)
+                snapshot = await browser_runtime.snapshot(session.id)
+                await db.commit()
         except BrowserAccessDenied as exc:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     screenshot_ref = snapshot.screenshot_ref
@@ -287,7 +296,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                 try:
                     if event == "snapshot":
                         snapshot = await browser_runtime.snapshot(session.id)
-                    elif event in {"mouse_click", "key", "text", "scroll"}:
+                    elif event in {"mouse_click", "mouse_down", "mouse_move", "mouse_up", "key", "text", "scroll"}:
                         info = await browser_runtime.manual_input(
                             session.id,
                             event=event,
@@ -297,6 +306,10 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
+                        if event in {"mouse_down", "mouse_move"}:
+                            continue
+                        if event == "mouse_click":
+                            await websocket.send_json({"type": "focus", "focused_input": info.focused_input})
                         snapshot = await browser_runtime.snapshot(session.id)
                     elif event == "navigate":
                         info = await browser_runtime.navigate(session.id, str(message.get("url", "")))

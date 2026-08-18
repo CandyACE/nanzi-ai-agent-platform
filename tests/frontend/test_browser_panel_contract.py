@@ -13,6 +13,12 @@ def test_browser_panel_contains_same_origin_viewer_and_manual_input_contract():
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
     assert "WebSocket" in source
     assert "mouse_click" in source
+    assert "mouse_down" in source
+    assert "mouse_move" in source
+    assert "mouse_up" in source
+    assert "@pointerdown" in source
+    assert "@pointermove" in source
+    assert "@pointerup" in source
     assert "screenshot_ref" in source
     assert "autopilot" in source
     assert "defineModel<boolean>('pinned'" in source
@@ -50,6 +56,10 @@ def test_browser_panel_exposes_remote_focus_feedback_plain_manual_input_and_sess
     assert "lastClickStyle" in source
     assert 'type="text"' in source
     assert 'type="password"' not in source
+    assert "showManualInput" in source
+    assert 'v-if="showManualInput"' in source
+    assert "focused_input" in source
+    assert "人工输入" in source
     assert "close-session" in source
 
 

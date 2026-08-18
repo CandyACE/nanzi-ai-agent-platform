@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -19,27 +20,32 @@ class BrowserRuntime:
     def __init__(self, worker: BrowserWorker | None = None) -> None:
         self.worker = worker or BrowserWorker()
         self._snapshots: dict[str, BrowserSnapshot] = {}
+        self._session_locks: dict[str, asyncio.Lock] = {}
+
+    def _session_lock(self, session_id: str) -> asyncio.Lock:
+        return self._session_locks.setdefault(session_id, asyncio.Lock())
 
     async def open_session(self, db: AsyncSession, session: BrowserSession) -> BrowserPageInfo:
-        profile = await BrowserProfileService(db).get_owned(
-            user_id=int(session.user_id), profile_id=session.profile_id
-        )
-        profile_path = await BrowserProfileService(db).profile_path(profile)
-        target_url = session.current_url or "https://www.baidu.com/"
-        if self.worker.has_session(session.id):
-            info = await self.worker.navigate(session.id, target_url)
-        else:
-            info = await self.worker.open(
-                session_id=session.id,
-                profile_path=profile_path,
-                url=target_url,
+        async with self._session_lock(session.id):
+            profile = await BrowserProfileService(db).get_owned(
+                user_id=int(session.user_id), profile_id=session.profile_id
             )
-        session.current_url = info.url
-        session.page_title = info.title
-        session.last_seen_at = datetime.now()
-        session.updated_at = datetime.now()
-        await db.flush()
-        return info
+            profile_path = await BrowserProfileService(db).profile_path(profile)
+            target_url = session.current_url or "https://www.baidu.com/"
+            if self.worker.has_session(session.id):
+                info = await self.worker.navigate(session.id, target_url)
+            else:
+                info = await self.worker.open(
+                    session_id=session.id,
+                    profile_path=profile_path,
+                    url=target_url,
+                )
+            session.current_url = info.url
+            session.page_title = info.title
+            session.last_seen_at = datetime.now()
+            session.updated_at = datetime.now()
+            await db.flush()
+            return info
 
     async def open_for_user(
         self,
@@ -62,9 +68,10 @@ class BrowserRuntime:
             return session
 
     async def snapshot(self, session_id: str) -> BrowserSnapshot:
-        snapshot = await self.worker.snapshot(session_id)
-        self._snapshots[session_id] = snapshot
-        return snapshot
+        async with self._session_lock(session_id):
+            snapshot = await self.worker.snapshot(session_id)
+            self._snapshots[session_id] = snapshot
+            return snapshot
 
     def cached_snapshot(self, session_id: str, snapshot_id: str) -> BrowserSnapshot:
         snapshot = self._snapshots.get(session_id)
@@ -76,12 +83,14 @@ class BrowserRuntime:
         return self.worker.has_session(session_id)
 
     async def navigate(self, session_id: str, url: str) -> BrowserPageInfo:
-        self._snapshots.pop(session_id, None)
-        return await self.worker.navigate(session_id, url)
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.navigate(session_id, url)
 
     async def manual_input(self, session_id: str, *, event: str, payload: dict[str, Any]) -> BrowserPageInfo:
-        self._snapshots.pop(session_id, None)
-        return await self.worker.manual_input(session_id, event=event, payload=payload)
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.manual_input(session_id, event=event, payload=payload)
 
     async def click(
         self,
@@ -92,16 +101,17 @@ class BrowserRuntime:
         approval_mode: str,
         confirmed: bool,
     ) -> BrowserToolResult:
-        snapshot = self.cached_snapshot(session_id, snapshot_id)
-        result = await self.worker.click(
-            session_id,
-            target_ref=target_ref,
-            snapshot=snapshot,
-            approval_mode=approval_mode,
-            confirmed=confirmed,
-        )
-        self._snapshots.pop(session_id, None)
-        return result
+        async with self._session_lock(session_id):
+            snapshot = self.cached_snapshot(session_id, snapshot_id)
+            result = await self.worker.click(
+                session_id,
+                target_ref=target_ref,
+                snapshot=snapshot,
+                approval_mode=approval_mode,
+                confirmed=confirmed,
+            )
+            self._snapshots.pop(session_id, None)
+            return result
 
     async def fill(
         self,
@@ -112,23 +122,26 @@ class BrowserRuntime:
         value: str,
         sensitive: bool | None,
     ) -> BrowserToolResult:
-        snapshot = self.cached_snapshot(session_id, snapshot_id)
-        result = await self.worker.fill(
-            session_id,
-            target_ref=target_ref,
-            value=value,
-            snapshot=snapshot,
-            sensitive=sensitive,
-        )
-        self._snapshots.pop(session_id, None)
-        return result
+        async with self._session_lock(session_id):
+            snapshot = self.cached_snapshot(session_id, snapshot_id)
+            result = await self.worker.fill(
+                session_id,
+                target_ref=target_ref,
+                value=value,
+                snapshot=snapshot,
+                sensitive=sensitive,
+            )
+            self._snapshots.pop(session_id, None)
+            return result
 
     async def close(self, session_id: str) -> None:
-        self._snapshots.pop(session_id, None)
-        await self.worker.close(session_id)
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            await self.worker.close(session_id)
 
     async def shutdown(self) -> None:
         self._snapshots.clear()
+        self._session_locks.clear()
         await self.worker.shutdown()
 
 
