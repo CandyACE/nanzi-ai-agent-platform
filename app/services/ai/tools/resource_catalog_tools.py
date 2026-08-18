@@ -5,12 +5,10 @@ import json
 import logging
 from typing import Any, Optional
 
-from sqlalchemy import select
-
 from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
-from app.models.knowledge import KnowledgeBaseMetadata
 from app.services.ai.tools.tool_compat import tool
+from app.services.ai.knowledge_catalog import fetch_authorized_knowledge_catalog
 from app.services.metadata_service import MetadataService
 from app.services.permission_service import PermissionService
 
@@ -92,23 +90,14 @@ async def list_accessible_knowledge_bases() -> str:
     try:
         user_name = _context_user_name(ctx)
         async with AsyncSessionLocal() as db:
-            access = await PermissionService(db).get_knowledge_base_access(
-                int(ctx.user_id),
-                user_name,
+            catalog = await fetch_authorized_knowledge_catalog(
+                db,
+                user_id=int(ctx.user_id),
+                user_name=user_name,
+                is_admin=bool(ctx.is_admin),
+                permission_service=PermissionService(db),
             )
-            stmt = select(KnowledgeBaseMetadata).where(
-                KnowledgeBaseMetadata.status != "deleted"
-            )
-            rows = list((await db.execute(stmt)).scalars().all())
-            allowed_ids = access.get("accessible_ids")
-            items: list[dict[str, Any]] = []
-            for row in rows:
-                rag_id = str(getattr(row, "ragflow_dataset_id", None) or "").strip()
-                if not rag_id:
-                    continue
-                if allowed_ids is not None and rag_id not in allowed_ids:
-                    continue
-                items.append(_knowledge_item(row))
+            items = [_knowledge_item(row) for row in catalog.items]
             items.sort(key=lambda x: x.get("ragflow_dataset_id") or "")
             return json.dumps({"items": items, "count": len(items)}, ensure_ascii=False)
     except Exception as e:

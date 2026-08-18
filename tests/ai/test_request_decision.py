@@ -9,6 +9,10 @@ from app.services.ai.request_decision import (
 )
 from app.services.ai.intent_service import looks_like_current_model_query
 from app.services.ai.chatbi_qualification import ChatBIMode, qualify_chatbi_request
+from app.services.ai.knowledge_catalog import (
+    AuthorizedKnowledgeCatalog,
+    KnowledgeBaseCatalogItem,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -130,6 +134,98 @@ def test_internal_docs_requires_knowledge_search_and_can_delegate():
     assert decision.should_delegate is True
     assert decision.delegate_capability == "knowledge_base"
     assert decision.requires_knowledge_search is True
+
+
+def test_generic_knowledge_signal_without_catalog_match_allows_only_direct_fallback():
+    catalog = AuthorizedKnowledgeCatalog(
+        status="available",
+        items=(
+            KnowledgeBaseCatalogItem(
+                ragflow_dataset_id="kb-ev",
+                name="蔚来汽车知识库",
+                description="车辆功能、辅助驾驶和换电操作说明",
+            ),
+        ),
+    )
+
+    decision = resolve_request_decision(
+        "查看春秋航空9C6475航班的准点率和退改签政策",
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.9,
+        knowledge_catalog=catalog,
+    )
+
+    assert decision.source == RequestSource.GENERAL
+    assert decision.capability == RequestCapability.ANSWER
+    assert decision.should_delegate is False
+    assert decision.requires_knowledge_search is False
+    assert decision.knowledge_catalog_status == "available"
+    assert decision.knowledge_catalog_match_ids == ()
+    assert decision.knowledge_fallback_allowed is True
+
+
+def test_semantically_matching_authorized_catalog_keeps_knowledge_route():
+    catalog = AuthorizedKnowledgeCatalog(
+        status="available",
+        items=(
+            KnowledgeBaseCatalogItem(
+                ragflow_dataset_id="kb-travel",
+                name="员工差旅制度",
+                description="员工出差报销政策、审批流程和住宿标准",
+            ),
+        ),
+    )
+
+    decision = resolve_request_decision(
+        "查一下内部员工出差报销政策",
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.9,
+        knowledge_catalog=catalog,
+    )
+
+    assert decision.source == RequestSource.INTERNAL_DOCS
+    assert decision.capability == RequestCapability.KNOWLEDGE_SEARCH
+    assert decision.should_delegate is True
+    assert decision.requires_knowledge_search is True
+    assert decision.knowledge_catalog_match_ids == ("kb-travel",)
+    assert decision.knowledge_fallback_allowed is False
+
+
+def test_empty_or_unavailable_catalog_never_opens_search_fallback_without_scope():
+    for status in ("empty", "unavailable"):
+        decision = resolve_request_decision(
+            "查一下内部员工出差报销政策",
+            semantic_intent=IntentType.KNOWLEDGE_BASE,
+            semantic_confidence=0.9,
+            knowledge_catalog=AuthorizedKnowledgeCatalog(status=status, items=()),
+        )
+
+        assert decision.source == RequestSource.GENERAL
+        assert decision.should_delegate is False
+        assert decision.knowledge_catalog_status == status
+        assert decision.knowledge_fallback_allowed is False
+
+
+def test_explicit_knowledge_context_overrides_catalog_non_match():
+    decision = resolve_request_decision(
+        "换电过程中可以开门吗？",
+        has_explicit_knowledge_context=True,
+        knowledge_catalog=AuthorizedKnowledgeCatalog(
+            status="available",
+            items=(
+                KnowledgeBaseCatalogItem(
+                    ragflow_dataset_id="kb-other",
+                    name="员工差旅制度",
+                    description="报销和审批流程",
+                ),
+            ),
+        ),
+    )
+
+    assert decision.source == RequestSource.INTERNAL_DOCS
+    assert decision.should_delegate is True
+    assert decision.knowledge_catalog_match_ids == ()
+    assert decision.knowledge_fallback_allowed is False
 
 
 def test_internal_structured_data_requires_data_query_and_allows_data_route():

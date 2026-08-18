@@ -2968,7 +2968,19 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
   return false;
 };
 
+const sendInFlight = ref(false);
+
 const sendMessage = async () => {
+  if (sendInFlight.value) return;
+  sendInFlight.value = true;
+  try {
+    return await sendMessageInternal();
+  } finally {
+    sendInFlight.value = false;
+  }
+};
+
+const sendMessageInternal = async () => {
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
   const content = userInput.value.trim();
@@ -4911,7 +4923,7 @@ onUnmounted(() => {
         <ChatInput
           ref="chatInputRef"
           v-model="userInput"
-          :is-processing="isProcessing"
+          :is-processing="isProcessing || sendInFlight"
           :show-shortcuts="debugConfig.showShortcuts"
           :slash-commands="slashCommands"
           :allowed-agents="agents"

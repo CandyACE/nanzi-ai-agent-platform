@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.services.ai.router_service import RouterService
+from app.services.ai.knowledge_catalog import AuthorizedKnowledgeCatalog, KnowledgeBaseCatalogItem
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -68,11 +69,25 @@ async def test_router_injects_authorized_resource_catalog_before_semantic_routin
             "app.services.ai.router_service.build_accessible_resource_catalog",
             new_callable=AsyncMock,
         ) as mock_catalog, \
+        patch(
+            "app.services.ai.router_service.load_authorized_knowledge_catalog",
+            new_callable=AsyncMock,
+        ) as mock_knowledge_catalog, \
         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
         patch("app.services.ai.router_service.chat_client_from_handle") as mock_factory:
         mock_fetch.return_value = agents
         mock_filter.return_value = agents
         mock_catalog.return_value = resource_catalog
+        mock_knowledge_catalog.return_value = AuthorizedKnowledgeCatalog(
+            status="available",
+            items=(
+                KnowledgeBaseCatalogItem(
+                    ragflow_dataset_id="kb-ev",
+                    name="蔚来汽车手册",
+                    description="车辆功能、辅助驾驶和使用说明",
+                ),
+            ),
+        )
         mock_get_llm.return_value = object()
         mock_factory.return_value = mock_chat
 
@@ -84,14 +99,82 @@ async def test_router_injects_authorized_resource_catalog_before_semantic_routin
 
     assert result is not None
     assert result.agent_id == "knowledge-agent"
-    mock_catalog.assert_awaited_once_with(
-        user_id=7,
-        user_name=None,
-        is_admin=False,
-    )
+    mock_catalog.assert_awaited_once()
+    assert mock_catalog.await_args.kwargs["user_id"] == 7
+    assert mock_catalog.await_args.kwargs["user_name"] is None
+    assert mock_catalog.await_args.kwargs["is_admin"] is False
+    assert mock_catalog.await_args.kwargs["knowledge_catalog"] is mock_knowledge_catalog.return_value
     system_prompt = mock_chat.generate_text.call_args.args[0][0].content[0].text
     assert "当前用户可访问的内部资源摘要" in system_prompt
     assert "蔚来汽车手册" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_router_does_not_select_knowledge_agent_when_catalog_has_no_match():
+    router = RouterService()
+    agents = [
+        {
+            "id": "knowledge-agent",
+            "name": "knowledge-base",
+            "description": "内部知识库和文档问答",
+            "capabilities": ["knowledge_base"],
+        },
+        {
+            "id": "general-agent",
+            "name": "general-chat",
+            "description": "通用问答",
+            "capabilities": ["chat"],
+        },
+    ]
+    mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = None
+    mock_chat.generate_text.return_value = (
+        '{"agent_name":"knowledge-base","confidence":0.93,'
+        '"secondary_agents":[],"intent":"KNOWLEDGE_BASE",'
+        '"domain":"internal_docs","intent_confidence":0.91,'
+        '"thought":"命中知识库"}'
+    )
+
+    with patch.object(router, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+        patch.object(router, "_filter_agents_for_user", new_callable=AsyncMock) as mock_filter, \
+        patch(
+            "app.services.ai.router_service.load_authorized_knowledge_catalog",
+            new_callable=AsyncMock,
+        ) as mock_knowledge_catalog, \
+        patch(
+            "app.services.ai.router_service.build_accessible_resource_catalog",
+            new_callable=AsyncMock,
+            return_value="",
+        ), \
+        patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+        patch("app.services.ai.router_service.chat_client_from_handle") as mock_factory:
+        mock_fetch.return_value = agents
+        mock_filter.return_value = agents
+        mock_knowledge_catalog.return_value = AuthorizedKnowledgeCatalog(
+            status="available",
+            items=(
+                KnowledgeBaseCatalogItem(
+                    ragflow_dataset_id="kb-ev",
+                    name="蔚来汽车手册",
+                    description="车辆功能与换电操作说明",
+                ),
+            ),
+        )
+        mock_get_llm.return_value = object()
+        mock_factory.return_value = mock_chat
+
+        result = await router.route_query(
+            "查看春秋航空9C6475航班的准点率和退改签政策",
+            user_id=7,
+            is_admin=False,
+        )
+
+    assert result is not None
+    assert result.agent_id == "general-agent"
+    assert result.agent_name == "general-chat"
+    assert result.turn_kind == "general"
+    assert result.should_delegate is False
+    assert result.knowledge_fallback_allowed is True
 
 
 @pytest.mark.asyncio

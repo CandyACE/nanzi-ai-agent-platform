@@ -17,6 +17,7 @@ from app.services.ai.request_decision import (
     resolve_request_decision,
 )
 from app.services.ai.turn_decision import TurnDecision
+from app.services.ai.knowledge_catalog import AuthorizedKnowledgeCatalog, KnowledgeBaseCatalogItem
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -321,6 +322,40 @@ def test_sub_agent_call_is_not_selected_by_generic_tool_relevance_without_intent
     nudge = resolve_tool_nudge("帮我查一下设备资产列表", tools)
 
     assert nudge is None
+
+
+def test_weak_catalog_evidence_nudges_one_direct_knowledge_search_not_sub_agent():
+    decision = resolve_request_decision(
+        "查看春秋航空9C6475航班的准点率和退改签政策",
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.9,
+        knowledge_catalog=AuthorizedKnowledgeCatalog(
+            status="available",
+            items=(
+                KnowledgeBaseCatalogItem(
+                    ragflow_dataset_id="kb-ev",
+                    name="蔚来汽车知识库",
+                    description="车辆功能和换电操作说明",
+                ),
+            ),
+        ),
+    )
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务"),
+        _tool("search_knowledge_base", "检索授权知识库文档正文并返回引用"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "查看春秋航空9C6475航班的准点率和退改签政策",
+        tools,
+        available_sub_agent_names={"knowledge-agent"},
+        sub_agent_candidates_by_capability={"knowledge_base": ["knowledge-agent"]},
+        request_decision=decision,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "search_knowledge_base"
+    assert nudge.should_force_first_call is True
 
 
 @pytest.mark.parametrize(

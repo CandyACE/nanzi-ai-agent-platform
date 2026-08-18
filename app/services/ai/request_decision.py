@@ -10,6 +10,10 @@ from enum import Enum
 from typing import Any, Optional
 
 from app.services.ai.chatbi_qualification import ChatBIQualification, ChatBIMode
+from app.services.ai.knowledge_catalog import (
+    AuthorizedKnowledgeCatalog,
+    match_knowledge_catalog,
+)
 
 from app.services.ai.intent_service import (
     IntentType,
@@ -80,6 +84,10 @@ class RequestDecision:
     chatbi_evidence_level: str = "none"
     chatbi_reason: Optional[str] = None
     matched_dataset_ids: tuple[int, ...] = ()
+    knowledge_catalog_status: Optional[str] = None
+    knowledge_catalog_match_ids: tuple[str, ...] = ()
+    knowledge_catalog_match_confidence: str = "none"
+    knowledge_fallback_allowed: bool = False
 
 
 def _intent_name(value: Any) -> str:
@@ -174,6 +182,10 @@ def _decision(
     allows_data_route: bool = False,
     semantic_name: str = "",
     semantic_confidence: float = 0.0,
+    knowledge_catalog_status: Optional[str] = None,
+    knowledge_catalog_match_ids: tuple[str, ...] = (),
+    knowledge_catalog_match_confidence: str = "none",
+    knowledge_fallback_allowed: bool = False,
 ) -> RequestDecision:
     return RequestDecision(
         source=source,
@@ -186,6 +198,10 @@ def _decision(
         allows_data_route=allows_data_route,
         semantic_intent=semantic_name or None,
         semantic_confidence=semantic_confidence,
+        knowledge_catalog_status=knowledge_catalog_status,
+        knowledge_catalog_match_ids=knowledge_catalog_match_ids,
+        knowledge_catalog_match_confidence=knowledge_catalog_match_confidence,
+        knowledge_fallback_allowed=knowledge_fallback_allowed,
     )
 
 
@@ -242,6 +258,7 @@ def _resolve_request_decision(
     semantic_domain: Any = None,
     semantic_operation: Any = None,
     reference_mode: Any = None,
+    knowledge_catalog: AuthorizedKnowledgeCatalog | None = None,
 ) -> RequestDecision:
     """统一判断请求来源、所需能力和是否允许委派。
 
@@ -256,6 +273,50 @@ def _resolve_request_decision(
     semantic_domain_name = _normalize_semantic(semantic_domain)
     semantic_operation_name = _normalize_semantic(semantic_operation)
     reference_mode_name = _normalize_reference_mode(reference_mode)
+
+    catalog_match = match_knowledge_catalog(q, knowledge_catalog)
+    catalog_fields = (
+        {
+            "knowledge_catalog_status": catalog_match.status,
+            "knowledge_catalog_match_ids": (
+                catalog_match.matched_ids
+                if catalog_match.confidence == "strong"
+                else ()
+            ),
+            "knowledge_catalog_match_confidence": catalog_match.confidence,
+            "knowledge_fallback_allowed": bool(
+                knowledge_catalog.has_effective_scope
+                and catalog_match.confidence != "strong"
+            ),
+        }
+        if knowledge_catalog is not None
+        else {}
+    )
+
+    def _knowledge_fallback_decision() -> RequestDecision:
+        return _decision(
+            RequestSource.GENERAL,
+            RequestCapability.ANSWER,
+            max(semantic_score, 0.72),
+            "知识库候选未得到授权目录的高置信匹配，保留一次直接检索兜底但不委派子代理",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+            **catalog_fields,
+        )
+
+    def _knowledge_route_decision(reason: str) -> RequestDecision:
+        return _decision(
+            RequestSource.INTERNAL_DOCS,
+            RequestCapability.KNOWLEDGE_SEARCH,
+            max(semantic_score, 0.85),
+            reason,
+            should_delegate=True,
+            delegate_capability="knowledge_base",
+            requires_knowledge_search=True,
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+            **catalog_fields,
+        )
 
     if not q:
         return _decision(
@@ -357,6 +418,29 @@ def _resolve_request_decision(
             semantic_confidence=semantic_score,
         )
 
+    # 目录是当前用户授权范围的语义证据。通用知识信号（例如“政策”）
+    # 只能打开候选，不得在目录无匹配时升级成知识库子代理。
+    knowledge_candidate = (
+        semantic_name == IntentType.KNOWLEDGE_BASE.value
+        or semantic_domain_name == "internal_docs"
+        or looks_like_knowledge_query(q)
+    )
+    if (
+        knowledge_catalog is not None
+        and knowledge_candidate
+        and semantic_name != IntentType.DATA_QUERY.value
+        and semantic_domain_name != "chatbi_business_data"
+    ):
+        if has_explicit_knowledge_context:
+            return _knowledge_route_decision(
+                "显式知识库上下文优先于目录语义匹配，进入知识库检索"
+            )
+        if catalog_match.confidence == "strong":
+            return _knowledge_route_decision(
+                "授权知识库目录与当前问题存在高置信语义匹配"
+            )
+        return _knowledge_fallback_decision()
+
     # The structured domain is a source boundary, not a decoration on the
     # old intent label.  In particular, local files and runtime facts must
     # never become ChatBI merely because the user said "统计" or "查询".
@@ -388,16 +472,8 @@ def _resolve_request_decision(
             semantic_confidence=semantic_score,
         )
     if semantic_domain_name == "internal_docs":
-        return _decision(
-            RequestSource.INTERNAL_DOCS,
-            RequestCapability.KNOWLEDGE_SEARCH,
-            max(semantic_score, 0.82),
-            "internal document request requires knowledge retrieval",
-            should_delegate=True,
-            delegate_capability="knowledge_base",
-            requires_knowledge_search=True,
-            semantic_name=effective_intent,
-            semantic_confidence=semantic_score,
+        return _knowledge_route_decision(
+            "internal document request requires knowledge retrieval"
         )
     if semantic_domain_name == "general":
         return _decision(
@@ -500,16 +576,8 @@ def _resolve_request_decision(
         )
 
     if semantic_name == IntentType.KNOWLEDGE_BASE.value or looks_like_knowledge_query(q):
-        return _decision(
-            RequestSource.INTERNAL_DOCS,
-            RequestCapability.KNOWLEDGE_SEARCH,
-            max(semantic_score, 0.85),
-            "internal documentation/SOP/knowledge-base request",
-            should_delegate=True,
-            delegate_capability="knowledge_base",
-            requires_knowledge_search=True,
-            semantic_name=effective_intent,
-            semantic_confidence=semantic_score,
+        return _knowledge_route_decision(
+            "internal documentation/SOP/knowledge-base request"
         )
 
     # ``has_knowledge_binding`` only describes an available agent capability.
@@ -564,6 +632,7 @@ def resolve_request_decision(
     requires_source_timestamp: bool = False,
     reference_mode: Any = None,
     needs_fresh_data: Any = None,
+    knowledge_catalog: AuthorizedKnowledgeCatalog | None = None,
 ) -> RequestDecision:
     """Resolve the legacy source/capability decision and attach fact semantics.
 
@@ -583,6 +652,7 @@ def resolve_request_decision(
         semantic_domain=semantic_domain,
         semantic_operation=semantic_operation,
         reference_mode=reference_mode,
+        knowledge_catalog=knowledge_catalog,
     )
 
     normalized_domain = _normalize_semantic(semantic_domain)

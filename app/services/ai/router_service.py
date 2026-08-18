@@ -24,6 +24,10 @@ from app.services.ai.chatbi_qualification import (
 from app.services.ai.accessible_resource_catalog import (
     build_accessible_resource_catalog,
 )
+from app.services.ai.knowledge_catalog import (
+    AuthorizedKnowledgeCatalog,
+    load_authorized_knowledge_catalog,
+)
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 from app.services.ai.turn_decision import TurnDecision
@@ -244,9 +248,39 @@ class RouterService:
             logger.warning("No routeable agents available for user %s.", user_id)
             return None
 
+        from app.services.ai.intent_service import looks_like_knowledge_query
+
+        knowledge_catalog: Optional[AuthorizedKnowledgeCatalog] = None
+        if looks_like_knowledge_query(user_input):
+            knowledge_catalog = await load_authorized_knowledge_catalog(
+                user_id=user_id,
+                user_name=user_name,
+                is_admin=is_admin,
+            )
+
+        preflight_request_decision = self._request_decision_from_intent(
+            user_input,
+            None,
+            False,
+            knowledge_catalog=knowledge_catalog,
+        )
+
         # 结构短路：权限过滤后仅剩 1 个候选，无需意图/路由 LLM。
         if len(agents_metadata) == 1:
             sole = agents_metadata[0]
+            if (
+                self._is_knowledge_agent(agents_metadata, sole.get("name"))
+                and preflight_request_decision.knowledge_catalog_status
+                and not preflight_request_decision.knowledge_fallback_allowed
+                and preflight_request_decision.source == RequestSource.GENERAL
+            ):
+                fallback_agent = self._find_fallback_agent(agents_metadata)
+                if fallback_agent and fallback_agent.get("id") != sole.get("id"):
+                    return self._route_to_sole_candidate(
+                        fallback_agent,
+                        reasoning="授权知识库目录未高置信匹配，避免把请求短路到知识库智能体",
+                        request_decision=preflight_request_decision,
+                    )
             logger.info(
                 "Sole candidate shortcut (post-permission): routing to %s without LLM",
                 sole.get("name"),
@@ -254,6 +288,7 @@ class RouterService:
             return self._route_to_sole_candidate(
                 sole,
                 reasoning="权限过滤后仅剩唯一可路由智能体，结构短路跳过路由 LLM",
+                request_decision=preflight_request_decision,
             )
 
         from app.services.ai.intent_service import (
@@ -427,6 +462,7 @@ class RouterService:
             user_input,
             intent_info,
             previous_chatbi_result,
+            knowledge_catalog=knowledge_catalog,
         )
         source_frame = self._source_frame_from_request_decision(request_decision)
         data_route_allowed = self._data_route_allowed(
@@ -462,10 +498,23 @@ class RouterService:
         # 避免运营在配置页误改导致路由失准。
         system_prompt = self.DEFAULT_SYSTEM_PROMPT
         agents_str = self._build_agents_context(routing_agents)
+        if knowledge_catalog is None:
+            # 目录摘要本来就在该路径加载；保留结构化快照，避免 LLM 返回
+            # KNOWLEDGE_BASE 后再次读取权限目录。
+            knowledge_catalog = await load_authorized_knowledge_catalog(
+                user_id=user_id,
+                user_name=user_name,
+                is_admin=is_admin,
+            )
+        catalog_kwargs = {
+            "user_id": user_id,
+            "user_name": user_name,
+            "is_admin": is_admin,
+        }
+        if knowledge_catalog is not None:
+            catalog_kwargs["knowledge_catalog"] = knowledge_catalog
         accessible_resources_context = await build_accessible_resource_catalog(
-            user_id=user_id,
-            user_name=user_name,
-            is_admin=is_admin,
+            **catalog_kwargs,
         )
         history_str = self._build_history_context(
             history,
@@ -572,7 +621,9 @@ class RouterService:
                     agents_metadata=agents_metadata,
                     previous_chatbi_result=previous_chatbi_result,
                     user_id=user_id,
+                    user_name=user_name,
                     is_admin=is_admin,
+                    knowledge_catalog=knowledge_catalog,
                 )
                 decision = self._build_turn_decision(
                     result_json,
@@ -621,6 +672,7 @@ class RouterService:
         user_input: str,
         intent_info: Optional[IntentResponse],
         previous_chatbi_result: bool,
+        knowledge_catalog: Optional[AuthorizedKnowledgeCatalog] = None,
     ) -> RequestDecision:
         return resolve_request_decision(
             user_input,
@@ -634,6 +686,7 @@ class RouterService:
             reference_mode=getattr(intent_info, "reference_mode", None),
             needs_fresh_data=getattr(intent_info, "needs_fresh_data", None),
             has_last_data_result=previous_chatbi_result,
+            knowledge_catalog=knowledge_catalog,
         )
 
     def _data_route_allowed(
@@ -730,13 +783,30 @@ class RouterService:
         agents_metadata: List[dict],
         previous_chatbi_result: bool,
         user_id: Optional[int],
+        user_name: Optional[str],
         is_admin: bool,
+        knowledge_catalog: Optional[AuthorizedKnowledgeCatalog] = None,
     ) -> tuple:
         intent_info = self._intent_from_router_payload(result_json)
+        if (
+            knowledge_catalog is None
+            and intent_info is not None
+            and (
+                intent_info.intent == IntentType.KNOWLEDGE_BASE
+                or str(getattr(intent_info, "domain", "") or "").strip().lower()
+                == "internal_docs"
+            )
+        ):
+            knowledge_catalog = await load_authorized_knowledge_catalog(
+                user_id=user_id,
+                user_name=user_name,
+                is_admin=is_admin,
+            )
         request_decision = self._request_decision_from_intent(
             user_input,
             intent_info,
             previous_chatbi_result,
+            knowledge_catalog=knowledge_catalog,
         )
         if intent_info is None:
             source_frame = self._source_frame_from_request_decision(request_decision)
@@ -1039,6 +1109,17 @@ class RouterService:
         cap_set = {str(cap).strip().lower() for cap in caps}
         return bool(cap_set & self._DATA_QUERY_CAPABILITY_KEYS)
 
+    def _is_knowledge_agent(self, agents_metadata: List[dict], agent_name: Optional[str]) -> bool:
+        """识别具备知识库执行能力的候选，用于目录未匹配时避免误短路。"""
+        agent = self._match_agent(agent_name, agents_metadata)
+        if not agent:
+            return False
+        capabilities = agent.get("capabilities") or []
+        if isinstance(capabilities, str):
+            capabilities = [capabilities]
+        normalized = {str(value).strip().lower() for value in capabilities}
+        return bool(normalized & {"knowledge_base", "knowledge_search", "rag"})
+
     @staticmethod
     def _source_frame_from_request_decision(decision: RequestDecision) -> IntentSourceFrame:
         source_map = {
@@ -1100,6 +1181,25 @@ class RouterService:
                 intent_info=intent_info,
                 request_decision=request_decision,
             )
+
+        if (
+            request_decision is not None
+            and self._is_knowledge_agent(agents_metadata, target_agent.get("name"))
+            and request_decision.knowledge_catalog_status
+            and request_decision.source == RequestSource.GENERAL
+        ):
+            fallback_agents = fallback_agents_metadata or agents_metadata
+            if self._find_fallback_agent(fallback_agents):
+                logger.info(
+                    "Router selected knowledge agent %s without catalog evidence; falling back to Main.",
+                    target_agent.get("name"),
+                )
+                return self._fallback_to_general(
+                    fallback_agents,
+                    "授权知识库目录未提供高置信匹配，保留一次直接检索兜底但不进入知识库智能体",
+                    intent_info=intent_info,
+                    request_decision=request_decision,
+                )
 
         if self._is_data_query_agent(agents_metadata, target_agent.get("name")) and not data_route_allowed:
             source_reason = getattr(source_frame, "reasoning", "unknown source")
