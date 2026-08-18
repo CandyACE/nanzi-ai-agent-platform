@@ -28,7 +28,7 @@ export interface ChatBIResultTable {
   columns: string[];
   /** Row values aligned to columns. */
   rows: unknown[][];
-  total_row_count: number;
+  total_row_count: number | null;
   embedded_row_count: number;
   page_size: number;
   truncated?: boolean;
@@ -37,7 +37,7 @@ export interface ChatBIResultTable {
 /** Whether the model analyzed full rows or a sample. */
 export interface ChatBIAnalysisScope {
   mode: "full" | "sample";
-  total_row_count: number;
+  total_row_count: number | null;
   model_row_count: number;
   user_notice?: string;
 }
@@ -57,6 +57,10 @@ export interface ChatBIInsightMeta {
   execution: {
     mode: "direct" | "repaired" | "federated";
     row_count: number;
+    total_row_count?: number | null;
+    returned_row_count?: number;
+    truncated?: boolean | null;
+    count_status?: "exact" | "unknown" | "not_requested" | "legacy_derived" | string;
     repair_count?: number;
     federated?: boolean;
   };

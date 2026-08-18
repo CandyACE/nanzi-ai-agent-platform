@@ -143,6 +143,20 @@ def build_repair_message(
             "在获得相关性更明确的 schema 前禁止执行 SQL 或直接回答用户。"
         )
     if state.schema_ambiguous:
+        if state.schema_ambiguity_candidates:
+            options = "\n".join(
+                f"- id={item.get('id')} label={item.get('label')} "
+                f"description={item.get('description') or '相关 Schema 候选'}"
+                for item in state.schema_ambiguity_candidates[:12]
+            )
+            return (
+                "【Schema 歧义澄清要求】上一轮 get_dataset_schema 返回多个高置信度候选，"
+                f"{state.schema_ambiguous_reason}。请立即调用 ask_user_question，禁止生成 SQL、"
+                "禁止直接回答用户，也不要只输出泛化提示。必须生成单选数据集选择卡，严格使用以下候选：\n"
+                f"{options}\n"
+                "调用参数必须设置 purpose=chatbi_dataset_selection、"
+                "is_multi_select=false、allow_custom_input=false；提问完成后立即停止，等待用户回答。"
+            )
         return (
             "【Schema 歧义澄清要求】上一轮 get_dataset_schema 返回多个高置信度候选，"
             f"{state.schema_ambiguous_reason}。请停止生成 SQL，先用自然语言和 quick 按钮请用户确认"
@@ -495,6 +509,8 @@ def resolve_repair_tool_choice(state: DataRunState) -> Any | None:
         return ToolChoice(mode="get_dataset_schema")
     if state.schema_needs_refinement:
         return ToolChoice(mode="get_dataset_schema")
+    if state.schema_ambiguous and state.schema_ambiguity_candidates:
+        return ToolChoice(mode="ask_user_question")
     if state.schema_ambiguous:
         return None
     if state.schema_refresh_required and not state.schema_refreshed_after_sql_error:

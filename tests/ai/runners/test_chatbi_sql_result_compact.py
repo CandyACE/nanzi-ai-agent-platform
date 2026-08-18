@@ -99,6 +99,48 @@ def test_compact_sql_result_for_model_samples_large_payload():
     assert "dimension_summaries" in compact
 
 
+def test_compact_sql_result_uses_exact_total_instead_of_returned_rows():
+    rows = [[i, f"RACK-{i % 5}"] for i in range(1000)]
+    payload = {
+        "columns": [{"name": "id"}, {"name": "rack"}],
+        "items": rows,
+        "total_count": 5000,
+        "returned_count": 1000,
+        "truncated": True,
+        "count_status": "exact",
+    }
+
+    compact = json.loads(
+        compact_sql_result_for_model(_FakeRunner(), json.dumps(payload, ensure_ascii=False))
+    )
+
+    assert compact["total_row_count"] == 5000
+    assert compact["returned_row_count"] == 1000
+    assert compact["truncated"] is True
+    assert compact["count_status"] == "exact"
+    assert "全部 5000 行中的前 500 行样例" in compact["_model_context_note"]
+
+
+def test_compact_sql_result_does_not_infer_unknown_total_from_sample_size():
+    rows = [[i] for i in range(1000)]
+    payload = {
+        "columns": [{"name": "id"}],
+        "items": rows,
+        "total_count": None,
+        "returned_count": 1000,
+        "truncated": None,
+        "count_status": "unknown",
+    }
+
+    compact = json.loads(
+        compact_sql_result_for_model(_FakeRunner(), json.dumps(payload, ensure_ascii=False))
+    )
+
+    assert compact["total_row_count"] is None
+    assert compact["returned_row_count"] == 1000
+    assert "总数未统计" in compact["_model_context_note"]
+
+
 def test_build_model_result_scope_marks_sample_mode():
     from app.services.ai.runners.chatbi.sql_result_compact import build_model_result_scope
 
@@ -109,6 +151,29 @@ def test_build_model_result_scope_marks_sample_mode():
     assert scope["total_row_count"] == 600
     assert scope["model_row_count"] == 500
     assert "并非逐行全量分析" in scope["user_notice"]
+
+
+def test_build_model_result_scope_preserves_unknown_total():
+    from app.services.ai.runners.chatbi.sql_result_compact import build_model_result_scope
+
+    rows = [[i] for i in range(1000)]
+    payload = json.dumps(
+        {
+            "columns": [{"name": "id"}],
+            "items": rows,
+            "total_count": None,
+            "returned_count": 1000,
+            "truncated": None,
+            "count_status": "unknown",
+        }
+    )
+
+    scope = build_model_result_scope(_FakeRunner(), payload)
+
+    assert scope["mode"] == "sample"
+    assert scope["total_row_count"] is None
+    assert scope["model_row_count"] == 500
+    assert "总数未统计" in scope["user_notice"]
 
 
 def test_compact_sql_result_for_model_skips_under_threshold():
@@ -407,3 +472,5 @@ def test_global_guardrails_forbid_deferred_and_bash_dump():
     assert "Bash/Read/Grep" in text
     assert "查询结果明细" in text
     assert "样例而非逐行全量分析" in text
+    assert "count_status=exact" in text
+    assert "数据库总数未统计" in text

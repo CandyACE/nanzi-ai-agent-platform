@@ -84,6 +84,7 @@ READ_ONLY_TOOL_NAMES = {
     "sub_agent_call",
     "sub_agent_batch_call",
     "todo_write",
+    "browser_snapshot",
 }
 NATIVE_TOOL_EVIDENCE_TYPES = {
     "Bash": frozenset({EvidenceType.RUNTIME_STATE}),
@@ -121,6 +122,100 @@ def _record_evidence_result(
         )
 
 
+def _redact_runtime_tool_arguments(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """在审计边界统一脱敏，避免敏感浏览器输入进入事件或审计存储。"""
+    if tool_name != "browser_fill":
+        return dict(arguments)
+    from app.services.ai.browser.browser_policy import redact_browser_arguments
+
+    # browser_fill 不把 sensitive 暴露给模型，审计边界按服务端策略强制脱敏。
+    return redact_browser_arguments({**arguments, "sensitive": True})
+
+
+async def _browser_permission_decision(
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> Any:
+    """将 BrowserSession 的 guarded/autopilot 策略接入 AgentScope 权限层。"""
+    if tool_name not in {"browser_click", "browser_fill"}:
+        return None
+
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    from app.core.context import get_current_agent_context
+
+    context = get_current_agent_context()
+    session_id = getattr(context, "browser_session_id", None) if context else None
+    user_id = getattr(context, "user_id", None) if context else None
+    if not session_id or user_id is None:
+        # 让通用权限层处理缺少浏览器上下文的异常调用。
+        return None
+
+    from app.core.orm import AsyncSessionLocal
+    from app.services.ai.browser.browser_policy import classify_browser_action
+    from app.services.ai.browser.browser_runtime import browser_runtime
+    from app.services.ai.browser.browser_session_service import BrowserAccessDenied, BrowserSessionService
+
+    snapshot_id = str(tool_input.get("snapshot_id", ""))
+    target_ref = str(tool_input.get("target_ref", ""))
+    try:
+        snapshot = browser_runtime.cached_snapshot(str(session_id), snapshot_id)
+        element = next((item for item in snapshot.elements if item.ref == target_ref), None)
+    except Exception:
+        element = None
+
+    if tool_name == "browser_fill":
+        if element is None:
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message="无法确认浏览器输入目标，请刷新页面快照后重试。",
+                decision_reason="browser_target_not_in_snapshot",
+                bypass_immune=True,
+            )
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="浏览器输入可自动执行。",
+            decision_reason="browser_fill_target",
+        )
+
+    if element is None:
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message="浏览器快照已过期，请重新获取页面快照后重试。",
+            decision_reason="browser_target_not_in_snapshot",
+            bypass_immune=True,
+        )
+
+    action_class = classify_browser_action(role=element.role, name=element.name)
+    async with AsyncSessionLocal() as db:
+        try:
+            session = await BrowserSessionService(db).get_owned_session(
+                user_id=int(user_id), session_id=str(session_id)
+            )
+        except (BrowserAccessDenied, TypeError, ValueError):
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message="浏览器会话不存在或无权访问。",
+                decision_reason="browser_session_access_denied",
+                bypass_immune=True,
+            )
+
+    if action_class == "commit" and session.approval_mode != "autopilot":
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="该浏览器动作可能提交、删除或产生外部副作用，需要用户确认。",
+            decision_reason="guarded_browser_commit",
+        )
+    return PermissionDecision(
+        behavior=PermissionBehavior.ALLOW,
+        message="浏览器交互动作可自动执行。",
+        decision_reason="browser_interaction_allowed",
+    )
+
+
 @dataclass(frozen=True)
 class RuntimeToolAuditEvent:
     tool_name: str
@@ -154,6 +249,7 @@ class RuntimeToolSpec:
 
     async def invoke(self, arguments: dict[str, Any] | None = None) -> Any:
         arguments = arguments or {}
+        audit_arguments = _redact_runtime_tool_arguments(self.name, arguments)
         start = time.perf_counter()
         await self._emit_audit(
             RuntimeToolAuditEvent(
@@ -161,7 +257,7 @@ class RuntimeToolSpec:
                 status="start",
                 source_type=self.source_type,
                 permission_scope=self.permission_scope,
-                arguments=arguments,
+                arguments=audit_arguments,
             )
         )
         try:
@@ -177,7 +273,7 @@ class RuntimeToolSpec:
                     status="success",
                     source_type=self.source_type,
                     permission_scope=self.permission_scope,
-                    arguments=arguments,
+                    arguments=audit_arguments,
                     elapsed_ms=(time.perf_counter() - start) * 1000,
                     result_preview=_preview_result(result),
                 )
@@ -195,7 +291,7 @@ class RuntimeToolSpec:
                 cause=exc,
                 details={"tool_name": self.name, "timeout_seconds": self.timeout_seconds},
             )
-            await self._emit_error_audit(arguments, start, wrapped)
+            await self._emit_error_audit(audit_arguments, start, wrapped)
             raise wrapped from exc
         except Exception as exc:
             wrapped = RuntimeToolError(
@@ -203,7 +299,7 @@ class RuntimeToolSpec:
                 cause=exc,
                 details={"tool_name": self.name},
             )
-            await self._emit_error_audit(arguments, start, wrapped)
+            await self._emit_error_audit(audit_arguments, start, wrapped)
             raise wrapped from exc
 
     async def _emit_error_audit(
@@ -302,6 +398,18 @@ class AgentScopeRuntimeTool:
 
         if deletion_decision:
             return deletion_decision
+
+        if self.name in {"browser_click", "browser_fill"}:
+            if self.approval_mode == "deny":
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY,
+                    message=f"Tool '{self.name}' is denied by runtime approval mode.",
+                    decision_reason=f"runtime approval mode: {self.approval_mode}",
+                    bypass_immune=True,
+                )
+            browser_decision = await _browser_permission_decision(self.name, tool_input)
+            if browser_decision is not None:
+                return browser_decision
 
         if self.spec.permission_scope == "read":
             return PermissionDecision(

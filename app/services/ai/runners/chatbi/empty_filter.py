@@ -53,7 +53,7 @@ async def maybe_run_empty_filter_diagnostics(
 
     async def _execute_sql(**kwargs: Any) -> str:
         async with AsyncSessionLocal() as session:
-            return await execute_sql_query_core(session, dry_run=False, **kwargs)
+            return await execute_sql_query_core(session, dry_run=False, include_total=False, **kwargs)
 
     try:
         diagnostics = await run_empty_filter_diagnostics(

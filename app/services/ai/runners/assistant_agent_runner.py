@@ -1447,7 +1447,16 @@ class AssistantAgentRunner(BaseExecutor):
                 tool_args = json.loads(raw_args)
             except Exception:
                 tool_args = {"input": raw_args}
+            if tool_name == "browser_fill" and isinstance(tool_args, dict):
+                from app.services.ai.browser.browser_policy import redact_browser_arguments
+
+                tool_args = redact_browser_arguments({**tool_args, "sensitive": True})
             output = tool_outputs.get(tool_id, "")
+            from app.services.ai.runtime.agentscope.browser_events import build_browser_session_event
+
+            browser_event = build_browser_session_event(tool_name, output)
+            if browser_event:
+                yield browser_event
             if tool_data.get(tool_id):
                 output = {
                     "text": output,

@@ -58,6 +58,30 @@ def filter_schema_hits_to_scope(
     return accepted
 
 
+def _metadata_dataset_id_from_hit(hit: dict[str, Any], authorized_datasets: list[Any]) -> str | None:
+    """把 local/RAG 命中的来源 ID 统一映射为 MetaDataset.id。"""
+    metadata_id = str(hit.get("metadata_dataset_id") or hit.get("dataset_id") or "").strip()
+    allowed_metadata_ids = {
+        str(getattr(dataset, "id", "") or "").strip()
+        for dataset in authorized_datasets
+        if str(getattr(dataset, "id", "") or "").strip()
+    }
+    if metadata_id in allowed_metadata_ids:
+        return metadata_id
+    rag_id = str(hit.get("rag_dataset_id") or hit.get("ragflow_dataset_id") or "").strip()
+    if rag_id:
+        for dataset in authorized_datasets:
+            if rag_id == str(getattr(dataset, "rag_dataset_id", "") or "").strip():
+                dataset_id = str(getattr(dataset, "id", "") or "").strip()
+                return dataset_id or None
+    if metadata_id:
+        for dataset in authorized_datasets:
+            if metadata_id == str(getattr(dataset, "rag_dataset_id", "") or "").strip():
+                dataset_id = str(getattr(dataset, "id", "") or "").strip()
+                return dataset_id or None
+    return None
+
+
 def _set_metadata_scope_debug(
     *,
     authorized_datasets: list[Any],
@@ -131,7 +155,7 @@ async def _format_fallback_dataset_chunks(session: AsyncSession, dataset_id: int
     formatted: list[str] = []
     index = start_index
     for content in raw_chunks:
-        piece = format_schema_chunk(index, content)
+        piece = format_schema_chunk(index, content, dataset_id=dataset_id)
         if piece:
             formatted.append(piece)
             index += 1
@@ -275,6 +299,13 @@ async def _fetch_dataset_schema_impl(
                 "content": content,
                 "similarity": similarity,
                 "doc_name": chunk.get("doc_name", "unknown"),
+                "metadata_dataset_id": (
+                    _metadata_dataset_id_from_hit(chunk, authorized_datasets)
+                ),
+                "rag_dataset_id": (
+                    chunk.get("rag_dataset_id")
+                    or chunk.get("ragflow_dataset_id")
+                ),
             })
 
         if filtered_hits:
@@ -334,6 +365,13 @@ async def _fetch_dataset_schema_impl(
                     "content": content,
                     "similarity": similarity,
                     "doc_name": item.get("doc_name", "unknown"),
+                    "metadata_dataset_id": (
+                        _metadata_dataset_id_from_hit(item, authorized_datasets)
+                    ),
+                    "rag_dataset_id": (
+                        item.get("rag_dataset_id")
+                        or item.get("ragflow_dataset_id")
+                    ),
                 })
 
             if filtered_hits:
@@ -522,7 +560,11 @@ async def _enrich_with_cross_dataset_schema(
             yaml_chunk = MetadataRagService.render_table_schema_yaml(
                 dataset, table, [], data_source=ds_source
             )
-            formatted = format_schema_chunk(chunk_index, yaml_chunk)
+            formatted = format_schema_chunk(
+                chunk_index,
+                yaml_chunk,
+                dataset_id=getattr(dataset, "id", None),
+            )
             if formatted:
                 extra_chunks.append(
                     f"# [跨数据集关联补全: {dataset.name}.{table.physical_name}]\n{formatted}"

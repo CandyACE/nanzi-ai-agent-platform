@@ -2528,6 +2528,39 @@ def test_high_confidence_schema_candidates_require_clarification(data_config):
     assert "多个高置信度" in runner._build_repair_message(state)
 
 
+def test_schema_ambiguity_exposes_dataset_question_candidates(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.schema_chunk_format import format_schema_hits
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-question-card", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True)
+    schema_output = format_schema_hits([
+        {
+            "content": "table_name: entrance_log\ndataset: 门禁数据\n",
+            "similarity": 0.88,
+            "doc_name": "entrance_log.txt",
+            "metadata_dataset_id": 1,
+        },
+        {
+            "content": "table_name: audit_log\ndataset: 审计数据\n",
+            "similarity": 0.86,
+            "doc_name": "audit_log.txt",
+            "metadata_dataset_id": 2,
+        },
+    ])
+
+    runner._apply_schema_tool_result(state, schema_output)
+
+    assert state.schema_ambiguous is True
+    assert [item["id"] for item in state.schema_ambiguity_candidates] == ["1", "2"]
+    choice = runner._resolve_repair_tool_choice(state)
+    assert choice is not None
+    assert getattr(choice, "mode", None) == "ask_user_question"
+    repair_message = runner._build_repair_message(state)
+    assert "purpose=chatbi_dataset_selection" in repair_message
+    assert "门禁数据" in repair_message
+
+
 def test_schema_success_after_misses_recovers_schema_state(data_config):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
 

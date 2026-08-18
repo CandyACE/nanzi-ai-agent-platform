@@ -88,6 +88,8 @@ async def lifespan(app: FastAPI):
     await scheduler_service.stop()
     await GlobalHttpClient.close()
     await AuditService.stop_worker()
+    from app.services.ai.browser.browser_runtime import browser_runtime
+    await browser_runtime.shutdown()
     from app.services.pool_manager import DataSourcePoolManager
     await DataSourcePoolManager.close_all_pools()
     await database.close_db()

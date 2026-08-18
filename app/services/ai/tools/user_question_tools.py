@@ -30,6 +30,7 @@ class AskUserQuestionArgs(BaseModel):
     is_multi_select: bool = Field(default=False, description="是否支持多选")
     allow_custom_input: bool = Field(default=True, description="是否允许用户补充说明")
     context: str | None = Field(default=None, description="问题背景说明")
+    purpose: str | None = Field(default=None, description="受控恢复用途标识，普通提问无需填写")
 
     @field_validator("question")
     @classmethod
@@ -63,6 +64,16 @@ class AskUserQuestionArgs(BaseModel):
         text = str(value).strip()
         if len(text) > 1000:
             raise ValueError("context 不能超过 1000 个字符")
+        return text or None
+
+    @field_validator("purpose")
+    @classmethod
+    def _purpose_limited(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if len(text) > 100:
+            raise ValueError("purpose 不能超过 100 个字符")
         return text or None
 
 
@@ -100,6 +111,7 @@ class AskUserQuestionTool(BaseTool):
                 "is_multi_select": args.is_multi_select,
                 "allow_custom_input": args.allow_custom_input,
                 "context": args.context or "",
+                "purpose": args.purpose or "",
             },
             ensure_ascii=False,
         )

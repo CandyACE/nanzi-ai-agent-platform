@@ -15,13 +15,13 @@
     >
       <span class="min-w-0">
         <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-semibold text-gray-700 dark:text-gray-200">
-          <span class="truncate">查询结果明细 · {{ totalCount }} 行</span>
+          <span class="truncate">查询结果明细 · {{ totalCountLabel }}</span>
           <span
             v-if="sampleNotice"
             class="rounded-full bg-gray-200/70 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-700/80 dark:text-gray-300"
             :title="sampleNotice"
           >
-            AI 基于前 {{ analysisScope?.model_row_count }}/{{ analysisScope?.total_row_count }} 行样例
+            AI 基于前 {{ analysisScope?.model_row_count }}/{{ analysisScope?.total_row_count == null ? "总数未知" : analysisScope?.total_row_count }} 行样例
           </span>
         </span>
         <span v-if="table.truncated" class="mt-0.5 block text-[10px] font-normal text-gray-400">
@@ -131,6 +131,12 @@ const sampleNotice = computed(() => {
   if (!scope || scope.mode !== "sample") return "";
   const notice = String(scope.user_notice || "").trim();
   if (notice) return notice;
+  if (scope.total_row_count == null) {
+    return (
+      `AI 解读基于已返回 ${scope.model_row_count} 行中的样例，数据库总数未统计；` +
+      "完整明细见下方表格。"
+    );
+  }
   return (
     `AI 解读基于全部 ${scope.total_row_count} 行中的前 ${scope.model_row_count} 行样例，` +
     "并非逐行全量分析；完整明细见下方表格。"
@@ -147,10 +153,12 @@ const embeddedRows = computed(() => {
   return Array.isArray(rows) ? rows : [];
 });
 
-const totalCount = computed(() => {
-  const total = Number(props.table?.total_row_count);
-  if (Number.isFinite(total) && total > 0) return total;
-  return embeddedRows.value.length;
+const totalCountLabel = computed(() => {
+  const total = props.table?.total_row_count;
+  if (typeof total === "number" && Number.isFinite(total)) {
+    return `${total.toLocaleString("zh-CN")} 条`;
+  }
+  return `已返回 ${embeddedRows.value.length.toLocaleString("zh-CN")} 行 · 总数未统计`;
 });
 
 const pageCount = computed(() => Math.max(1, Math.ceil(embeddedRows.value.length / pageSize.value)));

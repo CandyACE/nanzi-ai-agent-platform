@@ -170,6 +170,51 @@ def _extract_primary_rows(parsed: Any) -> tuple[list[Any] | None, str | None]:
     return None, None
 
 
+def _result_count_metadata(parsed: Any, rows: list[Any]) -> dict[str, Any]:
+    """读取执行层计数元数据；旧结果没有元数据时保留历史行为。"""
+    if not isinstance(parsed, dict):
+        return {
+            "total": len(rows),
+            "returned": len(rows),
+            "truncated": False,
+            "status": "legacy_derived",
+        }
+
+    metadata_present = any(
+        key in parsed for key in ("total_count", "returned_count", "truncated", "count_status")
+    )
+    status = str(parsed.get("count_status") or "").strip().lower()
+    if status == "exact":
+        raw_total = parsed.get("total_count")
+        try:
+            total = int(raw_total) if raw_total is not None else None
+        except (TypeError, ValueError):
+            total = None
+    elif status == "unknown" or metadata_present:
+        total = None
+    else:
+        total = len(rows)
+
+    raw_returned = parsed.get("returned_count") if metadata_present else len(rows)
+    try:
+        returned = int(raw_returned) if raw_returned is not None else len(rows)
+    except (TypeError, ValueError):
+        returned = len(rows)
+    if returned < 0:
+        returned = len(rows)
+
+    raw_truncated = parsed.get("truncated") if metadata_present else None
+    truncated = raw_truncated if isinstance(raw_truncated, bool) else (
+        returned < total if total is not None else None
+    )
+    return {
+        "total": total,
+        "returned": returned,
+        "truncated": truncated,
+        "status": status or "legacy_derived",
+    }
+
+
 def _column_labels(parsed: dict[str, Any], sample_row: Any) -> list[str]:
     columns = parsed.get("columns")
     labels: list[str] = []
@@ -259,19 +304,30 @@ def compact_sql_result_for_model(
     rows, row_key = _extract_primary_rows(parsed)
     if rows is None:
         return None
-    total = len(rows)
-    if total <= threshold:
+    count_meta = _result_count_metadata(parsed, rows)
+    total = count_meta["total"]
+    returned = count_meta["returned"]
+    if len(rows) <= threshold:
         return None
 
-    sample_n = max(1, min(int(sample_rows), total))
+    sample_n = max(1, min(int(sample_rows), len(rows)))
     if isinstance(parsed, list):
         labels = _column_labels({}, rows[0] if rows else None)
         dims = _build_dimension_summaries(rows, labels=labels)
-        note = _model_context_note(total=total, sample_n=sample_n, has_dims=bool(dims))
+        note = _model_context_note(
+            total=total,
+            returned=returned,
+            sample_n=sample_n,
+            has_dims=bool(dims),
+            truncated=count_meta["truncated"],
+        )
         payload: dict[str, Any] = {
             "_model_context_note": note,
             "total_row_count": total,
+            "returned_row_count": returned,
             "sample_row_count": sample_n,
+            "truncated": count_meta["truncated"],
+            "count_status": count_meta["status"],
             "rows": rows[:sample_n],
         }
         if dims:
@@ -281,12 +337,21 @@ def compact_sql_result_for_model(
     assert isinstance(parsed, dict)
     labels = _column_labels(parsed, rows[0] if rows else None)
     dims = _build_dimension_summaries(rows, labels=labels)
-    note = _model_context_note(total=total, sample_n=sample_n, has_dims=bool(dims))
+    note = _model_context_note(
+        total=total,
+        returned=returned,
+        sample_n=sample_n,
+        has_dims=bool(dims),
+        truncated=count_meta["truncated"],
+    )
     compact: dict[str, Any] = dict(parsed)
     key = row_key or "items"
     compact[key] = rows[:sample_n]
     compact["total_row_count"] = total
+    compact["returned_row_count"] = returned
     compact["sample_row_count"] = sample_n
+    compact["truncated"] = count_meta["truncated"]
+    compact["count_status"] = count_meta["status"]
     compact["_model_context_note"] = note
     if dims:
         compact["dimension_summaries"] = dims
@@ -300,7 +365,10 @@ def compact_sql_result_for_model(
             {
                 "_model_context_note": note,
                 "total_row_count": total,
+                "returned_row_count": returned,
                 "sample_row_count": sample_n,
+                "truncated": count_meta["truncated"],
+                "count_status": count_meta["status"],
                 key: rows[:sample_n],
             },
             ensure_ascii=False,
@@ -308,17 +376,35 @@ def compact_sql_result_for_model(
         )
 
 
-def _model_context_note(*, total: int, sample_n: int, has_dims: bool) -> str:
+def _model_context_note(
+    *,
+    total: int | None,
+    returned: int,
+    sample_n: int,
+    has_dims: bool,
+    truncated: bool | None,
+) -> str:
     dim_part = "与维度分布摘要" if has_dims else ""
+    if total is None:
+        scope_part = f"当前已返回 {returned} 行，数据库总数未统计"
+        must_disclose = (
+            f"本次解读基于已返回 {returned} 行中的前 {sample_n} 行样例"
+            f"{'及维度分布' if has_dims else ''}，数据库总数未统计"
+        )
+    else:
+        scope_part = f"结果共 {total} 行"
+        must_disclose = (
+            f"本次解读基于全部 {total} 行中的前 {sample_n} 行样例"
+            f"{'及维度分布' if has_dims else ''}，并非对全部明细的逐行全量分析"
+        )
     return (
-        f"结果共 {total} 行，已向模型回传前 {sample_n} 行样例{dim_part}。"
+        f"{scope_part}，已向模型回传前 {sample_n} 行样例{dim_part}。"
         "请基于总行数、样例与分布直接给出汇总/要点回答；"
         "禁止承诺「读取完整数据后再汇总」；"
         "禁止再用 Bash/Read/Grep 把明细重新 dump；"
         "完整明细由前端「查询结果明细」表格提供，不必在回复中逐行粘贴。\n"
         "【必须告知用户】回答开头用一两句明确说明："
-        f"本次解读基于全部 {total} 行中的前 {sample_n} 行样例"
-        f"{'及维度分布' if has_dims else ''}，并非对全部明细的逐行全量分析；"
+        f"{must_disclose}；"
         "完整明细请查看下方「查询结果明细」。"
     )
 
@@ -333,30 +419,45 @@ def build_model_result_scope(
     """Describe whether the model saw full rows or a sample (for UI + prompts)."""
     parsed = runner._try_parse_json_output(output)
     rows, _ = _extract_primary_rows(parsed)
-    total = len(rows) if rows is not None else 0
-    if total <= 0:
+    if rows is None:
+        rows = []
+    count_meta = _result_count_metadata(parsed, rows)
+    observed = len(rows)
+    total = count_meta["total"]
+    returned = count_meta["returned"]
+    if observed <= 0:
         return {
             "mode": "full",
-            "total_row_count": 0,
+            "total_row_count": total if total is not None else 0,
             "model_row_count": 0,
             "user_notice": "",
         }
-    if total <= threshold:
+    if observed <= threshold:
+        user_notice = ""
+        if total is None and count_meta["status"] == "unknown":
+            user_notice = f"当前已返回 {returned} 行，数据库总数未统计。"
         return {
             "mode": "full",
             "total_row_count": total,
-            "model_row_count": total,
-            "user_notice": "",
+            "model_row_count": observed,
+            "user_notice": user_notice,
         }
-    sample_n = max(1, min(int(sample_rows), total))
+    sample_n = max(1, min(int(sample_rows), observed))
+    if total is None:
+        user_notice = (
+            f"AI 解读基于已返回 {returned} 行中的前 {sample_n} 行样例，"
+            "数据库总数未统计；完整明细见下方「查询结果明细」。"
+        )
+    else:
+        user_notice = (
+            f"AI 解读基于全部 {total} 行中的前 {sample_n} 行样例及维度分布，"
+            "并非逐行全量分析；完整明细见下方「查询结果明细」。"
+        )
     return {
         "mode": "sample",
         "total_row_count": total,
         "model_row_count": sample_n,
-        "user_notice": (
-            f"AI 解读基于全部 {total} 行中的前 {sample_n} 行样例及维度分布，"
-            "并非逐行全量分析；完整明细见下方「查询结果明细」。"
-        ),
+        "user_notice": user_notice,
     }
 
 

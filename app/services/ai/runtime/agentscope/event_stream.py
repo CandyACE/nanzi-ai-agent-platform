@@ -123,6 +123,10 @@ async def stream_pending_tool_interrupt(
             tool_args = {"input": raw_args}
         if not isinstance(tool_args, dict):
             tool_args = {"input": tool_args}
+        if tool_name == "browser_fill":
+            from app.services.ai.browser.browser_policy import redact_browser_arguments
+
+            tool_args = redact_browser_arguments({**tool_args, "sensitive": True})
         pending = await pending_agentscope_confirmations.register(
             kind=kind,
             agent=agent,

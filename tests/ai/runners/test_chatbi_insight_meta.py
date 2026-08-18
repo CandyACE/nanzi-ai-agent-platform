@@ -159,6 +159,55 @@ def test_build_insight_includes_paginated_result_table():
     assert data["analysis_scope"]["total_row_count"] == 60
 
 
+def test_build_insight_uses_exact_total_and_returned_count_metadata():
+    rows = [{"id": i} for i in range(3)]
+    state = _state(rows)
+    state.last_successful_sql_output = json.dumps(
+        {
+            "rows": rows,
+            "total_count": 238,
+            "returned_count": 3,
+            "truncated": True,
+            "count_status": "exact",
+        },
+        ensure_ascii=False,
+    )
+
+    data = build_chatbi_insight_meta(state)["data"]
+
+    assert data["execution"]["row_count"] == 3
+    assert data["execution"]["total_row_count"] == 238
+    assert data["execution"]["returned_row_count"] == 3
+    assert data["execution"]["truncated"] is True
+    assert data["table"]["total_row_count"] == 238
+    assert data["table"]["embedded_row_count"] == 3
+    assert data["table"]["truncated"] is True
+
+
+def test_build_insight_does_not_infer_unknown_total_from_returned_rows():
+    rows = [{"id": i} for i in range(1000)]
+    state = _state(rows)
+    state.last_successful_sql_output = json.dumps(
+        {
+            "rows": rows,
+            "total_count": None,
+            "returned_count": 1000,
+            "truncated": None,
+            "count_status": "unknown",
+        },
+        ensure_ascii=False,
+    )
+
+    data = build_chatbi_insight_meta(state)["data"]
+
+    assert data["execution"]["total_row_count"] is None
+    assert data["execution"]["returned_row_count"] == 1000
+    assert data["table"]["total_row_count"] is None
+    assert data["table"]["truncated"] is None
+    assert data["analysis_scope"]["total_row_count"] is None
+    assert "总数未统计" in data["analysis_scope"]["user_notice"]
+
+
 def test_build_insight_analysis_scope_sample_when_state_marks_sample():
     rows = [{"id": i} for i in range(600)]
     state = _state(rows)
