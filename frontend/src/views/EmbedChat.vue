@@ -2543,13 +2543,12 @@ const openEmbedTrace = (traceId: string) => {
 const isProcessing = ref(false);
 const activeTodoTimeline = computed(() => {
   if (!isProcessing.value) return undefined;
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    const msg = messages.value[i];
-    if (msg && (msg.role === 'agent' || msg.role === 'assistant') && msg.processTimeline?.some(item => item.kind === 'todo')) {
-      return msg.processTimeline;
-    }
+  const currentMsg = messages.value[messages.value.length - 1];
+  if (!currentMsg || (currentMsg.role !== 'agent' && currentMsg.role !== 'assistant')) {
+    return undefined;
   }
-  return undefined;
+  const hasTodo = currentMsg.processTimeline?.some((item) => item.kind === 'todo');
+  return hasTodo ? currentMsg.processTimeline : undefined;
 });
 const datasetMenuLoading = ref(false);
 const isInitialLoading = ref(true);
