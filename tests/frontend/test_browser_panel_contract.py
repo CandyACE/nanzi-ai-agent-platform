@@ -53,7 +53,9 @@ def test_browser_panel_exposes_remote_focus_feedback_plain_manual_input_and_sess
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
     assert "remoteFocusMessage" in source
     assert "已聚焦远程页面" in source
-    assert "lastClickStyle" in source
+    assert "lastClickStyle" not in source
+    assert "naturalWidth" in source
+    assert "naturalHeight" in source
     assert 'type="text"' in source
     assert 'type="password"' not in source
     assert "showManualInput" in source
@@ -75,6 +77,17 @@ def test_browser_panel_refresh_pause_is_manual_not_pointer_triggered():
     assert '@click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"' in source
     assert '@mouseenter="pauseAutoRefresh"' not in source
     assert '@focus="pauseAutoRefresh"' not in source
+
+
+def test_browser_panel_exposes_human_handoff_refresh_and_captcha_state():
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    assert "controlOwner" in source
+    assert "当前由人工操作" in source
+    assert "交还 AI" in source
+    assert "interactionInProgress" in source
+    assert "captchaDetected" in source
+    assert "release_control" in source
+    assert "controlOwner.value === 'human'" in source
 
 
 def test_embed_chat_contains_browser_panel_toggle_and_session_binding():

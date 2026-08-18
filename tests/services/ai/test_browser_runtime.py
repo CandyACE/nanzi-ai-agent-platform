@@ -1,8 +1,9 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.schemas.browser import BrowserSnapshot
+from app.schemas.browser import BrowserSnapshot, BrowserToolResult
 from app.services.ai.browser.browser_runtime import BrowserRuntime
 from app.services.ai.browser.browser_worker import BrowserPageInfo
 
@@ -28,6 +29,9 @@ class SerialProbeWorker:
     def has_session(self, _session_id):
         return True
 
+    async def shutdown(self):
+        return None
+
     async def navigate(self, _session_id, _url):
         self._enter()
         self.navigate_started.set()
@@ -47,6 +51,35 @@ class SerialProbeWorker:
         )
 
 
+class ControlProbeWorker:
+    def __init__(self):
+        self.manual_input = AsyncMock(
+            return_value=BrowserPageInfo(url="https://example.com/", title="Example")
+        )
+        self.click = AsyncMock(
+            return_value=BrowserToolResult(
+                session_id="session-1",
+                action="click",
+                url="https://example.com/",
+                title="Example",
+            )
+        )
+        self.fill = AsyncMock(
+            return_value=BrowserToolResult(
+                session_id="session-1",
+                action="fill",
+                url="https://example.com/",
+                title="Example",
+            )
+        )
+
+    def has_session(self, _session_id):
+        return True
+
+    async def shutdown(self):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_browser_runtime_serializes_navigation_and_snapshot_per_session():
     worker = SerialProbeWorker()
@@ -63,3 +96,91 @@ async def test_browser_runtime_serializes_navigation_and_snapshot_per_session():
     await asyncio.gather(navigate_task, snapshot_task)
 
     assert worker.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_blocks_ai_until_human_releases_control():
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+    runtime._snapshots["session-1"] = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-1",
+        url="https://example.com/",
+        title="Example",
+    )
+
+    await runtime.manual_input("session-1", event="mouse_click", payload={"x": 10, "y": 10})
+    assert runtime.control_state("session-1")["owner"] == "human"
+    runtime._snapshots["session-1"] = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-1",
+        url="https://example.com/",
+        title="Example",
+    )
+
+    click_task = asyncio.create_task(
+        runtime.click(
+            "session-1",
+            target_ref="e1",
+            snapshot_id="snapshot-1",
+            approval_mode="autopilot",
+            confirmed=True,
+        )
+    )
+    await asyncio.sleep(0)
+    worker.click.assert_not_awaited()
+
+    await runtime.release_human_control("session-1")
+    await click_task
+    worker.click.assert_awaited_once()
+    assert runtime.control_state("session-1")["owner"] == "ai"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_control_state_isolated_and_shutdown_clears_it():
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+
+    await runtime.manual_input("session-1", event="key", payload={"key": "Enter"})
+
+    assert runtime.control_state("session-1")["owner"] == "human"
+    assert runtime.control_state("session-2")["owner"] == "ai"
+
+    await runtime.shutdown()
+
+    assert runtime.control_state("session-1")["owner"] == "ai"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_clears_captcha_flag_after_human_verification_completes():
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        side_effect=[
+            BrowserSnapshot(
+                session_id="session-1",
+                snapshot_id="captcha-1",
+                url="https://example.com/",
+                title="Verify",
+                page_state="captcha",
+            ),
+            BrowserSnapshot(
+                session_id="session-1",
+                snapshot_id="ready-1",
+                url="https://example.com/",
+                title="Example",
+                page_state="ready",
+            ),
+        ]
+    )
+    runtime = BrowserRuntime(worker=worker)
+
+    await runtime.snapshot("session-1")
+    assert runtime.control_state("session-1")["captcha"] is True
+
+    await runtime.snapshot("session-1")
+
+    assert runtime.control_state("session-1") == {
+        "owner": "human",
+        "reason": "captcha",
+        "captcha": False,
+    }

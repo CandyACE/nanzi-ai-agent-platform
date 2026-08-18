@@ -183,9 +183,10 @@
             </div>
             <div class="flex shrink-0 items-center gap-1.5">
               <span class="text-sky-600 dark:text-sky-300">
-                {{ autoRefreshPaused ? '自动刷新已暂停' : '每 2 秒自动刷新' }}
+                {{ controlOwner === 'human' ? '当前由人工操作，自动刷新已暂停' : captchaDetected ? '验证码处理中，自动刷新已暂停' : interactionInProgress ? '操作中，完成后刷新一次' : autoRefreshPaused ? '自动刷新已暂停' : '每 2 秒自动刷新' }}
               </span>
               <button
+                v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
                 type="button"
                 class="rounded border border-sky-200 bg-white/70 px-1.5 py-0.5 font-semibold text-sky-700 hover:bg-white dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60"
                 @click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"
@@ -209,6 +210,26 @@
               <span aria-hidden="true">🎯</span>
               <span>{{ remoteFocusMessage }}</span>
             </div>
+            <div
+              v-if="controlOwner === 'human'"
+              class="mb-2 flex items-center justify-between gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200"
+              role="status"
+            >
+              <span
+                class="min-w-0 truncate"
+                :title="controlReason ? `人工接管：${controlReason}` : '当前由人工操作'"
+              >
+                <strong>当前由人工操作</strong>
+                <span v-if="captchaDetected">，请完成安全验证</span>
+              </span>
+              <button
+                type="button"
+                class="shrink-0 rounded border border-emerald-300 bg-white/70 px-2 py-0.5 font-semibold text-emerald-700 hover:bg-white dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                @click="releaseControl"
+              >
+                交还 AI
+              </button>
+            </div>
             <div v-if="screenshotUrl" class="relative">
               <img
                 :key="snapshot.snapshot_id"
@@ -221,12 +242,6 @@
                 @pointermove="handleImagePointerMove"
                 @pointerup="handleImagePointerUp"
                 @pointercancel="handleImagePointerCancel"
-              />
-              <span
-                v-if="lastClickStyle"
-                :style="lastClickStyle"
-                class="pointer-events-none absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-blue-600 bg-blue-400/30 shadow-[0_0_0_3px_rgba(255,255,255,0.8)] dark:border-blue-300 dark:bg-blue-400/30"
-                aria-hidden="true"
               />
             </div>
             <div v-else class="flex h-full min-h-56 items-center justify-center text-xs text-gray-400">等待浏览器画面…</div>
@@ -263,6 +278,7 @@
                   class="min-w-0 flex-1 rounded-md border border-blue-200 bg-blue-50/40 px-2 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:text-gray-200"
                   placeholder="输入文字，回车发送"
                   @keyup.enter="sendText"
+                  @keydown.esc="showManualInput = false"
                 />
                 <button class="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700" @click="sendText">发送</button>
               </div>
@@ -286,6 +302,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 type ApprovalMode = 'guarded' | 'autopilot';
+type ControlOwner = 'ai' | 'human';
 type BrowserElement = {
   ref: string;
   role?: string | null;
@@ -332,7 +349,10 @@ const manualText = ref('');
 const showManualInput = ref(false);
 const manualInputRef = ref<HTMLInputElement | null>(null);
 const remoteFocusMessage = ref('请先点击截图中的输入框，再使用下方人工输入');
-const lastClick = ref<{ x: number; y: number } | null>(null);
+const controlOwner = ref<ControlOwner>('ai');
+const controlReason = ref<string | null>(null);
+const captchaDetected = ref(false);
+const interactionInProgress = ref(false);
 const pointerDownPoint = ref<RemotePoint | null>(null);
 const lastPointerPoint = ref<RemotePoint | null>(null);
 const pointerDragging = ref(false);
@@ -415,20 +435,20 @@ const screenshotUrl = computed(() => {
   const separator = reference.includes('?') ? '&' : '?';
   return `${reference}${separator}snapshot_id=${encodeURIComponent(snapshotId)}`;
 });
-const lastClickStyle = computed<Record<string, string> | null>(() => {
-  if (!lastClick.value) return null;
-  return {
-    left: `${(lastClick.value.x / 1280) * 100}%`,
-    top: `${(lastClick.value.y / 800) * 100}%`,
-  };
-});
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let interactionFinishTimer: ReturnType<typeof setTimeout> | null = null;
 
 const stopPolling = () => {
   if (!pollTimer) return;
   clearInterval(pollTimer);
   pollTimer = null;
+};
+
+const stopInteractionFinishTimer = () => {
+  if (!interactionFinishTimer) return;
+  clearTimeout(interactionFinishTimer);
+  interactionFinishTimer = null;
 };
 
 const closeSocket = () => {
@@ -438,6 +458,8 @@ const closeSocket = () => {
     reconnectTimer = null;
   }
   stopPolling();
+  stopInteractionFinishTimer();
+  interactionInProgress.value = false;
   if (socket.value) {
     socket.value.onclose = null;
     socket.value.close();
@@ -451,6 +473,10 @@ const connect = async () => {
   errorMessage.value = '';
   showManualInput.value = false;
   manualText.value = '';
+  controlOwner.value = 'ai';
+  controlReason.value = null;
+  captchaDetected.value = false;
+  interactionInProgress.value = false;
   if (!props.visible || !props.sessionId || !props.viewerToken || typeof window === 'undefined') return;
   await nextTick();
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -463,14 +489,53 @@ const connect = async () => {
     startPolling();
   };
   client.onmessage = (event) => {
-    let payload: { type?: string; snapshot?: BrowserSnapshot; message?: string; focused_input?: boolean };
+    let payload: {
+      type?: string;
+      snapshot?: BrowserSnapshot;
+      message?: string;
+      focused_input?: boolean;
+      owner?: ControlOwner;
+      reason?: string | null;
+      captcha?: boolean;
+      detected?: boolean;
+    };
     try {
-      payload = JSON.parse(event.data) as { type?: string; snapshot?: BrowserSnapshot; message?: string; focused_input?: boolean };
+      payload = JSON.parse(event.data) as {
+        type?: string;
+        snapshot?: BrowserSnapshot;
+        message?: string;
+        focused_input?: boolean;
+        owner?: ControlOwner;
+        reason?: string | null;
+        captcha?: boolean;
+        detected?: boolean;
+      };
     } catch {
       errorMessage.value = '浏览器返回了无法识别的消息';
       return;
     }
-    if (payload.type === 'focus') {
+    if (payload.type === 'control_state') {
+      controlOwner.value = payload.owner === 'human' ? 'human' : 'ai';
+      controlReason.value = payload.reason || null;
+      if (controlOwner.value === 'human') {
+        stopPolling();
+      } else if (payload.captcha) {
+        captchaDetected.value = true;
+        stopPolling();
+      } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+        startPolling();
+      }
+    } else if (payload.type === 'captcha') {
+      captchaDetected.value = Boolean(payload.detected);
+      if (captchaDetected.value) {
+        stopPolling();
+        remoteFocusMessage.value = '检测到安全验证，请人工完成；自动刷新已暂停';
+      } else if (controlOwner.value === 'human') {
+        stopPolling();
+      } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+        startPolling();
+      }
+    } else if (payload.type === 'focus') {
       showManualInput.value = Boolean(payload.focused_input);
       if (showManualInput.value) {
         remoteFocusMessage.value = '已聚焦输入区域，请在弹框中输入文字';
@@ -483,8 +548,11 @@ const connect = async () => {
       const previousUrl = snapshot.value?.url;
       snapshot.value = payload.snapshot;
       address.value = payload.snapshot.url || address.value;
+      if (payload.snapshot.page_state === 'captcha') {
+        captchaDetected.value = true;
+        stopPolling();
+      }
       if (previousUrl && previousUrl !== payload.snapshot.url) {
-        lastClick.value = null;
         showManualInput.value = false;
         manualText.value = '';
         remoteFocusMessage.value = '页面已变化，请重新点击要输入的区域';
@@ -514,7 +582,7 @@ const requestSnapshot = () => send({ type: 'snapshot' });
 
 const startPolling = () => {
   stopPolling();
-  if (autoRefreshPaused.value || !connected.value) return;
+  if (controlOwner.value === 'human' || autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value || !connected.value) return;
   pollTimer = setInterval(requestSnapshot, 2000);
 };
 
@@ -525,9 +593,32 @@ const pauseAutoRefresh = () => {
 
 const resumeAutoRefresh = () => {
   autoRefreshPaused.value = false;
-  if (!connected.value) return;
+  if (!connected.value || captchaDetected.value || interactionInProgress.value) return;
   requestSnapshot();
   startPolling();
+};
+
+const pauseForInteraction = () => {
+  interactionInProgress.value = true;
+  controlOwner.value = 'human';
+  stopPolling();
+};
+
+const finishInteraction = () => {
+  stopInteractionFinishTimer();
+  if (!interactionInProgress.value) return;
+  interactionInProgress.value = false;
+};
+
+const scheduleInteractionFinish = () => {
+  stopInteractionFinishTimer();
+  interactionFinishTimer = setTimeout(finishInteraction, 180);
+};
+
+const releaseControl = () => {
+  send({ type: 'release_control' });
+  remoteFocusMessage.value = '正在交还 AI 控制权';
+  if (!captchaDetected.value && !autoRefreshPaused.value && controlOwner.value === 'ai') startPolling();
 };
 
 const confirmCloseSession = () => {
@@ -539,16 +630,17 @@ const remotePointFromEvent = (event: MouseEvent): RemotePoint | null => {
   const image = event.currentTarget as HTMLImageElement;
   const rect = image.getBoundingClientRect();
   if (!rect.width || !rect.height) return null;
+  const remoteWidth = image.naturalWidth || 1280;
+  const remoteHeight = image.naturalHeight || 800;
   return {
-    x: ((event.clientX - rect.left) / rect.width) * 1280,
-    y: ((event.clientY - rect.top) / rect.height) * 800,
+    x: ((event.clientX - rect.left) / rect.width) * remoteWidth,
+    y: ((event.clientY - rect.top) / rect.height) * remoteHeight,
   };
 };
 
 const sendRemoteClick = (event: MouseEvent) => {
   const point = remotePointFromEvent(event);
   if (!point) return;
-  lastClick.value = point;
   remoteFocusMessage.value = '已聚焦远程页面，键盘输入将发送到当前焦点';
   viewportRef.value?.focus({ preventScroll: true });
   send({
@@ -562,7 +654,9 @@ const handleImageClick = (event: MouseEvent) => {
     suppressNextClick.value = false;
     return;
   }
+  pauseForInteraction();
   sendRemoteClick(event);
+  finishInteraction();
 };
 
 const suppressNativeClick = () => {
@@ -586,6 +680,7 @@ const handleImagePointerDown = (event: PointerEvent) => {
   const point = remotePointFromEvent(event);
   if (!point) return;
   event.preventDefault();
+  pauseForInteraction();
   const image = event.currentTarget as HTMLImageElement;
   image.setPointerCapture?.(event.pointerId);
   pointerDownPoint.value = point;
@@ -622,11 +717,11 @@ const handleImagePointerUp = (event: PointerEvent) => {
   if (pointerDragging.value) {
     send({ type: 'mouse_move', ...point });
     send({ type: 'mouse_up', ...point });
-    lastClick.value = point;
     remoteFocusMessage.value = '人工拖拽已发送到远程页面';
   } else {
     sendRemoteClick(event);
   }
+  finishInteraction();
   releasePointerCapture(event);
   pointerDownPoint.value = null;
   lastPointerPoint.value = null;
@@ -641,6 +736,7 @@ const handleImagePointerCancel = (event: PointerEvent) => {
     const point = lastPointerPoint.value || pointerDownPoint.value;
     send({ type: 'mouse_up', ...point });
   }
+  finishInteraction();
   releasePointerCapture(event);
   pointerDownPoint.value = null;
   lastPointerPoint.value = null;
@@ -650,11 +746,21 @@ const handleImagePointerCancel = (event: PointerEvent) => {
 const handleKeydown = (event: KeyboardEvent) => {
   if (event.isComposing) return;
   event.preventDefault();
-  send({ type: 'key', key: event.key });
+  pauseForInteraction();
+  const modifiers = [
+    event.ctrlKey ? 'Control' : '',
+    event.altKey ? 'Alt' : '',
+    event.shiftKey ? 'Shift' : '',
+    event.metaKey ? 'Meta' : '',
+  ].filter(Boolean);
+  send({ type: 'key', key: [...modifiers, event.key].join('+') });
+  scheduleInteractionFinish();
 };
 
 const handleWheel = (event: WheelEvent) => {
+  pauseForInteraction();
   send({ type: 'scroll', delta_y: event.deltaY });
+  scheduleInteractionFinish();
 };
 
 const sendText = () => {
@@ -663,19 +769,22 @@ const sendText = () => {
     remoteFocusMessage.value = '尚未点击远程输入区域，请先点击截图中的搜索框';
     return;
   }
+  pauseForInteraction();
   send({ type: 'text', text: manualText.value });
   remoteFocusMessage.value = '文字已发送到远程页面';
   manualText.value = '';
+  finishInteraction();
 };
 
 const navigate = () => {
   const value = address.value.trim();
   if (!value) return;
-  lastClick.value = null;
+  pauseForInteraction();
   showManualInput.value = false;
   manualText.value = '';
   remoteFocusMessage.value = '页面导航中，请等待加载后重新点击输入区域';
   send({ type: 'navigate', url: value });
+  finishInteraction();
 };
 
 watch(
@@ -690,6 +799,10 @@ watch(
     showCloseSessionConfirm.value = false;
     showManualInput.value = false;
     manualText.value = '';
+    controlOwner.value = 'ai';
+    controlReason.value = null;
+    captchaDetected.value = false;
+    interactionInProgress.value = false;
     autoRefreshPaused.value = false;
     if (visible && !isMobile.value) pinned.value = true;
   },

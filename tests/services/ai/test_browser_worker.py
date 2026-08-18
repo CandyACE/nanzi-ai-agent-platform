@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -21,6 +22,11 @@ class FakeLocator:
         return self.elements
 
 
+class FakeFrame:
+    def __init__(self, focused_input=False):
+        self.evaluate = AsyncMock(return_value=focused_input)
+
+
 class FakePage:
     def __init__(self):
         self.url = "about:blank"
@@ -36,6 +42,16 @@ class FakePage:
                 "wheel": AsyncMock(),
             },
         )()
+        self.keyboard = type(
+            "FakeKeyboard",
+            (),
+            {
+                "press": AsyncMock(),
+                "type": AsyncMock(),
+                "insert_text": AsyncMock(),
+            },
+        )()
+        self.frames = []
         self.locator_value = FakeLocator(
             self,
             [
@@ -189,6 +205,42 @@ async def test_worker_adopts_new_tab_after_manual_mouse_click(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_worker_adopts_delayed_new_tab_after_manual_mouse_click(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-delayed-popup",
+        profile_path=str(tmp_path / "profile-delayed-popup"),
+        url="https://www.baidu.com/",
+    )
+
+    popup = FakePage()
+    popup.url = "https://image.baidu.com/i?tn=baiduimage"
+
+    async def append_popup():
+        await asyncio.sleep(0.06)
+        fake_playwright.chromium.context.pages.append(popup)
+
+    async def open_popup(*_args):
+        asyncio.create_task(append_popup())
+
+    fake_context_page(fake_playwright).mouse.click.side_effect = open_popup
+
+    info = await worker.manual_input(
+        "bs-delayed-popup",
+        event="mouse_click",
+        payload={"x": 300, "y": 36},
+    )
+
+    assert info.url == popup.url
+    assert worker._handles["bs-delayed-popup"].page is popup
+
+
+@pytest.mark.asyncio
 async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
     fake_playwright = FakePlaywright()
     worker = BrowserWorker(
@@ -212,6 +264,34 @@ async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
 
     assert info.focused_input is True
     page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_reports_text_focus_inside_accessible_iframe(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-focus-iframe",
+        profile_path=str(tmp_path / "profile-focus-iframe"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+    page.evaluate = AsyncMock(return_value=False)
+    frame = FakeFrame(focused_input=True)
+    page.frames = [frame]
+
+    info = await worker.manual_input(
+        "bs-focus-iframe",
+        event="mouse_click",
+        payload={"x": 300, "y": 200},
+    )
+
+    assert info.focused_input is True
+    frame.evaluate.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -260,6 +340,52 @@ async def test_worker_forwards_human_drag_pointer_events(tmp_path):
     page.mouse.move.assert_any_await(180, 200)
     page.mouse.down.assert_awaited_once_with()
     page.mouse.up.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_worker_inserts_human_text_without_key_by_key_ime_events(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-text",
+        profile_path=str(tmp_path / "profile-text"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+
+    await worker.manual_input(
+        "bs-text",
+        event="text",
+        payload={"text": "中文搜索"},
+    )
+
+    page.keyboard.insert_text.assert_awaited_once_with("中文搜索")
+    page.keyboard.type.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_worker_detects_explicit_captcha_page_without_matching_generic_verify_copy(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-captcha",
+        profile_path=str(tmp_path / "profile-captcha"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+    page.evaluate = AsyncMock(return_value={"matched": True, "reason": "滑块验证"})
+
+    snapshot = await worker.snapshot("bs-captcha")
+
+    assert snapshot.page_state == "captcha"
 
 
 @pytest.mark.asyncio

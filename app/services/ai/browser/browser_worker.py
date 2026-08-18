@@ -145,31 +145,98 @@ class BrowserWorker:
 
     async def _has_focused_input(self, page: Any, *, x: float, y: float) -> bool:
         evaluate = getattr(page, "evaluate", None)
-        if not callable(evaluate):
-            return False
-        try:
-            return bool(
-                await _maybe_await(
-                    evaluate(
-                        """
-                        ({x, y}) => {
-                          const isTextInput = (element) => {
-                            const candidate = element?.closest?.('textarea, [contenteditable="true"], input');
-                            if (!candidate) return false;
-                            if (candidate.matches('textarea, [contenteditable="true"]')) return true;
-                            return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'hidden']
-                              .includes((candidate.type || 'text').toLowerCase());
-                          };
-                          const target = document.elementFromPoint(x, y);
-                          return isTextInput(document.activeElement) && isTextInput(target);
-                        }
-                        """,
-                        {"x": x, "y": y},
+        if callable(evaluate):
+            try:
+                if bool(
+                    await _maybe_await(
+                        evaluate(
+                            """
+                            ({x, y}) => {
+                              const isTextInput = (element) => {
+                                const candidate = element?.closest?.('textarea, [contenteditable="true"], [role="textbox"], input');
+                                if (!candidate) return false;
+                                if (candidate.matches('textarea, [contenteditable="true"], [role="textbox"]')) return true;
+                                return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'hidden']
+                                  .includes((candidate.type || 'text').toLowerCase());
+                              };
+                              const target = document.elementFromPoint(x, y);
+                              const active = document.activeElement;
+                              return isTextInput(active) && (isTextInput(target) || target === active || !target);
+                            }
+                            """,
+                            {"x": x, "y": y},
+                        )
                     )
+                ):
+                    return True
+            except Exception:
+                pass
+
+        # 点击 iframe 内的输入框时，主文档的 activeElement 通常只是 iframe 节点；
+        # 对可访问的 frame 再检查一次当前焦点，跨域 frame 则由 Playwright 在 frame
+        # 上执行，避免在页面中注入脚本或绕过站点权限。
+        for frame in list(getattr(page, "frames", []) or []):
+            frame_evaluate = getattr(frame, "evaluate", None)
+            if not callable(frame_evaluate):
+                continue
+            try:
+                if bool(
+                    await _maybe_await(
+                        frame_evaluate(
+                            """
+                            () => {
+                              const active = document.activeElement;
+                              if (!active) return false;
+                              const candidate = active.closest?.('textarea, [contenteditable="true"], [role="textbox"], input');
+                              if (!candidate) return false;
+                              if (candidate.matches('textarea, [contenteditable="true"], [role="textbox"]')) return true;
+                              return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'hidden']
+                                .includes((candidate.type || 'text').toLowerCase());
+                            }
+                            """
+                        )
+                    )
+                ):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _detect_captcha(self, page: Any) -> tuple[bool, str | None]:
+        evaluate = getattr(page, "evaluate", None)
+        if not callable(evaluate):
+            return False, None
+        try:
+            result = await _maybe_await(
+                evaluate(
+                    """
+                    () => {
+                      const bodyText = (document.body?.innerText || '').toLowerCase();
+                      const textMarkers = [
+                        '验证码', '安全验证', '人机验证', '滑块验证',
+                        'captcha', 'verify-human'
+                      ];
+                      const hasTextMarker = textMarkers.some((marker) => bodyText.includes(marker));
+                      const hasChallengeNode = Array.from(document.querySelectorAll('[id], [class]')).some((node) => {
+                        const value = `${node.id || ''} ${typeof node.className === 'string' ? node.className : ''}`.toLowerCase();
+                        return /captcha|geetest|nc_1|slider-verify|verify-slider/.test(value);
+                      });
+                      const hasChallengeFrame = Array.from(document.querySelectorAll('iframe')).some((frame) =>
+                        /captcha|geetest|nc_1|slider-verify|verify-slider/.test((frame.getAttribute('src') || '').toLowerCase())
+                      );
+                      return {
+                        matched: hasTextMarker || hasChallengeNode || hasChallengeFrame,
+                        reason: hasTextMarker ? '页面要求人工完成安全验证' : '页面出现验证码控件'
+                      };
+                    }
+                    """
                 )
             )
+            if not isinstance(result, dict) or not result.get("matched"):
+                return False, None
+            return True, str(result.get("reason") or "页面要求人工完成安全验证")
         except Exception:
-            return False
+            return False, None
 
     def _handle(self, session_id: str) -> _BrowserHandle:
         try:
@@ -208,6 +275,7 @@ class BrowserWorker:
     async def _snapshot_once(self, session_id: str) -> BrowserSnapshot:
         handle = self._handle(session_id)
         info = await self._page_info(handle.page)
+        captcha_detected, _captcha_reason = await self._detect_captcha(handle.page)
         locator = handle.page.locator("button, input, textarea, select, a")
         raw_elements = await locator.evaluate_all(
             """
@@ -254,6 +322,7 @@ class BrowserWorker:
             title=info.title,
             screenshot_ref=screenshot_ref,
             elements=elements,
+            page_state="captcha" if captcha_detected else "ready",
         )
 
     def has_session(self, session_id: str) -> bool:
@@ -293,6 +362,13 @@ class BrowserWorker:
             await _maybe_await(handle.page.mouse.click(x, y))
             pages_after = list(getattr(handle.context, "pages", []) or [])
             new_pages = [page for page in pages_after if id(page) not in pages_before]
+            if not new_pages:
+                for _ in range(8):
+                    await asyncio.sleep(0.05)
+                    pages_after = list(getattr(handle.context, "pages", []) or [])
+                    new_pages = [page for page in pages_after if id(page) not in pages_before]
+                    if new_pages:
+                        break
             if new_pages:
                 handle.page = new_pages[-1]
                 popup_url = str(getattr(handle.page, "url", "") or "")
@@ -316,7 +392,11 @@ class BrowserWorker:
             await _maybe_await(handle.page.keyboard.press(key))
         elif event == "text":
             text = str(payload.get("text", ""))[:2000]
-            await _maybe_await(handle.page.keyboard.type(text))
+            insert_text = getattr(handle.page.keyboard, "insert_text", None)
+            if callable(insert_text):
+                await _maybe_await(insert_text(text))
+            else:
+                await _maybe_await(handle.page.keyboard.type(text))
         elif event == "mouse_down":
             x = float(payload.get("x", 0))
             y = float(payload.get("y", 0))

@@ -272,6 +272,24 @@ def _viewer_token_from_websocket(websocket: WebSocket) -> tuple[str | None, str 
     return websocket.query_params.get("token"), None
 
 
+async def _send_viewer_control_state(
+    websocket: WebSocket,
+    session_id: str,
+    snapshot=None,
+) -> None:
+    state = browser_runtime.control_state(session_id)
+    await websocket.send_json({"type": "control_state", **state})
+    if snapshot is not None:
+        detected = snapshot.page_state == "captcha"
+        await websocket.send_json(
+            {
+                "type": "captcha",
+                "detected": detected,
+                "reason": "页面要求人工完成安全验证" if detected else None,
+            }
+        )
+
+
 @viewer_router.websocket("/sessions/{session_id}/viewer")
 async def browser_viewer(websocket: WebSocket, session_id: str):
     token, selected_protocol = _viewer_token_from_websocket(websocket)
@@ -289,6 +307,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
             snapshot = await browser_runtime.snapshot(session.id)
             await db.commit()
             await websocket.send_json({"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)})
+            await _send_viewer_control_state(websocket, session.id, snapshot)
 
             while True:
                 message = await websocket.receive_json()
@@ -306,10 +325,15 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
+                        if event != "mouse_move":
+                            await _send_viewer_control_state(websocket, session.id)
                         if event in {"mouse_down", "mouse_move"}:
                             continue
                         if event == "mouse_click":
                             await websocket.send_json({"type": "focus", "focused_input": info.focused_input})
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "release_control":
+                        await browser_runtime.release_human_control(session.id)
                         snapshot = await browser_runtime.snapshot(session.id)
                     elif event == "navigate":
                         info = await browser_runtime.navigate(session.id, str(message.get("url", "")))
@@ -345,6 +369,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                     else:
                         await websocket.send_json({"type": "error", "message": "不支持的浏览器输入事件"})
                         continue
+                    await _send_viewer_control_state(websocket, session.id, snapshot)
                     await websocket.send_json({"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)})
                 except Exception as op_exc:
                     logger.exception("Browser viewer operation failed")
@@ -352,6 +377,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
         except BrowserAccessDenied:
             await websocket.close(code=4403)
         except WebSocketDisconnect:
+            await browser_runtime.release_human_control(session_id)
             return
         except Exception as exc:
             logger.exception("Browser viewer operation failed")

@@ -43,6 +43,13 @@ def test_browser_viewer_reports_manual_input_focus_after_click():
     assert '"type": "focus"' in source
 
 
+def test_browser_viewer_exposes_human_control_handoff_and_captcha_events():
+    source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/browser.py").read_text(encoding="utf-8")
+    assert "control_state" in source
+    assert "release_control" in source
+    assert '"type": "captcha"' in source
+
+
 @pytest.mark.asyncio
 async def test_screenshot_endpoint_reuses_requested_snapshot_without_rereading_page(tmp_path: Path):
     screenshot_path = tmp_path / "snapshot.png"

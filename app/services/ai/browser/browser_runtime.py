@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,13 @@ from app.services.ai.browser.browser_session_service import BrowserSessionServic
 from app.services.ai.browser.browser_worker import BrowserPageInfo, BrowserWorker
 
 
+@dataclass
+class _HumanControl:
+    reason: str
+    captcha: bool = False
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+
+
 class BrowserRuntime:
     """当前应用进程内的浏览器 Worker 注册表。生产部署需保证会话粘滞到同一 Worker。"""
 
@@ -21,11 +29,66 @@ class BrowserRuntime:
         self.worker = worker or BrowserWorker()
         self._snapshots: dict[str, BrowserSnapshot] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._human_controls: dict[str, _HumanControl] = {}
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
+    def _set_human_control_locked(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        captcha: bool = False,
+    ) -> _HumanControl:
+        state = self._human_controls.get(session_id)
+        if state is None:
+            state = _HumanControl(reason=reason, captcha=captcha)
+            self._human_controls[session_id] = state
+        else:
+            state.reason = reason
+            state.captcha = state.captcha or captcha
+        return state
+
+    async def _wait_for_ai_control(self, session_id: str) -> None:
+        while True:
+            async with self._session_lock(session_id):
+                state = self._human_controls.get(session_id)
+                if state is None:
+                    return
+                released = state.released
+            await released.wait()
+
+    def control_state(self, session_id: str) -> dict[str, Any]:
+        state = self._human_controls.get(session_id)
+        if state is None:
+            return {"owner": "ai", "reason": None, "captcha": False}
+        return {"owner": "human", "reason": state.reason, "captcha": state.captcha}
+
+    async def acquire_human_control(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        captcha: bool = False,
+    ) -> dict[str, Any]:
+        async with self._session_lock(session_id):
+            self._set_human_control_locked(
+                session_id,
+                reason=reason,
+                captcha=captcha,
+            )
+            return self.control_state(session_id)
+
+    async def release_human_control(self, session_id: str) -> dict[str, Any]:
+        async with self._session_lock(session_id):
+            state = self._human_controls.pop(session_id, None)
+            if state is not None:
+                state.released.set()
+            return self.control_state(session_id)
+
     async def open_session(self, db: AsyncSession, session: BrowserSession) -> BrowserPageInfo:
+        await self._wait_for_ai_control(session.id)
         async with self._session_lock(session.id):
             profile = await BrowserProfileService(db).get_owned(
                 user_id=int(session.user_id), profile_id=session.profile_id
@@ -71,6 +134,16 @@ class BrowserRuntime:
         async with self._session_lock(session_id):
             snapshot = await self.worker.snapshot(session_id)
             self._snapshots[session_id] = snapshot
+            if snapshot.page_state == "captcha":
+                self._set_human_control_locked(
+                    session_id,
+                    reason="captcha",
+                    captcha=True,
+                )
+            else:
+                state = self._human_controls.get(session_id)
+                if state is not None:
+                    state.captcha = False
             return snapshot
 
     def cached_snapshot(self, session_id: str, snapshot_id: str) -> BrowserSnapshot:
@@ -83,12 +156,23 @@ class BrowserRuntime:
         return self.worker.has_session(session_id)
 
     async def navigate(self, session_id: str, url: str) -> BrowserPageInfo:
+        await self.acquire_human_control(session_id, reason="navigate")
         async with self._session_lock(session_id):
             self._snapshots.pop(session_id, None)
             return await self.worker.navigate(session_id, url)
 
     async def manual_input(self, session_id: str, *, event: str, payload: dict[str, Any]) -> BrowserPageInfo:
+        reason = {
+            "mouse_click": "click",
+            "mouse_down": "drag",
+            "mouse_move": "drag",
+            "mouse_up": "drag",
+            "key": "input",
+            "text": "input",
+            "scroll": "scroll",
+        }.get(event, "input")
         async with self._session_lock(session_id):
+            self._set_human_control_locked(session_id, reason=reason)
             self._snapshots.pop(session_id, None)
             return await self.worker.manual_input(session_id, event=event, payload=payload)
 
@@ -101,17 +185,21 @@ class BrowserRuntime:
         approval_mode: str,
         confirmed: bool,
     ) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            snapshot = self.cached_snapshot(session_id, snapshot_id)
-            result = await self.worker.click(
-                session_id,
-                target_ref=target_ref,
-                snapshot=snapshot,
-                approval_mode=approval_mode,
-                confirmed=confirmed,
-            )
-            self._snapshots.pop(session_id, None)
-            return result
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                snapshot = self.cached_snapshot(session_id, snapshot_id)
+                result = await self.worker.click(
+                    session_id,
+                    target_ref=target_ref,
+                    snapshot=snapshot,
+                    approval_mode=approval_mode,
+                    confirmed=confirmed,
+                )
+                self._snapshots.pop(session_id, None)
+                return result
 
     async def fill(
         self,
@@ -122,25 +210,35 @@ class BrowserRuntime:
         value: str,
         sensitive: bool | None,
     ) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            snapshot = self.cached_snapshot(session_id, snapshot_id)
-            result = await self.worker.fill(
-                session_id,
-                target_ref=target_ref,
-                value=value,
-                snapshot=snapshot,
-                sensitive=sensitive,
-            )
-            self._snapshots.pop(session_id, None)
-            return result
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                snapshot = self.cached_snapshot(session_id, snapshot_id)
+                result = await self.worker.fill(
+                    session_id,
+                    target_ref=target_ref,
+                    value=value,
+                    snapshot=snapshot,
+                    sensitive=sensitive,
+                )
+                self._snapshots.pop(session_id, None)
+                return result
 
     async def close(self, session_id: str) -> None:
         async with self._session_lock(session_id):
             self._snapshots.pop(session_id, None)
+            state = self._human_controls.pop(session_id, None)
+            if state is not None:
+                state.released.set()
             await self.worker.close(session_id)
 
     async def shutdown(self) -> None:
         self._snapshots.clear()
+        for state in self._human_controls.values():
+            state.released.set()
+        self._human_controls.clear()
         self._session_locks.clear()
         await self.worker.shutdown()
 
