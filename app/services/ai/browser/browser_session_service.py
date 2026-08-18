@@ -59,7 +59,6 @@ class BrowserSessionService:
         result = await self.db.execute(
             select(BrowserSession)
             .where(*conditions)
-            .with_for_update()
             .order_by(BrowserSession.updated_at.desc())
         )
         session = result.scalars().first()

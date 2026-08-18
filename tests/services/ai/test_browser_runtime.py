@@ -137,6 +137,31 @@ async def test_browser_runtime_blocks_ai_until_human_releases_control():
 
 
 @pytest.mark.asyncio
+async def test_browser_runtime_keeps_recent_ai_snapshot_when_viewer_refreshes():
+    worker = ControlProbeWorker()
+    first = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-ai",
+        url="https://example.com/",
+        title="Example",
+    )
+    second = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-viewer",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker.snapshot = AsyncMock(side_effect=[first, second])
+    runtime = BrowserRuntime(worker=worker)
+
+    await runtime.snapshot("session-1")
+    await runtime.snapshot("session-1")
+
+    assert runtime.cached_snapshot("session-1", "snapshot-ai") is first
+    assert runtime.cached_snapshot("session-1", "snapshot-viewer") is second
+
+
+@pytest.mark.asyncio
 async def test_browser_runtime_control_state_isolated_and_shutdown_clears_it():
     worker = ControlProbeWorker()
     runtime = BrowserRuntime(worker=worker)

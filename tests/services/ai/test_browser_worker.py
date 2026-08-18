@@ -104,6 +104,7 @@ class FakeContext:
         self.page = FakePage()
         self.pages = [self.page]
         self.close = AsyncMock()
+        self.add_init_script = AsyncMock()
 
     async def new_page(self):
         return self.page
@@ -144,6 +145,33 @@ async def test_worker_open_snapshot_and_semantic_click(tmp_path):
     assert result.action == "click"
     assert fake_playwright.chromium.launch_persistent_context.await_count == 1
     assert fake_context_page(fake_playwright).role_calls == [("button", "百度一下", True)]
+
+
+@pytest.mark.asyncio
+async def test_worker_can_click_a_recent_snapshot_after_another_snapshot_is_created(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-snapshot-history",
+        profile_path=str(tmp_path / "profile-snapshot-history"),
+        url="https://www.baidu.com/",
+    )
+
+    first = await worker.snapshot("bs-snapshot-history")
+    await worker.snapshot("bs-snapshot-history")
+    result = await worker.click(
+        "bs-snapshot-history",
+        target_ref="e2",
+        snapshot=first,
+        approval_mode="autopilot",
+        confirmed=True,
+    )
+
+    assert result.action == "click"
 
 
 @pytest.mark.asyncio
@@ -464,6 +492,36 @@ async def test_worker_cannot_override_snapshot_sensitive_flag(tmp_path):
     )
 
     assert result.data["value"] == "<redacted>"
+
+
+@pytest.mark.asyncio
+async def test_worker_open_applies_stealth_anti_bot_options_and_init_script(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-stealth",
+        profile_path=str(tmp_path / "profile-stealth"),
+        url="https://example.com/",
+    )
+
+    launch_mock = fake_playwright.chromium.launch_persistent_context
+    assert launch_mock.await_count == 1
+    _, kwargs = launch_mock.call_args
+    assert "--disable-blink-features=AutomationControlled" in kwargs["args"]
+    assert "Mozilla/5.0" in kwargs["user_agent"]
+    assert "HeadlessChrome" not in kwargs["user_agent"]
+    assert kwargs["locale"] == "zh-CN"
+    assert kwargs["timezone_id"] == "Asia/Shanghai"
+
+    context = fake_playwright.chromium.context
+    assert context.add_init_script.await_count == 1
+    injected_script = context.add_init_script.call_args[0][0]
+    assert "webdriver" in injected_script
+    assert "window.chrome" in injected_script
 
 
 def fake_context_page(fake_playwright):

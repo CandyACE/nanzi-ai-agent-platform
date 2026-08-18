@@ -23,7 +23,6 @@ class BrowserProfileService:
         result = await self.db.execute(
             select(BrowserProfile)
             .where(BrowserProfile.user_id == user_id, BrowserProfile.status == "active")
-            .with_for_update()
             .order_by(BrowserProfile.last_used_at.desc(), BrowserProfile.created_at.asc())
         )
         profile = result.scalars().first()

@@ -95,6 +95,8 @@ class BrowserRuntime:
             )
             profile_path = await BrowserProfileService(db).profile_path(profile)
             target_url = session.current_url or "https://www.baidu.com/"
+            await db.commit()
+
             if self.worker.has_session(session.id):
                 info = await self.worker.navigate(session.id, target_url)
             else:
@@ -107,7 +109,8 @@ class BrowserRuntime:
             session.page_title = info.title
             session.last_seen_at = datetime.now()
             session.updated_at = datetime.now()
-            await db.flush()
+            db.add(session)
+            await db.commit()
             return info
 
     async def open_for_user(
@@ -133,7 +136,14 @@ class BrowserRuntime:
     async def snapshot(self, session_id: str) -> BrowserSnapshot:
         async with self._session_lock(session_id):
             snapshot = await self.worker.snapshot(session_id)
-            self._snapshots[session_id] = snapshot
+            current_map = self._snapshots.get(session_id)
+            if not isinstance(current_map, dict):
+                current_map = {}
+                self._snapshots[session_id] = current_map
+            current_map[snapshot.snapshot_id] = snapshot
+            if len(current_map) > 5:
+                oldest_key = next(iter(current_map))
+                current_map.pop(oldest_key, None)
             if snapshot.page_state == "captcha":
                 self._set_human_control_locked(
                     session_id,
@@ -147,10 +157,14 @@ class BrowserRuntime:
             return snapshot
 
     def cached_snapshot(self, session_id: str, snapshot_id: str) -> BrowserSnapshot:
-        snapshot = self._snapshots.get(session_id)
-        if snapshot is None or snapshot.snapshot_id != snapshot_id:
+        snapshots = self._snapshots.get(session_id)
+        if isinstance(snapshots, BrowserSnapshot):
+            if snapshots.snapshot_id == snapshot_id:
+                return snapshots
             raise ValueError("浏览器快照已过期，请先重新获取快照")
-        return snapshot
+        if not isinstance(snapshots, dict) or snapshot_id not in snapshots:
+            raise ValueError("浏览器快照已过期，请先重新获取快照")
+        return snapshots[snapshot_id]
 
     def has_session(self, session_id: str) -> bool:
         return self.worker.has_session(session_id)

@@ -36,6 +36,68 @@ class BrowserPageInfo:
     focused_input: bool = False
 
 
+DEFAULT_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
+
+CHROMIUM_LAUNCH_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+]
+
+STEALTH_INIT_SCRIPT = """
+(() => {
+    try {
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+            configurable: true,
+        });
+    } catch (_) {}
+
+    try {
+        if (!window.chrome) {
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {},
+            };
+        }
+    } catch (_) {}
+
+    try {
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['zh-CN', 'zh', 'en-US', 'en'],
+            configurable: true,
+        });
+    } catch (_) {}
+
+    try {
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5],
+            configurable: true,
+        });
+    } catch (_) {}
+
+    try {
+        const originalQuery = window.navigator?.permissions?.query;
+        if (typeof originalQuery === 'function') {
+            window.navigator.permissions.query = (parameters) => (
+                parameters && parameters.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : originalQuery(parameters)
+            );
+        }
+    } catch (_) {}
+})();
+"""
+
+
 @dataclass
 class _BrowserHandle:
     context: Any
@@ -105,22 +167,33 @@ class BrowserWorker:
             # 某些受限文件系统不支持 chmod，仍由 Worker 的路径隔离继续保护。
             pass
 
+        common_context_kwargs: dict[str, Any] = {
+            "viewport": {"width": 1280, "height": 800},
+            "user_agent": DEFAULT_BROWSER_USER_AGENT,
+            "locale": "zh-CN",
+            "timezone_id": "Asia/Shanghai",
+        }
+
         chromium = playwright.chromium
         launch_persistent_context = getattr(chromium, "launch_persistent_context", None)
         if launch_persistent_context is not None:
             context = await launch_persistent_context(
                 user_data_dir=profile_path,
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-                viewport={"width": 1280, "height": 800},
+                args=CHROMIUM_LAUNCH_ARGS,
+                **common_context_kwargs,
             )
             browser = None
         else:
             browser = await chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+                args=CHROMIUM_LAUNCH_ARGS,
             )
-            context = await browser.new_context(viewport={"width": 1280, "height": 800})
+            context = await browser.new_context(**common_context_kwargs)
+
+        add_init_script = getattr(context, "add_init_script", None)
+        if callable(add_init_script):
+            await _maybe_await(add_init_script(STEALTH_INIT_SCRIPT))
 
         await self._install_request_guard(context)
         page = await context.new_page()
@@ -312,7 +385,12 @@ class BrowserWorker:
             )
             elements.append(element)
             target_map[ref] = item
-        self._snapshots[session_id] = {snapshot_id: target_map}
+        if session_id not in self._snapshots:
+            self._snapshots[session_id] = {}
+        self._snapshots[session_id][snapshot_id] = target_map
+        if len(self._snapshots[session_id]) > 5:
+            oldest_key = next(iter(self._snapshots[session_id]))
+            self._snapshots[session_id].pop(oldest_key, None)
 
         screenshot_ref = await self._capture_screenshot(handle.page, session_id, snapshot_id)
         return BrowserSnapshot(

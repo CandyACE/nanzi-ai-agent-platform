@@ -183,9 +183,10 @@ async def _browser_permission_decision(
 
     if element is None:
         return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message="无法确认浏览器目标，请先刷新页面快照后再执行。",
+            behavior=PermissionBehavior.DENY,
+            message="浏览器快照已过期，请重新获取页面快照后重试。",
             decision_reason="browser_target_not_in_snapshot",
+            bypass_immune=True,
         )
 
     action_class = classify_browser_action(role=element.role, name=element.name)

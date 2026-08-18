@@ -95,6 +95,29 @@ async def test_browser_fill_allows_sensitive_snapshot_targets(monkeypatch):
     assert decision.decision_reason == "browser_fill_target"
 
 
+@pytest.mark.asyncio
+async def test_stale_browser_click_is_denied_instead_of_asking_for_confirmation(monkeypatch):
+    class FakeContext:
+        browser_session_id = "bs-1"
+        user_id = 1
+
+    monkeypatch.setattr(core_context, "get_current_agent_context", lambda: FakeContext())
+
+    def stale_snapshot(*_args):
+        raise ValueError("浏览器快照已过期")
+
+    monkeypatch.setattr(browser_runtime, "cached_snapshot", stale_snapshot)
+
+    decision = await _browser_permission_decision(
+        "browser_click",
+        {"snapshot_id": "stale-snapshot", "target_ref": "e1"},
+    )
+
+    assert decision.behavior == PermissionBehavior.DENY
+    assert decision.bypass_immune is True
+    assert decision.decision_reason == "browser_target_not_in_snapshot"
+
+
 def test_browser_open_result_emits_persisted_approval_mode():
     event = build_browser_session_event(
         "browser_open",
