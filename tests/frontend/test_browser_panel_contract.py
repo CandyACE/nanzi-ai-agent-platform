@@ -60,6 +60,13 @@ def test_browser_panel_cache_busts_screenshot_when_snapshot_changes():
     assert ':src="screenshotUrl"' in source
 
 
+def test_browser_panel_refresh_pause_is_manual_not_pointer_triggered():
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    assert '@click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"' in source
+    assert '@mouseenter="pauseAutoRefresh"' not in source
+    assert '@focus="pauseAutoRefresh"' not in source
+
+
 def test_embed_chat_contains_browser_panel_toggle_and_session_binding():
     source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     assert "BrowserPanel" in source
@@ -73,4 +80,3 @@ def test_embed_chat_contains_browser_panel_toggle_and_session_binding():
     assert '@close-session="closeBrowserSession"' in source
     assert "const closeBrowserSession = async" in source
     assert "axios.delete" in source
-

@@ -199,8 +199,6 @@
             ref="viewportRef"
             class="relative min-h-0 flex-1 overflow-auto bg-slate-100 p-2 dark:bg-slate-950"
             tabindex="0"
-            @mouseenter="pauseAutoRefresh"
-            @focus="pauseAutoRefresh"
             @keydown="handleKeydown"
             @wheel.prevent="handleWheel"
           >
@@ -241,7 +239,6 @@
                 autocomplete="off"
                 class="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
                 placeholder="人工输入（回车发送到远程页面）"
-                @focus="pauseAutoRefresh"
                 @keyup.enter="sendText"
               />
               <button class="rounded-md border border-gray-200 px-2.5 py-1.5 text-[10px] font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800" @click="sendText">输入</button>
