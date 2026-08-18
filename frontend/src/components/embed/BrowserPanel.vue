@@ -33,6 +33,50 @@
         >
           <div v-if="isResizing" class="fixed inset-0 z-[300] cursor-col-resize select-none" />
           <div
+            v-if="showCloseSessionConfirm"
+            class="absolute inset-0 z-[260] flex items-center justify-center bg-slate-950/30 p-4"
+            @click.self="showCloseSessionConfirm = false"
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="browser-close-session-title"
+              class="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-4 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div id="browser-close-session-title" class="text-sm font-bold text-gray-900 dark:text-gray-100">结束浏览器会话？</div>
+                  <div class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">远程浏览器会关闭，Profile 和 Cookie 会保留，下次可以重新打开。</div>
+                </div>
+                <button
+                  type="button"
+                  class="rounded-md px-1.5 py-0.5 text-lg leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  aria-label="关闭确认弹窗"
+                  title="关闭确认弹窗"
+                  @click="showCloseSessionConfirm = false"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  class="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                  @click="showCloseSessionConfirm = false"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                  @click="confirmCloseSession"
+                >
+                  结束会话
+                </button>
+              </div>
+            </div>
+          </div>
+          <div
             v-if="!isMobile"
             class="absolute bottom-0 left-0 top-0 z-50 flex w-3 -translate-x-1/2 cursor-col-resize select-none items-center justify-center touch-none"
             :class="isResizing ? 'bg-primary/30' : 'hover:bg-primary/20'"
@@ -67,7 +111,7 @@
                 type="button"
                 class="rounded-md px-1.5 py-1 text-[10px] font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 dark:text-gray-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
                 title="结束当前浏览器会话（保留 Profile 和 Cookie）"
-                @click="emit('close-session')"
+                @click="showCloseSessionConfirm = true"
               >
                 结束会话
               </button>
@@ -137,13 +181,26 @@
               <strong class="shrink-0 font-bold">远程页面截图</strong>
               <span class="truncate text-sky-700 dark:text-sky-200">不是网页本体；点击、滚轮、键盘会转发到远程浏览器</span>
             </div>
-            <span class="shrink-0 text-sky-600 dark:text-sky-300">每 2 秒自动刷新</span>
+            <div class="flex shrink-0 items-center gap-1.5">
+              <span class="text-sky-600 dark:text-sky-300">
+                {{ autoRefreshPaused ? '自动刷新已暂停' : '每 2 秒自动刷新' }}
+              </span>
+              <button
+                type="button"
+                class="rounded border border-sky-200 bg-white/70 px-1.5 py-0.5 font-semibold text-sky-700 hover:bg-white dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60"
+                @click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"
+              >
+                {{ autoRefreshPaused ? '恢复自动刷新' : '暂停刷新' }}
+              </button>
+            </div>
           </div>
 
           <div
             ref="viewportRef"
             class="relative min-h-0 flex-1 overflow-auto bg-slate-100 p-2 dark:bg-slate-950"
             tabindex="0"
+            @mouseenter="pauseAutoRefresh"
+            @focus="pauseAutoRefresh"
             @keydown="handleKeydown"
             @wheel.prevent="handleWheel"
           >
@@ -184,6 +241,7 @@
                 autocomplete="off"
                 class="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
                 placeholder="人工输入（回车发送到远程页面）"
+                @focus="pauseAutoRefresh"
                 @keyup.enter="sendText"
               />
               <button class="rounded-md border border-gray-200 px-2.5 py-1.5 text-[10px] font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800" @click="sendText">输入</button>
@@ -234,6 +292,7 @@ const emit = defineEmits<{
 }>();
 
 const showSafetyNotice = ref(props.approvalMode === 'guarded');
+const showCloseSessionConfirm = ref(false);
 
 const socket = ref<WebSocket | null>(null);
 const connected = ref(false);
@@ -243,6 +302,7 @@ const address = ref('');
 const manualText = ref('');
 const remoteFocusMessage = ref('请先点击截图中的输入框，再使用下方人工输入');
 const lastClick = ref<{ x: number; y: number } | null>(null);
+const autoRefreshPaused = ref(false);
 const viewportRef = ref<HTMLElement | null>(null);
 const isMobile = ref(
   typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
@@ -329,16 +389,19 @@ const lastClickStyle = computed<Record<string, string> | null>(() => {
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+const stopPolling = () => {
+  if (!pollTimer) return;
+  clearInterval(pollTimer);
+  pollTimer = null;
+};
+
 const closeSocket = () => {
   connected.value = false;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  stopPolling();
   if (socket.value) {
     socket.value.onclose = null;
     socket.value.close();
@@ -359,7 +422,7 @@ const connect = async () => {
   client.onopen = () => {
     connected.value = true;
     client.send(JSON.stringify({ type: 'snapshot' }));
-    pollTimer = setInterval(requestSnapshot, 2000);
+    startPolling();
   };
   client.onmessage = (event) => {
     let payload: { type?: string; snapshot?: BrowserSnapshot; message?: string };
@@ -399,6 +462,29 @@ const send = (payload: Record<string, unknown>) => {
 };
 
 const requestSnapshot = () => send({ type: 'snapshot' });
+
+const startPolling = () => {
+  stopPolling();
+  if (autoRefreshPaused.value || !connected.value) return;
+  pollTimer = setInterval(requestSnapshot, 2000);
+};
+
+const pauseAutoRefresh = () => {
+  autoRefreshPaused.value = true;
+  stopPolling();
+};
+
+const resumeAutoRefresh = () => {
+  autoRefreshPaused.value = false;
+  if (!connected.value) return;
+  requestSnapshot();
+  startPolling();
+};
+
+const confirmCloseSession = () => {
+  showCloseSessionConfirm.value = false;
+  emit('close-session');
+};
 
 const handleImageClick = (event: MouseEvent) => {
   const image = event.currentTarget as HTMLImageElement;
@@ -454,6 +540,8 @@ watch(
 watch(
   () => props.visible,
   (visible) => {
+    showCloseSessionConfirm.value = false;
+    autoRefreshPaused.value = false;
     if (visible && !isMobile.value) pinned.value = true;
   },
 );

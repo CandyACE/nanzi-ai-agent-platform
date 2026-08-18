@@ -43,7 +43,9 @@ async def browser_open(url: str = "https://www.baidu.com/", profile_id: Optional
     )
     context.browser_session_id = session.id
     snapshot = await browser_runtime.snapshot(session.id)
-    return json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False)
+    payload = snapshot.model_dump(mode="json")
+    payload["approval_mode"] = session.approval_mode
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool

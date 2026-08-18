@@ -168,17 +168,17 @@ async def _browser_permission_decision(
         element = None
 
     if tool_name == "browser_fill":
-        if element is None or element.sensitive:
+        if element is None:
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
-                message="智能体不能直接填写敏感浏览器字段，请在右侧浏览器面板中人工输入。",
-                decision_reason="sensitive_browser_fill_requires_manual_input",
+                message="无法确认浏览器输入目标，请刷新页面快照后重试。",
+                decision_reason="browser_target_not_in_snapshot",
                 bypass_immune=True,
             )
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
-            message="普通浏览器输入可自动执行。",
-            decision_reason="non_sensitive_browser_fill",
+            message="浏览器输入可自动执行。",
+            decision_reason="browser_fill_target",
         )
 
     if element is None:

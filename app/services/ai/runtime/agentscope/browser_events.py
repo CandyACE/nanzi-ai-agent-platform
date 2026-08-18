@@ -16,9 +16,13 @@ def build_browser_session_event(tool_name: str, output: Any) -> dict[str, Any] |
     session_id = str(payload.get("session_id") or "").strip()
     if not session_id:
         return None
-    return {
+    event = {
         "type": "browser_session",
         "session_id": session_id,
         "url": payload.get("url"),
         "title": payload.get("title"),
     }
+    approval_mode = payload.get("approval_mode")
+    if approval_mode in {"guarded", "autopilot"}:
+        event["approval_mode"] = approval_mode
+    return event

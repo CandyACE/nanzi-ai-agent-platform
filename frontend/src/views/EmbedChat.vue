@@ -2655,7 +2655,6 @@ const closeBrowserPanel = () => {
 const closeBrowserSession = async () => {
   const sessionId = browserSessionId.value;
   if (!sessionId || typeof window === "undefined") return;
-  if (!window.confirm("结束当前浏览器会话？\nProfile 和 Cookie 会保留，下次可以重新打开。")) return;
   try {
     await axios.delete(
       `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}`,

@@ -73,3 +73,4 @@ def test_embed_chat_contains_browser_panel_toggle_and_session_binding():
     assert '@close-session="closeBrowserSession"' in source
     assert "const closeBrowserSession = async" in source
     assert "axios.delete" in source
+

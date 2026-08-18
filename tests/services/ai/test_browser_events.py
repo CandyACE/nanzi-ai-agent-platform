@@ -1,8 +1,17 @@
-import pytest
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
+from agentscope.permission import PermissionBehavior
+
+from app.core import context as core_context
+from app.schemas.browser import BrowserElement, BrowserSnapshot
+from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+from app.services.ai.runtime.agentscope.tools import _browser_permission_decision
 from app.services.ai.runtime.agentscope.browser_events import build_browser_session_event
-from app.services.ai.tools.browser_tools import browser_click, browser_fill
+from app.services.ai.tools.browser_tools import browser_click, browser_fill, browser_open
 from app.services.ai.tools.registry import ToolRegistry
 
 
@@ -52,3 +61,70 @@ async def test_runtime_tool_audit_redacts_browser_fill_value():
 
     assert len(events) == 2
     assert all(event.arguments["value"] == "<redacted>" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_browser_fill_allows_sensitive_snapshot_targets(monkeypatch):
+    class FakeContext:
+        browser_session_id = "bs-1"
+        user_id = 1
+
+    snapshot = BrowserSnapshot(
+        session_id="bs-1",
+        snapshot_id="snap-1",
+        url="https://example.com/",
+        title="Example",
+        elements=[
+            BrowserElement(
+                ref="e1",
+                role="textbox",
+                name="验证码",
+                sensitive=True,
+            )
+        ],
+    )
+    monkeypatch.setattr(core_context, "get_current_agent_context", lambda: FakeContext())
+    monkeypatch.setattr(browser_runtime, "cached_snapshot", lambda *_args: snapshot)
+
+    decision = await _browser_permission_decision(
+        "browser_fill",
+        {"snapshot_id": "snap-1", "target_ref": "e1"},
+    )
+
+    assert decision.behavior == PermissionBehavior.ALLOW
+    assert decision.decision_reason == "browser_fill_target"
+
+
+def test_browser_open_result_emits_persisted_approval_mode():
+    event = build_browser_session_event(
+        "browser_open",
+        '{"session_id":"bs-1","url":"https://www.baidu.com/","title":"百度",'
+        '"approval_mode":"autopilot"}',
+    )
+
+    assert event["approval_mode"] == "autopilot"
+
+
+@pytest.mark.asyncio
+async def test_browser_open_result_contains_session_approval_mode(monkeypatch):
+    class FakeContext:
+        user_id = 1
+        conversation_id = "conv-1"
+
+    session = SimpleNamespace(id="bs-1", approval_mode="guarded")
+    snapshot = BrowserSnapshot(
+        session_id="bs-1",
+        snapshot_id="snap-1",
+        url="https://www.baidu.com/",
+        title="百度",
+    )
+    monkeypatch.setattr(
+        "app.services.ai.tools.browser_tools.get_current_agent_context",
+        lambda: FakeContext(),
+    )
+    monkeypatch.setattr(browser_runtime, "open_for_user", AsyncMock(return_value=session))
+    monkeypatch.setattr(browser_runtime, "snapshot", AsyncMock(return_value=snapshot))
+
+    payload = json.loads(await browser_open.ainvoke({}))
+
+    assert payload["approval_mode"] == "guarded"
