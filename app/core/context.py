@@ -44,6 +44,7 @@ class AgentContext(BaseModel):
     # User session info for permission enforcement in tools/services
     user_id: Optional[int] = None
     conversation_id: Optional[str] = None
+    browser_session_id: Optional[str] = None
     parent_conversation_id: Optional[str] = None
     child_session_id: Optional[str] = None
     is_admin: bool = False

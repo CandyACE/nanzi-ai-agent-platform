@@ -109,6 +109,9 @@ class BaseExecutor(ABC):
             ctx.api_key = self.user_info.get("api_key")
         if self.conversation_id:
             ctx.conversation_id = self.conversation_id
+        browser_session_id = self.debug_options.get("browser_session_id")
+        if browser_session_id:
+            ctx.browser_session_id = str(browser_session_id)
         ctx.permission_options = dict(self.permission_options or {})
         if self.trace_buffer is not None:
             ctx.trace_buffer = self.trace_buffer
@@ -141,6 +144,7 @@ class BaseExecutor(ABC):
             engine_config=engine_config,
             user_id=u_id_val,
             conversation_id=self.conversation_id,
+            browser_session_id=self.debug_options.get("browser_session_id"),
             is_admin=is_admin_val,
             api_key=self.user_info.get("api_key") if self.user_info else None,
             user_dimensions=user_dims,

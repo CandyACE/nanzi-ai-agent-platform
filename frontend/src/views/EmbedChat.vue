@@ -128,6 +128,15 @@
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             </button>
+            <button
+                @click="toggleBrowserPanel"
+                class="relative p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                :class="browserPanelVisible ? 'text-primary bg-primary/10' : ''"
+                title="打开服务端浏览器"
+            >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="M3 8h18M7 6h.01M10 6h.01"/></svg>
+                <span v-if="browserPanelVisible" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            </button>
         </div>
       </div>
 
@@ -1865,6 +1874,17 @@
       @close="chatbiMonitorDialogOpen = false"
       @created="handleChatBIMonitorCreated"
     />
+    <BrowserPanel
+      :visible="browserPanelVisible"
+      :session-id="browserSessionId"
+      :viewer-token="browserViewerToken"
+      :approval-mode="browserApprovalMode"
+      v-model:pinned="browserPinned"
+      v-model:panel-width="browserPanelWidthReactive"
+      @close="closeBrowserPanel"
+      @close-session="closeBrowserSession"
+      @update:approval-mode="updateBrowserApprovalMode"
+    />
     </div>
 </template>
 <script setup lang="ts">
@@ -1924,6 +1944,7 @@ import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
+import BrowserPanel from "@/components/embed/BrowserPanel.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
 import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
@@ -2580,6 +2601,98 @@ const config = reactive({
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: true,
 });
+type BrowserApprovalMode = "guarded" | "autopilot";
+const browserPanelVisible = ref(false);
+const browserSessionId = ref<string | null>(null);
+const browserViewerToken = ref<string | null>(null);
+const browserApprovalMode = ref<BrowserApprovalMode>("autopilot");
+const browserPinned = ref(true);
+
+const attachBrowserSession = async (sessionId: string, approvalMode?: string) => {
+  if (!sessionId) return;
+  if (!config.token) {
+    showToast("浏览器需要有效的登录凭证", "warning");
+    return;
+  }
+  try {
+    const tokenResponse = await axios.post(
+      `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}/viewer-token`,
+      {},
+      { headers: embedAuthHeaders() },
+    );
+    browserSessionId.value = sessionId;
+    browserViewerToken.value = tokenResponse.data.token;
+    browserApprovalMode.value = approvalMode === "autopilot" ? "autopilot" : "guarded";
+    browserPinned.value = true;
+    browserPanelVisible.value = true;
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "连接服务端浏览器失败", "error");
+  }
+};
+
+const openBrowserPanel = async () => {
+  if (!config.token) {
+    showToast("浏览器需要有效的登录凭证", "warning");
+    return;
+  }
+  try {
+    const sessionResponse = await axios.post(
+      "/api/v1/chat/browser/sessions/open",
+      { url: "https://www.baidu.com/", conversation_id: conversationId.value || undefined },
+      { headers: embedAuthHeaders() },
+    );
+    const session = sessionResponse.data;
+    await attachBrowserSession(session.id, session.approval_mode);
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "打开服务端浏览器失败", "error");
+  }
+};
+
+const closeBrowserPanel = () => {
+  browserPanelVisible.value = false;
+};
+
+const closeBrowserSession = async () => {
+  const sessionId = browserSessionId.value;
+  if (!sessionId || typeof window === "undefined") return;
+  if (!window.confirm("结束当前浏览器会话？\nProfile 和 Cookie 会保留，下次可以重新打开。")) return;
+  try {
+    await axios.delete(
+      `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}`,
+      { headers: embedAuthHeaders() },
+    );
+    browserPanelVisible.value = false;
+    browserSessionId.value = null;
+    browserViewerToken.value = null;
+    showToast("浏览器会话已结束，Profile 和 Cookie 已保留", "success");
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "结束浏览器会话失败", "error");
+  }
+};
+
+const toggleBrowserPanel = () => {
+  if (browserPanelVisible.value) {
+    closeBrowserPanel();
+  } else {
+    void openBrowserPanel();
+  }
+};
+
+const updateBrowserApprovalMode = async (mode: BrowserApprovalMode) => {
+  if (!browserSessionId.value) return;
+  const previous = browserApprovalMode.value;
+  browserApprovalMode.value = mode;
+  try {
+    await axios.put(
+      `/api/v1/chat/browser/sessions/${encodeURIComponent(browserSessionId.value)}/policy`,
+      { approval_mode: mode },
+      { headers: embedAuthHeaders() },
+    );
+  } catch (error: any) {
+    browserApprovalMode.value = previous;
+    showToast(error?.response?.data?.detail || "切换浏览器动作模式失败", "error");
+  }
+};
 const thinkingEnableOverride = ref<boolean | null>(null);
 const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
@@ -6255,12 +6368,15 @@ watch(
 
 
 
-const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge") => {
+const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge" | "browser") => {
   let rem = 0;
   if (exclude !== "portal" && showPortalDrawer.value && portalPinned.value) rem += 28;
   if (exclude !== "knowledge" && showKnowledgePortal.value && knowledgePinned.value) rem += 28;
   if (exclude !== "workspace" && showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
   if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
+  if (exclude !== "browser" && browserPanelVisible.value && browserPinned.value && !isMobile.value) {
+    rem += browserPanelWidthReactive.value / 16;
+  }
   return rem;
 };
 
@@ -6279,6 +6395,7 @@ const portalDrawerWidthReactive = ref(448);
 const knowledgeDrawerWidthReactive = ref(448);
 const workspaceDrawerWidthReactive = ref(448);
 const canvasPinnedWidthReactive = ref(520);
+const browserPanelWidthReactive = ref(520);
 
 const portalDrawerWidthPx = computed(() => {
   if (!showPortalDrawer.value || !portalPinned.value || isMobile.value) return 0;
@@ -6300,6 +6417,11 @@ const workspaceDrawerWidthPx = computed(() => {
   return workspaceDrawerWidthReactive.value;
 });
 
+const browserPanelWidthPx = computed(() => {
+  if (!browserPanelVisible.value || !browserPinned.value || isMobile.value) return 0;
+  return browserPanelWidthReactive.value;
+});
+
 const totalPinnedDrawerPx = computed(() => {
   if (isMobile.value || windowWidth.value < 768) return 0;
   let px = 0;
@@ -6307,6 +6429,7 @@ const totalPinnedDrawerPx = computed(() => {
   px += knowledgeDrawerWidthPx.value;
   px += workspaceDrawerWidthPx.value;
   px += canvasPinnedWidthPx.value;
+  px += browserPanelWidthPx.value;
   if (showMemoryDrawer.value && memoryPinned.value) px += 448;
   return px;
 });
@@ -6840,6 +6963,7 @@ const sendMessage = async () => {
         model: config.overrideModel || undefined,
         enable_sql_plan: config.enableSqlPlan,
         grounding_enabled: config.enableGrounding,
+        browser_session_id: browserSessionId.value || undefined,
         ignore_ltm: ltmIgnoredVal,
         hallucination_check: hallucinationCheckEnabled.value || undefined,
         knowledge_ragflow_similarity_threshold: knowledgeSimilarityThreshold.value,
@@ -6904,7 +7028,9 @@ const sendMessage = async () => {
         try {
           const data = JSON.parse(dataStr);
           applyStreamTraceId(agentMsg.value, data);
-          if (data.type === "log") {
+          if (data.type === "browser_session") {
+            void attachBrowserSession(String(data.session_id || ""), data.approval_mode);
+          } else if (data.type === "log") {
             if (agentMsg.value.isThinking && data.title) {
               agentMsg.value.thinkingText = `正在${data.title}...`;
             }

@@ -2342,6 +2342,7 @@ class AgentService:
 
             await AgentContextManager.setup_context(
                 config=runner.config,
+                debug_options=dict(getattr(runner, "debug_options", {}) or {}),
                 user_info=effective_user_info,
                 api_key=effective_user_info.get("api_key"),
                 conversation_id=(

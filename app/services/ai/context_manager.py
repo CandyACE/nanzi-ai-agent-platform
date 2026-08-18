@@ -337,6 +337,8 @@ class AgentContextManager:
             rag_params=_normalize_rag_params(engine_config),
             user_id=u_id_val,
             conversation_id=conversation_id,
+            browser_session_id=(debug_options or {}).get("browser_session_id")
+            or (previous_context.browser_session_id if previous_context else None),
             is_admin=is_admin_val,
             api_key=api_key_val,
             user_dimensions=user_dims,
