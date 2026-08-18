@@ -170,9 +170,10 @@ export function upsertTimelineTodo(
   if (indexes.length) {
     items[indexes[0]] = todo;
     for (const index of indexes.slice(1).reverse()) items.splice(index, 1);
-    return;
+  } else {
+    items.push(todo);
   }
-  items.push(todo);
+  target.processTimeline = [...items];
 }
 
 let textSequence = 0;

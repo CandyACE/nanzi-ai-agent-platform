@@ -2116,6 +2116,16 @@ const enterFullScreenFromTip = () => {
 
 const userInput = ref("");
 const isProcessing = ref(false);
+const activeTodoTimeline = computed(() => {
+  if (!isProcessing.value) return undefined;
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const msg = messages.value[i];
+    if (msg && (msg.role === 'agent' || msg.role === 'assistant') && msg.processTimeline?.some(item => item.kind === 'todo')) {
+      return msg.processTimeline;
+    }
+  }
+  return undefined;
+});
 const messagesContainer = ref<HTMLDivElement | null>(null);
 
 let abortController: AbortController | null = null;
@@ -4556,7 +4566,6 @@ onUnmounted(() => {
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 bordered
               />
-              <ChatTodoCard :timeline="msg.processTimeline" />
 
               <!-- Tool Permission Confirmation -->
               <div
@@ -4912,6 +4921,11 @@ onUnmounted(() => {
           @select-mcp-tool="mountMcpToolToSession"
           @system-command="handleSystemCommand"
         >
+          <template #banner>
+            <div v-if="activeTodoTimeline" class="mx-3 mt-2">
+              <ChatTodoCard :timeline="activeTodoTimeline" />
+            </div>
+          </template>
         </ChatInput>
       </div>
 

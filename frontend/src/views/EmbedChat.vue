@@ -591,7 +591,6 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 dark-mode
               />
-              <ChatTodoCard :timeline="msg.processTimeline" />
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
@@ -1087,6 +1086,11 @@
         @ignore-ltm="handleIgnoreLtm"
         @dismiss-ltm="activeLtmPreference = null"
       >
+        <template #banner>
+          <div v-if="activeTodoTimeline" class="mx-3 mt-2">
+            <ChatTodoCard :timeline="activeTodoTimeline" />
+          </div>
+        </template>
       </ChatInput>
     </div>
 
@@ -2537,6 +2541,16 @@ const openEmbedTrace = (traceId: string) => {
   showEmbedTrace.value = true;
 };
 const isProcessing = ref(false);
+const activeTodoTimeline = computed(() => {
+  if (!isProcessing.value) return undefined;
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const msg = messages.value[i];
+    if (msg && (msg.role === 'agent' || msg.role === 'assistant') && msg.processTimeline?.some(item => item.kind === 'todo')) {
+      return msg.processTimeline;
+    }
+  }
+  return undefined;
+});
 const datasetMenuLoading = ref(false);
 const isInitialLoading = ref(true);
 const messagesContainer = ref<HTMLDivElement | null>(null);

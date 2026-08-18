@@ -1158,42 +1158,6 @@ defineExpose({
     <div class="flex-shrink-0 bg-white dark:bg-gray-900 flex flex-col relative z-20">
       <slot name="banner"></slot>
 
-      <!-- Active LTM Preference Banner -->
-      <transition name="fade-slide">
-        <div v-if="activeLtmPreference" class="mx-3 mt-2 px-3 py-1.5 bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-100/30 dark:border-indigo-900/30 rounded-xl flex items-center justify-between z-10 animate-fade-in-up">
-          <div class="flex items-center space-x-2 text-[11px] text-indigo-600 dark:text-indigo-300 font-medium select-none">
-            <span class="text-sm">🧠</span>
-            <span class="truncate max-w-[200px] sm:max-w-[400px]">已自动应用您的常用偏好：{{ formatLtmText(activeLtmPreference) }}</span>
-          </div>
-          
-          <div class="flex items-center space-x-2 flex-shrink-0 ml-2">
-            <!-- 忽略本次按钮 -->
-            <button 
-              @click="emit('ignore-ltm')" 
-              class="flex items-center space-x-1 px-1.5 py-0.5 border border-indigo-200 dark:border-indigo-900/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 rounded-md text-[10px] text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 transition-all font-medium"
-              title="在本轮提问中临时停用并忽略此记忆偏好"
-            >
-              <span>🚫</span>
-              <span>忽略本次</span>
-            </button>
-            
-            <!-- 分割线 -->
-            <span class="w-[1px] h-3 bg-indigo-100 dark:bg-indigo-900/50"></span>
-            
-            <!-- 仅关闭按钮 -->
-            <button 
-              @click="emit('dismiss-ltm')" 
-              class="p-1 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 rounded-full text-indigo-400 hover:text-indigo-600 dark:text-indigo-500 transition-colors" 
-              title="仅关闭此提示气泡，不影响本轮偏好生效"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </transition>
-
       <div
         :class="isMobileViewport
           ? 'px-3 pt-1 pb-[calc(env(safe-area-inset-bottom,0px)+0.625rem)]'

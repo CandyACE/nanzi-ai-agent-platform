@@ -75,9 +75,24 @@
                 <blockquote
                   v-if="item.textKind === 'reasoning'"
                   v-show="isReasoningBodyOpen(item)"
-                  class="mb-0 mt-0.5 border-l-2 border-gray-200 pl-2.5 dark:border-gray-700"
+                  class="group/details relative mb-0 mt-0.5 border-l-2 border-gray-200 pl-2.5 dark:border-gray-700"
                 >
-                  <pre class="w-fit max-w-full whitespace-pre-wrap break-words font-sans">{{ item.content }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></pre>
+                  <button
+                    v-if="item.content"
+                    type="button"
+                    class="absolute right-1 top-0 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                    :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `reasoning-${item.id}` }"
+                    :title="copiedKey === `reasoning-${item.id}` ? '已复制' : '复制思考内容'"
+                    @click.stop="handleCopy(`reasoning-${item.id}`, item.content)"
+                  >
+                    <svg v-if="copiedKey === `reasoning-${item.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                    </svg>
+                    <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                    </svg>
+                  </button>
+                  <pre class="w-fit max-w-full whitespace-pre-wrap break-words pr-6 font-sans">{{ item.content }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></pre>
                 </blockquote>
                 <pre
                   v-else
@@ -136,7 +151,23 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
-                  <pre v-if="child.details && child.isExpanded && !child.children?.length" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ child.details }}</pre>
+                  <div v-if="child.details && child.isExpanded && !child.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                    <button
+                      type="button"
+                      class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                      :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `child-${child.id}` }"
+                      :title="copiedKey === `child-${child.id}` ? '已复制' : '复制内容'"
+                      @click.stop="handleCopy(`child-${child.id}`, child.details)"
+                    >
+                      <svg v-if="copiedKey === `child-${child.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                      </svg>
+                      <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                      </svg>
+                    </button>
+                    <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ child.details }}</pre>
+                  </div>
 
                   <!-- 嵌套展示子代理内部步骤 -->
                   <div v-if="child.children?.length && child.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
@@ -165,7 +196,23 @@
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                         </svg>
                       </button>
-                      <pre v-if="subStep.details && subStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ subStep.details }}</pre>
+                      <div v-if="subStep.details && subStep.isExpanded" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                        <button
+                          type="button"
+                          class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                          :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `substep-${subStep.id}` }"
+                          :title="copiedKey === `substep-${subStep.id}` ? '已复制' : '复制内容'"
+                          @click.stop="handleCopy(`substep-${subStep.id}`, subStep.details)"
+                        >
+                          <svg v-if="copiedKey === `substep-${subStep.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                          </svg>
+                          <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                          </svg>
+                        </button>
+                        <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ subStep.details }}</pre>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -219,7 +266,23 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
               </svg>
             </button>
-            <pre v-if="item.details && item.isExpanded && !item.children?.length" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ item.details }}</pre>
+            <div v-if="item.details && item.isExpanded && !item.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+              <button
+                type="button"
+                class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `item-${item.id}` }"
+                :title="copiedKey === `item-${item.id}` ? '已复制' : '复制内容'"
+                @click.stop="handleCopy(`item-${item.id}`, item.details)"
+              >
+                <svg v-if="copiedKey === `item-${item.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                </svg>
+                <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                </svg>
+              </button>
+              <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ item.details }}</pre>
+            </div>
 
             <!-- 嵌套展示根级别子代理内部步骤 -->
             <div v-if="item.children?.length && item.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
@@ -248,7 +311,23 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                   </svg>
                 </button>
-                <pre v-if="subStep.details && subStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ subStep.details }}</pre>
+                <div v-if="subStep.details && subStep.isExpanded" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                  <button
+                    type="button"
+                    class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                    :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `substep-${subStep.id}` }"
+                    :title="copiedKey === `substep-${subStep.id}` ? '已复制' : '复制内容'"
+                    @click.stop="handleCopy(`substep-${subStep.id}`, subStep.details)"
+                  >
+                    <svg v-if="copiedKey === `substep-${subStep.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                    </svg>
+                    <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                    </svg>
+                  </button>
+                  <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ subStep.details }}</pre>
+                </div>
               </div>
             </div>
           </div>
@@ -263,8 +342,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
+import { copyToClipboard } from "@/utils/clipboard";
 import {
   skillFlowNoticeLabel,
   summarizeSkillFlowBadges,
@@ -380,6 +460,23 @@ function subagentStatusLabel(status: ProcessTimelineLogItem["status"]): string {
 function formatDuration(duration?: number | null): string {
   if (duration === undefined || duration === null || Number.isNaN(duration) || duration <= 0) return "";
   return duration < 1000 ? `${Math.max(1, Math.round(duration))}ms` : `${(duration / 1000).toFixed(1)}s`;
+}
+
+const copiedKey = ref<string | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function handleCopy(key: string, text?: string | null) {
+  if (!text) return;
+  const ok = await copyToClipboard(text);
+  if (ok) {
+    copiedKey.value = key;
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      if (copiedKey.value === key) {
+        copiedKey.value = null;
+      }
+    }, 1500);
+  }
 }
 </script>
 
