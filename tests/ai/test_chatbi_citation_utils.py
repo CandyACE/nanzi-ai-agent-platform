@@ -32,6 +32,44 @@ def test_format_chatbi_sql_citation_content_includes_sql_and_sample():
     assert "Alice" in content
 
 
+def test_format_chatbi_sql_citation_distinguishes_exact_total_from_returned_rows():
+    parsed = {
+        "columns": [{"name": "id"}],
+        "items": [[1], [2]],
+        "total_count": 238,
+        "returned_count": 2,
+        "truncated": True,
+        "count_status": "exact",
+    }
+
+    content = format_chatbi_sql_citation_content(
+        sql="SELECT id FROM demo LIMIT 1000",
+        dataset_name="demo_ds",
+        parsed_output=parsed,
+    )
+
+    assert "匹配总数 238 条" in content
+    assert "返回 2 行" in content
+
+
+def test_format_chatbi_sql_citation_does_not_claim_unknown_total():
+    content = format_chatbi_sql_citation_content(
+        sql="SELECT id FROM demo LIMIT 1000",
+        dataset_name="demo_ds",
+        parsed_output={
+            "items": [[1], [2]],
+            "total_count": None,
+            "returned_count": 2,
+            "truncated": None,
+            "count_status": "unknown",
+        },
+    )
+
+    assert "返回 2 行" in content
+    assert "总数未统计" in content
+    assert "匹配总数" not in content
+
+
 def test_count_result_rows_supports_items_and_rows():
     assert count_result_rows({"items": [[1], [2]]}) == 2
     assert count_result_rows({"rows": []}) == 0

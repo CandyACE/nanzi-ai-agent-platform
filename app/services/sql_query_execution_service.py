@@ -143,6 +143,20 @@ def dialect_from_data_source(data_source: Optional[str]) -> str:
     return dialect
 
 
+def build_unbounded_count_sql(sql: str, dialect: str) -> str:
+    """为已完成权限改写的查询构造不带行数限制的精确 COUNT SQL。"""
+    base_sql = str(sql or "").strip().rstrip(";").strip()
+    if not base_sql:
+        raise ValueError("SQL 为空")
+
+    expression = sqlglot.parse_one(base_sql, read=to_sqlglot_dialect(dialect))
+    expression.set("limit", None)
+    expression.set("offset", None)
+    expression.set("order", None)
+    count_query = exp.select(exp.Count(this=exp.Star())).from_(expression.subquery("_count_query"))
+    return count_query.sql(dialect=to_sqlglot_dialect(dialect))
+
+
 def _physical_fragment_from_table(table: exp.Table) -> str:
     parts = getattr(table, "parts", None) or []
     if parts:
@@ -358,6 +372,7 @@ async def execute_sql_query_core(
     bypass_table_auth: bool = False,
     sql_query_binding: Any | None = None,
     permission_notice: Optional[Dict[str, Any]] = None,
+    include_total: bool = True,
 ) -> str:
     """
     在给定 DB 会话下完成权限重写与执行；调用方负责会话生命周期。
@@ -374,6 +389,8 @@ async def execute_sql_query_core(
         permission_notice: 可选可变字典；当行级权限 SQL 重写实际生效时写入给 HTTP/前端使用的
                  非敏感提示元信息；可含 `executed_sql` 供工具日志展示实际执行的 SQL，
                  不包含具体过滤条件表达式。
+        include_total: 是否执行不带行数限制的 COUNT 查询并在结果中附加精确总数；
+                       ChatBI 业务查询默认开启，诊断/样例探查可关闭。
     """
     from app.services.ai.chatbi_sql_query_binding import (
         build_data_perm_table_metadata,
@@ -590,4 +607,5 @@ async def execute_sql_query_core(
         sql,
         data_source=data_source,
         cache_scope=str(user_id_eff) if user_id_eff is not None else None,
+        include_total=include_total,
     )

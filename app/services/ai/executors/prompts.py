@@ -422,6 +422,9 @@ XML 示例：
         "确需计算时优先在 SQL 内完成聚合，或基于工具已返回的样例/摘要直接回答。\n"
         "14. 若工具结果注明仅回传了样例行（含 `_model_context_note` 或「已向模型回传前 N 行样例」），"
         "回答开头必须明确告知用户：本次解读基于样例而非逐行全量分析，并引导查看下方「查询结果明细」。"
+        "15. 工具结果中的 `items` / `rows` 只代表本次实际回传的明细行；"
+        "只有 `count_status=exact` 且存在 `total_count` 时，才能把 `total_count` 表述为匹配总数。"
+        "若 `count_status=unknown` 或 `total_count` 为空，必须明确说明数据库总数未统计，禁止用回传行数冒充总数。"
     )
 
     # 分页/TopN 常见语法反例（Oracle ROWNUM 与 ORDER BY 混用是高频错误）

@@ -9,7 +9,7 @@
         class="inline-flex items-center gap-1 text-emerald-600/80 dark:text-emerald-400/80"
       >
         <span class="text-[10px]">✓</span>
-        <span>查询成功 · {{ rowCount }} 行</span>
+        <span>查询成功 · {{ resultCountLabel }}</span>
       </span>
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
         <svg
@@ -242,23 +242,48 @@ const tabs = computed(() => {
   return items;
 });
 
-const rowCount = computed(() =>
-  Number(props.meta?.execution?.row_count || props.meta?.table?.total_row_count || 0),
-);
+const exactTotalCount = computed<number | null>(() => {
+  const executionTotal = props.meta?.execution?.total_row_count;
+  if (typeof executionTotal === "number" && Number.isFinite(executionTotal)) return executionTotal;
+  const tableTotal = props.meta?.table?.total_row_count;
+  return typeof tableTotal === "number" && Number.isFinite(tableTotal) ? tableTotal : null;
+});
+
+const returnedRowCount = computed(() => {
+  const returned = props.meta?.execution?.returned_row_count;
+  if (typeof returned === "number" && Number.isFinite(returned)) return returned;
+  const executionRows = props.meta?.execution?.row_count;
+  if (typeof executionRows === "number" && Number.isFinite(executionRows)) return executionRows;
+  return embeddedRows.value.length;
+});
+
+const resultCountLabel = computed(() => {
+  if (exactTotalCount.value !== null) {
+    const total = formatCount(exactTotalCount.value);
+    const returned = formatCount(returnedRowCount.value);
+    const truncated = props.meta?.execution?.truncated ?? props.meta?.table?.truncated;
+    return truncated ? `匹配总数 ${total} 条 · 已返回 ${returned} 行` : `匹配总数 ${total} 条`;
+  }
+  return `已返回 ${formatCount(returnedRowCount.value)} 行 · 总数未统计`;
+});
 
 const sampleNotice = computed(() => {
   const scope = props.meta?.analysis_scope;
   if (!scope || scope.mode !== "sample") return "";
+  const totalLabel = scope.total_row_count == null ? "总数未知" : `${scope.total_row_count} 行`;
+  const basis = scope.total_row_count == null
+    ? `已返回 ${scope.model_row_count} 行`
+    : `全部 ${totalLabel}中的前 ${scope.model_row_count} 行`;
   return (
     String(scope.user_notice || "").trim() ||
-    `AI 解读基于全部 ${scope.total_row_count} 行中的前 ${scope.model_row_count} 行样例，并非逐行全量分析。`
+    `AI 解读基于${basis}样例${scope.total_row_count == null ? "，数据库总数未统计" : "，并非逐行全量分析"}。`
   );
 });
 
 const sampleChip = computed(() => {
   const scope = props.meta?.analysis_scope;
   if (!scope || scope.mode !== "sample") return "";
-  return `AI 样例 ${scope.model_row_count}/${scope.total_row_count}`;
+  return `AI 样例 ${scope.model_row_count}/${scope.total_row_count == null ? "总数未知" : scope.total_row_count}`;
 });
 
 const pageSize = computed(() => {
@@ -341,6 +366,10 @@ function emitOpenCitation(citation: any, event: MouseEvent) {
 function formatEvidenceTime(value?: string | null) {
   if (!value) return "未提供";
   return value.replace("T", " ").replace(/\.\d{3,6}(?=[+-]\d{2}:?\d{2}|Z$)/, "");
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString("zh-CN");
 }
 
 function formatCell(value: unknown): string {

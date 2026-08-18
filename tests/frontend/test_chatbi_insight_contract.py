@@ -19,10 +19,14 @@ def test_shared_chatbi_insight_contract_is_wired_to_both_chat_surfaces():
     embed = _source("frontend/src/views/EmbedChat.vue")
     debug = _source("frontend/src/views/AgentDebug.vue")
     panel = _source("frontend/src/components/chatbi/ChatBIInsightPanel.vue")
+    result_table = _source("frontend/src/components/chatbi/ChatBIResultTable.vue")
 
     assert "export interface ChatBIInsightMeta" in types
     assert "export interface ChatBIResultTable" in types
     assert "export interface ChatBIAnalysisScope" in types
+    assert "total_row_count: number | null" in types
+    assert "returned_row_count?: number" in types
+    assert "truncated?: boolean" in types
     assert "table?: ChatBIResultTable | null" in types
     assert "analysis_scope?: ChatBIAnalysisScope | null" in types
     assert "actions: ChatBIInsightAction[]" in types
@@ -31,6 +35,10 @@ def test_shared_chatbi_insight_contract_is_wired_to_both_chat_surfaces():
     assert 'label: "明细"' in panel
     assert 'label: "依据"' in panel
     assert "引用来源" in panel
+    assert "匹配总数" in panel
+    assert "总数未统计" in panel
+    assert "总数未统计" in result_table
+    assert "totalCountLabel" in result_table
     assert "rounded-xl border border-gray-200" not in panel
     for source in (embed, debug):
         assert "ChatBIInsightPanel" in source

@@ -73,16 +73,106 @@ def validate_sql(sql: str, dialect: str = "clickhouse") -> Optional[str]:
 
     return None
 
+
+def _result_rows(payload: Any) -> list[Any]:
+    """从本地适配器或远程 API 的常见响应结构中取出返回行。"""
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ("items", "rows", "records", "list", "result"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            nested_rows = _result_rows(value)
+            if nested_rows:
+                return nested_rows
+    data = payload.get("data")
+    if isinstance(data, (dict, list)):
+        return _result_rows(data)
+    return []
+
+
+def _count_from_payload(payload: Any) -> Optional[int]:
+    """兼容 COUNT 查询返回的标量、单行单列和常见包装结构。"""
+    if isinstance(payload, bool):
+        return None
+    if isinstance(payload, int):
+        return payload
+    if isinstance(payload, float) and payload.is_integer():
+        return int(payload)
+    if isinstance(payload, dict):
+        for key in ("_total_count", "total_count", "count", "COUNT(*)", "count(*)"):
+            if key in payload:
+                return _count_from_payload(payload[key])
+        for key in ("data", "result", "rows", "items", "records", "list"):
+            if key in payload:
+                count = _count_from_payload(payload[key])
+                if count is not None:
+                    return count
+        return None
+    if isinstance(payload, (list, tuple)) and payload:
+        first = payload[0]
+        if isinstance(first, dict):
+            for value in first.values():
+                count = _count_from_payload(value)
+                if count is not None:
+                    return count
+            return None
+        if isinstance(first, (list, tuple)) and first:
+            return _count_from_payload(first[0])
+        return _count_from_payload(first)
+    return None
+
+
+def _count_error_category(error: Exception) -> str:
+    if isinstance(error, asyncio.TimeoutError):
+        return "timeout"
+    if isinstance(error, (ParseError, ValueError)):
+        return "invalid_count_sql"
+    return "execution_error"
+
+
+def _attach_count_metadata(
+    detail_payload: Any,
+    *,
+    total_count: Optional[int],
+    count_status: str,
+    count_error: Optional[str] = None,
+) -> dict[str, Any]:
+    if isinstance(detail_payload, dict):
+        payload = dict(detail_payload)
+    else:
+        payload = {"rows": detail_payload if isinstance(detail_payload, list) else []}
+
+    returned_count = len(_result_rows(payload))
+    payload.update(
+        {
+            "total_count": total_count,
+            "returned_count": returned_count,
+            "truncated": returned_count < total_count if total_count is not None else None,
+            "count_status": count_status,
+        }
+    )
+    if count_error:
+        payload["count_error"] = count_error
+    return payload
+
+
 async def call_external_sql_api(
     sql: str,
     data_source: Optional[str] = None,
     cache_scope: Optional[str] = None,
+    include_total: bool = False,
 ) -> str:
     """
     执行物理 SQL 查询的统一入口：支持本地 Adapter 直连与远程 API 调用的双层分流控制。
 
     cache_scope: 结果缓存的隔离作用域（通常为执行用户 id）。必须传入，
     否则不同用户在行级权限场景下可能复用到彼此的缓存结果，造成跨用户数据泄露。
+    include_total: 是否额外执行不带 LIMIT 的 COUNT 查询并返回精确总数。
+        ChatBI 主链路开启；沙箱预检和其他只需要样例行的调用保持关闭。
     """
     # Dynamic Config
     from app.services.config_service import ConfigService
@@ -116,8 +206,11 @@ async def call_external_sql_api(
     # 2. Check Cache (TTL 60s)
     # Cache Key 必须包含执行模式（避免 local/remote 切换复用）与用户作用域（避免跨用户复用行级结果）。
     scope = str(cache_scope) if cache_scope is not None and str(cache_scope).strip() else "anon"
-    cache_digest = hashlib.md5((scope + "|" + sql + "|" + (data_source or "")).encode()).hexdigest()
-    cache_key = f"sql_result:{execution_mode}:{scope}:{cache_digest}"
+    cache_variant = "with_total" if include_total else "rows_only"
+    cache_digest = hashlib.md5(
+        (cache_variant + "|" + scope + "|" + sql + "|" + (data_source or "")).encode()
+    ).hexdigest()
+    cache_key = f"sql_result:v2:{execution_mode}:{cache_variant}:{scope}:{cache_digest}"
     redis_client = await get_redis()
 
     if redis_client:
@@ -191,9 +284,48 @@ async def call_external_sql_api(
             else:
                 sql_limited = f"SELECT * FROM ({clean_sql}) AS _sub LIMIT {MAX_LOCAL_SQL_ROWS}"
 
+        count_sql: Optional[str] = None
+        count_status = "not_requested"
+        count_error: Optional[str] = None
+        total_count: Optional[int] = None
+        if include_total:
+            try:
+                from app.services.sql_query_execution_service import (
+                    build_unbounded_count_sql,
+                    dialect_from_data_source,
+                )
+
+                count_sql = build_unbounded_count_sql(
+                    sql,
+                    dialect_from_data_source(data_source),
+                )
+            except Exception as error:
+                count_status = "unknown"
+                count_error = _count_error_category(error)
+
         # 物理执行与超时保护
         try:
+            if include_total and count_sql:
+                try:
+                    count_data = await asyncio.wait_for(adapter.execute_sql(count_sql), timeout=timeout)
+                    total_count = _count_from_payload(count_data)
+                    if total_count is None or total_count < 0:
+                        count_status = "unknown"
+                        count_error = "invalid_count_result"
+                    else:
+                        count_status = "exact"
+                except Exception as error:
+                    count_status = "unknown"
+                    count_error = _count_error_category(error)
+
             res_data = await asyncio.wait_for(adapter.execute_sql(sql_limited), timeout=timeout)
+            if include_total:
+                res_data = _attach_count_metadata(
+                    res_data,
+                    total_count=total_count,
+                    count_status=count_status,
+                    count_error=count_error,
+                )
             result_json = json.dumps(res_data, ensure_ascii=False)
             if len(result_json.encode("utf-8")) > MAX_LOCAL_RESULT_BYTES:
                 return f"[TOOL_ERROR] 本地执行结果超过最大返回体限制 ({MAX_LOCAL_RESULT_BYTES} bytes)，请缩小查询字段或过滤条件。\n\n[Executed SQL]:\n{sql}"
@@ -217,17 +349,55 @@ async def call_external_sql_api(
         "Content-Type": "application/json",
         "X-API-Key": api_key,
     }
-    payload = {
-        "data_source": data_source,
-        "sql": sql,
-        "params": {}
-    }
+    payload = {"data_source": data_source, "sql": sql, "params": {}}
 
     logger.info(f"[Agent Remote] Calling External SQL API: {api_url} (Cached: False)")
 
+    count_sql: Optional[str] = None
+    count_status = "not_requested"
+    count_error: Optional[str] = None
+    total_count: Optional[int] = None
+    if include_total:
+        try:
+            from app.services.sql_query_execution_service import (
+                build_unbounded_count_sql,
+                dialect_from_data_source,
+            )
+
+            count_sql = build_unbounded_count_sql(sql, dialect_from_data_source(data_source))
+        except Exception as error:
+            count_status = "unknown"
+            count_error = _count_error_category(error)
+
     try:
         client = await GlobalHttpClient.get_client()
-        response = await client.post(api_url, headers=headers, json=payload, timeout=timeout)
+
+        if include_total and count_sql:
+            count_payload = {**payload, "sql": count_sql}
+            try:
+                count_response = await client.post(
+                    api_url,
+                    headers=headers,
+                    json=count_payload,
+                    timeout=timeout,
+                )
+                if count_response.is_error:
+                    raise RuntimeError(f"remote_http_{count_response.status_code}")
+                count_response_data = count_response.json()
+                if count_response_data.get("code") != 200:
+                    raise RuntimeError("remote_api_error")
+                total_count = _count_from_payload(count_response_data.get("data"))
+                if total_count is None or total_count < 0:
+                    count_status = "unknown"
+                    count_error = "invalid_count_result"
+                else:
+                    count_status = "exact"
+            except Exception as error:
+                count_status = "unknown"
+                count_error = _count_error_category(error)
+
+        detail_payload = {**payload, "sql": sql}
+        response = await client.post(api_url, headers=headers, json=detail_payload, timeout=timeout)
 
         if response.is_error:
             error_detail = response.text
@@ -242,7 +412,15 @@ async def call_external_sql_api(
         if resp_data.get("code") != 200:
             return f"[TOOL_ERROR] Error from API: {resp_data.get('message')}\n\n[Executed SQL]:\n{sql}"
 
-        result_json = json.dumps(resp_data.get("data"), ensure_ascii=False)
+        result_data = resp_data.get("data")
+        if include_total:
+            result_data = _attach_count_metadata(
+                result_data,
+                total_count=total_count,
+                count_status=count_status,
+                count_error=count_error,
+            )
+        result_json = json.dumps(result_data, ensure_ascii=False)
 
         if redis_client:
             await redis_client.set(cache_key, result_json, ex=60)

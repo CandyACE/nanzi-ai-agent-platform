@@ -56,6 +56,36 @@ def count_result_rows(parsed: Any) -> int:
     return len(extract_result_row_items(parsed))
 
 
+def _result_count_summary(parsed: Any) -> tuple[Optional[int], int, bool]:
+    """返回 (精确总数, 当前返回行数, 是否明确知道总数统计失败)。"""
+    normalized = _try_parse_json(parsed)
+    returned = count_result_rows(normalized)
+    if not isinstance(normalized, dict):
+        return returned, returned, False
+
+    metadata_present = any(
+        key in normalized for key in ("total_count", "returned_count", "truncated", "count_status")
+    )
+    raw_returned = normalized.get("returned_count") if metadata_present else None
+    try:
+        if raw_returned is not None:
+            returned = max(0, int(raw_returned))
+    except (TypeError, ValueError):
+        pass
+
+    status = str(normalized.get("count_status") or "").strip().lower()
+    if status == "exact":
+        try:
+            total = int(normalized.get("total_count"))
+        except (TypeError, ValueError):
+            total = None
+        if total is not None and total >= 0:
+            return total, returned, False
+    if status == "unknown" or metadata_present:
+        return None, returned, True
+    return returned, returned, False
+
+
 def _format_cell(value: Any, *, max_len: int = 80) -> str:
     if value is None:
         return "NULL"
@@ -105,15 +135,23 @@ def format_chatbi_sql_citation_content(
     sql_text = str(sql or "").strip() or "（未记录 SQL）"
     dataset = str(dataset_name or "").strip() or "未知数据集"
     source = str(data_source or "").strip()
-    row_count = count_result_rows(parsed_output) if parsed_output is not None else None
+    total_count: Optional[int] = None
+    row_count: Optional[int] = None
+    count_unknown = False
+    if parsed_output is not None:
+        total_count, row_count, count_unknown = _result_count_summary(parsed_output)
     columns = extract_result_column_names(parsed_output) if parsed_output is not None else []
 
     lines = [f"【{title}】", sql_text, "", "【数据概览】"]
     overview_parts = [f"数据集：{dataset}"]
     if source:
         overview_parts.append(f"数据源：{source}")
+    if total_count is not None and total_count != row_count:
+        overview_parts.append(f"匹配总数 {total_count} 条")
     if row_count is not None:
         overview_parts.append(f"返回 {row_count} 行")
+    if count_unknown:
+        overview_parts.append("总数未统计")
     if columns:
         preview_cols = ", ".join(columns[:8])
         if len(columns) > 8:

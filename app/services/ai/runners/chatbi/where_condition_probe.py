@@ -66,7 +66,7 @@ async def maybe_run_where_condition_diagnostics(
 
     async def _execute_sql(**kwargs: Any) -> str:
         async with AsyncSessionLocal() as session:
-            return await execute_sql_query_core(session, dry_run=False, **kwargs)
+            return await execute_sql_query_core(session, dry_run=False, include_total=False, **kwargs)
 
     schema_context = _where_probe_schema_context(state, error_message=error_message)
 

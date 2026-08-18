@@ -17,6 +17,7 @@ _DATE_VALUE_RE = re.compile(r"^\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?")
 # 气泡下方平台明细表：前端默认每页行数；SSE 最多嵌入行数（超出截断，仍报 total）。
 CHATBI_RESULT_TABLE_PAGE_SIZE = 50
 CHATBI_RESULT_TABLE_MAX_EMBED_ROWS = 2000
+_UNSET_COUNT = object()
 
 
 def _parse_result(output: Any) -> Any:
@@ -57,6 +58,49 @@ def _rows_from_result(parsed: Any, depth: int = 0) -> list[dict[str, Any]]:
             if rows:
                 return rows
     return []
+
+
+def _result_count_metadata(parsed: Any, rows: list[Any]) -> dict[str, Any]:
+    """读取执行层计数元数据，避免把返回样例行数当成数据库总数。"""
+    if not isinstance(parsed, dict):
+        return {
+            "total": len(rows),
+            "returned": len(rows),
+            "truncated": False,
+            "status": "legacy_derived",
+        }
+
+    metadata_present = any(
+        key in parsed for key in ("total_count", "returned_count", "truncated", "count_status")
+    )
+    status = str(parsed.get("count_status") or "").strip().lower()
+    if status == "exact":
+        try:
+            total = int(parsed.get("total_count"))
+        except (TypeError, ValueError):
+            total = None
+    elif status == "unknown" or metadata_present:
+        total = None
+    else:
+        total = len(rows)
+
+    try:
+        returned = int(parsed.get("returned_count")) if metadata_present and parsed.get("returned_count") is not None else len(rows)
+    except (TypeError, ValueError):
+        returned = len(rows)
+    if returned < 0:
+        returned = len(rows)
+
+    raw_truncated = parsed.get("truncated") if metadata_present else None
+    truncated = raw_truncated if isinstance(raw_truncated, bool) else (
+        returned < total if total is not None else None
+    )
+    return {
+        "total": total,
+        "returned": returned,
+        "truncated": truncated,
+        "status": status or "legacy_derived",
+    }
 
 
 def _column_roles(rows: list[dict[str, Any]]) -> tuple[list[str], list[str], list[str]]:
@@ -222,7 +266,12 @@ def _jsonable_cell(value: Any) -> Any:
     return str(value)
 
 
-def build_result_table_payload(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def build_result_table_payload(
+    rows: list[dict[str, Any]],
+    *,
+    total_row_count: int | None | object = _UNSET_COUNT,
+    truncated: bool | None | object = _UNSET_COUNT,
+) -> dict[str, Any] | None:
     """Structured table for platform UI (not for LLM context)."""
     if not rows:
         return None
@@ -231,7 +280,7 @@ def build_result_table_payload(rows: list[dict[str, Any]]) -> dict[str, Any] | N
         for key in row.keys():
             if key not in columns:
                 columns.append(str(key))
-    total = len(rows)
+    total = len(rows) if total_row_count is _UNSET_COUNT else total_row_count
     embed_rows = rows[:CHATBI_RESULT_TABLE_MAX_EMBED_ROWS]
     matrix = [
         [_jsonable_cell(row.get(column)) for column in columns]
@@ -243,7 +292,15 @@ def build_result_table_payload(rows: list[dict[str, Any]]) -> dict[str, Any] | N
         "total_row_count": total,
         "embedded_row_count": len(embed_rows),
         "page_size": CHATBI_RESULT_TABLE_PAGE_SIZE,
-        "truncated": total > len(embed_rows),
+        "truncated": (
+            total > len(embed_rows)
+            if truncated is _UNSET_COUNT and total is not None
+            else (
+                (bool(truncated) or total > len(embed_rows))
+                if truncated is not _UNSET_COUNT and total is not None
+                else truncated
+            )
+        ),
     }
 
 
@@ -259,6 +316,7 @@ def build_chatbi_insight_meta(
     rows = _rows_from_result(parsed)
     if not rows:
         return None
+    count_meta = _result_count_metadata(parsed, rows)
     notice = parsed.get("permission_notice") if isinstance(parsed, dict) else None
     safe_notice = {
         key: notice.get(key)
@@ -268,9 +326,16 @@ def build_chatbi_insight_meta(
     raw_sql = str(state.last_successful_sql_args.get("sql") or state.last_successful_sql_args.get("query") or "").strip()
     executed_sql = str(notice.get("executed_sql") or "").strip() if isinstance(notice, dict) else ""
     repair_count = sum(int(count or 0) for count in state.repair_attempts.values()) + int(state.platform_auto_sql_attempts or 0)
-    table = build_result_table_payload(rows)
+    table = build_result_table_payload(
+        rows,
+        total_row_count=count_meta["total"],
+        truncated=count_meta["truncated"],
+    )
     scope = getattr(state, "model_result_scope", None)
-    if not isinstance(scope, dict) or scope.get("mode") not in {"full", "sample"}:
+    has_count_metadata = isinstance(parsed, dict) and any(
+        key in parsed for key in ("total_count", "returned_count", "truncated", "count_status")
+    )
+    if has_count_metadata or not isinstance(scope, dict) or scope.get("mode") not in {"full", "sample"}:
         from app.services.ai.runners.chatbi.sql_result_compact import build_model_result_scope
 
         class _ScopeRunner:
@@ -290,7 +355,11 @@ def build_chatbi_insight_meta(
             "evidence": _build_evidence_metadata(parsed, evidence_metadata, state),
             "execution": {
                 "mode": "repaired" if repair_count else "direct",
-                "row_count": len(rows),
+                "row_count": count_meta["returned"],
+                "total_row_count": count_meta["total"],
+                "returned_row_count": count_meta["returned"],
+                "truncated": count_meta["truncated"],
+                "count_status": count_meta["status"],
                 "repair_count": repair_count,
                 "federated": False,
             },
@@ -328,6 +397,7 @@ def build_federated_chatbi_insight_meta(
     rows = _rows_from_result(parsed)
     if not rows:
         return None
+    count_meta = _result_count_metadata(parsed, rows)
     return {
         "type": "chatbi_insight_meta",
         "data": {
@@ -342,17 +412,25 @@ def build_federated_chatbi_insight_meta(
             "evidence": _build_evidence_metadata(parsed, evidence_metadata),
             "execution": {
                 "mode": "federated",
-                "row_count": len(rows),
+                "row_count": count_meta["returned"],
+                "total_row_count": count_meta["total"],
+                "returned_row_count": count_meta["returned"],
+                "truncated": count_meta["truncated"],
+                "count_status": count_meta["status"],
                 "repair_count": 0,
                 "federated": True,
             },
             "final_sql": str(final_sql or "").strip(),
             "actions": _build_actions(rows),
-            "table": build_result_table_payload(rows),
+            "table": build_result_table_payload(
+                rows,
+                total_row_count=count_meta["total"],
+                truncated=count_meta["truncated"],
+            ),
             "analysis_scope": {
                 "mode": "full",
-                "total_row_count": len(rows),
-                "model_row_count": len(rows),
+                "total_row_count": count_meta["total"],
+                "model_row_count": count_meta["returned"],
                 "user_notice": "",
             },
         },
@@ -383,6 +461,7 @@ def build_saved_report_chatbi_insight_meta(
     }
     dataset = str(dataset_name or safe_notice.get("dataset_name") or "").strip()
     source = str(data_source or "").strip()
+    count_meta = _result_count_metadata(parsed, rows)
     return {
         "version": 1,
         "status": "success",
@@ -396,17 +475,29 @@ def build_saved_report_chatbi_insight_meta(
         "evidence": _build_evidence_metadata(parsed),
         "execution": {
             "mode": "direct",
-            "row_count": len(rows),
+            "row_count": count_meta["returned"],
+            "total_row_count": count_meta["total"],
+            "returned_row_count": count_meta["returned"],
+            "truncated": count_meta["truncated"],
+            "count_status": count_meta["status"],
             "repair_count": 0,
             "federated": False,
         },
         "final_sql": str(sql or "").strip(),
         "actions": _build_actions(rows),
-        "table": build_result_table_payload(rows),
+        "table": build_result_table_payload(
+            rows,
+            total_row_count=count_meta["total"],
+            truncated=count_meta["truncated"],
+        ),
         "analysis_scope": {
             "mode": "full",
-            "total_row_count": len(rows),
-            "model_row_count": len(rows),
-            "user_notice": "",
+            "total_row_count": count_meta["total"],
+            "model_row_count": count_meta["returned"],
+            "user_notice": (
+                f"当前已返回 {count_meta['returned']} 行，数据库总数未统计。"
+                if count_meta["total"] is None and count_meta["status"] == "unknown"
+                else ""
+            ),
         },
     }
