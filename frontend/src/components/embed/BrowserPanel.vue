@@ -169,7 +169,7 @@
             <input
               v-model="address"
               class="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-700 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-              placeholder="输入 http(s) 地址后回车"
+              placeholder="输入网址，如 www.baidu.com"
               @keyup.enter="navigate"
             />
             <button class="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700" @click="navigate">打开</button>
@@ -815,9 +815,19 @@ const sendText = () => {
   finishInteraction();
 };
 
+const normalizeNavigationUrl = (raw: string) => {
+  const value = raw.trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith('//')) return `https:${value}`;
+  if (/^[a-z][a-z\d+.-]*:/i.test(value)) return value;
+  return `https://${value}`;
+};
+
 const navigate = () => {
-  const value = address.value.trim();
+  const value = normalizeNavigationUrl(address.value);
   if (!value) return;
+  address.value = value;
   pauseForInteraction();
   showManualInput.value = false;
   manualText.value = '';

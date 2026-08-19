@@ -151,3 +151,13 @@ def test_browser_panel_refreshes_after_ai_browser_action_without_short_polling()
     assert "watch(() => props.refreshSignal" in panel
     assert ":refresh-signal=\"browserRefreshSignal\"" in embed
     assert "data.type === \"browser_refresh\"" in embed
+
+
+def test_browser_panel_normalizes_protocol_less_navigation_addresses():
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "const normalizeNavigationUrl" in source
+    assert "https://${value}" in source
+    assert "if (/^https?:\\/\\//i.test(value)) return value;" in source
+    assert "const value = normalizeNavigationUrl(address.value);" in source
+    assert "address.value = value;" in source
