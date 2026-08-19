@@ -72,11 +72,27 @@ class BrowserElement(BaseModel):
 class BrowserSnapshot(BaseModel):
     session_id: str
     snapshot_id: str
+    tab_id: Optional[str] = None
     url: str
     title: str
     screenshot_ref: Optional[str] = None
     elements: list[BrowserElement] = Field(default_factory=list)
     page_state: str = "ready"
+    scroll_x: float = 0
+    scroll_y: float = 0
+    viewport_width: Optional[int] = None
+    viewport_height: Optional[int] = None
+    document_width: Optional[int] = None
+    document_height: Optional[int] = None
+    page_text: str = ""
+    visible_text: str = ""
+
+
+class BrowserTab(BaseModel):
+    tab_id: str
+    url: str
+    title: str
+    active: bool = False
 
 
 class BrowserToolResult(BaseModel):

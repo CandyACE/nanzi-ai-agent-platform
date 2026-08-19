@@ -247,6 +247,27 @@ async def test_browser_runtime_keeps_recent_ai_snapshot_when_viewer_refreshes():
 
 
 @pytest.mark.asyncio
+async def test_browser_runtime_scrolls_and_remembers_the_fresh_snapshot():
+    worker = ControlProbeWorker()
+    scrolled = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-scroll",
+        url="https://example.com/",
+        title="Example",
+        scroll_y=640,
+        document_height=2400,
+    )
+    worker.scroll = AsyncMock(return_value=scrolled)
+    runtime = BrowserRuntime(worker=worker)
+
+    result = await runtime.scroll("session-1", direction="down", amount=640)
+
+    assert result is scrolled
+    worker.scroll.assert_awaited_once_with("session-1", direction="down", amount=640)
+    assert runtime.cached_snapshot("session-1", "snapshot-scroll") is scrolled
+
+
+@pytest.mark.asyncio
 async def test_browser_runtime_control_state_isolated_and_shutdown_clears_it():
     worker = ControlProbeWorker()
     runtime = BrowserRuntime(worker=worker)

@@ -5,11 +5,11 @@ import inspect
 import os
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from app.schemas.browser import BrowserElement, BrowserSnapshot, BrowserToolResult
+from app.schemas.browser import BrowserElement, BrowserSnapshot, BrowserTab, BrowserToolResult
 from app.services.ai.browser.browser_policy import (
     BrowserActionClass,
     BrowserUrlBlocked,
@@ -23,6 +23,10 @@ from app.services.ai.browser.browser_policy import (
 
 class BrowserTargetStale(RuntimeError):
     """页面已经变化，调用方必须先重新获取快照。"""
+
+
+class BrowserWaitTimeout(TimeoutError):
+    """浏览器页面在限定时间内没有达到等待条件。"""
 
 
 class BrowserActionConfirmationRequired(PermissionError):
@@ -51,6 +55,11 @@ CHROMIUM_LAUNCH_ARGS = [
 ]
 
 MANUAL_CLICK_LOAD_TIMEOUT_MS = 1500
+SNAPSHOT_NODE_SELECTOR = "body *"
+SNAPSHOT_MAX_ELEMENTS = 120
+SNAPSHOT_PAGE_TEXT_LIMIT = 6000
+SNAPSHOT_VISIBLE_TEXT_LIMIT = 12000
+SNAPSHOT_SETTLE_DELAY_MS = 150
 
 STEALTH_INIT_SCRIPT = """
 (() => {
@@ -105,6 +114,8 @@ class _BrowserHandle:
     context: Any
     page: Any
     browser: Any = None
+    tab_ids: dict[int, str] = field(default_factory=dict)
+    next_tab_number: int = 1
 
 
 def _default_playwright_factory():
@@ -221,6 +232,69 @@ class BrowserWorker:
     async def current_page_info(self, session_id: str) -> BrowserPageInfo:
         """读取当前页面信息，供恢复已有会话时避免无意义的重复导航。"""
         return await self._page_info(self._handle(session_id).page)
+
+    def _tab_id(self, handle: _BrowserHandle, page: Any) -> str:
+        key = id(page)
+        existing = handle.tab_ids.get(key)
+        if existing:
+            return existing
+        tab_id = f"tab-{handle.next_tab_number}"
+        handle.next_tab_number += 1
+        handle.tab_ids[key] = tab_id
+        return tab_id
+
+    def _pages(self, handle: _BrowserHandle) -> list[Any]:
+        pages = list(getattr(handle.context, "pages", []) or [])
+        if handle.page not in pages:
+            pages.append(handle.page)
+        for page in pages:
+            self._tab_id(handle, page)
+        return pages
+
+    async def list_tabs(self, session_id: str) -> list[BrowserTab]:
+        handle = self._handle(session_id)
+        tabs: list[BrowserTab] = []
+        for page in self._pages(handle):
+            tabs.append(
+                BrowserTab(
+                    tab_id=self._tab_id(handle, page),
+                    url=str(getattr(page, "url", "") or ""),
+                    title=str(await _maybe_await(page.title())),
+                    active=page is handle.page,
+                )
+            )
+        return tabs
+
+    async def switch_tab(self, session_id: str, tab_id: str) -> BrowserPageInfo:
+        handle = self._handle(session_id)
+        page = next(
+            (candidate for candidate in self._pages(handle) if self._tab_id(handle, candidate) == tab_id),
+            None,
+        )
+        if page is None:
+            raise BrowserTargetStale("浏览器标签页不存在，请先获取标签页列表")
+        handle.page = page
+        self._snapshots.pop(session_id, None)
+        return await self._page_info(page)
+
+    async def close_tab(self, session_id: str, tab_id: str) -> BrowserPageInfo:
+        handle = self._handle(session_id)
+        pages = self._pages(handle)
+        page = next(
+            (candidate for candidate in pages if self._tab_id(handle, candidate) == tab_id),
+            None,
+        )
+        if page is None:
+            raise BrowserTargetStale("浏览器标签页不存在，请先获取标签页列表")
+        if len(pages) <= 1:
+            raise BrowserTargetStale("浏览器至少需要保留一个标签页")
+        await _maybe_await(page.close())
+        handle.tab_ids.pop(id(page), None)
+        remaining = [candidate for candidate in pages if candidate is not page]
+        if handle.page is page:
+            handle.page = remaining[-1]
+        self._snapshots.pop(session_id, None)
+        return await self._page_info(handle.page)
 
     async def _has_focused_input(self, page: Any, *, x: float, y: float) -> bool:
         evaluate = getattr(page, "evaluate", None)
@@ -355,20 +429,70 @@ class BrowserWorker:
         handle = self._handle(session_id)
         info = await self._page_info(handle.page)
         captcha_detected, _captcha_reason = await self._detect_captcha(handle.page)
-        locator = handle.page.locator("button, input, textarea, select, a")
+        page_context = await self._snapshot_page_context(handle.page)
+        locator = handle.page.locator(SNAPSHOT_NODE_SELECTOR)
         raw_elements = await locator.evaluate_all(
-            """
-            (nodes) => nodes.slice(0, 100).map((node) => ({
-              role: node.getAttribute('role') || ({
+            r"""
+            (nodes) => {
+              const interactiveRoles = new Set([
+                'button', 'link', 'tab', 'option', 'menuitem', 'combobox',
+                'checkbox', 'radio', 'switch', 'listbox'
+              ]);
+              const nativeRoles = {
                 button: 'button', a: 'link', select: 'combobox', textarea: 'textbox',
-                input: (node.type === 'search' ? 'searchbox' : 'textbox')
-              }[node.tagName.toLowerCase()] || node.tagName.toLowerCase()),
-              sensitive: node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')),
-              name: node.getAttribute('aria-label') || node.getAttribute('placeholder') || node.innerText || (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')) ? '' : (node.value || '')),
-              value: (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete'))) ? '' : (node.value || ''),
-              disabled: Boolean(node.disabled),
-            }))
+                input: (node) => (node.type === 'search' ? 'searchbox' : 'textbox')
+              };
+              const isVisible = (node) => {
+                const style = window.getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden'
+                  && rect.width > 0 && rect.height > 0;
+              };
+              const cleanText = (value) => String(value || '')
+                .replace(/\u00a0/g, ' ')
+                .replace(/[ \t]+/g, ' ')
+                .replace(/\s*\n\s*/g, '\n')
+                .trim()
+                .slice(0, 240);
+              const candidates = [];
+              for (let nodeIndex = 0; nodeIndex < nodes.length && candidates.length < %d; nodeIndex += 1) {
+                const node = nodes[nodeIndex];
+                const tagName = node.tagName.toLowerCase();
+                const roleAttribute = (node.getAttribute('role') || '').trim().toLowerCase();
+                const nativeRole = nativeRoles[tagName];
+                const resolvedNativeRole = typeof nativeRole === 'function' ? nativeRole(node) : nativeRole;
+                const inferredInteractive = !roleAttribute && !resolvedNativeRole && (
+                  node.hasAttribute('onclick')
+                  || (node.hasAttribute('tabindex') && Number(node.tabIndex) >= 0)
+                  || node.hasAttribute('aria-haspopup')
+                  || window.getComputedStyle(node).cursor === 'pointer'
+                );
+                const role = roleAttribute || resolvedNativeRole || (inferredInteractive ? 'button' : '');
+                const candidate = Boolean(resolvedNativeRole)
+                  || (roleAttribute && interactiveRoles.has(roleAttribute))
+                  || inferredInteractive;
+                if (!candidate || !isVisible(node)) continue;
+                const sensitive = tagName === 'input'
+                  && (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')));
+                const rawName = node.getAttribute('aria-label')
+                  || node.getAttribute('title')
+                  || node.getAttribute('placeholder')
+                  || node.innerText
+                  || (node.value || '');
+                candidates.push({
+                  role,
+                  _role_source: roleAttribute ? 'explicit' : resolvedNativeRole ? 'native' : 'inferred',
+                  _node_index: nodeIndex,
+                  sensitive,
+                  name: cleanText(rawName),
+                  value: sensitive ? '' : cleanText(node.value || ''),
+                  disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true',
+                });
+              }
+              return candidates;
+            }
             """
+            % SNAPSHOT_MAX_ELEMENTS
         )
 
         snapshot_id = uuid.uuid4().hex
@@ -402,12 +526,90 @@ class BrowserWorker:
         return BrowserSnapshot(
             session_id=session_id,
             snapshot_id=snapshot_id,
+            tab_id=self._tab_id(handle, handle.page),
             url=info.url,
             title=info.title,
             screenshot_ref=screenshot_ref,
             elements=elements,
             page_state="captcha" if captcha_detected else "ready",
+            scroll_x=page_context.get("scroll_x", 0),
+            scroll_y=page_context.get("scroll_y", 0),
+            viewport_width=page_context.get("viewport_width"),
+            viewport_height=page_context.get("viewport_height"),
+            document_width=page_context.get("document_width"),
+            document_height=page_context.get("document_height"),
+            page_text=page_context.get("page_text", ""),
+            visible_text=page_context.get("visible_text", ""),
         )
+
+    async def _snapshot_page_context(self, page: Any) -> dict[str, Any]:
+        evaluate = getattr(page, "evaluate", None)
+        if not callable(evaluate):
+            return {}
+        try:
+            result = await _maybe_await(
+                evaluate(
+                    r"""
+                    () => {
+                      const root = document.documentElement;
+                      const body = document.body;
+                      const cleanText = (value) => String(value || '')
+                        .replace(/\u00a0/g, ' ')
+                        .replace(/[ \t]+/g, ' ')
+                        .replace(/\s*\n\s*/g, '\n')
+                        .replace(/\n{3,}/g, '\n\n')
+                        .trim();
+                      const visibleText = () => {
+                        const viewportWidth = window.innerWidth || 0;
+                        const viewportHeight = window.innerHeight || 0;
+                        const lines = [];
+                        for (const node of Array.from(body?.querySelectorAll('*') || [])) {
+                          const style = window.getComputedStyle(node);
+                          const rect = node.getBoundingClientRect();
+                          const hasDirectText = Array.from(node.childNodes || [])
+                            .some((child) => child.nodeType === Node.TEXT_NODE && String(child.textContent || '').trim());
+                          if (!hasDirectText || style.display === 'none' || style.visibility === 'hidden'
+                            || rect.width <= 0 || rect.height <= 0 || rect.right <= 0 || rect.bottom <= 0
+                            || rect.left >= viewportWidth || rect.top >= viewportHeight) continue;
+                          const text = cleanText(node.textContent || '');
+                          if (text) lines.push(text);
+                        }
+                        return Array.from(new Set(lines)).join('\n').slice(0, %d);
+                      };
+                      return {
+                        scroll_x: Math.round(window.scrollX || 0),
+                        scroll_y: Math.round(window.scrollY || 0),
+                        viewport_width: Math.round(window.innerWidth || 0),
+                        viewport_height: Math.round(window.innerHeight || 0),
+                        document_width: Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0),
+                        document_height: Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0),
+                        page_text: cleanText(body?.innerText || '').slice(0, %d),
+                        visible_text: visibleText(),
+                      };
+                    }
+                    """
+                    % (SNAPSHOT_VISIBLE_TEXT_LIMIT, SNAPSHOT_PAGE_TEXT_LIMIT)
+                )
+            )
+        except Exception:
+            return {}
+        if not isinstance(result, dict):
+            return {}
+        context: dict[str, Any] = {}
+        for key in ("scroll_x", "scroll_y"):
+            try:
+                context[key] = float(result.get(key) or 0)
+            except (TypeError, ValueError):
+                context[key] = 0
+        for key in ("viewport_width", "viewport_height", "document_width", "document_height"):
+            try:
+                value = result.get(key)
+                context[key] = int(value) if value is not None else None
+            except (TypeError, ValueError):
+                context[key] = None
+        context["page_text"] = str(result.get("page_text") or "")[:SNAPSHOT_PAGE_TEXT_LIMIT]
+        context["visible_text"] = str(result.get("visible_text") or "")[:SNAPSHOT_VISIBLE_TEXT_LIMIT]
+        return context
 
     def has_session(self, session_id: str) -> bool:
         return session_id in self._handles
@@ -431,6 +633,269 @@ class BrowserWorker:
         self._url_validator(final_url)
         self._snapshots.pop(session_id, None)
         return await self._page_info(handle.page)
+
+    async def scroll(self, session_id: str, *, direction: str, amount: int) -> BrowserSnapshot:
+        """滚动当前页面并返回滚动后的完整语义快照。"""
+        handle = self._handle(session_id)
+        normalized_direction = str(direction or "down").strip().lower()
+        if normalized_direction not in {"up", "down", "top", "bottom"}:
+            raise ValueError("滚动方向必须是 up、down、top 或 bottom")
+        normalized_amount = max(100, min(abs(int(amount or 640)), 2000))
+
+        if normalized_direction == "top":
+            await _maybe_await(handle.page.evaluate("() => window.scrollTo(0, 0)"))
+        elif normalized_direction == "bottom":
+            await _maybe_await(
+                handle.page.evaluate(
+                    "() => window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight))"
+                )
+            )
+        else:
+            delta_y = normalized_amount if normalized_direction == "down" else -normalized_amount
+            await _maybe_await(handle.page.mouse.wheel(0, delta_y))
+
+        wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
+        if callable(wait_for_timeout):
+            await _maybe_await(wait_for_timeout(SNAPSHOT_SETTLE_DELAY_MS))
+        else:
+            await asyncio.sleep(0)
+        self._snapshots.pop(session_id, None)
+        return await self.snapshot(session_id)
+
+    async def wait_for(
+        self,
+        session_id: str,
+        *,
+        condition: str,
+        value: str,
+        timeout_ms: int = 5000,
+    ) -> BrowserSnapshot:
+        """等待受限页面条件满足后返回新快照，不执行任意页面脚本。"""
+        handle = self._handle(session_id)
+        normalized_condition = str(condition or "text").strip().lower()
+        if normalized_condition not in {"text", "url", "target", "page_state"}:
+            raise ValueError("等待条件必须是 text、url、target 或 page_state")
+        timeout = max(100, min(int(timeout_ms or 5000), 10000))
+        expected = str(value or "").strip()
+        if not expected:
+            raise ValueError("等待条件值不能为空")
+        deadline = asyncio.get_running_loop().time() + (timeout / 1000)
+        while True:
+            current_url = str(getattr(handle.page, "url", "") or "")
+            if normalized_condition == "url" and expected in current_url:
+                return await self.snapshot(session_id)
+            if normalized_condition in {"text", "target"}:
+                context = await self._snapshot_page_context(handle.page)
+                haystack = context.get("visible_text" if normalized_condition == "target" else "page_text", "")
+                if expected.casefold() in str(haystack).casefold():
+                    return await self.snapshot(session_id)
+            if normalized_condition == "page_state":
+                captcha, _reason = await self._detect_captcha(handle.page)
+                current_state = "captcha" if captcha else "ready"
+                if expected.casefold() == current_state:
+                    return await self.snapshot(session_id)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise BrowserWaitTimeout(f"等待浏览器条件超时：{normalized_condition}={expected}")
+            wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
+            if callable(wait_for_timeout):
+                await _maybe_await(wait_for_timeout(min(250, max(1, int(remaining * 1000)))))
+            else:
+                await asyncio.sleep(min(0.25, remaining))
+
+    async def read_visible(self, session_id: str) -> dict[str, Any]:
+        handle = self._handle(session_id)
+        page_context = await self._snapshot_page_context(handle.page)
+        info = await self._page_info(handle.page)
+        return {
+            "session_id": session_id,
+            "url": info.url,
+            "title": info.title,
+            "scroll_x": page_context.get("scroll_x", 0),
+            "scroll_y": page_context.get("scroll_y", 0),
+            "text": page_context.get("visible_text", ""),
+        }
+
+    async def press(
+        self,
+        session_id: str,
+        *,
+        target_ref: str | None,
+        key: str,
+        snapshot: BrowserSnapshot | None,
+    ) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        normalized_key = str(key or "").strip()[:40]
+        if not normalized_key:
+            raise ValueError("键盘操作缺少 key")
+        if target_ref:
+            if snapshot is None:
+                raise BrowserTargetStale("按目标发送键盘操作需要页面快照")
+            target = self._target(session_id, snapshot, target_ref)
+            locator = self._locator_for(handle.page, target)
+            await self._validate_inferred_target(locator, target)
+            await locator.press(normalized_key)
+        else:
+            await _maybe_await(handle.page.keyboard.press(normalized_key))
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(session_id=session_id, action="press", url=info.url, title=info.title)
+
+    async def select_option(
+        self,
+        session_id: str,
+        *,
+        target_ref: str,
+        snapshot: BrowserSnapshot,
+        value: str | None,
+        label: str | None = None,
+    ) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        target = self._target(session_id, snapshot, target_ref)
+        locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(locator, target)
+        select_option = getattr(locator, "select_option", None)
+        if not callable(select_option):
+            raise BrowserTargetStale("当前目标不是可选下拉框，请重新获取快照")
+        options: dict[str, str] = {}
+        if value:
+            options["value"] = value
+        elif label:
+            options["label"] = label
+        else:
+            raise ValueError("下拉选择需要 value 或 label")
+        try:
+            await _maybe_await(select_option(**options))
+        except Exception as exc:
+            option_name = label or value
+            try:
+                await _maybe_await(locator.click())
+                option_locator = handle.page.get_by_role("option", name=option_name, exact=True)
+                await _maybe_await(option_locator.click())
+            except Exception as fallback_exc:
+                raise BrowserTargetStale("下拉目标无法选择该选项，请刷新页面快照") from fallback_exc
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(session_id=session_id, action="select_option", url=info.url, title=info.title)
+
+    async def hover(
+        self,
+        session_id: str,
+        *,
+        target_ref: str,
+        snapshot: BrowserSnapshot,
+    ) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        target = self._target(session_id, snapshot, target_ref)
+        locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(locator, target)
+        await _maybe_await(locator.hover())
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(session_id=session_id, action="hover", url=info.url, title=info.title)
+
+    async def drag(
+        self,
+        session_id: str,
+        *,
+        source_ref: str,
+        target_ref: str,
+        snapshot: BrowserSnapshot,
+    ) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        source = self._target(session_id, snapshot, source_ref)
+        target = self._target(session_id, snapshot, target_ref)
+        source_locator = self._locator_for(handle.page, source)
+        target_locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(source_locator, source)
+        await self._validate_inferred_target(target_locator, target)
+        await _maybe_await(source_locator.drag_to(target_locator))
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(session_id=session_id, action="drag", url=info.url, title=info.title)
+
+    async def upload(
+        self,
+        session_id: str,
+        *,
+        target_ref: str,
+        file_path: str,
+        snapshot: BrowserSnapshot,
+    ) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        source = Path(file_path).resolve()
+        if not source.is_file():
+            raise ValueError("待上传文件不存在")
+        if source.stat().st_size > 20 * 1024 * 1024:
+            raise ValueError("上传文件大小不能超过 20MB")
+        target = self._target(session_id, snapshot, target_ref)
+        locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(locator, target)
+        set_input_files = getattr(locator, "set_input_files", None)
+        if not callable(set_input_files):
+            raise BrowserTargetStale("当前目标不是文件输入控件，请重新获取快照")
+        await _maybe_await(set_input_files(str(source)))
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="upload",
+            url=info.url,
+            title=info.title,
+            data={"filename": source.name, "size": source.stat().st_size},
+        )
+
+    async def download(
+        self,
+        session_id: str,
+        *,
+        target_ref: str,
+        snapshot: BrowserSnapshot,
+    ) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        target = self._target(session_id, snapshot, target_ref)
+        locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(locator, target)
+        expect_download = getattr(handle.page, "expect_download", None)
+        if not callable(expect_download):
+            raise RuntimeError("当前浏览器不支持下载捕获")
+        async with expect_download(timeout=25000) as download_info:
+            await _maybe_await(locator.click())
+        download = await _maybe_await(download_info.value)
+        path_method = getattr(download, "path", None)
+        download_path = await _maybe_await(path_method()) if callable(path_method) else None
+        filename = str(getattr(download, "suggested_filename", "download") or "download")
+        if not download_path:
+            raise RuntimeError("浏览器下载文件不可用")
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="download",
+            url=info.url,
+            title=info.title,
+            data={"download_path": str(download_path), "filename": Path(filename).name},
+        )
+
+    async def _history_action(self, session_id: str, action: str) -> BrowserToolResult:
+        handle = self._handle(session_id)
+        method = getattr(handle.page, action, None)
+        if not callable(method):
+            raise RuntimeError(f"浏览器不支持{action}操作")
+        await _maybe_await(method(wait_until="domcontentloaded", timeout=25000))
+        info = await self._page_info(handle.page)
+        self._url_validator(info.url)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(session_id=session_id, action=action, url=info.url, title=info.title)
+
+    async def go_back(self, session_id: str) -> BrowserToolResult:
+        return await self._history_action(session_id, "go_back")
+
+    async def go_forward(self, session_id: str) -> BrowserToolResult:
+        return await self._history_action(session_id, "go_forward")
+
+    async def reload(self, session_id: str) -> BrowserToolResult:
+        return await self._history_action(session_id, "reload")
 
     async def manual_input(self, session_id: str, *, event: str, payload: dict[str, Any]) -> BrowserPageInfo:
         """转发面板的人工接管输入；不接受任意 JS，只转发有限的浏览器输入事件。"""
@@ -518,12 +983,19 @@ class BrowserWorker:
         return str(path)
 
     def _target(self, session_id: str, snapshot: BrowserSnapshot, target_ref: str) -> dict[str, Any]:
+        handle = self._handle(session_id)
+        if snapshot.tab_id and snapshot.tab_id != self._tab_id(handle, handle.page):
+            raise BrowserTargetStale("浏览器页面已变化，请先重新获取页面快照")
         snapshot_map = self._snapshots.get(session_id, {}).get(snapshot.snapshot_id)
         if snapshot.session_id != session_id or not snapshot_map or target_ref not in snapshot_map:
             raise BrowserTargetStale("浏览器页面已变化，请先重新获取页面快照")
         return snapshot_map[target_ref]
 
     def _locator_for(self, page: Any, target: dict[str, Any]) -> Any:
+        if target.get("_role_source") == "inferred":
+            node_index = target.get("_node_index")
+            if isinstance(node_index, int) and node_index >= 0:
+                return page.locator(SNAPSHOT_NODE_SELECTOR).nth(node_index)
         role = str(target.get("role") or "").strip()
         name = str(target.get("name") or "").strip()
         if role and name:
@@ -531,6 +1003,34 @@ class BrowserWorker:
         if role:
             return page.get_by_role(role)
         raise BrowserTargetStale("目标缺少可复现的语义定位信息，请刷新页面快照")
+
+    async def _validate_inferred_target(self, locator: Any, target: dict[str, Any]) -> None:
+        if target.get("_role_source") != "inferred":
+            return
+        evaluate = getattr(locator, "evaluate", None)
+        if not callable(evaluate):
+            return
+        try:
+            current = await _maybe_await(
+                evaluate(
+                    """
+                    (node) => ({
+                      name: node.getAttribute('aria-label')
+                        || node.getAttribute('title')
+                        || node.getAttribute('placeholder')
+                        || node.innerText
+                        || node.value
+                        || ''
+                    })
+                    """
+                )
+            )
+        except Exception as exc:
+            raise BrowserTargetStale("浏览器页面已变化，请先重新获取页面快照") from exc
+        expected_name = " ".join(str(target.get("name") or "").split()).casefold()
+        current_name = " ".join(str((current or {}).get("name") or "").split()).casefold()
+        if expected_name and current_name and expected_name not in current_name and current_name not in expected_name:
+            raise BrowserTargetStale("浏览器页面已变化，请先重新获取页面快照")
 
     async def click(
         self,
@@ -549,7 +1049,9 @@ class BrowserWorker:
         decision = decide_browser_action(approval_mode, action_class)
         if decision.requires_confirmation and not confirmed:
             raise BrowserActionConfirmationRequired(decision.reason)
-        await self._locator_for(handle.page, target).click()
+        locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(locator, target)
+        await locator.click()
         info = await self._page_info(handle.page)
         self._snapshots.pop(session_id, None)
         return BrowserToolResult(session_id=session_id, action="click", url=info.url, title=info.title)
@@ -565,7 +1067,9 @@ class BrowserWorker:
     ) -> BrowserToolResult:
         handle = self._handle(session_id)
         target = self._target(session_id, snapshot, target_ref)
-        await self._locator_for(handle.page, target).fill(value)
+        locator = self._locator_for(handle.page, target)
+        await self._validate_inferred_target(locator, target)
+        await locator.fill(value)
         info = await self._page_info(handle.page)
         # 页面快照推断的敏感性是下限，调用方只能追加标记，不能用 False 覆盖密码字段。
         is_sensitive = bool(target.get("sensitive", False)) or bool(sensitive)
@@ -578,21 +1082,6 @@ class BrowserWorker:
             title=info.title,
             data=payload,
         )
-
-    async def press(
-        self,
-        session_id: str,
-        *,
-        target_ref: str,
-        key: str,
-        snapshot: BrowserSnapshot,
-    ) -> BrowserToolResult:
-        handle = self._handle(session_id)
-        target = self._target(session_id, snapshot, target_ref)
-        await self._locator_for(handle.page, target).press(key)
-        info = await self._page_info(handle.page)
-        self._snapshots.pop(session_id, None)
-        return BrowserToolResult(session_id=session_id, action="press", url=info.url, title=info.title)
 
     async def close(self, session_id: str) -> None:
         handle = self._handles.pop(session_id, None)

@@ -230,6 +230,11 @@
                 交还 AI
               </button>
             </div>
+            <div v-if="screenshotUrl" class="pointer-events-none absolute bottom-3 left-3 z-10" role="note">
+              <span class="rounded-md border border-red-300 bg-white/90 px-2.5 py-1 text-[11px] font-bold text-red-600 shadow-sm dark:border-red-700 dark:bg-red-950/90 dark:text-red-300">
+                这是页面截图，非 HTML 页面
+              </span>
+            </div>
             <div v-if="screenshotUrl" class="relative">
               <img
                 :key="snapshot.snapshot_id"
@@ -322,10 +327,19 @@ type BrowserElement = {
 type BrowserSnapshot = {
   session_id: string;
   snapshot_id: string;
+  tab_id?: string | null;
   url: string;
   title: string;
   screenshot_ref?: string | null;
   elements: BrowserElement[];
+  scroll_x?: number;
+  scroll_y?: number;
+  viewport_width?: number | null;
+  viewport_height?: number | null;
+  document_width?: number | null;
+  document_height?: number | null;
+  page_text?: string;
+  visible_text?: string;
 };
 type RemotePoint = { x: number; y: number };
 const BROWSER_PANEL_REFRESH_INTERVAL_MS = 5000;

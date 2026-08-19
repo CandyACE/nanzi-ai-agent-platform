@@ -10,10 +10,32 @@ from app.schemas.browser import BrowserElement, BrowserSnapshot
 from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runtime.agentscope.tools import _browser_permission_decision
+from app.services.ai.runtime.agentscope.tools import _redact_runtime_tool_arguments
 from app.services.ai.runtime.agentscope.browser_events import build_browser_refresh_event
 from app.services.ai.runtime.agentscope.browser_events import build_browser_session_event
-from app.services.ai.tools.browser_tools import browser_click, browser_fill, browser_open
+from app.services.ai.tools.browser_tools import (
+    browser_back,
+    browser_click,
+    browser_close_tab,
+    browser_download,
+    browser_drag,
+    browser_fill,
+    browser_forward,
+    browser_hover,
+    browser_open,
+    browser_press,
+    browser_read_visible,
+    browser_reload,
+    browser_scroll,
+    browser_select_option,
+    browser_snapshot,
+    browser_switch_tab,
+    browser_tabs,
+    browser_upload,
+    browser_wait_for,
+)
 from app.services.ai.tools.registry import ToolRegistry
+from app.services.ai.tools import browser_tools as browser_tools_module
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -49,14 +71,140 @@ def test_browser_action_result_emits_refresh_event_without_sensitive_output():
     assert build_browser_refresh_event("browser_snapshot", "{}") is None
 
 
+def test_browser_scroll_result_emits_refresh_event():
+    event = build_browser_refresh_event(
+        "browser_scroll",
+        '{"session_id":"bs-1","snapshot_id":"snap-2","scroll_y":640}',
+    )
+
+    assert event == {
+        "type": "browser_refresh",
+        "session_id": "bs-1",
+    }
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "browser_press",
+        "browser_wait_for",
+        "browser_select_option",
+        "browser_hover",
+        "browser_drag",
+        "browser_back",
+        "browser_forward",
+        "browser_reload",
+        "browser_switch_tab",
+        "browser_close_tab",
+        "browser_upload",
+        "browser_download",
+    ],
+)
+def test_all_state_changing_browser_tools_refresh_the_viewer(tool_name):
+    event = build_browser_refresh_event(tool_name, '{"session_id":"bs-1"}')
+
+    assert event == {"type": "browser_refresh", "session_id": "bs-1"}
+
+
 def test_browser_tools_are_implicit_first_party_agent_tools():
     names = {getattr(tool, "name", "") for tool in ToolRegistry.get_system_implicit_tools()}
-    assert {"browser_open", "browser_snapshot", "browser_click", "browser_fill"}.issubset(names)
+    assert {
+        "browser_open",
+        "browser_snapshot",
+        "browser_click",
+        "browser_fill",
+        "browser_scroll",
+        "browser_press",
+        "browser_wait_for",
+        "browser_select_option",
+        "browser_read_visible",
+        "browser_hover",
+        "browser_drag",
+        "browser_back",
+        "browser_forward",
+        "browser_reload",
+        "browser_tabs",
+        "browser_switch_tab",
+        "browser_close_tab",
+        "browser_upload",
+        "browser_download",
+    }.issubset(names)
 
 
 def test_browser_tools_do_not_expose_confirmation_or_sensitive_override():
     assert "confirmed" not in browser_click.args_schema.model_fields
     assert "sensitive" not in browser_fill.args_schema.model_fields
+
+
+def test_browser_upload_audit_redacts_local_file_path():
+    payload = _redact_runtime_tool_arguments(
+        "browser_upload",
+        {"file_path": "/private/user/workspace/secret.pdf", "target_ref": "e1"},
+    )
+
+    assert payload == {"file_path": "<redacted>", "target_ref": "e1"}
+
+
+@pytest.mark.asyncio
+async def test_browser_scroll_tool_returns_the_fresh_snapshot(monkeypatch):
+    class FakeContext:
+        user_id = 1
+
+    snapshot = BrowserSnapshot(
+        session_id="bs-1",
+        snapshot_id="snap-scroll",
+        url="https://example.com/",
+        title="Example",
+        scroll_y=640,
+    )
+    scroll = AsyncMock(return_value=snapshot)
+    monkeypatch.setattr(
+        "app.services.ai.tools.browser_tools.get_current_agent_context",
+        lambda: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.tools.browser_tools._owned_session",
+        AsyncMock(return_value=SimpleNamespace(id="bs-1")),
+    )
+    monkeypatch.setattr(browser_runtime, "scroll", scroll)
+
+    payload = json.loads(await browser_scroll.ainvoke({"direction": "down", "amount": 640}))
+
+    assert payload["snapshot_id"] == "snap-scroll"
+    assert payload["scroll_y"] == 640
+    scroll.assert_awaited_once_with("bs-1", direction="down", amount=640)
+
+
+@pytest.mark.asyncio
+async def test_browser_press_tool_persists_latest_page_info(monkeypatch):
+    class FakeContext:
+        user_id = 1
+
+    result = SimpleNamespace(
+        model_dump=lambda mode="json": {
+            "session_id": "bs-1",
+            "action": "press",
+            "url": "https://example.com/next",
+            "title": "Next",
+        },
+        url="https://example.com/next",
+        title="Next",
+    )
+    monkeypatch.setattr(browser_tools_module, "get_current_agent_context", lambda: FakeContext())
+    monkeypatch.setattr(
+        browser_tools_module,
+        "_owned_session",
+        AsyncMock(return_value=SimpleNamespace(id="bs-1")),
+    )
+    monkeypatch.setattr(browser_tools_module.browser_runtime, "press", AsyncMock(return_value=result))
+    persist = AsyncMock()
+    monkeypatch.setattr(browser_tools_module, "_persist_browser_result", persist, raising=False)
+
+    await browser_press.ainvoke({"key": "Enter"})
+
+    persist.assert_awaited_once()
+    assert persist.await_args.args[0].user_id == 1
+    assert persist.await_args.args[1] is result
 
 
 @pytest.mark.asyncio

@@ -37,7 +37,23 @@ def build_browser_session_event(tool_name: str, output: Any) -> dict[str, Any] |
 
 def build_browser_refresh_event(tool_name: str, output: Any) -> dict[str, Any] | None:
     """通知已连接的浏览器面板刷新 AI 操作后的页面，不透传工具结果。"""
-    if str(tool_name or "") not in {"browser_click", "browser_fill"}:
+    if str(tool_name or "") not in {
+        "browser_click",
+        "browser_fill",
+        "browser_scroll",
+        "browser_press",
+        "browser_wait_for",
+        "browser_select_option",
+        "browser_hover",
+        "browser_drag",
+        "browser_back",
+        "browser_forward",
+        "browser_reload",
+        "browser_switch_tab",
+        "browser_close_tab",
+        "browser_upload",
+        "browser_download",
+    }:
         return None
     payload = _browser_result_payload(output)
     if payload is None:
