@@ -85,6 +85,15 @@ READ_ONLY_TOOL_NAMES = {
     "sub_agent_batch_call",
     "todo_write",
     "browser_snapshot",
+    "browser_scroll",
+    "browser_wait_for",
+    "browser_read_visible",
+    "browser_tabs",
+    "browser_switch_tab",
+    "browser_hover",
+    "browser_back",
+    "browser_forward",
+    "browser_reload",
 }
 NATIVE_TOOL_EVIDENCE_TYPES = {
     "Bash": frozenset({EvidenceType.RUNTIME_STATE}),
@@ -127,6 +136,11 @@ def _redact_runtime_tool_arguments(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """在审计边界统一脱敏，避免敏感浏览器输入进入事件或审计存储。"""
+    if tool_name == "browser_upload":
+        payload = dict(arguments)
+        if "file_path" in payload:
+            payload["file_path"] = "<redacted>"
+        return payload
     if tool_name != "browser_fill":
         return dict(arguments)
     from app.services.ai.browser.browser_policy import redact_browser_arguments
@@ -140,7 +154,15 @@ async def _browser_permission_decision(
     tool_input: dict[str, Any],
 ) -> Any:
     """将 BrowserSession 的 guarded/autopilot 策略接入 AgentScope 权限层。"""
-    if tool_name not in {"browser_click", "browser_fill"}:
+    if tool_name not in {
+        "browser_click",
+        "browser_fill",
+        "browser_press",
+        "browser_select_option",
+        "browser_drag",
+        "browser_upload",
+        "browser_download",
+    }:
         return None
 
     from agentscope.permission import PermissionBehavior, PermissionDecision
@@ -161,11 +183,38 @@ async def _browser_permission_decision(
 
     snapshot_id = str(tool_input.get("snapshot_id", ""))
     target_ref = str(tool_input.get("target_ref", ""))
+    if tool_name == "browser_drag" and not target_ref:
+        target_ref = str(tool_input.get("source_ref", ""))
+    element = None
     try:
-        snapshot = browser_runtime.cached_snapshot(str(session_id), snapshot_id)
-        element = next((item for item in snapshot.elements if item.ref == target_ref), None)
+        if target_ref:
+            snapshot = browser_runtime.cached_snapshot(str(session_id), snapshot_id)
+            element = next((item for item in snapshot.elements if item.ref == target_ref), None)
     except Exception:
         element = None
+
+    if tool_name == "browser_press" and target_ref and element is None:
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message="浏览器快照已过期，请重新获取页面快照后重试。",
+            decision_reason="browser_target_not_in_snapshot",
+            bypass_immune=True,
+        )
+
+    if tool_name in {
+        "browser_click",
+        "browser_fill",
+        "browser_select_option",
+        "browser_drag",
+        "browser_upload",
+        "browser_download",
+    } and element is None:
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message="浏览器快照已过期，请重新获取页面快照后重试。",
+            decision_reason="browser_target_not_in_snapshot",
+            bypass_immune=True,
+        )
 
     if tool_name == "browser_fill":
         if element is None:
@@ -181,15 +230,20 @@ async def _browser_permission_decision(
             decision_reason="browser_fill_target",
         )
 
-    if element is None:
-        return PermissionDecision(
-            behavior=PermissionBehavior.DENY,
-            message="浏览器快照已过期，请重新获取页面快照后重试。",
-            decision_reason="browser_target_not_in_snapshot",
-            bypass_immune=True,
-        )
-
-    action_class = classify_browser_action(role=element.role, name=element.name)
+    if tool_name == "browser_upload":
+        action_class = "commit"
+    elif tool_name == "browser_press":
+        key = str(tool_input.get("key") or "").strip().casefold()
+        if element is None:
+            action_class = "commit" if key in {"enter", "numpadenter", "ctrl+enter", "meta+enter"} else "interact"
+        elif key in {"enter", "numpadenter", "ctrl+enter", "meta+enter"}:
+            target_class = classify_browser_action(role=element.role, name=element.name)
+            role = str(element.role or "").casefold()
+            action_class = "interact" if role in {"textbox", "searchbox", "combobox"} and target_class != "commit" else target_class
+        else:
+            action_class = "interact"
+    else:
+        action_class = classify_browser_action(role=element.role, name=element.name)
     async with AsyncSessionLocal() as db:
         try:
             session = await BrowserSessionService(db).get_owned_session(
@@ -399,7 +453,15 @@ class AgentScopeRuntimeTool:
         if deletion_decision:
             return deletion_decision
 
-        if self.name in {"browser_click", "browser_fill"}:
+        if self.name in {
+            "browser_click",
+            "browser_fill",
+            "browser_press",
+            "browser_select_option",
+            "browser_drag",
+            "browser_upload",
+            "browser_download",
+        }:
             if self.approval_mode == "deny":
                 return PermissionDecision(
                     behavior=PermissionBehavior.DENY,

@@ -1,11 +1,12 @@
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 import pytest
 
 from app.schemas.browser import BrowserSnapshot
-from app.services.ai.browser.browser_worker import BrowserWorker
+from app.services.ai.browser.browser_worker import BrowserTargetStale, BrowserWorker
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -15,10 +16,19 @@ class FakeLocator:
     def __init__(self, page, elements=None):
         self.page = page
         self.elements = elements or []
+        self.evaluate_all_script = None
         self.click = AsyncMock()
         self.fill = AsyncMock()
+        self.press = AsyncMock()
+        self.select_option = AsyncMock()
+        self.hover = AsyncMock()
+        self.drag_to = AsyncMock()
+        self.set_input_files = AsyncMock()
+        self.evaluate = AsyncMock(return_value={})
+        self.nth = Mock(return_value=self)
 
-    async def evaluate_all(self, _script):
+    async def evaluate_all(self, script):
+        self.evaluate_all_script = script
         return self.elements
 
 
@@ -27,10 +37,29 @@ class FakeFrame:
         self.evaluate = AsyncMock(return_value=focused_input)
 
 
+class FakeDownload:
+    suggested_filename = "report.csv"
+
+    async def path(self):
+        return "/tmp/report.csv"
+
+
+class FakeDownloadContext:
+    def __init__(self):
+        self.value = FakeDownload()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
 class FakePage:
     def __init__(self):
         self.url = "about:blank"
         self.role_calls = []
+        self.locator_calls = []
         self.mouse = type(
             "FakeMouse",
             (),
@@ -52,6 +81,14 @@ class FakePage:
             },
         )()
         self.frames = []
+        self.evaluate_scripts = []
+        self.wait_for_load_state = AsyncMock()
+        self.wait_for_timeout = AsyncMock()
+        self.go_back = AsyncMock(return_value=object())
+        self.go_forward = AsyncMock(return_value=object())
+        self.reload = AsyncMock(return_value=object())
+        self.close = AsyncMock()
+        self.download_context = FakeDownloadContext()
         self.locator_value = FakeLocator(
             self,
             [
@@ -85,11 +122,16 @@ class FakePage:
     async def title(self):
         return "百度一下"
 
-    async def evaluate(self, _script):
+    async def evaluate(self, script):
+        self.evaluate_scripts.append(script)
         return False
 
-    def locator(self, _selector):
+    def locator(self, selector):
+        self.locator_calls.append(selector)
         return self.locator_value
+
+    def expect_download(self, **_kwargs):
+        return self.download_context
 
     def get_by_role(self, role, name=None, exact=True):
         self.role_calls.append((role, name, exact))
@@ -148,6 +190,34 @@ async def test_worker_open_snapshot_and_semantic_click(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_javascript_preserves_regex_escape_sequences(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-snapshot-script",
+        profile_path=str(tmp_path / "profile-snapshot-script"),
+        url="https://example.com/",
+    )
+
+    await worker.snapshot("bs-snapshot-script")
+
+    page = fake_context_page(fake_playwright)
+    element_script = page.locator_value.evaluate_all_script
+    assert element_script is not None
+    assert r"\s*\n\s*" in element_script
+    assert r"'\n'" in element_script
+
+    context_scripts = [script for script in page.evaluate_scripts if "page_text:" in str(script)]
+    assert context_scripts
+    assert r"\s*\n\s*" in context_scripts[-1]
+    assert r"'\n'" in context_scripts[-1]
+
+
+@pytest.mark.asyncio
 async def test_worker_can_click_a_recent_snapshot_after_another_snapshot_is_created(tmp_path):
     fake_playwright = FakePlaywright()
     worker = BrowserWorker(
@@ -172,6 +242,135 @@ async def test_worker_can_click_a_recent_snapshot_after_another_snapshot_is_crea
     )
 
     assert result.action == "click"
+
+
+@pytest.mark.asyncio
+async def test_worker_scroll_returns_fresh_snapshot_metadata(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-scroll",
+        profile_path=str(tmp_path / "profile-scroll"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+    page.evaluate = AsyncMock(
+        side_effect=[
+            False,
+            {
+                "scroll_x": 0,
+                "scroll_y": 640,
+                "viewport_width": 1280,
+                "viewport_height": 800,
+                "document_width": 1280,
+                "document_height": 2400,
+                "page_text": "起飞时间早-晚\n22:20 上海-长沙",
+            },
+        ]
+    )
+
+    snapshot = await worker.scroll("bs-scroll", direction="down", amount=640)
+
+    page.mouse.wheel.assert_awaited_once_with(0, 640)
+    assert snapshot.scroll_y == 640
+    assert snapshot.viewport_height == 800
+    assert snapshot.document_height == 2400
+    assert "起飞时间早-晚" in snapshot.page_text
+
+
+@pytest.mark.asyncio
+async def test_worker_resolves_inferred_custom_target_by_snapshot_dom_index(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-custom-target",
+        profile_path=str(tmp_path / "profile-custom-target"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-custom-target",
+        snapshot_id="snapshot-custom-target",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-custom-target"] = {
+        snapshot.snapshot_id: {
+            "e1": {
+                "role": "button",
+                "name": "起飞时间早-晚",
+                "value": "",
+                "disabled": False,
+                "sensitive": False,
+                "_role_source": "inferred",
+                "_node_index": 17,
+            }
+        }
+    }
+
+    result = await worker.click(
+        "bs-custom-target",
+        target_ref="e1",
+        snapshot=snapshot,
+        approval_mode="autopilot",
+        confirmed=True,
+    )
+
+    assert result.action == "click"
+    assert fake_context_page(fake_playwright).role_calls == []
+    assert fake_context_page(fake_playwright).locator_calls[-1] == "body *"
+    fake_context_page(fake_playwright).locator_value.nth.assert_called_once_with(17)
+
+
+@pytest.mark.asyncio
+async def test_worker_rejects_inferred_target_when_dom_index_now_points_elsewhere(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-stale-custom-target",
+        profile_path=str(tmp_path / "profile-stale-custom-target"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-stale-custom-target",
+        snapshot_id="snapshot-stale-custom-target",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-stale-custom-target"] = {
+        snapshot.snapshot_id: {
+            "e1": {
+                "role": "button",
+                "name": "起飞时间早-晚",
+                "value": "",
+                "disabled": False,
+                "sensitive": False,
+                "_role_source": "inferred",
+                "_node_index": 17,
+            }
+        }
+    }
+    fake_context_page(fake_playwright).locator_value.evaluate.return_value = {"name": "其他排序"}
+
+    with pytest.raises(BrowserTargetStale, match="页面已变化"):
+        await worker.click(
+            "bs-stale-custom-target",
+            target_ref="e1",
+            snapshot=snapshot,
+            approval_mode="autopilot",
+            confirmed=True,
+        )
 
 
 @pytest.mark.asyncio
@@ -269,6 +468,31 @@ async def test_worker_adopts_delayed_new_tab_after_manual_mouse_click(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_worker_uses_short_wait_after_manual_click(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-click-wait",
+        profile_path=str(tmp_path / "profile-click-wait"),
+        url="https://example.com/",
+    )
+
+    await worker.manual_input(
+        "bs-click-wait",
+        event="mouse_click",
+        payload={"x": 300, "y": 36},
+    )
+
+    fake_context_page(fake_playwright).wait_for_load_state.assert_awaited_once_with(
+        "domcontentloaded", timeout=1500
+    )
+
+
+@pytest.mark.asyncio
 async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
     fake_playwright = FakePlaywright()
     worker = BrowserWorker(
@@ -292,6 +516,26 @@ async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
 
     assert info.focused_input is True
     page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_exposes_current_page_info_without_navigating(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-current-page",
+        profile_path=str(tmp_path / "profile-current-page"),
+        url="https://example.com/",
+    )
+
+    info = await worker.current_page_info("bs-current-page")
+
+    assert info.url == "https://example.com/"
+    assert info.title == "百度一下"
 
 
 @pytest.mark.asyncio
@@ -526,3 +770,285 @@ async def test_worker_open_applies_stealth_anti_bot_options_and_init_script(tmp_
 
 def fake_context_page(fake_playwright):
     return fake_playwright.chromium.context.page
+
+
+@pytest.mark.asyncio
+async def test_worker_supports_keyboard_select_hover_drag_and_history_actions(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-actions",
+        profile_path=str(tmp_path / "profile-actions"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-actions",
+        snapshot_id="snapshot-actions",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-actions"] = {
+        snapshot.snapshot_id: {
+            "e1": {"role": "combobox", "name": "日期", "value": "", "_role_source": "native"},
+            "e2": {"role": "button", "name": "目标", "value": "", "_role_source": "native"},
+        }
+    }
+
+    def restore_targets():
+        worker._snapshots["bs-actions"] = {
+            snapshot.snapshot_id: {
+                "e1": {"role": "combobox", "name": "日期", "value": "", "_role_source": "native"},
+                "e2": {"role": "button", "name": "目标", "value": "", "_role_source": "native"},
+            }
+        }
+
+    await worker.press("bs-actions", target_ref="e2", key="Enter", snapshot=snapshot)
+    restore_targets()
+    await worker.select_option("bs-actions", target_ref="e1", value="2026-08-19", snapshot=snapshot)
+    restore_targets()
+    await worker.hover("bs-actions", target_ref="e2", snapshot=snapshot)
+    restore_targets()
+    await worker.drag("bs-actions", source_ref="e1", target_ref="e2", snapshot=snapshot)
+    await worker.go_back("bs-actions")
+    await worker.go_forward("bs-actions")
+    await worker.reload("bs-actions")
+
+    page = fake_context_page(fake_playwright)
+    page.locator_value.press.assert_awaited_once_with("Enter")
+    page.locator_value.select_option.assert_awaited_once_with(value="2026-08-19")
+    page.locator_value.hover.assert_awaited_once_with()
+    page.locator_value.drag_to.assert_awaited_once_with(page.locator_value)
+    page.go_back.assert_awaited_once()
+    page.go_forward.assert_awaited_once()
+    page.reload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_validates_final_url_after_history_navigation(tmp_path):
+    fake_playwright = FakePlaywright()
+    validated_urls = []
+
+    def validate(url):
+        validated_urls.append(url)
+        if url == "https://blocked.example/":
+            raise RuntimeError("blocked history destination")
+        return url
+
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=validate,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-history-url",
+        profile_path=str(tmp_path / "profile-history-url"),
+        url="https://example.com/",
+    )
+    page = fake_context_page(fake_playwright)
+
+    async def go_back_to_blocked(**_kwargs):
+        page.url = "https://blocked.example/"
+
+    page.go_back.side_effect = go_back_to_blocked
+
+    with pytest.raises(RuntimeError, match="blocked history destination"):
+        await worker.go_back("bs-history-url")
+
+    assert "https://blocked.example/" in validated_urls
+
+
+@pytest.mark.asyncio
+async def test_worker_waits_for_url_reads_visible_text_and_manages_tabs(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-wait-tabs",
+        profile_path=str(tmp_path / "profile-wait-tabs"),
+        url="https://example.com/results",
+    )
+    page = fake_context_page(fake_playwright)
+    page.evaluate = AsyncMock(
+        return_value={
+            "scroll_x": 0,
+            "scroll_y": 800,
+            "viewport_width": 1280,
+            "viewport_height": 800,
+            "document_width": 1280,
+            "document_height": 2400,
+            "page_text": "完整页面",
+            "visible_text": "上海-长沙 22:20 ¥800",
+        }
+    )
+
+    waited = await worker.wait_for(
+        "bs-wait-tabs",
+        condition="url",
+        value="/results",
+        timeout_ms=1000,
+    )
+    visible = await worker.read_visible("bs-wait-tabs")
+    tabs = await worker.list_tabs("bs-wait-tabs")
+
+    popup = FakePage()
+    popup.url = "https://example.com/detail"
+    fake_playwright.chromium.context.pages.append(popup)
+    tabs_with_popup = await worker.list_tabs("bs-wait-tabs")
+    await worker.switch_tab("bs-wait-tabs", tabs_with_popup[1].tab_id)
+    await worker.close_tab("bs-wait-tabs", tabs_with_popup[0].tab_id)
+
+    assert waited.url.endswith("/results")
+    assert visible["text"] == "上海-长沙 22:20 ¥800"
+    assert len(tabs) == 1
+    assert [tab.url for tab in tabs_with_popup] == ["https://example.com/results", "https://example.com/detail"]
+    assert worker._handles["bs-wait-tabs"].page is popup
+    page.close.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_worker_uploads_a_file_through_a_snapshot_target(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-upload",
+        profile_path=str(tmp_path / "profile-upload"),
+        url="https://example.com/upload",
+    )
+    source = tmp_path / "ticket.pdf"
+    source.write_bytes(b"pdf")
+    snapshot = BrowserSnapshot(
+        session_id="bs-upload",
+        snapshot_id="snapshot-upload",
+        url="https://example.com/upload",
+        title="Upload",
+    )
+    worker._snapshots["bs-upload"] = {
+        snapshot.snapshot_id: {
+            "e1": {"role": "button", "name": "选择文件", "value": "", "_role_source": "native"},
+        }
+    }
+
+    result = await worker.upload(
+        "bs-upload",
+        target_ref="e1",
+        file_path=str(source),
+        snapshot=snapshot,
+    )
+
+    assert result.action == "upload"
+    fake_context_page(fake_playwright).locator_value.set_input_files.assert_awaited_once_with(str(source))
+
+
+@pytest.mark.asyncio
+async def test_worker_select_option_falls_back_to_aria_option_for_custom_combobox(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-aria-select",
+        profile_path=str(tmp_path / "profile-aria-select"),
+        url="https://example.com/filters",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-aria-select",
+        snapshot_id="snapshot-aria-select",
+        url="https://example.com/filters",
+        title="Filters",
+    )
+    worker._snapshots["bs-aria-select"] = {
+        snapshot.snapshot_id: {
+            "e1": {"role": "combobox", "name": "筛选", "value": "", "_role_source": "explicit"},
+        }
+    }
+    page = fake_context_page(fake_playwright)
+    page.locator_value.select_option.side_effect = RuntimeError("not a native select")
+
+    result = await worker.select_option(
+        "bs-aria-select",
+        target_ref="e1",
+        value="economy",
+        snapshot=snapshot,
+    )
+
+    assert result.action == "select_option"
+    assert page.locator_value.click.await_count == 2
+    assert page.role_calls[-1] == ("option", "economy", True)
+
+
+@pytest.mark.asyncio
+async def test_worker_captures_download_path_without_exposing_it_in_filename(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-download",
+        profile_path=str(tmp_path / "profile-download"),
+        url="https://example.com/download",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-download",
+        snapshot_id="snapshot-download",
+        url="https://example.com/download",
+        title="Download",
+    )
+    worker._snapshots["bs-download"] = {
+        snapshot.snapshot_id: {
+            "e1": {"role": "link", "name": "下载", "value": "", "_role_source": "explicit"},
+        }
+    }
+
+    result = await worker.download(
+        "bs-download",
+        target_ref="e1",
+        snapshot=snapshot,
+    )
+
+    assert result.action == "download"
+    assert result.data == {"download_path": "/tmp/report.csv", "filename": "report.csv"}
+
+
+@pytest.mark.asyncio
+async def test_worker_rejects_a_snapshot_from_another_active_tab(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-tab-snapshot",
+        profile_path=str(tmp_path / "profile-tab-snapshot"),
+        url="https://example.com/one",
+    )
+    first_snapshot = await worker.snapshot("bs-tab-snapshot")
+    popup = FakePage()
+    popup.url = "https://example.com/two"
+    fake_playwright.chromium.context.pages.append(popup)
+    tabs = await worker.list_tabs("bs-tab-snapshot")
+    await worker.switch_tab("bs-tab-snapshot", tabs[1].tab_id)
+
+    with pytest.raises(BrowserTargetStale, match="页面已变化"):
+        await worker.click(
+            "bs-tab-snapshot",
+            target_ref="e2",
+            snapshot=first_snapshot,
+            approval_mode="autopilot",
+            confirmed=True,
+        )

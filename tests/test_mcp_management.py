@@ -682,3 +682,46 @@ async def test_mcp_server_rename_migrates_cached_tools_and_agent_versions(
         await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.id == version_id))
         await db_session.execute(delete(AIAgent).where(AIAgent.id == agent_id))
         await client.delete(f"/api/portal/mcp/servers/{server_id}", headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_mcp_servers_can_share_same_sse_url_with_different_names(
+    client: AsyncClient,
+    admin_api_key: str,
+):
+    headers = {"Authorization": f"Bearer {admin_api_key}"}
+    shared_url = f"https://shared-gateway.example/mcp/{uuid.uuid4().hex}"
+    name_1 = f"Server A {uuid.uuid4().hex[:6]}"
+    name_2 = f"Server B {uuid.uuid4().hex[:6]}"
+
+    with patch(
+        "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
+        new_callable=AsyncMock,
+    ):
+        resp1 = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": name_1,
+                "sse_url": shared_url,
+                "scope": "global",
+            },
+            headers=headers,
+        )
+        assert resp1.status_code == 200
+        server_id_1 = resp1.json()["id"]
+
+        resp2 = await client.post(
+            "/api/portal/mcp/servers",
+            json={
+                "server_name": name_2,
+                "sse_url": shared_url,
+                "scope": "global",
+            },
+            headers=headers,
+        )
+        assert resp2.status_code == 200
+        server_id_2 = resp2.json()["id"]
+
+    await client.delete(f"/api/portal/mcp/servers/{server_id_1}", headers=headers)
+    await client.delete(f"/api/portal/mcp/servers/{server_id_2}", headers=headers)
+

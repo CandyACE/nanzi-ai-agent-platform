@@ -293,15 +293,7 @@ async def create_mcp_server(
     if existing_name:
         raise HTTPException(status_code=400, detail=f"服务显示名称 '{server_name}' 已存在，请修改名称后保存")
 
-    # Check for address duplicates under the same owner scope.
     user_id = _get_user_id(user) if target_scope == "personal" else None
-    exist_stmt = select(McpServer).where(McpServer.sse_url == data.sse_url, McpServer.scope == target_scope)
-    if target_scope == "personal":
-        exist_stmt = exist_stmt.where(McpServer.user_id == user_id)
-    existing = (await db.execute(exist_stmt)).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"该服务地址已存在 (已命名为: {existing.server_name})")
-
     server_id = str(uuid.uuid4())
     server_data = data.model_dump()
     server_data["server_name"] = server_name
@@ -316,7 +308,7 @@ async def create_mcp_server(
     except Exception as e:
         await db.rollback()
         logger.error(f"Failed to commit new McpServer: {e}")
-        raise HTTPException(status_code=400, detail="服务保存冲突，请检查服务名称或地址是否重复")
+        raise HTTPException(status_code=400, detail="服务保存冲突，请检查服务名称是否重复")
     
     # Auto-sync tools immediately after creation
     try:
@@ -354,15 +346,6 @@ async def update_mcp_server(
     )
     if duplicate_name:
         raise HTTPException(status_code=400, detail=f"服务显示名称 '{server_name}' 已存在，请修改名称后保存")
-
-    # Check if new SSE URL is being used by another server in same scope
-    if data.sse_url != server.sse_url:
-        exist_stmt = select(McpServer).where(McpServer.sse_url == data.sse_url, McpServer.id != server_id, McpServer.scope == server.scope)
-        if server.scope == "personal":
-            exist_stmt = exist_stmt.where(McpServer.user_id == _get_user_id(user))
-        existing = (await db.execute(exist_stmt)).scalar_one_or_none()
-        if existing:
-            raise HTTPException(status_code=400, detail=f"新地址已被其他服务占用: {existing.server_name}")
 
     if server.server_name != server_name:
         await _migrate_server_name_references(db, server_id, server.server_name, server_name)

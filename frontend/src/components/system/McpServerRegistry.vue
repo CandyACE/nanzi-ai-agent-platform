@@ -34,6 +34,8 @@ import {
   ShoppingBagIcon,
   DocumentDuplicateIcon,
   ChevronLeftIcon,
+  CheckCircleIcon,
+  InformationCircleIcon,
 } from '@heroicons/vue/24/outline'
 
 const props = withDefaults(defineProps<{
@@ -106,7 +108,9 @@ const openTester = (tool: any) => {
   showTester.value = true
 }
 
-const wizardStep = ref<1 | 2>(1) // 1: Input & Verify, 2: Preview & Name
+const wizardStep = ref<1 | 2 | 3>(1) // 1: Input & Verify, 2: Preview & Name, 3: Success & Publish Guide
+const createdServer = ref<any | null>(null)
+const publishAllLoading = ref(false)
 const verifying = ref(false)
 const discoveredTools = ref<any[]>([])
 const syncLoading = ref<Record<string, boolean>>({})
@@ -189,12 +193,44 @@ const batchUpdateStatus = async (published: boolean) => {
       fetchServerUsage(selectedServer.value.id).then((usage) => {
         if (selectedServer.value) selectedServerUsage.value = usage
       })
+      fetchServers()
     }
     selectedToolIds.value.clear()
   } catch (e) {
     showToast(getApiErrorMessage(e, '批量操作失败'), 'error')
   } finally {
     loading.value = false
+  }
+}
+
+const publishedToolsCount = computed(() => tools.value.filter(tool => tool.is_published && tool.is_available !== false).length)
+const isAllToolsUnpublished = computed(() => {
+  const availableTools = tools.value.filter(tool => tool.is_available !== false)
+  return availableTools.length > 0 && publishedToolsCount.value === 0
+})
+const isPublishingAllCurrent = ref(false)
+
+const publishAllCurrentServerTools = async () => {
+  if (!selectedServer.value || !canManageSelectedTools.value) return
+  const unpub = tools.value.filter(tool => !tool.is_published && tool.is_available !== false)
+  if (unpub.length === 0) return
+
+  isPublishingAllCurrent.value = true
+  try {
+    await Promise.all(unpub.map(tool => 
+      axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=true`)
+    ))
+    showToast(`成功发布全部 ${unpub.length} 个工具`, 'success')
+    fetchTools(selectedServer.value.id)
+    fetchServerUsage(selectedServer.value.id).then((usage) => {
+      if (selectedServer.value) selectedServerUsage.value = usage
+    })
+    fetchServers()
+    selectedToolIds.value.clear()
+  } catch (e) {
+    showToast(getApiErrorMessage(e, '批量发布失败'), 'error')
+  } finally {
+    isPublishingAllCurrent.value = false
   }
 }
 
@@ -267,6 +303,8 @@ const resetWizard = () => {
   isEditing.value = false
   editingId.value = ''
   wizardStep.value = 1
+  createdServer.value = null
+  publishAllLoading.value = false
   verifying.value = false
   discoveredTools.value = []
   newServer.value = { server_name: '', remark: '', sse_url: '', auth_headers: '{}', enabled_status: 1 }
@@ -276,6 +314,11 @@ const resetWizard = () => {
   mcpJsonPasteHint.value = ''
   headerPairs.value = [{ key: '', value: '' }]
   headerMode.value = 'simple'
+}
+
+const closeWizard = () => {
+  showAddModal.value = false
+  resetWizard()
 }
 
 const openEditModal = (server: any) => {
@@ -503,15 +546,49 @@ const addServer = async () => {
     if (isEditing.value) {
       await axios.put(`/api/portal/mcp/servers/${editingId.value}`, payload)
       showToast('更新成功', 'success')
+      closeWizard()
+      fetchServers()
     } else {
-      await axios.post('/api/portal/mcp/servers', payload)
+      const res = await axios.post('/api/portal/mcp/servers', payload)
       showToast('添加成功', 'success')
+      createdServer.value = res.data
+      await fetchServers()
+      const matched = servers.value.find((s: any) => s.id === res.data?.id) || res.data
+      selectServer(matched)
+      wizardStep.value = 3
     }
-    showAddModal.value = false
-    fetchServers()
-    resetWizard()
   } catch (e: any) {
     showToast(getApiErrorMessage(e, '操作失败'), 'error')
+  }
+}
+
+const publishAllCreatedTools = async () => {
+  const targetServerId = createdServer.value?.id || selectedServer.value?.id
+  if (!targetServerId) {
+    closeWizard()
+    return
+  }
+  publishAllLoading.value = true
+  try {
+    let serverTools = tools.value
+    if (!serverTools.length || selectedServer.value?.id !== targetServerId) {
+      const res = await axios.get(`/api/portal/mcp/servers/${targetServerId}/tools`)
+      serverTools = res.data || []
+    }
+    const unpublishedTools = serverTools.filter((t: any) => !t.is_published && t.is_available !== false)
+    if (unpublishedTools.length > 0) {
+      await Promise.all(unpublishedTools.map((t: any) => 
+        axios.put(`/api/portal/mcp/tools/${t.id}/publish?published=true`)
+      ))
+    }
+    showToast(`成功发布全部 ${serverTools.length} 个工具`, 'success')
+    fetchTools(targetServerId)
+    fetchServers()
+    closeWizard()
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '批量发布失败，请前往右侧列表手动操作'), 'error')
+  } finally {
+    publishAllLoading.value = false
   }
 }
 
@@ -816,6 +893,29 @@ onMounted(fetchServers)
           </div>
         </div>
 
+        <!-- 全待发布提示条（当服务启用且工具全部为待发布时展示） -->
+        <div 
+          v-if="isSelectedServerEnabled && isAllToolsUnpublished"
+          class="flex flex-col gap-2 border-b border-amber-200 bg-amber-50/90 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 animate-fade-in"
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <InformationCircleIcon class="h-4 w-4 shrink-0 text-amber-600" />
+            <span class="text-xs text-amber-900 leading-snug">
+              当前服务下所有工具均为 <strong class="text-amber-800 underline decoration-amber-300">待发布</strong> 状态，智能体在配置与问答中<strong>无法搜索或调用</strong>这些工具。
+            </span>
+          </div>
+          <button
+            v-if="canManageSelectedTools"
+            @click="publishAllCurrentServerTools"
+            :disabled="isPublishingAllCurrent"
+            class="inline-flex shrink-0 items-center justify-center rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-amber-700 active:scale-95 disabled:opacity-50"
+          >
+            <ArrowPathIcon v-if="isPublishingAllCurrent" class="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            <SparklesIcon v-else class="mr-1.5 h-3.5 w-3.5" />
+            {{ isPublishingAllCurrent ? '正在发布...' : '一键全部发布' }}
+          </button>
+        </div>
+
         <div class="custom-scrollbar flex-1 overflow-y-auto p-3 sm:p-4">
           <div v-if="toolsLoading" class="p-12 text-center">
             <ArrowPathIcon class="mx-auto h-8 w-8 animate-spin text-gray-200" />
@@ -903,11 +1003,12 @@ onMounted(fetchServers)
         <div class="shrink-0 border-b border-gray-100 bg-gray-50/50 p-4 sm:p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-bold text-gray-900">
-              {{ wizardStep === 1 ? (isEditing ? '编辑配置' : '第一步：建立连接') : '第二步：确认工具并命名' }}
+              {{ isEditing ? '编辑配置' : (wizardStep === 1 ? '第一步：建立连接' : (wizardStep === 2 ? '第二步：确认工具并命名' : '第三步：完成与发布指引')) }}
             </h3>
-            <div class="flex space-x-1" v-if="!isEditing">
-              <div class="w-2 h-2 rounded-full" :class="wizardStep === 1 ? 'bg-primary' : 'bg-gray-200'"></div>
-              <div class="w-2 h-2 rounded-full" :class="wizardStep === 2 ? 'bg-primary' : 'bg-gray-200'"></div>
+            <div class="flex items-center space-x-1.5" v-if="!isEditing">
+              <div class="h-2 rounded-full transition-all duration-300" :class="wizardStep === 1 ? 'bg-primary w-5' : 'bg-gray-200 w-2'"></div>
+              <div class="h-2 rounded-full transition-all duration-300" :class="wizardStep === 2 ? 'bg-primary w-5' : 'bg-gray-200 w-2'"></div>
+              <div class="h-2 rounded-full transition-all duration-300" :class="wizardStep === 3 ? 'bg-green-600 w-5' : 'bg-gray-200 w-2'"></div>
             </div>
           </div>
           <p class="text-xs text-gray-500">
@@ -915,7 +1016,9 @@ onMounted(fetchServers)
               ? (connectionInputTab === 'json'
                 ? '粘贴 mcpServers JSON，解析后将自动连接并发现工具。'
                 : '手动填写服务地址与鉴权，然后连接并发现工具。')
-              : `探测成功！共发现 ${discoveredTools.length} 个工具。请检查列表并为该服务命名。` }}
+              : (wizardStep === 2
+                ? `探测成功！共发现 ${discoveredTools.length} 个工具。请检查列表并为该服务命名。`
+                : 'MCP 服务已成功接入系统，请发布工具以便在智能体中使用。') }}
           </p>
         </div>
 
@@ -1027,7 +1130,7 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Step 2: Preview -->
-        <div v-else class="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+        <div v-else-if="wizardStep === 2" class="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
           <div>
             <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">服务显示名称</label>
             <div class="flex items-stretch rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-primary/40">
@@ -1074,9 +1177,76 @@ onMounted(fetchServers)
           </div>
         </div>
 
+        <!-- Wizard Step 3: Success & Publish Guide -->
+        <div v-else-if="wizardStep === 3" class="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+          <!-- 成功状态卡片 -->
+          <div class="rounded-xl border border-green-200 bg-green-50/70 p-4 text-center">
+            <div class="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-green-100 text-green-600 mb-2">
+              <CheckCircleIcon class="h-7 w-7" />
+            </div>
+            <h4 class="text-sm font-bold text-gray-900">MCP 服务添加成功！</h4>
+            <p class="mt-1 text-xs text-gray-600">
+              已成功接入 <span class="font-mono font-bold text-gray-800">{{ createdServer?.server_name || newServer.server_name }}</span>，
+              共发现 <span class="font-bold text-green-700">{{ discoveredTools.length }}</span> 个工具。
+            </p>
+          </div>
+
+          <!-- 重要提示与发布操作指引 -->
+          <div class="rounded-xl border border-amber-200 bg-amber-50/60 p-4 space-y-3">
+            <div class="flex items-start gap-2.5">
+              <span class="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white shrink-0 mt-0.5">
+                重要提示
+              </span>
+              <div class="space-y-1 text-xs text-amber-950 leading-relaxed">
+                <p class="font-bold">
+                  新接入的 MCP 工具默认处于 <span class="text-amber-800 underline decoration-amber-400">「未发布」</span> 状态。
+                </p>
+                <p class="text-gray-600 text-[11px]">
+                  未发布的工具不会出现在智能体编排挂载列表中。必须先进行<span class="font-semibold text-gray-900">「发布」</span>，智能体方可正常识别与调用。
+                </p>
+              </div>
+            </div>
+
+            <!-- 操作引导提示 -->
+            <div class="pt-2.5 border-t border-amber-200/60 space-y-2">
+              <div class="text-[11px] font-bold text-gray-700 flex items-center gap-1">
+                <SparklesIcon class="w-3.5 h-3.5 text-amber-600" />
+                如何发布工具？
+              </div>
+              <div class="grid grid-cols-1 gap-2 text-[11px]">
+                <div class="flex items-start gap-2 rounded-lg bg-white/80 p-2.5 border border-amber-100">
+                  <span class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800 mt-0.5">1</span>
+                  <span class="text-gray-700 leading-relaxed">
+                    点击下方 <strong>【一键全部发布】</strong> 按钮，系统将立即将该服务下的所有工具批量发布。
+                  </span>
+                </div>
+                <div class="flex items-start gap-2 rounded-lg bg-white/80 p-2.5 border border-amber-100">
+                  <span class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800 mt-0.5">2</span>
+                  <span class="text-gray-700 leading-relaxed">
+                    或点击 <strong>【前往工具列表】</strong>，在右侧工具列表中选择工具点击 <strong>【发布】</strong> 或 <strong>【批量发布】</strong>。
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Wizard Footer -->
         <div class="flex shrink-0 flex-col-reverse gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-          <button @click="showAddModal = false" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">取消</button>
+          <button 
+            v-if="wizardStep !== 3"
+            @click="closeWizard" 
+            class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+          >
+            取消
+          </button>
+          <button 
+            v-else
+            @click="closeWizard" 
+            class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+          >
+            稍后手动发布
+          </button>
           
           <div class="flex flex-col gap-2 sm:flex-row sm:space-x-3 sm:gap-0">
             <button v-if="wizardStep === 2" @click="wizardStep = 1" class="px-4 py-2 text-sm font-medium text-primary hover:underline">返回修改</button>
@@ -1102,12 +1272,30 @@ onMounted(fetchServers)
             </button>
             
             <button 
-              v-else
+              v-else-if="wizardStep === 2"
               @click="addServer" 
               class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 sm:px-6 sm:py-2"
             >
               {{ isEditing ? '保存修改' : '确认并完成添加' }}
             </button>
+
+            <template v-else-if="wizardStep === 3">
+              <button
+                @click="closeWizard"
+                class="flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:scale-95 sm:px-5 sm:py-2"
+              >
+                前往工具列表
+              </button>
+              <button
+                @click="publishAllCreatedTools"
+                :disabled="publishAllLoading"
+                class="flex items-center justify-center rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 disabled:opacity-50 sm:px-6 sm:py-2"
+              >
+                <ArrowPathIcon v-if="publishAllLoading" class="mr-2 h-4 w-4 animate-spin" />
+                <SparklesIcon v-else class="mr-1.5 h-4 w-4" />
+                {{ publishAllLoading ? '正在批量发布...' : '一键全部发布' }}
+              </button>
+            </template>
           </div>
         </div>
       </div>

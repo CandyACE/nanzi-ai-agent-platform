@@ -1,5 +1,7 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 import pytest
 
@@ -99,6 +101,42 @@ async def test_browser_runtime_serializes_navigation_and_snapshot_per_session():
 
 
 @pytest.mark.asyncio
+async def test_browser_runtime_reuses_existing_page_when_target_url_is_unchanged(monkeypatch):
+    worker = ControlProbeWorker()
+    worker.current_page_info = AsyncMock(
+        return_value=BrowserPageInfo(url="https://example.com/", title="Example")
+    )
+    worker.open = AsyncMock()
+    worker.navigate = AsyncMock()
+    runtime = BrowserRuntime(worker=worker)
+    profile_service = Mock()
+    profile_service.get_owned = AsyncMock(return_value=SimpleNamespace(id="profile-1"))
+    profile_service.profile_path = AsyncMock(return_value="/tmp/browser-profile")
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_runtime.BrowserProfileService",
+        lambda _db: profile_service,
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        user_id=1,
+        profile_id="profile-1",
+        current_url="https://example.com/",
+        page_title=None,
+        last_seen_at=None,
+        updated_at=None,
+    )
+    db = Mock()
+    db.commit = AsyncMock()
+
+    info = await runtime.open_session(db, session)
+
+    assert info.url == "https://example.com/"
+    worker.current_page_info.assert_awaited_once_with("session-1")
+    worker.navigate.assert_not_awaited()
+    worker.open.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_browser_runtime_blocks_ai_until_human_releases_control():
     worker = ControlProbeWorker()
     runtime = BrowserRuntime(worker=worker)
@@ -137,6 +175,53 @@ async def test_browser_runtime_blocks_ai_until_human_releases_control():
 
 
 @pytest.mark.asyncio
+async def test_browser_runtime_ignores_release_from_stale_viewer_owner():
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+
+    await runtime.manual_input(
+        "session-1",
+        event="mouse_click",
+        payload={"x": 10, "y": 10},
+        owner_id="viewer-old",
+    )
+    await runtime.manual_input(
+        "session-1",
+        event="mouse_click",
+        payload={"x": 20, "y": 20},
+        owner_id="viewer-new",
+    )
+
+    await runtime.release_human_control("session-1", owner_id="viewer-old")
+
+    assert runtime.control_state("session-1")["owner"] == "human"
+
+    await runtime.release_human_control("session-1", owner_id="viewer-new")
+
+    assert runtime.control_state("session-1")["owner"] == "ai"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_releases_unowned_captcha_control_for_viewer():
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="captcha-1",
+            url="https://example.com/verify",
+            title="Verify",
+            page_state="captcha",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+
+    await runtime.snapshot("session-1")
+    await runtime.release_human_control("session-1", owner_id="viewer-1")
+
+    assert runtime.control_state("session-1")["owner"] == "ai"
+
+
+@pytest.mark.asyncio
 async def test_browser_runtime_keeps_recent_ai_snapshot_when_viewer_refreshes():
     worker = ControlProbeWorker()
     first = BrowserSnapshot(
@@ -159,6 +244,27 @@ async def test_browser_runtime_keeps_recent_ai_snapshot_when_viewer_refreshes():
 
     assert runtime.cached_snapshot("session-1", "snapshot-ai") is first
     assert runtime.cached_snapshot("session-1", "snapshot-viewer") is second
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_scrolls_and_remembers_the_fresh_snapshot():
+    worker = ControlProbeWorker()
+    scrolled = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-scroll",
+        url="https://example.com/",
+        title="Example",
+        scroll_y=640,
+        document_height=2400,
+    )
+    worker.scroll = AsyncMock(return_value=scrolled)
+    runtime = BrowserRuntime(worker=worker)
+
+    result = await runtime.scroll("session-1", direction="down", amount=640)
+
+    assert result is scrolled
+    worker.scroll.assert_awaited_once_with("session-1", direction="down", amount=640)
+    assert runtime.cached_snapshot("session-1", "snapshot-scroll") is scrolled
 
 
 @pytest.mark.asyncio
