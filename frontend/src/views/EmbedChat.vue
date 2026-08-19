@@ -1877,6 +1877,7 @@
     <BrowserPanel
       :visible="browserPanelVisible"
       :loading="browserPanelOpening || (browserPanelVisible && !browserSessionId)"
+      :refresh-signal="browserRefreshSignal"
       :session-id="browserSessionId"
       :viewer-token="browserViewerToken"
       :approval-mode="browserApprovalMode"
@@ -2615,6 +2616,7 @@ const browserViewerToken = ref<string | null>(null);
 const browserApprovalMode = ref<BrowserApprovalMode>("autopilot");
 const browserPinned = ref(true);
 const browserPanelOpening = ref(false);
+const browserRefreshSignal = ref(0);
 let browserOpenGeneration = 0;
 
 const attachBrowserSession = async (
@@ -7107,6 +7109,10 @@ const sendMessageInternal = async () => {
               data.approval_mode,
               openingGeneration,
             );
+          } else if (data.type === "browser_refresh") {
+            if (String(data.session_id || "") === String(browserSessionId.value || "")) {
+              browserRefreshSignal.value += 1;
+            }
           } else if (data.type === "log") {
             if (agentMsg.value.isThinking && data.title) {
               agentMsg.value.thinkingText = `正在${data.title}...`;

@@ -183,7 +183,7 @@
             </div>
             <div class="flex shrink-0 items-center gap-1.5">
               <span class="text-sky-600 dark:text-sky-300">
-                {{ controlOwner === 'human' ? '当前由人工操作，自动刷新已暂停' : captchaDetected ? '验证码处理中，自动刷新已暂停' : interactionInProgress ? '操作中，完成后刷新一次' : autoRefreshPaused ? '自动刷新已暂停' : '每 2 秒自动刷新' }}
+                {{ controlOwner === 'human' ? '当前由人工操作，自动刷新已暂停' : captchaDetected ? '验证码处理中，自动刷新已暂停' : interactionInProgress ? '操作中，完成后刷新一次' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
               </span>
               <button
                 v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
@@ -328,10 +328,12 @@ type BrowserSnapshot = {
   elements: BrowserElement[];
 };
 type RemotePoint = { x: number; y: number };
+const BROWSER_PANEL_REFRESH_INTERVAL_MS = 5000;
 
 const props = defineProps<{
   visible: boolean;
   loading?: boolean;
+  refreshSignal?: number;
   sessionId: string | null;
   viewerToken: string | null;
   approvalMode: ApprovalMode;
@@ -617,7 +619,7 @@ const requestSnapshot = () => {
 const startPolling = () => {
   stopPolling();
   if (controlOwner.value === 'human' || autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value || !connected.value) return;
-  pollTimer = setInterval(requestSnapshot, 2000);
+  pollTimer = setInterval(requestSnapshot, BROWSER_PANEL_REFRESH_INTERVAL_MS);
 };
 
 const pauseAutoRefresh = () => {
@@ -852,6 +854,12 @@ watch(() => props.approvalMode,
     }
   },
 );
+
+watch(() => props.refreshSignal, () => {
+  if (!props.visible || !connected.value) return;
+  if (controlOwner.value === 'human' || autoRefreshPaused.value || captchaDetected.value) return;
+  requestSnapshot();
+});
 
 onMounted(() => {
   loadCustomWidth();

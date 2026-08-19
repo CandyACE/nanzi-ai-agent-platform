@@ -43,7 +43,7 @@ def test_browser_panel_explains_screenshot_surface_and_hides_internal_targets():
     assert "远程页面截图" in source
     assert "不是网页本体" in source
     assert "点击、滚轮、键盘会转发到远程浏览器" in source
-    assert "每 2 秒自动刷新" in source
+    assert "每 5 秒自动刷新" in source
     assert 'v-for="element in snapshot.elements"' not in source
     assert 'ref="viewportRef"' in source
     assert "viewportRef.value?.focus" in source
@@ -125,6 +125,8 @@ def test_browser_panel_does_not_request_duplicate_initial_snapshot_and_reports_d
 
     assert "client.send(JSON.stringify({ type: 'snapshot' }));" not in on_open
     assert "if (socket.value !== client) return;" in on_open
+    assert "BROWSER_PANEL_REFRESH_INTERVAL_MS = 5000" in source
+    assert "setInterval(requestSnapshot, BROWSER_PANEL_REFRESH_INTERVAL_MS)" in source
     assert "浏览器连接已断开" in source
 
 
@@ -139,3 +141,13 @@ def test_browser_panel_ignores_stale_socket_events_and_token_attachment_respects
     assert "String(data.session_id || \"\")," in embed
     assert "data.approval_mode," in embed
     assert "openingGeneration," in embed
+
+
+def test_browser_panel_refreshes_after_ai_browser_action_without_short_polling():
+    panel = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "refreshSignal?: number" in panel
+    assert "watch(() => props.refreshSignal" in panel
+    assert ":refresh-signal=\"browserRefreshSignal\"" in embed
+    assert "data.type === \"browser_refresh\"" in embed
