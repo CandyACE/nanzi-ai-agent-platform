@@ -52,6 +52,7 @@ class FakePage:
             },
         )()
         self.frames = []
+        self.wait_for_load_state = AsyncMock()
         self.locator_value = FakeLocator(
             self,
             [
@@ -269,6 +270,31 @@ async def test_worker_adopts_delayed_new_tab_after_manual_mouse_click(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_worker_uses_short_wait_after_manual_click(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-click-wait",
+        profile_path=str(tmp_path / "profile-click-wait"),
+        url="https://example.com/",
+    )
+
+    await worker.manual_input(
+        "bs-click-wait",
+        event="mouse_click",
+        payload={"x": 300, "y": 36},
+    )
+
+    fake_context_page(fake_playwright).wait_for_load_state.assert_awaited_once_with(
+        "domcontentloaded", timeout=1500
+    )
+
+
+@pytest.mark.asyncio
 async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
     fake_playwright = FakePlaywright()
     worker = BrowserWorker(
@@ -292,6 +318,26 @@ async def test_worker_reports_when_human_click_focuses_text_input(tmp_path):
 
     assert info.focused_input is True
     page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_exposes_current_page_info_without_navigating(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-current-page",
+        profile_path=str(tmp_path / "profile-current-page"),
+        url="https://example.com/",
+    )
+
+    info = await worker.current_page_info("bs-current-page")
+
+    assert info.url == "https://example.com/"
+    assert info.title == "百度一下"
 
 
 @pytest.mark.asyncio

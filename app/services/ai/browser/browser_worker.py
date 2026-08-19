@@ -50,6 +50,8 @@ CHROMIUM_LAUNCH_ARGS = [
     "--disable-infobars",
 ]
 
+MANUAL_CLICK_LOAD_TIMEOUT_MS = 1500
+
 STEALTH_INIT_SCRIPT = """
 (() => {
     try {
@@ -215,6 +217,10 @@ class BrowserWorker:
         url = str(getattr(page, "url", "") or "")
         title = str(await _maybe_await(page.title()))
         return BrowserPageInfo(url=url, title=title, focused_input=focused_input)
+
+    async def current_page_info(self, session_id: str) -> BrowserPageInfo:
+        """读取当前页面信息，供恢复已有会话时避免无意义的重复导航。"""
+        return await self._page_info(self._handle(session_id).page)
 
     async def _has_focused_input(self, page: Any, *, x: float, y: float) -> bool:
         evaluate = getattr(page, "evaluate", None)
@@ -457,7 +463,10 @@ class BrowserWorker:
                 if callable(wait_for_load_state):
                     try:
                         await _maybe_await(
-                            wait_for_load_state("domcontentloaded", timeout=5000)
+                            wait_for_load_state(
+                                "domcontentloaded",
+                                timeout=MANUAL_CLICK_LOAD_TIMEOUT_MS,
+                            )
                         )
                     except Exception:
                         # 点击可能触发长时间加载或下载；保留当前页面并继续刷新快照。

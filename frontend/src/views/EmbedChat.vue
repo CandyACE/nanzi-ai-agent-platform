@@ -1876,6 +1876,7 @@
     />
     <BrowserPanel
       :visible="browserPanelVisible"
+      :loading="browserPanelOpening || (browserPanelVisible && !browserSessionId)"
       :session-id="browserSessionId"
       :viewer-token="browserViewerToken"
       :approval-mode="browserApprovalMode"
@@ -2613,12 +2614,18 @@ const browserSessionId = ref<string | null>(null);
 const browserViewerToken = ref<string | null>(null);
 const browserApprovalMode = ref<BrowserApprovalMode>("autopilot");
 const browserPinned = ref(true);
+const browserPanelOpening = ref(false);
+let browserOpenGeneration = 0;
 
-const attachBrowserSession = async (sessionId: string, approvalMode?: string) => {
-  if (!sessionId) return;
+const attachBrowserSession = async (
+  sessionId: string,
+  approvalMode?: string,
+  openingGeneration?: number,
+): Promise<boolean> => {
+  if (!sessionId) return false;
   if (!config.token) {
     showToast("浏览器需要有效的登录凭证", "warning");
-    return;
+    return false;
   }
   try {
     const tokenResponse = await axios.post(
@@ -2626,41 +2633,63 @@ const attachBrowserSession = async (sessionId: string, approvalMode?: string) =>
       {},
       { headers: embedAuthHeaders() },
     );
+    if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
     browserSessionId.value = sessionId;
     browserViewerToken.value = tokenResponse.data.token;
     browserApprovalMode.value = approvalMode === "autopilot" ? "autopilot" : "guarded";
     browserPinned.value = true;
     browserPanelVisible.value = true;
+    return true;
   } catch (error: any) {
+    if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
     showToast(error?.response?.data?.detail || "连接服务端浏览器失败", "error");
+    return false;
   }
 };
 
 const openBrowserPanel = async () => {
+  if (browserPanelOpening.value) return;
+  if (browserSessionId.value && browserViewerToken.value) {
+    browserPanelVisible.value = true;
+    return;
+  }
   if (!config.token) {
     showToast("浏览器需要有效的登录凭证", "warning");
     return;
   }
+  const generation = ++browserOpenGeneration;
+  browserPanelOpening.value = true;
+  browserPanelVisible.value = true;
   try {
     const sessionResponse = await axios.post(
       "/api/v1/chat/browser/sessions/open",
       { url: "https://www.baidu.com/", conversation_id: conversationId.value || undefined },
       { headers: embedAuthHeaders() },
     );
+    if (generation !== browserOpenGeneration) return;
     const session = sessionResponse.data;
-    await attachBrowserSession(session.id, session.approval_mode);
+    const attached = await attachBrowserSession(session.id, session.approval_mode, generation);
+    if (!attached && generation === browserOpenGeneration) browserPanelVisible.value = false;
   } catch (error: any) {
+    if (generation !== browserOpenGeneration) return;
+    browserPanelVisible.value = false;
     showToast(error?.response?.data?.detail || "打开服务端浏览器失败", "error");
+  } finally {
+    if (generation === browserOpenGeneration) browserPanelOpening.value = false;
   }
 };
 
 const closeBrowserPanel = () => {
+  browserOpenGeneration += 1;
+  browserPanelOpening.value = false;
   browserPanelVisible.value = false;
 };
 
 const closeBrowserSession = async () => {
   const sessionId = browserSessionId.value;
   if (!sessionId || typeof window === "undefined") return;
+  browserOpenGeneration += 1;
+  browserPanelOpening.value = false;
   try {
     await axios.delete(
       `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}`,
@@ -7072,7 +7101,12 @@ const sendMessageInternal = async () => {
           const data = JSON.parse(dataStr);
           applyStreamTraceId(agentMsg.value, data);
           if (data.type === "browser_session") {
-            void attachBrowserSession(String(data.session_id || ""), data.approval_mode);
+            const openingGeneration = browserOpenGeneration;
+            void attachBrowserSession(
+              String(data.session_id || ""),
+              data.approval_mode,
+              openingGeneration,
+            );
           } else if (data.type === "log") {
             if (agentMsg.value.isThinking && data.title) {
               agentMsg.value.thinkingText = `正在${data.title}...`;

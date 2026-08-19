@@ -360,3 +360,8 @@
 | 个人通知渠道开关即时持久化 (Notification Channel Toggle Persist) | `NotificationConfigs.vue` | **勾选即保存**：`is_enabled` 变更立即 PUT，避免关闭后因保存按钮随面板消失而未持久化。 | ✅ 手工验证 | 2026-08-10 |
 | 实体关系 join_type 归一化与一对多展示 (Relationship Join Type Labels) | `relationshipJoinType.ts`, `RelationshipList.vue`, `SmartImportWizard.vue`, `SchemaGraph.vue`, `test_relationship_join_type.py` | **ONE_TO_MANY → Left**：列表/图展示统一为「Left · 一对多 (1:N)」；编辑单选文案标明 One to Many；打开编辑与保存、智能导入均归一化到 `left`/`inner`/`one_to_one`。 | ✅ 契约通过 | 2026-08-12 |
 | ask_user_question 主动互动触发优化 (Explicit Interactive Question Trigger) | `tool_nudge_policy.py`, `assistant_agent_runner.py`, `knowledge_agent_runner.py`, `agent_prompts.py`, `user_question_tools.py`, `tests/ai/test_tool_nudge_policy.py`, `tests/ai/runners/test_knowledge_agent_tools.py` | **触发分层**：用户明确说「随便问我几个问题」「考考我」「我不知道怎么提问，你引导我」「逐个问我」时，通用助手与知识库助手首步优先调用 `ask_user_question`；「列出几个问题」、用户回答回执、否定提问和后台自动任务不触发；保留决策收集、任务澄清、业务确认和 ChatBI 原有门禁。 | ✅ 聚焦单测通过 | 2026-08-18 |
+| MCP 服务添加三步向导与全待发布提示横幅 (MCP Add Server 3-Step Wizard & All-Unpublished Banner) | `McpServerRegistry.vue`, `tests/frontend/test_mcp_server_wizard_step3_contract.py` | **三步向导与发布引导闭环**：添加 MCP 服务流程从两步扩展为三步向导（1.建立连接 -> 2.确认命名 -> 3.完成与发布指引）；第二步点击「确认并完成添加」后保持弹窗并进入第三步，展示成功状态与发布操作指引；在右侧工具列表中，当选中服务的所有工具均为「待发布」状态时，在列表顶栏下方渲染琥珀色醒目提示横条并附带「一键全部发布」按钮，明确告知用户“工具待发布时智能体无法搜索或调用”，可一键直接发布生效。 | ✅ 契约测试通过 | 2026-08-19 |
+| MCP 服务支持同地址多命名空间注册 (MCP Same URL Multiple Namespaces Support) | `app/api/portal/endpoints/mcp.py`, `tests/test_mcp_management.py` | **支持同地址不同命名空间**：移除后端在创建和更新 MCP 服务时对 `sse_url` 相同的硬性拦截，保持 `server_name` 全局唯一性；支持用户将同一个后端服务地址按不同业务命名空间、不同鉴权配置或不同测试用途重复注册为独立 MCP 服务。 | ✅ 单测覆盖 | 2026-08-19 |
+
+
+

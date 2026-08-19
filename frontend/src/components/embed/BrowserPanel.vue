@@ -94,16 +94,16 @@
             </div>
           </div>
           <header class="relative flex h-12 shrink-0 items-center justify-between border-b border-gray-200 px-3 dark:border-gray-700">
-      <div class="flex min-w-0 items-center gap-2">
-        <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">⌁</span>
-        <div class="min-w-0">
-          <div class="truncate text-xs font-bold text-gray-800 dark:text-gray-100">服务端浏览器</div>
-          <div class="flex items-center gap-1.5 text-[10px] text-gray-400">
-            <span :class="connected ? 'bg-emerald-500' : 'bg-amber-500'" class="h-1.5 w-1.5 rounded-full" />
-            {{ connected ? '已连接，可人工接管' : '正在连接…' }}
-          </div>
-        </div>
-      </div>
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">⌁</span>
+              <div class="min-w-0">
+                <div class="truncate text-xs font-bold text-gray-800 dark:text-gray-100">服务端浏览器</div>
+                <div class="flex items-center gap-1.5 text-[10px] text-gray-400">
+                  <span :class="connected ? 'bg-emerald-500' : 'bg-amber-500'" class="h-1.5 w-1.5 rounded-full" />
+                  {{ connected ? '已连接，可人工接管' : loadingStage }}
+                </div>
+              </div>
+            </div>
             <div class="flex items-center gap-1.5">
               <span v-if="pinned && !isMobile" class="hidden rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300 sm:inline-flex">已钉住</span>
               <button
@@ -244,7 +244,15 @@
                 @pointercancel="handleImagePointerCancel"
               />
             </div>
-            <div v-else class="flex h-full min-h-56 items-center justify-center text-xs text-gray-400">等待浏览器画面…</div>
+            <div v-else class="flex h-full min-h-56 items-center justify-center px-6 text-center text-xs text-gray-400">
+              <div class="w-full max-w-sm rounded-xl border border-sky-100 bg-white/80 p-5 shadow-sm dark:border-sky-900/60 dark:bg-gray-900/70">
+                <div class="mx-auto mb-4 h-2 w-32 animate-pulse rounded-full bg-sky-100 dark:bg-sky-900/60" />
+                <div class="mx-auto h-2 w-56 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                <div class="mx-auto mt-2 h-2 w-44 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                <div class="mt-4 font-semibold text-slate-600 dark:text-slate-300">{{ loadingStage }}</div>
+                <div class="mt-1 text-[10px] text-slate-400 dark:text-slate-500">页面加载完成后，画面会自动显示在这里</div>
+              </div>
+            </div>
           </div>
 
           <div
@@ -323,6 +331,7 @@ type RemotePoint = { x: number; y: number };
 
 const props = defineProps<{
   visible: boolean;
+  loading?: boolean;
   sessionId: string | null;
   viewerToken: string | null;
   approvalMode: ApprovalMode;
@@ -353,6 +362,7 @@ const controlOwner = ref<ControlOwner>('ai');
 const controlReason = ref<string | null>(null);
 const captchaDetected = ref(false);
 const interactionInProgress = ref(false);
+const snapshotRequestInFlight = ref(false);
 const pointerDownPoint = ref<RemotePoint | null>(null);
 const lastPointerPoint = ref<RemotePoint | null>(null);
 const pointerDragging = ref(false);
@@ -435,6 +445,13 @@ const screenshotUrl = computed(() => {
   const separator = reference.includes('?') ? '&' : '?';
   return `${reference}${separator}snapshot_id=${encodeURIComponent(snapshotId)}`;
 });
+const loadingStage = computed(() => {
+  if (props.loading && !props.sessionId) return '正在准备服务端浏览器…';
+  if (props.loading && !props.viewerToken) return '正在连接浏览器服务…';
+  if (!connected.value) return props.sessionId ? '正在连接实时画面…' : '等待浏览器会话…';
+  if (!snapshot.value) return '正在获取页面截图…';
+  return '页面已就绪';
+});
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let interactionFinishTimer: ReturnType<typeof setTimeout> | null = null;
@@ -460,6 +477,7 @@ const closeSocket = () => {
   stopPolling();
   stopInteractionFinishTimer();
   interactionInProgress.value = false;
+  snapshotRequestInFlight.value = false;
   if (socket.value) {
     socket.value.onclose = null;
     socket.value.close();
@@ -484,11 +502,12 @@ const connect = async () => {
   const client = new WebSocket(url, [`browser-viewer.${props.viewerToken}`]);
   socket.value = client;
   client.onopen = () => {
+    if (socket.value !== client) return;
     connected.value = true;
-    client.send(JSON.stringify({ type: 'snapshot' }));
     startPolling();
   };
   client.onmessage = (event) => {
+    if (socket.value !== client) return;
     let payload: {
       type?: string;
       snapshot?: BrowserSnapshot;
@@ -545,6 +564,7 @@ const connect = async () => {
         remoteFocusMessage.value = '当前点击的不是输入框';
       }
     } else if (payload.type === 'snapshot' && payload.snapshot) {
+      snapshotRequestInFlight.value = false;
       const previousUrl = snapshot.value?.url;
       snapshot.value = payload.snapshot;
       address.value = payload.snapshot.url || address.value;
@@ -558,27 +578,41 @@ const connect = async () => {
         remoteFocusMessage.value = '页面已变化，请重新点击要输入的区域';
       }
     } else if (payload.type === 'error') {
+      snapshotRequestInFlight.value = false;
       errorMessage.value = payload.message || '浏览器操作失败';
     }
   };
   client.onerror = () => {
+    if (socket.value !== client) return;
     errorMessage.value = '浏览器连接失败，请稍后重试';
   };
   client.onclose = () => {
+    if (socket.value !== client) return;
     connected.value = false;
+    snapshotRequestInFlight.value = false;
+    errorMessage.value = '浏览器连接已断开，正在重连…';
     if (props.visible && socket.value === client) {
       reconnectTimer = setTimeout(() => void connect(), 1500);
     }
   };
 };
 
-const send = (payload: Record<string, unknown>) => {
+const send = (payload: Record<string, unknown>): boolean => {
   if (socket.value?.readyState === WebSocket.OPEN) {
     socket.value.send(JSON.stringify(payload));
+    return true;
   }
+  return false;
 };
 
-const requestSnapshot = () => send({ type: 'snapshot' });
+const requestSnapshot = () => {
+  if (!connected.value) return;
+  if (snapshotRequestInFlight.value) return;
+  snapshotRequestInFlight.value = true;
+  if (!send({ type: 'snapshot' })) {
+    snapshotRequestInFlight.value = false;
+  }
+};
 
 const startPolling = () => {
   stopPolling();
@@ -641,12 +675,15 @@ const remotePointFromEvent = (event: MouseEvent): RemotePoint | null => {
 const sendRemoteClick = (event: MouseEvent) => {
   const point = remotePointFromEvent(event);
   if (!point) return;
-  remoteFocusMessage.value = '已聚焦远程页面，键盘输入将发送到当前焦点';
   viewportRef.value?.focus({ preventScroll: true });
-  send({
+  if (!send({
     type: 'mouse_click',
     ...point,
-  });
+  })) {
+    errorMessage.value = '浏览器连接已断开，请等待重新连接后再操作';
+    return;
+  }
+  remoteFocusMessage.value = '已聚焦远程页面，键盘输入将发送到当前焦点';
 };
 
 const handleImageClick = (event: MouseEvent) => {

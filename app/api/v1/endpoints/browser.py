@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse
@@ -297,11 +298,14 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
         await websocket.close(code=4403)
         return
     async with AsyncSessionLocal() as db:
+        should_release_control = False
         try:
             session = await BrowserSessionService(db).resolve_viewer_token(token)
             if session.id != session_id:
                 raise BrowserAccessDenied("浏览器查看令牌与会话不匹配")
+            viewer_connection_id = uuid.uuid4().hex
             await websocket.accept(subprotocol=selected_protocol)
+            should_release_control = True
             if not browser_runtime.has_session(session.id):
                 await browser_runtime.open_session(db, session)
             snapshot = await browser_runtime.snapshot(session.id)
@@ -320,6 +324,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                             session.id,
                             event=event,
                             payload=message,
+                            owner_id=viewer_connection_id,
                         )
                         session.current_url = info.url
                         session.page_title = info.title
@@ -333,10 +338,17 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                             await websocket.send_json({"type": "focus", "focused_input": info.focused_input})
                         snapshot = await browser_runtime.snapshot(session.id)
                     elif event == "release_control":
-                        await browser_runtime.release_human_control(session.id)
+                        await browser_runtime.release_human_control(
+                            session.id,
+                            owner_id=viewer_connection_id,
+                        )
                         snapshot = await browser_runtime.snapshot(session.id)
                     elif event == "navigate":
-                        info = await browser_runtime.navigate(session.id, str(message.get("url", "")))
+                        info = await browser_runtime.navigate(
+                            session.id,
+                            str(message.get("url", "")),
+                            owner_id=viewer_connection_id,
+                        )
                         session.current_url = info.url
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
@@ -377,8 +389,13 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
         except BrowserAccessDenied:
             await websocket.close(code=4403)
         except WebSocketDisconnect:
-            await browser_runtime.release_human_control(session_id)
             return
         except Exception as exc:
             logger.exception("Browser viewer operation failed")
             await websocket.send_json({"type": "error", "message": "浏览器操作失败，请刷新后重试"})
+        finally:
+            if should_release_control:
+                await browser_runtime.release_human_control(
+                    session_id,
+                    owner_id=viewer_connection_id,
+                )

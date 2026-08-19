@@ -19,6 +19,7 @@ from app.services.ai.browser.browser_worker import BrowserPageInfo, BrowserWorke
 class _HumanControl:
     reason: str
     captcha: bool = False
+    owner_id: str | None = None
     released: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -40,14 +41,17 @@ class BrowserRuntime:
         *,
         reason: str,
         captcha: bool = False,
+        owner_id: str | None = None,
     ) -> _HumanControl:
         state = self._human_controls.get(session_id)
         if state is None:
-            state = _HumanControl(reason=reason, captcha=captcha)
+            state = _HumanControl(reason=reason, captcha=captcha, owner_id=owner_id)
             self._human_controls[session_id] = state
         else:
             state.reason = reason
             state.captcha = state.captcha or captcha
+            if owner_id is not None:
+                state.owner_id = owner_id
         return state
 
     async def _wait_for_ai_control(self, session_id: str) -> None:
@@ -71,18 +75,30 @@ class BrowserRuntime:
         *,
         reason: str,
         captcha: bool = False,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         async with self._session_lock(session_id):
             self._set_human_control_locked(
                 session_id,
                 reason=reason,
                 captcha=captcha,
+                owner_id=owner_id,
             )
             return self.control_state(session_id)
 
-    async def release_human_control(self, session_id: str) -> dict[str, Any]:
+    async def release_human_control(
+        self,
+        session_id: str,
+        *,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
         async with self._session_lock(session_id):
-            state = self._human_controls.pop(session_id, None)
+            state = self._human_controls.get(session_id)
+            if state is None:
+                return self.control_state(session_id)
+            if owner_id is not None and state.owner_id not in {None, owner_id}:
+                return self.control_state(session_id)
+            self._human_controls.pop(session_id, None)
             if state is not None:
                 state.released.set()
             return self.control_state(session_id)
@@ -98,7 +114,15 @@ class BrowserRuntime:
             await db.commit()
 
             if self.worker.has_session(session.id):
-                info = await self.worker.navigate(session.id, target_url)
+                current_page_info = getattr(self.worker, "current_page_info", None)
+                if callable(current_page_info):
+                    current_info = await current_page_info(session.id)
+                else:
+                    current_info = None
+                if current_info is not None and _same_browser_url(current_info.url, target_url):
+                    info = current_info
+                else:
+                    info = await self.worker.navigate(session.id, target_url)
             else:
                 info = await self.worker.open(
                     session_id=session.id,
@@ -169,13 +193,26 @@ class BrowserRuntime:
     def has_session(self, session_id: str) -> bool:
         return self.worker.has_session(session_id)
 
-    async def navigate(self, session_id: str, url: str) -> BrowserPageInfo:
-        await self.acquire_human_control(session_id, reason="navigate")
+    async def navigate(
+        self,
+        session_id: str,
+        url: str,
+        *,
+        owner_id: str | None = None,
+    ) -> BrowserPageInfo:
+        await self.acquire_human_control(session_id, reason="navigate", owner_id=owner_id)
         async with self._session_lock(session_id):
             self._snapshots.pop(session_id, None)
             return await self.worker.navigate(session_id, url)
 
-    async def manual_input(self, session_id: str, *, event: str, payload: dict[str, Any]) -> BrowserPageInfo:
+    async def manual_input(
+        self,
+        session_id: str,
+        *,
+        event: str,
+        payload: dict[str, Any],
+        owner_id: str | None = None,
+    ) -> BrowserPageInfo:
         reason = {
             "mouse_click": "click",
             "mouse_down": "drag",
@@ -186,7 +223,7 @@ class BrowserRuntime:
             "scroll": "scroll",
         }.get(event, "input")
         async with self._session_lock(session_id):
-            self._set_human_control_locked(session_id, reason=reason)
+            self._set_human_control_locked(session_id, reason=reason, owner_id=owner_id)
             self._snapshots.pop(session_id, None)
             return await self.worker.manual_input(session_id, event=event, payload=payload)
 
@@ -255,6 +292,13 @@ class BrowserRuntime:
         self._human_controls.clear()
         self._session_locks.clear()
         await self.worker.shutdown()
+
+
+def _same_browser_url(left: str | None, right: str | None) -> bool:
+    """避免根地址仅因尾部斜杠差异而重复导航。"""
+    left_value = str(left or "").rstrip("/")
+    right_value = str(right or "").rstrip("/")
+    return bool(left_value) and left_value == right_value
 
 
 browser_runtime = BrowserRuntime()

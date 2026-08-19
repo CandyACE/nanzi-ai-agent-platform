@@ -50,6 +50,16 @@ def test_browser_viewer_exposes_human_control_handoff_and_captcha_events():
     assert '"type": "captcha"' in source
 
 
+def test_browser_viewer_releases_human_control_for_all_disconnect_paths():
+    source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/browser.py").read_text(encoding="utf-8")
+    assert "should_release_control = False" in source
+    assert "viewer_connection_id = uuid.uuid4().hex" in source
+    assert "owner_id=viewer_connection_id" in source
+    assert "if should_release_control:" in source
+    assert "finally:" in source
+    assert "await browser_runtime.release_human_control(" in source
+
+
 @pytest.mark.asyncio
 async def test_screenshot_endpoint_reuses_requested_snapshot_without_rereading_page(tmp_path: Path):
     screenshot_path = tmp_path / "snapshot.png"

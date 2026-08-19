@@ -103,3 +103,39 @@ def test_embed_chat_contains_browser_panel_toggle_and_session_binding():
     assert '@close-session="closeBrowserSession"' in source
     assert "const closeBrowserSession = async" in source
     assert "axios.delete" in source
+
+
+def test_browser_panel_opens_immediately_with_loading_stages_and_reuses_viewer_session():
+    panel = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "loading" in panel
+    assert "正在准备服务端浏览器" in panel
+    assert "正在连接实时画面" in panel
+    assert "snapshotRequestInFlight" in panel
+    assert "if (snapshotRequestInFlight.value) return" in panel
+    assert "browserPanelOpening" in embed
+    assert "browserPanelVisible.value = true" in embed
+    assert "browserSessionId.value && browserViewerToken.value" in embed
+
+
+def test_browser_panel_does_not_request_duplicate_initial_snapshot_and_reports_disconnect():
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    on_open = source.split("client.onopen", 1)[1].split("client.onmessage", 1)[0]
+
+    assert "client.send(JSON.stringify({ type: 'snapshot' }));" not in on_open
+    assert "if (socket.value !== client) return;" in on_open
+    assert "浏览器连接已断开" in source
+
+
+def test_browser_panel_ignores_stale_socket_events_and_token_attachment_respects_open_generation():
+    panel = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "if (socket.value !== client) return" in panel
+    assert "openingGeneration?: number" in embed
+    assert "openingGeneration !== undefined && openingGeneration !== browserOpenGeneration" in embed
+    assert "const openingGeneration = browserOpenGeneration;" in embed
+    assert "String(data.session_id || \"\")," in embed
+    assert "data.approval_mode," in embed
+    assert "openingGeneration," in embed
