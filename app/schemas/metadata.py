@@ -127,3 +127,18 @@ class DBConnectionConfig(BaseModel):
 class DDLRequest(BaseModel):
     config: DBConnectionConfig
     tables: List[str]
+
+
+# --- Batch Delete Schemas ---
+
+class BatchDeleteTablesRequest(BaseModel):
+    table_names: List[str]
+
+
+class BatchDeleteMetricsRequest(BaseModel):
+    metric_ids: List[int]
+
+
+class BatchDeleteRelationshipsRequest(BaseModel):
+    relationship_ids: List[int]
+

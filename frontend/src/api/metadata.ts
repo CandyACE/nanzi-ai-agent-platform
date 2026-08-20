@@ -129,6 +129,12 @@ export const metadataApi = {
   deleteTable: (datasetId: number, tableName: string) =>
     axios.delete(`${API_BASE}/datasets/${datasetId}/tables/${tableName}`),
 
+  batchDeleteTables: (datasetId: number, tableNames: string[]) =>
+    axios.post<{ message: string; deleted_count: number }>(
+      `${API_BASE}/datasets/${datasetId}/tables/batch-delete`,
+      { table_names: tableNames }
+    ),
+
   // Metrics
   getMetrics: (datasetId: number) =>
     axios.get<Metric[]>(`${API_BASE}/datasets/${datasetId}/metrics`),
@@ -137,6 +143,11 @@ export const metadataApi = {
   updateMetric: (id: number, data: Partial<Metric>) =>
     axios.put<Metric>(`${API_BASE}/metrics/${id}`, data),
   deleteMetric: (id: number) => axios.delete(`${API_BASE}/metrics/${id}`),
+  batchDeleteMetrics: (metricIds: number[]) =>
+    axios.post<{ message: string; deleted_count: number }>(
+      `${API_BASE}/metrics/batch-delete`,
+      { metric_ids: metricIds }
+    ),
 
   // Relationships
   getRelationships: (datasetId: number) =>
@@ -152,6 +163,11 @@ export const metadataApi = {
     axios.put<Relationship>(`${API_BASE}/relationships/${id}`, data),
   deleteRelationship: (id: number) =>
     axios.delete(`${API_BASE}/relationships/${id}`),
+  batchDeleteRelationships: (relationshipIds: number[]) =>
+    axios.post<{ message: string; deleted_count: number }>(
+      `${API_BASE}/relationships/batch-delete`,
+      { relationship_ids: relationshipIds }
+    ),
   getAllTables: () =>
     axios.get<AllTablesDataset[]>(`${API_BASE}/all-tables`),
 

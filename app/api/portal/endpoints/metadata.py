@@ -12,7 +12,8 @@ from app.schemas.metadata import (
     DatasetCreate, DatasetUpdate, DatasetResponse, DatasetDetailResponse, DatasetOptionResponse,
     TableCreate, TableResponse,
     MetricSchema, MetricResponse,
-    RelationshipSchema, RelationshipResponse
+    RelationshipSchema, RelationshipResponse,
+    BatchDeleteTablesRequest, BatchDeleteMetricsRequest, BatchDeleteRelationshipsRequest
 )
 from app.models.user import User
 from app.models.permission import Role
@@ -410,6 +411,21 @@ async def delete_metric(metric_id: int, conn: AsyncSession = Depends(get_db_sess
     )
     return {"message": "Metric deleted"}
 
+@router.post("/metrics/batch-delete", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
+async def batch_delete_metrics(
+    req: BatchDeleteMetricsRequest,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user)
+):
+    """批量删除指标"""
+    count = await MetadataService.batch_delete_metrics(
+        conn, req.metric_ids,
+        user_id=int(user.get("user_id") or 0),
+        user_name=user.get("user_name"),
+        reason="批量删除业务指标"
+    )
+    return {"message": f"成功删除 {count} 个指标", "deleted_count": count}
+
 @router.get("/datasets/{dataset_id}/metrics", response_model=List[MetricResponse])
 async def list_metrics(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):
     """获取数据集下的所有指标"""
@@ -445,6 +461,21 @@ async def delete_relationship(rel_id: int, conn: AsyncSession = Depends(get_db_s
         reason="删除关系"
     )
     return {"message": "Relationship deleted"}
+
+@router.post("/relationships/batch-delete", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
+async def batch_delete_relationships(
+    req: BatchDeleteRelationshipsRequest,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user)
+):
+    """批量删除实体关系"""
+    count = await MetadataService.batch_delete_relationships(
+        conn, req.relationship_ids,
+        user_id=int(user.get("user_id") or 0),
+        user_name=user.get("user_name"),
+        reason="批量删除实体关系"
+    )
+    return {"message": f"成功删除 {count} 条关联关系", "deleted_count": count}
 
 @router.get("/datasets/{dataset_id}/relationships", response_model=List[RelationshipResponse])
 async def list_relationships(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):
@@ -508,6 +539,22 @@ async def delete_table(dataset_id: int, table_name: str, conn: AsyncSession = De
         reason="删除表"
     )
     return {"message": "Table deleted successfully"}
+
+@router.post("/datasets/{dataset_id}/tables/batch-delete", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
+async def batch_delete_tables(
+    dataset_id: int,
+    req: BatchDeleteTablesRequest,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user)
+):
+    """批量删除表结构"""
+    count = await MetadataService.batch_delete_table_metadata(
+        conn, dataset_id, req.table_names,
+        user_id=int(user.get("user_id") or 0),
+        user_name=user.get("user_name"),
+        reason=f"批量删除表: {', '.join(req.table_names)}"
+    )
+    return {"message": f"成功删除 {count} 张表", "deleted_count": count}
 
 @router.post("/datasets/{dataset_id}/metrics/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def recommend_metrics(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):

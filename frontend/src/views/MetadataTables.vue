@@ -243,14 +243,68 @@ const handleDeleteTable = (tableName: string) => {
 const confirmDeleteTable = async () => {
   if (!deleteTableId.value) return
   try {
-    // We don't have a direct delete table API yet, but we can assume one exists or implement it.
-    // Based on the current API structure, we might need to add it to metadataApi.
     await metadataApi.deleteTable(datasetId, deleteTableId.value)
+    // 如果被删除的表在已选列表中，移除它
+    selectedTableNames.value = selectedTableNames.value.filter(n => n !== deleteTableId.value)
     fetchDatasetInfo()
     deleteTableId.value = null
   } catch (e) {
     console.error('Delete table failed', e)
     deleteTableId.value = null
+  }
+}
+
+// 批量删除数据表状态与逻辑
+const selectedTableNames = ref<string[]>([])
+const showBatchDeleteTableModal = ref(false)
+const batchDeletingTables = ref(false)
+
+const isAllFilteredTablesSelected = computed(() => {
+  if (filteredTables.value.length === 0) return false
+  return filteredTables.value.every(t => selectedTableNames.value.includes(t.physical_name))
+})
+
+const isSomeFilteredTablesSelected = computed(() => {
+  return filteredTables.value.some(t => selectedTableNames.value.includes(t.physical_name)) && !isAllFilteredTablesSelected.value
+})
+
+const toggleSelectAllFilteredTables = () => {
+  if (isAllFilteredTablesSelected.value) {
+    const filteredSet = new Set(filteredTables.value.map(t => t.physical_name))
+    selectedTableNames.value = selectedTableNames.value.filter(name => !filteredSet.has(name))
+  } else {
+    const currentSet = new Set(selectedTableNames.value)
+    filteredTables.value.forEach(t => currentSet.add(t.physical_name))
+    selectedTableNames.value = Array.from(currentSet)
+  }
+}
+
+const toggleSelectTable = (tableName: string) => {
+  const idx = selectedTableNames.value.indexOf(tableName)
+  if (idx > -1) {
+    selectedTableNames.value.splice(idx, 1)
+  } else {
+    selectedTableNames.value.push(tableName)
+  }
+}
+
+const handleBatchDeleteTables = () => {
+  if (selectedTableNames.value.length === 0) return
+  showBatchDeleteTableModal.value = true
+}
+
+const confirmBatchDeleteTables = async () => {
+  if (selectedTableNames.value.length === 0) return
+  batchDeletingTables.value = true
+  try {
+    await metadataApi.batchDeleteTables(datasetId, selectedTableNames.value)
+    selectedTableNames.value = []
+    showBatchDeleteTableModal.value = false
+    await fetchDatasetInfo()
+  } catch (e) {
+    console.error('Batch delete tables failed', e)
+  } finally {
+    batchDeletingTables.value = false
   }
 }
 
@@ -304,6 +358,34 @@ const copyYaml = async (event: Event) => {
       btn.classList.add(...originalClasses)
       btn.classList.remove('bg-green-50', 'text-green-600', 'border-green-200')
   }, 2000)
+}
+
+const exportMarkdown = () => {
+  const name = dataset.value?.name || 'dataset'
+  const displayName = dataset.value?.display_name || name
+  const dateStr = new Date().toISOString().slice(0, 10)
+  const filename = `${name}_metadata_${dateStr}.md`
+  
+  const mdContent = `# ${displayName} 元数据定义\n\n` +
+    `- **数据集英文标识**: \`${name}\`\n` +
+    `- **数据集展示名称**: ${displayName}\n` +
+    `- **关联数据源**: \`${dataset.value?.data_source || 'default'}\`\n` +
+    `- **描述**: ${dataset.value?.description || '暂无描述'}\n` +
+    `- **导出时间**: ${new Date().toLocaleString()}\n\n` +
+    `## AI 元数据定义 (YAML)\n\n` +
+    `\`\`\`yaml\n` +
+    `${yamlContent.value || ''}\n` +
+    `\`\`\`\n`
+
+  const blob = new Blob([mdContent], { type: 'text/markdown;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 const getDatasetEmoji = (name: string) => {
@@ -500,7 +582,7 @@ defineExpose({ fetchMetrics })
           class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap"
         >
           <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-          查看 AI YAML
+          查看&导出 AI YAML
         </button>
         <button 
           v-if="hasPermission('element:metadata:import')"
@@ -574,19 +656,44 @@ defineExpose({ fetchMetrics })
 
     <!-- Content: Tables -->
     <div v-show="activeTab === 'tables'" class="space-y-4">
-      <div class="flex justify-between items-center gap-4 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
-         <div class="relative flex-1 max-w-md">
-            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            </span>
-            <input 
-              v-model="searchQuery" 
-              type="search"
-              class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary sm:text-sm transition-all focus:bg-white" 
-              placeholder="搜索物理表名、业务名或描述..."
-            >
+      <div class="flex flex-wrap justify-between items-center gap-4 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+         <div class="flex items-center gap-3 flex-1 max-w-md">
+            <label v-if="filteredTables.length > 0 && hasPermission('element:metadata:delete_table')" class="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-gray-600 hover:text-gray-900 shrink-0 ml-1">
+               <input 
+                 type="checkbox" 
+                 :checked="isAllFilteredTablesSelected"
+                 :indeterminate="isSomeFilteredTablesSelected"
+                 @change="toggleSelectAllFilteredTables"
+                 class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+               />
+               <span>全选</span>
+            </label>
+            <div class="relative flex-1">
+               <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+               </span>
+               <input 
+                 v-model="searchQuery" 
+                 type="search"
+                 class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary sm:text-sm transition-all focus:bg-white" 
+                 placeholder="搜索物理表名、业务名或描述..."
+               >
+            </div>
          </div>
-         <div class="flex items-center gap-4">
+         <div class="flex items-center gap-3">
+            <div v-if="selectedTableNames.length > 0" class="flex items-center gap-2">
+               <span class="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-bold border border-blue-100">
+                  已选择 {{ selectedTableNames.length }} 张表
+               </span>
+               <button 
+                  v-if="hasPermission('element:metadata:delete_table')"
+                  @click="handleBatchDeleteTables"
+                  class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm"
+               >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  批量删除
+               </button>
+            </div>
             <div class="text-xs text-gray-400 font-medium hidden sm:block">
                共找到 {{ filteredTables.length }} 张表
             </div>
@@ -613,15 +720,25 @@ defineExpose({ fetchMetrics })
             <button v-else @click="showImportModal = true" class="mt-4 text-primary text-sm font-medium hover:underline">立即导入</button>
          </div>
          
-         <div v-for="table in filteredTables" :key="table.physical_name" class="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group">
+         <div v-for="table in filteredTables" :key="table.physical_name" :class="['bg-white rounded-xl border overflow-hidden hover:shadow-md transition-all group', selectedTableNames.includes(table.physical_name) ? 'border-blue-300 ring-2 ring-blue-100/70 shadow-sm' : 'border-gray-100']">
             <div class="p-5">
               <div class="flex justify-between items-start mb-3 gap-3">
-                <div class="flex-1 min-w-0 cursor-pointer" @click="toggleTableExpand(table.physical_name)">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <h3 class="font-bold text-gray-900 group-hover:text-primary transition-colors font-mono">{{ table.physical_name }}</h3>
-                    <span class="text-[10px] font-bold text-gray-500 px-1.5 py-0.5 bg-gray-50 rounded border border-gray-100">{{ table.term || '未命名' }}</span>
+                <div class="flex items-start gap-3 flex-1 min-w-0">
+                  <div v-if="hasPermission('element:metadata:delete_table')" class="pt-0.5 shrink-0" @click.stop>
+                     <input 
+                       type="checkbox" 
+                       :checked="selectedTableNames.includes(table.physical_name)"
+                       @change="toggleSelectTable(table.physical_name)"
+                       class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                     />
                   </div>
-                  <p class="text-xs text-gray-500 mt-2 leading-relaxed line-clamp-2">{{ table.description || '暂无描述' }}</p>
+                  <div class="flex-1 min-w-0 cursor-pointer" @click="toggleTableExpand(table.physical_name)">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <h3 class="font-bold text-gray-900 group-hover:text-primary transition-colors font-mono">{{ table.physical_name }}</h3>
+                      <span class="text-[10px] font-bold text-gray-500 px-1.5 py-0.5 bg-gray-50 rounded border border-gray-100">{{ table.term || '未命名' }}</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 leading-relaxed line-clamp-2">{{ table.description || '暂无描述' }}</p>
+                  </div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                   <button
@@ -1207,6 +1324,10 @@ defineExpose({ fetchMetrics })
           <pre class="p-6 text-sm font-mono text-cyan-400 leading-relaxed">{{ yamlContent }}</pre>
         </div>
         <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+           <button @click="exportMarkdown" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 flex items-center gap-2 transition-all shadow-sm shadow-purple-500/20">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              导出为 Markdown
+           </button>
            <button @click="copyYaml" class="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:bg-gray-100 flex items-center gap-2 transition-all">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               复制内容
@@ -1214,6 +1335,32 @@ defineExpose({ fetchMetrics })
            <button @click="showYamlModal = false" class="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:bg-gray-100">关闭预览</button>
         </div>
       </div>
+    </div>
+    <!-- Batch Delete Tables Modal -->
+    <div v-if="showBatchDeleteTableModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showBatchDeleteTableModal = false">
+       <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+          <div class="p-6 text-center">
+             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+             </div>
+             <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除数据表?</h3>
+             <p class="text-sm text-gray-500 mb-4">
+               您确定要删除已选中的 <b class="text-red-600 font-mono">{{ selectedTableNames.length }}</b> 张数据表吗？<br>此操作不可恢复，关联的字段与关系定义也将同步删除。
+             </p>
+             <div class="max-h-36 overflow-y-auto bg-gray-50 rounded-lg p-2.5 mb-6 text-left border border-gray-100">
+                <div v-for="name in selectedTableNames" :key="name" class="text-xs font-mono text-gray-600 py-0.5 truncate">
+                   • {{ name }}
+                </div>
+             </div>
+             <div class="flex gap-3 justify-center">
+                <button @click="showBatchDeleteTableModal = false" :disabled="batchDeletingTables" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                <button @click="confirmBatchDeleteTables" :disabled="batchDeletingTables" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2">
+                   <svg v-if="batchDeletingTables" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                   <span>{{ batchDeletingTables ? '正在删除...' : '确认批量删除' }}</span>
+                </button>
+             </div>
+          </div>
+       </div>
     </div>
     <!-- Delete Modal -->
     <div v-if="deleteTableId" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="deleteTableId = null">

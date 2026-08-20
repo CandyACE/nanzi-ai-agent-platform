@@ -500,19 +500,20 @@ async def execute_sql_query_core(
             table_metadata: Dict[str, Any] = build_data_perm_table_metadata(binding, str(dataset_name or "")) or {}
             if ds.enable_data_perm and not table_metadata:
                 try:
-                    tables_stmt = select(MetaTable).where(MetaTable.dataset_id == ds.id)
-                    tables_result = await session.execute(tables_stmt)
-                    tables = tables_result.scalars().all()
-
-                    for table in tables:
-                        cols_stmt = select(MetaColumn.physical_name).where(MetaColumn.table_id == table.id)
-                        cols_result = await session.execute(cols_stmt)
-                        columns = {col.physical_name for col in cols_result.scalars().all()}
-                        table_metadata[table.physical_name] = columns
+                    # 一次性 join 查询拿到该数据集全部 表->列 映射，避免逐表查询的 N+1 开销。
+                    cols_stmt = (
+                        select(MetaTable.physical_name, MetaColumn.physical_name)
+                        .join(MetaColumn, MetaColumn.table_id == MetaTable.id)
+                        .where(MetaTable.dataset_id == ds.id)
+                    )
+                    cols_result = await session.execute(cols_stmt)
+                    table_metadata: Dict[str, Any] = {}
+                    for table_name, column_name in cols_result.all():
+                        table_metadata.setdefault(table_name, set()).add(column_name)
 
                     logger.info(
                         "[DataPerm] Loaded metadata for %s tables, %s columns",
-                        len(tables),
+                        len(table_metadata),
                         sum(len(cols) for cols in table_metadata.values()),
                     )
                 except Exception as e:

@@ -63,10 +63,63 @@ const handleDelete = (id: number) => {
   deleteId.value = id
 }
 
+const selectedMetricIds = ref<number[]>([])
+const showBatchDeleteModal = ref(false)
+const batchDeleting = ref(false)
+
+const isAllMetricsSelected = computed(() => {
+  if (metrics.value.length === 0) return false
+  return metrics.value.every(m => m.id && selectedMetricIds.value.includes(m.id))
+})
+
+const isSomeMetricsSelected = computed(() => {
+  return metrics.value.some(m => m.id && selectedMetricIds.value.includes(m.id)) && !isAllMetricsSelected.value
+})
+
+const toggleSelectAllMetrics = () => {
+  if (isAllMetricsSelected.value) {
+    selectedMetricIds.value = []
+  } else {
+    selectedMetricIds.value = metrics.value.map(m => m.id).filter(Boolean) as number[]
+  }
+}
+
+const toggleSelectMetric = (id: number) => {
+  const idx = selectedMetricIds.value.indexOf(id)
+  if (idx > -1) {
+    selectedMetricIds.value.splice(idx, 1)
+  } else {
+    selectedMetricIds.value.push(id)
+  }
+}
+
+const handleBatchDelete = () => {
+  if (selectedMetricIds.value.length === 0) return
+  showBatchDeleteModal.value = true
+}
+
+const confirmBatchDelete = async () => {
+  if (selectedMetricIds.value.length === 0) return
+  batchDeleting.value = true
+  try {
+    await metadataApi.batchDeleteMetrics(selectedMetricIds.value)
+    selectedMetricIds.value = []
+    showBatchDeleteModal.value = false
+    await fetchMetrics()
+  } catch (e: any) {
+    console.error('Batch delete metrics failed', e)
+    error.value = '批量删除失败'
+    setTimeout(() => error.value = '', 3000)
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 const confirmDelete = async () => {
   if (!deleteId.value) return
   try {
     await metadataApi.deleteMetric(deleteId.value)
+    selectedMetricIds.value = selectedMetricIds.value.filter(id => id !== deleteId.value)
     deleteId.value = null
     fetchMetrics()
   } catch (e) {
@@ -109,19 +162,45 @@ defineExpose({ fetchMetrics })
 <template>
   <div class="space-y-4">
     <!-- Toolbar -->
-    <div class="flex justify-between items-center">
-      <h3 class="text-lg font-bold text-gray-800">业务指标 (Metrics)</h3>
+    <div class="flex flex-wrap justify-between items-center gap-3 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+      <div class="flex items-center gap-3">
+        <label v-if="metrics.length > 0 && hasPermission('element:metadata:edit')" class="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-gray-600 hover:text-gray-900 shrink-0 ml-1">
+          <input 
+            type="checkbox" 
+            :checked="isAllMetricsSelected"
+            :indeterminate="isSomeMetricsSelected"
+            @change="toggleSelectAllMetrics"
+            class="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 cursor-pointer"
+          />
+          <span>全选</span>
+        </label>
+        <h3 class="text-base font-bold text-gray-800">业务指标 (Metrics)</h3>
+        <span class="text-xs text-gray-400 font-medium hidden sm:inline">共 {{ metrics.length }} 个指标</span>
+      </div>
+
       <div class="flex items-center gap-3" v-if="hasPermission('element:metadata:edit')">
+        <div v-if="selectedMetricIds.length > 0" class="flex items-center gap-2">
+          <span class="text-xs bg-amber-50 text-amber-700 px-2.5 py-1 rounded-full font-bold border border-amber-200">
+            已选择 {{ selectedMetricIds.length }} 项
+          </span>
+          <button 
+            @click="handleBatchDelete"
+            class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            批量删除
+          </button>
+        </div>
         <button 
           @click="emit('show-smart-discovery')"
-          class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-bold shadow-sm"
+          class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 text-xs font-bold shadow-sm h-9"
         >
           <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           ✨ 智能发现指标
         </button>
         <button 
           @click="openCreate"
-          class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-bold"
+          class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-xs font-bold h-9"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           新建指标
@@ -146,17 +225,27 @@ defineExpose({ fetchMetrics })
     </div>
 
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-       <div v-for="m in metrics" :key="m.id" class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow group relative">
-          <div class="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit')">
-             <button @click="openEdit(m)" class="text-gray-400 hover:text-blue-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>
-             <button @click="handleDelete(m.id!)" class="text-gray-400 hover:text-red-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+       <div v-for="m in metrics" :key="m.id" :class="['bg-white p-5 rounded-xl border transition-all group relative', m.id && selectedMetricIds.includes(m.id) ? 'border-amber-400 ring-2 ring-amber-100/80 shadow-md' : 'border-gray-200 shadow-sm hover:shadow-md']">
+          <div class="absolute top-4 right-4 flex items-center gap-2">
+             <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit')">
+                <button @click="openEdit(m)" class="text-gray-400 hover:text-blue-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>
+                <button @click="handleDelete(m.id!)" class="text-gray-400 hover:text-red-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+             </div>
+             <div v-if="hasPermission('element:metadata:edit') && m.id" class="ml-1" @click.stop>
+                <input 
+                  type="checkbox" 
+                  :checked="selectedMetricIds.includes(m.id)"
+                  @change="toggleSelectMetric(m.id)"
+                  class="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 cursor-pointer"
+                />
+             </div>
           </div>
           
-          <div class="flex items-center gap-2 mb-2">
-             <div class="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-xs">M</div>
-             <div>
-                <h4 class="font-bold text-gray-900">{{ m.display_name }}</h4>
-                <p class="text-xs font-mono text-gray-500">{{ m.name }}</p>
+          <div class="flex items-center gap-2 mb-2 pr-12">
+             <div class="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-xs shrink-0">M</div>
+             <div class="min-w-0">
+                <h4 class="font-bold text-gray-900 truncate">{{ m.display_name }}</h4>
+                <p class="text-xs font-mono text-gray-500 truncate">{{ m.name }}</p>
              </div>
           </div>
           
@@ -231,6 +320,27 @@ defineExpose({ fetchMetrics })
              <div class="flex gap-3 justify-center">
                 <button @click="deleteId = null" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
                 <button @click="confirmDelete" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
+             </div>
+          </div>
+       </div>
+    </div>
+    <!-- Batch Delete Modal -->
+    <div v-if="showBatchDeleteModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showBatchDeleteModal = false">
+       <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+          <div class="p-6 text-center">
+             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+             </div>
+             <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除指标?</h3>
+             <p class="text-sm text-gray-500 mb-6">
+               您确定要删除已选中的 <b class="text-red-600">{{ selectedMetricIds.length }}</b> 个指标吗？<br>此操作无法撤销。
+             </p>
+             <div class="flex gap-3 justify-center">
+                <button @click="showBatchDeleteModal = false" :disabled="batchDeleting" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                <button @click="confirmBatchDelete" :disabled="batchDeleting" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2">
+                   <svg v-if="batchDeleting" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                   <span>{{ batchDeleting ? '正在删除...' : '确认批量删除' }}</span>
+                </button>
              </div>
           </div>
        </div>

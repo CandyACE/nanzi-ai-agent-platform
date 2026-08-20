@@ -621,6 +621,64 @@ class MetadataService:
 
         await AgentConfigProvider.refresh_dataset_menu()
 
+    @staticmethod
+    async def batch_delete_table_metadata(db: AsyncSession, dataset_id: int, table_names: List[str], user_id: Optional[int] = None, user_name: Optional[str] = None, reason: Optional[str] = None) -> int:
+        """
+        批量删除指定数据集下的多个表结构。
+        """
+        if not table_names:
+            return 0
+
+        # 1. 批量查询待删除数据记录用于记录审计日志
+        old_tables_result = await db.execute(
+            select(MetaTable)
+            .options(selectinload(MetaTable.columns))
+            .where(MetaTable.dataset_id == dataset_id, MetaTable.physical_name.in_(table_names))
+        )
+        old_tables = old_tables_result.scalars().all()
+
+        for old_table in old_tables:
+            table_id_str = f"{dataset_id}:{old_table.physical_name}"
+            old_data = {
+                "physical_name": old_table.physical_name,
+                "term": old_table.term,
+                "description": old_table.description,
+                "synonyms": old_table.synonyms,
+                "columns": [
+                    {"physical_name": col.physical_name, "term": col.term, "type": col.type}
+                    for col in old_table.columns
+                ]
+            }
+            await ChangelogService.log_change(
+                db=db,
+                resource_type="table",
+                resource_id=table_id_str,
+                operation="delete",
+                user_id=user_id,
+                user_name=user_name,
+                old_data=old_data,
+                reason=reason or f"批量删除表 {old_table.physical_name}"
+            )
+
+        # 2. 执行批量删除
+        query = delete(MetaTable).where(
+            MetaTable.dataset_id == dataset_id,
+            MetaTable.physical_name.in_(table_names)
+        )
+        await db.execute(query)
+        await MetadataService._mark_dataset_as_modified(db, dataset_id)
+        await db.commit()
+
+        # 3. 同步本地 Redis 向量与刷新缓存
+        try:
+            from app.services.ai.metadata_index_service import MetadataIndexService
+            await MetadataIndexService.sync_local_redis_vector(dataset_id)
+        except Exception as ex:
+            logger.warning("[Local Redis Sync] Failed to trigger sync in batch_delete_table_metadata: %s", ex)
+
+        await AgentConfigProvider.refresh_dataset_menu()
+        return len(old_tables)
+
 
     # --- Metrics CRUD ---
 
@@ -805,6 +863,59 @@ class MetadataService:
             except Exception as ex:
                 logger.warning("[Local Redis Sync] Failed to trigger sync in delete_metric: %s", ex)
 
+    @staticmethod
+    async def batch_delete_metrics(db: AsyncSession, metric_ids: List[int], user_id: Optional[int] = None, user_name: Optional[str] = None, reason: Optional[str] = None) -> int:
+        """
+        批量删除业务指标。
+        """
+        if not metric_ids:
+            return 0
+
+        # 1. 批量查询待删除指标
+        old_metrics_result = await db.execute(select(MetaMetric).where(MetaMetric.id.in_(metric_ids)))
+        old_metrics = old_metrics_result.scalars().all()
+
+        dataset_ids = set()
+        for old_metric in old_metrics:
+            if old_metric.dataset_id:
+                dataset_ids.add(old_metric.dataset_id)
+            old_data = {
+                "name": old_metric.name,
+                "display_name": old_metric.display_name,
+                "description": old_metric.description,
+                "calculation_logic": old_metric.calculation_logic,
+                "unit": old_metric.unit
+            }
+            await ChangelogService.log_change(
+                db=db,
+                resource_type="metric",
+                resource_id=str(old_metric.name),
+                operation="delete",
+                user_id=user_id,
+                user_name=user_name,
+                old_data=old_data,
+                reason=reason or f"批量删除指标 {old_metric.name}"
+            )
+
+        # 2. 执行批量删除
+        query = delete(MetaMetric).where(MetaMetric.id.in_(metric_ids))
+        await db.execute(query)
+
+        for d_id in dataset_ids:
+            await MetadataService._mark_dataset_as_modified(db, d_id)
+
+        await db.commit()
+
+        # 同步本地 Redis 向量
+        for d_id in dataset_ids:
+            try:
+                from app.services.ai.metadata_index_service import MetadataIndexService
+                await MetadataIndexService.sync_local_redis_vector(d_id)
+            except Exception as ex:
+                logger.warning("[Local Redis Sync] Failed to trigger sync in batch_delete_metrics: %s", ex)
+
+        return len(old_metrics)
+
     # --- Relationships CRUD ---
 
     @staticmethod
@@ -982,6 +1093,67 @@ class MetadataService:
                 await MetadataIndexService.sync_local_redis_vector(dataset_id)
             except Exception as ex:
                 logger.warning("[Local Redis Sync] Failed to trigger sync in delete_relationship: %s", ex)
+
+    @staticmethod
+    async def batch_delete_relationships(db: AsyncSession, rel_ids: List[int], user_id: Optional[int] = None, user_name: Optional[str] = None, reason: Optional[str] = None) -> int:
+        """
+        批量删除实体关系。
+        """
+        if not rel_ids:
+            return 0
+
+        # 1. 批量查询关联关系与其归属的 dataset_id
+        res = await db.execute(
+            select(MetaRelationship.id, MetaTable.dataset_id)
+            .join(MetaTable, MetaTable.id == MetaRelationship.source_table_id)
+            .where(MetaRelationship.id.in_(rel_ids))
+        )
+        rel_dataset_map = {row[0]: row[1] for row in res.all()}
+
+        old_rels_result = await db.execute(select(MetaRelationship).where(MetaRelationship.id.in_(rel_ids)))
+        old_rels = old_rels_result.scalars().all()
+
+        dataset_ids = set()
+        for old_rel in old_rels:
+            d_id = rel_dataset_map.get(old_rel.id)
+            if d_id:
+                dataset_ids.add(d_id)
+            old_data = {
+                "source_table_id": old_rel.source_table_id,
+                "target_table_id": old_rel.target_table_id,
+                "join_condition": old_rel.join_condition,
+                "join_type": old_rel.join_type,
+                "description": old_rel.description
+            }
+            await ChangelogService.log_change(
+                db=db,
+                resource_type="relationship",
+                resource_id=str(old_rel.id),
+                operation="delete",
+                user_id=user_id,
+                user_name=user_name,
+                old_data=old_data,
+                reason=reason or f"批量删除关系 {old_rel.id}"
+            )
+
+        # 2. 执行批量删除
+        query = delete(MetaRelationship).where(MetaRelationship.id.in_(rel_ids))
+        await db.execute(query)
+
+        for d_id in dataset_ids:
+            await MetadataService._mark_dataset_as_modified(db, d_id)
+
+        await db.commit()
+
+        # 同步本地 Redis 向量
+        for d_id in dataset_ids:
+            try:
+                from app.services.ai.metadata_index_service import MetadataIndexService
+                await MetadataIndexService.sync_local_redis_vector(d_id)
+            except Exception as ex:
+                logger.warning("[Local Redis Sync] Failed to trigger sync in batch_delete_relationships: %s", ex)
+
+        return len(old_rels)
 
     # --- 跨数据集关联 ---
 

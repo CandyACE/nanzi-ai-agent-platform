@@ -5,10 +5,10 @@ import logging
 import re
 from typing import Any, Optional
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.metadata import MetaDataset, MetaTable
+from app.models.metadata import MetaDataset, MetaRelationship, MetaTable
 from app.services.auth_service import AuthService
 from app.services.config_service import ConfigService
 from app.services.metadata_service import MetadataService
@@ -458,6 +458,49 @@ def _extract_schema_table_refs(schema_text: str) -> list[tuple[str | None, str]]
     return refs
 
 
+_HAS_RELATIONSHIP_CACHE_KEY = "sys:meta:has_cross_dataset_relationship:v1"
+_HAS_RELATIONSHIP_CACHE_TTL = 60  # 秒；短 TTL 自恢复，无需在 CRUD 处显式失效
+
+
+async def _has_any_relationship(session: AsyncSession) -> bool:
+    """全局是否存在 MetaRelationship 的短路径判断（Redis TTL 缓存）。
+
+    跨数据集关联补全属于较稀有的配置；绝大多数数据集没有任何关联。
+    热路径上先查一次缓存/计数，若系统整体没有 relationship 则直接短路，
+    避免后续多次 DB 查询与鉴权开销。
+    """
+    from app.core.redis import get_redis
+
+    try:
+        redis = await get_redis()
+    except Exception:
+        redis = None
+
+    if redis:
+        try:
+            cached = await redis.get(_HAS_RELATIONSHIP_CACHE_KEY)
+            if cached is not None:
+                return cached == "1"
+        except Exception as ex:
+            logger.warning("[cross_dataset_enrich] Failed to read relationship cache: %s", ex)
+
+    # 未命中/Redis 不可用时回退 DB 快速计数
+    try:
+        cnt = (await session.execute(select(func.count(MetaRelationship.id)))).scalar() or 0
+        has_any = cnt > 0
+    except Exception as ex:
+        # 即使计数失败也不阻断开原路径——按“存在”处理，交给后续逻辑去兜底
+        logger.warning("[cross_dataset_enrich] Failed to count relationships: %s", ex)
+        return True
+
+    if redis:
+        try:
+            await redis.set(_HAS_RELATIONSHIP_CACHE_KEY, "1" if has_any else "0", ex=_HAS_RELATIONSHIP_CACHE_TTL)
+        except Exception as ex:
+            logger.warning("[cross_dataset_enrich] Failed to cache relationship flag: %s", ex)
+    return has_any
+
+
 async def _filter_tables_by_metadata_permission(
     session: AsyncSession,
     tables: list[MetaTable],
@@ -472,7 +515,24 @@ async def _filter_tables_by_metadata_permission(
 
     from app.services.permission_service import PermissionService
 
+    # 批量鉴权：一次取用户完整权限（已有 Redis 缓存），取出 metadata 数据集 ID 集合，
+    # 全部在内存内过滤，避免逐表重复命中缓存/DB（原实现每表一次 check_permission）。
     permission_service = PermissionService(session)
+    try:
+        perms = await permission_service.get_user_permissions(int(user_id))
+    except Exception as ex:
+        logger.warning("[cross_dataset_enrich] Failed to load user permissions for %s: %s", user_id, ex)
+        return []
+
+    # Admin bypass：权限在 roles 中携带，与 check_permission 保持一致语义
+    roles = getattr(perms, "roles", []) or []
+    if "admin" in roles:
+        return tables
+
+    permission_set = getattr(perms, "permissions", None)
+    if permission_set is None:
+        return []
+    allowed_dataset_ids = set(getattr(permission_set, "metadata", None) or [])
     allowed: list[MetaTable] = []
     for table in tables:
         dataset_id = getattr(table, "dataset_id", None)
@@ -480,7 +540,7 @@ async def _filter_tables_by_metadata_permission(
             dataset_id = getattr(table.dataset, "id", None)
         if dataset_id is None:
             continue
-        if await permission_service.check_permission(int(user_id), "metadata", str(dataset_id)):
+        if str(dataset_id) in allowed_dataset_ids:
             allowed.append(table)
     return allowed
 
@@ -502,6 +562,10 @@ async def _enrich_with_cross_dataset_schema(
     # 1. 从 schema YAML 中提取 dataset + table_name 列表，避免不同数据集同名物理表误命中。
     table_refs = _extract_schema_table_refs(schema_text)
     if not table_refs:
+        return schema_text
+
+    # 1.1 全局短路径：系统没有任何 MetaRelationship 时直接返回，避免后续多余 DB 查询与鉴权。
+    if not await _has_any_relationship(session):
         return schema_text
 
     # 2. 查询这些 table_name 对应的 table_id（物理表名匹配）
