@@ -640,7 +640,7 @@
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
-                class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-900/20 p-3 text-xs"
+                class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-900/20 p-3 text-xs transition-all"
               >
                 <div class="flex items-start gap-2">
                   <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
@@ -649,53 +649,90 @@
                     </svg>
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="font-bold text-amber-900 dark:text-amber-100 truncate">
-                        {{ msg.pendingPermission.title || '工具调用确认' }}
-                      </div>
-                      <span
-                        class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
-                        :class="{
-                          'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': msg.pendingPermission.status === 'pending',
-                          'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': msg.pendingPermission.status === 'approved',
-                          'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': msg.pendingPermission.status === 'rejected',
-                          'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': msg.pendingPermission.status === 'error' || msg.pendingPermission.status === 'expired'
-                        }"
-                      >
-                        {{ formatPermissionStatus(msg.pendingPermission.status) }}
-                      </span>
-                    </div>
-                    <div class="mt-1 text-amber-800/80 dark:text-amber-200/80 break-words">
-                      {{ msg.pendingPermission.details }}
-                    </div>
+                    <!-- Card Header with Toggle -->
                     <div
-                      v-if="msg.pendingPermission.tool_call?.name"
-                      class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-amber-100 dark:border-amber-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto"
+                      class="flex items-center justify-between gap-2 cursor-pointer select-none group"
+                      :title="(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) ? '点击收起' : '点击展开'"
+                      @click="msg.pendingPermission.expanded = !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending'))"
                     >
-                      <span>{{ msg.pendingPermission.tool_call.name }}</span>
-                      <span v-if="msg.pendingPermission.tool_call.args"> {{ JSON.stringify(msg.pendingPermission.tool_call.args) }}</span>
+                      <div class="flex min-w-0 flex-1 items-center gap-2">
+                        <div class="font-bold text-amber-900 dark:text-amber-100 shrink-0">
+                          {{ msg.pendingPermission.title || '工具调用确认' }}
+                        </div>
+                        <!-- Collapsed summary preview -->
+                        <span
+                          v-if="!(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) && (msg.pendingPermission.tool_call?.name || msg.pendingPermission.details)"
+                          class="min-w-0 flex-1 truncate text-[11px] text-amber-800/70 dark:text-amber-200/70 font-normal"
+                        >
+                          {{ msg.pendingPermission.tool_call?.name ? `${msg.pendingPermission.tool_call.name}${msg.pendingPermission.tool_call.args ? ': ' + JSON.stringify(msg.pendingPermission.tool_call.args) : ''}` : msg.pendingPermission.details }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <span
+                          class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+                          :class="{
+                            'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': msg.pendingPermission.status === 'pending',
+                            'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': msg.pendingPermission.status === 'approved',
+                            'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': msg.pendingPermission.status === 'rejected',
+                            'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': msg.pendingPermission.status === 'error' || msg.pendingPermission.status === 'expired'
+                          }"
+                        >
+                          {{ formatPermissionStatus(msg.pendingPermission.status) }}
+                        </span>
+                        <!-- Fold/Unfold Arrow -->
+                        <button
+                          type="button"
+                          class="flex h-5 w-5 items-center justify-center rounded text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200 transition-colors"
+                          :aria-label="(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) ? '收起确认' : '展开确认'"
+                          @click.stop="msg.pendingPermission.expanded = !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending'))"
+                        >
+                          <svg
+                            class="h-3.5 w-3.5 transition-transform duration-200"
+                            :class="{ 'rotate-180': !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 15-7-7-7 7" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="msg.pendingPermission.status === 'pending'" class="mt-3 flex items-center gap-2">
-                      <button
-                        @click="confirmPendingPermission(msg, true)"
-                        :disabled="msg.pendingPermission.isSubmitting"
-                        class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+
+                    <!-- Expanded Content -->
+                    <div v-show="msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')" class="mt-2">
+                      <div class="text-amber-800/80 dark:text-amber-200/80 break-words">
+                        {{ msg.pendingPermission.details }}
+                      </div>
+                      <div
+                        v-if="msg.pendingPermission.tool_call?.name"
+                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-amber-100 dark:border-amber-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
                       >
-                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
-                        </svg>
-                        允许
-                      </button>
-                      <button
-                        @click="confirmPendingPermission(msg, false)"
-                        :disabled="msg.pendingPermission.isSubmitting"
-                        class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
-                      >
-                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18 18 6M6 6l12 12" />
-                        </svg>
-                        拒绝
-                      </button>
+                        <div class="font-semibold text-amber-900 dark:text-amber-200 mb-0.5">{{ msg.pendingPermission.tool_call.name }}</div>
+                        <pre v-if="msg.pendingPermission.tool_call.args" class="whitespace-pre-wrap break-all font-mono">{{ JSON.stringify(msg.pendingPermission.tool_call.args, null, 2) }}</pre>
+                      </div>
+                      <div v-if="msg.pendingPermission.status === 'pending'" class="mt-3 flex items-center gap-2">
+                        <button
+                          @click="confirmPendingPermission(msg, true)"
+                          :disabled="msg.pendingPermission.isSubmitting"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
+                          </svg>
+                          允许
+                        </button>
+                        <button
+                          @click="confirmPendingPermission(msg, false)"
+                          :disabled="msg.pendingPermission.isSubmitting"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18 18 6M6 6l12 12" />
+                          </svg>
+                          拒绝
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -703,7 +740,7 @@
               <!-- External Tool Execution -->
               <div
                 v-if="msg.pendingExternalExecution"
-                class="mt-3 rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50/80 dark:bg-sky-900/20 p-3 text-xs"
+                class="mt-3 rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50/80 dark:bg-sky-900/20 p-3 text-xs transition-all"
               >
                 <div class="flex items-start gap-2">
                   <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300">
@@ -712,38 +749,75 @@
                     </svg>
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="font-bold text-sky-900 dark:text-sky-100 truncate">
-                        {{ msg.pendingExternalExecution.title || '外部工具执行' }}
-                      </div>
-                      <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                        {{ formatExternalExecutionStatus(msg.pendingExternalExecution.status) }}
-                      </span>
-                    </div>
-                    <div class="mt-1 text-sky-800/80 dark:text-sky-200/80 break-words">
-                      {{ msg.pendingExternalExecution.details }}
-                    </div>
+                    <!-- Card Header with Toggle -->
                     <div
-                      v-if="msg.pendingExternalExecution.tool_call?.name"
-                      class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-sky-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto"
+                      class="flex items-center justify-between gap-2 cursor-pointer select-none group"
+                      :title="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '点击收起' : '点击展开'"
+                      @click="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
                     >
-                      <span>{{ msg.pendingExternalExecution.tool_call.name }}</span>
-                      <span v-if="msg.pendingExternalExecution.tool_call.args"> {{ JSON.stringify(msg.pendingExternalExecution.tool_call.args) }}</span>
+                      <div class="flex min-w-0 flex-1 items-center gap-2">
+                        <div class="font-bold text-sky-900 dark:text-sky-100 shrink-0">
+                          {{ msg.pendingExternalExecution.title || '外部工具执行' }}
+                        </div>
+                        <!-- Collapsed summary preview -->
+                        <span
+                          v-if="!(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) && (msg.pendingExternalExecution.tool_call?.name || msg.pendingExternalExecution.details)"
+                          class="min-w-0 flex-1 truncate text-[11px] text-sky-800/70 dark:text-sky-200/70 font-normal"
+                        >
+                          {{ msg.pendingExternalExecution.tool_call?.name ? `${msg.pendingExternalExecution.tool_call.name}${msg.pendingExternalExecution.tool_call.args ? ': ' + JSON.stringify(msg.pendingExternalExecution.tool_call.args) : ''}` : msg.pendingExternalExecution.details }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                          {{ formatExternalExecutionStatus(msg.pendingExternalExecution.status) }}
+                        </span>
+                        <!-- Fold/Unfold Arrow -->
+                        <button
+                          type="button"
+                          class="flex h-5 w-5 items-center justify-center rounded text-sky-600 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200 transition-colors"
+                          :aria-label="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '收起执行' : '展开执行'"
+                          @click.stop="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
+                        >
+                          <svg
+                            class="h-3.5 w-3.5 transition-transform duration-200"
+                            :class="{ 'rotate-180': !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 15-7-7-7 7" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="msg.pendingExternalExecution.status === 'pending'" class="mt-3 space-y-2">
-                      <textarea
-                        v-model="msg.pendingExternalExecution.outputDraft"
-                        rows="4"
-                        placeholder="在此粘贴客户端执行该工具后的输出结果..."
-                        class="w-full rounded-md border border-sky-200 dark:border-sky-800 bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-                      />
-                      <button
-                        @click="submitPendingExternalExecution(msg)"
-                        :disabled="msg.pendingExternalExecution.isSubmitting"
-                        class="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+
+                    <!-- Expanded Content -->
+                    <div v-show="msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')" class="mt-2">
+                      <div class="text-sky-800/80 dark:text-sky-200/80 break-words">
+                        {{ msg.pendingExternalExecution.details }}
+                      </div>
+                      <div
+                        v-if="msg.pendingExternalExecution.tool_call?.name"
+                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-sky-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
                       >
-                        提交结果并继续
-                      </button>
+                        <div class="font-semibold text-sky-900 dark:text-sky-200 mb-0.5">{{ msg.pendingExternalExecution.tool_call.name }}</div>
+                        <pre v-if="msg.pendingExternalExecution.tool_call.args" class="whitespace-pre-wrap break-all font-mono">{{ JSON.stringify(msg.pendingExternalExecution.tool_call.args, null, 2) }}</pre>
+                      </div>
+                      <div v-if="msg.pendingExternalExecution.status === 'pending'" class="mt-3 space-y-2">
+                        <textarea
+                          v-model="msg.pendingExternalExecution.outputDraft"
+                          rows="4"
+                          placeholder="在此粘贴客户端执行该工具后的输出结果..."
+                          class="w-full rounded-md border border-sky-200 dark:border-sky-800 bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+                        />
+                        <button
+                          @click="submitPendingExternalExecution(msg)"
+                          :disabled="msg.pendingExternalExecution.isSubmitting"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          提交结果并继续
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

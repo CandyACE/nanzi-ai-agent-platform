@@ -45,6 +45,7 @@ export interface PendingToolPermission {
   };
   status: "pending" | "approved" | "rejected" | "expired" | "error";
   isSubmitting?: boolean;
+  expanded?: boolean;
 }
 
 export interface PendingExternalExecution {
@@ -61,6 +62,7 @@ export interface PendingExternalExecution {
   status: "pending" | "completed" | "error";
   isSubmitting?: boolean;
   outputDraft?: string;
+  expanded?: boolean;
 }
 
 export interface ToolResultDataBlock {
@@ -203,6 +205,7 @@ export function handlePermissionRequired<T extends AgentStreamMessage>(
     details: String(data.details || ""),
     tool_call: data.tool_call as PendingToolPermission["tool_call"],
     status: "pending",
+    expanded: true,
   };
   msg.isThinking = false;
   addLog(msg, {
@@ -231,6 +234,7 @@ export function handleExternalExecutionRequired<T extends AgentStreamMessage>(
     tool_call: data.tool_call as PendingExternalExecution["tool_call"],
     status: "pending",
     outputDraft: "",
+    expanded: true,
   };
   msg.isThinking = false;
   addLog(msg, {
@@ -732,6 +736,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     case "external_execution_result":
       if (msg.pendingExternalExecution) {
         msg.pendingExternalExecution.status = data.status === "error" ? "error" : "completed";
+        msg.pendingExternalExecution.expanded = false;
       }
       addLog(msg, {
         id: `external_result_${data.external_execution_request_id || Date.now()}`,
@@ -744,6 +749,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     case "permission_result":
       if (msg.pendingPermission) {
         msg.pendingPermission.status = data.status === "rejected" ? "rejected" : "approved";
+        msg.pendingPermission.expanded = false;
       }
       addLog(msg, {
         id: `permission_${data.permission_request_id}`,

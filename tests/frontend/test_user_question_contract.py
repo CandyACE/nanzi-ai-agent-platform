@@ -86,3 +86,27 @@ def test_user_question_frontend_wiring_is_independent_from_business_confirmation
     assert "取消提问" in card
     assert "cancelled" in card
     assert "BusinessConfirmationCard" not in card
+
+
+def test_cards_collapsible_and_toggle_contract():
+    card = (ROOT / "frontend/src/components/UserQuestionCard.vue").read_text(encoding="utf-8")
+    biz_card = (ROOT / "frontend/src/components/BusinessConfirmationCard.vue").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    # UserQuestionCard 折叠支持
+    assert "toggleExpand" in card
+    assert "rotate-180" in card
+    assert "expanded" in card
+
+    # BusinessConfirmationCard 折叠支持
+    assert "toggleExpand" in biz_card
+    assert "rotate-180" in biz_card
+    assert "expanded" in biz_card
+
+    # EmbedChat 与 AgentDebug 中的工具确认框与外部执行框折叠支持
+    assert "msg.pendingPermission.expanded" in embed
+    assert "msg.pendingExternalExecution.expanded" in embed
+    assert "msg.pendingPermission.expanded" in debug
+    assert "msg.pendingExternalExecution.expanded" in debug
+
