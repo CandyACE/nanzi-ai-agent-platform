@@ -26,6 +26,9 @@ class FakeLocator:
         self.set_input_files = AsyncMock()
         self.evaluate = AsyncMock(return_value={})
         self.nth = Mock(return_value=self)
+        self.bounding_box = AsyncMock(
+            return_value={"x": 0.0, "y": 100.0, "width": 40.0, "height": 40.0}
+        )
 
     async def evaluate_all(self, script):
         self.evaluate_all_script = script
@@ -33,8 +36,18 @@ class FakeLocator:
 
 
 class FakeFrame:
-    def __init__(self, focused_input=False):
+    def __init__(self, focused_input=False, page=None, elements=None):
         self.evaluate = AsyncMock(return_value=focused_input)
+        self.role_calls = []
+        self.locator_value = FakeLocator(page, elements or [])
+        self.elements = elements or []
+
+    def locator(self, selector):
+        return self.locator_value
+
+    def get_by_role(self, role, name=None, exact=True):
+        self.role_calls.append((role, name, exact))
+        return self.locator_value
 
 
 class FakeDownload:
@@ -208,6 +221,95 @@ async def test_worker_open_snapshot_and_semantic_click(tmp_path):
     assert result.action == "click"
     assert fake_playwright.chromium.launch_persistent_context.await_count == 1
     assert fake_context_page(fake_playwright).role_calls == [("button", "百度一下", True)]
+
+
+def _page_with_subframe(subframe_elements):
+    """在 FakePage 上挂一个子帧主力帧占位，构造 frames=[主帧占位, 子帧] 的页面对象。"""
+    page = FakePage()
+    sub_frame = FakeFrame(page=page, elements=subframe_elements)
+    # frames[0] 为主帧占位（快照逻辑跳过 index 0），frames[1] 为真实 iframe 子帧。
+    page.frames = [FakePage(), sub_frame]
+    return page, sub_frame
+
+
+@pytest.mark.asyncio
+async def test_snapshot_captures_elements_from_subframe(tmp_path):
+    fake_playwright = FakePlaywright()
+    page, _sub_frame = _page_with_subframe(
+        [
+            {
+                "role": "button",
+                "name": "iframe按钮",
+                "value": "",
+                "disabled": False,
+                "sensitive": False,
+            }
+        ]
+    )
+    fake_playwright.chromium.context.page = page
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=str(tmp_path),
+    )
+    opened = await worker.open(
+        session_id="bs-iframe",
+        profile_path=str(tmp_path / "profile-iframe"),
+        url="https://example.com/",
+    )
+    snapshot = await worker.snapshot("bs-iframe")
+
+    # 主帧元素行走 handle.page.locator 路径，不带 _frame_index。
+    assert snapshot.elements[0].ref == "e1"
+    assert snapshot.elements[0].name == "搜索"
+    target_map = worker._snapshots["bs-iframe"][snapshot.snapshot_id]
+    assert "_frame_index" not in target_map["e1"]
+
+    # 子帧元素被聚合且带 _frame_index=1（帧内 ref 用 frame_index*120 的偏移量）。
+    sub_elem = next(e for e in snapshot.elements if e.name == "iframe按钮")
+    assert sub_elem.ref == "e121"
+    assert target_map[sub_elem.ref]["_frame_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_click_resolves_locator_against_subframe(tmp_path):
+    fake_playwright = FakePlaywright()
+    page, sub_frame = _page_with_subframe(
+        [
+            {
+                "role": "button",
+                "name": "iframe按钮",
+                "value": "",
+                "disabled": False,
+                "sensitive": False,
+            }
+        ]
+    )
+    fake_playwright.chromium.context.page = page
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=str(tmp_path),
+    )
+    await worker.open(
+        session_id="bs-iframe-click",
+        profile_path=str(tmp_path / "profile-iframe-click"),
+        url="https://example.com/",
+    )
+    snapshot = await worker.snapshot("bs-iframe-click")
+
+    # 用 frame_index==1 的子帧按钮做语义点击。
+    result = await worker.click(
+        "bs-iframe-click",
+        target_ref="e121",
+        snapshot=snapshot,
+        approval_mode="guarded",
+    )
+
+    assert result.action == "click"
+    # 点击必须落到子帧 container，而非主帧 page。
+    assert sub_frame.role_calls == [("button", "iframe按钮", True)]
+    assert page.role_calls == []
 
 
 @pytest.mark.asyncio
@@ -392,6 +494,182 @@ async def test_worker_rejects_inferred_target_when_dom_index_now_points_elsewher
             approval_mode="autopilot",
             confirmed=True,
         )
+
+
+class _FakePlaywrightStaleError(RuntimeError):
+    """类名含 stale 的执行期异常，模拟 Playwright 的 stale-element 错误（非 BrowserTargetStale）。"""
+
+    name = "Error"
+
+
+def _native_button_snapshot_map(snapshot_id):
+    """构造一个指向 e2(button“百度一下”) 的原生目标 target_map。"""
+    return {
+        snapshot_id: {
+            "e2": {
+                "role": "button",
+                "name": "百度一下",
+                "value": "",
+                "disabled": False,
+                "sensitive": False,
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_worker_click_recovers_after_execution_stale_and_succeeds(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-recover-stale",
+        profile_path=str(tmp_path / "profile-recover-stale"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-recover-stale",
+        snapshot_id="snapshot-recover-stale",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-recover-stale"] = _native_button_snapshot_map(snapshot.snapshot_id)
+
+    locator = fake_context_page(fake_playwright).locator_value
+    # 首轮点击碰到 Playwright stale-element 错误，第二轮（重试）成功。
+    locator.click.side_effect = [_FakePlaywrightStaleError("element is not attached"), None]
+
+    result = await worker.click(
+        "bs-recover-stale",
+        target_ref="e2",
+        snapshot=snapshot,
+        approval_mode="autopilot",
+        confirmed=True,
+    )
+
+    assert result.action == "click"
+    # 首轮失败 + 刷新快照后重试一次 = 调用 2 次点击。
+    assert locator.click.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_click_does_not_retry_unrecoverable_target_stale(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-unrecoverable-stale",
+        profile_path=str(tmp_path / "profile-unrecoverable-stale"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-unrecoverable-stale",
+        snapshot_id="snapshot-unrecoverable-stale",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-unrecoverable-stale"] = _native_button_snapshot_map(
+        snapshot.snapshot_id
+    )
+
+    locator = fake_context_page(fake_playwright).locator_value
+    # 默认 recoverable=False 的 BrowserTargetStale（如 _validate_inferred_target 失配）必须立即上抛。
+    locator.click.side_effect = [BrowserTargetStale("目标已变化"), None]
+
+    with pytest.raises(BrowserTargetStale, match="目标已变化"):
+        await worker.click(
+            "bs-unrecoverable-stale",
+            target_ref="e2",
+            snapshot=snapshot,
+            approval_mode="autopilot",
+            confirmed=True,
+        )
+    # 不可恢复的目标解析失败不应触发自动重试：点击只尝试一次。
+    assert locator.click.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_click_recovers_after_wait_timeout(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-recover-timeout",
+        profile_path=str(tmp_path / "profile-recover-timeout"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-recover-timeout",
+        snapshot_id="snapshot-recover-timeout",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-recover-timeout"] = _native_button_snapshot_map(snapshot.snapshot_id)
+
+    locator = fake_context_page(fake_playwright).locator_value
+    # 首轮 asyncio.TimeoutError（超时类可恢复），第二轮成功。
+    locator.click.side_effect = [TimeoutError("timed out"), None]
+
+    result = await worker.click(
+        "bs-recover-timeout",
+        target_ref="e2",
+        snapshot=snapshot,
+        approval_mode="autopilot",
+        confirmed=True,
+    )
+
+    assert result.action == "click"
+    assert locator.click.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_click_raises_normalized_error_after_retries_exhausted(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-exhausted",
+        profile_path=str(tmp_path / "profile-exhausted"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-exhausted",
+        snapshot_id="snapshot-exhausted",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-exhausted"] = _native_button_snapshot_map(snapshot.snapshot_id)
+
+    locator = fake_context_page(fake_playwright).locator_value
+    # 每次重试都命中 Playwright stale-element 错误，直到 ACTION_RETRY_COUNT 耗尽。
+    locator.click.side_effect = [
+        _FakePlaywrightStaleError("stale 1"),
+        _FakePlaywrightStaleError("stale 2"),
+        _FakePlaywrightStaleError("stale 3"),
+    ]
+
+    with pytest.raises(BrowserTargetStale, match="连续执行失败"):
+        await worker.click(
+            "bs-exhausted",
+            target_ref="e2",
+            snapshot=snapshot,
+            approval_mode="autopilot",
+            confirmed=True,
+        )
+    # 初始尝试 + ACTION_RETRY_COUNT 次重试。
+    assert locator.click.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -846,6 +1124,76 @@ async def test_worker_supports_keyboard_select_hover_drag_and_history_actions(tm
     page.go_back.assert_awaited_once()
     page.go_forward.assert_awaited_once()
     page.reload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_slider_drag_manual_and_gap_measurement(tmp_path):
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-slider",
+        profile_path=str(tmp_path / "profile-slider"),
+        url="https://example.com/",
+    )
+    snapshot = BrowserSnapshot(
+        session_id="bs-slider",
+        snapshot_id="snapshot-slider",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker._snapshots["bs-slider"] = {
+        snapshot.snapshot_id: {
+            "handle": {"role": "button", "name": "滑块", "value": "", "_role_source": "native"},
+            "gap": {"role": "img", "name": "缺口", "value": "", "_role_source": "native"},
+        }
+    }
+    page = fake_context_page(fake_playwright)
+
+    # 手动距离模式：source 中心 x = 10 + 20 = 30，拖 120px
+    page.locator_value.bounding_box = AsyncMock(
+        return_value={"x": 10.0, "y": 100.0, "width": 40.0, "height": 40.0}
+    )
+    result = await worker.slider_drag(
+        "bs-slider", source_ref="handle", snapshot=snapshot, distance_px=120
+    )
+    assert result.action == "slider_drag"
+    assert result.data["distance_px"] == 120
+    assert result.data["steps"] > 0
+    assert result.data["measured_gap_px"] is None
+    page.mouse.down.assert_awaited_once()
+    page.mouse.up.assert_awaited_once()
+
+    # 缺口测量模式：滑块中心 x=30，缺口中心 x=220 => 190px
+    page.mouse.down.reset_mock()
+    page.mouse.up.reset_mock()
+    # 上一轮 slider_drag 已 pop snapshot map，需重新注入
+    worker._snapshots["bs-slider"] = {
+        snapshot.snapshot_id: {
+            "handle": {"role": "button", "name": "滑块", "value": "", "_role_source": "native"},
+            "gap": {"role": "img", "name": "缺口", "value": "", "_role_source": "native"},
+        }
+    }
+    page.locator_value.bounding_box = AsyncMock(
+        side_effect=[
+            {"x": 10.0, "y": 100.0, "width": 40.0, "height": 40.0},
+            {"x": 200.0, "y": 100.0, "width": 40.0, "height": 40.0},
+        ]
+    )
+    result = await worker.slider_drag(
+        "bs-slider", source_ref="handle", snapshot=snapshot, gap_target_ref="gap"
+    )
+    assert result.data["measured_gap_px"] == 190
+    assert result.data["distance_px"] == 190
+    page.mouse.down.assert_awaited_once()
+    page.mouse.up.assert_awaited_once()
+
+    # 两者皆缺应抛 ValueError
+    with pytest.raises(ValueError):
+        await worker.slider_drag("bs-slider", source_ref="handle", snapshot=snapshot)
 
 
 @pytest.mark.asyncio

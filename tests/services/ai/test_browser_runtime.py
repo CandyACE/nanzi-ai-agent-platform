@@ -74,6 +74,15 @@ class ControlProbeWorker:
                 title="Example",
             )
         )
+        self.slider_drag = AsyncMock(
+            return_value=BrowserToolResult(
+                session_id="session-1",
+                action="slider_drag",
+                url="https://example.com/",
+                title="Example",
+                data={"distance_px": 190, "steps": 5, "measured_gap_px": None},
+            )
+        )
 
     def has_session(self, _session_id):
         return True
@@ -172,6 +181,37 @@ async def test_browser_runtime_blocks_ai_until_human_releases_control():
     await click_task
     worker.click.assert_awaited_once()
     assert runtime.control_state("session-1")["owner"] == "ai"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_forwards_slider_drag_payload():
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+    runtime._snapshots["session-1"] = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-1",
+        url="https://example.com/",
+        title="Example",
+    )
+
+    result = await runtime.slider_drag(
+        "session-1",
+        source_ref="handle",
+        snapshot_id="snapshot-1",
+        distance_px=190,
+        gap_target_ref="gap",
+    )
+
+    worker.slider_drag.assert_awaited_once()
+    call_kwargs = worker.slider_drag.await_args.kwargs
+    assert worker.slider_drag.await_args.args[0] == "session-1"
+    assert call_kwargs["source_ref"] == "handle"
+    assert call_kwargs["snapshot"].session_id == "session-1"
+    assert call_kwargs["snapshot"].snapshot_id == "snapshot-1"
+    assert call_kwargs["distance_px"] == 190
+    assert call_kwargs["gap_target_ref"] == "gap"
+    assert result.action == "slider_drag"
+    assert result.data["distance_px"] == 190
 
 
 @pytest.mark.asyncio

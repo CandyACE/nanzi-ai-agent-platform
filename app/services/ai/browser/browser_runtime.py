@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -14,6 +16,16 @@ from app.services.ai.browser.browser_profile_service import BrowserProfileServic
 from app.services.ai.browser.browser_session_service import BrowserSessionService
 from app.services.ai.browser.browser_worker import BrowserPageInfo, BrowserWorker
 
+# 人工接管超时：当验证码 / 人工接管触发而无人持续操作时，AI 等待超过该阈值即抛错
+# 终止并上报，避免全自动运行在无人值守下永久死锁。可通过环境变量覆盖。
+HUMAN_CONTROL_TIMEOUT_SECONDS = float(
+    os.environ.get("BROWSER_HUMAN_CONTROL_TIMEOUT_SECONDS", "45")
+)
+
+
+class BrowserHumanControlRequired(RuntimeError):
+    """页面需要人工接管（如验证码）但限时内无人持续操作，AI 应终止并上报。"""
+
 
 @dataclass
 class _HumanControl:
@@ -21,6 +33,8 @@ class _HumanControl:
     captcha: bool = False
     owner_id: str | None = None
     released: asyncio.Event = field(default_factory=asyncio.Event)
+    held_at: float = 0.0
+    last_activity: float = 0.0
 
 
 class BrowserRuntime:
@@ -54,25 +68,57 @@ class BrowserRuntime:
         captcha: bool = False,
         owner_id: str | None = None,
     ) -> _HumanControl:
+        now = time.monotonic()
         state = self._human_controls.get(session_id)
         if state is None:
-            state = _HumanControl(reason=reason, captcha=captcha, owner_id=owner_id)
+            state = _HumanControl(
+                reason=reason,
+                captcha=captcha,
+                owner_id=owner_id,
+                held_at=now,
+                last_activity=now,
+            )
             self._human_controls[session_id] = state
         else:
             state.reason = reason
             state.captcha = state.captcha or captcha
+            # 每次人工互动（手动输入、重新获取接管）都会刷新接管计时，
+            # 使正在持续处理的人工不会被误判为超时放弃。
+            state.last_activity = now
             if owner_id is not None:
                 state.owner_id = owner_id
         return state
 
-    async def _wait_for_ai_control(self, session_id: str) -> None:
+    async def _wait_for_ai_control(self, session_id: str, timeout_ms: int | None = None) -> None:
+        """等待 AI 获得页面控制权。
+
+        若页面正被人工接管（验证码 / 手动输入），且超过 ``timeout_ms`` 内无人持续操作，
+        则抛出 :class:`BrowserHumanControlRequired`，让 AI 停止而非永久挂起。
+        """
+        timeout_s = (timeout_ms or 0) / 1000 if timeout_ms else HUMAN_CONTROL_TIMEOUT_SECONDS
         while True:
             async with self._session_lock(session_id):
                 state = self._human_controls.get(session_id)
                 if state is None:
                     return
                 released = state.released
-            await released.wait()
+                last_activity = state.last_activity
+                reason = state.reason
+            if timeout_s > 0:
+                elapsed_s = time.monotonic() - last_activity
+                if elapsed_s >= timeout_s:
+                    raise BrowserHumanControlRequired(
+                        "页面需要人工接管（原因：{}，人工在 {} 秒内未持续操作）。"
+                        "AI 未能获得控制权，请人工处理或结束任务。".format(reason, int(elapsed_s))
+                    )
+            try:
+                await asyncio.wait_for(
+                    released.wait(),
+                    timeout=None if timeout_s <= 0 else max(0.2, timeout_s - 0.0),
+                )
+            except asyncio.TimeoutError:
+                # 超时后回到循环头重新评估 last_activity，避免在释放与竞争间的漏检。
+                continue
 
     def control_state(self, session_id: str) -> dict[str, Any]:
         state = self._human_controls.get(session_id)
@@ -386,6 +432,30 @@ class BrowserRuntime:
                     source_ref=source_ref,
                     target_ref=target_ref,
                     snapshot=self.cached_snapshot(session_id, snapshot_id),
+                )
+                self._snapshots.pop(session_id, None)
+                return result
+
+    async def slider_drag(
+        self,
+        session_id: str,
+        *,
+        source_ref: str,
+        snapshot_id: str,
+        distance_px: int | None = None,
+        gap_target_ref: str | None = None,
+    ) -> BrowserToolResult:
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                result = await self.worker.slider_drag(
+                    session_id,
+                    source_ref=source_ref,
+                    snapshot=self.cached_snapshot(session_id, snapshot_id),
+                    distance_px=distance_px,
+                    gap_target_ref=gap_target_ref,
                 )
                 self._snapshots.pop(session_id, None)
                 return result
