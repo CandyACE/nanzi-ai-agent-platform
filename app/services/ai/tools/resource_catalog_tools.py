@@ -105,23 +105,26 @@ async def list_accessible_knowledge_bases() -> str:
         return f"列出可访问知识库失败: {e}"
 
 
-def _agent_item(agent: Any) -> dict[str, Any]:
+def _agent_item(agent: Any, *, current_agent_id: Optional[str] = None) -> dict[str, Any]:
+    agent_id = str(getattr(agent, "id", "") or "")
+    is_current = bool(current_agent_id and agent_id == str(current_agent_id))
     return {
         "agent_name": getattr(agent, "name", "") or "",
         "display_name": getattr(agent, "display_name", "") or getattr(agent, "name", "") or "",
         "description": getattr(agent, "description", "") or "",
         "capabilities": list(getattr(agent, "capabilities", None) or []),
+        "is_current": is_current,
     }
 
 
 @tool
 async def list_available_agents() -> str:
-    """列出当前用户有权限访问且可运行的可用智能体/专家目录（包含 agent_name、展示名称、职责描述与核心能力）。
+    """列出当前用户有权限访问且可运行的可用智能体/专家目录（包含 agent_name、展示名称、职责描述、核心能力与当前会话标识 is_current）。
 
     使用规则：
     - 当用户问「我有哪些智能体」「能调用哪些专家」「可用智能体列表」时调用。
     - 在需要通过 sub_agent_call 委派子任务前，若需查询或确认可委派的智能体标识 (agent_name) 与核心能力，可调用此工具。
-    - 仅返回已启用且当前用户有权限访问的可运行智能体；会自动排除当前会话自身智能体。
+    - 返回当前用户有权限访问的全部可用智能体，当前正在对话的自身智能体标注为 is_current=true。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
@@ -131,16 +134,17 @@ async def list_available_agents() -> str:
         from app.services.ai.agent_manager import AgentManagerService
         from app.services.ai.tools.agent_delegate_tool import resolve_runnable_delegable_system_agents
 
+        current_agent_id = getattr(ctx, "agent_id", None)
         async with AsyncSessionLocal() as db:
             active_agents = await AgentManagerService.list_agents(db)
-            delegable_agents = await resolve_runnable_delegable_system_agents(
+            available_agents = await resolve_runnable_delegable_system_agents(
                 db,
                 active_agents,
                 user_id=ctx.user_id,
                 is_admin=bool(ctx.is_admin),
-                current_agent_id=getattr(ctx, "agent_id", None),
+                current_agent_id=None,
             )
-            items = [_agent_item(a) for a in delegable_agents]
+            items = [_agent_item(a, current_agent_id=current_agent_id) for a in available_agents]
             return json.dumps({"items": items, "count": len(items)}, ensure_ascii=False)
     except Exception as e:
         logger.error("[list_available_agents] failed: %s", e, exc_info=True)

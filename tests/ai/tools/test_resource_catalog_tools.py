@@ -235,6 +235,7 @@ async def test_list_available_agents_returns_lightweight_fields():
             "display_name": "数据分析专家",
             "description": "负责数据查询与分析",
             "capabilities": ["text2sql", "chart"],
+            "is_current": False,
         }
     ]
     mock_list_agents.assert_awaited_once_with(db)
@@ -243,6 +244,6 @@ async def test_list_available_agents_returns_lightweight_fields():
         [agent_target],
         user_id=7,
         is_admin=False,
-        current_agent_id="agent_current",
+        current_agent_id=None,
     )
 

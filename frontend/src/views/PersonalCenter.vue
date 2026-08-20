@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import axios from '../utils/axios'
 import Toast from '../components/Toast.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 import { useBranding } from '../composables/useBranding'
 import { renderMarkdown } from '../utils/markdown'
 import { copyToClipboard } from '../utils/clipboard'
@@ -122,11 +123,17 @@ const handlePasswordChange = async () => {
 }
 
 const clearingBrowserData = ref(false)
-const handleClearBrowserData = async () => {
-    if (!confirm('确认清除您在平台上的【云端自动化浏览器】历史、登录状态和缓存吗？\n（此操作仅重置云端服务端浏览器，不会影响您本地电脑的浏览器）。')) return
+const showClearBrowserModal = ref(false)
+
+const handleClearBrowserData = () => {
+    showClearBrowserModal.value = true
+}
+
+const confirmClearBrowserData = async () => {
     clearingBrowserData.value = true
     try {
         await axios.delete('/api/v1/browser/profiles/clear')
+        showClearBrowserModal.value = false
         showToast('云端自动化浏览器历史、登录态及文件缓存已彻底清除', 'success')
     } catch (e: any) {
         showToast(e.response?.data?.detail || '清除失败，请稍后重试', 'error')
@@ -681,6 +688,18 @@ onMounted(() => {
         </div>
 
     </div>
+
+    <ConfirmModal
+      v-if="showClearBrowserModal"
+      title="清除云端自动化浏览器缓存"
+      message="确认清除您在平台上的【云端自动化浏览器】历史、登录状态和本地缓存数据吗？&#10;（此操作仅重置云端服务端浏览器，不会影响您本地电脑的 Chrome/Edge 浏览器数据）。"
+      confirmText="确认清除"
+      cancelText="取消"
+      type="danger"
+      :loading="clearingBrowserData"
+      @confirm="confirmClearBrowserData"
+      @cancel="showClearBrowserModal = false"
+    />
 
     <Toast 
       v-if="toast.show" 
