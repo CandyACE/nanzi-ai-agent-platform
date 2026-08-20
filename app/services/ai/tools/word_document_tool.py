@@ -7,7 +7,7 @@ from docx import Document
 
 from app.core.context import get_current_agent_context
 from app.services.ai.tools.document_paths import DocumentPathError, resolve_document_input_path, resolve_document_output_path
-from app.services.ai.tools.generated_file_service import publish
+from app.services.ai.tools.generated_file_service import register_artifact
 from app.services.ai.tools.tool_compat import tool
 
 _EXTENSIONS = {".docx"}
@@ -52,8 +52,16 @@ async def _output_path(filename: str):
     )
 
 
-def _result(output_path, summary: str, changes: dict[str, Any]) -> dict[str, Any]:
-    artifact = publish(output_path, output_path.name)
+async def _result(output_path, summary: str, changes: dict[str, Any]) -> dict[str, Any]:
+    context = _context()
+    artifact = await register_artifact(
+        source_path=output_path,
+        filename=output_path.name,
+        owner_user_id=context.user_id,
+        artifact_type="word",
+        conversation_id=context.conversation_id,
+        trace_id=context.trace_id,
+    )
     return {"status": "ok", "summary": summary, "changes": changes, "artifact": artifact.to_tool_payload()}
 
 
@@ -124,4 +132,4 @@ async def word_document_write(action: str, output_filename: str, path: str | Non
         changes["created_document"] = True
     output_path = await _output_path(output_filename)
     document.save(output_path)
-    return _result(output_path, "已生成 Word 文档", changes)
+    return await _result(output_path, "已生成 Word 文档", changes)

@@ -12,7 +12,7 @@ from app.services.ai.tools.document_paths import (
     resolve_document_input_path,
     resolve_document_output_path,
 )
-from app.services.ai.tools.generated_file_service import publish
+from app.services.ai.tools.generated_file_service import register_artifact
 from app.services.ai.tools.tool_compat import tool
 
 _EXTENSIONS = {".xlsx"}
@@ -61,8 +61,16 @@ async def _output_path(filename: str):
     )
 
 
-def _artifact_result(output_path, *, summary: str, changes: dict[str, Any]) -> dict[str, Any]:
-    artifact = publish(output_path, output_path.name)
+async def _artifact_result(output_path, *, summary: str, changes: dict[str, Any]) -> dict[str, Any]:
+    context = _context()
+    artifact = await register_artifact(
+        source_path=output_path,
+        filename=output_path.name,
+        owner_user_id=context.user_id,
+        artifact_type="excel",
+        conversation_id=context.conversation_id,
+        trace_id=context.trace_id,
+    )
     return {
         "status": "ok",
         "summary": summary,
@@ -167,4 +175,4 @@ async def excel_document_write(
     output_path = await _output_path(output_filename)
     workbook.save(output_path)
     workbook.close()
-    return _artifact_result(output_path, summary="已生成 Excel 文件", changes=changes)
+    return await _artifact_result(output_path, summary="已生成 Excel 文件", changes=changes)

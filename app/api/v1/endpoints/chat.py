@@ -4,7 +4,9 @@ import time
 import uuid
 import re
 import asyncio
-from typing import List, Optional, AsyncGenerator, Dict, Any
+import secrets
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, AsyncGenerator, Dict, Any, Union
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
@@ -14,7 +16,7 @@ from app.services.ai.agent_service import agent_service
 from app.services.ai.export_service import ExportService
 from app.core.context import set_debug_context
 from app.core.dependencies import require_api_key
-from app.schemas.response import StandardResponse
+from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir
 from app.services.permission_service import PermissionService
@@ -39,9 +41,13 @@ public_router = APIRouter()
 
 @public_router.get("/generated-files/{artifact_id}")
 async def download_generated_file(artifact_id: str, token: str):
-    from app.services.ai.tools.generated_file_service import resolve_for_download
+    from app.services.ai.tools.generated_file_service import resolve_for_download, resolve_workspace_artifact
 
-    artifact = resolve_for_download(artifact_id, token)
+    # DB 优先：工作区产物先经 ai_artifacts 校验归属（storage_path 在工作区内 + token 匹配）
+    artifact = await resolve_workspace_artifact(artifact_id, token)
+    # manifest 回退：兼容旧版 publish() 生成的文件链接
+    if artifact is None:
+        artifact = resolve_for_download(artifact_id, token)
     if artifact is None:
         raise HTTPException(status_code=404, detail="文件不存在或已过期")
     return FileResponse(
@@ -49,6 +55,144 @@ async def download_generated_file(artifact_id: str, token: str):
         media_type=artifact.mime_type,
         filename=artifact.filename,
     )
+
+
+class ArtifactListItem(BaseModel):
+    id: str
+    filename: str
+    artifact_type: str
+    mime_type: Optional[str] = None
+    size: int
+    conversation_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    download_url: str
+
+
+@router.get(
+    "/artifacts",
+    response_model=StandardResponse[ListResponse[ArtifactListItem]],
+    summary="我的 AI 产物列表",
+    description="列出当前用户在 ai_artifacts 中登记的 AI 生成/导出产物（Word/Excel/导出等）。"
+    "由于 ai_artifacts 只存 token 哈希，为每条记录新签发一个下载 token 并回写哈希与过期时间，"
+    "保证返回的 download_url 可用。",
+)
+async def list_artifacts(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    artifact_type: Optional[str] = Query(None, description="按产物类型过滤：word / excel / export"),
+    trace_id: Optional[str] = Query(None, description="按 trace_id 过滤（用于查看某条 AI 消息产生的产物）"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from app.models.artifact import AiArtifact
+    from app.services.ai.tools.generated_file_service import DEFAULT_TTL, _token_hash
+    from sqlalchemy import func, select
+
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = int(raw_user_id) if raw_user_id is not None else None
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+
+    filters = [AiArtifact.owner_user_id == user_id]
+    if artifact_type:
+        filters.append(AiArtifact.artifact_type == artifact_type)
+    if trace_id:
+        filters.append(AiArtifact.trace_id == trace_id)
+    total = await db.scalar(
+        select(func.count())
+        .select_from(AiArtifact)
+        .where(*filters)
+    )
+    total = int(total or 0)
+
+    stmt = (
+        select(AiArtifact)
+        .where(*filters)
+        .order_by(AiArtifact.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await db.scalars(stmt)).all()
+
+    now = datetime.now(timezone.utc)
+    items: List[ArtifactListItem] = []
+    # 数据库只存 token 哈希，无法还原旧 token。这里对新列出的每条记录新签发下载 token
+    # 并回写 token_hash/expires_at，保证前端拿到的 download_url 可直接下载。
+    for row in rows:
+        token = secrets.token_urlsafe(32)
+        new_expires_at = now + DEFAULT_TTL
+        row.token_hash = _token_hash(token)
+        row.expires_at = new_expires_at
+        items.append(
+            ArtifactListItem(
+                id=row.id,
+                filename=row.filename,
+                artifact_type=row.artifact_type,
+                mime_type=row.mime_type,
+                size=int(row.size or 0),
+                conversation_id=row.conversation_id,
+                trace_id=row.trace_id,
+                created_at=row.created_at,
+                expires_at=new_expires_at,
+                download_url=f"/api/v1/chat/generated-files/{row.id}?token={token}",
+            )
+        )
+    await db.commit()
+
+    return StandardResponse(
+        data=ListResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+class ArtifactCountsByTrace(BaseModel):
+    """某会话内各 AI 消息 trace_id → 产物数量 的轻量映射（用于按钮显示与角标）。"""
+    counts: Dict[str, int]
+
+
+@router.get(
+    "/artifacts/counts",
+    response_model=StandardResponse[ArtifactCountsByTrace],
+    summary="会话内产物数量统计",
+    description="按 conversation_id 一次返回当前用户该会话内各 trace_id 的产物数量，"
+    "仅统计 trace_id 非空的产物；不含文件元信息、不签发下载 token，供前端判断某条 AI 消息是否真有产物及显示数量角标。",
+)
+async def count_artifacts_by_trace(
+    conversation_id: str = Query(..., description="会话 id"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from app.models.artifact import AiArtifact
+    from sqlalchemy import func, select
+
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = int(raw_user_id) if raw_user_id is not None else None
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+
+    rows = (
+        await db.execute(
+            select(AiArtifact.trace_id, func.count())
+            .where(
+                AiArtifact.owner_user_id == user_id,
+                AiArtifact.conversation_id == conversation_id,
+                AiArtifact.trace_id.isnot(None),
+            )
+            .group_by(AiArtifact.trace_id)
+        )
+    ).all()
+
+    counts: Dict[str, int] = {}
+    for trace_id, cnt in rows:
+        if trace_id:
+            counts[trace_id] = int(cnt)
+    return StandardResponse(data=ArtifactCountsByTrace(counts=counts))
 
 class SkillMeta(BaseModel):
     id: Optional[str] = Field(default=None, description="技能 ID")
@@ -415,10 +559,70 @@ async def recommend_table_questions(
     return StandardResponse(data=DatasetGroupRefreshResponse(questions=questions))
 
 
+class FileAttachment(BaseModel):
+    """会话消息中的附件条目。字段与前端 `ChatFile` 保持一致，
+    同时 `extra="allow"` 保留如 skillMeta/memoryMeta 等可选附带元数据。"""
+    model_config = {"extra": "allow"}
+
+    type: Optional[str] = None
+    url: Optional[str] = None
+    filename: Optional[str] = None
+    size: Optional[int] = None
+    ext: Optional[str] = None
+
+
+class ProcessTimelineItem(BaseModel):
+    """流程时间线条目。`process_timeline` 高度异构（log/text/todo 三种 kind），
+    这里仅收敛最常见的跨 kind 字段，`extra="allow"` 保留各自专属字段
+    （如 log 的 execution_time_ms/subagent、text 的 sourceId/sourceLabel 等）。"""
+    model_config = {"extra": "allow"}
+
+    kind: Optional[str] = None
+    # log kind 的 id 可以是 string 或 number（前端契约 `string | number`）
+    id: Optional[Union[str, int]] = None
+    title: Optional[str] = None
+    status: Optional[str] = None
+    textKind: Optional[str] = None
+    content: Optional[str] = None
+    details: Optional[str] = None
+    isExpanded: Optional[bool] = False
+    pending: Optional[bool] = False
+    children: Optional[List["ProcessTimelineItem"]] = None
+    # todo kind 专属字段（content/status 二元的待办列表）+ 计数
+    todos: Optional[List[Dict[str, Any]]] = None
+    counts: Optional[Dict[str, Any]] = None
+
+
+class ConversationMessage(BaseModel):
+    """结构化收敛的会话消息体。涵盖 user/assistant 各类已知字段，
+    同时 `extra="allow"` 容忍历史遗留的未声明字段，避免解析失败。"""
+    model_config = {"extra": "allow"}
+
+    role: Optional[str] = None
+    content: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    trace_id: Optional[str] = None
+
+    # token 用量 / 结构化输出标记
+    prompt_tokens: Optional[int] = 0
+    completion_tokens: Optional[int] = 0
+    total_tokens: Optional[int] = 0
+    has_data_output: Optional[bool] = False
+
+    # assistant 消息专属元数据
+    agent_name: Optional[str] = None
+    agent_type: Optional[str] = None
+    agent_display_name: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    process_timeline: Optional[List[ProcessTimelineItem]] = None
+    feedback: Optional[Any] = None
+    files: Optional[List[FileAttachment]] = None
+
+
 class ConversationHistoryResponse(BaseModel):
 
     conversation_id: str = Field(..., description="会话ID")
-    messages: List[Dict[str, Any]] = Field(..., description="消息列表")
+    messages: List[ConversationMessage] = Field(..., description="消息列表")
 
 @router.get("/conversation/{conversation_id}",
     response_model=StandardResponse[ConversationHistoryResponse],
@@ -444,22 +648,28 @@ async def get_conversation_history(
     history = await memory_service.get_history(user_id, conversation_id, limit=limit, offset=offset)
 
     # Enrich Redis-backed assistant messages so the frontend can keep the same
-    # message actions available after a page reload.
+    # message actions available after a page reload. agent_type / agent_display_name
+    # are now persisted at write time; we only fall back to a full agent lookup
+    # for legacy entries that lack them.
     agent_type_by_name: Dict[str, str] = {}
-    agent_type_by_id: Dict[str, str] = {}
-    try:
-        from app.services.ai.agent_manager import AgentManagerService
-        all_agents = await AgentManagerService.list_agents(db, user=user_info)
-        for agent in all_agents:
-            agent_type = getattr(agent, "agent_type", None) or "GENERAL"
-            agent_type = getattr(agent_type, "value", agent_type)
-            agent_type_by_name[str(agent.name)] = str(agent_type)
-            agent_type_by_id[str(agent.id)] = str(agent_type)
-    except Exception:
-        pass
+    needs_agent_lookup = False
+    for message in history[:50]:
+        if message.get("role") == "assistant" and message.get("agent_name") and not message.get("agent_type"):
+            needs_agent_lookup = True
+            break
+    if needs_agent_lookup:
+        try:
+            from app.services.ai.agent_manager import AgentManagerService
+            all_agents = await AgentManagerService.list_agents(db, user=user_info)
+            for agent in all_agents:
+                agent_type = getattr(agent, "agent_type", None) or "GENERAL"
+                agent_type = getattr(agent_type, "value", agent_type)
+                agent_type_by_name[str(agent.name)] = str(agent_type)
+        except Exception:
+            pass
 
     for message in history:
-        if message.get("role") == "assistant" and message.get("agent_name"):
+        if message.get("role") == "assistant" and message.get("agent_name") and not message.get("agent_type"):
             agent_type = agent_type_by_name.get(str(message["agent_name"]))
             if agent_type:
                 message["agent_type"] = agent_type
@@ -482,12 +692,18 @@ async def get_conversation_history(
         records = db_res.scalars().all()
         
         # Dynamically fetch active agents map for rich display names
+        agent_map = {}
+        agent_type_by_id = {}
         try:
             from app.services.ai.agent_manager import AgentManagerService
             all_agents = await AgentManagerService.list_agents(db, user=user_info)
             agent_map = {str(a.id): (a.name, a.display_name) for a in all_agents}
+            for a in all_agents:
+                agent_type = getattr(a, "agent_type", None) or "GENERAL"
+                agent_type = getattr(agent_type, "value", agent_type)
+                agent_type_by_id[str(a.id)] = str(agent_type)
         except Exception:
-            agent_map = {}
+            pass
             
         fallback_history = []
         for r in records:
@@ -513,9 +729,13 @@ async def get_conversation_history(
                     "timestamp": r.created_at.isoformat() if r.created_at else None,
                     "agent_name": agent_name,
                     "agent_display_name": agent_display_name,
-                    "agent_type": agent_type_by_id.get(str(r.agent_id)),
+                    "agent_type": agent_type_by_id.get(str(r.agent_id)) or "GENERAL",
                     "trace_id": r.trace_id,
-                    "feedback": r.feedback
+                    "feedback": r.feedback,
+                    "prompt_tokens": int(r.prompt_tokens or 0),
+                    "completion_tokens": int(r.completion_tokens or 0),
+                    "total_tokens": int(r.total_tokens or 0),
+                    "has_data_output": bool(getattr(r, "has_data_output", 0) or False)
                 })
         history = fallback_history
         
@@ -1323,23 +1543,56 @@ async def export_trace_data(
     data = await ExportService.get_trace_data(trace_id)
     if not data:
         raise HTTPException(status_code=404, detail="No exportable data found for this trace.")
-    
+
     filename = f"export_{trace_id}"
-    
-    if format.lower() == "xlsx":
+    is_xlsx = format.lower() == "xlsx"
+    if is_xlsx:
         content = ExportService.json_to_excel(data)
-        return Response(
-            content=content,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}.xlsx"}
-        )
+        ext, media_type = "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     else:
         content = ExportService.json_to_csv(data)
-        return Response(
-            content=content,
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={filename}.csv"}
-        )
+        ext, media_type = "csv", "text/csv"
+    out_name = f"{filename}.{ext}"
+
+    # 导出产物落盘到用户工作区目录 {root}/{user_key}/export/，并登记到 ai_artifacts
+    # （只存元信息，具体内容留在工作区），返回带鉴权 token 的 download_url。
+    from pathlib import Path
+    from app.services.ai.runtime.agentscope.workspace import (
+        resolve_workspace_root,
+        resolve_workspace_user_key,
+    )
+    from app.services.ai.tools.generated_file_service import register_artifact
+
+    workspace_root = await resolve_workspace_root()
+    user_key = resolve_workspace_user_key(
+        user_id=history_item.user_id,
+        user_name=history_item.username,
+    )
+    export_dir = Path(workspace_root) / user_key / "export"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    out_path = export_dir / out_name
+    if isinstance(content, bytes):
+        out_path.write_bytes(content)
+    else:
+        out_path.write_bytes(content.encode("utf-8"))
+
+    # owner_user_id：优先取鉴权用户 id，回退 history.user_id（register_artifact 内部会 int() 转换）
+    owner_user_id = (user_info or {}).get("user_id") or history_item.user_id
+    artifact = await register_artifact(
+        source_path=out_path,
+        filename=out_name,
+        owner_user_id=owner_user_id,
+        artifact_type="export",
+        conversation_id=history_item.conversation_id,
+        trace_id=trace_id,
+    )
+    return {
+        "filename": artifact.filename,
+        "mime_type": media_type,
+        "size": artifact.size,
+        "download_url": artifact.download_url,
+        "expires_at": artifact.expires_at.isoformat(),
+    }
 
 
 class UploadResponse(BaseModel):

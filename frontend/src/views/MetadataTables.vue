@@ -442,6 +442,73 @@ onMounted(async () => {
   fetchDatasetInfo()
 })
 
+// 头部卡片折叠状态（默认从 localStorage 读取，初始默认 false 即展开）
+const isHeaderCollapsed = ref(localStorage.getItem('nanzi_dataset_header_collapsed') === 'true')
+const toggleHeaderCollapse = () => {
+  isHeaderCollapsed.value = !isHeaderCollapsed.value
+  localStorage.setItem('nanzi_dataset_header_collapsed', String(isHeaderCollapsed.value))
+}
+
+// AI 补全描述相关状态
+const enhancingDataset = ref(false)
+const showAiEnhanceModal = ref(false)
+const aiGeneratedDesc = ref('')
+const aiGeneratedTags = ref<string[]>([])
+const aiTagInput = ref('')
+const savingAiEnhance = ref(false)
+
+const addAiTag = () => {
+  const tag = aiTagInput.value.trim()
+  if (tag && !aiGeneratedTags.value.includes(tag)) {
+    aiGeneratedTags.value.push(tag)
+  }
+  aiTagInput.value = ''
+}
+
+const removeAiTag = (index: number) => {
+  aiGeneratedTags.value.splice(index, 1)
+}
+
+const handleAiEnhance = async () => {
+  if (!dataset.value?.id || enhancingDataset.value) return
+  enhancingDataset.value = true
+  try {
+    const res: any = await metadataApi.enhanceDatasetMetadata(dataset.value.id)
+    if (res.data?.code === 200) {
+      const data = res.data.data
+      aiGeneratedDesc.value = data.description || ''
+      aiGeneratedTags.value = Array.isArray(data.tags) ? [...data.tags] : []
+      showAiEnhanceModal.value = true
+    } else {
+      showToast(res.data?.message || 'AI 辅助生成失败', 'error')
+    }
+  } catch (e: any) {
+    console.error('AI enhance failed', e)
+    showToast(e.response?.data?.detail || 'AI 辅助生成失败', 'error')
+  } finally {
+    enhancingDataset.value = false
+  }
+}
+
+const saveAiEnhance = async () => {
+  if (!dataset.value?.id) return
+  savingAiEnhance.value = true
+  try {
+    await metadataApi.updateDataset(dataset.value.id, {
+      description: aiGeneratedDesc.value,
+      tags: aiGeneratedTags.value
+    })
+    showToast('AI 描述与标签已成功保存', 'success')
+    showAiEnhanceModal.value = false
+    await fetchDatasetInfo()
+  } catch (e: any) {
+    console.error('Save AI enhance failed', e)
+    showToast(e.response?.data?.detail || '保存失败', 'error')
+  } finally {
+    savingAiEnhance.value = false
+  }
+}
+
 const metricListRef = ref<any>(null)
 
 const fetchMetrics = () => {
@@ -500,98 +567,177 @@ defineExpose({ fetchMetrics })
     </div>
 
     <!-- Header Card -->
-    <div class="flex justify-between items-start bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden">
+    <div :class="['bg-white rounded-xl shadow-sm border border-gray-100 relative overflow-hidden transition-all duration-300', isHeaderCollapsed ? 'p-4' : 'p-6']">
       <!-- Decoration Top -->
       <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-primary"></div>
       
-      <div class="flex items-start gap-5 relative z-10">
-        <div class="flex gap-4">
-           <!-- Emoji -->
-           <div class="w-16 h-16 rounded-xl bg-gray-50 flex items-center justify-center text-3xl shadow-inner border border-gray-100 flex-shrink-0">
-              {{ dataset?.name ? getDatasetEmoji(dataset.name) : '📂' }}
-           </div>
-           
-           <div class="max-w-2xl min-w-0">
-              <div class="flex items-center gap-3">
-                 <h1 class="text-2xl font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
-                 <span class="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs font-mono rounded select-all flex-shrink-0">#{{ dataset?.name }}</span>
-              </div>
-              
-              <div class="mt-1 mb-2">
-                <p class="text-gray-500 text-sm leading-relaxed">
-                  {{ dataset?.description ? (dataset.description.length > 80 ? dataset.description.substring(0, 80) + '...' : dataset.description) : '暂无描述信息' }}
-                  <button 
-                    v-if="dataset?.description && dataset.description.length > 80" 
-                    type="button"
-                    @click.stop="showFullDescription = true"
-                    class="text-primary font-bold hover:underline ml-1 inline-flex items-center"
-                  >
-                    [详情]
-                  </button>
-                </p>
-              </div>
-              
-              <!-- Meta Info -->
-              <div class="flex items-center gap-4 text-xs text-gray-400 font-mono">
-                 <span class="flex items-center gap-1 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
-                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2zm0 5h16"/></svg>
-                   {{ dataset?.data_source }}
-                 </span>
-                 <span v-if="dataset?.updated_at" class="flex items-center gap-1">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                    Updated {{ new Date(dataset.updated_at).toLocaleString() }}
-                 </span>
-              </div>
+      <!-- Collapsed Compact View -->
+      <div v-if="isHeaderCollapsed" class="flex flex-wrap justify-between items-center gap-3 relative z-10">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center text-xl shadow-inner border border-gray-100 shrink-0">
+            {{ dataset?.name ? getDatasetEmoji(dataset.name) : '📂' }}
+          </div>
+          <div class="flex items-center gap-2.5 min-w-0">
+            <h1 class="text-lg font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
+            <span class="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs font-mono rounded select-all shrink-0">#{{ dataset?.name }}</span>
+            <span class="hidden sm:inline-flex items-center gap-1 bg-gray-50 px-2 py-0.5 rounded border border-gray-100 text-xs text-gray-400 font-mono">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2zm0 5h16"/></svg>
+              {{ dataset?.data_source }}
+            </span>
+          </div>
+        </div>
 
-              <!-- Permissions Info -->
-              <div v-if="datasetPermissions?.users?.length || datasetPermissions?.roles?.length" class="mt-3.5 pt-3 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-2 text-xs">
-                <div v-if="datasetPermissions.roles.length" class="flex items-center gap-1.5">
-                  <span class="text-gray-400 font-medium select-none">授权角色:</span>
-                  <div class="flex flex-wrap gap-1">
-                    <span 
-                      v-for="r in datasetPermissions.roles" 
-                      :key="r.code"
-                      class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100/50 flex items-center gap-1 select-none"
-                    >
-                      {{ r.name }}
-                    </span>
-                  </div>
-                </div>
-                
-                <div v-if="datasetPermissions.users.length" class="flex items-center gap-1.5">
-                  <span class="text-gray-400 font-medium select-none">授权用户:</span>
-                  <div class="flex flex-wrap gap-1">
-                    <span 
-                      v-for="u in datasetPermissions.users" 
-                      :key="u.user_name"
-                      class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-100/50 flex items-center gap-1 select-none"
-                    >
-                      {{ u.real_name || u.user_name }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-           </div>
+        <div class="flex items-center gap-2.5 shrink-0">
+          <button 
+            v-if="hasPermission('element:metadata:edit')"
+            @click="handleAiEnhance"
+            :disabled="enhancingDataset"
+            class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm h-8 disabled:opacity-50"
+            title="基于现有表结构智能生成/润色数据集业务描述和标签"
+          >
+            <svg v-if="enhancingDataset" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <svg v-else class="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span>{{ enhancingDataset ? '生成中...' : 'AI 补全描述' }}</span>
+          </button>
+          <button 
+            v-has-perm="'element:metadata:view_yaml'"
+            @click="fetchYaml"
+            class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-8 whitespace-nowrap"
+          >
+            <svg class="w-3.5 h-3.5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+            查看&导出 AI YAML
+          </button>
+          <button 
+            v-if="hasPermission('element:metadata:import')"
+            @click="showImportModal = true"
+            class="bg-slate-900 hover:bg-black text-white px-3 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-medium h-8 whitespace-nowrap"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+            导入 DDL
+          </button>
+          <button 
+            @click="toggleHeaderCollapse"
+            class="text-gray-400 hover:text-gray-700 w-8 h-8 rounded-lg hover:bg-gray-100 transition-all flex items-center justify-center border border-gray-200 bg-white shadow-2xs shrink-0"
+            :title="isHeaderCollapsed ? '展开数据集详情' : '收起数据集详情'"
+          >
+            <svg class="w-4 h-4 transition-transform duration-300 transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
         </div>
       </div>
-      
-      <div class="flex gap-3 mt-1 flex-shrink-0 ml-4">
-        <button 
-          v-has-perm="'element:metadata:view_yaml'"
-          @click="fetchYaml"
-          class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap"
-        >
-          <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-          查看&导出 AI YAML
-        </button>
-        <button 
-          v-if="hasPermission('element:metadata:import')"
-          @click="showImportModal = true"
-          class="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          导入 DDL 结构
-        </button>
+
+      <!-- Expanded Full View -->
+      <div v-else class="flex flex-col lg:flex-row justify-between items-start gap-4 relative z-10">
+        <div class="flex items-start gap-5 relative min-w-0 flex-1">
+          <!-- Emoji -->
+          <div class="w-16 h-16 rounded-xl bg-gray-50 flex items-center justify-center text-3xl shadow-inner border border-gray-100 shrink-0">
+            {{ dataset?.name ? getDatasetEmoji(dataset.name) : '📂' }}
+          </div>
+          
+          <div class="max-w-2xl min-w-0 flex-1">
+            <div class="flex items-center gap-3">
+              <h1 class="text-2xl font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
+              <span class="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs font-mono rounded select-all shrink-0">#{{ dataset?.name }}</span>
+            </div>
+            
+            <div class="mt-1.5 mb-2 flex items-center flex-wrap gap-2">
+              <p class="text-gray-500 text-sm leading-relaxed">
+                {{ dataset?.description ? (dataset.description.length > 80 ? dataset.description.substring(0, 80) + '...' : dataset.description) : '暂无描述信息' }}
+                <button 
+                  v-if="dataset?.description && dataset.description.length > 80" 
+                  type="button"
+                  @click.stop="showFullDescription = true"
+                  class="text-primary font-bold hover:underline ml-1 inline-flex items-center"
+                >
+                  [详情]
+                </button>
+              </p>
+
+              <!-- AI Enhance Button (in-line) -->
+              <button 
+                v-if="hasPermission('element:metadata:edit')"
+                @click="handleAiEnhance"
+                :disabled="enhancingDataset"
+                class="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-0.5 rounded-full border border-indigo-200/80 inline-flex items-center gap-1 font-bold transition-all shadow-sm disabled:opacity-50"
+                title="基于现有表结构智能生成/润色数据集业务描述和标签"
+              >
+                <svg v-if="enhancingDataset" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                <svg v-else class="w-3 h-3 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span>{{ enhancingDataset ? 'AI 生成中...' : 'AI 补全描述' }}</span>
+              </button>
+            </div>
+            
+            <!-- Meta Info -->
+            <div class="flex items-center gap-4 text-xs text-gray-400 font-mono">
+              <span class="flex items-center gap-1 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2zm0 5h16"/></svg>
+                {{ dataset?.data_source }}
+              </span>
+              <span v-if="dataset?.updated_at" class="flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Updated {{ new Date(dataset.updated_at).toLocaleString() }}
+              </span>
+            </div>
+
+            <!-- Permissions Info -->
+            <div v-if="datasetPermissions?.users?.length || datasetPermissions?.roles?.length" class="mt-3.5 pt-3 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-2 text-xs">
+              <div v-if="datasetPermissions.roles.length" class="flex items-center gap-1.5">
+                <span class="text-gray-400 font-medium select-none">授权角色:</span>
+                <div class="flex flex-wrap gap-1">
+                  <span 
+                    v-for="r in datasetPermissions.roles" 
+                    :key="r.code"
+                    class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100/50 flex items-center gap-1 select-none"
+                  >
+                    {{ r.name }}
+                  </span>
+                </div>
+              </div>
+              
+              <div v-if="datasetPermissions.users.length" class="flex items-center gap-1.5">
+                <span class="text-gray-400 font-medium select-none">授权用户:</span>
+                <div class="flex flex-wrap gap-1">
+                  <span 
+                    v-for="u in datasetPermissions.users" 
+                    :key="u.user_name"
+                    class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-100/50 flex items-center gap-1 select-none"
+                  >
+                    {{ u.real_name || u.user_name }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-2.5 shrink-0 self-start lg:self-auto">
+          <button 
+            v-has-perm="'element:metadata:view_yaml'"
+            @click="fetchYaml"
+            class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap shadow-sm"
+          >
+            <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+            查看&导出 AI YAML
+          </button>
+          <button 
+            v-if="hasPermission('element:metadata:import')"
+            @click="showImportModal = true"
+            class="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+            导入 DDL 结构
+          </button>
+          <button 
+            @click="toggleHeaderCollapse"
+            class="text-gray-400 hover:text-gray-700 w-10 h-10 rounded-lg hover:bg-gray-100 transition-all flex items-center justify-center border border-gray-200 bg-white shadow-2xs shrink-0"
+            :title="isHeaderCollapsed ? '展开数据集详情' : '收起数据集详情'"
+          >
+            <svg class="w-4 h-4 transition-transform duration-300 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1403,6 +1549,92 @@ defineExpose({ fetchMetrics })
              </button>
           </div>
        </div>
+    </div>
+
+    <!-- AI Enhance Dataset Modal -->
+    <div v-if="showAiEnhanceModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showAiEnhanceModal = false">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
+          <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
+            <span class="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </span>
+            AI 智能生成数据集描述与标签
+          </h3>
+          <button @click="showAiEnhanceModal = false" class="p-1.5 hover:bg-white rounded-lg transition-colors text-gray-400 hover:text-gray-600">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <!-- Body -->
+        <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          <div class="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-100 text-xs text-indigo-700 flex items-start gap-2 leading-relaxed">
+            <svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span>已基于当前数据集所包含的数据表、字段画像及业务指标深度提炼生成。您可以在下方直接编辑微调，确认无误后点击保存。</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1.5">数据集业务描述</label>
+            <textarea 
+              v-model="aiGeneratedDesc" 
+              rows="4" 
+              class="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 leading-relaxed transition-all"
+              placeholder="请输入或微调数据集描述..."
+            ></textarea>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1.5">业务标签 (Tags)</label>
+            <div class="flex gap-2 mb-2">
+              <input 
+                v-model="aiTagInput" 
+                @keyup.enter="addAiTag" 
+                type="text" 
+                class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" 
+                placeholder="输入标签并按回车添加..."
+              >
+              <button 
+                type="button" 
+                @click="addAiTag"
+                class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-lg font-medium transition-colors"
+              >
+                添加
+              </button>
+            </div>
+            <div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-gray-50 rounded-xl border border-gray-100">
+              <span 
+                v-for="(tag, i) in aiGeneratedTags" 
+                :key="i" 
+                class="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-lg flex items-center gap-1.5 border border-indigo-100 font-medium"
+              >
+                # {{ tag }}
+                <button @click="removeAiTag(i)" class="text-indigo-400 hover:text-red-500 transition-colors font-bold">&times;</button>
+              </span>
+              <span v-if="aiGeneratedTags.length === 0" class="text-xs text-gray-400 py-0.5">暂无标签</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+          <button 
+            @click="showAiEnhanceModal = false" 
+            :disabled="savingAiEnhance"
+            class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50 text-gray-700 font-medium transition-colors"
+          >
+            取消
+          </button>
+          <button 
+            @click="saveAiEnhance" 
+            :disabled="savingAiEnhance"
+            class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+          >
+            <svg v-if="savingAiEnhance" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <span>{{ savingAiEnhance ? '正在保存...' : '应用并保存' }}</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

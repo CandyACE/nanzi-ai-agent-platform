@@ -64,6 +64,7 @@ class AuditManager:
         conversation_id: Optional[str] = None,
         reasoning_content: Optional[str] = None,
         process_timeline: Optional[List[Dict[str, Any]]] = None,
+        has_data_output: Optional[bool] = None,
     ):
         """
         High-level method to handle all audit logging (Trace Logs + History).
@@ -121,6 +122,7 @@ class AuditManager:
                 total_tokens=total_tokens_sum,
                 reasoning_content=reasoning_content,
                 process_timeline=process_timeline,
+                has_data_output=has_data_output,
             )
 
     @staticmethod
@@ -180,6 +182,7 @@ class AuditManager:
         total_tokens: int = 0,
         reasoning_content: Optional[str] = None,
         process_timeline: Optional[List[Dict[str, Any]]] = None,
+        has_data_output: Optional[bool] = None,
     ):
         """
         Saves the high-level conversation entry.
@@ -205,7 +208,8 @@ class AuditManager:
                     model_config_id=model_config_id,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    total_tokens=total_tokens
+                    total_tokens=total_tokens,
+                    has_data_output=(1 if has_data_output else 0),
                 )
                 session.add(history_entry)
                 await session.commit()

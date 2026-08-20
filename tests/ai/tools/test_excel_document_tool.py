@@ -7,6 +7,26 @@ from app.core.context import AgentContext, set_agent_context
 pytestmark = pytest.mark.no_infrastructure
 
 
+class _FakeArtifactSession:
+    """最小 fake async session：使 register_artifact 在无 DB 时也能记录产物。"""
+
+    def __init__(self):
+        self._added = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def add(self, obj):
+        self._added.append(obj)
+
+    async def commit(self):
+        # AiArtifact.id 已由 uuid4().hex 在构造时生成，无需数据库回填
+        pass
+
+
 @pytest.fixture
 def excel_context(tmp_path, monkeypatch):
     from app.services.ai.tools import document_paths, generated_file_service
@@ -25,6 +45,13 @@ def excel_context(tmp_path, monkeypatch):
         return str(tmp_path / "agent_workspaces")
     monkeypatch.setattr(document_paths, "resolve_workspace_root", workspace_root)
     monkeypatch.setattr(generated_file_service, "generated_files_root", lambda: tmp_path / "generated")
+    # register_artifact 的依赖：workspace 根与 DB 会话均改为测试内无 DB 版本
+    async def artifact_workspace_root():
+        return tmp_path / "agent_workspaces"
+    monkeypatch.setattr(generated_file_service, "_workspace_root", artifact_workspace_root)
+    monkeypatch.setattr(
+        generated_file_service, "AsyncSessionLocal", lambda: _FakeArtifactSession()
+    )
     set_agent_context(AgentContext(
         agent_id="agent", agent_name="Agent", user_id=1, conversation_id="conv",
         authorized_attachment_paths=[str(source)],

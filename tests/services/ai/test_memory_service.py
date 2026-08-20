@@ -118,23 +118,35 @@ async def test_memory_service_get_history(mock_redis):
     """测试获取历史记录及其限额过滤"""
     service = MemoryService(max_history_turns=2) # Max 4 messages
     
-    # Mock data in Redis (5 items)
+    # Mock data in Redis (5 items), in list-index order (oldest first)
     mock_data = [
         json.dumps({"role": "user", "content": f"msg {i}"})
         for i in range(5)
     ]
-    mock_redis.lrange.return_value = mock_data
-    
+
+    def _lrange_side_effect(key, start, end):
+        # 模拟 Redis LRange 返回 [start, end]（含端点）区间，end == -1 表示到末尾
+        if end == -1 or end >= len(mock_data):
+            end = len(mock_data) - 1
+        if start < 0:
+            start = 0
+        if start > end:
+            return []
+        return mock_data[start : end + 1]
+
+    mock_redis.llen.return_value = len(mock_data)
+    mock_redis.lrange.side_effect = _lrange_side_effect
+
     with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
         mock_get_redis.return_value = mock_redis
         
-        # 1. Fetch with service default limit (4)
+        # 1. Fetch with service default limit (4): Redis 端取窗口 [1,4]
         history = await service.get_history("u1", "c1")
         assert len(history) == 4
         assert history[-1]["content"] == "msg 4"
         assert history[0]["content"] == "msg 1"
         
-        # 2. Fetch with custom limit (2)
+        # 2. Fetch with custom limit (2): Redis 端取窗口 [3,4]
         history_limited = await service.get_history("u1", "c1", limit=2)
         assert len(history_limited) == 2
         assert history_limited[0]["content"] == "msg 3"

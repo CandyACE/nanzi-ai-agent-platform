@@ -785,6 +785,8 @@ class AgentService:
                                 cancellation_message,
                                 trace_id=trace_id,
                                 agent_name=resolved_agent_name,
+                                agent_type="system",
+                                agent_display_name=resolved_display_name,
                                 process_timeline=_final_process_timeline(
                                     shared_state.get("process_timeline")
                                 ),
@@ -1561,6 +1563,8 @@ class AgentService:
                             response,
                             trace_id=trace_id,
                             agent_name=agent_config.agent_name,
+                            agent_type=_public_agent_type(agent_config),
+                            agent_display_name=(agent_config.agent_display_name or agent_config.agent_name),
                         )
                     )
                 return
@@ -2058,8 +2062,11 @@ class AgentService:
                     full_response_content,
                     trace_id=trace_id,
                     agent_name=handled_by,
+                    agent_type=_public_agent_type(agent_config),
+                    agent_display_name=(getattr(agent_config, "agent_display_name", None) or None),
                     prompt_tokens=p_tokens,
                     completion_tokens=c_tokens,
+                    total_tokens=t_tokens,
                     has_data_output=has_data_output or None,
                     reasoning_content=full_reasoning_content or None,
                     process_timeline=_final_process_timeline(
@@ -2100,6 +2107,7 @@ class AgentService:
                         process_timeline=_final_process_timeline(
                             (shared_state or {}).get("process_timeline")
                         ),
+                        has_data_output=has_data_output if execution_status == "success" else None,
                     )
 
                 await await_unless_cancelling(
@@ -2331,8 +2339,11 @@ class AgentService:
                 full_response_content,
                 trace_id=pending.trace_id,
                 agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(getattr(agent_config, "agent_display_name", None) or handled_by),
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
+                total_tokens=t_tokens,
                 reasoning_content=full_reasoning_content or None,
                 process_timeline=_final_process_timeline(process_timeline_state),
             ))
@@ -2589,8 +2600,11 @@ class AgentService:
                 full_response_content,
                 trace_id=pending.trace_id,
                 agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(getattr(agent_config, "agent_display_name", None) or handled_by),
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
+                total_tokens=t_tokens,
                 reasoning_content=full_reasoning_content or None,
                 process_timeline=_final_process_timeline(process_timeline_state),
             ))

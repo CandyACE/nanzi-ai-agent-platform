@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.models.artifact import AiArtifact
+from app.core.orm import AsyncSessionLocal
 from app.utils.fs_paths import get_data_base_dir
 
 DEFAULT_TTL = timedelta(hours=24)
@@ -95,6 +97,88 @@ def _purge_expired() -> None:
             shutil.rmtree(artifact_dir, ignore_errors=True)
 
 
+def _path_under(path: Path, parent: Path) -> bool:
+    """True when `path` is strictly inside `parent` (resolved, no symlink escape)."""
+    try:
+        rpath = path.resolve()
+        rparent = Path(parent).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    try:
+        return rpath == rparent or rparent in rpath.parents
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+async def _workspace_root() -> Path:
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_root
+
+    return Path(await resolve_workspace_root())
+
+
+async def register_artifact(
+    *,
+    source_path: str | Path,
+    filename: str,
+    owner_user_id: int | str | None,
+    artifact_type: str,
+    conversation_id: str | None = None,
+    trace_id: str | None = None,
+    ttl: timedelta = DEFAULT_TTL,
+) -> PublishedArtifact:
+    """登记一个已落在用户工作区内的产物到 ai_artifacts，不复制文件。
+
+    与旧版同步 publish() 的区别：产物内容本身已存在于用户工作区目录，
+    这里只写一条指向该文件的元信息（storage_path），由下载端点校验归属后
+    直接以 FileResponse 返回原文件，避免重复占用磁盘。
+
+    用于 Word/Excel 生成文件与导出数据（artifact_type 取 word/excel/export）。
+    """
+    source = Path(source_path).resolve()
+    if not source.is_file():
+        raise ValueError("待发布文件不存在")
+
+    display_name = Path(filename).name
+    if not display_name or display_name in {".", ".."}:
+        raise ValueError("生成文件名无效")
+
+    root = await _workspace_root()
+    if not _path_under(source, root):
+        raise ValueError("待发布文件必须位于用户工作区目录内")
+
+    if owner_user_id is None:
+        raise ValueError("登记工作区产物需要 owner_user_id")
+
+    expires_at = datetime.now(timezone.utc) + ttl
+    token = secrets.token_urlsafe(32)
+
+    async with AsyncSessionLocal() as session:
+        artifact = AiArtifact(
+            id=uuid.uuid4().hex,
+            owner_user_id=int(owner_user_id),
+            conversation_id=conversation_id or None,
+            trace_id=trace_id or None,
+            artifact_type=artifact_type,
+            filename=display_name,
+            mime_type=_mime_type_for(display_name),
+            size=source.stat().st_size,
+            storage_path=str(source),
+            token_hash=_token_hash(token),
+            expires_at=expires_at,
+        )
+        session.add(artifact)
+        await session.commit()
+
+    return PublishedArtifact(
+        artifact_id=artifact.id,
+        token=token,
+        filename=display_name,
+        mime_type=artifact.mime_type,
+        size=artifact.size,
+        expires_at=expires_at,
+    )
+
+
 def publish(
     source_path: str | Path,
     filename: str,
@@ -169,4 +253,60 @@ def resolve_for_download(artifact_id: str, token: str) -> GeneratedFile | None:
             expires_at=expires_at,
         )
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+
+async def resolve_workspace_artifact(artifact_id: str, token: str) -> GeneratedFile | None:
+    """从 ai_artifacts 解析工作区产物，校验归属后返回可供 FileResponse 的实体。
+
+    校验项：artifact_id 必须为 32 位十六进制、token 与库中 token_hash 匹配、
+    未过期、storage_path 解析后位于用户工作区根之内，且文件确实存在。
+    """
+    if not artifact_id or len(artifact_id) != 32 or any(char not in "0123456789abcdef" for char in artifact_id):
+        return None
+    if not token:
+        return None
+
+    try:
+        workspace_root = await _workspace_root()
+    except Exception:
+        return None
+
+    async with AsyncSessionLocal() as session:
+        try:
+            record = await session.get(AiArtifact, artifact_id)
+        except Exception:
+            return None
+
+    if record is None:
+        return None
+
+    try:
+        if record.expires_at is not None:
+            expires = record.expires_at
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if expires <= datetime.now(timezone.utc):
+                return None
+
+        if not hmac.compare_digest(record.token_hash or "", _token_hash(token)):
+            return None
+
+        storage = Path(record.storage_path).resolve()
+        # 归属校验：文件必须位于用户工作区根之下，防止穿越到工作区外的任意文件。
+        if not _path_under(storage, workspace_root):
+            return None
+        filename = Path(record.filename).name
+        if not filename or not storage.is_file():
+            return None
+
+        return GeneratedFile(
+            artifact_id=artifact_id,
+            path=storage,
+            filename=filename,
+            mime_type=record.mime_type or "application/octet-stream",
+            size=record.size or 0,
+            expires_at=record.expires_at,
+        )
+    except (OSError, ValueError, TypeError):
         return None

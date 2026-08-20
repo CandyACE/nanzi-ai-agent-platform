@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { metadataApi } from '../../api/metadata'
 import type { Metric } from '../../api/metadata'
 import { useUser } from '../../composables/useUser'
@@ -66,6 +66,13 @@ const handleDelete = (id: number) => {
 const selectedMetricIds = ref<number[]>([])
 const showBatchDeleteModal = ref(false)
 const batchDeleting = ref(false)
+
+// 视图模式：卡片网格 (grid) 或 结构化列表 (list)
+const viewMode = ref<'grid' | 'list'>((localStorage.getItem('nanzi_metric_view_mode') as 'grid' | 'list') || 'grid')
+const setViewMode = (mode: 'grid' | 'list') => {
+  viewMode.value = mode
+  localStorage.setItem('nanzi_metric_view_mode', mode)
+}
 
 const isAllMetricsSelected = computed(() => {
   if (metrics.value.length === 0) return false
@@ -178,8 +185,8 @@ defineExpose({ fetchMetrics })
         <span class="text-xs text-gray-400 font-medium hidden sm:inline">共 {{ metrics.length }} 个指标</span>
       </div>
 
-      <div class="flex items-center gap-3" v-if="hasPermission('element:metadata:edit')">
-        <div v-if="selectedMetricIds.length > 0" class="flex items-center gap-2">
+      <div class="flex items-center gap-3">
+        <div v-if="selectedMetricIds.length > 0 && hasPermission('element:metadata:edit')" class="flex items-center gap-2">
           <span class="text-xs bg-amber-50 text-amber-700 px-2.5 py-1 rounded-full font-bold border border-amber-200">
             已选择 {{ selectedMetricIds.length }} 项
           </span>
@@ -191,20 +198,43 @@ defineExpose({ fetchMetrics })
             批量删除
           </button>
         </div>
-        <button 
-          @click="emit('show-smart-discovery')"
-          class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 text-xs font-bold shadow-sm h-9"
-        >
-          <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-          ✨ 智能发现指标
-        </button>
-        <button 
-          @click="openCreate"
-          class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-xs font-bold h-9"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-          新建指标
-        </button>
+
+        <!-- View Switcher -->
+        <div class="flex items-center bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+          <button 
+            type="button"
+            @click="setViewMode('grid')" 
+            :class="['p-1.5 rounded-md transition-all flex items-center justify-center', viewMode === 'grid' ? 'bg-white text-amber-600 shadow-sm font-bold' : 'text-gray-400 hover:text-gray-600']"
+            title="卡片网格视图"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          </button>
+          <button 
+            type="button"
+            @click="setViewMode('list')" 
+            :class="['p-1.5 rounded-md transition-all flex items-center justify-center', viewMode === 'list' ? 'bg-white text-amber-600 shadow-sm font-bold' : 'text-gray-400 hover:text-gray-600']"
+            title="表格列表视图"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+        </div>
+
+        <template v-if="hasPermission('element:metadata:edit')">
+          <button 
+            @click="emit('show-smart-discovery')"
+            class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 text-xs font-bold shadow-sm h-9"
+          >
+            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            ✨ 智能发现指标
+          </button>
+          <button 
+            @click="openCreate"
+            class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-xs font-bold h-9"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            新建指标
+          </button>
+        </template>
       </div>
     </div>
 
@@ -214,17 +244,19 @@ defineExpose({ fetchMetrics })
       {{ error }}
     </div>
 
-    <!-- List -->
+    <!-- Loading -->
     <div v-if="loading" class="flex justify-center py-8">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500"></div>
     </div>
     
+    <!-- Empty State -->
     <div v-else-if="metrics.length === 0" class="text-center py-12 bg-amber-50/50 rounded-xl border border-dashed border-amber-200">
       <p class="text-amber-600 font-medium">暂无定义的指标</p>
       <p class="text-xs text-amber-500 mt-1">添加指标以帮助 AI 理解复杂的业务计算逻辑。</p>
     </div>
 
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <!-- Grid Card View -->
+    <div v-else-if="viewMode === 'grid'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
        <div v-for="m in metrics" :key="m.id" :class="['bg-white p-5 rounded-xl border transition-all group relative', m.id && selectedMetricIds.includes(m.id) ? 'border-amber-400 ring-2 ring-amber-100/80 shadow-md' : 'border-gray-200 shadow-sm hover:shadow-md']">
           <div class="absolute top-4 right-4 flex items-center gap-2">
              <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit')">
@@ -259,6 +291,80 @@ defineExpose({ fetchMetrics })
              </div>
           </div>
        </div>
+    </div>
+
+    <!-- Table List View -->
+    <div v-else-if="viewMode === 'list'" class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="bg-gray-50/80 border-b border-gray-100 text-gray-500 font-bold uppercase tracking-wider">
+              <th v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 w-10 text-center">
+                <input 
+                  type="checkbox" 
+                  :checked="isAllMetricsSelected"
+                  :indeterminate="isSomeMetricsSelected"
+                  @change="toggleSelectAllMetrics"
+                  class="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 cursor-pointer"
+                />
+              </th>
+              <th class="px-4 py-3 w-1/4">指标名称 / 物理标识</th>
+              <th class="px-4 py-3 w-1/3">计算逻辑</th>
+              <th class="px-4 py-3">业务描述</th>
+              <th class="px-4 py-3 w-20 text-center">单位</th>
+              <th v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 w-24 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 text-gray-700">
+            <tr 
+              v-for="m in metrics" 
+              :key="m.id" 
+              :class="['hover:bg-amber-50/40 transition-colors group', m.id && selectedMetricIds.includes(m.id) ? 'bg-amber-50/60' : '']"
+            >
+              <td v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 text-center" @click.stop>
+                <input 
+                  v-if="m.id"
+                  type="checkbox" 
+                  :checked="selectedMetricIds.includes(m.id)"
+                  @change="toggleSelectMetric(m.id)"
+                  class="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 cursor-pointer"
+                />
+              </td>
+              <td class="px-4 py-3">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700 font-bold text-xs shrink-0">M</div>
+                  <div class="min-w-0">
+                    <div class="font-bold text-gray-900 truncate">{{ m.display_name }}</div>
+                    <div class="text-[11px] font-mono text-gray-400 truncate">#{{ m.name }}</div>
+                  </div>
+                </div>
+              </td>
+              <td class="px-4 py-3">
+                <div class="font-mono text-gray-600 bg-gray-50 px-2 py-1 rounded border border-gray-100 text-[11px] line-clamp-2 max-w-md break-all" :title="m.calculation_logic">
+                  {{ m.calculation_logic || '--' }}
+                </div>
+              </td>
+              <td class="px-4 py-3 text-gray-500 max-w-xs truncate" :title="m.description">
+                {{ m.description || '暂无描述' }}
+              </td>
+              <td class="px-4 py-3 text-center">
+                <span v-if="m.unit" class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[11px] font-medium">{{ m.unit }}</span>
+                <span v-else class="text-gray-300">-</span>
+              </td>
+              <td v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 text-right">
+                <div class="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                  <button @click="openEdit(m)" class="text-gray-400 hover:text-blue-600 p-1.5 hover:bg-white rounded-md transition-colors" title="编辑指标">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                  </button>
+                  <button @click="handleDelete(m.id!)" class="text-gray-400 hover:text-red-600 p-1.5 hover:bg-white rounded-md transition-colors" title="删除指标">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Modal -->

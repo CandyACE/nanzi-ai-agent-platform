@@ -48,6 +48,7 @@ class AgentExecutionHistory(Base):
     prompt_tokens = Column(Integer, default=0, comment='输入 Token 消耗数')
     completion_tokens = Column(Integer, default=0, comment='输出 Token 消耗数')
     total_tokens = Column(Integer, default=0, comment='总 Token 消耗数')
+    has_data_output = Column(Integer, default=0, comment='是否产出了数据表格/文件等结构化输出')
     execution_time_ms = Column(Float, comment='耗时(ms)')
     status = Column(String(50), default='success', comment='状态: success, failed')
     agent_version = Column(String(32), nullable=True, comment='生成该回复的 Agent 版本号')

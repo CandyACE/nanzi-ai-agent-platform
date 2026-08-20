@@ -379,27 +379,73 @@ async def read_image(path: str, question: str = "") -> str:
 
 
 @tool
-def write_file(path: str, content: str) -> str:
+async def write_file(
+    path: str,
+    content: str,
+    save_artifact: bool = False,
+    artifact_type: str = "document",
+) -> str:
     """
     写入或覆盖本地安全沙箱文件。用户要求保存内容、生成文件、修改文件、写入配置或把结果落盘到 data/skills 等安全目录时应触发本工具。
     只允许写入安全沙箱 data 目录或已配置的 skills 目录，若父级目录不存在将自动创建。
-    
+
+    当且仅当用户要求把该文件作为可交付产物保存（如"把这段内容保存成文档给我/输出一份文档"）时，
+    应传 save_artifact=True；此时若目标位于用户工作区内，将自动登记到 AI 产物产出并返回可下载链接，
+    便于前端检索与下载。默认写入代码、技能、配置、缓存等过程文件时保持 save_artifact=False，不污染产出表。
+
     Args:
-        path: 物理写入目标路径 (如 data/skills/my_skill.py)。
+        path: 物理写入目标路径 (如 data/skills/my_skill.py 或 data/agent_workspaces/{user_key}/docs/xxx.md)。
         content: 写入文件的完整文本内容。
+        save_artifact: 是否把该文件登记为 AI 产物（需位于用户工作区内才可登记）。默认 False。
+        artifact_type: 产物类型，仅当 save_artifact=True 时生效（如 document/txt/markdown），默认 "document"。
     """
     try:
         abs_path = validate_safe_path(path)
-        
+
         # 自动创建父级目录
         dir_name = os.path.dirname(abs_path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
-            
+
         with open(abs_path, "w", encoding="utf-8") as f:
             f.write(content)
-            
-        return f"物理写入成功！路径：{path}，写入大小：{len(content.encode('utf-8'))} 字节。"
+
+        size = len(content.encode("utf-8"))
+        base_msg = f"物理写入成功！路径：{path}，写入大小：{size} 字节。"
+
+        if not save_artifact:
+            return base_msg
+
+        # 需登记到 AI 产物产出：要求文件位于用户工作区内，且能拿到归属用户上下文。
+        try:
+            from app.core.context import get_current_agent_context
+            from app.services.ai.tools.generated_file_service import register_artifact
+            from pathlib import Path as _Path
+
+            ctx = get_current_agent_context()
+            owner_user_id = ctx.user_id if ctx else None
+            source = _Path(abs_path).resolve()
+            if owner_user_id is None:
+                return base_msg + "（提示：当前会话无归属用户上下文，未能登记到 AI 产物，请直接使用文件路径访问。）"
+            # register_artifact 内部会校验是否位于工作区内；不在工作区内会抛错。
+            artifact = await register_artifact(
+                source_path=source,
+                filename=os.path.basename(abs_path),
+                owner_user_id=owner_user_id,
+                artifact_type=artifact_type or "document",
+                conversation_id=ctx.conversation_id if ctx else None,
+                trace_id=ctx.trace_id if ctx else None,
+            )
+            payload = artifact.to_tool_payload()
+            return (
+                base_msg
+                + f"\n【已登记到 AI 产物】文件名:{payload['filename']}，"
+                f"大小:{payload['size']} 字节，下载链接:{payload['download_url']}"
+            )
+        except ValueError as e:
+            return base_msg + f"\n（提示：未能登记到 AI 产物，原因：{e}。文件已落盘，可直接访问路径。）"
+        except Exception as e:
+            return base_msg + f"\n（提示：产物登记失败，原因：{e}。文件已落盘，可直接访问路径。）"
     except Exception as e:
         return f"写入文件失败: {str(e)}"
 

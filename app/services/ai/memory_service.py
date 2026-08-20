@@ -111,53 +111,58 @@ class MemoryService:
         """
         Retrieve history from Redis with pagination support.
         offset=0 means the most recent messages.
+
+        通过 `llen` 定位并仅拉取所需的窗口切片（反向分页）：
+        取最近若干条（以及 max_history_len 保留窗口内）时，不再 lrange 全量拉到 Python 侧，
+        而是直接在 Redis 端截取目标区间，减少大列表下的数据传输。
         """
         redis = await get_redis()
         if not redis:
             return []
-            
+
         key = self._get_key(user_id, conversation_id)
-        # Fetch all messages first (Redis operations are fast enough for <1000 items)
-        data = await redis.lrange(key, 0, -1)
-        logger.info(f"[MemoryService] Fetching history for key: {key}. Total items: {len(data)}, Limit: {limit}, Offset: {offset}")
-        
+        total = await redis.llen(key)
+        logger.info(f"[MemoryService] Fetching history for key: {key}. Total items: {total}, Limit: {limit}, Offset: {offset}")
+
+        # Max Retention Window: 只回看最近 max_history_len 条
+        if total > self.max_history_len:
+            valid_start = total - self.max_history_len
+            valid_end = total
+        else:
+            valid_start = 0
+            valid_end = total
+
+        # 反向分页：end_exclusive 为保留窗口的尾部开区间上界，start_incl 为其下界。
+        # 当 limit 大于可用条数时，窗口左边界会越过保留窗口起点：此时应向上钳制到
+        # valid_start（返回窗口内全部可用条），而非返回空——与旧实现的 clamp 语义一致，
+        # 避免 GET(limit=50) 在历史只有 2 条时读到空、导致真实 Redis 下 history 消失。
+        if limit is not None and limit > 0:
+            end_exclusive = valid_end - offset
+            if end_exclusive <= valid_start:
+                return []  # offset 已越过保留窗口，无可读条
+            start_incl = max(end_exclusive - limit, valid_start)
+            data = await redis.lrange(key, start_incl, end_exclusive - 1)
+        else:
+            data = await redis.lrange(key, valid_start, valid_end - 1)
+
         history = []
         for item in data:
             try:
                 history.append(json.loads(item))
             except Exception as e:
                 logger.error(f"Failed to parse history item: {item}. Error: {e}")
-        
-        # Apply Max Retention Logic first (ensure we only work with the valid window)
-        if len(history) > self.max_history_len:
-             history = history[-self.max_history_len:]
-
-        # Apply Pagination (Reverse Slicing)
-        # Scenario: Total 50. limit=10, offset=0 -> get last 10 (40-50)
-        # Scenario: Total 50. limit=10, offset=10 -> get prev 10 (30-40)
-        if limit:
-            start_idx = len(history) - (offset + limit)
-            end_idx = len(history) - offset
-            
-            # Boundary Checks
-            if end_idx > len(history): end_idx = len(history)
-            if start_idx < 0: start_idx = 0
-            if end_idx <= 0: return [] # Offset too large
-            
-            if start_idx >= end_idx:
-                return []
-                
-            history = history[start_idx:end_idx]
 
         return history
 
-    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None):
+    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None):
         """
         Append a single message to the conversation history.
         Now supports trace_id, attachment files, and token usage values.
 
         agent_name: 处理该轮的智能体 name(slug)。仅对 assistant 消息记录，
         用于后续路由的会话粘性（让追问沿用上一轮智能体）。
+        agent_type: 处理该轮的智能体类型（如 system/agent/rag 等主类型）。仅对 assistant 消息记录。
+        agent_display_name: 处理该轮的智能体展示名。仅对 assistant 消息记录。
         """
         redis = await get_redis()
         if not redis:
@@ -177,14 +182,20 @@ class MemoryService:
             message["files"] = files
         if agent_name:
             message["agent_name"] = agent_name
+        if role == "assistant":
+            message["agent_type"] = agent_type or "GENERAL"
+            if agent_display_name:
+                message["agent_display_name"] = agent_display_name
         if reasoning_content:
             message["reasoning_content"] = reasoning_content
         if process_timeline:
             message["process_timeline"] = process_timeline
-        message["prompt_tokens"] = int(prompt_tokens or 0)
-        message["completion_tokens"] = int(completion_tokens or 0)
-        if has_data_output:
-            message["has_data_output"] = True
+        _prompt_tokens = int(prompt_tokens or 0)
+        _completion_tokens = int(completion_tokens or 0)
+        message["prompt_tokens"] = _prompt_tokens
+        message["completion_tokens"] = _completion_tokens
+        message["total_tokens"] = int(total_tokens or (_prompt_tokens + _completion_tokens))
+        message["has_data_output"] = bool(has_data_output or False)
 
         
         # Push to list

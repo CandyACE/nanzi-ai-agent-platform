@@ -32,6 +32,55 @@ const defaultDataSource = ref('')
 // Toast
 const { showToast } = useToast()
 
+// File Upload State & Logic
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const triggerFileUpload = () => {
+  if (analyzing.value) return
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+    fileInputRef.value.click()
+  }
+}
+
+const handleFileUpload = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const content = e.target?.result as string
+    if (content) {
+      ddlText.value = content
+      showToast(`已成功导入文件: ${file.name}`, 'success')
+    }
+  }
+  reader.onerror = () => {
+    showToast('读取文件失败，请重试', 'error')
+  }
+  reader.readAsText(file, 'UTF-8')
+}
+
+const handleFileDrop = (event: DragEvent) => {
+  if (analyzing.value) return
+  const file = event.dataTransfer?.files?.[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const content = e.target?.result as string
+    if (content) {
+      ddlText.value = content
+      showToast(`已成功导入文件: ${file.name}`, 'success')
+    }
+  }
+  reader.onerror = () => {
+    showToast('读取文件失败，请重试', 'error')
+  }
+  reader.readAsText(file, 'UTF-8')
+}
+
 // Log Viewer State
 const showLogs = ref(false)
 const currentTraceId = ref('')
@@ -440,25 +489,47 @@ const normalizeType = (rawType: string): string => {
       <div v-if="step === 1" class="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div class="flex-1 p-5 min-h-0 overflow-hidden">
         <div class="relative h-full">
+           <!-- 隐藏的文件选择 input -->
+           <input 
+             ref="fileInputRef"
+             type="file" 
+             accept=".md,.markdown,.sql,.txt,.yaml,.yml,.json" 
+             class="hidden" 
+             @change="handleFileUpload"
+           />
+
            <textarea 
              v-model="ddlText" 
              :disabled="analyzing"
+             @dragover.prevent
+             @drop.prevent="handleFileDrop"
              class="w-full h-full bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 p-5 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
-             placeholder="请在此粘贴 SQL DDL (CREATE TABLE...) 或者业务需求文档...&#10;&#10;示例:&#10;CREATE TABLE orders (id int, user_id int); -- 订单表&#10;CREATE TABLE users (id int, name varchar); -- 用户表&#10;-- 用户表和订单表是一对多关系"
+             placeholder="请在此粘贴 SQL DDL (CREATE TABLE...)、导出的 YAML/Markdown 结构或业务需求文档... 也可直接点击右上角导入文件或拖拽文件至此。&#10;&#10;示例:&#10;CREATE TABLE orders (id int, user_id int); -- 订单表&#10;CREATE TABLE users (id int, name varchar); -- 用户表&#10;-- 用户表和订单表是一对多关系"
            ></textarea>
-            <div class="absolute top-3 right-3 z-10">
+            <div class="absolute top-3 right-3 z-10 flex flex-col items-end gap-2">
                <button 
+                 type="button"
                  @click="showDbImportModal = true"
                  :disabled="analyzing"
-                 class="bg-white/80 backdrop-blur border border-gray-200 text-blue-600 hover:text-blue-700 hover:bg-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50"
+                 class="bg-white/95 backdrop-blur border border-gray-200 text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50"
                >
                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                  从数据库加载 (MySQL/CK)
                </button>
+               <button 
+                 type="button"
+                 @click="triggerFileUpload"
+                 :disabled="analyzing"
+                 class="bg-white/95 backdrop-blur border border-purple-200 text-purple-700 hover:text-purple-800 hover:bg-purple-50 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50"
+                 title="导入 Markdown (.md)、SQL (.sql)、YAML 或文本定义文件"
+               >
+                 <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                 <span>导入文件 (.md/.sql/yaml)</span>
+               </button>
             </div>
-            <div class="absolute bottom-3 right-3 text-xs text-gray-400 flex items-center gap-4">
+            <div class="absolute bottom-3 right-3 text-xs text-gray-400 flex items-center gap-4 bg-white/70 backdrop-blur px-2 py-0.5 rounded-md">
               <span class="font-mono">{{ ddlText.length }} 字符</span>
-              <span>支持 SQL, Markdown, 自然语言</span>
+              <span>支持 Markdown, SQL, YAML, 拖拽上传</span>
             </div>
         </div>
         </div>
