@@ -700,6 +700,7 @@ class MetadataService:
             existing_metric.description = data.get('description', existing_metric.description)
             existing_metric.calculation_logic = data.get('calculation_logic', existing_metric.calculation_logic)
             existing_metric.unit = data.get('unit', existing_metric.unit)
+            existing_metric.tags = data.get('tags', existing_metric.tags)
             existing_metric.updated_at = datetime.now()
             await MetadataService._mark_dataset_as_modified(db, dataset_id)
             await db.commit()
@@ -716,6 +717,8 @@ class MetadataService:
 
         # Create New
         metric = MetaMetric(dataset_id=dataset_id, **data)
+        if metric.tags is None:
+            metric.tags = []
         db.add(metric)
         await MetadataService._mark_dataset_as_modified(db, dataset_id)
         
@@ -725,7 +728,8 @@ class MetadataService:
             "display_name": metric.display_name,
             "description": metric.description,
             "calculation_logic": metric.calculation_logic,
-            "unit": metric.unit
+            "unit": metric.unit,
+            "tags": metric.tags or []
         }
         
         await ChangelogService.log_change(
@@ -778,7 +782,8 @@ class MetadataService:
                 "display_name": old_metric.display_name,
                 "description": old_metric.description,
                 "calculation_logic": old_metric.calculation_logic,
-                "unit": old_metric.unit
+                "unit": old_metric.unit,
+                "tags": old_metric.tags or []
             }
             
             new_data = {
@@ -786,7 +791,8 @@ class MetadataService:
                 "display_name": data.get('display_name', old_metric.display_name),
                 "description": data.get('description', old_metric.description),
                 "calculation_logic": data.get('calculation_logic', old_metric.calculation_logic),
-                "unit": data.get('unit', old_metric.unit)
+                "unit": data.get('unit', old_metric.unit),
+                "tags": data.get('tags', old_metric.tags or [])
             }
             
             await ChangelogService.log_change(
@@ -837,7 +843,8 @@ class MetadataService:
                 "display_name": old_metric.display_name,
                 "description": old_metric.description,
                 "calculation_logic": old_metric.calculation_logic,
-                "unit": old_metric.unit
+                "unit": old_metric.unit,
+                "tags": old_metric.tags or []
             }
             await ChangelogService.log_change(
                 db=db,
@@ -884,7 +891,8 @@ class MetadataService:
                 "display_name": old_metric.display_name,
                 "description": old_metric.description,
                 "calculation_logic": old_metric.calculation_logic,
-                "unit": old_metric.unit
+                "unit": old_metric.unit,
+                "tags": old_metric.tags or []
             }
             await ChangelogService.log_change(
                 db=db,
@@ -1251,14 +1259,31 @@ class MetadataService:
             status=1,
         )
 
+        dataset_ids = [ds.id for ds in datasets]
+        if not dataset_ids:
+            return []
+
+        # 一次 IN 查询取回所有权限内数据集的表 + 嵌套列，避免逐数据集循环（N+1）。
+        tables_stmt = (
+            select(MetaTable)
+            .where(
+                MetaTable.dataset_id.in_(dataset_ids),
+                MetaTable.status == 1,
+            )
+            .options(selectinload(MetaTable.columns))
+            .order_by(MetaTable.dataset_id, MetaTable.id)
+        )
+        tables_result = await db.execute(tables_stmt)
+        tables = tables_result.scalars().all()
+
+        # 内存按 dataset_id 分组，保持数据集顺序与 search_datasets 返回一致。
+        tables_by_dataset: dict[int, list[MetaTable]] = {}
+        for t in tables:
+            tables_by_dataset.setdefault(t.dataset_id, []).append(t)
+
         result = []
         for ds in datasets:
-            tables_stmt = select(MetaTable).where(
-                MetaTable.dataset_id == ds.id,
-                MetaTable.status == 1,
-            ).options(selectinload(MetaTable.columns))
-            tables_result = await db.execute(tables_stmt)
-            tables = tables_result.scalars().all()
+            ds_tables = tables_by_dataset.get(ds.id, [])
             result.append({
                 "dataset_id": ds.id,
                 "dataset_name": ds.name,
@@ -1276,7 +1301,7 @@ class MetadataService:
                             for col in t.columns
                         ]
                     }
-                    for t in tables
+                    for t in ds_tables
                 ],
             })
         return result

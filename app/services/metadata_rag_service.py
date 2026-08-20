@@ -155,6 +155,7 @@ class MetadataRagService:
                     "display": m.display_name,
                     "desc": m.description or "",
                     "unit": m.unit or "",
+                    "tags": m.tags or [],
                     "sql": m.calculation_logic,
                 }
                 for m in (dataset.metrics or [])

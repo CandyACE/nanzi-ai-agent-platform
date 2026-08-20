@@ -28,8 +28,26 @@ const form = ref<Metric>({
   display_name: '',
   description: '',
   calculation_logic: '',
-  unit: ''
+  unit: '',
+  tags: []
 })
+
+const tagInput = ref('')
+
+const addTag = (target: { tags?: string[] }) => {
+  const tag = tagInput.value.trim()
+  if (!tag) return
+  const tags = (target.tags = target.tags || [])
+  if (!tags.includes(tag)) {
+    tags.push(tag)
+    tagInput.value = ''
+  }
+}
+
+const removeTag = (target: { tags?: string[] }, index: number) => {
+  if (!target.tags) return
+  target.tags.splice(index, 1)
+}
 
 const fetchMetrics = async () => {
   loading.value = true
@@ -47,14 +65,16 @@ const fetchMetrics = async () => {
 
 const openCreate = () => {
   editingId.value = null
-  form.value = { name: '', display_name: '', description: '', calculation_logic: '', unit: '' }
+  form.value = { name: '', display_name: '', description: '', calculation_logic: '', unit: '', tags: [] }
+  tagInput.value = ''
   modalError.value = ''
   showModal.value = true
 }
 
 const openEdit = (m: Metric) => {
   editingId.value = m.id || null
-  form.value = { ...m }
+  form.value = { ...m, tags: m.tags || [] }
+  tagInput.value = ''
   modalError.value = ''
   showModal.value = true
 }
@@ -167,7 +187,7 @@ defineExpose({ fetchMetrics })
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="space-y-3">
     <!-- Toolbar -->
     <div class="flex flex-wrap justify-between items-center gap-3 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
       <div class="flex items-center gap-3">
@@ -289,6 +309,9 @@ defineExpose({ fetchMetrics })
              <div v-if="m.unit" class="text-xs text-gray-400 flex items-center gap-1">
                 <span>Unit:</span> <span class="bg-gray-100 px-1 rounded text-gray-600">{{ m.unit }}</span>
              </div>
+             <div v-if="m.tags && m.tags.length" class="flex flex-wrap gap-1 pt-1">
+                <span v-for="tag in m.tags" :key="tag" class="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded-full border border-blue-100">{{ tag }}</span>
+             </div>
           </div>
        </div>
     </div>
@@ -312,6 +335,7 @@ defineExpose({ fetchMetrics })
               <th class="px-4 py-3 w-1/3">计算逻辑</th>
               <th class="px-4 py-3">业务描述</th>
               <th class="px-4 py-3 w-20 text-center">单位</th>
+              <th class="px-4 py-3">标签</th>
               <th v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 w-24 text-right">操作</th>
             </tr>
           </thead>
@@ -349,6 +373,12 @@ defineExpose({ fetchMetrics })
               </td>
               <td class="px-4 py-3 text-center">
                 <span v-if="m.unit" class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[11px] font-medium">{{ m.unit }}</span>
+                <span v-else class="text-gray-300">-</span>
+              </td>
+              <td class="px-4 py-3">
+                <div v-if="m.tags && m.tags.length" class="flex flex-wrap gap-1 max-w-xs">
+                  <span v-for="tag in m.tags" :key="tag" class="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded-full border border-blue-100">{{ tag }}</span>
+                </div>
                 <span v-else class="text-gray-300">-</span>
               </td>
               <td v-if="hasPermission('element:metadata:edit')" class="px-4 py-3 text-right">
@@ -404,6 +434,17 @@ defineExpose({ fetchMetrics })
              <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">单位</label>
                 <input v-model="form.unit" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. kWh, %">
+             </div>
+             <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">标签 <span class="text-gray-400 font-normal">(用于业务归类与检索，可选)</span></label>
+                <input v-model="tagInput" @keyup.enter="addTag(form)" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="输入标签后回车">
+                <div class="flex flex-wrap gap-2 mt-2">
+                  <span v-for="(tag, i) in form.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                    {{ tag }}
+                    <button type="button" @click="removeTag(form, i as number)" class="text-blue-400 hover:text-red-500 ml-1" title="移除标签">&times;</button>
+                  </span>
+                  <span v-if="!form.tags || form.tags.length === 0" class="text-xs text-gray-400">暂无标签</span>
+                </div>
              </div>
           </div>
           <div class="p-6 bg-gray-50 flex justify-end gap-3">

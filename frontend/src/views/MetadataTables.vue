@@ -12,6 +12,7 @@ import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
 import SmartMetricModal from '../components/metadata/SmartMetricModal.vue'
 import SchemaGraph from '../components/metadata/SchemaGraph.vue'
 import ChangelogList from '../components/metadata/ChangelogList.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
@@ -451,11 +452,17 @@ const toggleHeaderCollapse = () => {
 
 // AI 补全描述相关状态
 const enhancingDataset = ref(false)
+const showAiConfirmModal = ref(false)
 const showAiEnhanceModal = ref(false)
 const aiGeneratedDesc = ref('')
 const aiGeneratedTags = ref<string[]>([])
 const aiTagInput = ref('')
 const savingAiEnhance = ref(false)
+
+// 点击「AI 补全描述」先弹出确认框，避免误触发 AI 调用/覆盖已有描述
+const openAiEnhanceConfirm = () => {
+  showAiConfirmModal.value = true
+}
 
 const addAiTag = () => {
   const tag = aiTagInput.value.trim()
@@ -521,9 +528,9 @@ defineExpose({ fetchMetrics })
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-3">
     <!-- Breadcrumbs -->
-    <nav class="flex mb-4 text-sm" aria-label="Breadcrumb">
+    <nav class="flex text-xs" aria-label="Breadcrumb">
       <ol class="flex items-center space-x-2">
         <li>
           <router-link to="/dashboard/metadata" class="text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1">
@@ -541,7 +548,7 @@ defineExpose({ fetchMetrics })
     <!-- RAG Pending Warning Banner -->
     <div 
       v-if="!isLocalMode && dataset?.rag_sync_status === 3" 
-      class="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between shadow-sm animate-pulse-slow mb-6"
+      class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center justify-between shadow-xs animate-pulse-slow"
     >
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200">
@@ -567,7 +574,7 @@ defineExpose({ fetchMetrics })
     </div>
 
     <!-- Header Card -->
-    <div :class="['bg-white rounded-xl shadow-sm border border-gray-100 relative overflow-hidden transition-all duration-300', isHeaderCollapsed ? 'p-4' : 'p-6']">
+    <div :class="['bg-white rounded-xl shadow-xs border border-gray-100 relative overflow-hidden transition-all duration-300', isHeaderCollapsed ? 'px-4 py-2.5' : 'px-5 py-3.5']">
       <!-- Decoration Top -->
       <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-primary"></div>
       
@@ -590,7 +597,7 @@ defineExpose({ fetchMetrics })
         <div class="flex items-center gap-2.5 shrink-0">
           <button 
             v-if="hasPermission('element:metadata:edit')"
-            @click="handleAiEnhance"
+            @click="openAiEnhanceConfirm"
             :disabled="enhancingDataset"
             class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold shadow-sm h-8 disabled:opacity-50"
             title="基于现有表结构智能生成/润色数据集业务描述和标签"
@@ -629,20 +636,20 @@ defineExpose({ fetchMetrics })
 
       <!-- Expanded Full View -->
       <div v-else class="flex flex-col lg:flex-row justify-between items-start gap-4 relative z-10">
-        <div class="flex items-start gap-5 relative min-w-0 flex-1">
+        <div class="flex items-start gap-4 relative min-w-0 flex-1">
           <!-- Emoji -->
-          <div class="w-16 h-16 rounded-xl bg-gray-50 flex items-center justify-center text-3xl shadow-inner border border-gray-100 shrink-0">
+          <div class="w-14 h-14 rounded-xl bg-gray-50 flex items-center justify-center text-3xl shadow-inner border border-gray-100 shrink-0">
             {{ dataset?.name ? getDatasetEmoji(dataset.name) : '📂' }}
           </div>
           
           <div class="max-w-2xl min-w-0 flex-1">
             <div class="flex items-center gap-3">
-              <h1 class="text-2xl font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
+              <h1 class="text-xl font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
               <span class="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs font-mono rounded select-all shrink-0">#{{ dataset?.name }}</span>
             </div>
             
-            <div class="mt-1.5 mb-2 flex items-center flex-wrap gap-2">
-              <p class="text-gray-500 text-sm leading-relaxed">
+            <div class="mt-1 mb-1.5 flex items-center flex-wrap gap-2">
+              <p class="text-gray-500 text-xs leading-relaxed">
                 {{ dataset?.description ? (dataset.description.length > 80 ? dataset.description.substring(0, 80) + '...' : dataset.description) : '暂无描述信息' }}
                 <button 
                   v-if="dataset?.description && dataset.description.length > 80" 
@@ -657,7 +664,7 @@ defineExpose({ fetchMetrics })
               <!-- AI Enhance Button (in-line) -->
               <button 
                 v-if="hasPermission('element:metadata:edit')"
-                @click="handleAiEnhance"
+                @click="openAiEnhanceConfirm"
                 :disabled="enhancingDataset"
                 class="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-0.5 rounded-full border border-indigo-200/80 inline-flex items-center gap-1 font-bold transition-all shadow-sm disabled:opacity-50"
                 title="基于现有表结构智能生成/润色数据集业务描述和标签"
@@ -681,7 +688,7 @@ defineExpose({ fetchMetrics })
             </div>
 
             <!-- Permissions Info -->
-            <div v-if="datasetPermissions?.users?.length || datasetPermissions?.roles?.length" class="mt-3.5 pt-3 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-2 text-xs">
+            <div v-if="datasetPermissions?.users?.length || datasetPermissions?.roles?.length" class="mt-2.5 pt-2 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
               <div v-if="datasetPermissions.roles.length" class="flex items-center gap-1.5">
                 <span class="text-gray-400 font-medium select-none">授权角色:</span>
                 <div class="flex flex-wrap gap-1">
@@ -715,7 +722,7 @@ defineExpose({ fetchMetrics })
           <button 
             v-has-perm="'element:metadata:view_yaml'"
             @click="fetchYaml"
-            class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap shadow-sm"
+            class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-9 whitespace-nowrap shadow-sm"
           >
             <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
             查看&导出 AI YAML
@@ -723,14 +730,14 @@ defineExpose({ fetchMetrics })
           <button 
             v-if="hasPermission('element:metadata:import')"
             @click="showImportModal = true"
-            class="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-medium h-10 whitespace-nowrap"
+            class="bg-slate-900 hover:bg-black text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-medium h-9 whitespace-nowrap"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
             导入 DDL 结构
           </button>
           <button 
             @click="toggleHeaderCollapse"
-            class="text-gray-400 hover:text-gray-700 w-10 h-10 rounded-lg hover:bg-gray-100 transition-all flex items-center justify-center border border-gray-200 bg-white shadow-2xs shrink-0"
+            class="text-gray-400 hover:text-gray-700 w-9 h-9 rounded-lg hover:bg-gray-100 transition-all flex items-center justify-center border border-gray-200 bg-white shadow-2xs shrink-0"
             :title="isHeaderCollapsed ? '展开数据集详情' : '收起数据集详情'"
           >
             <svg class="w-4 h-4 transition-transform duration-300 transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -741,14 +748,12 @@ defineExpose({ fetchMetrics })
       </div>
     </div>
 
-
-
     <!-- Tabs -->
     <div class="border-b border-gray-200">
-      <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+      <nav class="-mb-px flex space-x-6" aria-label="Tabs">
         <button
           @click="activeTab = 'tables'"
-          :class="[activeTab === 'tables' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'tables' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           数据表
           <span 
@@ -757,7 +762,7 @@ defineExpose({ fetchMetrics })
         </button>
         <button
           @click="activeTab = 'metrics'"
-          :class="[activeTab === 'metrics' ? 'border-amber-500 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'metrics' ? 'border-amber-500 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           业务指标
           <span 
@@ -766,7 +771,7 @@ defineExpose({ fetchMetrics })
         </button>
         <button
           @click="activeTab = 'relationships'"
-          :class="[activeTab === 'relationships' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'relationships' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           实体关系
           <span 
@@ -775,21 +780,21 @@ defineExpose({ fetchMetrics })
         </button>
         <button
           @click="activeTab = 'visualization'"
-          :class="[activeTab === 'visualization' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'visualization' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
           可视化
         </button>
         <button
           @click="activeTab = 'changelog'"
-          :class="[activeTab === 'changelog' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'changelog' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           变更日志
         </button>
         <button
           @click="activeTab = 'permissions'"
-          :class="[activeTab === 'permissions' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
+          :class="[activeTab === 'permissions' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300', 'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ease-in-out flex items-center gap-2']"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
           权限管理
@@ -801,7 +806,7 @@ defineExpose({ fetchMetrics })
     </div>
 
     <!-- Content: Tables -->
-    <div v-show="activeTab === 'tables'" class="space-y-4">
+    <div v-show="activeTab === 'tables'" class="space-y-3">
       <div class="flex flex-wrap justify-between items-center gap-4 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
          <div class="flex items-center gap-3 flex-1 max-w-md">
             <label v-if="filteredTables.length > 0 && hasPermission('element:metadata:delete_table')" class="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-gray-600 hover:text-gray-900 shrink-0 ml-1">
@@ -1636,6 +1641,18 @@ defineExpose({ fetchMetrics })
         </div>
       </div>
     </div>
+
+    <!-- AI 补全描述确认框（复用通用 ConfirmModal 组件） -->
+    <ConfirmModal
+      v-if="showAiConfirmModal"
+      title="确认 AI 补全描述？"
+      message="将基于当前数据集的数据表、字段与指标，智能生成并润色业务描述与标签。若当前已有描述或标签，可能会被 AI 生成结果覆盖。确认后开始生成？"
+      confirm-text="开始生成"
+      cancel-text="取消"
+      type="primary"
+      @confirm="handleAiEnhance"
+      @cancel="showAiConfirmModal = false"
+    />
   </div>
 </template>
 

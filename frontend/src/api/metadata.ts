@@ -65,6 +65,7 @@ export interface Metric {
   description?: string;
   calculation_logic: string;
   unit?: string;
+  tags?: string[];
 }
 
 export interface Relationship {
@@ -97,6 +98,27 @@ export interface AllTablesDataset {
   dataset_name: string;
   display_name: string;
   tables: AllTablesTable[];
+}
+
+// 智能发现关系 - 推荐结果类型（仅预览，不入库）
+export type RelationshipRelationType =
+  | "one_to_one"
+  | "one_to_many"
+  | "many_to_one";
+
+export interface RelationshipRecommendation {
+  source_table: string; // 源表物理名
+  target_table: string; // 目标表物理名
+  condition: string; // JOIN 表达式，如 't1.a = t2.b'
+  relation_type: RelationshipRelationType;
+  description: string; // 业务含义描述
+  confidence: number; // 置信度 0~1
+  source?: string; // 推荐来源标识，如 'AI'
+}
+
+export interface RelationshipRecommendationResult {
+  relationships: RelationshipRecommendation[];
+  _trace_id?: string;
 }
 
 export const metadataApi = {
@@ -177,6 +199,13 @@ export const metadataApi = {
   
   recommendMetrics: (datasetId: number) =>
     axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, {}, { timeout: 300000 }),
+
+  recommendRelationships: (datasetId: number) =>
+    axios.post<{
+      code: number;
+      message?: string;
+      data: RelationshipRecommendationResult;
+    }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, {}, { timeout: 300000 }),
 
   enhanceDatasetMetadata: (datasetId: number) =>
     axios.post<{ code: number; message?: string; data: { description: string; tags: string[] } }>(

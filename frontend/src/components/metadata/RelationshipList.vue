@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed, nextTick, shallowRef, onUnmounted } from "vue";
 import { metadataApi } from "../../api/metadata";
-import type { Relationship, Table, AllTablesDataset } from "../../api/metadata";
+import type {
+  Relationship,
+  RelationshipRecommendation,
+  Table,
+  AllTablesDataset,
+} from "../../api/metadata";
 import { useUser } from "../../composables/useUser";
 import {
   formatRelationshipJoinTypeLabel,
@@ -62,6 +67,147 @@ const targetField = ref("");
 
 // 跨数据集：全平台所有数据集 + 表列表
 const allTablesList = ref<AllTablesDataset[]>([]);
+
+// ===== 智能发现关系 =====
+const showDiscovery = ref(false); // 预览面板是否展开
+const recommending = ref(false); // 正在请求推荐
+const recommendedRels = ref<RelationshipRecommendation[]>([]);
+const discoveryError = ref("");
+const adoptingId = ref<number | null>(null); // 正在逐条入库的推荐下标
+const adoptingAll = ref(false); // 正在批量入库
+const sortKey = ref<"confidence" | "source_table">("confidence");
+const sortAsc = ref(false); // 默认 confidence 降序
+
+// 按物理表名反查表格 id（先在当前数据集内查找，再查跨数据集）
+const findTableIdByPhysicalName = (name: string): number | null => {
+  const local = props.tables.find((t) => t.physical_name === name);
+  if (local && local.id != null) return local.id;
+  for (const ds of allTablesList.value) {
+    const t = ds.tables.find((x) => x.physical_name === name);
+    if (t) return t.id;
+  }
+  return null;
+};
+
+const relationTypeLabel = (t?: string) => {
+  switch (t) {
+    case "one_to_one": return "一对一";
+    case "one_to_many": return "一对多";
+    case "many_to_one": return "多对一";
+    default: return t || "-";
+  }
+};
+
+const confidenceStyle = (c: number) => {
+  if (c >= 0.8)
+    return { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", bar: "bg-emerald-500", label: "高置信" };
+  if (c >= 0.6)
+    return { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", bar: "bg-amber-500", label: "中置信" };
+  return { bg: "bg-red-50", text: "text-red-700", border: "border-red-200", bar: "bg-red-500", label: "低置信" };
+};
+
+const sortedRecommendedRels = computed(() => {
+  const list = [...recommendedRels.value];
+  const dir = sortAsc.value ? 1 : -1;
+  list.sort((a, b) => {
+    if (sortKey.value === "confidence") {
+      return (a.confidence - b.confidence) * dir;
+    }
+    return a.source_table.localeCompare(b.source_table) * dir;
+  });
+  return list;
+});
+
+const toggleDiscovery = () => {
+  showDiscovery.value = !showDiscovery.value;
+  if (!showDiscovery.value) {
+    discoveryError.value = "";
+  }
+};
+
+const runDiscovery = async () => {
+  recommending.value = true;
+  discoveryError.value = "";
+  try {
+    const res = await metadataApi.recommendRelationships(props.datasetId);
+    const data = res.data?.data;
+    recommendedRels.value = data?.relationships ?? [];
+    showDiscovery.value = true;
+  } catch (e: any) {
+    console.error(e);
+    discoveryError.value = "智能发现失败: " + (e.response?.data?.detail || e.message);
+    showDiscovery.value = true;
+  } finally {
+    recommending.value = false;
+  }
+};
+
+// 将单条推荐入库（物理表名反查 id；找不到则跳过并提示）
+const adoptRel = async (rec: RelationshipRecommendation, index: number) => {
+  const srcId = findTableIdByPhysicalName(rec.source_table);
+  const tgtId = findTableIdByPhysicalName(rec.target_table);
+  if (srcId == null || tgtId == null) {
+    discoveryError.value = `无法识别的物理表名: ${rec.source_table} / ${rec.target_table}，请手动新建关系`;
+    return;
+  }
+  adoptingId.value = index;
+  discoveryError.value = "";
+  try {
+    await metadataApi.createRelationship(props.datasetId, {
+      source_table_id: srcId,
+      target_table_id: tgtId,
+      join_condition: rec.condition,
+      join_type: "left",
+      description: rec.description,
+    });
+    // 移除已采纳的推荐
+    const name = rec.source_table + rec.target_table + rec.condition;
+    recommendedRels.value = recommendedRels.value.filter(
+      (r) => r.source_table + r.target_table + r.condition !== name
+    );
+    fetchRelationships();
+  } catch (e: any) {
+    console.error(e);
+    discoveryError.value = "入库失败: " + (e.response?.data?.detail || e.message);
+  } finally {
+    adoptingId.value = null;
+  }
+};
+
+// 批量将全部推荐入库
+const adoptAllRels = async () => {
+  const failed: string[] = [];
+  adoptingAll.value = true;
+  discoveryError.value = "";
+  const snapshot = [...recommendedRels.value];
+  for (const rec of snapshot) {
+    const srcId = findTableIdByPhysicalName(rec.source_table);
+    const tgtId = findTableIdByPhysicalName(rec.target_table);
+    if (srcId == null || tgtId == null) {
+      failed.push(`${rec.source_table}->${rec.target_table}`);
+      continue;
+    }
+    try {
+      await metadataApi.createRelationship(props.datasetId, {
+        source_table_id: srcId,
+        target_table_id: tgtId,
+        join_condition: rec.condition,
+        join_type: "left",
+        description: rec.description,
+      });
+    } catch (e: any) {
+      console.error(e);
+      failed.push(`${rec.source_table}->${rec.target_table}`);
+    }
+  }
+  if (failed.length > 0) {
+    discoveryError.value = `部分关系入库失败，请手动处理: ${failed.join(", ")}`;
+  }
+  recommendedRels.value = [];
+  fetchRelationships();
+  adoptingAll.value = false;
+};
+// ===== 智能发现关系结束 =====
 
 const sourceColumns = computed(() => {
   const table = props.tables.find((t) => t.id === form.value.source_table_id);
@@ -578,7 +724,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="space-y-3">
     <!-- Toolbar -->
     <div class="flex flex-wrap justify-between items-center gap-3 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
       <div class="flex items-center gap-3 flex-1 min-w-[280px]">
@@ -659,6 +805,17 @@ onUnmounted(() => {
 
         <button
           v-if="hasPermission('element:metadata:edit')"
+          @click="runDiscovery"
+          :disabled="recommending"
+          class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-bold h-8 shrink-0"
+          title="基于字段语义与既有关联，由 AI 智能推断可能的 FK / Join 关系"
+        >
+          <svg v-if="recommending" class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          {{ recommending ? "发现中…" : "智能发现" }}
+        </button>
+        <button
+          v-if="hasPermission('element:metadata:edit')"
           @click="openCreate()"
           class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md flex items-center gap-1.5 text-xs font-bold h-8 shrink-0"
         >
@@ -694,14 +851,130 @@ onUnmounted(() => {
       <p class="text-xs text-purple-600/80 mt-1 max-w-md mx-auto">
         定义数据表之间的 Join 路径与主外键逻辑，让 AI 智能体掌握跨表分析与多维关联。
       </p>
-      <button 
-        v-if="hasPermission('element:metadata:edit')"
-        @click="openCreate()"
-        class="mt-4 px-4 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-bold shadow-sm hover:bg-purple-700 transition-all inline-flex items-center gap-1.5"
-      >
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-        立即新建第一条关系
-      </button>
+      <div class="flex items-center justify-center gap-3">
+        <button 
+          v-if="hasPermission('element:metadata:edit')"
+          @click="runDiscovery"
+          :disabled="recommending"
+          class="mt-4 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-sm hover:bg-indigo-700 transition-all inline-flex items-center gap-1.5 disabled:bg-indigo-300"
+        >
+          <svg v-if="recommending" class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          {{ recommending ? "发现中…" : "智能发现关系" }}
+        </button>
+      </div>
+    </div>
+
+    <!-- VIEW 0: 智能发现关系 弹窗 -->
+    <div v-if="showDiscovery"
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-gray-900/40 backdrop-blur-sm"
+         @click.self="toggleDiscovery">
+      <div class="bg-white rounded-xl border border-indigo-200/70 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+        <!-- header -->
+        <div class="px-5 py-3 bg-gradient-to-r from-indigo-50 via-violet-50/50 to-white border-b border-indigo-100 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div class="flex items-center gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-indigo-900 flex items-center gap-2">
+                ✨ 智能发现关系
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">AI 建议 · 仅供参考</span>
+              </h3>
+              <p class="text-[11px] text-gray-500 mt-0.5">
+                根据字段语义与既有关系由 AI 推断得出，结果需人工确认后才入库。
+              </p>
+            </div>
+          </div>
+          <button @click="toggleDiscovery" class="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all" title="关闭">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- body -->
+        <div class="p-5 overflow-y-auto flex-1">
+        <div v-if="recommending" class="flex justify-center py-10">
+          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <span class="ml-3 text-sm text-gray-500 self-center">AI 正在分析表结构与字段语义，请稍候…</span>
+        </div>
+
+        <div v-else-if="discoveryError" class="bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm border border-red-100">
+          {{ discoveryError }}
+        </div>
+
+        <div v-else-if="recommendedRels.length === 0" class="text-center py-8">
+          <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-400 flex items-center justify-center mx-auto mb-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          </div>
+          <p class="text-sm text-gray-600 font-bold">当前未发现新的候选关系</p>
+          <p class="text-xs text-gray-400 mt-1">可能是已有关系已覆盖，或表结构信息不足以推断。</p>
+        </div>
+
+        <div v-else>
+          <!-- 排序控制 -->
+          <div class="flex items-center gap-2 mb-3 text-xs">
+            <span class="text-gray-500 font-medium">排序:</span>
+            <button v-for="key in (['confidence', 'source_table'] as const)" :key="key" @click="sortKey = key"
+              :class="[sortKey === key ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200', 'px-2.5 py-1 rounded-md font-bold transition-all']">
+              {{ key === "confidence" ? "置信度" : "源表" }}
+            </button>
+            <button @click="sortAsc = !sortAsc" class="px-2 py-1 rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 font-bold transition-all">
+              {{ sortAsc ? "升序 ↑" : "降序 ↓" }}
+            </button>
+          </div>
+
+          <ul class="space-y-3">
+            <li v-for="(rec, index) in sortedRecommendedRels" :key="rec.source_table + rec.target_table + rec.condition"
+                class="border border-gray-200/80 rounded-lg p-3 hover:border-indigo-200 hover:bg-indigo-50/20 transition-all">
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0 flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-mono font-bold text-xs text-gray-800 px-2 py-0.5 bg-gray-100 rounded border border-gray-200">{{ rec.source_table }}</span>
+                    <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                    <span class="font-mono font-bold text-xs text-gray-800 px-2 py-0.5 bg-gray-100 rounded border border-gray-200">{{ rec.target_table }}</span>
+                    <span class="px-1.5 py-0.5 text-[10px] font-bold rounded border"
+                      :class="rec.relation_type === 'one_to_one' ? 'bg-blue-50 text-blue-700 border-blue-200' : (rec.relation_type === 'one_to_many' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200')">
+                      {{ relationTypeLabel(rec.relation_type) }}
+                    </span>
+                  </div>
+                  <p class="text-xs font-mono text-gray-600 mt-2 px-2 py-1 bg-gray-50 rounded border border-gray-100">{{ rec.condition }}</p>
+                  <p class="text-xs text-gray-500 mt-1.5">{{ rec.description }}</p>
+                </div>
+                <div class="flex flex-col items-end gap-1.5 shrink-0">
+                  <span class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold rounded-full border"
+                    :class="[confidenceStyle(rec.confidence).bg, confidenceStyle(rec.confidence).text, confidenceStyle(rec.confidence).border]">
+                    <span class="w-1.5 h-1.5 rounded-full" :class="confidenceStyle(rec.confidence).bar"></span>
+                    {{ Math.round(rec.confidence * 100) }}% · {{ confidenceStyle(rec.confidence).label }}
+                  </span>
+                  <button
+                    @click="adoptRel(rec, index)"
+                    :disabled="adoptingId === index || adoptingAll"
+                    class="px-3 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white transition-all flex items-center gap-1"
+                  >
+                    <svg v-if="adoptingId === index" class="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <svg v-else class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    采纳入库
+                  </button>
+                </div>
+              </div>
+            </li>
+          </ul>
+
+          <div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+            <span class="text-xs text-gray-500">共 {{ recommendedRels.length }} 条候选建议</span>
+            <button
+              @click="adoptAllRels"
+              :disabled="adoptingAll"
+              class="px-4 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white transition-all flex items-center gap-1.5"
+            >
+              <svg v-if="adoptingAll" class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              {{ adoptingAll ? "入库中…" : "全部采纳入库" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
     </div>
 
     <!-- VIEW 1: Hub / Star Schema Cards (主表聚合卡片视图) -->
@@ -861,30 +1134,40 @@ onUnmounted(() => {
                   class="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500 cursor-pointer"
                 />
               </td>
-              <td class="py-3 px-4 font-mono font-bold text-gray-900">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-blue-500">🗄️</span>
-                  <span>{{ getTableMeta(r.source_table_id).physical_name }}</span>
-                  <span v-if="getTableMeta(r.source_table_id).term" class="text-gray-400 font-normal">
-                    ({{ getTableMeta(r.source_table_id).term }})
-                  </span>
+              <td class="py-2.5 px-4 font-mono">
+                <div class="flex items-start gap-1.5">
+                  <span class="text-blue-500 shrink-0 mt-0.5">🗄️</span>
+                  <div class="min-w-0">
+                    <div class="font-bold text-gray-900 leading-snug">
+                      {{ getTableMeta(r.source_table_id).physical_name }}
+                    </div>
+                    <div v-if="getTableMeta(r.source_table_id).term" class="text-[11px] font-sans font-normal text-gray-500 leading-tight mt-0.5">
+                      {{ getTableMeta(r.source_table_id).term }}
+                    </div>
+                  </div>
                 </div>
               </td>
-              <td class="py-3 px-3 text-center">
+              <td class="py-2.5 px-3 text-center">
                 <span class="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 rounded text-[11px] font-bold">
                   {{ formatRelationshipJoinTypeLabel(r.join_type) }}
                 </span>
               </td>
-              <td class="py-3 px-4 font-mono font-bold text-gray-900">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-emerald-500">🔗</span>
-                  <span>{{ getTableMeta(r.target_table_id).physical_name }}</span>
-                  <span v-if="getTableMeta(r.target_table_id).term" class="text-gray-400 font-normal">
-                    ({{ getTableMeta(r.target_table_id).term }})
-                  </span>
-                  <span v-if="!isCurrentDataset(r.target_table_id)" class="px-1.5 py-0.5 text-[9px] bg-amber-100 text-amber-700 rounded border border-amber-200">
-                    跨库
-                  </span>
+              <td class="py-2.5 px-4 font-mono">
+                <div class="flex items-start gap-1.5">
+                  <span class="text-emerald-500 shrink-0 mt-0.5">🔗</span>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-bold text-gray-900 leading-snug">
+                        {{ getTableMeta(r.target_table_id).physical_name }}
+                      </span>
+                      <span v-if="!isCurrentDataset(r.target_table_id)" class="px-1.5 py-0.2 text-[9px] font-sans font-bold bg-amber-100 text-amber-700 rounded border border-amber-200 shrink-0">
+                        跨库
+                      </span>
+                    </div>
+                    <div v-if="getTableMeta(r.target_table_id).term" class="text-[11px] font-sans font-normal text-gray-500 leading-tight mt-0.5">
+                      {{ getTableMeta(r.target_table_id).term }}
+                    </div>
+                  </div>
                 </div>
               </td>
               <td class="py-3 px-4">

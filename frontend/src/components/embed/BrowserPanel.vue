@@ -173,6 +173,27 @@
             </button>
           </div>
 
+          <div
+            v-if="showAutoNotice"
+            role="status"
+            class="flex items-start gap-2 border-b border-sky-100 bg-sky-50 px-3 py-2 dark:border-sky-900/60 dark:bg-sky-950/40"
+          >
+            <span class="mt-px text-[11px]" aria-hidden="true">🖥️</span>
+            <div class="min-w-0 flex-1 text-[10px] leading-relaxed text-sky-800 dark:text-sky-200">
+              <span class="font-bold">关闭此面板不会影响浏览器自动化。</span>
+              <span class="mt-0.5 block text-sky-700 dark:text-sky-300">自动化在服务端浏览器中继续执行，你可以随时重新打开本面板查看画面。</span>
+            </div>
+            <button
+              type="button"
+              class="rounded p-0.5 text-sky-600 hover:bg-sky-100 hover:text-sky-900 dark:text-sky-300 dark:hover:bg-sky-900/60 dark:hover:text-white"
+              aria-label="关闭提示"
+              title="关闭提示"
+              @click="showAutoNotice = false"
+            >
+              ×
+            </button>
+          </div>
+
           <div class="flex shrink-0 items-center gap-2 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
             <input
               v-model="address"
@@ -371,6 +392,7 @@ const emit = defineEmits<{
 }>();
 
 const showSafetyNotice = ref(props.approvalMode === 'guarded');
+const showAutoNotice = ref(true);
 const showCloseSessionConfirm = ref(false);
 
 const socket = ref<WebSocket | null>(null);

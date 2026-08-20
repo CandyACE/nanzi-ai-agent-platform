@@ -33,6 +33,7 @@ class MetricSchema(BaseModel):
     description: Optional[str] = None
     calculation_logic: str = ""
     unit: Optional[str] = None
+    tags: Optional[List[str]] = []
 
 class MetricResponse(MetricSchema):
     id: int

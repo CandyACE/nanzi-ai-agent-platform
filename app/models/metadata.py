@@ -82,7 +82,8 @@ class MetaMetric(Base):
     description = Column(Text, comment='业务口径描述')
     calculation_logic = Column(Text, comment='计算逻辑')
     unit = Column(String(20), comment='单位')
-    
+    tags = Column(JSON, comment='标签列表')
+
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

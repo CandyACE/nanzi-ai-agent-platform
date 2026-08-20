@@ -581,6 +581,30 @@ async def recommend_metrics(dataset_id: int, conn: AsyncSession = Depends(get_db
         "data": result
     }
 
+@router.post("/datasets/{dataset_id}/relationships/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
+async def recommend_relationships(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):
+    """
+    智能推荐实体（表）之间的关联关系 (返回建议值 + 置信度，不直接入库)
+    """
+    from app.services.metadata_service import MetadataService
+    from app.services.metadata_generator import MetadataGeneratorService
+
+    # Verify dataset exists and get context
+    ds = await MetadataService.get_dataset_by_id(conn, dataset_id, is_admin=True)
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id)
+
+    # Call Generator
+    result = await MetadataGeneratorService.recommend_relationships(dataset_id, schema_yaml)
+
+    return {
+        "code": 200,
+        "message": "success",
+        "data": result
+    }
+
 @router.post("/datasets/{dataset_id}/enhance-metadata", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def enhance_dataset_metadata(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):
     """
