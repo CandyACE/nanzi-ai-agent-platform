@@ -33,6 +33,7 @@ class MetricSchema(BaseModel):
     description: Optional[str] = None
     calculation_logic: str = ""
     unit: Optional[str] = None
+    tags: Optional[List[str]] = []
 
 class MetricResponse(MetricSchema):
     id: int
@@ -127,3 +128,18 @@ class DBConnectionConfig(BaseModel):
 class DDLRequest(BaseModel):
     config: DBConnectionConfig
     tables: List[str]
+
+
+# --- Batch Delete Schemas ---
+
+class BatchDeleteTablesRequest(BaseModel):
+    table_names: List[str]
+
+
+class BatchDeleteMetricsRequest(BaseModel):
+    metric_ids: List[int]
+
+
+class BatchDeleteRelationshipsRequest(BaseModel):
+    relationship_ids: List[int]
+

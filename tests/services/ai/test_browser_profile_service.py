@@ -46,6 +46,9 @@ class InMemorySession:
     async def flush(self):
         return None
 
+    async def commit(self):
+        return None
+
 
 @pytest.mark.asyncio
 async def test_get_or_create_default_reuses_user_profile():

@@ -38,6 +38,7 @@ from app.services.ai.tools.memory_search_tool import memory_search
 from app.services.ai.tools.resource_catalog_tools import (
     list_accessible_datasets,
     list_accessible_knowledge_bases,
+    list_available_agents,
 )
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
@@ -316,6 +317,7 @@ class ToolRegistry:
         "memory_search": memory_search,
         "list_accessible_datasets": list_accessible_datasets,
         "list_accessible_knowledge_bases": list_accessible_knowledge_bases,
+        "list_available_agents": list_available_agents,
         "get_myinfo": get_myinfo,
         "request_user_confirmation": request_user_confirmation,
         "ask_user_question": ask_user_question,
@@ -866,6 +868,7 @@ class ToolRegistry:
             memory_search,
             list_accessible_datasets,
             list_accessible_knowledge_bases,
+            list_available_agents,
             get_myinfo,
             request_user_confirmation,
             ask_user_question,

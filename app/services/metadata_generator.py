@@ -43,6 +43,22 @@ class ImportResult(BaseModel):
     metrics: List[MetricMetadata] = Field(default=[], description="识别出的业务指标")
     relationships: List[RelationshipMetadata] = Field(default=[], description="识别出的表关联关系")
 
+class RelationshipRecommendation(BaseModel):
+    source_table: str = Field(description="源表物理名（必须是 Schema 中实际存在的物理表名）")
+    target_table: str = Field(description="目标表物理名（必须是 Schema 中实际存在的物理表名）")
+    condition: str = Field(description="关联条件 JOIN 表达式，如 't1.id = t2.t1_id'，使用物理表/字段名")
+    relation_type: str = Field(description="关联类型: one_to_one, one_to_many, many_to_one")
+    description: str = Field(description="该关联关系的业务含义描述")
+    confidence: float = Field(
+        description="置信度打分，0~1 之间的小数，值越高表示模型对这条关联关系越有把握",
+        ge=0,
+        le=1,
+    )
+    source: str = Field(default="AI", description="推荐来源标识，默认 'AI'，可填 'FK'/'NAMING'/'AI' 等")
+
+class RelationshipRecommendationResult(BaseModel):
+    relationships: List[RelationshipRecommendation] = Field(description="推荐的表关联关系列表")
+
 class MetricRecommendationResult(BaseModel):
     metrics: List[MetricMetadata] = Field(description="推荐的高价值业务指标列表")
 
@@ -278,6 +294,83 @@ class MetadataGeneratorService:
             await MetadataGeneratorService._save_trace_log(trace_id, 5, "error", {"error": str(e)})
             from fastapi import HTTPException
             raise HTTPException(status_code=500, detail=f"指标推荐失败: {str(e)}")
+
+    @staticmethod
+    async def recommend_relationships(dataset_id: int, schema_context: str) -> Dict[str, Any]:
+        """
+        根据数据集 Schema 智能推荐实体（表）之间的关联关系。
+        仅输出建议，不自动入库，供用户人工判断确认。
+        """
+        import uuid
+        import time
+        from app.services.ai.agent_manager import AgentManagerService
+
+        trace_id = f"rel-rec-{str(uuid.uuid4())}"
+        start_total = time.time()
+
+        try:
+            # 1. Log Start
+            await MetadataGeneratorService._save_trace_log(
+                trace_id, 1, "start_recommendation",
+                {"dataset_id": dataset_id, "schema_len": len(schema_context)},
+            )
+
+            # 2. Get Agent Config
+            async with AsyncSessionLocal() as session:
+                agent_config = await AgentManagerService.get_active_agent_config(
+                    session, agent_name='metadata-specialist'
+                )
+
+            chat_config = agent_config
+            if not chat_config:
+                logger.warning("Metadata Specialist config not found, using default.")
+
+            # Get configured LLM
+            llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
+
+            # 3. Prompt
+            system_prompt = (
+                "你是一个精通数据建模的 DBA/数据架构师。\n"
+                "请分析给定的数据库 Schema（包含每张表的字段、业务术语、字段描述），推断表与表之间可能存在的高质量关联关系。\n\n"
+                "推断规则：\n"
+                "1. **字段语义匹配**：优先基于字段的业务术语/描述、命名相似性（如某表的 'id'/'code' 对应另一表的 'xxx_id'/'xxx_code'、主外键命名模式）推断关联。\n"
+                "2. **业务逻辑关联**：结合表名与字段描述判断它们是否描述同一业务实体（如订单与订单明细、用户与用户日志）。\n"
+                "3. **避免重复**：**不要推荐 Schema 中已经存在（既有 relationships）的关联关系**，只输出新的潜在关联。\n"
+                "4. **只推荐当前 Schema 内真实存在的表**：source_table/target_table 必须使用 Schema 中的物理表名。\n\n"
+                "输出要求：\n"
+                "- 推荐 5-10 条高置信度的关联关系。\n"
+                "- condition 使用 '物理表别名1.字段 = 物理表别名2.字段' 形式，例如 't1.order_id = t2.id'。\n"
+                "- relation_type 取值：one_to_one / one_to_many / many_to_one。\n"
+                "- confidence 是 0~1 之间的小数，表示你对该关联关系成立的自信心（优先输出高置信度的关系）。\n"
+                "- description 用中文简述该关联的业务含义。\n"
+                "{format_instructions}"
+            )
+
+            # 4. Invoke
+            start_llm = time.time()
+            result = await MetadataGeneratorService._invoke_json(
+                llm,
+                RelationshipRecommendationResult,
+                system_prompt,
+                f"Schema 定义如下：\n\n{schema_context}",
+            )
+            duration_llm = (time.time() - start_llm) * 1000
+
+            # 5. Log Success
+            await MetadataGeneratorService._save_trace_log(
+                trace_id, 4, "llm_success", result, execution_time=duration_llm
+            )
+
+            if isinstance(result, dict):
+                result["_trace_id"] = trace_id
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error recommending relationships: {e}", exc_info=True)
+            await MetadataGeneratorService._save_trace_log(trace_id, 5, "error", {"error": str(e)})
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"关系推荐失败: {str(e)}")
 
     @staticmethod
     async def enhance_dataset_metadata(dataset_id: int, tables_summary: str) -> Dict[str, Any]:

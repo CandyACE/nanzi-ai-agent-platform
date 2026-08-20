@@ -54,6 +54,27 @@ class FakeDownloadContext:
     async def __aexit__(self, *_args):
         return None
 
+@pytest.mark.asyncio
+async def test_clean_idle_sessions_closes_expired_sessions():
+    worker = BrowserWorker(url_validator=lambda url: url, request_validator=lambda url: url)
+    mock_close = AsyncMock()
+    worker.close = mock_close
+
+    handle1 = Mock()
+    handle1.last_active_at = 100.0
+    handle2 = Mock()
+    handle2.last_active_at = 900.0
+
+    worker._handles = {"s1": handle1, "s2": handle2}
+
+    loop = asyncio.get_running_loop()
+    with pytest.MonkeyPatch().context() as m:
+        m.setattr(loop, "time", lambda: 1000.0)
+        cleaned = await worker.clean_idle_sessions(max_idle_seconds=500)
+
+    assert cleaned == ["s1"]
+    mock_close.assert_called_once_with("s1")
+
 
 class FakePage:
     def __init__(self):

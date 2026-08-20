@@ -68,10 +68,18 @@
                 </button>
                 <button
                   type="button"
-                  class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
-                  @click="confirmCloseSession"
+                  class="rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+                  title="关闭浏览器并彻底删除存储的 Cookie 与登录状态"
+                  @click="confirmCloseSession(true)"
                 >
-                  结束会话
+                  重置登录与缓存
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                  @click="confirmCloseSession(false)"
+                >
+                  仅结束会话
                 </button>
               </div>
             </div>
@@ -160,6 +168,27 @@
               aria-label="关闭安全提示"
               title="关闭安全提示"
               @click="showSafetyNotice = false"
+            >
+              ×
+            </button>
+          </div>
+
+          <div
+            v-if="showAutoNotice"
+            role="status"
+            class="flex items-start gap-2 border-b border-sky-100 bg-sky-50 px-3 py-2 dark:border-sky-900/60 dark:bg-sky-950/40"
+          >
+            <span class="mt-px text-[11px]" aria-hidden="true">🖥️</span>
+            <div class="min-w-0 flex-1 text-[10px] leading-relaxed text-sky-800 dark:text-sky-200">
+              <span class="font-bold">关闭此面板不会影响浏览器自动化。</span>
+              <span class="mt-0.5 block text-sky-700 dark:text-sky-300">自动化在服务端浏览器中继续执行，你可以随时重新打开本面板查看画面。</span>
+            </div>
+            <button
+              type="button"
+              class="rounded p-0.5 text-sky-600 hover:bg-sky-100 hover:text-sky-900 dark:text-sky-300 dark:hover:bg-sky-900/60 dark:hover:text-white"
+              aria-label="关闭提示"
+              title="关闭提示"
+              @click="showAutoNotice = false"
             >
               ×
             </button>
@@ -358,11 +387,12 @@ const panelWidth = defineModel<number>('panelWidth', { default: 520 });
 
 const emit = defineEmits<{
   (event: 'close'): void;
-  (event: 'close-session'): void;
+  (event: 'close-session', destroyProfile?: boolean): void;
   (event: 'update:approval-mode', mode: ApprovalMode): void;
 }>();
 
 const showSafetyNotice = ref(props.approvalMode === 'guarded');
+const showAutoNotice = ref(true);
 const showCloseSessionConfirm = ref(false);
 
 const socket = ref<WebSocket | null>(null);
@@ -671,9 +701,9 @@ const releaseControl = () => {
   if (!captchaDetected.value && !autoRefreshPaused.value && controlOwner.value === 'ai') startPolling();
 };
 
-const confirmCloseSession = () => {
+const confirmCloseSession = (destroyProfile: boolean = false) => {
   showCloseSessionConfirm.value = false;
-  emit('close-session');
+  emit('close-session', destroyProfile);
 };
 
 const remotePointFromEvent = (event: MouseEvent): RemotePoint | null => {

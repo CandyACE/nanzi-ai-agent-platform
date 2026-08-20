@@ -1445,6 +1445,30 @@ class AssistantAgentRunner(BaseExecutor):
             process_narration_events.on_tool_result_end(state)
             tool_id = getattr(event, "tool_call_id", "")
             tool_name = tool_names.get(tool_id, "")
+
+            # 方案二：ghost 工具检测 —— 若该工具在 TOOL_CALL_START 时已被标记为未知工具，
+            # 跳过正常的 observation 处理，只给用户输出错误提示。
+            # LLM 侧已由 AgentScope 框架在内部把 TOOL_RESULT_END 写入 context，
+            # 下一轮 LLM 会看到工具调用失败，此处不需要额外注入。
+            ghost_tool_ids: set = state.get("ghost_tool_ids") or set()
+            if tool_id in ghost_tool_ids:
+                logger.warning(
+                    "[ToolGuard] Ghost tool result received for tool='%s' tool_id=%s, suppressing observation.",
+                    tool_name,
+                    tool_id,
+                )
+                yield {
+                    "type": "log",
+                    "id": tool_id,
+                    "title": f"⚠️ 工具调用已拦截: {tool_name}",
+                    "details": (
+                        f"工具 `{tool_name}` 未在本智能体注册，调用已被平台拦截。"
+                        f"模型已收到错误反馈，将重新生成回答。"
+                    ),
+                    "status": "error",
+                }
+                return
+
             raw_args = tool_args_text.get(tool_id, "") or "{}"
             try:
                 tool_args = json.loads(raw_args)
@@ -1509,6 +1533,8 @@ class AssistantAgentRunner(BaseExecutor):
                 yield result["citation"]
             if result.get("trace"):
                 self.trace_buffer.append(result["trace"])
+
+
 
         async def on_text_block_delta(event: Any) -> AsyncGenerator[Dict[str, Any], None]:
             delta = sanitize_assistant_stream_text(str(getattr(event, "delta", "")))

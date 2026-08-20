@@ -630,6 +630,16 @@ const availableTools = [
     description: "快速拉取静态网页正文（已知 URL 深读）",
     isSystem: true,
   },
+  {
+    name: "sub_agent_call",
+    description: "委派特定专有子智能体执行单项任务（如单独查数、查手册等串行任务）",
+    isSystem: true,
+  },
+  {
+    name: "sub_agent_batch_call",
+    description: "并行委派多个彼此独立的子智能体任务，并聚合返回结果（适合多维度并发汇总）",
+    isSystem: true,
+  },
 ];
 
 const dynamicTools = ref<SysApiTool[]>([]);
@@ -1039,7 +1049,7 @@ const allAvailableTools = computed(() => {
   return combined;
 });
 
-type ToolGroupKey = 'chatbi' | 'knowledge' | 'web' | 'system' | 'office' | 'notification' | 'memory' | 'other';
+type ToolGroupKey = 'chatbi' | 'knowledge' | 'web' | 'system' | 'office' | 'notification' | 'memory' | 'delegation' | 'other';
 type ToolGroup = { label: string; icon: string; tools: any[] };
 
 const groupedTools = computed(() => {
@@ -1051,13 +1061,16 @@ const groupedTools = computed(() => {
     office: { label: '办公协作', icon: '💼', tools: [] },
     notification: { label: '消息通知', icon: '💬', tools: [] },
     memory: { label: '长期事实与记忆引擎', icon: '🧠', tools: [] },
+    delegation: { label: '多智能体协同与调度', icon: '🤖', tools: [] },
     other: { label: '其他扩展工具', icon: '🔧', tools: [] }
   };
 
   allAvailableTools.value.forEach(tool => {
     const name = tool.name.toLowerCase();
 
-    if (name.includes('sql') || name.includes('dataset') || name.includes('bi_') || name.includes('olap')) {
+    if (name.includes('sub_agent')) {
+      groups.delegation.tools.push(tool);
+    } else if (name.includes('sql') || name.includes('dataset') || name.includes('bi_') || name.includes('olap')) {
       groups.chatbi.tools.push(tool);
     } else if (name.startsWith('excel_document') || name.startsWith('word_document')) {
       groups.office.tools.push(tool);

@@ -63,6 +63,7 @@ class AgentServicePrompts:
 
 ## 工具调用基础
 - **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现的工具不得声称已使用。参数和用法以工具 description 为准。
+- **没有对应工具时禁止假装执行**：若用户请求的操作（如创建文件、发送消息、查询数据库等）需要工具支持，但当前工具列表中不存在该能力，必须明确告知用户"当前没有执行该操作的工具/权限"，禁止描述任何假操作过程、伪造任何文件路径、URL、工单号、执行状态或结果。
 - 需要实时业务数据、文档知识、历史对话、用户偏好或文件内容时，必须先使用可用工具再回答；工具不可用、返回为空或失败时如实说明，禁止编造结果。"""
 
     _PLATFORM_EXECUTION_BIAS_SECTION = """## 执行倾向
@@ -123,6 +124,7 @@ class AgentServicePrompts:
         "memory_search": "跨会话摘要/历史对话检索",
         "list_accessible_datasets": "列出当前用户有权限且已启用的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
+        "list_available_agents": "列出当前用户有权限且可运行的智能体/专家目录",
         "get_myinfo": "读取当前用户本人的基本信息、扩展信息、详情信息、角色与权限",
         "request_user_confirmation": "录入/修改/删除业务数据前，向用户展示可编辑确认卡并等待【业务确认】回执",
         "ask_user_question": "缺少关键输入或存在业务分支时，向用户展示选项提问并等待【用户回答】回执",
@@ -454,6 +456,9 @@ class AgentServicePrompts:
 
         if "list_accessible_knowledge_bases" in tool_names:
             table_rows.append("| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |")
+
+        if "list_available_agents" in tool_names:
+            table_rows.append("| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**（返回可用智能体标识 agent_name、名称、职责与能力） |")
 
         if "get_myinfo" in tool_names:
             table_rows.append("| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |")

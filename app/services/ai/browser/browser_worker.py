@@ -60,6 +60,7 @@ SNAPSHOT_MAX_ELEMENTS = 120
 SNAPSHOT_PAGE_TEXT_LIMIT = 6000
 SNAPSHOT_VISIBLE_TEXT_LIMIT = 12000
 SNAPSHOT_SETTLE_DELAY_MS = 150
+DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 1800  # 30 分钟无操作自动清理空闲 Chromium 实例
 
 STEALTH_INIT_SCRIPT = """
 (() => {
@@ -116,6 +117,13 @@ class _BrowserHandle:
     browser: Any = None
     tab_ids: dict[int, str] = field(default_factory=dict)
     next_tab_number: int = 1
+    last_active_at: float = field(default_factory=asyncio.get_event_loop().time if False else lambda: 0.0)
+
+    def touch(self) -> None:
+        try:
+            self.last_active_at = asyncio.get_running_loop().time()
+        except RuntimeError:
+            pass
 
 
 def _default_playwright_factory():
@@ -220,7 +228,9 @@ class BrowserWorker:
                 await _maybe_await(browser.close())
             raise
 
-        self._handles[session_id] = _BrowserHandle(context=context, page=page, browser=browser)
+        handle = _BrowserHandle(context=context, page=page, browser=browser)
+        handle.touch()
+        self._handles[session_id] = handle
         self._snapshots.pop(session_id, None)
         return await self._page_info(page)
 
@@ -393,9 +403,29 @@ class BrowserWorker:
 
     def _handle(self, session_id: str) -> _BrowserHandle:
         try:
-            return self._handles[session_id]
+            handle = self._handles[session_id]
+            handle.touch()
+            return handle
         except KeyError as exc:
             raise RuntimeError(f"浏览器会话不存在或已关闭：{session_id}") from exc
+
+    async def clean_idle_sessions(self, max_idle_seconds: float = DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS) -> list[str]:
+        """清理超过指定闲置时间的 Chromium 会话，释放内存与无用进程。"""
+        try:
+            now = asyncio.get_running_loop().time()
+        except RuntimeError:
+            return []
+        expired_sessions: list[str] = []
+        for session_id, handle in list(self._handles.items()):
+            if handle.last_active_at > 0 and (now - handle.last_active_at) >= max_idle_seconds:
+                expired_sessions.append(session_id)
+
+        for session_id in expired_sessions:
+            try:
+                await self.close(session_id)
+            except Exception:
+                pass
+        return expired_sessions
 
     async def _install_request_guard(self, context: Any) -> None:
         route_method = getattr(context, "route", None)
@@ -474,17 +504,23 @@ class BrowserWorker:
                 if (!candidate || !isVisible(node)) continue;
                 const sensitive = tagName === 'input'
                   && (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')));
-                const rawName = node.getAttribute('aria-label')
+                const rawName = cleanText(
+                  node.getAttribute('aria-label')
                   || node.getAttribute('title')
                   || node.getAttribute('placeholder')
                   || node.innerText
-                  || (node.value || '');
+                  || (node.value || '')
+                );
+                // 剔除包含大量嵌套重复文字的大文本容器节点或无语义名称的泛化容器，仅保留精简的叶子/语义节点
+                if (tagName === 'div' || tagName === 'section' || tagName === 'article') {
+                  if (!resolvedNativeRole && !roleAttribute && rawName.length > 150) continue;
+                }
                 candidates.push({
                   role,
                   _role_source: roleAttribute ? 'explicit' : resolvedNativeRole ? 'native' : 'inferred',
                   _node_index: nodeIndex,
                   sensitive,
-                  name: cleanText(rawName),
+                  name: rawName,
                   value: sensitive ? '' : cleanText(node.value || ''),
                   disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true',
                 });

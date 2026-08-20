@@ -103,16 +103,53 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 14h6v6m0-6l-6 6m16-6h-6v6m0-6l6 6M4 10h6V4m0 6L4 4m16 6h-6V4m0 6l6-6" />
                 </svg>
 	            </button>
-            <button
-                v-if="isMobile || !config.showShortcuts"
-                @click="handleHeaderShortcutsClick"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
-                :title="isMobile ? '快捷指令' : '显示快捷指令'"
-            >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 2L4 14h7l-1 8 10-13h-7l1-7z" />
-                </svg>
-            </button>
+            <div class="relative">
+              <button
+                  v-if="isMobile || !config.showShortcuts"
+                  @click="handleHeaderShortcutsClick"
+                  class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                  :class="{ 'text-primary bg-primary/10': showShortcutsHint }"
+                  :title="isMobile ? '快捷指令' : '显示快捷指令'"
+              >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 2L4 14h7l-1 8 10-13h-7l1-7z" />
+                  </svg>
+              </button>
+
+              <!-- 折叠快捷指令后的右上角气泡引导提示 -->
+              <transition
+                enter-active-class="transition-all duration-300 ease-out"
+                enter-from-class="opacity-0 -translate-y-2 scale-95"
+                enter-to-class="opacity-100 translate-y-0 scale-100"
+                leave-active-class="transition-all duration-200 ease-in"
+                leave-from-class="opacity-100 translate-y-0 scale-100"
+                leave-to-class="opacity-0 -translate-y-1 scale-95"
+              >
+                <div
+                  v-if="showShortcutsHint && (isMobile || !config.showShortcuts)"
+                  class="absolute right-0 top-full mt-2.5 z-50 flex items-center gap-2.5 whitespace-nowrap rounded-xl border border-primary/20 bg-primary/95 px-3 py-2 text-[12px] text-white shadow-2xl backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 pointer-events-auto"
+                >
+                  <!-- 顶部小尖角 -->
+                  <div class="absolute -top-1.5 right-3 h-3 w-3 rotate-45 border-l border-t border-primary/20 bg-primary/95 dark:border-slate-700/60 dark:bg-slate-900/95" />
+
+                  <span class="text-sm shrink-0" aria-hidden="true">⚡️</span>
+                  <div class="flex flex-col text-left">
+                    <span class="font-bold leading-tight">已折叠快捷指令</span>
+                    <span class="text-[11px] text-white/85 dark:text-slate-300 leading-tight mt-0.5">下次点这里重新打开</span>
+                  </div>
+                  <button
+                    type="button"
+                    @click.stop="dismissShortcutsHint"
+                    class="ml-1 rounded-md p-1 text-white/70 hover:text-white hover:bg-white/20 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
+                    title="知道了"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </transition>
+            </div>
             <button
                 @click="showHelpModal = true"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
@@ -847,6 +884,26 @@
                 </svg>
                 <span>导出</span>
               </button>
+              <!-- Artifacts Button -->
+              <button
+                v-if="msg.trace_id && hasArtifacts(msg.trace_id)"
+                @click="toggleMessageArtifacts(msg.id)"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                :class="[
+                  windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5',
+                  artifactsOpenMsgId === msg.id ? 'text-primary bg-gray-100 dark:bg-gray-800' : '',
+                ]"
+                title="查看该消息产生的文件产物"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>产物</span>
+                <span
+                  v-if="artifactCount(msg.trace_id) > 0"
+                  class="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-semibold leading-none text-white bg-primary"
+                >{{ artifactCount(msg.trace_id) }}</span>
+              </button>
               <!-- Time -->
               <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
               <button
@@ -987,11 +1044,11 @@
                   <span class="hidden sm:inline">添加黄金报表</span>
                 </button>
               </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+            </div>
+            </div>
+        </div>
+      </div>
+    </div>
     <!-- Floating Scroll Down Button (Refined) -->
     <transition
       enter-active-class="transition-all duration-500 cubic-bezier(0.34, 1.56, 0.64, 1)"
@@ -1186,6 +1243,14 @@
       :session-started="messages.length > 0"
       @select="handleSelectLocalFs"
       @preview="handleWorkspaceFilePreview"
+    />
+
+    <MyArtifactsDrawer v-model="showMyArtifactsDrawer" />
+
+    <MessageArtifactsDrawer
+      v-if="activeArtifactsTraceId"
+      :trace-id="activeArtifactsTraceId"
+      @close="closeMessageArtifacts"
     />
 
     <MemoryBrowserDrawer
@@ -1914,6 +1979,11 @@ import {
   WORKSPACE_SYSTEM_COMMAND_ID,
   isWorkspaceSlashCommand,
 } from "@/constants/workspaceCommand";
+import {
+  MY_ARTIFACTS_SLASH_COMMAND,
+  MY_ARTIFACTS_SYSTEM_COMMAND_ID,
+  isMyArtifactsSlashCommand,
+} from "@/constants/artifactsCommand";
 
 import { useBranding } from "@/composables/useBranding";
 import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
@@ -1971,8 +2041,12 @@ import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
 import PortalNotificationBell from "@/components/PortalNotificationBell.vue";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
+import MyArtifactsDrawer from "@/components/embed/MyArtifactsDrawer.vue";
+import MessageArtifactsDrawer from "@/components/embed/MessageArtifactsDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome";
+import { resolveGeneratedFileHref } from "@/utils/generatedFileUrl";
+import { artifactApi } from "@/api/artifact";
 import {
   personalResourceFallbackItems,
   personalResourcePlaceholderItems,
@@ -2336,6 +2410,7 @@ const hideEmbedLikeDislike = computed(() => {
 const chatInputRef = ref<any>(null);
 const userInput = ref("");
 const showWorkspaceDrawer = ref(false);
+const showMyArtifactsDrawer = ref(false);
 const workspaceDrawerRef = ref<{ refreshDirectory: (path?: string) => Promise<void> } | null>(null);
 
 const readStoredBoolean = (key: string, defaultWhenUnset: boolean) => {
@@ -2380,6 +2455,13 @@ const toggleWorkspaceDrawer = () => {
     return;
   }
   openWorkspaceDrawer();
+};
+
+const openMyArtifactsDrawer = () => {
+  showMyArtifactsDrawer.value = true;
+};
+const toggleMyArtifactsDrawer = () => {
+  showMyArtifactsDrawer.value = !showMyArtifactsDrawer.value;
 };
 
 const showMemoryDrawer = ref(false);
@@ -2569,15 +2651,26 @@ const openEmbedTrace = (traceId: string) => {
   embedTraceId.value = traceId;
   showEmbedTrace.value = true;
 };
+/** 切换某条 AI 消息的「产物」面板（单开：同一条收起、其它条自动切换） */
+const toggleMessageArtifacts = (msgId: string) => {
+  artifactsOpenMsgId.value = artifactsOpenMsgId.value === msgId ? "" : msgId;
+};
+/** 关闭「产物」面板 */
+const closeMessageArtifacts = () => {
+  artifactsOpenMsgId.value = "";
+};
 const isProcessing = ref(false);
 const activeTodoTimeline = computed(() => {
-  if (!isProcessing.value) return undefined;
-  const currentMsg = messages.value[messages.value.length - 1];
-  if (!currentMsg || (currentMsg.role !== 'agent' && currentMsg.role !== 'assistant')) {
-    return undefined;
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const msg = messages.value[i];
+    if (msg.role === 'agent' || msg.role === 'assistant') {
+      const hasTodo = msg.processTimeline?.some((item) => item.kind === 'todo');
+      if (hasTodo) {
+        return msg.processTimeline;
+      }
+    }
   }
-  const hasTodo = currentMsg.processTimeline?.some((item) => item.kind === 'todo');
-  return hasTodo ? currentMsg.processTimeline : undefined;
+  return undefined;
 });
 const datasetMenuLoading = ref(false);
 const isInitialLoading = ref(true);
@@ -2687,20 +2780,24 @@ const closeBrowserPanel = () => {
   browserPanelVisible.value = false;
 };
 
-const closeBrowserSession = async () => {
+const closeBrowserSession = async (destroyProfile: boolean = false) => {
   const sessionId = browserSessionId.value;
   if (!sessionId || typeof window === "undefined") return;
   browserOpenGeneration += 1;
   browserPanelOpening.value = false;
   try {
     await axios.delete(
-      `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}`,
+      `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}?destroy_profile=${destroyProfile ? "true" : "false"}`,
       { headers: embedAuthHeaders() },
     );
     browserPanelVisible.value = false;
     browserSessionId.value = null;
     browserViewerToken.value = null;
-    showToast("浏览器会话已结束，Profile 和 Cookie 已保留", "success");
+    if (destroyProfile) {
+      showToast("浏览器会话已结束，重置登录与本地缓存成功", "success");
+    } else {
+      showToast("浏览器会话已结束，Profile 和 Cookie 已保留", "success");
+    }
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "结束浏览器会话失败", "error");
   }
@@ -2996,6 +3093,35 @@ const onModeChange = (mode: string) => {
     }
 };
 const conversationId = ref("");
+/** 当前展开「产物」面板的 AI 消息 id（为空表示无展开）。单开，点击其它消息的「产物」会切换。 */
+const artifactsOpenMsgId = ref<string>("");
+/** 会话内各 trace_id → 产物数量 的缓存（后端 /artifacts/counts 返回），驱动「产物」按钮显示与数量角标 */
+const artifactCountByTrace = ref<Record<string, number>>({});
+/** 某 trace 对应的产物数量（无则 0） */
+const artifactCount = (traceId: string): number => artifactCountByTrace.value[traceId] || 0;
+/** 该消息是否真有产物（据此才显示「产物」按钮） */
+const hasArtifacts = (traceId: string): boolean => artifactCount(traceId) > 0;
+/** 拉取本会话各 trace_id 的产物数量（新会话/切会话/流式结束有新增产物时调用） */
+const loadArtifactCounts = async () => {
+  const cid = conversationId.value;
+  if (!cid) return;
+  try {
+    const res = await artifactApi.countsByTrace(cid);
+    // 仅在会话未切换时写入，避免旧会话的统计覆盖新会话
+    if (conversationId.value !== cid) return;
+    artifactCountByTrace.value = res.data?.data?.counts ?? {};
+  } catch (e) {
+    console.warn("[Artifacts] 拉取产物数量失败", e);
+  }
+};
+// 会话切换 / 首次挂载 → 刷新产物数量
+watch(conversationId, () => void loadArtifactCounts());
+/** 当前展开「产物」面板对应消息的 trace_id */
+const activeArtifactsTraceId = computed(() => {
+  if (!artifactsOpenMsgId.value) return "";
+  const msg = messages.value.find((m) => m.id === artifactsOpenMsgId.value);
+  return msg?.trace_id || "";
+});
 const showResourceScopeModal = ref(false);
 const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[], mcp_tools: [] as any[] });
 const {
@@ -4004,6 +4130,7 @@ const SYSTEM_SLASH_COMMANDS = [
   { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📊 数据门户", sort_order: -35 },
   { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
   { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
+  { id: MY_ARTIFACTS_SYSTEM_COMMAND_ID, command: MY_ARTIFACTS_SLASH_COMMAND, label: "📄 我的产出", sort_order: -33.5 },
   { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
 ];
@@ -5052,15 +5179,39 @@ const handleMemoryCleared = (payload: { conversationIds: string[]; all?: boolean
 const availableModels = ref<AIModel[]>([]);
 const currentUser = ref<any>(null);
 const accountInfo = ref<any>(null); // System account info from /me
+const showShortcutsHint = ref(false);
+let shortcutsHintTimer: ReturnType<typeof setTimeout> | null = null;
+
+const dismissShortcutsHint = () => {
+  showShortcutsHint.value = false;
+  if (shortcutsHintTimer) {
+    clearTimeout(shortcutsHintTimer);
+    shortcutsHintTimer = null;
+  }
+};
+
+const triggerShortcutsHint = () => {
+  showShortcutsHint.value = true;
+  if (shortcutsHintTimer) clearTimeout(shortcutsHintTimer);
+  shortcutsHintTimer = setTimeout(() => {
+    showShortcutsHint.value = false;
+    shortcutsHintTimer = null;
+  }, 4500);
+};
+
 const toggleShortcuts = () => {
   config.showShortcuts = !config.showShortcuts;
   saveRoutingSettings();
   if (config.showShortcuts) {
+    dismissShortcutsHint();
     fetchSlashCommands();
+  } else {
+    triggerShortcutsHint();
   }
 };
 
 const handleHeaderShortcutsClick = () => {
+  dismissShortcutsHint();
   if (isMobile.value) {
     fetchSlashCommands();
     chatInputRef.value?.openCommandDrawer?.();
@@ -5881,6 +6032,11 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     toggleWorkspaceDrawer();
     return true;
   }
+  if (isMyArtifactsSlashCommand(normalizedCmd)) {
+    userInput.value = "";
+    toggleMyArtifactsDrawer();
+    return true;
+  }
   if (isKnowledgePortalSlashCommand(normalizedCmd)) {
     userInput.value = "";
     if (isRoutingSettingsLocked.value && !agentHasCapability("knowledge_base")) {
@@ -5974,23 +6130,23 @@ const copyMessage = async (content: string) => {
 const exportData = async (traceId: string, format = 'xlsx') => {
   if (!traceId) return;
   try {
+    // 导出端点现在登记产物到 ai_artifacts 并返回带鉴权 download_url（JSON，非文件流），
+    // 由 /generated-files/{id} 以二进制 FileResponse 提供下载，避免 blob 方式误把 JSON 当文件打开。
     const response = await axios.get(`/api/v1/chat/export/data/${traceId}`, {
-      params: { format },
-      responseType: 'blob'
+      params: { format }
     });
-
-    const blob = new Blob([response.data], {
-      type: format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv'
-    });
-    const url = window.URL.createObjectURL(blob);
+    const downloadUrl: string = response.data?.download_url;
+    if (!downloadUrl) {
+      throw new Error('missing download_url');
+    }
+    const href = resolveGeneratedFileHref(downloadUrl);
+    const filename: string = response.data?.filename || `nanzi_export_${traceId.slice(0, 8)}.${format}`;
     const link = document.createElement('a');
-    link.href = url;
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    link.setAttribute('download', `nanzi_export_${dateStr}_${traceId.slice(0, 8)}.${format}`);
+    link.href = href;
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.URL.revokeObjectURL(url);
     showToast('数据导出成功', 'success');
   } catch (e) {
     console.error("Export failed", e);
@@ -7254,6 +7410,7 @@ const sendMessageInternal = async () => {
     isProcessing.value = false;
     agentMsg.value.isThinking = false;
     void refreshQuota();
+    void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
     clearStallTimer();
     clearStalePendingTimer();
     showStalledPrompt.value = false;

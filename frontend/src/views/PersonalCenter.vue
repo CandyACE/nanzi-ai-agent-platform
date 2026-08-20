@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import axios from '../utils/axios'
 import Toast from '../components/Toast.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 import { useBranding } from '../composables/useBranding'
 import { renderMarkdown } from '../utils/markdown'
 import { copyToClipboard } from '../utils/clipboard'
@@ -118,6 +119,26 @@ const handlePasswordChange = async () => {
         showToast(e.response?.data?.detail || '修改失败', 'error')
     } finally {
         loadingPassword.value = false
+    }
+}
+
+const clearingBrowserData = ref(false)
+const showClearBrowserModal = ref(false)
+
+const handleClearBrowserData = () => {
+    showClearBrowserModal.value = true
+}
+
+const confirmClearBrowserData = async () => {
+    clearingBrowserData.value = true
+    try {
+        await axios.delete('/api/v1/browser/profiles/clear')
+        showClearBrowserModal.value = false
+        showToast('云端自动化浏览器历史、登录态及文件缓存已彻底清除', 'success')
+    } catch (e: any) {
+        showToast(e.response?.data?.detail || '清除失败，请稍后重试', 'error')
+    } finally {
+        clearingBrowserData.value = false
     }
 }
 
@@ -320,7 +341,7 @@ onMounted(() => {
         <div :class="(activeTab === 'data' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'tasks') ? 'pt-4 sm:pt-5' : 'px-4 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6'">
         <!-- Info Tab -->
         <div v-if="activeTab === 'info'">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                 <!-- Basic Info -->
                 <div class="space-y-4 sm:space-y-6">
                     <h3 class="text-md sm:text-lg font-medium text-gray-900 border-b pb-2">账号信息</h3>
@@ -446,6 +467,29 @@ onMounted(() => {
                             </div>
                         </div>
                     </form>
+                </div>
+
+                <!-- Cloud Browser Cache & Reset -->
+                <div class="space-y-4 sm:space-y-6">
+                    <h3 class="text-md sm:text-lg font-medium text-gray-900 border-b pb-2">云端浏览器缓存</h3>
+                    <div class="space-y-4">
+                        <p class="text-xs text-gray-500 leading-relaxed">
+                            如果在智能体自动化任务中登录过外部网站，可在此一键重置您的<span class="font-semibold text-gray-700">云端服务端浏览器环境</span>，彻底擦除云端存储的 Cookie、登录状态、历史记录及本地文件缓存（不影响您本地电脑的 Chrome 浏览器数据）。
+                        </p>
+                        <div>
+                            <button
+                                type="button"
+                                @click="handleClearBrowserData"
+                                :disabled="clearingBrowserData"
+                                class="w-full flex justify-center items-center gap-1.5 py-2.5 px-4 bg-red-50 border border-red-200 text-red-700 hover:bg-red-100 text-xs sm:text-sm font-bold rounded-lg shadow-sm transition-all disabled:opacity-50"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                                {{ clearingBrowserData ? '正在清理中...' : '清除云端自动化浏览器缓存与登录态' }}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -644,6 +688,18 @@ onMounted(() => {
         </div>
 
     </div>
+
+    <ConfirmModal
+      v-if="showClearBrowserModal"
+      title="清除云端自动化浏览器缓存"
+      message="确认清除您在平台上的【云端自动化浏览器】历史、登录状态和本地缓存数据吗？&#10;（此操作仅重置云端服务端浏览器，不会影响您本地电脑的 Chrome/Edge 浏览器数据）。"
+      confirmText="确认清除"
+      cancelText="取消"
+      type="danger"
+      :loading="clearingBrowserData"
+      @confirm="confirmClearBrowserData"
+      @cancel="showClearBrowserModal = false"
+    />
 
     <Toast 
       v-if="toast.show" 

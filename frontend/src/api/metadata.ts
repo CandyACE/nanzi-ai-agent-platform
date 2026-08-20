@@ -65,6 +65,7 @@ export interface Metric {
   description?: string;
   calculation_logic: string;
   unit?: string;
+  tags?: string[];
 }
 
 export interface Relationship {
@@ -99,6 +100,27 @@ export interface AllTablesDataset {
   tables: AllTablesTable[];
 }
 
+// 智能发现关系 - 推荐结果类型（仅预览，不入库）
+export type RelationshipRelationType =
+  | "one_to_one"
+  | "one_to_many"
+  | "many_to_one";
+
+export interface RelationshipRecommendation {
+  source_table: string; // 源表物理名
+  target_table: string; // 目标表物理名
+  condition: string; // JOIN 表达式，如 't1.a = t2.b'
+  relation_type: RelationshipRelationType;
+  description: string; // 业务含义描述
+  confidence: number; // 置信度 0~1
+  source?: string; // 推荐来源标识，如 'AI'
+}
+
+export interface RelationshipRecommendationResult {
+  relationships: RelationshipRecommendation[];
+  _trace_id?: string;
+}
+
 export const metadataApi = {
   // Datasets
   getDatasets: () => axios.get<Dataset[]>(`${API_BASE}/datasets`),
@@ -129,6 +151,12 @@ export const metadataApi = {
   deleteTable: (datasetId: number, tableName: string) =>
     axios.delete(`${API_BASE}/datasets/${datasetId}/tables/${tableName}`),
 
+  batchDeleteTables: (datasetId: number, tableNames: string[]) =>
+    axios.post<{ message: string; deleted_count: number }>(
+      `${API_BASE}/datasets/${datasetId}/tables/batch-delete`,
+      { table_names: tableNames }
+    ),
+
   // Metrics
   getMetrics: (datasetId: number) =>
     axios.get<Metric[]>(`${API_BASE}/datasets/${datasetId}/metrics`),
@@ -137,6 +165,11 @@ export const metadataApi = {
   updateMetric: (id: number, data: Partial<Metric>) =>
     axios.put<Metric>(`${API_BASE}/metrics/${id}`, data),
   deleteMetric: (id: number) => axios.delete(`${API_BASE}/metrics/${id}`),
+  batchDeleteMetrics: (metricIds: number[]) =>
+    axios.post<{ message: string; deleted_count: number }>(
+      `${API_BASE}/metrics/batch-delete`,
+      { metric_ids: metricIds }
+    ),
 
   // Relationships
   getRelationships: (datasetId: number) =>
@@ -152,6 +185,11 @@ export const metadataApi = {
     axios.put<Relationship>(`${API_BASE}/relationships/${id}`, data),
   deleteRelationship: (id: number) =>
     axios.delete(`${API_BASE}/relationships/${id}`),
+  batchDeleteRelationships: (relationshipIds: number[]) =>
+    axios.post<{ message: string; deleted_count: number }>(
+      `${API_BASE}/relationships/batch-delete`,
+      { relationship_ids: relationshipIds }
+    ),
   getAllTables: () =>
     axios.get<AllTablesDataset[]>(`${API_BASE}/all-tables`),
 
@@ -161,6 +199,13 @@ export const metadataApi = {
   
   recommendMetrics: (datasetId: number) =>
     axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, {}, { timeout: 300000 }),
+
+  recommendRelationships: (datasetId: number) =>
+    axios.post<{
+      code: number;
+      message?: string;
+      data: RelationshipRecommendationResult;
+    }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, {}, { timeout: 300000 }),
 
   enhanceDatasetMetadata: (datasetId: number) =>
     axios.post<{ code: number; message?: string; data: { description: string; tags: string[] } }>(

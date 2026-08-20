@@ -1,0 +1,523 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 07 篇（全景深度重构版）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- ========== Header Banner ========== -->
+  <section style="margin:0 0 24px 0;padding:28px 18px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:12px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1.5px;">NanZi 开源智能体平台实战连载 · 07</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.4;letter-spacing:1px;">用户 Workspace 与目录隔离：从沙箱规划到多租户安全防护</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">Docker物理隔离 · 多租户工作区 · 会话沙箱 · 访问控制 · Shell防护 · 云端Sandbox扩展</p>
+  </section>
+
+  <!-- ========== 项目声明卡片 ========== -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>（MIT 协议）。开源仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;font-weight:600;">RandyChen1985/nanzi-ai-agent-platform</a><br/>
+      核心代码路径：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/services/ai/runtime/agentscope/workspace.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/utils/fs_access.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/utils/fs_paths.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/api/v1/endpoints/fs.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;color:#0f766e;">app/services/ai/runtime/shell_deletion_policy.py</code>
+    </p>
+  </section>
+
+  <!-- ========== 导言 ========== -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      当大模型智能体从单纯的“文字聊天”进化为具备真实生产力的“数字员工”时，它必须拥有<strong>读写文件、执行脚本、生成报表和调用 Shell 命令</strong>的实操能力。然而，在企业多用户并发环境下，一旦为 Agent 开放底层文件系统与执行权限，随之而来的就是极其严峻的安全挑战：<strong>如何防止用户 A 的助手偷看用户 B 的机密文件？如何杜绝模型误操作对宿主机系统的破坏？会话产生的临时数据如何安全隔离与销毁？</strong><br/>
+      NanZi 平台构建了从<strong>“Docker 宿主机物理隔离 → 多租户专属工作区 → 会话级运行时沙箱 → 提示词认知引导 → 云端第三方 Sandbox 扩展”</strong>的完整纵深防御体系。本篇将全面拆解这一硬核安全架构。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 00｜背景与安全架构四层防线 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">00｜背景与核心挑战：四层纵深防御安全防线</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">开放文件与 Shell 执行的四大安全风险</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.9;">
+      在企业级场景中，AI 必须能完成“阅读用户上传的 Excel → 编写 Python 脚本分析 → 生成 PDF 简报并落盘”这一整套操作。若缺乏完善的隔离机制，将面临：
+      <br/>• <strong>宿主机破坏风险（Host Compromise）</strong>：命令直接在宿主机执行，模型误删宿主机系统文件或窃取主机环境密钥。
+      <br/>• <strong>跨租户越权（Cross-Tenant Leakage）</strong>：恶意 Prompt 诱导 Agent 读取 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">../../other_user/</code> 目录下的敏感凭证或数据。
+      <br/>• <strong>工作目录混淆（CWD Collision）</strong>：多用户同时执行脚本时，相对路径相互覆盖，造成数据污染。
+      <br/>• <strong>破坏性误操作（Destructive Actions）</strong>：模型偶发幻觉执行 <code style="background:#fef2f2;padding:1px 4px;border-radius:3px;color:#991b1b;">rm -rf /</code> 或清空全平台存储。
+    </p>
+  </section>
+
+  <!-- 四层防线架构表 -->
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">NanZi 平台的四层纵深防御隔离架构</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:20%;">防线层级</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:30%;">核心技术载体</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:50%;">隔离机制与防御目标</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#047857;">第 1 层：容器物理隔离</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><strong>Docker 容器边界</strong></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">推荐 Docker 部署，所有命令在容器内运行，宿主机 OS 与外部业务物理不可达</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;">第 2 层：多租户空间隔离</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;"><strong>fs_access.py / fs.py</strong></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">用户专属 <code style="background:#f1f5f9;padding:1px 3px;">agent_workspaces/{user_key}</code> 目录，API 白名单与 realpath 防越权</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#1d4ed8;">第 3 层：会话运行时沙箱</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><strong>AgentScope LocalWorkspace</strong></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">每个会话绑定专属 CWD 沙箱，原生文件/Bash 工具重定向，Prompt 注入路径约束</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#7c3aed;">第 4 层：云端计算沙箱扩展</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;"><strong>第三方 / 云端 Sandbox 接口</strong></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">接口预留支持将 Bash/Python 调度至独立 Docker 沙箱容器、MicroVM 或云端 Serverless 执行</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 截图占位｜00 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:24px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:left;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;text-align:center;">图片占位｜00：多租户文件与沙箱隔离架构全景</p>
+      <p style="margin:0 0 10px 0;font-size:12px;color:#64748b;line-height:1.7;text-align:center;">建议配图：展示公共资源（data/skills、data/branding）与多个用户私有工作区（agent_workspaces/user__id）的物理树状隔离关系及多层防护网</p>
+      <section style="padding:10px 12px;background:#1e293b;border-radius:6px;font-size:12px;color:#e2e8f0;line-height:1.7;">
+        <span style="color:#6ee7b7;font-weight:bold;">🎨 AI 生图提示词：</span><br/>
+        一张高科技多租户文件系统架构全景概念图。中心展示一个安全隔离的数据中枢（Data Hub），上方标注公共只读层（Public Read-Only Assets, 带有技能包和品牌标志），下方通过多道发光的绿色半透明安全护盾隔离出多个独立的用户工作空间立方体（Isolated User Workspaces）。每个工作区内清晰展示独立的文件抽屉和会话沙箱（Session Sandboxes）。整体采用深色科技背景（Dark Slate & Emerald Green）、发光网格、等距三维（Isometric 3D）架构视角、扁平化科技线条、极简专业、无杂乱文字、8K高分辨率、企业级云计算安全概念。
+      </section>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 1｜多租户沙箱隔离：从物理路径到运行时边界的纵深防护</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01｜目录设计全景与用户专属工作区 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">01｜目录设计全景：物理布局与五大专属子空间</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      NanZi 平台的数据存储物理根目录位于容器内的 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">/app/data</code>（或本地开发目录 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">data/</code>）。所有用户的文件资产统一规整在 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">data/agent_workspaces/</code> 根节点下。
+    </p>
+  </section>
+
+  <!-- 物理目录结构 ASCII -->
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#111827;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#a7f3d0;">文件系统物理目录树规划（fs_paths / workspace.py）</p>
+    <section style="font-family:Menlo,Monaco,Consolas,monospace;font-size:12px;color:#e2e8f0;line-height:1.75;">
+      /app/data/<br/>
+      ├── branding/                      # 【平台公共】品牌 Logo、UI 静态资源（全员只读）<br/>
+      ├── skills/                        # 【平台公共】全局官方技能包（全员只读）<br/>
+      └── agent_workspaces/              # 【工作区根目录】多租户专属工作空间集合<br/>
+          ├── admin__1/                  # 用户专属私有根（user_name__user_id）<br/>
+          │   ├── sessions/              # 会话工作目录容器<br/>
+          │   │   └── &lt;conversation_id&gt;/ # 单会话沙箱工作目录（LocalWorkspace cwd）<br/>
+          │   ├── docs/                  # 持久化文档库（AI 报告/导出文件默认落盘区，跨会话共享）<br/>
+          │   ├── uploads/               # 会话附件上传目录（仅本人可读写）<br/>
+          │   ├── sandbox/               # SQLite 演算沙箱（sess_&lt;id&gt;.db 临时库）<br/>
+          │   ├── skills/                # 个人专属私有技能目录（Personal Skills）<br/>
+          │   └── .trash/                # 用户专属回收站目录<br/>
+          └── randy__2/                  # 其他用户的专属私有空间（严格互斥，物理隔离）<br/>
+    </section>
+  </section>
+
+  <!-- 用户专属子目录功能表 -->
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">用户工作空间各子目录职能与生命周期对照</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:22%;">子目录名称</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:38%;">核心职能与作用</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:22%;">读写权限策略</th>
+          <th style="padding:8px 6px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:18%;">生命周期</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 3px;">sessions/&lt;cid&gt;</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><strong>单会话执行沙箱</strong>：AgentScope 工具执行工作目录（cwd），存放临时脚本与过程数据</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">仅本人及本会话 Agent 可读写</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;color:#dc2626;">删除会话时自动清理</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 3px;">docs/</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;"><strong>用户持久化文档库</strong>：AI 生成分析报告、图表、导出文件时的默认持久化落盘位置</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">仅本人可读写，跨会话共享</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;color:#16a34a;">长期持久化保留</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 3px;">uploads/</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><strong>会话附件托管库</strong>：用户在对话界面上传的 Word、Excel、图片等附件的安全暂存区</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">仅本人可读写，平台只读扫描</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;color:#16a34a;">长期持久化保留</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 3px;">sandbox/</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;"><strong>数据演算沙箱</strong>：存放临时 SQLite 数据库文件（如 ChatBI 数据转换的中间库）</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">仅本人及内部工具读写</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#f9fafb;">按演算轮次维护</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 3px;">skills/</code></td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;"><strong>个人私有技能库</strong>：用户自己编写或定制的 <code style="background:#f1f5f9;padding:1px 3px;">SKILL.md</code> 技能文件存储区</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;">仅本人可编辑/挂载</td>
+          <td style="padding:8px 6px;border:1px solid #e2e8f0;background:#ffffff;color:#16a34a;">长期持久化保留</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 用户标识算法亮点 -->
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f0fdf4;border-left:4px solid #10b981;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#065f46;line-height:1.85;">
+      <strong>安全命名规范（Key Sanitation）：</strong>用户目录名由 <code style="background:#dcfce7;padding:1px 4px;border-radius:3px;">resolve_workspace_user_key()</code> 计算得出。平台对用户名和 ID 强制执行正则清洗（仅允许字母、数字、下划线及连字符），彻底杜绝通过特殊字符或路径截断符号构造非法目录的可能。
+    </p>
+  </section>
+
+  <!-- 截图占位｜01 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:24px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:left;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;text-align:center;">图片占位｜01：文件浏览器（FS Browser）中的用户目录展示</p>
+      <p style="margin:0 0 10px 0;font-size:12px;color:#64748b;line-height:1.7;text-align:center;">请截取文件浏览器界面：普通用户视角下仅展现“公共目录（skills/branding）”与“本人工作区（docs/uploads/sessions）”，无权查看他人目录</p>
+      <section style="padding:10px 12px;background:#1e293b;border-radius:6px;font-size:12px;color:#e2e8f0;line-height:1.7;">
+        <span style="color:#6ee7b7;font-weight:bold;">🎨 AI 生图提示词：</span><br/>
+        现代化企业级 AI 智能体平台的文件管理器与工作区界面（UI Mockup）。左侧为极简侧边栏导航，中央为主文件浏览器窗口。目录树清晰展示受限的根节点：只读公共目录（带有小锁图标的 skills/ 和 branding/）以及当前用户的高亮私有目录（admin__1/，包含 docs, uploads, sessions, skills）。右侧展示当前选中文件的清晰预览卡片与权限标签（“本人私有·完全控制”）。采用 Emerald Green（翡翠绿）与深灰高级配色、圆角卡片、毛玻璃质感、现代 SaaS Web 应用界面设计。
+      </section>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 2｜前端文件浏览器：普通用户严格受限于授权根目录</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02｜API 与文件系统安全访问控制 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">02｜API 与文件系统安全访问控制（fs_access.py & fs.py）</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      前端文件管理、附件预览与内容编辑统一由 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">/api/v1/fs</code> 系列接口提供。底层通过 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/utils/fs_access.py</code> 实施严格的 RBAC 与路径校验：
+    </p>
+  </section>
+
+  <!-- 机制卡片组 -->
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">1. 授权根目录白名单（`get_allowed_fs_roots`）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      • <strong>普通用户（user）</strong>：系统动态计算可访问根目录列表 = <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">[公共数据目录 (branding, skills), 本人私有工作区 (agent_workspaces/{user_key})]</code>。访问其他路径均直接触发 403 拦截。<br/>
+      • <strong>系统管理员（admin）</strong>：具备 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">/app/data</code> 完整沙箱的运维与审计权限。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">2. 严格的读写分离防护（`assert_path_writable`）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      公共目录（如全局技能包、平台静态资源）对普通用户<strong>仅开放只读访问</strong>。新建文件、写入内容、重命名或删除等修改动作，通过 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">assert_path_writable()</code> 进行强校验，<strong>只允许写入当前登录用户的私有工作区内</strong>，防止恶意篡改公共设施。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">3. 路径规范化与符号链接防逃逸（`normalize_fs_path`）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      为了防御利用 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">../../</code> 相对路径穿越或 Linux 符号链接（Symlink）绕过权限校验的行为，平台在鉴权前统一调用 <code style="background:#ede9fe;padding:1px 4px;border-radius:3px;">os.path.realpath()</code> 解析真实物理路径，确保判定基准真实可靠。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03｜AgentScope 运行时与 LocalWorkspace 动态沙箱 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">03｜Agent 运行时沙箱：AgentScope LocalWorkspace 深度集成</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      在后端执行层，NanZi 深度集成了阿里开源的 <strong>AgentScope 2.x</strong> 运行时。智能体在思考和行动时，平台如何将文件工具安全收敛至会话沙箱中？
+    </p>
+  </section>
+
+  <!-- 运行时绑定流程图 -->
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#111827;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#fde68a;">AgentScope 运行时工作区装配流程（workspace.py）</p>
+    <section style="font-family:Menlo,Monaco,Consolas,monospace;font-size:12px;color:#e2e8f0;line-height:1.75;">
+      [用户触发对话 (user_id, conversation_id)]<br/>
+      │<br/>
+      ├── 1. 动态定位会话工作目录 (resolve_session_workdir)<br/>
+      │    └── workdir = /app/data/agent_workspaces/{user_key}/sessions/{conversation_id}<br/>
+      │<br/>
+      ├── 2. 双轨技能路径扫描 (discover_platform_skill_paths)<br/>
+      │    ├── 全局技能包：/app/data/skills/ (按白名单过滤)<br/>
+      │    └── 本人私有技能：/app/data/agent_workspaces/{user_key}/skills/<br/>
+      │<br/>
+      ├── 3. 初始化并缓存 LocalWorkspace 实例<br/>
+      │    └── LocalWorkspace(workdir=workdir, skill_paths=[...])<br/>
+      │<br/>
+      └── 4. 工具重定向与 CWD 绑定 (bind_configured_tools_to_workspace)<br/>
+           ├── 将智能体配置的 Bash、Read、Write、Edit、Glob、Grep 绑定至该工作区<br/>
+           └── Bash 启动目录天然锁定为 workdir，会话隔离开箱即用！<br/>
+    </section>
+  </section>
+
+  <!-- 核心机制解析 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">原生工具重定向与生命周期缓存</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      • <strong>动态重定向</strong>：NanZi 不直接使用裸机 Python 函数，而是利用 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">bind_configured_tools_to_workspace</code> 把模型调用的文件工具替换为与当前会话绑定的沙箱实例。这意味着大模型编写代码执行 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">open("output.csv", "w")</code> 时，文件必然安全写入该会话的 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">sessions/{conversation_id}/</code> 目录下，绝不污染系统和其他会话。<br/>
+      • <strong>Workspace 高性能缓存</strong>：通过 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">_workspace_cache</code> 按 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">workdir::skills_hash</code> 维护内存实例，避免单会话多轮对话中重复初始化的开销。
+    </p>
+  </section>
+
+  <!-- 涉及文件读写的工具矩阵与安全门禁 -->
+  <section style="margin:0 0 14px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;line-height:1.5;">全平台涉及文件读写的工具清单与专属安全门禁</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:20%;">工具分类 / 名称</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:24%;">涉及文件操作</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:30%;">核心路径校验与访问边界</th>
+          <th style="padding:7px 5px;border:1px solid #cbd5e1;background:#334155;color:#ffffff;text-align:left;width:26%;">专属安全门禁与防护机制</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">read_file</code> / <code style="background:#f1f5f9;padding:1px 2px;">Read</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">读取纯文本、代码或配置</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 2px;">validate_safe_path</code>：限定数据安全根目录，严禁穿越</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">读取长度上限截断（防超大文件打爆上下文）、编码自动检测</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">write_file</code> / <code style="background:#f1f5f9;padding:1px 2px;">Write</code> / <code style="background:#f1f5f9;padding:1px 2px;">Edit</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">新建、覆写或局部编辑文本</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">绑定到当前会话 <code style="background:#f1f5f9;padding:1px 2px;">sessions/{cid}</code> 或指定安全路径</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">只写本人目录；平台高危写保护；自动递归创建父目录</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">search_text</code> / <code style="background:#f1f5f9;padding:1px 2px;">Grep</code> / <code style="background:#f1f5f9;padding:1px 2px;">Glob</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">全文字符串搜索、文件名正则匹配</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">搜索范围锁定在本人工作区与公共目录</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">禁止扫描系统根目录；匹配结果上限防 I/O 资源耗尽</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">read_image</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">读取图片文件并输入多模态大模型</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">支持 <code style="background:#f1f5f9;padding:1px 2px;">uploads/</code> 附件与工作区图片物理路径</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">文件后缀白名单校验（png/jpg/webp/gif）；自动重映射路径</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">excel_document_read</code><br/><code style="background:#f1f5f9;padding:1px 2px;">excel_document_write</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">Excel 表格智能读取、分析与写出</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 2px;">resolve_document_*_path</code>：仅限当前会话授权附件或 <code style="background:#f1f5f9;padding:1px 2px;">docs/</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;"><strong>20MB 硬限</strong>；仅限 <code style="background:#f1f5f9;padding:1px 2px;">.xlsx</code>；行列截断（防超限）；写出强制 <code style="background:#f1f5f9;padding:1px 2px;">ask</code> 用户审批</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">word_document_read</code><br/><code style="background:#f1f5f9;padding:1px 2px;">word_document_write</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">Word 文档内容解析、段落提取与生成</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;"><code style="background:#f1f5f9;padding:1px 2px;">resolve_document_*_path</code>：隔离跨用户文件，写出至 <code style="background:#f1f5f9;padding:1px 2px;">docs/</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;"><strong>20MB 硬限</strong>；仅限 <code style="background:#f1f5f9;padding:1px 2px;">.docx</code>；文件名非法字符清洗；写出声明为 <code style="background:#f1f5f9;padding:1px 2px;">ask</code></td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">create_skills</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">动态创建/更新智能体技能包</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">普通用户强制限定在本人 <code style="background:#f1f5f9;padding:1px 2px;">agent_workspaces/{key}/skills/</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;"><code style="background:#f1f5f9;padding:1px 2px;">_validate_skill_id</code> 正则严格校验；YAML Frontmatter 格式闭环防注入</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">sqlite_scratchpad</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">创建/读写临时 SQLite 数据演算库</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">文件强制存放在 <code style="background:#f1f5f9;padding:1px 2px;">agent_workspaces/{key}/sandbox/</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#f9fafb;">命名空间强绑定会话 ID，仅限标准 DDL/DML，禁止读取宿主 DB</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;font-weight:bold;color:#0f766e;"><code style="background:#f1f5f9;padding:1px 2px;">exec_command</code> / <code style="background:#f1f5f9;padding:1px 2px;">Bash</code></td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">通过 Shell 脚本/CLI 命令操作文件</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;">CWD 锁定为当前会话目录；Docker 容器与宿主机物理隔离</td>
+          <td style="padding:6px 5px;border:1px solid #e2e8f0;background:#ffffff;"><strong>高危指令黑名单</strong> + <strong>受保护根删除拦截（shell_deletion_policy）</strong> + 异步超时强杀</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 截图占位｜03 -->
+  <section style="margin:0 0 16px 0;">
+    <section style="box-sizing:border-box;min-height:160px;padding:24px 16px;border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;text-align:left;">
+      <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#334155;line-height:1.6;text-align:center;">图片占位｜03：Agent 运行时工具绑定与沙箱调用日志</p>
+      <p style="margin:0 0 10px 0;font-size:12px;color:#64748b;line-height:1.7;text-align:center;">请截取对话调试 Trace 界面：展示 AgentScope LocalWorkspace 初始化日志，以及 Bash/Write 工具在当前会话目录中的执行过程</p>
+      <section style="padding:10px 12px;background:#1e293b;border-radius:6px;font-size:12px;color:#e2e8f0;line-height:1.7;">
+        <span style="color:#6ee7b7;font-weight:bold;">🎨 AI 生图提示词：</span><br/>
+        AI 智能体（Agent）在沙箱工作目录内执行代码与调用工具的可视化概念图。左侧展示一个发光的 AI 大脑/Agent 图标正在生成 Python 数据分析脚本；中间是一个高亮加锁的绿色沙箱圆环（Sandbox Execution Environment），内部标注当前工作目录 sessions/conv_123/；右侧连接着受限的文件工具（Bash 终端、Read、Write、Glob 工具图标）。外部其他用户目录被红色的防御网阻隔在外。深色背景、流程图动效感、发光线条、精美科技扁平化插画。
+      </section>
+    </section>
+    <p style="margin:6px 0 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.5;">图 3｜运行时沙箱绑定：工具工作目录（cwd）与会话生命周期强绑定</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04｜计算隔离进阶：Docker 物理隔离与云端 Sandbox 扩展 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #059669;padding-left:12px;line-height:1.4;">04｜计算隔离进阶：从 Docker 容器物理边界到云端扩展 Sandbox</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      除了文件系统逻辑隔离，算力执行环境的<strong>物理边界</strong>是保障平台绝对安全的基石：
+    </p>
+  </section>
+
+  <!-- Docker 物理隔离卡片 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">1. Docker 容器物理边界：彻底避免对宿主机的危险破坏</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      • <strong>官方推荐生产部署方式</strong>：NanZi 官方强烈推荐采用 Docker 容器化部署。<br/>
+      • <strong>宿主机零侵入</strong>：Linux Namespace（PID、MNT、NET）与 Cgroups 机制把大模型执行的所有 Bash 进程与 Python 脚本完全封锁在容器内部。<br/>
+      • <strong>物理防御底线</strong>：大模型在容器内执行的任何命令、创建的任何中间进程，均无法逃逸触碰宿主机的底层操作系统与宿主业务，从根本上消除了破坏宿主机的灾难性风险。
+    </p>
+  </section>
+
+  <!-- 云端 Sandbox 扩展卡片 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">2. 架构前瞻：接口预留与第三方 / 云端 Sandbox 扩展</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      在面对金融、政企等高合规场景中不可信 Python/Shell 脚本的深度执行需求时，NanZi 在执行器接口层进行了可插拔解耦设计：
+    </p>
+    <section style="font-family:Menlo,Monaco,Consolas,monospace;font-size:12px;color:#0e7490;line-height:1.75;background:#ffffff;padding:10px 12px;border-radius:6px;border:1px solid #cffafe;margin:8px 0;">
+      [NanZi 控制面 (Agent Orchestration)]<br/>
+      │<br/>
+      ├── 本地默认：Docker 容器内 LocalWorkspace 执行器<br/>
+      │<br/>
+      └── 扩展接口：第三方 / 云端 Sandbox 适配器 (Remote Sandbox Provider)<br/>
+           ├── 独立 Docker Sandbox 容器集群（多租户即起即毁）<br/>
+           ├── 轻量级 MicroVM（如 Firecracker / Kata Containers）<br/>
+           └── 云端 Serverless 安全沙箱（如 E2B、Modal、云厂商计算沙箱）
+    </section>
+    <p style="margin:0;font-size:13px;color:#0e7490;line-height:1.75;">
+      通过将“智能体编排控制面”与“代码执行数据面”在物理上完全分离，实现高危代码秒级容器拉起、网络外呼精细化拦截以及执行完即焚，提供极致的安全隔离能力。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05｜Prompt 沙箱约束与 Shell 破坏性防护 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #ef4444;padding-left:12px;line-height:1.4;">05｜Prompt 软引导与 Shell 破坏性硬防护</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      除了底层系统沙箱，NanZi 还在<strong>“大模型认知层（Prompt）”</strong>与<strong>“命令行执行层（Shell Policy）”</strong>构筑了双重安全门禁：
+    </p>
+  </section>
+
+  <!-- Prompt 注入卡片 -->
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">认知层引导：自动注入 [Session Workspace & Path Sandbox] 规则</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      当智能体挂载了文件或命令工具时，系统在运行时会自动向 System Prompt 中注入沙箱说明（见 <code style="background:#dcfce7;padding:1px 4px;border-radius:3px;">AgentServicePrompts.session_workspace_sandbox_block</code>）：
+    </p>
+    <section style="margin:8px 0;padding:12px;background:#1e293b;border-radius:6px;font-family:Menlo,Monaco,Consolas,monospace;font-size:12px;color:#a7f3d0;line-height:1.7;">
+      [Session Workspace & Path Sandbox]<br/>
+      • 会话工作目录：/app/data/agent_workspaces/{user_key}/sessions/{cid}<br/>
+      • 默认文档目录：/app/data/agent_workspaces/{user_key}/docs<br/>
+      • 严禁访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。<br/>
+      • 用户要求交付持久文档但未指定路径时，默认写入 docs/ 目录。
+    </section>
+    <p style="margin:0;font-size:13px;color:#065f46;line-height:1.75;">
+      大模型在拥有清晰路径心智后，能主动将临时文件与交付物分门别类存放，大幅减少由于路径不明确引发的执行错误。
+    </p>
+  </section>
+
+  <!-- Shell 删除策略 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#991b1b;line-height:1.5;">执行层硬防护：Shell 受保护根目录与删除拦截策略</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      在 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">shell_deletion_policy.py</code> 中，平台构建了<strong>受保护根目录清单（Protected Roots）</strong>：<br/>
+      • <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">/</code>、<code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">/app/data</code>、<code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">/app/data/agent_workspaces</code> 以及用户主目录均为<strong>绝对保护根</strong>。<br/>
+      • <strong>拦截判定（deny）</strong>：任何试图递归删除受保护根目录的命令（如 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">rm -rf /app/data/agent_workspaces</code>）均会被即时阻断并告警。<br/>
+      • <strong>二次确认（ask）</strong>：针对具体工作区文件的批量删除，系统可根据安全配置挂起并要求用户在界面上点击确认后方可继续执行。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06｜端到端实操与排障清单 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #2563eb;padding-left:12px;line-height:1.4;">06｜端到端数据流转与生命周期实战</p>
+  </section>
+
+  <!-- 场景 A -->
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1d4ed8;line-height:1.5;">典型文件流转全链路（从附件上传到报表落盘）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      1. <strong>用户上传附件</strong>：用户在前端上传 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">sales.xlsx</code>，后端清洗后暂存至 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">agent_workspaces/{user_key}/uploads/sales.xlsx</code>。<br/>
+      2. <strong>Agent 演算分析</strong>：AgentScope 在会话工作目录 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">sessions/{cid}/</code> 下执行 Python 脚本读取附件，清洗数据并生成临时图表。<br/>
+      3. <strong>报告落盘交付</strong>：Agent 将最终整理好的 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">sales_report.md</code> 写入用户持久化文档目录 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">docs/sales_report.md</code>。<br/>
+      4. <strong>会话生命周期终结</strong>：当用户在界面删除该历史会话时，<code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">memory_service.py</code> 自动调用 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">delete_workspace_for_session</code>，<strong>仅物理清理该会话对应的 sessions/{cid} 临时目录并释放内存缓存</strong>，用户的持久报告（docs）与历史上传附件（uploads）完整保留！
+    </p>
+  </section>
+
+  <!-- 排障清单表格 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#991b1b;line-height:1.5;">工作区与文件隔离高频排障清单</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;">
+      <thead>
+        <tr>
+          <th style="padding:7px 6px;border:1px solid #fca5a5;background:#991b1b;color:#ffffff;text-align:left;width:28%;">故障现象</th>
+          <th style="padding:7px 6px;border:1px solid #fca5a5;background:#991b1b;color:#ffffff;text-align:left;width:32%;">常见根因</th>
+          <th style="padding:7px 6px;border:1px solid #fca5a5;background:#991b1b;color:#ffffff;text-align:left;width:40%;">排查与解决办法</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;font-weight:bold;color:#7f1d1d;">API 提示“安全越权拦截 403”</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">请求路径不在公共目录或本人私有工作区内，或使用了非法相对路径</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">确认当前登录用户身份；检查前端传递的路径是否越界。普通用户不可直接访问 <code style="background:#fee2e2;padding:1px 3px;border-radius:2px;">/app/data</code> 根节点。</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;font-weight:bold;color:#7f1d1d;">AI 声称写了文件但 docs 中没有</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">模型使用了相对路径写入了会话临时目录 <code style="background:#fee2e2;padding:1px 3px;border-radius:2px;">sessions/&lt;cid&gt;/</code>，未写入 <code style="background:#fee2e2;padding:1px 3px;border-radius:2px;">docs/</code></td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#fff5f5;">在文件浏览器中检查对应的会话目录；或在对话中明确要求“将文件保存至我的文档目录”。</td>
+        </tr>
+        <tr>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;font-weight:bold;color:#7f1d1d;">Docker 部署后工作区写入报错 Permission Denied</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">宿主机挂载的 <code style="background:#fee2e2;padding:1px 3px;border-radius:2px;">data/</code> 目录权限未赋予容器内运行用户</td>
+          <td style="padding:7px 6px;border:1px solid #fee2e2;background:#ffffff;">在宿主机执行 <code style="background:#fee2e2;padding:1px 3px;border-radius:2px;">chmod -R 777 ./data</code> 或将挂载目录所有权赋予对应容器用户。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 核心代码速查 -->
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#334155;">最佳实践与关键代码入口速查</p>
+    <p style="margin:0;font-size:13px;color:#475569;line-height:1.8;">
+      • <strong>工作区运行时管理器</strong>：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/services/ai/runtime/agentscope/workspace.py</code><br/>
+      • <strong>文件访问安全判定器</strong>：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/utils/fs_access.py</code><br/>
+      • <strong>路径安全解析工具</strong>：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/utils/fs_paths.py</code><br/>
+      • <strong>文件管理 API 控制器</strong>：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/api/v1/endpoints/fs.py</code><br/>
+      • <strong>Shell 高危删除策略门禁</strong>：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/services/ai/runtime/shell_deletion_policy.py</code>
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 07｜下期预告与 Footer ========== -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>NanZi 实战连载 · 08｜Skills 技能系统实战</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">双轨技能目录、白名单管理、扫描与提及触发机制以及 <code style="background:#dcfce7;padding:1px 4px;border-radius:3px;">create_skills</code> 动态创建。</p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 07</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">严密沙箱守护安全，自由执行激发潜能。</p>
+  </section>
+
+</section>

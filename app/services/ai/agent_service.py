@@ -117,8 +117,13 @@ def _final_process_timeline(state: Optional[List[Dict[str, Any]]]):
 
 
 def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。"""
-    allowed_keys = ("role", "content", "files")
+    """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。
+
+    注意：agent_name 必须保留，供 context_manager 倒序扫描提取 last_agent_name，
+    用于路由的会话粘性判断。该字段不会传给 LLM（convert_history_to_messages 在
+    assistant 分支只提取 content 字段构建 AIMessage）。
+    """
+    allowed_keys = ("role", "content", "files", "agent_name")
     return [
         {key: message[key] for key in allowed_keys if key in message}
         for message in history
@@ -780,6 +785,8 @@ class AgentService:
                                 cancellation_message,
                                 trace_id=trace_id,
                                 agent_name=resolved_agent_name,
+                                agent_type="system",
+                                agent_display_name=resolved_display_name,
                                 process_timeline=_final_process_timeline(
                                     shared_state.get("process_timeline")
                                 ),
@@ -1556,6 +1563,8 @@ class AgentService:
                             response,
                             trace_id=trace_id,
                             agent_name=agent_config.agent_name,
+                            agent_type=_public_agent_type(agent_config),
+                            agent_display_name=(agent_config.agent_display_name or agent_config.agent_name),
                         )
                     )
                 return
@@ -1774,11 +1783,17 @@ class AgentService:
                     is_admin=user_info.get("role") == "admin",
                 )
 
-            # --- 主助手：动态专家清单 + sub_agent_call 通讯录 ---
+            # --- 主助手或显式配置了 sub_agent_call 的智能体：动态专家清单 + sub_agent_call 通讯录 ---
             agent_system_prompt = agent_config.system_prompt
             sub_agents_context = None
             from app.services.ai.skill_resolver import is_main_general_agent
-            if is_main_general_agent(agent_config):
+            has_subagent_tool = any(
+                (isinstance(t, str) and t in ("sub_agent_call", "sub_agent_batch_call"))
+                or (isinstance(t, dict) and t.get("name") in ("sub_agent_call", "sub_agent_batch_call"))
+                or (getattr(t, "name", None) in ("sub_agent_call", "sub_agent_batch_call"))
+                for t in (agent_config.tools or [])
+            )
+            if is_main_general_agent(agent_config) or has_subagent_tool:
                 try:
                     from app.core.orm import AsyncSessionLocal
                     from app.models.agent import AIAgent
@@ -2047,8 +2062,11 @@ class AgentService:
                     full_response_content,
                     trace_id=trace_id,
                     agent_name=handled_by,
+                    agent_type=_public_agent_type(agent_config),
+                    agent_display_name=(getattr(agent_config, "agent_display_name", None) or None),
                     prompt_tokens=p_tokens,
                     completion_tokens=c_tokens,
+                    total_tokens=t_tokens,
                     has_data_output=has_data_output or None,
                     reasoning_content=full_reasoning_content or None,
                     process_timeline=_final_process_timeline(
@@ -2089,6 +2107,7 @@ class AgentService:
                         process_timeline=_final_process_timeline(
                             (shared_state or {}).get("process_timeline")
                         ),
+                        has_data_output=has_data_output if execution_status == "success" else None,
                     )
 
                 await await_unless_cancelling(
@@ -2320,8 +2339,11 @@ class AgentService:
                 full_response_content,
                 trace_id=pending.trace_id,
                 agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(getattr(agent_config, "agent_display_name", None) or handled_by),
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
+                total_tokens=t_tokens,
                 reasoning_content=full_reasoning_content or None,
                 process_timeline=_final_process_timeline(process_timeline_state),
             ))
@@ -2578,8 +2600,11 @@ class AgentService:
                 full_response_content,
                 trace_id=pending.trace_id,
                 agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(getattr(agent_config, "agent_display_name", None) or handled_by),
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
+                total_tokens=t_tokens,
                 reasoning_content=full_reasoning_content or None,
                 process_timeline=_final_process_timeline(process_timeline_state),
             ))

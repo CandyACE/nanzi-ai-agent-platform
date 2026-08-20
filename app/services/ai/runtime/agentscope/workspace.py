@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import logging
 import os
 import re
@@ -279,6 +281,192 @@ def resolve_user_workspace_root(
     return None
 
 
+def _sanitize_skill_dir_name(name: str) -> str:
+    """Replicate AgentScope's ``_sanitize_dir_name`` for pre-seeded layout.
+
+    Allowed characters: ASCII letters/digits/underscore (``\\w``), CJK
+    unified ideographs (一-鿿), and hyphens. Everything else becomes ``_``.
+    Must stay byte-for-byte identical to the third-party implementation so
+    the pre-seeded directory names match what AgentScope would produce.
+    """
+    return re.sub(r"[^\w一-鿿-]", "_", name)
+
+
+def _hardlink_or_copy2(src: str, dst: str) -> None:
+    """copytree ``copy_function``: hard-link first, copy2 on cross-device.
+
+    Pre-seeding session ``skills/`` uses hard links so 400+ sessions share a
+    single physical copy of every skill file instead of duplicating disk.
+    When the source and destination live on different filesystems (e.g.
+    Docker multi-volume mounts), ``os.link`` raises ``EXDEV``; fall back to
+    a normal ``shutil.copy2`` so seeding always succeeds. ``copy2`` also
+    copies metadata (mtime), keeping the snapshot faithful.
+    """
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
+    """Pre-seed ``<workdir>/skills`` with the platform skills before AgentScope.
+
+    AgentScope's ``LocalWorkspace.initialize`` seeds ``skill_paths`` into
+    ``<workdir>/skills`` via ``shutil.copytree`` (a full physical copy per
+    session), which multiplies disk usage linearly as sessions accumulate.
+    This function pre-populates the same directory using hard links toward
+    the shared source skill dirs (or ``copy2`` on cross-device) and writes an
+    AgentScope-compatible ``.skills`` index, so that when ``initialize`` runs
+    it finds every skill's content hash already present and skips all copying
+    — eliminating the per-session duplication while keeping full COW-like
+    isolation where the filesystem supports hard links.
+
+    Idempotent: if ``<workdir>/skills/.skills`` already exists the seed is
+    left untouched, so re-initialisation never rebuilds or overwrites a
+    snapshot.
+
+    Hard-link caveat (honest limitation): linked files share the same inode
+    as the source. AgentScope never writes into session ``skills/`` and the
+    platform's ``create_skills`` writes to the user/global source dirs, so a
+    session snapshot stays effectively read-only; however if a source skill
+    file were later modified in place, already-linked session copies would
+    observe that change. Cross-device mounts fall back to real copies (no
+    sharing), which is safe but re-introduces per-session duplication.
+    """
+    skills_dir = os.path.join(workdir, "skills")
+    index_path = os.path.join(skills_dir, ".skills")
+    if os.path.isfile(index_path):
+        return
+
+    os.makedirs(skills_dir, exist_ok=True)
+
+    # Load any existing index so we never clobber previously seeded skills.
+    existing: dict[str, dict[str, str]] = {}
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        stored = data.get("skills")
+        if isinstance(stored, dict):
+            existing = {
+                str(d): {"hash": str(e.get("hash", "")), "skill_name": str(e.get("skill_name", ""))}
+                for d, e in stored.items()
+                if isinstance(e, dict)
+            }
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("[workspace] Failed to parse existing .skills: %s", exc)
+
+    existing_hashes: set[str] = {e.get("hash", "") for e in existing.values()}
+    existing_agent_names: set[str] = {e.get("skill_name", "") for e in existing.values()}
+    existing_dir_names: set[str] = set(existing.keys())
+
+    # Parse SKILL.md frontmatter the same way AgentScope's frontmatter.loads
+    # does, so `name` and the content hash match exactly.
+    try:
+        import frontmatter
+    except Exception:
+        frontmatter = None
+
+    updated = False
+    for skill_path in skill_paths:
+        skill_md_path = os.path.join(skill_path, "SKILL.md")
+        try:
+            with open(skill_md_path, "rb") as fh:
+                raw = fh.read()
+            content_str = raw.decode("utf-8")
+        except Exception as exc:
+            logger.warning("[workspace] Pre-seed skip unreadable skill %s: %s", skill_path, exc)
+            continue
+
+        # parse name/description
+        name: str | None = None
+        if frontmatter is not None:
+            try:
+                parsed = frontmatter.loads(content_str)
+                name = str(parsed.get("name") or "") or None
+                description = str(parsed.get("description") or "") or None
+            except Exception:
+                name = None
+                description = None
+        else:
+            # Fallback: minimal line-based frontmatter parse for name only.
+            description = None
+            match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content_str, re.DOTALL)
+            if match:
+                for line in match.group(1).splitlines():
+                    if ":" in line:
+                        key, value = line.split(":", 1)
+                        if key.strip().lower() == "name":
+                            name = value.strip().strip('"').strip("'")
+        if not name or not description:
+            logger.warning(
+                "[workspace] Pre-seed skip %s: SKILL.md missing name/description",
+                skill_path,
+            )
+            continue
+
+        skill_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()
+        if skill_hash in existing_hashes:
+            continue
+
+        # Resolve agent-facing name conflict (mirror AgentScope loop)
+        agent_name = name
+        counter = 1
+        while agent_name in existing_agent_names:
+            agent_name = f"{name} ({counter})"
+            counter += 1
+
+        # Resolve directory name conflict (mirror AgentScope loop)
+        base_dir = _sanitize_skill_dir_name(name)
+        dir_name = base_dir
+        counter = 1
+        while dir_name in existing_dir_names:
+            dir_name = f"{base_dir}_{counter}"
+            counter += 1
+
+        dest_path = os.path.join(skills_dir, dir_name)
+        if not os.path.realpath(dest_path).startswith(
+            os.path.realpath(skills_dir) + os.sep,
+        ):
+            logger.warning("[workspace] Pre-seed skip %s: path escapes skills_dir", skill_path)
+            continue
+
+        try:
+            shutil.copytree(
+                skill_path,
+                dest_path,
+                copy_function=_hardlink_or_copy2,
+                dirs_exist_ok=False,
+            )
+        except Exception as exc:
+            logger.warning("[workspace] Pre-seed failed to copy skill %s: %s", skill_path, exc)
+            continue
+
+        existing[dir_name] = {"hash": skill_hash, "skill_name": agent_name}
+        existing_hashes.add(skill_hash)
+        existing_agent_names.add(agent_name)
+        existing_dir_names.add(dir_name)
+        updated = True
+
+    if updated:
+        try:
+            mtime = os.stat(skills_dir).st_mtime
+        except OSError:
+            mtime = 0.0
+        payload = {"skills_dir_mtime": float(mtime), "skills": existing}
+        try:
+            with open(index_path, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, indent=2, ensure_ascii=False))
+            logger.info(
+                "[workspace] Pre-seeded %d skill(s) via hard links in %s",
+                updated,
+                skills_dir,
+            )
+        except Exception as exc:
+            logger.warning("[workspace] Failed to write .skills at %s: %s", skills_dir, exc)
+
+
 async def get_local_workspace(
     *,
     user_id: str | int | None,
@@ -301,6 +489,11 @@ async def get_local_workspace(
         conversation_id=conversation_id,
     )
     os.makedirs(workdir, exist_ok=True)
+    skill_paths = discover_platform_skill_paths(
+        user_info=user_info,
+        skills_custom=skills_custom,
+        allowed_global_skills=allowed_global_skills,
+    )
     skills_fp = (
         f"custom:{','.join(sorted(str(s) for s in (allowed_global_skills or []) if str(s).strip()))}"
         if skills_custom
@@ -319,13 +512,13 @@ async def get_local_workspace(
 
     workspace = LocalWorkspace(
         workdir=workdir,
-        skill_paths=discover_platform_skill_paths(
-            user_info=user_info,
-            skills_custom=skills_custom,
-            allowed_global_skills=allowed_global_skills,
-        ),
+        skill_paths=skill_paths,
     )
     try:
+        # Pre-seed session skills/ with hard links + matching .skills index so
+        # AgentScope's initialize() hash-skips all copies instead of duplicating
+        # every skill into each session directory.
+        _preseed_session_skills(workdir, skill_paths)
         await workspace.initialize()
     except Exception as exc:
         logger.warning("[workspace] Failed to initialize LocalWorkspace workdir=%s: %s", workdir, exc)

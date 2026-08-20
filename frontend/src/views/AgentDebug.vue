@@ -99,6 +99,7 @@ import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import { copyToClipboard } from "@/utils/clipboard";
+import { resolveGeneratedFileHref } from "@/utils/generatedFileUrl";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
   canSaveGoldenReportFromMessage,
@@ -1158,22 +1159,26 @@ const exportData = async (traceId: string, format = 'xlsx') => {
   if (!traceId) return;
   try {
     const response = await axios.get(`/api/v1/chat/export/data/${traceId}`, {
-      params: { format },
-      responseType: 'blob'
+      params: { format }
     });
 
-    const blob = new Blob([response.data], {
-      type: format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv'
-    });
-    const url = window.URL.createObjectURL(blob);
+    const payload = response.data as {
+      download_url?: string;
+    };
+    if (!payload || !payload.download_url) {
+      showToast("导出失败：未找到可导出数据", "error");
+      return;
+    }
+
+    const href = resolveGeneratedFileHref(payload.download_url);
     const link = document.createElement('a');
-    link.href = url;
+    link.href = href;
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     link.setAttribute('download', `debug_export_${dateStr}_${traceId.slice(0, 8)}.${format}`);
+    link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.URL.revokeObjectURL(url);
     showToast("数据导出成功", "success");
   } catch (e) {
     console.error("Export failed", e);
@@ -2139,13 +2144,16 @@ const enterFullScreenFromTip = () => {
 const userInput = ref("");
 const isProcessing = ref(false);
 const activeTodoTimeline = computed(() => {
-  if (!isProcessing.value) return undefined;
-  const currentMsg = messages.value[messages.value.length - 1];
-  if (!currentMsg || (currentMsg.role !== 'agent' && currentMsg.role !== 'assistant')) {
-    return undefined;
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const msg = messages.value[i];
+    if (msg.role === 'agent' || msg.role === 'assistant') {
+      const hasTodo = msg.processTimeline?.some((item) => item.kind === 'todo');
+      if (hasTodo) {
+        return msg.processTimeline;
+      }
+    }
   }
-  const hasTodo = currentMsg.processTimeline?.some((item) => item.kind === 'todo');
-  return hasTodo ? currentMsg.processTimeline : undefined;
+  return undefined;
 });
 const messagesContainer = ref<HTMLDivElement | null>(null);
 
