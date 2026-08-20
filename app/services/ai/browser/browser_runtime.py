@@ -32,6 +32,17 @@ class BrowserRuntime:
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._human_controls: dict[str, _HumanControl] = {}
 
+    async def clean_idle_sessions(self, max_idle_seconds: float = 1800) -> list[str]:
+        """按空闲时间自动释放过期的 Chromium 实例与内存快照。"""
+        cleaned = await self.worker.clean_idle_sessions(max_idle_seconds=max_idle_seconds)
+        for session_id in cleaned:
+            self._snapshots.pop(session_id, None)
+            self._session_locks.pop(session_id, None)
+            state = self._human_controls.pop(session_id, None)
+            if state is not None:
+                state.released.set()
+        return cleaned
+
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 

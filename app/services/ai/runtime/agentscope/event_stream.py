@@ -376,6 +376,32 @@ async def map_standard_agentscope_event(
         tool_started_at = state.setdefault("tool_started_at", {})
         tool_names[tool_id] = tool_name
         tool_started_at[tool_id] = time.time()
+
+        # 方案二：工具白名单校验（硬拦截幻觉工具调用）
+        # tools 在 Simple Mode 下为 None，跳过校验；ReAct Mode 下必须校验。
+        if tools is not None:
+            known_tool_names = {getattr(t, "name", "") for t in tools}
+            if tool_name and tool_name not in known_tool_names:
+                logger.warning(
+                    "[ToolGuard] LLM attempted to call unregistered tool '%s' (tool_id=%s). "
+                    "Marking as ghost and injecting error feedback.",
+                    tool_name,
+                    tool_id,
+                )
+                ghost_tool_ids = state.setdefault("ghost_tool_ids", set())
+                ghost_tool_ids.add(tool_id)
+                yield {
+                    "type": "log",
+                    "id": tool_id,
+                    "title": f"⚠️ 未知工具调用被拦截: {tool_name}",
+                    "details": (
+                        f"模型尝试调用工具 `{tool_name}`，但该工具未在本智能体当前会话中注册。"
+                        f"已拦截，将向模型注入错误反馈以纠正。"
+                    ),
+                    "status": "error",
+                }
+                return
+
         yield {
             "type": "log",
             "id": tool_id,

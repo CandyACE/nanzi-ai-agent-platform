@@ -523,6 +523,58 @@ def should_inherit_data_agent_session(user_question: str) -> bool:
     return resolve_data_agent_session_affinity(user_question) == DataSessionAffinity.KEEP
 
 
+# 通用追问：指代上一轮内容继续追问，而非新话题的典型前缀词
+_GENERAL_FOLLOWUP_PREFIXES = (
+    "继续", "那", "那么", "再说说", "再讲讲", "再详细", "接着", "然后呢",
+    "还有呢", "还有吗", "还有什么", "那么呢", "那你", "那它", "那这",
+    "能再", "可以再", "请继续", "请再", "说下去", "接下来",
+    "那这个", "这个呢", "那个呢", "它呢", "它是", "然后",
+    "continue", "go on", "and then", "what else",
+)
+# 短句追问后缀（与前缀组合判断，避免漏掉"好的呢" "那呢"等）
+_GENERAL_FOLLOWUP_SUFFIXES = ("呢", "吗", "?", "？", "呀", "啊")
+
+# 有这些词说明是新话题或业务请求，不应粘性沿用（阻断器）
+_GENERAL_FOLLOWUP_BLOCKERS = (
+    *_DATA_QUERY_STRONG_SIGNALS,
+    *_KNOWLEDGE_SIGNALS[:10],  # 只取前几个最强的知识库信号
+    "联网", "搜索", "搜一下", "新闻", "资讯", "公司", "品牌",
+    "帮我", "写一个", "生成", "翻译", "总结这段", "分析这段",
+)
+
+
+def looks_like_general_followup(user_question: str) -> bool:
+    """轻量启发式：判断本轮是否为对上一轮（通用助手）内容的追问/延续。
+
+    用于在路由阶段短路粘性沿用通用助手（Main），避免每次追问都调路由 LLM。
+    设计保守：只有高置信度的延续句才返回 True，避免误伤真正需要切换的新话题。
+    """
+    q = (user_question or "").strip()
+    if not q or len(q) > 60:
+        # 超过 60 字通常是新话题，不做短路
+        return False
+
+    q_lower = q.lower()
+
+    # 是问候/打招呼 → 不是延续追问（has_standalone 语义）
+    if looks_like_greeting(q):
+        return False
+
+    # 有阻断词 → 不是纯粹的延续追问
+    if any(blocker in q_lower for blocker in _GENERAL_FOLLOWUP_BLOCKERS):
+        return False
+
+    # 命中前缀词 → 典型延续
+    if any(q.startswith(prefix) for prefix in _GENERAL_FOLLOWUP_PREFIXES):
+        return True
+
+    # 极短句（≤8字）且含后缀词 → 指代式追问（如 "那呢" "好的吗" "行吗"）
+    if len(q) <= 8 and any(q.endswith(suffix) for suffix in _GENERAL_FOLLOWUP_SUFFIXES):
+        return True
+
+    return False
+
+
 _GREETING_CORE_PHRASES = frozenset({
     "你好", "您好", "你好呀", "你好啊", "您好呀", "你好吗",
     "hi", "hello", "hey",

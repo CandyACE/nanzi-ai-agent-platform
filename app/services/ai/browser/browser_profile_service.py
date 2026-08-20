@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +43,7 @@ class BrowserProfileService:
         else:
             profile.last_used_at = datetime.now()
             profile.updated_at = datetime.now()
-        await self.db.flush()
+        await self.db.commit()
         return profile
 
     async def get_owned(self, *, user_id: int, profile_id: str) -> BrowserProfile:
@@ -70,7 +71,15 @@ class BrowserProfileService:
         profile = await self.get_owned(user_id=user_id, profile_id=profile_id)
         profile.status = "deleted"
         profile.updated_at = datetime.now()
-        await self.db.flush()
+        path = await self.profile_path(profile)
+        await self.db.commit()
+        # 清理物理磁盘目录
+        if os.path.exists(path):
+            try:
+                import shutil
+                shutil.rmtree(path, ignore_errors=True)
+            except Exception:
+                pass
 
     async def profile_path(self, profile: BrowserProfile) -> str:
         """返回内部 Worker 使用的路径，不通过 API 返回给用户。"""

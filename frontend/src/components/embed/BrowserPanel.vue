@@ -68,10 +68,18 @@
                 </button>
                 <button
                   type="button"
-                  class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
-                  @click="confirmCloseSession"
+                  class="rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+                  title="关闭浏览器并彻底删除存储的 Cookie 与登录状态"
+                  @click="confirmCloseSession(true)"
                 >
-                  结束会话
+                  重置登录与缓存
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                  @click="confirmCloseSession(false)"
+                >
+                  仅结束会话
                 </button>
               </div>
             </div>
@@ -358,7 +366,7 @@ const panelWidth = defineModel<number>('panelWidth', { default: 520 });
 
 const emit = defineEmits<{
   (event: 'close'): void;
-  (event: 'close-session'): void;
+  (event: 'close-session', destroyProfile?: boolean): void;
   (event: 'update:approval-mode', mode: ApprovalMode): void;
 }>();
 
@@ -671,9 +679,9 @@ const releaseControl = () => {
   if (!captchaDetected.value && !autoRefreshPaused.value && controlOwner.value === 'ai') startPolling();
 };
 
-const confirmCloseSession = () => {
+const confirmCloseSession = (destroyProfile: boolean = false) => {
   showCloseSessionConfirm.value = false;
-  emit('close-session');
+  emit('close-session', destroyProfile);
 };
 
 const remotePointFromEvent = (event: MouseEvent): RemotePoint | null => {

@@ -2687,20 +2687,24 @@ const closeBrowserPanel = () => {
   browserPanelVisible.value = false;
 };
 
-const closeBrowserSession = async () => {
+const closeBrowserSession = async (destroyProfile: boolean = false) => {
   const sessionId = browserSessionId.value;
   if (!sessionId || typeof window === "undefined") return;
   browserOpenGeneration += 1;
   browserPanelOpening.value = false;
   try {
     await axios.delete(
-      `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}`,
+      `/api/v1/chat/browser/sessions/${encodeURIComponent(sessionId)}?destroy_profile=${destroyProfile ? "true" : "false"}`,
       { headers: embedAuthHeaders() },
     );
     browserPanelVisible.value = false;
     browserSessionId.value = null;
     browserViewerToken.value = null;
-    showToast("浏览器会话已结束，Profile 和 Cookie 已保留", "success");
+    if (destroyProfile) {
+      showToast("浏览器会话已结束，重置登录与本地缓存成功", "success");
+    } else {
+      showToast("浏览器会话已结束，Profile 和 Cookie 已保留", "success");
+    }
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "结束浏览器会话失败", "error");
   }

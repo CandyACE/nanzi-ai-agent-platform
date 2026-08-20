@@ -48,6 +48,9 @@ class InMemorySession:
     async def flush(self):
         return None
 
+    async def commit(self):
+        return None
+
 
 @pytest.mark.asyncio
 async def test_user_cannot_read_another_users_session():

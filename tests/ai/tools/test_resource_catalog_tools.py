@@ -21,10 +21,13 @@ def test_resource_catalog_tools_are_system_implicit():
     tool_names = {getattr(tool, "name", "") for tool in ToolRegistry.get_system_implicit_tools()}
     assert "list_accessible_datasets" in tool_names
     assert "list_accessible_knowledge_bases" in tool_names
+    assert "list_available_agents" in tool_names
     assert "list_accessible_datasets" in READ_ONLY_TOOL_NAMES
     assert "list_accessible_knowledge_bases" in READ_ONLY_TOOL_NAMES
+    assert "list_available_agents" in READ_ONLY_TOOL_NAMES
     assert infer_runtime_permission_scope("list_accessible_datasets", "system") == "read"
     assert infer_runtime_permission_scope("list_accessible_knowledge_bases", "system") == "read"
+    assert infer_runtime_permission_scope("list_available_agents", "system") == "read"
     assert ToolRegistry._registry["list_accessible_datasets"].name == "list_accessible_datasets"
     description = str(getattr(ToolRegistry._registry["list_accessible_datasets"], "description", "") or "")
     assert "已启用" in description
@@ -32,6 +35,10 @@ def test_resource_catalog_tools_are_system_implicit():
     assert (
         ToolRegistry._registry["list_accessible_knowledge_bases"].name
         == "list_accessible_knowledge_bases"
+    )
+    assert (
+        ToolRegistry._registry["list_available_agents"].name
+        == "list_available_agents"
     )
 
 
@@ -168,3 +175,74 @@ async def test_list_accessible_knowledge_bases_filters_by_access():
         }
     ]
     perm.get_knowledge_base_access.assert_awaited_once_with(7, "alice")
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_requires_user_context():
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=None,
+    ):
+        result = await list_available_agents.ainvoke({})
+
+    assert "无法识别当前用户" in result
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_returns_lightweight_fields():
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    ctx = MagicMock()
+    ctx.user_id = 7
+    ctx.is_admin = False
+    ctx.agent_id = "agent_current"
+
+    agent_target = SimpleNamespace(
+        id="agent_target",
+        name="data_expert",
+        display_name="数据分析专家",
+        description="负责数据查询与分析",
+        capabilities=["text2sql", "chart"],
+    )
+
+    db = AsyncMock()
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=ctx,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
+        return_value=db_cm,
+    ), patch(
+        "app.services.ai.agent_manager.AgentManagerService.list_agents",
+        AsyncMock(return_value=[agent_target]),
+    ) as mock_list_agents, patch(
+        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        AsyncMock(return_value=[agent_target]),
+    ) as mock_resolve_delegable:
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["count"] == 1
+    assert payload["items"] == [
+        {
+            "agent_name": "data_expert",
+            "display_name": "数据分析专家",
+            "description": "负责数据查询与分析",
+            "capabilities": ["text2sql", "chart"],
+        }
+    ]
+    mock_list_agents.assert_awaited_once_with(db)
+    mock_resolve_delegable.assert_awaited_once_with(
+        db,
+        [agent_target],
+        user_id=7,
+        is_admin=False,
+        current_agent_id="agent_current",
+    )
+

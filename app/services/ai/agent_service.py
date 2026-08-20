@@ -117,8 +117,13 @@ def _final_process_timeline(state: Optional[List[Dict[str, Any]]]):
 
 
 def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。"""
-    allowed_keys = ("role", "content", "files")
+    """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。
+
+    注意：agent_name 必须保留，供 context_manager 倒序扫描提取 last_agent_name，
+    用于路由的会话粘性判断。该字段不会传给 LLM（convert_history_to_messages 在
+    assistant 分支只提取 content 字段构建 AIMessage）。
+    """
+    allowed_keys = ("role", "content", "files", "agent_name")
     return [
         {key: message[key] for key in allowed_keys if key in message}
         for message in history
@@ -1774,11 +1779,17 @@ class AgentService:
                     is_admin=user_info.get("role") == "admin",
                 )
 
-            # --- 主助手：动态专家清单 + sub_agent_call 通讯录 ---
+            # --- 主助手或显式配置了 sub_agent_call 的智能体：动态专家清单 + sub_agent_call 通讯录 ---
             agent_system_prompt = agent_config.system_prompt
             sub_agents_context = None
             from app.services.ai.skill_resolver import is_main_general_agent
-            if is_main_general_agent(agent_config):
+            has_subagent_tool = any(
+                (isinstance(t, str) and t in ("sub_agent_call", "sub_agent_batch_call"))
+                or (isinstance(t, dict) and t.get("name") in ("sub_agent_call", "sub_agent_batch_call"))
+                or (getattr(t, "name", None) in ("sub_agent_call", "sub_agent_batch_call"))
+                for t in (agent_config.tools or [])
+            )
+            if is_main_general_agent(agent_config) or has_subagent_tool:
                 try:
                     from app.core.orm import AsyncSessionLocal
                     from app.models.agent import AIAgent

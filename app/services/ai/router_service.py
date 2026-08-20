@@ -451,6 +451,34 @@ class RouterService:
                         user_action_type="transform_context",
                     )
 
+        # 通用追问粘性短路（Fix 2）：上一轮非数据智能体 + 本轮为高置信延续追问
+        # → 直接粘性沿用，跳过路由 LLM。
+        # 设计保守：looks_like_general_followup 仅覆盖极短的指代/延续句，
+        # 含任何业务数据信号时自动阻断，不影响需要切换智能体的新话题。
+        from app.services.ai.intent_service import looks_like_general_followup
+
+        if (
+            last_agent_name
+            and not self._is_data_query_agent(agents_metadata, last_agent_name)
+            and looks_like_general_followup(user_input)
+        ):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent:
+                logger.info(
+                    "General followup shortcut: sticky route to %s without LLM (last=%s)",
+                    sticky_agent["name"],
+                    last_agent_name,
+                )
+                return TurnDecision.from_router_components(
+                    agent_id=sticky_agent["id"],
+                    agent_name=sticky_agent.get("name"),
+                    confidence=0.93,
+                    reasoning="通用追问/指代延续，启发式短路粘性沿用上一轮智能体（跳过路由 LLM）",
+                    turn_labels=["continuation_followup", "same_topic"],
+                    relation_to_previous="followup",
+                    user_action_type="chat",
+                )
+
         # 不再单独打意图 LLM：启发式先开闸，意图字段由同一次路由 JSON 带回后再校验。
         intent_info = None
         previous_chatbi_result = bool(
@@ -558,6 +586,12 @@ class RouterService:
                 attempt_messages = messages
                 if attempt > 0:
                     # 第二次用极简提示，强制先写 agent_name，降低截断重伤概率。
+                    # Fix 3: 同时注入 last_agent_name，避免 retry 时丢失粘性上下文。
+                    last_agent_hint = (
+                        f"\n上一轮由智能体 `{last_agent_name}` 处理，若本轮为追问/指代请优先沿用。"
+                        if last_agent_name
+                        else ""
+                    )
                     compact_prompt = (
                         "你是路由助手。只返回一行纯 JSON，字段顺序固定为："
                         '{"agent_name":"...","confidence":0.9,"secondary_agents":[],'
@@ -570,6 +604,7 @@ class RouterService:
                         "domain 为 chatbi_business_data/local_file/public_web/runtime_environment/"
                         "internal_docs/general/conversation_context/unknown。"
                         "intent_confidence 是来源意图把握，不是 agent_name 的 confidence。"
+                        f"{last_agent_hint}"
                         f"\n可用智能体：\n{agents_str}"
                         f"\n当前用户可访问的内部资源摘要：\n"
                         f"{accessible_resources_context or '（当前没有可展示的资源摘要）'}\n"

@@ -58,6 +58,27 @@ async def list_browser_profiles(
     return await service.list_owned(user_id=_user_id(user_info))
 
 
+@router.delete("/profiles/clear")
+async def clear_browser_profiles(
+    user_info: dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = _user_id(user_info)
+    service = BrowserProfileService(db)
+    profiles = await service.list_owned(user_id=user_id)
+    session_service = BrowserSessionService(db)
+    active_sessions = await session_service.list_owned_active(user_id=user_id)
+    for session in active_sessions:
+        await session_service.close(user_id=user_id, session_id=session.id, destroy_profile=True)
+        await browser_runtime.close(session.id)
+    for profile in profiles:
+        try:
+            await service.delete_owned(user_id=user_id, profile_id=profile.id)
+        except Exception:
+            pass
+    return {"success": True, "message": "浏览器历史、登录态及本地缓存已彻底清除"}
+
+
 @router.post("/sessions/open", response_model=BrowserSessionResponse)
 async def open_browser_session(
     payload: BrowserSessionOpenRequest,
