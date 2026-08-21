@@ -5,11 +5,15 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from app.services.ai.runtime.agentscope.tool_choice_compat import (
+    tool_choice_for_model,
+)
+
 
 class ForcedFirstToolChoiceModel:
     def __init__(self, inner: Any, tool_choice: Any):
         self._inner = inner
-        self._tool_choice = tool_choice
+        self._tool_choice = tool_choice_for_model(inner, tool_choice)
         self._consumed = False
 
     def __getattr__(self, name: str) -> Any:

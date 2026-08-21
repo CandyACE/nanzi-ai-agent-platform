@@ -91,6 +91,9 @@ from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
     runtime_tool_spec_from_legacy_tool,
 )
+from app.services.ai.runtime.agentscope.tool_choice_compat import (
+    tool_choice_for_model,
+)
 from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.tool_capability import (
     AgentScopeToolConsumer,
@@ -128,7 +131,7 @@ class _ForcedFirstToolChoiceModel:
 
     def __init__(self, inner: Any, tool_choice: Any):
         self._inner = inner
-        self._tool_choice = tool_choice
+        self._tool_choice = tool_choice_for_model(inner, tool_choice)
         self._consumed = False
 
     def __getattr__(self, name: str) -> Any:
