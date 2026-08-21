@@ -66,7 +66,7 @@ def bash(command: str, cwd: str = ".") -> str:
 
     Args:
         command: The shell command line to execute.
-        cwd: Relative directory (under /workspace) to run in.
+        cwd: Relative directory under the configured sandbox workdir to run in.
     """
     workdir = _ROOT if cwd in ("", ".") else _abspath(cwd)
     try:
@@ -92,7 +92,7 @@ def read(path: str, offset: int = 0, limit: int = 2000) -> str:
     """Read a text file inside the sandbox.
 
     Args:
-        path: File path (relative to /workspace).
+        path: File path relative to the configured sandbox workdir.
         offset: Zero-based starting line.
         limit: Max number of lines to return.
     """
@@ -118,7 +118,7 @@ def write(path: str, content: str) -> str:
     """Create or overwrite a text file inside the sandbox.
 
     Args:
-        path: File path (relative to /workspace). Parent dirs created.
+        path: File path relative to the configured sandbox workdir. Parent dirs created.
         content: Full file content to write.
     """
     p = _abspath(path)
@@ -133,10 +133,10 @@ def write(path: str, content: str) -> str:
 
 @mcp.tool()
 def glob(pattern: str, cwd: str = ".") -> str:
-    """List files under /workspace matching a glob pattern.
+    """List files under the configured sandbox workdir matching a glob pattern.
 
     Args:
-        pattern: Glob pattern (relative to /workspace), e.g. **/*.py.
+        pattern: Glob pattern relative to the configured sandbox workdir, e.g. **/*.py.
         cwd: Subdirectory to search in.
     """
     import glob as _glob
@@ -150,26 +150,31 @@ mcp.run(transport="stdio")
 '''
 
 
-def build_container_tool_mcp() -> MCPClient:
+def build_container_tool_mcp(workdir: str = CONTAINER_WORKDIR) -> MCPClient:
     """Return the stateful STDIO MCP handshake for the sandbox tools.
 
     The gateway (inside the container) spawns ``python -c <script>``
     with its default inherited environment; we pin a container-side
     working directory via ``cwd`` and expose it under
-    :data:`CONTAINER_MCP_NAME`.
+    :data:`CONTAINER_MCP_NAME`. Docker sandboxes pass the same absolute
+    path as the host-side user workspace so tool results can be consumed
+    directly by the platform's file preview endpoint.
     """
+    resolved_workdir = str(workdir or CONTAINER_WORKDIR).strip()
+    if not resolved_workdir.startswith("/"):
+        raise ValueError("sandbox workdir must be an absolute path")
     return MCPClient(
         name=CONTAINER_MCP_NAME,
         is_stateful=True,
         mcp_config=StdioMCPConfig(
             command="python",
             args=["-c", _INLINE_SERVER],
-            cwd=CONTAINER_WORKDIR,
-            env={"SANDBOX_WORKDIR": CONTAINER_WORKDIR},
+            cwd=resolved_workdir,
+            env={"SANDBOX_WORKDIR": resolved_workdir},
         ),
     )
 
 
-def container_tool_mcp_spec() -> dict[str, Any]:
+def container_tool_mcp_spec(workdir: str = CONTAINER_WORKDIR) -> dict[str, Any]:
     """Return the gateway-consumed JSON for the sandbox tool server."""
-    return build_container_tool_mcp().model_dump(mode="json")
+    return build_container_tool_mcp(workdir=workdir).model_dump(mode="json")

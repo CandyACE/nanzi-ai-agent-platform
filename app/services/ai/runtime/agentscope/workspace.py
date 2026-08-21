@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import time
 import uuid
@@ -496,6 +497,99 @@ KNOWN_SANDBOX_POLICIES = frozenset(
 )
 
 
+def _make_same_path_docker_workspace_class(base_cls: type[Any]) -> type[Any]:
+    """Adapt AgentScope DockerWorkspace to bind a user root at itself.
+
+    AgentScope currently hard-codes ``/workspace`` as the container-side
+    bind target. The platform's file preview and artifact APIs operate on
+    the backend's real user workspace path, so a persistent user sandbox
+    must expose that same absolute path inside the container. The legacy
+    ``/workspace`` path remains a symlink for AgentScope internals that
+    still use its fixed constants.
+    """
+
+    class SamePathDockerWorkspace(base_cls):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            host_workdir = kwargs.get("host_workdir")
+            self._same_path_workdir = os.path.abspath(
+                str(host_workdir or DOCKER_WORKSPACE_LOGICAL_ROOT),
+            )
+            super().__init__(*args, **kwargs)
+            self.workdir = self._same_path_workdir
+
+        async def get_instructions(self) -> str:
+            return self.instructions.format(workdir=self._same_path_workdir)
+
+        async def _create_and_start_container(self) -> None:
+            container_workdir = self._same_path_workdir
+            command = ["sleep", "infinity"]
+            if container_workdir != DOCKER_WORKSPACE_LOGICAL_ROOT:
+                workspace_link = shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT)
+                target = shlex.quote(container_workdir)
+                command = [
+                    "sh",
+                    "-lc",
+                    f"rm -rf {workspace_link} && "
+                    f"ln -s {target} {workspace_link} && "
+                    "exec sleep infinity",
+                ]
+
+            config: dict[str, Any] = {
+                "Image": self._image_tag,
+                "Cmd": command,
+                "WorkingDir": container_workdir,
+                "Labels": {
+                    "agentscope.workspace": "true",
+                    "agentscope.workspace.id": self.workspace_id,
+                },
+                "ExposedPorts": {f"{self.gateway_port}/tcp": {}},
+            }
+            if self.env:
+                config["Env"] = [f"{k}={v}" for k, v in self.env.items()]
+
+            host_config: dict[str, Any] = {
+                "PortBindings": {
+                    f"{self.gateway_port}/tcp": [
+                        {"HostIp": "127.0.0.1", "HostPort": ""},
+                    ],
+                },
+            }
+            if self.host_workdir is not None:
+                host_workdir = os.path.abspath(self.host_workdir)
+                os.makedirs(host_workdir, exist_ok=True)
+                host_config["Binds"] = [
+                    f"{host_workdir}:{container_workdir}:rw",
+                ]
+            config["HostConfig"] = host_config
+
+            self._container = await self._client.containers.create_or_replace(
+                name=f"as_ws_{self.workspace_id}",
+                config=config,
+            )
+            await self._container.start()
+
+            info = await self._container.show()
+            ports_info = info.get("NetworkSettings", {}).get("Ports") or {}
+            bindings = ports_info.get(f"{self.gateway_port}/tcp", []) or []
+            if not bindings:
+                raise RuntimeError(
+                    f"gateway port {self.gateway_port} did not bind to a host port",
+                )
+            self._port_mapping[self.gateway_port] = int(bindings[0]["HostPort"])
+
+            # AgentScope's inherited internals still address /workspace;
+            # the startup command above makes it resolve to the same bind.
+            await self._exec(
+                "mkdir -p "
+                f"{shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT + '/data')} "
+                f"{shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT + '/skills')} "
+                f"{shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT + '/sessions')}"
+            )
+
+    SamePathDockerWorkspace.__name__ = f"SamePath{base_cls.__name__}"
+    return SamePathDockerWorkspace
+
+
 async def _policy_docker_workspace(
     skill_paths: list[str] | None,
     *,
@@ -508,8 +602,9 @@ async def _policy_docker_workspace(
     Runs in a container built from ``base_image`` (or the AgentScope default).
     Bash/file tools are exposed through the container's inline FastMCP stdio
     server seeded via ``default_mcps`` (see workspace_container_mcp). A user
-    sandbox mounts exactly ``<workspace_root>/<sandbox_user_key>`` at
-    ``/workspace``; the old configurable host directory is intentionally ignored.
+    sandbox mounts exactly ``<workspace_root>/<sandbox_user_key>`` at the same
+    absolute path inside the container; the old configurable host directory is
+    intentionally ignored.
     """
     from app.services.config_service import ConfigService
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
@@ -525,9 +620,19 @@ async def _policy_docker_workspace(
             sandbox_user_key,
         )
 
+    container_workdir = host_workdir or DOCKER_WORKSPACE_LOGICAL_ROOT
+    docker_workspace_cls = DockerWorkspace
+    if host_workdir:
+        docker_workspace_cls = _make_same_path_docker_workspace_class(DockerWorkspace)
+    default_mcp = (
+        build_container_tool_mcp(workdir=container_workdir)
+        if host_workdir
+        else build_container_tool_mcp()
+    )
+
     kwargs: dict[str, Any] = {
         "host_workdir": host_workdir,  # None => ephemeral container
-        "default_mcps": [build_container_tool_mcp()],
+        "default_mcps": [default_mcp],
         "skill_paths": skill_paths,
     }
     if workspace_id:
@@ -535,7 +640,7 @@ async def _policy_docker_workspace(
     if base_image:
         kwargs["base_image"] = base_image
 
-    workspace = DockerWorkspace(**kwargs)
+    workspace = docker_workspace_cls(**kwargs)
     try:
         await workspace.initialize()
     except Exception:
@@ -1221,32 +1326,6 @@ async def append_session_workspace_sandbox_to_system_prompt(
 
     from app.services.ai.agent_prompts import AgentServicePrompts
 
-    logical_workspace_root = None
-    logical_session_workdir = None
-    logical_docs_dir = None
-    try:
-        from app.services.config_service import (
-            ConfigService,
-            resolve_effective_sandbox_policy,
-        )
-
-        policy = resolve_effective_sandbox_policy(
-            await ConfigService.get("sandbox_policy", "local"),
-        )
-    except Exception:
-        policy = "local"
-    if policy == SANDBOX_POLICY_DOCKER:
-        logical_workspace_root = DOCKER_WORKSPACE_LOGICAL_ROOT
-        logical_session_workdir = os.path.join(
-            DOCKER_WORKSPACE_LOGICAL_ROOT,
-            USER_SESSIONS_DIR_NAME,
-            _clean_key_part(conversation_id, "conversation"),
-        )
-        logical_docs_dir = os.path.join(
-            DOCKER_WORKSPACE_LOGICAL_ROOT,
-            USER_DOCS_DIR_NAME,
-        )
-
     root = await resolve_workspace_root()
     session_workdir = resolve_session_workdir(
         root=root,
@@ -1265,9 +1344,6 @@ async def append_session_workspace_sandbox_to_system_prompt(
         session_workdir=session_workdir,
         docs_dir=docs_dir,
         file_tool_names=sorted(file_tools),
-        logical_workspace_root=logical_workspace_root,
-        logical_session_workdir=logical_session_workdir,
-        logical_docs_dir=logical_docs_dir,
     )
     base = (system_content or "").strip()
     if base:
@@ -1398,25 +1474,12 @@ def _map_docker_workspace_tool_input(
 
 
 def _logicalize_docker_workspace_result(result: Any, host_root: str) -> Any:
-    """Hide host-only prefixes from file-tool results returned to the model."""
-    host_prefix = os.path.abspath(host_root).rstrip(os.sep)
-    if not host_prefix:
-        return result
-    if isinstance(result, str):
-        return result.replace(host_prefix, DOCKER_WORKSPACE_LOGICAL_ROOT)
-
-    for block in getattr(result, "content", []) or []:
-        text = getattr(block, "text", None)
-        if isinstance(text, str):
-            try:
-                block.text = text.replace(host_prefix, DOCKER_WORKSPACE_LOGICAL_ROOT)
-            except Exception:  # noqa: BLE001
-                pass
+    """Keep real host paths because Docker now mounts the same path inside."""
     return result
 
 
 class _DockerLogicalWorkspaceNativeTool:
-    """Make host-backed file tools use the same ``/workspace`` namespace."""
+    """Map legacy ``/workspace`` inputs while preserving real output paths."""
 
     def __init__(self, native_tool: Any, host_root: str) -> None:
         self._native_tool = native_tool
@@ -1464,13 +1527,6 @@ class _DockerLogicalWorkspaceNativeTool:
         if generator is None:
             return []
         suggestions = generator(self._map(tool_input))
-        for suggestion in suggestions or []:
-            rule_content = getattr(suggestion, "rule_content", None)
-            if isinstance(rule_content, str):
-                suggestion.rule_content = rule_content.replace(
-                    self._host_root,
-                    DOCKER_WORKSPACE_LOGICAL_ROOT,
-                )
         return suggestions
 
 

@@ -297,6 +297,15 @@ def test_docker_workspace_path_mapping_uses_one_logical_root_and_rejects_escape(
         )
 
 
+def test_docker_workspace_results_keep_real_user_workspace_paths():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_root = "/srv/agent_workspaces/alice__1"
+    result = f"saved: {host_root}/docs/report.md"
+
+    assert workspace_module._logicalize_docker_workspace_result(result, host_root) == result
+
+
 @pytest.mark.asyncio
 async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_root():
     from app.services.ai.runtime.agentscope import workspace as workspace_module
@@ -592,7 +601,7 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
     monkeypatch.setattr("agentscope.workspace.DockerWorkspace", FakeDockerWorkspace)
     monkeypatch.setattr(
         "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
-        lambda: object(),
+        lambda **_kwargs: object(),
     )
     monkeypatch.setattr(
         "app.services.config_service.ConfigService.get",
@@ -609,6 +618,80 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
     kwargs = FakeDockerWorkspace.instances[0].kwargs
     assert kwargs["workspace_id"] == "alice__1"
     assert kwargs["host_workdir"] == str(tmp_path / "alice__1")
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_mounts_user_root_at_the_same_container_path(tmp_path):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    class BaseWorkspace:
+        def __init__(self, *, workspace_id=None, host_workdir=None, **_kwargs):
+            self.workspace_id = workspace_id or "workspace"
+            self.host_workdir = host_workdir
+
+    class FakeContainer:
+        async def start(self):
+            return None
+
+        async def show(self):
+            return {
+                "NetworkSettings": {
+                    "Ports": {"5600/tcp": [{"HostPort": "4567"}]},
+                },
+            }
+
+    class FakeContainers:
+        def __init__(self):
+            self.config = None
+
+        async def create_or_replace(self, *, name, config):
+            self.config = config
+            return FakeContainer()
+
+    class FakeClient:
+        def __init__(self):
+            self.containers = FakeContainers()
+
+    user_root = tmp_path / "alice__1"
+    workspace_cls = workspace_module._make_same_path_docker_workspace_class(
+        BaseWorkspace,
+    )
+    workspace = workspace_cls(
+        workspace_id="alice__1",
+        host_workdir=str(user_root),
+    )
+    workspace._client = FakeClient()
+    workspace._image_tag = "agentscope-workspace:test"
+    workspace.gateway_port = 5600
+    workspace.env = {}
+    workspace._port_mapping = {}
+
+    async def fake_exec(_command):
+        return None
+
+    workspace._exec = fake_exec
+
+    await workspace._create_and_start_container()
+
+    config = workspace._client.containers.config
+    assert config["WorkingDir"] == str(user_root)
+    assert config["HostConfig"]["Binds"] == [
+        f"{user_root}:{user_root}:rw",
+    ]
+    assert str(user_root) in config["Cmd"][2]
+    assert "/workspace" in config["Cmd"][2]
+
+
+def test_container_tool_mcp_uses_the_same_absolute_workspace_path():
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        build_container_tool_mcp,
+    )
+
+    workspace_path = "/app/data/agent_workspaces/alice__1"
+    spec = build_container_tool_mcp(workdir=workspace_path).model_dump(mode="json")
+
+    assert spec["mcp_config"]["cwd"] == workspace_path
+    assert spec["mcp_config"]["env"]["SANDBOX_WORKDIR"] == workspace_path
 
 
 @pytest.mark.asyncio

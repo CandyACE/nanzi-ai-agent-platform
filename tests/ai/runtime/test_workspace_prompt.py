@@ -80,7 +80,7 @@ async def test_append_workspace_prompt_when_file_tools_and_conversation(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_append_docker_workspace_prompt_uses_container_logical_paths(monkeypatch):
+async def test_append_docker_workspace_prompt_uses_real_user_workspace_paths(monkeypatch):
     async def _root():
         return "/tmp/workspaces"
 
@@ -103,10 +103,9 @@ async def test_append_docker_workspace_prompt_uses_container_logical_paths(monke
         tools=[SimpleNamespace(name="Read")],
     )
 
-    assert "`/workspace`" in result
-    assert "/workspace/sessions/conv-1" in result
-    assert "/workspace/docs" in result
-    assert "/tmp/workspaces/u1" not in result
+    assert "/tmp/workspaces/u1/sessions/conv-1" in result
+    assert "/tmp/workspaces/u1/docs" in result
+    assert "`/workspace`" not in result
 
 
 @pytest.mark.asyncio
