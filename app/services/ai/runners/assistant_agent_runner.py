@@ -160,6 +160,9 @@ class AssistantAgentRunner(BaseExecutor):
             route_status="failed",
             provenance="missing_turn_decision",
         )
+        # A 项：本轮工具调用元数据（tool_names/args/outputs/data）流结束后落于此，
+        # 供保存点读取并跨轮持久化，避免污染 assistant 展示内容。
+        self._last_turn_tool_meta: Optional[Dict[str, Any]] = None
 
     def _runtime_user_id(self) -> str | None:
         if not self.user_info:
@@ -834,8 +837,9 @@ class AssistantAgentRunner(BaseExecutor):
         # 3. Execution Mode Selection
         if not tools:
             # --- Simple Mode (No Tools) ---
-            # 仅保留最近 10 轮原始历史（20 条消息），防止长对话 Token 无限累积
-            pruned_history = history[-20:] if history else history
+            # AgentService 已按最终模型的 history_budget 完成窗口选择和摘录。
+            # 这里不能再次按固定条数截断，否则会把平台注入的早前对话摘录丢掉。
+            pruned_history = history
             runtime_messages = [SystemMessage(content=system_content)]
             runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
             runtime_messages = normalize_messages_for_llm(runtime_messages)
@@ -920,7 +924,9 @@ class AssistantAgentRunner(BaseExecutor):
             conversation_id=self.conversation_id,
             tools=tools,
         )
-        pruned_history = history[-20:] if history else history
+        # AgentService 已按最终模型的 history_budget 完成窗口选择和摘录；
+        # runner 只消费这份上下文，不再维护另一套固定条数上限。
+        pruned_history = history
         runtime_messages = [SystemMessage(content=system_content)]
         runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
         runtime_messages = normalize_messages_for_llm(runtime_messages)
@@ -1331,6 +1337,9 @@ class AssistantAgentRunner(BaseExecutor):
                         fuse_message=fuse_message,
                     ):
                         yield chunk
+
+                # A 项：流结束后捕获本轮工具元数据，供保存点跨轮持久化。
+                self._last_turn_tool_meta = state
 
                 if self.conversation_id:
                     from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
@@ -2398,3 +2407,38 @@ class AssistantAgentRunner(BaseExecutor):
                 tool_call_id=tool_id,
             ),
         }
+
+    def resolve_has_tool_meta(self) -> bool:
+        """A 项：本轮是否存在待跨轮持久化的工具元数据。"""
+        meta = getattr(self, "_last_turn_tool_meta", None)
+        return bool(meta and meta.get("tool_names"))
+
+    def resolve_tool_run_text(self, *, max_total_chars: int = 4000) -> str:
+        """A 项：把本轮工具调用转成可读转录文本（供跨轮持久化进历史，不污染 assistant 展示内容）。
+
+        聚合 state 中的 tool_names / tool_args_text / tool_outputs / tool_data，
+        按工具顺序输出 "工具: 参数 -> 结果"。输出按 max_total_chars 截断。
+        """
+        meta = getattr(self, "_last_turn_tool_meta", None)
+        if not meta:
+            return ""
+        tool_names: Dict[str, str] = meta.get("tool_names") or {}
+        tool_args_text: Dict[str, str] = meta.get("tool_args_text") or {}
+        tool_outputs: Dict[str, str] = meta.get("tool_outputs") or {}
+        tool_data: Dict[str, List[Dict[str, Any]]] = meta.get("tool_data") or {}
+        if not tool_names:
+            return ""
+
+        lines: List[str] = []
+        for tool_id, tool_name in tool_names.items():
+            try:
+                arg_preview = tool_args_text.get(tool_id) or "{}"
+                out = str(tool_outputs.get(tool_id) or "")
+            except Exception:
+                continue
+            data_blocks = tool_data.get(tool_id) or []
+            block_note = f" (data_blocks={len(data_blocks)})" if data_blocks else ""
+            lines.append(f"{tool_name}: {arg_preview} -> {truncate_for_context(out, max_len=800)}{block_note}")
+        if not lines:
+            return ""
+        return "\n".join(lines)[: max_total_chars]

@@ -72,6 +72,42 @@ def _is_async_iterable(obj: Any) -> bool:
     return _safe_getattr(obj, "__aiter__") is not None
 
 
+def _count_message_roles(messages: list) -> dict[str, int]:
+    """统计 input 消息中每个角色的条数，便于可视化上下文构成。"""
+    roles: dict[str, int] = {}
+    try:
+        for msg in messages or []:
+            role = _safe_getattr(msg, "role", None) or "unknown"
+            roles[role] = roles.get(role, 0) + 1
+    except Exception:
+        pass
+    return roles
+
+
+def _contains_compaction(messages: list) -> bool:
+    """判断 input 消息中是否包含早前对话的裁剪摘录标记。"""
+    if not messages:
+        return False
+    try:
+        from app.services.ai.context_compaction import COMPACTION_MARKER
+    except Exception:
+        return False
+    try:
+        for msg in messages:
+            content = _safe_getattr(msg, "content", None)
+            blocks = content if isinstance(content, list) else [content]
+            for block in blocks:
+                text = (
+                    block.get("text", "") if isinstance(block, dict)
+                    else _safe_getattr(block, "text", "")
+                )
+                if text and COMPACTION_MARKER in text:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def _extract_tool_calls_detail(content: Any) -> list[dict[str, Any]]:
     """从 ChatResponse.content 中提取包含详细参数的工具调用列表。"""
     tool_calls: list[dict[str, Any]] = []
@@ -214,12 +250,49 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         conversation_id: str,
         agent_name: str,
         trace_id: str | None = None,
+        physical_window: int | None = None,
+        history_budget: int | None = None,
+        overhead_reservation: int | None = None,
     ) -> None:
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._agent_name = agent_name
         self._trace_id = trace_id
+        self._physical_window = physical_window
+        self._history_budget = history_budget
+        self._overhead_reservation = overhead_reservation
         self._call_index = 0
+        # 平台侧对话上下文预算（agent_context_max_tokens，默认 64k）的缓存与解析标记。
+        # None 表示「尚未解析」，解析一次后缓存，避免每轮工具调用重复查配置。
+        self._budget_context_size: int | None = None
+        self._budget_is_resolved = False
+
+    async def _resolve_context_budget(self) -> int | None:
+        """解析平台侧对话上下文 Token 预算（agent_context_max_tokens，默认 64k）。
+
+        该值即实际发送/截断 LLM 上下文的水位线：历史累计估算 token 超过它就从最早
+        历史开始截断（必要时触发 compact）。结果缓存一次，避免每轮工具调用重复查配置。
+        """
+        if self._budget_is_resolved:
+            return self._budget_context_size
+        value: int | None = None
+        try:
+            from app.services.config_service import ConfigService
+
+            raw = await ConfigService.get("agent_context_max_tokens", "65536")
+            if raw is not None and str(raw).strip() != "":
+                value = int(raw)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "[ModelCallStatsMiddleware] Invalid agent_context_max_tokens: %s", exc
+            )
+        except Exception as exc:  # 配置读取失败不应阻断 LLM 调用
+            logger.warning(
+                "[ModelCallStatsMiddleware] Failed to read context budget: %s", exc
+            )
+        self._budget_context_size = value
+        self._budget_is_resolved = True
+        return value
 
     async def on_model_call(
         self,
@@ -237,8 +310,29 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         tools: list = input_kwargs.get("tools", [])
         current_model = input_kwargs.get("current_model")
         model_name: str = getattr(current_model, "model", "unknown")
-        input_message_count: int = len(input_kwargs.get("messages", []))
+        input_messages: list = input_kwargs.get("messages", [])
+        input_message_count: int = len(input_messages)
         has_tools_bound: bool = bool(tools)
+
+        # 模型物理上下文窗口大小（由 ai_model.context_size 经构造注入的实例属性）。
+        # 若模型未配置 context_size，则用平台侧对话上下文预算（agent_context_max_tokens）
+        # 兜底，避免分母落到 agentscope 硬编码默认值造成百分比失真。
+        context_size: int | None = getattr(current_model, "context_size", None)
+        # 平台侧实际截断水位线。默认读 agent_context_max_tokens（64k）兜底；
+        # 当模型显式配置了更大的物理窗口（current_model.context_size 由构造注入，
+        # 仅显式配置时才存在），则同步抬高水位线，避免提前 compact——与
+        # agent_service._resolve_runtime_context_budget 的截断逻辑保持一致。
+        context_budget: int | None = self._history_budget
+        if not context_budget or context_budget <= 0:
+            context_budget = await self._resolve_context_budget()
+        physical_window = self._physical_window
+        if not physical_window or physical_window <= 0:
+            physical_window = context_size if context_size and context_size > 0 else context_budget
+        if not context_size or context_size <= 0:
+            context_size = physical_window
+        # 各角色的消息条数统计（便于前端可视化上下文构成），以及是否包含早前对话的裁剪摘录。
+        message_roles: dict[str, int] = _count_message_roles(input_messages)
+        contains_compaction: bool = _contains_compaction(input_messages)
 
         result = await next_handler(**input_kwargs)
 
@@ -254,6 +348,17 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             "input_message_count": input_message_count,
             "has_tools_bound": has_tools_bound,
             "trace_id": self._trace_id,
+            "context_size": context_size,
+            "context_budget": context_budget,
+            "physical_window": physical_window,
+            "history_budget": context_budget,
+            "overhead_reservation_tokens": (
+                self._overhead_reservation
+                if self._overhead_reservation is not None
+                else max(0, (physical_window or 0) - (context_budget or 0))
+            ),
+            "message_roles": message_roles,
+            "contains_compaction": contains_compaction,
         }
 
         # ── 流式响应：return 包装后的 async generator ──────────────────────

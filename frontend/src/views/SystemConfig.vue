@@ -260,7 +260,7 @@ interface ConfigItem {
 const configGroups = ref<{ [category: string]: ConfigItem[] }>({})
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
-  const order = ['general', 'agent', 'metadata', 'data_api', 'knowledge', 'other']
+  const order = ['general', 'agent_context', 'agent', 'metadata', 'data_api', 'knowledge', 'other']
   const keys = Object.keys(configGroups.value)
   return keys.sort((a, b) => {
     const idxA = order.indexOf(a)
@@ -580,6 +580,7 @@ const toggleSecret = (key: string) => {
 
 const getCategoryLabel = (cat: string) => {
   const map: Record<string, string> = {
+    'agent_context': '上下文管理 (Context Management)',
     'data_api': '智能报表 (ChatBI)',
     'metadata': '元数据与 RAG 设置 (Metadata & RAG)',
     'knowledge': '知识库设置 (Knowledge Base)',
@@ -593,6 +594,7 @@ const getCategoryLabel = (cat: string) => {
 const getCategoryIcon = (cat: string) => {
   const map: Record<string, any> = {
     'data_api': CircleStackIcon,
+    'agent_context': ArrowPathIcon,
     'agent': CpuChipIcon,
     'metadata': SparklesIcon,
     'knowledge': ServerStackIcon,
@@ -753,7 +755,12 @@ const getCategoryTip = (key: string) => {
 * 如果问题比较多样化、偏口语表述，调高该值（如 0.6 ~ 0.7）以强化语义召回。`,
     'knowledge_ragflow_metadata_top_k': '知识库问答检索时，最大召回匹配的候选文档片段数。值越大参考条数越多，但会消耗更多的模型 Token。',
     'knowledge_base_enabled': '总开关：关闭后隐藏下方 RAGFlow 配置项，并禁用知识库管理、检索测试及智能体的 search_knowledge_base 工具。',
-    'third_party_user_sync_config': '配置从外部数据源定时同步用户信息到本平台的参数。包含启用状态、连接源、表名、字段对应关系和同步周期。此配置已在【用户管理】页面统一维护，在此处仅提供只读展示。'
+    'third_party_user_sync_config': '配置从外部数据源定时同步用户信息到本平台的参数。包含启用状态、连接源、表名、字段对应关系和同步周期。此配置已在【用户管理】页面统一维护，在此处仅提供只读展示。',
+    'agent_context_max_tokens': '发送给 LLM 的上下文 Token 预算上限（默认 65536 即 64k）。当历史会话上下文超过此预算时，系统优先触发早期对话压缩摘录或截断，避免超出大模型的上下文窗口限制。',
+    'agent_max_context_messages': '发送给 LLM 的最大历史消息条目数（Token 预算优先，此处作为绝对兜底上限，默认 60 条）。',
+    'agent_context_compaction_enabled': '上下文超预算时，是否把早期历史对话压缩为摘录注入上下文，保留关键信息而非直接丢弃。',
+    'agent_context_compaction_max_chars': '溢出压缩摘录中正文部分的最大字符数（默认 1200），用于控制历史摘录的体积，防止摘录过大挤占新对话空间。',
+    'agent_context_llm_summary_enabled': '是否用当前会话模型对超长历史做语义摘要（LLM 智能摘要）；若模型摘要失败或超时，系统将自动降级为确定性首末尾摘录，保证对话稳定性。'
   }
   return tips[key] || ''
 }
@@ -899,6 +906,11 @@ const configShortDescriptions: Record<string, string> = {
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
+  agent_context_max_tokens: '上下文 Token 预算上限 (默认 64k，超过则从最早历史开始截断)。',
+  agent_max_context_messages: '发送给 LLM 的最大历史消息条目数 (Token 预算优先，此处作为绝对兜底上限，默认 60)。',
+  agent_context_compaction_enabled: '上下文超预算时，是否把早期对话压缩为摘录注入，避免丢失关键信息。',
+  agent_context_compaction_max_chars: '溢出压缩摘录中正文部分的最大字符数，过大会挤占新对话空间。',
+  agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
 }
 
 const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
@@ -906,7 +918,6 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   let list = [...items]
   if (category === 'agent') {
     const order = [
-      'agent_max_context_messages',
       'agent_max_iterations',
       'llm_model_name',
       'multimodal_model_name',
@@ -915,6 +926,23 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'embed_api_key',
       'embed_model_name',
       'embed_dimensions'
+    ]
+    list.sort((a, b) => {
+      const idxA = order.indexOf(a.key)
+      const idxB = order.indexOf(b.key)
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB
+      if (idxA !== -1) return -1
+      if (idxB !== -1) return 1
+      return a.key.localeCompare(b.key)
+    })
+  }
+  if (category === 'agent_context') {
+    const order = [
+      'agent_context_max_tokens',
+      'agent_max_context_messages',
+      'agent_context_compaction_enabled',
+      'agent_context_compaction_max_chars',
+      'agent_context_llm_summary_enabled'
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -2150,6 +2178,12 @@ onMounted(() => {
                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                              >{{ item.description }}</p>
                           </div>
+                          <div v-else-if="['agent_context_compaction_enabled', 'agent_context_llm_summary_enabled'].includes(item.key)">
+                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                                <option value="true">true (开启)</option>
+                                <option value="false">false (关闭)</option>
+                             </select>
+                          </div>
                           <div v-else-if="item.key === 'embedchat_watermark_style'">
                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                 <option value="user_time">用户名 + 时间戳</option>
@@ -2161,6 +2195,103 @@ onMounted(() => {
                              <p v-if="item.key === 'third_party_user_sync_config'" class="mt-2 text-xs text-blue-600 bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 leading-normal select-none">
                                  💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
                              </p>
+                          </div>
+                          <div v-else-if="item.key === 'agent_context_max_tokens'">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               placeholder="如 65536"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in [
+                                    { label: '16k', value: '16384' },
+                                    { label: '32k', value: '32768' },
+                                    { label: '64k (推荐)', value: '65536' },
+                                    { label: '128k', value: '131072' },
+                                    { label: '256k', value: '262144' },
+                                  ]"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
+                          </div>
+                          <div v-else-if="item.key === 'agent_max_context_messages'">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               placeholder="如 60"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in [
+                                    { label: '30 条', value: '30' },
+                                    { label: '60 条 (推荐)', value: '60' },
+                                    { label: '100 条', value: '100' },
+                                    { label: '200 条', value: '200' },
+                                  ]"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
+                          </div>
+                          <div v-else-if="item.key === 'agent_context_compaction_max_chars'">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               placeholder="如 1200"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in [
+                                    { label: '600 字', value: '600' },
+                                    { label: '1200 字 (推荐)', value: '1200' },
+                                    { label: '2000 字', value: '2000' },
+                                    { label: '3000 字', value: '3000' },
+                                  ]"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />

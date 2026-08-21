@@ -86,6 +86,22 @@ class AIModelBase(BaseModel):
     )
     is_active: bool = True
 
+    @field_validator("context_size", "max_output_tokens", mode="before")
+    @classmethod
+    def normalize_optional_tokens(cls, value: Any) -> Optional[int]:
+        if value is None or value == "" or value == 0:
+            return None
+        if isinstance(value, str):
+            val_str = value.strip()
+            if not val_str:
+                return None
+            try:
+                val_int = int(val_str)
+                return val_int if val_int > 0 else None
+            except ValueError:
+                return None
+        return value
+
     @field_validator("supported_reasoning_efforts", mode="before")
     @classmethod
     def normalize_reasoning_efforts(cls, value: Any) -> list[str]:
@@ -122,6 +138,22 @@ class AIModelUpdate(BaseModel):
     supported_reasoning_efforts: Optional[list[ReasoningEffort]] = None
     api_key: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("context_size", "max_output_tokens", mode="before")
+    @classmethod
+    def normalize_optional_tokens(cls, value: Any) -> Optional[int]:
+        if value is None or value == "" or value == 0:
+            return None
+        if isinstance(value, str):
+            val_str = value.strip()
+            if not val_str:
+                return None
+            try:
+                val_int = int(val_str)
+                return val_int if val_int > 0 else None
+            except ValueError:
+                return None
+        return value
 
     @field_validator("name", "model_id")
     @classmethod
@@ -163,6 +195,22 @@ class AIModelTestRequest(BaseModel):
     context_size: Optional[int] = Field(default=None, gt=0, le=10_000_000)
     max_output_tokens: Optional[int] = Field(default=None, gt=0, le=10_000_000)
     model_config_id: Optional[str] = None
+
+    @field_validator("context_size", "max_output_tokens", mode="before")
+    @classmethod
+    def normalize_optional_tokens(cls, value: Any) -> Optional[int]:
+        if value is None or value == "" or value == 0:
+            return None
+        if isinstance(value, str):
+            val_str = value.strip()
+            if not val_str:
+                return None
+            try:
+                val_int = int(val_str)
+                return val_int if val_int > 0 else None
+            except ValueError:
+                return None
+        return value
 
     @field_validator("model_id")
     @classmethod

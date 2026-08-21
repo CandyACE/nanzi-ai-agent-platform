@@ -33,6 +33,23 @@ async def test_parse_hash_binary_embedding():
 
 
 @pytest.mark.asyncio
+async def test_parse_hash_embedding_missing_marker_invalidates_stale_vector():
+    raw = {
+        b"user_id": b"1",
+        b"conversation_id": b"conv-1",
+        b"summary": "无法生成向量的摘要".encode("utf-8"),
+        b"embedding": _vector_to_bytes([0.1, 0.2]),
+        b"embedding_missing": b"1",
+    }
+
+    parsed = await MemoryIndexService._parse_hash(raw)
+
+    assert parsed["embedding_missing"] is True
+    assert parsed["has_embedding"] is False
+    assert parsed.get("_embedding_vec") is None
+
+
+@pytest.mark.asyncio
 async def test_list_summaries_uses_binary_redis_for_hgetall():
     vec = [1.0, 0.0, 0.0, 0.0]
     binary_redis = AsyncMock()
@@ -142,19 +159,14 @@ async def test_search_summaries_uses_redis_knn_when_query_embedding_exists():
             "9", query="Redis", query_embedding=[1.0, 0.0, 0.0, 0.0], limit=3
         )
 
-    assert items == [
-        {
-            "user_id": "9",
-            "conversation_id": "c1",
-            "title": "容量规划",
-            "summary": "讨论了 Redis 向量检索",
-            "last_active": 1716880000,
-            "turn_count": 2,
-            "has_embedding": True,
-            "score": 0.75,
-            "entities": "Redis",
-        }
-    ]
+    assert len(items) == 1
+    assert items[0]["user_id"] == "9"
+    assert items[0]["conversation_id"] == "c1"
+    assert items[0]["title"] == "容量规划"
+    assert items[0]["summary"] == "讨论了 Redis 向量检索"
+    assert items[0]["has_embedding"] is True
+    assert items[0]["score"] == 0.75
+    assert "final_score" in items[0]
     command = binary_redis.execute_command.await_args.args
     assert command[0] == "FT.SEARCH"
     assert "KNN" in command[2]

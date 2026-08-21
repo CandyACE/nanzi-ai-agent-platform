@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import platform
+import sys
 from typing import Any
 
 from app.core.context import get_current_agent_context, get_debug_option
@@ -12,6 +14,7 @@ from app.core.redis import get_redis
 from app.services.ai.memory_service import memory_service
 from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
 from app.services.ai.tools.tool_compat import tool
+from app.services.schema_chunk_format import estimate_text_tokens
 
 
 _SAFE_MODEL_FIELDS = (
@@ -122,6 +125,42 @@ def _client_summary() -> dict[str, Any]:
     }
 
 
+def _runtime_env_summary() -> dict[str, Any]:
+    """只读的运行环境事实（后端进程所在的机器 / 容器环境）。
+
+    全部字段来自 Python 运行时（``sys``/``platform``）与进程级缓存的环境探测，
+    不启动任何子进程、不做耗时探测，也不公开用户身份等敏感信息。任何字段探测
+    失败都返回 ``None`` 并交由调用方计入 ``limitations``，不抛错。
+    """
+    env_kind: str | None = None
+    try:
+        # 惰性导入规避 import 环；get_env() 进程级只探一次并缓存。
+        from app.utils.env import get_env
+
+        env_kind = get_env()
+    except Exception:
+        env_kind = None
+
+    vi = sys.version_info
+    return {
+        "env_kind": env_kind,
+        "python": {
+            "version": platform.python_version(),
+            "major": vi.major,
+            "minor": vi.minor,
+            "micro": vi.micro,
+            "implementation": platform.python_implementation(),
+            "interpreter": sys.executable,
+        },
+        "platform": {
+            "os": sys.platform,
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+    }
+
+
 def _model_summary(context: Any) -> dict[str, Any]:
     info = dict(getattr(context, "runtime_model_info", {}) or {}) if context else {}
     result = {field: info.get(field) for field in _SAFE_MODEL_FIELDS}
@@ -216,6 +255,108 @@ async def _last_model_call_stats(context: Any) -> dict[str, Any]:
     return result
 
 
+async def _context_usage_estimate(context: Any) -> dict[str, Any]:
+    """估算当前会话上下文的 Token 使用情况（全量历史 vs token 预算）。
+
+    口径与链路人压缩卡片（``agent_service._emit_compaction_card``）一致：
+    ``token_used`` = 全量历史 ``estimate_text_tokens(content + tool_run_text)`` 的近似和，
+    ``token_budget`` 取动态截断水位线：当 ``context.runtime_model_info`` 来源为显式
+    （``runtime_override`` / ``debug_override`` / ``agent_config``）且解析出有效
+    ``context_size`` 时采纳该模型窗口，否则回落 ``agent_context_max_tokens``（默认 64k）——
+    与 ``agent_service._resolve_runtime_context_budget`` 的截断逻辑保持一致。纯只读，任何
+    失败都返回 ``None`` 占位，不抛错、不写状态、不含密钥。这个估算在 ``session_status`` 运行时
+    通常会先于上下文压缩发生，因此反映的是当前持有历史的全量占用。
+    """
+    empty = {
+        "estimated_current_tokens": None,
+        "estimated_remaining_tokens": None,
+        "context_messages": None,
+        "token_budget": None,
+        "physical_window": None,
+        "history_budget": None,
+        "overhead_reservation_tokens": None,
+        "usage_percentage": None,
+    }
+    if context is None or not getattr(context, "conversation_id", None):
+        return empty
+
+    uid = str(getattr(context, "user_id", None) or "anonymous")
+    conversation_id = getattr(context, "conversation_id", None)
+    try:
+        full_history = await memory_service.get_history(uid, conversation_id)
+        if not full_history:
+            return empty
+
+        total_tokens = sum(
+            estimate_text_tokens(
+                str(msg.get("content") or "") + str(msg.get("tool_run_text") or "")
+            )
+            for msg in full_history
+            if isinstance(msg, dict)
+        )
+        total_tokens = int(total_tokens)
+
+        try:
+            from app.services.config_service import ConfigService
+
+            fallback_raw = await ConfigService.get("agent_context_max_tokens", "65536")
+            fallback_window = int(fallback_raw)
+        except (ValueError, TypeError):
+            fallback_window = 65536
+        if fallback_window <= 0:
+            fallback_window = 65536
+
+        info = dict(getattr(context, "runtime_model_info", {}) or {}) if context else {}
+        try:
+            physical_window = int(info.get("physical_window") or 0)
+        except (TypeError, ValueError):
+            physical_window = 0
+        if physical_window <= 0:
+            source = info.get("source")
+            if source in {"runtime_override", "debug_override", "agent_config"}:
+                try:
+                    physical_window = int(info.get("context_size") or 0)
+                except (TypeError, ValueError):
+                    physical_window = 0
+        if physical_window <= 0:
+            physical_window = fallback_window
+
+        try:
+            overhead = int(info.get("overhead_reservation_tokens") or 0)
+        except (TypeError, ValueError):
+            overhead = 0
+        if overhead <= 0:
+            try:
+                overhead_raw = await ConfigService.get(
+                    "agent_context_overhead_headroom_tokens", "8192"
+                )
+                overhead = max(0, int(overhead_raw))
+            except (ValueError, TypeError):
+                overhead = 8192
+
+        try:
+            budget = int(info.get("history_budget") or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        if budget <= 0:
+            budget = max(physical_window - overhead, max(1, physical_window // 3))
+
+        remaining = max(0, budget - total_tokens)
+        percentage = round(total_tokens / budget * 100, 1) if budget > 0 else 0.0
+        return {
+            "estimated_current_tokens": total_tokens,
+            "estimated_remaining_tokens": remaining,
+            "context_messages": len(full_history),
+            "token_budget": budget,
+            "physical_window": physical_window,
+            "history_budget": budget,
+            "overhead_reservation_tokens": overhead,
+            "usage_percentage": percentage,
+        }
+    except Exception:
+        return empty
+
+
 async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
     empty = {
         "user_root": None,
@@ -307,23 +448,29 @@ def _resource_summary(context: Any) -> dict[str, Any]:
 async def session_status() -> str:
     """读取当前 AI 会话的只读运行时信息。
 
-    当不确定会话、设备、模型上下文窗口、工作区、文档目录、用户身份或最近
-    Token 统计时调用；这些信息不可用时返回 null 或限制说明，不要猜测。
-    不接受参数，不修改任何会话状态。
+    当不确定会话、设备、模型上下文窗口、工作区、文档目录、用户身份、最近
+    Token 统计或运行环境（容器 / 宿主机、Python 与系统版本）时调用；这些信息
+    不可用时返回 null 或限制说明，不要猜测。不接受参数，不修改任何会话状态。
     """
     context = get_current_agent_context()
     workspace, workspace_limitations = await _workspace_summary(context)
     usage = await _last_model_call_stats(context)
+    estimate = await _context_usage_estimate(context)
+    runtime_env = _runtime_env_summary()
 
     limitations = [
         "device_type 和 display_hint 来自客户端请求，仅作为客户端上报信息",
         "Token 使用量仅代表最近一次已完成模型调用的统计",
+        "estimated_* 为全量历史基于 estimate_text_tokens 的粗略估算",
         "当前上下文 Token 和剩余容量没有可靠实时估算时返回 null",
         "当前 AgentContext 未保存已绑定 MCP 工具列表",
+        "runtime_env 描述的是后端进程所在机器/容器，可能与用户客户端环境不同",
         *workspace_limitations,
     ]
     if context is None:
         limitations.insert(0, "当前请求没有可用的 AgentContext，未对环境信息进行猜测")
+    if runtime_env["env_kind"] is None:
+        limitations.insert(0, "运行环境（容器/宿主机）探测失败，env_kind 不可用")
 
     payload = {
         "schema_version": 1,
@@ -333,11 +480,11 @@ async def session_status() -> str:
         "model": _model_summary(context),
         "context_usage": {
             **usage,
-            "estimated_current_tokens": None,
-            "estimated_remaining_tokens": None,
+            **estimate,
         },
         "user": _user_summary(context),
         "workspace": workspace,
+        "runtime_env": runtime_env,
         "resources": _resource_summary(context),
         "attachments": _attachments_summary(context),
         "limitations": limitations,

@@ -38,6 +38,41 @@ const formatModelCallTime = (isoStr: string): string => {
   }
 };
 
+const calcContextUsage = (stat: any): number => {
+  const ctx = Number(stat.physical_window || stat.context_size || 0);
+  const inp = Number(stat.input_tokens || 0);
+  if (!ctx || ctx <= 0) return 0;
+  return Math.min((inp / ctx) * 100, 100);
+};
+
+const contextUsageBarClass = (usage: number, stat: any = null): string => {
+  // 已越过截断水位线：即便未达到模型窗口 100%，也属危险区间
+  const budgetPct = contextBudgetPct(stat);
+  if (budgetPct !== null && usage > budgetPct) return "bg-red-500";
+  if (usage < 70) return "bg-emerald-500";
+  if (usage < 90) return "bg-amber-500";
+  return "bg-red-500";
+};
+
+// 截断水位线在进度条上的百分比位置（context_budget / context_size）。
+// 仅当 0 < 预算 < 模型窗口 时才有意义；窗口未配置(=预算)或预算缺失时不画标记。
+const contextBudgetPct = (stat: any): number | null => {
+  const ctx = Number(stat.physical_window || stat.context_size || 0);
+  const budget = Number(stat.history_budget || stat.context_budget || 0);
+  if (ctx > 0 && budget > 0 && budget < ctx) {
+    return Math.min((budget / ctx) * 100, 100);
+  }
+  return null;
+};
+
+// 1000+ 显示的简洁单位：例如 65536 -> 64k。
+const formatTokens = (n: number): string => {
+  if (!n || n <= 0) return "0";
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+};
+
 const statsSummary = computed(() => {
   const totalDuration = props.stats.reduce((acc: number, cur: any) => acc + (cur.elapsed_ms || 0), 0);
   const totalIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.input_tokens || 0), 0);
@@ -202,6 +237,48 @@ const statsSummary = computed(() => {
                 <div v-for="(call, cIdx) in stat.tool_calls" :key="cIdx" class="break-all whitespace-pre-wrap">
                   <span class="text-blue-500 dark:text-blue-400 font-bold">{{ call.name }}</span>(<span class="text-gray-600 dark:text-gray-400">{{ formatToolArgs(call.arguments) }}</span>)
                 </div>
+              </div>
+            </div>
+
+            <!-- Context Window Occupancy -->
+            <div v-if="stat.physical_window || stat.context_size" class="pt-2 border-t border-gray-100/50 dark:border-gray-700/20">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] text-gray-400 dark:text-gray-500">上下文窗口占用</span>
+                <span class="text-[10px] font-mono text-gray-500 dark:text-gray-400"
+                  >{{ stat.input_tokens || 0 }} / {{ stat.physical_window || stat.context_size }}</span
+                >
+              </div>
+              <div
+                class="mt-1 h-2 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden relative"
+                role="progressbar"
+                :aria-valuenow="calcContextUsage(stat)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <!-- 截断水位线：平台侧 actual truncation 阈值（context_budget / context_size） -->
+                <div
+                  v-if="contextBudgetPct(stat) !== null"
+                  class="absolute top-0 bottom-0 w-[2px] bg-red-500/70 dark:bg-red-400/80 z-10"
+                  :style="{ left: contextBudgetPct(stat) + '%' }"
+                  :title="`截断水位线 ${formatTokens(stat.history_budget || stat.context_budget)}（达到即触发上下文裁剪）`"
+                ></div>
+                <div
+                  class="h-full rounded-full transition-all"
+                  :class="contextUsageBarClass(calcContextUsage(stat), stat)"
+                  :style="{ width: Math.min(calcContextUsage(stat), 100) + '%' }"
+                ></div>
+              </div>
+              <div class="mt-0.5 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500">
+                <span>上下文占用 {{ calcContextUsage(stat).toFixed(2) }}%</span>
+                <span
+                  v-if="contextBudgetPct(stat) !== null"
+                  class="text-red-500 dark:text-red-400 font-bold"
+                  :title="`达到 ${formatTokens(stat.history_budget || stat.context_budget)} tokens 即触发上下文裁剪`"
+                  >历史截断线 {{ formatTokens(stat.history_budget || stat.context_budget) }}</span
+                >
+                <span v-if="stat.contains_compaction" class="text-amber-500 dark:text-amber-400 font-bold">
+                  含早前对话裁剪
+                </span>
               </div>
             </div>
 

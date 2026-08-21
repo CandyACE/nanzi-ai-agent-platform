@@ -796,6 +796,10 @@ class ModelCallStatDetail(BaseModel):
     response_text: Optional[str] = Field("", description="模型输出文本")
     reasoning_content: Optional[str] = Field("", description="模型深度思考内容")
     tool_calls: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="工具调用详情")
+    context_size: Optional[int] = Field(None, description="模型物理上下文窗口大小(Token)")
+    context_budget: Optional[int] = Field(None, description="平台侧上下文 Token 预算上限(agent_context_max_tokens，实际截断水位线)")
+    message_roles: Optional[Dict[str, int]] = Field(default_factory=dict, description="各角色消息条数统计")
+    contains_compaction: bool = Field(False, description="是否包含早前对话的裁剪摘录")
 
 
 class ModelCallStatsResponse(BaseModel):

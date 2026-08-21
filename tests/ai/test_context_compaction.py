@@ -1,5 +1,8 @@
 import pytest
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.ai.agent_service import AgentService
 from app.services.ai.context_compaction import (
     COMPACTION_MARKER,
     apply_context_compaction,
@@ -74,3 +77,199 @@ def test_apply_context_compaction_prepends_digest_on_overflow():
     assert COMPACTION_MARKER in out[0]["content"]
     # 原窗口顺序保持
     assert out[1:] == window
+
+
+# ---------------------------------------------------------------------------
+# F 项增强：out 观测容器 + 上下文使用率字段
+# ---------------------------------------------------------------------------
+
+
+def test_emit_compaction_card_writes_out_and_usage():
+    """_emit_compaction_card 把 dropped/kept/origin/preview/title 和
+    token_used/token_budget 写入 out 容器。"""
+    hist = _history(10)
+    window = hist[-4:]
+
+    compacted = apply_context_compaction(full_history=hist, window=window)
+    # 摘录是由 apply_context_compaction 构造的真实 system 消息，正文可被 _extract_digest_body 剥离
+    assert compacted[0]["role"] == "system"
+
+    out: dict = {}
+    AgentService._emit_compaction_card(
+        out, compacted, hist, window, origin="deterministic", token_budget=65536
+    )
+    assert out["dropped"] == len(hist) - len(window)
+    assert out["kept"] == len(window)
+    assert out["origin"] == "deterministic"
+    assert out["title"] == "对话上下文已压缩（平台摘录）"
+    assert COMPACTION_MARKER not in out["preview"]
+    # 全量历史非空 => 估算 token > 0
+    assert isinstance(out["token_used"], int)
+    assert out["token_used"] > 0
+    # 合法预算原样透传
+    assert out["token_budget"] == 65536
+
+
+def test_emit_compaction_card_usage_budget_normalized():
+    """token_budget 非正/非 int 时应归一为 None，且不影响其它字段。"""
+    hist = _history(6)
+    window = hist[-3:]
+    compacted = apply_context_compaction(full_history=hist, window=window)
+
+    for bad in [None, 0, -5, "abc"]:
+        out: dict = {}
+        AgentService._emit_compaction_card(
+            out, compacted, hist, window, origin="deterministic", token_budget=bad
+        )
+        assert out["token_budget"] is None
+        assert isinstance(out["token_used"], int)
+
+
+async def test_maybe_compact_overflow_writes_out_on_real_overflow():
+    """真实溢出压缩时，out 容器被填充；未溢出时预先返回、不写 out。"""
+    svc = AgentService()
+    hist = _history(10)
+    window = hist[-4:]
+
+    # mock ConfigService.get -> compaction 开启；LLM 语义摘要在真实溢出时降级为
+    # 异步后台任务（_spawn_llm_digest_task），因此断言该调度器被调用，而非等待后台协程。
+    get_mock = AsyncMock(side_effect=lambda key, default=None: "true")
+    spawn_mock = MagicMock()
+    # 提供 user_id / conversation_id 才会触发后台 LLM 摘要任务调度
+    with patch(
+        "app.services.config_service.ConfigService.get", new=get_mock
+    ), patch.object(svc, "_spawn_llm_digest_task", spawn_mock):
+        out: dict = {}
+        result = await svc._maybe_compact_overflow(
+            hist,
+            window,
+            out=out,
+            token_budget=400,
+            user_id="u1",
+            conversation_id="c1",
+        )
+    assert len(result) == len(window) + 1
+    assert result[0]["role"] == "system"
+    assert out["origin"] == "deterministic"
+    assert out["dropped"] == len(hist) - len(window)
+    assert out["token_budget"] == 400
+    assert out["token_used"] > 0
+    spawn_mock.assert_called_once()
+
+
+async def test_maybe_compact_overflow_no_overflow_skips_out():
+    """未溢出（full_history 不超窗口）时提前返回，不写 out、不调 LLM。"""
+    svc = AgentService()
+    hist = _history(3)
+    window = hist  # 无溢出
+    get_mock = AsyncMock(side_effect=lambda key, default=None: "true")
+    spawn_mock = AsyncMock(return_value=None)
+    with patch(
+        "app.services.config_service.ConfigService.get", new=get_mock
+    ), patch.object(svc, "_spawn_llm_digest_task", spawn_mock):
+        out: dict = {}
+        result = await svc._maybe_compact_overflow(hist, window, out=out, token_budget=400)
+    assert result is hist
+    assert out == {}
+    spawn_mock.assert_not_called()
+
+
+async def test_maybe_compact_overflow_pre_route_never_starts_llm_summary():
+    """路由前压缩只能使用确定性摘录，不能启动摘要模型任务。"""
+    svc = AgentService()
+    hist = _history(10)
+    window = hist[-4:]
+    get_mock = AsyncMock(side_effect=lambda key, default=None: "true")
+    spawn_mock = MagicMock()
+    with patch(
+        "app.services.config_service.ConfigService.get", new=get_mock
+    ), patch.object(svc, "_spawn_llm_digest_task", spawn_mock):
+        result = await svc._maybe_compact_overflow(
+            hist,
+            window,
+            user_id="u1",
+            conversation_id="c1",
+            token_budget=400,
+            enable_llm_summary=False,
+        )
+
+    assert len(result) == len(window) + 1
+    spawn_mock.assert_not_called()
+
+
+async def test_spawn_llm_digest_runs_in_background_and_writes_current_seq():
+    svc = AgentService()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_digest(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"content": "[早前对话摘录]\nsemantic"}
+
+    with patch.object(svc, "_try_llm_overflow_digest", side_effect=fake_digest), \
+         patch(
+             "app.services.ai.memory_service.MemoryService.set_digest_if_current",
+             new_callable=AsyncMock,
+             return_value=True,
+         ) as set_digest:
+        task = svc._spawn_llm_digest_task(
+            [{"role": "user", "content": "old", "seq": 3}],
+            [{"role": "user", "content": "old", "seq": 3}],
+            user_id="u1",
+            conversation_id="c1",
+            source_seq=3,
+        )
+        await asyncio.wait_for(started.wait(), timeout=0.2)
+        assert task is not None
+        assert not task.done()
+        release.set()
+        await task
+
+    set_digest.assert_awaited_once_with(
+        "u1",
+        "c1",
+        "[早前对话摘录]\nsemantic",
+        source_seq=3,
+        quality=1,
+        allow_newer_seq=True,
+    )
+
+
+async def test_maybe_compact_persists_deterministic_digest_conditionally():
+    svc = AgentService()
+    hist = [
+        {"role": "user", "content": "old", "seq": 7},
+        {"role": "assistant", "content": "answer", "seq": 8},
+    ]
+    window = hist[-1:]
+
+    with patch(
+        "app.services.config_service.ConfigService.get",
+        new=AsyncMock(return_value="true"),
+    ), patch.object(svc, "_spawn_llm_digest_task"), patch(
+        "app.services.ai.memory_service.MemoryService.get_context_revision",
+        new_callable=AsyncMock,
+        return_value=4,
+    ), patch(
+        "app.services.ai.memory_service.MemoryService.get_current_seq",
+        new_callable=AsyncMock,
+        return_value=8,
+    ), patch(
+        "app.services.ai.memory_service.MemoryService.set_digest_if_current",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as set_digest:
+        await svc._maybe_compact_overflow(
+            hist,
+            window,
+            user_id="u1",
+            conversation_id="c1",
+            enable_llm_summary=False,
+        )
+
+    set_digest.assert_awaited_once()
+    assert set_digest.await_args.kwargs["source_seq"] == 8
+    assert set_digest.await_args.kwargs["source_revision"] == 4
+    assert set_digest.await_args.kwargs["quality"] == 0
+    assert set_digest.await_args.kwargs["allow_newer_seq"] is True

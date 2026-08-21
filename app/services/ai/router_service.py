@@ -215,12 +215,15 @@ class RouterService:
         is_admin: bool = False,
         last_agent_name: Optional[str] = None,
         user_name: Optional[str] = None,
+        early_context: Optional[str] = None,
     ) -> Optional[TurnDecision]:
         """
         Use LLM to select the most appropriate agent(s) for the user query.
 
         last_agent_name: 上一轮处理本会话的智能体 name(slug)，用于会话粘性，
         让追问/指代类输入优先沿用上一轮智能体，降低多轮误路由。
+        early_context: 跨轮持久化的早期轮次压缩摘录（早于当前窗口被压缩溢出的历史要点），
+        随路由上下文一并交给路由模型，使多轮后路由判断仍基于完整会话背景。
         """
         import time
 
@@ -549,6 +552,7 @@ class RouterService:
             last_agent_name,
             user_input=user_input,
             agents_metadata=routing_agents,
+            early_context=early_context,
         )
         
         fallback_agent_name = self._resolve_fallback_agent_name(routing_agents)
@@ -990,14 +994,23 @@ class RouterService:
         *,
         user_input: str = "",
         agents_metadata: Optional[List[dict]] = None,
+        early_context: Optional[str] = None,
     ) -> str:
         """Build a denoised, truncated history context plus session-affinity hint.
 
         - 注入"上一轮处理者"，让追问/指代类输入可沿用上一轮智能体。
         - 若上一轮是 data_query 但本轮不再满足粘性条件，显式提示勿机械沿用。
         - 历史逐条截断并剥离表格/图表/代码块，避免大段业务输出淹没路由信号。
+        - early_context: 更早轮次（已压缩溢出）的跨轮摘录，置于历史之前的背景区。
         """
         parts: List[str] = []
+
+        if early_context:
+            parts.append(
+                "### 更早轮次要点 (Earlier Background)\n"
+                f"以下是本会话更早轮次被压缩的要点摘录，供你把握整体会话背景"
+                f"（这是历史背景，不是用户当前本轮的问题，请勿逐条复述）：\n{early_context}"
+            )
 
         if last_agent_name:
             from app.services.ai.intent_service import should_inherit_data_agent_session

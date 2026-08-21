@@ -505,6 +505,54 @@ export function handleContextUpdate<T extends AgentStreamMessage>(
   });
 }
 
+/**
+ * F 项：链路 A（平台注入）的上下文摘录卡片。
+ * 与 AgentScope 自带的 `context_compression`（`event_stream` 的 summary 观测噪声）彻底区分：
+ * - 不同事件类型 `context_summarized` / `context_compression`；
+ * - 不同 id 前缀 `context_summarized_` / `context_compression_`；
+ * - 不同 category `context_summarized` / `context_compression`（前端 iconFor 为摘录卡渲染专属图标）；
+ * - details 展示真正喂给 LLM 的摘录正文预览（`data.preview`），并标注来源与丢弃/保留条数。
+ * 该卡片描述的是真实承载跨轮连续性的摘录，而非空卡观测。
+ */
+export function handleContextSummarized<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+  addLog: AddStreamLogFn<T>,
+) {
+  const origin = String(data.origin || "");
+  const originLabel =
+    origin === "llm" ? "（模型语义摘要）" : origin === "deterministic" ? "（规则拼装摘要）" : "";
+  const dropped = data.dropped != null ? Number(data.dropped) : 0;
+  const kept = data.kept != null ? Number(data.kept) : 0;
+  const preview = String(data.preview || data.details || "");
+  const tokenUsed = data.token_used != null ? Number(data.token_used) : 0;
+  const tokenBudget = data.history_budget != null
+    ? Number(data.history_budget)
+    : data.token_budget != null
+      ? Number(data.token_budget)
+      : 0;
+  const physicalWindow = data.physical_window != null ? Number(data.physical_window) : 0;
+  const detailLines: string[] = [];
+  if (preview) detailLines.push(preview);
+  if (dropped > 0) {
+    detailLines.push(`本次压缩丢弃 ${dropped} 条，保留 ${kept} 条${originLabel}。`);
+  }
+  if (tokenBudget > 0) {
+    const pct = Math.min(100, Math.round((tokenUsed / tokenBudget) * 100));
+    const windowLabel = physicalWindow > 0
+      ? `，模型物理窗口 ${physicalWindow.toLocaleString()} token`
+      : "";
+    detailLines.push(`压缩前历史预算使用率约 ${pct}%（${tokenUsed.toLocaleString()} / ${tokenBudget.toLocaleString()} 历史预算 token${windowLabel}）。`);
+  }
+  addLog(msg, {
+    id: `context_summarized_${Date.now()}`,
+    title: String(data.title || "对话上下文已压缩（平台摘录）"),
+    details: detailLines.join("\n"),
+    status: (data.status as AgentStreamLog["status"]) || "success",
+    category: "context_summarized",
+  });
+}
+
 export function handleBusinessConfirmation<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
@@ -719,6 +767,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     businessConfirmation?: BusinessConfirmationState;
     userQuestion?: UserQuestionState;
   }>,
+  onBashEnv?: (env: "host" | "docker") => void,
 ): boolean {
   switch (data.type) {
     case "permission_required":
@@ -770,6 +819,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "context_compression":
       handleContextCompression(msg, data, addLog);
+      return true;
+    case "context_summarized":
+      handleContextSummarized(msg, data, addLog);
       return true;
     case "context_update":
       handleContextUpdate(msg, data, addLog);
@@ -825,6 +877,14 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     case "process_narration_promote":
     case "retraction":
       return applyProcessNarrationEvent(msg, data);
+    case "bash_env":
+      if (onBashEnv) {
+        const envVal = data.env;
+        if (envVal === "docker" || envVal === "host") {
+          onBashEnv(envVal);
+        }
+      }
+      return true;
     default:
       return false;
   }

@@ -30,6 +30,13 @@ def mock_redis():
     # 保留其他方法 Mock（供其他测试用）
     redis.lrange = AsyncMock(return_value=[])
     redis.delete = AsyncMock(return_value=1)
+    # 单调 seq 游标：add_message 在入队前直接 redis.incr(seq_key) 取 seq，
+    # 必须返回整数（否则 AsyncMock 被写入 message["seq"] → json.dumps 序列化失败）
+    seq_counter = {"n": 0}
+    async def _incr(_key):
+        seq_counter["n"] += 1
+        return seq_counter["n"]
+    redis.incr = AsyncMock(side_effect=_incr)
     redis._mock_pipe = mock_pipe  # 暴露 pipe 引用供测试断言
     return redis
 
@@ -109,7 +116,9 @@ async def test_memory_service_add_message(mock_redis):
         
         # 验证 LTRIM 和 EXPIRE 也在 Pipeline 中被调用
         assert pipe.ltrim.call_count == 2
-        assert pipe.expire.call_count == 2
+        # seq 机制：每次 add_message 同时 expire history key 与 seq_counter key，
+        # 因此 2 条消息共 4 次 expire
+        assert pipe.expire.call_count == 4
         # 验证 execute 被调用（提交 Pipeline）
         assert pipe.execute.call_count == 2
 
@@ -160,9 +169,15 @@ async def test_memory_service_clear_history(mock_redis):
         mock_get_redis.return_value = mock_redis
         
         await service.clear_history("u1", "c1")
-        assert mock_redis.delete.call_count == 4
         mock_redis.delete.assert_any_call("conversation:u1:c1:history")
         mock_redis.delete.assert_any_call("conversation:u1:c1:last_data_result")
+        mock_redis.delete.assert_any_call("conversation:u1:c1:digest")
+        mock_redis.delete.assert_any_call("memory:debounce:u1:c1")
+        deleted_keys = {call.args[0] for call in mock_redis.delete.await_args_list}
+        assert {
+            "conversation:u1:c1:data_result_stack_v1",
+            "conversation:u1:c1:session_tool_artifact_v1",
+        }.issubset(deleted_keys)
 
 
 @pytest.mark.asyncio
@@ -211,4 +226,174 @@ async def test_memory_service_truncate_history(mock_redis):
         # 截断到 <= 0 时直接删除
         success_del = await service.truncate_history("u1", "c1", 0)
         assert success_del is True
-        mock_redis.delete.assert_awaited_with("conversation:u1:c1:history")
+        mock_redis.delete.assert_any_await("conversation:u1:c1:history")
+
+
+@pytest.mark.asyncio
+async def test_memory_service_truncate_history_resets_context_state(mock_redis):
+    service = MemoryService()
+    reset_state = AsyncMock()
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch.object(service, "reset_context_state", reset_state):
+        mock_get_redis.return_value = mock_redis
+
+        success = await service.truncate_history("u1", "c1", 2)
+
+    assert success is True
+    reset_state.assert_awaited_once_with("u1", "c1")
+
+
+@pytest.mark.asyncio
+async def test_memory_service_reset_context_state_clears_summary_layers_but_keeps_seq(mock_redis):
+    service = MemoryService()
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch(
+             "app.services.ai.memory_index_service.MemoryIndexService.delete_summary",
+             new_callable=AsyncMock,
+         ) as delete_summary:
+        mock_get_redis.return_value = mock_redis
+
+        await service.reset_context_state("u1", "c1")
+
+    mock_redis.delete.assert_any_await("conversation:u1:c1:digest")
+    mock_redis.delete.assert_any_await("memory:debounce:u1:c1")
+    delete_summary.assert_awaited_once_with("u1", "c1")
+    deleted_keys = {call.args[0] for call in mock_redis.delete.await_args_list}
+    assert "conversation:u1:c1:seq_counter" not in deleted_keys
+    mock_redis.incr.assert_awaited_once_with("conversation:u1:c1:context_revision")
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_writes_when_seq_is_current():
+    service = MemoryService()
+
+    class _Pipeline:
+        def __init__(self):
+            self.commands = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def watch(self, key):
+            self.commands.append(("watch", key))
+
+        async def get(self, key):
+            self.commands.append(("get", key))
+            return "3" if key.endswith(":seq_counter") else None
+
+        def multi(self):
+            self.commands.append(("multi",))
+
+        def set(self, key, value, ex):
+            self.commands.append(("set", key, value, ex))
+
+        async def execute(self):
+            self.commands.append(("execute",))
+            return [True]
+
+    class _Redis:
+        def __init__(self):
+            self.pipe = _Pipeline()
+
+        async def get(self, key):
+            return "3" if key.endswith(":seq_counter") else None
+
+        def pipeline(self):
+            return self.pipe
+
+    redis = _Redis()
+    with patch(
+        "app.services.ai.memory_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        written = await service.set_digest_if_current(
+            "u1", "c1", "semantic", source_seq=3
+        )
+
+    assert written is True
+    assert ("set", "conversation:u1:c1:digest", "semantic", service.ttl) in redis.pipe.commands
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_skips_reset_branch():
+    service = MemoryService()
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=["3", "4"])
+
+    with patch(
+        "app.services.ai.memory_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=mock_redis,
+    ):
+        written = await service.set_digest_if_current(
+            "u1",
+            "c1",
+            "stale semantic",
+            source_seq=3,
+            source_revision=3,
+        )
+
+    assert written is False
+    mock_redis.pipeline.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_skips_stale_source(mock_redis):
+    service = MemoryService()
+    mock_redis.get = AsyncMock(return_value="12")
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+
+        written = await service.set_digest_if_current(
+            "u1",
+            "c1",
+            "[早前对话摘录]\nnew",
+            source_seq=11,
+        )
+
+    assert written is False
+    mock_redis.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_allows_newer_seq_for_same_branch(
+    mock_redis,
+):
+    service = MemoryService()
+    async def get_value(key):
+        if key.endswith(":seq_counter"):
+            return "12"
+        if key.endswith(":context_revision"):
+            return "2"
+        return None
+
+    mock_redis.get = AsyncMock(side_effect=get_value)
+    pipe = mock_redis.pipeline.return_value
+    pipe.__aenter__.return_value = pipe
+    pipe.watch = AsyncMock()
+    pipe.get = AsyncMock(side_effect=get_value)
+    pipe.multi = lambda: None
+    pipe.set = lambda *args, **kwargs: None
+    pipe.execute = AsyncMock(return_value=[True])
+    pipe.reset = AsyncMock()
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+        written = await service.set_digest_if_current(
+            "u1",
+            "c1",
+            "prefix semantic",
+            source_seq=11,
+            source_revision=2,
+            allow_newer_seq=True,
+        )
+
+    assert written is True
+    pipe.execute.assert_awaited_once()

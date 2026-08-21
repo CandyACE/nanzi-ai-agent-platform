@@ -45,13 +45,83 @@ from app.services.ai.turn_decision import (
 )
 from app.services.ai.intent_service import looks_like_current_model_query
 from app.services.ai.business_context import sanitize_injected_context
+from app.services.schema_chunk_format import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
+
+_LLM_DIGEST_TASKS: set[asyncio.Task] = set()
+_POST_PROCESS_TASKS: set[asyncio.Task] = set()
 
 AWAITING_RESUME_STATUSES = frozenset(
     {"awaiting_permission", "awaiting_external_execution", "awaiting_user"}
 )
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
+
+
+async def _persist_assistant_message_and_summary(
+    *,
+    user_id: Any,
+    conversation_id: str,
+    content: str,
+    trace_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    agent_type: Optional[str] = None,
+    agent_display_name: Optional[str] = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    has_data_output: Optional[bool] = None,
+    reasoning_content: Optional[str] = None,
+    process_timeline: Optional[List[Dict[str, Any]]] = None,
+    tool_run_text: Optional[str] = None,
+    merge_summary: bool = False,
+) -> None:
+    """按顺序持久化 assistant，再异步合并摘要。
+
+    摘要不能和 assistant 写入并发启动，否则 merge 可能读取不到本轮回答，
+    或在多次恢复请求之间以旧游标覆盖新状态。
+    """
+    try:
+        await memory_service.add_message(
+            user_id,
+            conversation_id,
+            "assistant",
+            content,
+            trace_id=trace_id,
+            agent_name=agent_name,
+            agent_type=agent_type,
+            agent_display_name=agent_display_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            has_data_output=has_data_output,
+            reasoning_content=reasoning_content,
+            process_timeline=process_timeline,
+            tool_run_text=tool_run_text,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[AgentService] Assistant persistence failed; summary skipped: %s",
+            exc,
+        )
+        return
+
+    if merge_summary and user_id and content:
+        try:
+            from app.services.ai.session_summary_service import SessionSummaryService
+
+            await SessionSummaryService.merge_session_summary(
+                str(user_id), conversation_id, content
+            )
+        except Exception as exc:
+            logger.warning("[AgentService] Session summary task failed: %s", exc)
+
+
+def _schedule_post_process(coro: Any) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _POST_PROCESS_TASKS.add(task)
+    task.add_done_callback(_POST_PROCESS_TASKS.discard)
+    return task
 
 
 def _public_agent_type(agent_config: Any) -> str:
@@ -122,13 +192,70 @@ def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[st
     注意：agent_name 必须保留，供 context_manager 倒序扫描提取 last_agent_name，
     用于路由的会话粘性判断。该字段不会传给 LLM（convert_history_to_messages 在
     assistant 分支只提取 content 字段构建 AIMessage）。
+    agent_display_name：F 项——窗口内保留 agent 元数据，让后续轮 LLM 感知
+    上一轮由哪个智能体处理；convert_history_to_messages 会将其短句注入 assistant 消息。
     """
-    allowed_keys = ("role", "content", "files", "agent_name")
+    allowed_keys = (
+        "role",
+        "content",
+        "files",
+        "agent_name",
+        "agent_display_name",
+        "tool_run_text",
+        "seq",
+    )
     return [
         {key: message[key] for key in allowed_keys if key in message}
         for message in history
         if isinstance(message, dict)
     ]
+
+
+def _window_for_context(
+    server_history: List[Dict[str, Any]],
+    max_context_messages: int,
+    max_tokens: int,
+) -> List[Dict[str, Any]]:
+    """C 项：用 token 预算主导窗口，条数上限仅作绝对兜底。
+
+    从历史尾部（最近）倒序累计每条消息的估算 token（``content`` 与工具摘要
+    ``tool_run_text`` 均计入，与 convert_history_to_messages 实际注入模型的内容一致）。
+
+    **优先级（token 优先）：**
+    1. 首选由 token 预算 ``max_tokens``（默认 64k）决定保留多少历史 —— 这是主约束；
+    2. 条数上限 ``max_context_messages`` 仅作为最后兜底，防止在极端情况下（例如
+       单条消息 token 估算严重偏低、工具元数据条数异常多）窗口无限累积膨胀。
+
+    返回保持历史顺序的窗口切片。
+
+    仅用于上下文选择层，不触碰展示路径（get_conversation_history 仍原样返回）；
+    与 :meth:`_maybe_compact_overflow` 的 ``len(full) <= len(window)`` 溢出判断天然兼容
+    —— 被 token 预算丢弃的尾部旧消息同样会被压缩成 system 摘录。
+    """
+    if not server_history:
+        return []
+    total_tokens = 0
+    kept = 0
+    cut_index: Optional[int] = None
+    for idx in range(len(server_history) - 1, -1, -1):
+        msg = server_history[idx]
+        if not isinstance(msg, dict):
+            continue
+        content = str(msg.get("content") or "")
+        tool_text = str(msg.get("tool_run_text") or "")
+        total_tokens += estimate_text_tokens(content + tool_text)
+        kept += 1
+        # 主判据：token 预算超限即截断（token 优先）
+        if total_tokens > max_tokens:
+            cut_index = idx
+            break
+        # 兜底判据：条数超限（仅在 token 未超限时触发，防止极端膨胀）
+        if kept > max_context_messages:
+            cut_index = idx
+            break
+    if cut_index is None:
+        return server_history
+    return server_history[cut_index + 1:]
 
 
 def _client_prefix_history_len(messages: List[Dict[str, Any]]) -> int:
@@ -715,6 +842,10 @@ class AgentService:
                     server_history = await memory_service.get_history(u_id, conversation_id)
                     user_msg = messages[-1] if messages else None
 
+                    # 路由前只使用平台兜底预算；真实目标 agent/model 在内部 runner
+                    # 完成路由后再按最终模型重建一次上下文。
+                    runtime_max_tokens = await self._resolve_pre_route_context_budget()
+
                     # 检测客户端历史截断（如编辑重发或分支）：仅在客户端显式传递了前缀历史且短于服务端时裁剪对齐
                     client_prefix_history_len = _client_prefix_history_len(messages)
                     if len(messages) > 1 and server_history and len(server_history) > client_prefix_history_len:
@@ -733,34 +864,83 @@ class AgentService:
                         )
 
                         from app.services.config_service import ConfigService
-                        max_context = await ConfigService.get("agent_max_context_messages", "20")
+                        max_context = await ConfigService.get("agent_max_context_messages", "60")
                         try:
                             max_context = int(max_context)
                         except ValueError:
-                            max_context = 20
-
-                        context_history = _history_messages_for_context(
-                            server_history[-max_context:] if server_history else []
+                            max_context = 60
+                        history_max_tokens = await self._resolve_history_context_budget(
+                            runtime_max_tokens
                         )
+                        if shared_state is not None:
+                            shared_state["context_source_history"] = list(server_history or [])
+                            shared_state["context_user_message"] = user_msg
+                            shared_state["context_history_budget"] = history_max_tokens
+                        window_hidden = _window_for_context(
+                            server_history if server_history else [],
+                            max_context,
+                            history_max_tokens,
+                        )
+                        context_history = _history_messages_for_context(window_hidden)
                         context_full_history = _history_messages_for_context(server_history)
+                        ctx_event: dict = {}
                         context_history = await self._maybe_compact_overflow(
-                            context_full_history, context_history
+                            context_full_history,
+                            context_history,
+                            user_id=lane_user_id,
+                            conversation_id=conversation_id,
+                            agent_id=agent_id,
+                            agent_name=agent_name,
+                            version_id=version_id,
+                            out=ctx_event,
+                            token_budget=history_max_tokens,
+                            enable_llm_summary=False,
+                            physical_window=runtime_max_tokens,
                         )
+                        if ctx_event:
+                            ctx_event = dict(ctx_event)
+                            ctx_event["type"] = "context_summarized"
+                            yield ctx_event
                         messages = context_history + [user_msg]
                     else:
                         from app.services.config_service import ConfigService
-                        max_context = await ConfigService.get("agent_max_context_messages", "20")
+                        max_context = await ConfigService.get("agent_max_context_messages", "60")
                         try:
                             max_context = int(max_context)
                         except ValueError:
-                            max_context = 20
-                        window = _history_messages_for_context(
-                            server_history[-max_context:] if server_history else []
+                            max_context = 60
+                        history_max_tokens = await self._resolve_history_context_budget(
+                            runtime_max_tokens
                         )
+                        if shared_state is not None:
+                            shared_state["context_source_history"] = list(server_history or [])
+                            shared_state["context_user_message"] = None
+                            shared_state["context_history_budget"] = history_max_tokens
+                        window = _history_messages_for_context(
+                            _window_for_context(
+                                server_history if server_history else [],
+                                max_context,
+                                history_max_tokens,
+                            )
+                        )
+                        ctx_event: dict = {}
                         messages = await self._maybe_compact_overflow(
                             _history_messages_for_context(server_history),
                             window,
+                            user_id=lane_user_id,
+                            conversation_id=conversation_id,
+                            agent_id=agent_id,
+                            agent_name=agent_name,
+                            version_id=version_id,
+                            out=ctx_event,
+                            token_budget=history_max_tokens,
+                            enable_llm_summary=False,
+                            physical_window=runtime_max_tokens,
                         )
+                        if ctx_event:
+                            ctx_event = dict(ctx_event)
+                            ctx_event["type"] = "context_summarized"
+                            yield ctx_event
 
                 from app.utils.skill_metadata import enrich_messages_with_skill_meta
 
@@ -862,14 +1042,374 @@ class AgentService:
             }
             return
 
+    async def _resolve_runtime_context_budget(
+        self,
+        *,
+        debug_options: Optional[Dict[str, Any]],
+        agent_id: Optional[str],
+        agent_name: Optional[str],
+        version_id: Optional[str],
+    ) -> int:
+        """动态解析截断上下文水位线（token）。
+
+        优先级（与用户需求一致）：
+        1. 显式指定的当前模型 context_size（debug_options.model，即输入框切换所选模型），
+           经 debug 通道解析。
+        2. 发布版本模型的 context_size（按 agent_id / agent_name / version_id 轻量定位
+           ChatConfig.model_name 后再解析）。
+        3. 兜底：ConfigService.agent_context_max_tokens（默认 65536）。
+
+        仅当模型来源为显式指定（runtime_override / debug_override / agent_config，
+        而非 system_default 回落）且注册表解析出有效 context_size 时才采纳模型窗口，
+        否则一律回落配置兜底值，避免水位线与模型窗口脱钩导致提前 compat。
+        任何 DB / 注册表异常均吞掉并回落兜底，不影响主流程。
+        """
+        fallback_tokens = await self._resolve_pre_route_context_budget()
+
+        chat_config = None
+        try:
+            from app.services.ai.agent_manager import AgentManagerService
+
+            session = AsyncSessionLocal()
+            try:
+                if version_id:
+                    chat_config = await AgentManagerService.get_version_config(
+                        session, version_id
+                    )
+                else:
+                    chat_config = await AgentManagerService.get_active_agent_config(
+                        session,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                    )
+            finally:
+                await session.close()
+        except Exception:
+            logger.warning(
+                "Failed to resolve published model config for runtime context budget; "
+                "falling back to agent_context_max_tokens"
+            )
+            chat_config = None
+
+        info = None
+        try:
+            info = await resolve_runtime_model_info(
+                config=chat_config,
+                debug_options=debug_options,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to resolve runtime model info for context budget; "
+                "falling back to agent_context_max_tokens"
+            )
+            return fallback_tokens
+        if info is not None and info.source in {
+            "runtime_override",
+            "debug_override",
+            "agent_config",
+        }:
+            try:
+                resolved = int(info.context_size) if info.context_size else 0
+            except (TypeError, ValueError):
+                resolved = 0
+            if resolved > 0:
+                return resolved
+        return fallback_tokens
+
+    async def _resolve_pre_route_context_budget(self) -> int:
+        """读取路由前可安全使用的全局上下文预算，不解析任何 agent。"""
+        from app.services.config_service import ConfigService
+
+        cfg = await ConfigService.get("agent_context_max_tokens", "65536")
+        try:
+            fallback_tokens = int(cfg)
+        except (TypeError, ValueError):
+            fallback_tokens = 65536
+        return fallback_tokens if fallback_tokens > 0 else 65536
+
+    async def _resolve_runtime_model_info_safe(
+        self,
+        *,
+        config: Optional[Any],
+        debug_options: Optional[Dict[str, Any]],
+        model_override: Optional[str] = None,
+        phase: str = "primary_agent",
+    ) -> RuntimeModelInfo:
+        """解析最终模型身份；注册表异常时保留可执行的配置模型兜底。"""
+        try:
+            return await resolve_runtime_model_info(
+                config=config,
+                debug_options=debug_options,
+                model_override=model_override,
+                phase=phase,
+            )
+        except Exception as exc:
+            configured_model = str(
+                model_override or getattr(config, "model_name", "") or ""
+            ).strip()
+            source = "runtime_override" if model_override else (
+                "agent_config" if configured_model else "system_default"
+            )
+            if not configured_model:
+                try:
+                    from app.services.config_service import ConfigService
+
+                    configured_model = str(
+                        await ConfigService.get("llm_model_name", "deepseek-chat")
+                        or "deepseek-chat"
+                    )
+                except Exception:
+                    configured_model = "deepseek-chat"
+            logger.warning(
+                "Failed to resolve final runtime model info; continuing with configured "
+                "model=%s: %s",
+                configured_model,
+                exc,
+            )
+            return RuntimeModelInfo(
+                configured_model=configured_model,
+                effective_model_id=configured_model,
+                source=source,
+                phase=phase,
+                resolution_status="registry_unresolved",
+            )
+
+    async def _resolve_history_context_budget(self, runtime_max_tokens: int) -> int:
+        """从模型窗口预算中扣除「非历史 overhead」，返回历史消息可用的 token 配额。
+
+        最终请求的实际组成远不止历史消息：还包括系统提示（含 grounding 安全前缀、
+        路由 hint、会话产物、时间锚点）、工具 schema、注入的技能提示、路由注入内容，
+        以及本轮用户消息。这些由 runner 在 ``agent_service`` 之外独立组装，
+        ``_window_for_context`` 无法对其做 token 预算，若不预留配额，历史消息会把
+        模型窗口占满，导致最终请求超窗被模型端截断。
+
+        因此这里按配置 ``agent_context_overhead_headroom_tokens``（默认 8192）预留
+        一段 overhead 配额，剩下的才作为历史可用预算；并保证历史至少保留窗口的
+        1/3，避免小窗口模型被 overhead 吃干导致历史几乎全被压缩。
+        """
+        from app.services.config_service import ConfigService
+
+        try:
+            overhead_raw = await ConfigService.get(
+                "agent_context_overhead_headroom_tokens", "8192"
+            )
+            overhead = int(overhead_raw)
+        except (TypeError, ValueError):
+            overhead = 8192
+        if overhead < 0:
+            overhead = 0
+        return max(
+            runtime_max_tokens - overhead,
+            max(1, runtime_max_tokens // 3),
+        )
+
+    async def _history_budget_for_runtime_model_info(
+        self,
+        runtime_model_info: RuntimeModelInfo,
+    ) -> int:
+        """把最终模型信息转换成实际可用于历史的 token 预算。"""
+        runtime_max_tokens = await self._resolve_pre_route_context_budget()
+        if runtime_model_info.source in {
+            "runtime_override",
+            "debug_override",
+            "agent_config",
+        }:
+            try:
+                resolved = int(runtime_model_info.context_size or 0)
+            except (TypeError, ValueError):
+                resolved = 0
+            if resolved > 0:
+                runtime_max_tokens = resolved
+        return await self._resolve_history_context_budget(runtime_max_tokens)
+
     @staticmethod
+    def _configured_model_window(runtime_model_info: RuntimeModelInfo) -> int:
+        if runtime_model_info.source not in {
+            "runtime_override",
+            "debug_override",
+            "agent_config",
+        }:
+            return 0
+        try:
+            value = int(runtime_model_info.context_size or 0)
+        except (TypeError, ValueError):
+            value = 0
+        return value if value > 0 else 0
+
+    async def _runtime_context_metadata(
+        self,
+        runtime_model_info: RuntimeModelInfo,
+        *,
+        history_budget: Optional[int] = None,
+        synthesis_runtime_model_info: Optional[RuntimeModelInfo] = None,
+    ) -> Dict[str, Any]:
+        """Build the one context-budget contract consumed by runners and tools."""
+        fallback_window = await self._resolve_pre_route_context_budget()
+        windows = [
+            value
+            for value in (
+                self._configured_model_window(runtime_model_info),
+                self._configured_model_window(synthesis_runtime_model_info)
+                if synthesis_runtime_model_info is not None
+                else 0,
+            )
+            if value > 0
+        ]
+        physical_window = min(windows) if windows else fallback_window
+        if history_budget is None:
+            history_budget = await self._history_budget_for_runtime_model_info(
+                runtime_model_info
+            )
+        if synthesis_runtime_model_info is not None:
+            history_budget = min(
+                history_budget,
+                await self._history_budget_for_runtime_model_info(
+                    synthesis_runtime_model_info
+                ),
+            )
+        return {
+            **runtime_model_info.public_dict(),
+            "physical_window": physical_window,
+            "history_budget": history_budget,
+            "overhead_reservation_tokens": max(0, physical_window - history_budget),
+        }
+
+    async def _rebuild_context_for_resolved_model(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        runtime_model_info: RuntimeModelInfo,
+        conversation_id: Optional[str],
+        user_info: Optional[Dict[str, Any]],
+        agent_id: Optional[str],
+        agent_name: Optional[str],
+        version_id: Optional[str],
+        shared_state: Optional[Dict[str, Any]],
+        synthesis_runtime_model_info: Optional[RuntimeModelInfo] = None,
+    ) -> List[Dict[str, Any]]:
+        """路由完成后按目标模型重新构造真正发送给 executor 的上下文。"""
+        if not conversation_id or not shared_state:
+            return messages
+        source_history = shared_state.get("context_source_history")
+        if not isinstance(source_history, list):
+            return messages
+
+        target_history_budget = await self._history_budget_for_runtime_model_info(
+            runtime_model_info
+        )
+        if synthesis_runtime_model_info is not None:
+            target_history_budget = min(
+                target_history_budget,
+                await self._history_budget_for_runtime_model_info(
+                    synthesis_runtime_model_info
+                ),
+            )
+        model_key = ":".join(
+            filter(
+                None,
+                (
+                    runtime_model_info.effective_model_id,
+                    (
+                        synthesis_runtime_model_info.effective_model_id
+                        if synthesis_runtime_model_info is not None
+                        else None
+                    ),
+                ),
+            )
+        )
+        if (
+            shared_state.get("context_finalized_model") == model_key
+            and shared_state.get("context_history_budget") == target_history_budget
+        ):
+            return messages
+
+        from app.services.config_service import ConfigService
+
+        max_context_raw = await ConfigService.get("agent_max_context_messages", "60")
+        try:
+            max_context = int(max_context_raw)
+        except (TypeError, ValueError):
+            max_context = 60
+        user_message = shared_state.get("context_user_message")
+        window = _history_messages_for_context(
+            _window_for_context(
+                source_history,
+                max_context,
+                target_history_budget,
+            )
+        )
+        candidate_windows = [
+            value
+            for value in (
+                self._configured_model_window(runtime_model_info),
+                self._configured_model_window(synthesis_runtime_model_info)
+                if synthesis_runtime_model_info is not None
+                else 0,
+            )
+            if value > 0
+        ]
+        physical_window = (
+            min(candidate_windows)
+            if candidate_windows
+            else await self._resolve_pre_route_context_budget()
+        )
+        final_ctx_event: dict = {}
+        compacted = await self._maybe_compact_overflow(
+            _history_messages_for_context(source_history),
+            window,
+            user_id=(user_info or {}).get("user_id"),
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            version_id=version_id,
+            token_budget=target_history_budget,
+            enable_llm_summary=True,
+            out=final_ctx_event,
+            physical_window=physical_window,
+        )
+        shared_state["context_finalized_model"] = model_key
+        shared_state["context_history_budget"] = target_history_budget
+        if final_ctx_event:
+            final_ctx_event = dict(final_ctx_event)
+            final_ctx_event["type"] = "context_summarized"
+            shared_state["context_final_compaction_event"] = final_ctx_event
+        if isinstance(user_message, dict) and user_message.get("role") == "user":
+            return compacted + [user_message]
+        return compacted
+
     async def _maybe_compact_overflow(
+        self,
         full_history: List[Dict[str, Any]],
         window: List[Dict[str, Any]],
+        *,
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        version_id: Optional[str] = None,
+        out: Optional[dict] = None,
+        token_budget: Optional[int] = None,
+        enable_llm_summary: bool = True,
+        physical_window: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """超出上下文窗口时，把被丢弃的旧消息压缩成一条 system 摘录注入窗口最前。
 
-        确定性、无额外 LLM 调用；由配置 ``agent_context_compaction_enabled`` 控制（默认开启）。
+        由配置 ``agent_context_compaction_enabled`` 控制（默认开启）。
+
+        E 项：发生真实溢出且 ``agent_context_llm_summary_enabled`` 开启（默认）时，
+        会用「当前会话模型」尝试生成更高质量的语义摘要替换确定性摘录正文；
+        任何失败（配置关闭、模型解析失败、无可用 client、LLM 超时/报错）都会
+        优雅降级到确定性拼装摘录，不影响主链路。
+
+        B 项：当提供 ``user_id`` / ``conversation_id`` 时，摘录会持久化到独立 Redis key
+        并在下轮回读合并（跨轮累积早期事实），避免窗口滑动导致最古早信息断档。
+
+        ``agent_id`` / ``agent_name`` / ``version_id``：当前会话显式指定的 agent 身份，
+        用于确定式解析「当前会话模型」做语义摘要（有显式身份时不触发路由开销）。
+
+        ``out``：可选观测输出容器。当发生真实溢出压缩（非提前返回）时，会向其写入
+        ``{"dropped", "kept", "origin", "preview", "title"}``，供调用方（SSE 生成器）
+        据此发射与 AgentScope ``context_compression`` 语义无关的独立前端摘录卡片事件。
         """
         if not full_history or len(full_history) <= len(window):
             return window
@@ -885,23 +1425,442 @@ class AgentService:
             except (TypeError, ValueError):
                 max_chars = 1200
 
-            from app.services.ai.context_compaction import apply_context_compaction
+            prev_digest = None
+            context_revision: Optional[int] = None
+            source_seq = max(
+                (
+                    int(message.get("seq") or 0)
+                    for message in full_history
+                    if isinstance(message, dict)
+                ),
+                default=0,
+            )
+            if user_id and conversation_id:
+                from app.services.ai.memory_service import MemoryService
+
+                memory = MemoryService()
+                try:
+                    prev_digest = await memory.get_digest(user_id, conversation_id)
+                except Exception as exc:
+                    logger.warning(
+                        "[Compaction] Failed to read persisted digest: %s", exc
+                    )
+                    prev_digest = None
+                try:
+                    context_revision = await memory.get_context_revision(
+                        user_id, conversation_id
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[Compaction] Failed to read context revision: %s", exc
+                    )
+                    context_revision = None
+                try:
+                    # 当前轮用户消息已经先写入 Redis，但不在 full_history 快照中。
+                    # 将当前计数器作为摘要版本边界，避免摘要刚写入就因本轮用户消息
+                    # 的 seq 更大而被误判为旧快照。
+                    source_seq = max(
+                        source_seq,
+                        await memory.get_current_seq(user_id, conversation_id),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[Compaction] Failed to read current seq: %s", exc
+                    )
+
+            from app.services.ai.context_compaction import (
+                COMPACTION_MARKER,
+                apply_context_compaction,
+            )
 
             compacted = apply_context_compaction(
                 full_history=full_history,
                 window=window,
                 max_chars=max_chars,
+                prev_digest=prev_digest,
             )
-            if len(compacted) != len(window):
-                logger.info(
-                    "[Compaction] Injected overflow digest: dropped=%d kept=%d",
-                    len(full_history) - len(window),
-                    len(window),
+            if len(compacted) == len(window):
+                return compacted
+
+            # 有真实溢出。E 项（异步化）：本次立即用确定性摘录注入窗口，主链路零阻塞，
+            # 不增加首 token 延迟；同时把「当前会话模型」的语义摘要作为后台任务生成，
+            # 完成后写回 Redis digest，供下一轮真实溢出时经 prev_digest 自然合入
+            # （提升后续几轮的摘要质量，而非阻塞本轮）。任何失败/无 client 都会
+            # 优雅降级到确定性摘录，不影响主链路。
+            digest_origin = "deterministic"
+            if enable_llm_summary and user_id and conversation_id:
+                self._spawn_llm_digest_task(
+                    full_history,
+                    window,
+                    max_chars=max_chars,
+                    prev_digest=prev_digest,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    version_id=version_id,
+                    source_seq=source_seq,
+                    source_revision=context_revision,
                 )
+
+            logger.info(
+                "[Compaction] Injected overflow digest: dropped=%d kept=%d origin=%s",
+                len(full_history) - len(window),
+                len(window),
+                digest_origin,
+            )
+            # F 项：真实溢出压缩时向观测容器写入摘录卡片所需信息（供 SSE 生成器发射）。
+            if out is not None and isinstance(compacted, list):
+                self._emit_compaction_card(
+                    out,
+                    compacted,
+                    full_history,
+                    window,
+                    digest_origin,
+                    token_budget,
+                    physical_window,
+                )
+            if user_id and conversation_id:
+                try:
+                    digest_content = None
+                    head = compacted[0]
+                    if (
+                        isinstance(head, dict)
+                        and head.get("role") == "system"
+                        and COMPACTION_MARKER in str(head.get("content", ""))
+                    ):
+                        digest_content = str(head.get("content"))
+                    await MemoryService().set_digest_if_current(
+                        user_id,
+                        conversation_id,
+                        digest_content or "",
+                        source_seq=source_seq,
+                        source_revision=context_revision,
+                        quality=0,
+                        allow_newer_seq=True,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[Compaction] Failed to persist digest: %s", exc
+                    )
             return compacted
         except Exception as exc:
             logger.warning("[Compaction] Failed to compact overflow history: %s", exc)
             return window
+
+    @staticmethod
+    def _emit_compaction_card(
+        out: dict,
+        compacted: List[Dict[str, Any]],
+        full_history: List[Dict[str, Any]],
+        window: List[Dict[str, Any]],
+        origin: str,
+        token_budget: Optional[int] = None,
+        physical_window: Optional[int] = None,
+    ) -> None:
+        """F 项：把真实溢出压缩的观测信息写入 ``out`` 容器，供 SSE 生成器发射卡片。
+
+        只在真实压缩发生时调用（提前返回路径不会走到这里）。摘录正文取自
+        ``compacted[0]``（平台注入的 system 摘录），用 ``context_compaction`` 的
+        ``_extract_digest_body`` 剥离 marker 与前导说明行，得到可直接展示的要点预览。
+
+        与 AgentScope ``context_compression``（``event_stream`` 那条 summary 噪声）无关，
+        这里描述的是链路 A 真正喂给 LLM 的摘录内容。
+        """
+        try:
+            from app.services.ai.context_compaction import _extract_digest_body
+
+            dropped = len(full_history) - len(window)
+            kept = len(window)
+            preview = ""
+            head = compacted[0] if compacted else None
+            if isinstance(head, dict) and head.get("role") == "system":
+                preview = _extract_digest_body(str(head.get("content") or ""))
+            if not preview:
+                preview = str(head.get("content") or "") if isinstance(head, dict) else ""
+            # 卡片只展示简短预览，全长仍以配置 max_chars 为准。
+            preview = preview.strip()
+            if len(preview) > 300:
+                preview = preview[:300].rstrip() + "……"
+            out["dropped"] = dropped
+            out["kept"] = kept
+            out["origin"] = origin
+            out["preview"] = preview
+            out["title"] = "对话上下文已压缩（平台摘录）"
+            # F 项增强：上下文使用率。token_used = 全量历史估算 token，
+            # token_budget = 上层传入的 token 预算（agent_context_max_tokens）。
+            # 估算值来自 estimate_text_tokens（近似，非模型精确计数）。
+            try:
+                token_used = sum(
+                    estimate_text_tokens(
+                        str(msg.get("content") or "")
+                        + str(msg.get("tool_run_text") or "")
+                    )
+                    for msg in full_history
+                    if isinstance(msg, dict)
+                )
+            except Exception:
+                token_used = 0
+            out["token_used"] = int(token_used)
+            if isinstance(token_budget, int) and token_budget > 0:
+                out["token_budget"] = token_budget
+            else:
+                out["token_budget"] = None
+            out["history_budget"] = out["token_budget"]
+            out["physical_window"] = (
+                physical_window if isinstance(physical_window, int) and physical_window > 0
+                else None
+            )
+            if out["physical_window"] is not None and out["history_budget"] is not None:
+                out["overhead_reservation_tokens"] = max(
+                    0,
+                    out["physical_window"] - out["history_budget"],
+                )
+            else:
+                out["overhead_reservation_tokens"] = None
+        except Exception as exc:  # 观测信息失败不应影响主链路返回。
+            logger.warning("[Compaction] Failed to build compaction card: %s", exc)
+
+    def _spawn_llm_digest_task(
+        self,
+        full_history: List[Dict[str, Any]],
+        window: List[Dict[str, Any]],
+        *,
+        max_chars: int = 1200,
+        prev_digest: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        version_id: Optional[str] = None,
+        source_seq: int = 0,
+        source_revision: Optional[int] = None,
+    ) -> Optional[asyncio.Task]:
+        """E 项（异步）：后台生成 LLM 语义摘要，替代「同步阻塞首 token」。
+
+        ``_maybe_compact_overflow`` 在本轮立即用确定性摘录注入窗口（零阻塞），
+        同时本方法把语义摘要生成降级为后台任务：命中时调用
+        ``_try_llm_overflow_digest``，成功后把含 ``COMPACTION_MARKER`` 的正文
+        写回 Redis digest，供下一轮真实溢出时经 ``prev_digest`` 自然合入
+        （滞后一轮生效，提升后续几轮的摘要质量）。
+
+        作为权衡的边界：携带 ``user_id`` / ``conversation_id`` 才有 digest 落点，
+        否则不生成（返回 ``None``）。后台任务必须持有引用（返回给调用方）、并在
+        协程内部全量捕获异常，避免 ``Task exception was never retrieved``。
+        """
+        if not user_id or not conversation_id:
+            return None
+
+        async def _run() -> None:
+            try:
+                llm_digest = await self._try_llm_overflow_digest(
+                    full_history,
+                    window,
+                    max_chars=max_chars,
+                    prev_digest=prev_digest,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    version_id=version_id,
+                )
+                if not llm_digest or not isinstance(llm_digest, dict):
+                    return  # 命中失败，保持本轮写入的确定性摘录。
+                content = llm_digest.get("content")
+                if not content:
+                    return
+                from app.services.ai.memory_service import MemoryService
+
+                write_kwargs = {"source_seq": source_seq}
+                write_kwargs["quality"] = 1
+                write_kwargs["allow_newer_seq"] = True
+                if source_revision is not None:
+                    write_kwargs["source_revision"] = source_revision
+                written = await MemoryService().set_digest_if_current(
+                    user_id,
+                    conversation_id,
+                    str(content),
+                    **write_kwargs,
+                )
+                if not written:
+                    logger.info(
+                        "[Compaction] Async LLM digest skipped for stale conversation=%s",
+                        conversation_id,
+                    )
+                    return
+                logger.info(
+                    "[Compaction] Async LLM digest persisted for conversation=%s",
+                    conversation_id,
+                )
+            except Exception as exc:  # 后台任务绝不外抛，避免未取回异常告警。
+                logger.warning(
+                    "[Compaction] Async LLM digest task failed: %s", exc
+                )
+
+        # 进程级持有引用，直到任务完成；协程内部已经捕获所有业务异常。
+        task = asyncio.get_running_loop().create_task(_run())
+        _LLM_DIGEST_TASKS.add(task)
+        task.add_done_callback(_LLM_DIGEST_TASKS.discard)
+        return task
+
+    async def _try_llm_overflow_digest(
+        self,
+        full_history: List[Dict[str, Any]],
+        window: List[Dict[str, Any]],
+        *,
+        max_chars: int = 1200,
+        prev_digest: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        version_id: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
+        """E 项：尝试用「当前会话模型」生成语义摘要，替代确定性拼装摘录。
+
+        返回 ``{"role": "system", "content": ...}`` 或 ``None``。任何失败都返回
+        ``None``，由调用方降级到确定性 ``apply_context_compaction`` 结果。
+
+        模型优先级：显式 agent 身份 → ``get_configured_llm``（当前会话模型）；
+        否则 → ``get_fallback_llm``（系统默认 ``llm_model_name``）。
+        """
+        try:
+            from app.services.config_service import ConfigService
+
+            llm_summary_raw = await ConfigService.get(
+                "agent_context_llm_summary_enabled", "true"
+            )
+            if str(llm_summary_raw or "").strip().lower() not in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                return None
+
+            from app.services.ai.context_compaction import (
+                COMPACTION_MARKER,
+                _condense,
+                _extract_digest_body,
+                _flatten_content,
+            )
+
+            dropped = full_history[: len(full_history) - len(window)]
+            transcript_parts: List[str] = []
+            prev_body = prev_digest and _extract_digest_body(str(prev_digest))
+            if prev_body:
+                transcript_parts.append(f"〔更早轮次对话要点〕\n{prev_body}")
+            role_label = {
+                "user": "用户",
+                "assistant": "助手",
+                "system": "系统",
+            }
+            for msg in dropped or []:
+                role = (msg.get("role") or "").strip()
+                text = _flatten_content(msg.get("content"))
+                # 工具结果（tool_run_text）同样会注入模型上下文，摘要也应看到，
+                # 否则工具返回的结论/数据在语义摘要里会缺失。
+                tool_text = _flatten_content(msg.get("tool_run_text"))
+                if tool_text:
+                    text = f"{text} · 工具结果：{tool_text}".strip(
+                        " ·"
+                    ) if text else tool_text
+                if not text:
+                    continue
+                transcript_parts.append(
+                    f"{role_label.get(role, role or '未知')}：{text}"
+                )
+            if not transcript_parts:
+                return None
+            transcript = "\n".join(transcript_parts)
+
+            # 解析摘要模型：优先走显式 agent 身份（无路由额外模型调用）；否则系统默认。
+            llm = None
+            if any((agent_id, agent_name, version_id)):
+                try:
+                    from app.services.ai.config import AgentConfigProvider
+                    from app.services.ai.context_manager import AgentContextManager
+
+                    agent_config, _ = await AgentContextManager.resolve_agent_config(
+                        window,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        version_id=version_id,
+                        enable_multi_agent=False,
+                        force_data_query=False,
+                    )
+                    if agent_config is not None:
+                        llm = await AgentConfigProvider.get_configured_llm(
+                            streaming=False, config=agent_config
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "[Compaction][LLM digest] Failed to resolve current-agent model: %s",
+                        exc,
+                    )
+                    llm = None
+            if llm is None:
+                try:
+                    from app.services.ai.config import AgentConfigProvider
+
+                    llm = await AgentConfigProvider.get_fallback_llm(streaming=False)
+                except Exception as exc:
+                    logger.warning(
+                        "[Compaction][LLM digest] No fallback LLM available: %s", exc
+                    )
+                    return None
+            if llm is None:
+                logger.warning(
+                    "[Compaction][LLM digest] No available LLM, fallback to deterministic"
+                )
+                return None
+
+            from app.services.ai.conversation_summarizer import ConversationSummarizer
+            from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+            from app.services.ai.runtime.agentscope.messages import (
+                RuntimeContentBlock,
+                RuntimeMessage,
+            )
+
+            system_prompt = (
+                "你是上下文压缩助手。会话多轮上下文超过窗口后，请把下面"
+                "「更早轮次无法直接保留的对话」压缩成一段简洁的中文要点，仅输出正文，"
+                "不要输出 JSON、代码块或标题符号。要点需尽量覆盖：关键事实、已确认决策、"
+                "未完成事项、与后续轮次相关的核心对象/术语。不要编造对话中未出现的信息。"
+                f"全文控制在 {max_chars} 字以内。"
+            )
+            chat_client = chat_client_from_handle(llm)
+            llm_messages = [
+                RuntimeMessage(
+                    role="system",
+                    content=[RuntimeContentBlock(type="text", text=system_prompt)],
+                ),
+                RuntimeMessage(
+                    role="user",
+                    content=[RuntimeContentBlock(type="text", text=transcript)],
+                ),
+            ]
+            # 语义摘要属于增强项，整体加 15s 超时；超时/报错都优雅降级到确定性摘录。
+            raw = ""
+            async with asyncio.timeout(15):
+                raw = await ConversationSummarizer._generate_with_retry(
+                    chat_client, llm_messages, max_retries=2
+                )
+            body = (raw or "").strip()
+            if not body:
+                return None
+            # 代码层硬截断：模型返回可能忽略 system 提示的字数约束（超时/长度不受控），
+            # 这里用与确定性摘录一致的 `_condense` 把正文压到 max_chars 以内，
+            # 避免语义摘要反而撑爆上下文窗口。
+            body = _condense(body, max_chars)
+            content = (
+                f"{COMPACTION_MARKER}\n"
+                "以下是更早轮次对话的要点（已由模型压缩，仅供理解上下文与指代，不要逐条复述）：\n"
+                f"{body}"
+            )
+            return {"role": "system", "content": content}
+        except Exception as exc:
+            logger.warning(
+                "[Compaction][LLM digest] Semantic summary failed, fallback to deterministic: %s",
+                exc,
+            )
+            return None
 
     @staticmethod
     async def _maybe_empty_response_fallback() -> Optional[str]:
@@ -928,6 +1887,7 @@ class AgentService:
         trace_buffer: list[AgentExecutionStep],
         user_query: str,
         force_data_query: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> tuple[Any, Any, float, Optional[str]]:
         """解析并校验智能体配置与权限。
         返回: (agent_config, route_details, route_elapsed_ms, permission_denied_err_msg)
@@ -941,6 +1901,7 @@ class AgentService:
             enable_multi_agent=enable_multi_agent,
             user_info=user_info,
             force_data_query=force_data_query,
+            conversation_id=conversation_id,
         )
         route_elapsed_ms = (asyncio.get_running_loop().time() - route_start) * 1000
 
@@ -1507,6 +2468,7 @@ class AgentService:
         execution_status = "success"
         has_data_output = False
         executor = None
+        tool_run_text = None
 
         try:
             # 1. Resolve and Verify Agent Configuration and Permissions
@@ -1520,6 +2482,7 @@ class AgentService:
                 trace_buffer=trace_buffer,
                 user_query=user_query,
                 force_data_query=bool(metadata_dataset_ids),
+                conversation_id=conversation_id,
             )
 
             if agent_config and shared_state is not None:
@@ -1536,10 +2499,21 @@ class AgentService:
                 (debug_options or {}).get("resource_scope"),
             )
 
-            runtime_model_info = await resolve_runtime_model_info(
+            runtime_model_info = await self._resolve_runtime_model_info_safe(
                 config=agent_config,
                 debug_options=debug_options,
             )
+            synthesis_runtime_model_info = None
+            synthesis_model_name = str(
+                getattr(agent_config, "synthesis_model_name", "") or ""
+            ).strip()
+            if synthesis_model_name:
+                synthesis_runtime_model_info = await self._resolve_runtime_model_info_safe(
+                    config=agent_config,
+                    debug_options=debug_options,
+                    model_override=synthesis_model_name,
+                    phase="synthesis",
+                )
             if looks_like_current_model_query(user_query):
                 response = build_current_model_answer(runtime_model_info)
                 agent_config.model_name = runtime_model_info.configured_model
@@ -1568,6 +2542,32 @@ class AgentService:
                         )
                     )
                 return
+
+            messages = await self._rebuild_context_for_resolved_model(
+                messages=messages,
+                runtime_model_info=runtime_model_info,
+                conversation_id=conversation_id,
+                user_info=user_info,
+                agent_id=str(getattr(agent_config, "agent_id", "") or "") or None,
+                agent_name=getattr(agent_config, "agent_name", None),
+                version_id=None,
+                shared_state=shared_state,
+                synthesis_runtime_model_info=synthesis_runtime_model_info,
+            )
+            final_context_event = (shared_state or {}).pop(
+                "context_final_compaction_event", None
+            )
+            if final_context_event:
+                yield final_context_event
+
+            context_history_budget = (shared_state or {}).get(
+                "context_history_budget"
+            )
+            runtime_context_metadata = await self._runtime_context_metadata(
+                runtime_model_info,
+                history_budget=context_history_budget,
+                synthesis_runtime_model_info=synthesis_runtime_model_info,
+            )
 
             direct_agent_selection = bool(agent_id or agent_name or version_id)
             if route_details is not None:
@@ -1686,7 +2686,7 @@ class AgentService:
                 authorized_attachment_paths=self._authorized_attachment_paths(messages),
                 current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                 trace_buffer=trace_buffer,
-                runtime_model_info=runtime_model_info.public_dict(),
+                runtime_model_info=runtime_context_metadata,
             )
 
             # 2. Inject Active Skills
@@ -1733,7 +2733,7 @@ class AgentService:
                     current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                     require_explicit_dataset=True,
                     trace_buffer=trace_buffer,
-                    runtime_model_info=runtime_model_info.public_dict(),
+                    runtime_model_info=runtime_context_metadata,
                 )
 
             # Prompt inventory must match the tools that the selected executor
@@ -1998,6 +2998,12 @@ class AgentService:
                 if callable(resolve_has_data_output):
                     has_data_output = bool(resolve_has_data_output())
 
+                # A 项：本轮工具调用元数据转录，供跨轮持久化（独立字段，不污染 assistant 展示内容）
+                tool_run_text = None
+                resolve_tool_run_text = getattr(executor, "resolve_tool_run_text", None)
+                if callable(resolve_tool_run_text):
+                    tool_run_text = resolve_tool_run_text() or None
+
             # --- Empty Response Fallback ---
             if (
                 execution_status == "success"
@@ -2055,24 +3061,29 @@ class AgentService:
             if conversation_id and full_response_content:
                 u_id = user_info.get("user_id") if user_info else None
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
-                asyncio.create_task(memory_service.add_message(
-                    u_id,
-                    conversation_id,
-                    "assistant",
-                    full_response_content,
-                    trace_id=trace_id,
-                    agent_name=handled_by,
-                    agent_type=_public_agent_type(agent_config),
-                    agent_display_name=(getattr(agent_config, "agent_display_name", None) or None),
-                    prompt_tokens=p_tokens,
-                    completion_tokens=c_tokens,
-                    total_tokens=t_tokens,
-                    has_data_output=has_data_output or None,
-                    reasoning_content=full_reasoning_content or None,
-                    process_timeline=_final_process_timeline(
-                        (shared_state or {}).get("process_timeline")
-                    ),
-                ))
+                _schedule_post_process(
+                    _persist_assistant_message_and_summary(
+                        user_id=u_id,
+                        conversation_id=conversation_id,
+                        content=full_response_content,
+                        trace_id=trace_id,
+                        agent_name=handled_by,
+                        agent_type=_public_agent_type(agent_config),
+                        agent_display_name=(
+                            getattr(agent_config, "agent_display_name", None) or None
+                        ),
+                        prompt_tokens=p_tokens,
+                        completion_tokens=c_tokens,
+                        total_tokens=t_tokens,
+                        has_data_output=has_data_output or None,
+                        reasoning_content=full_reasoning_content or None,
+                        process_timeline=_final_process_timeline(
+                            (shared_state or {}).get("process_timeline")
+                        ),
+                        tool_run_text=tool_run_text,
+                        merge_summary=execution_status == "success",
+                    )
+                )
 
         except asyncio.CancelledError:
             execution_status = "cancelled"
@@ -2114,23 +3125,6 @@ class AgentService:
                     _audit_cancelled_run,
                     name=f"audit-run-{trace_id}",
                 )
-
-            if (
-                conversation_id
-                and execution_status == "success"
-                and full_response_content
-                and user_info
-                and user_info.get("user_id")
-            ):
-                from app.services.ai.session_summary_service import SessionSummaryService
-                u_id = user_info.get("user_id")
-                asyncio.create_task(
-                    SessionSummaryService.merge_session_summary(
-                        str(u_id), conversation_id, full_response_content
-                    )
-                )
-
-
 
     async def chat_completion(
         self,
@@ -2332,21 +3326,32 @@ class AgentService:
         if conversation_id and full_response_content:
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
-            asyncio.create_task(memory_service.add_message(
-                u_id,
-                conversation_id,
-                "assistant",
-                full_response_content,
-                trace_id=pending.trace_id,
-                agent_name=handled_by,
-                agent_type=_public_agent_type(agent_config),
-                agent_display_name=(getattr(agent_config, "agent_display_name", None) or handled_by),
-                prompt_tokens=p_tokens,
-                completion_tokens=c_tokens,
-                total_tokens=t_tokens,
-                reasoning_content=full_reasoning_content or None,
-                process_timeline=_final_process_timeline(process_timeline_state),
-            ))
+            resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
+            tool_run_text = (
+                resolve_tool_run_text() or None
+                if callable(resolve_tool_run_text)
+                else None
+            )
+            _schedule_post_process(
+                _persist_assistant_message_and_summary(
+                    user_id=u_id,
+                    conversation_id=conversation_id,
+                    content=full_response_content,
+                    trace_id=pending.trace_id,
+                    agent_name=handled_by,
+                    agent_type=_public_agent_type(agent_config),
+                    agent_display_name=(
+                        getattr(agent_config, "agent_display_name", None) or handled_by
+                    ),
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens,
+                    total_tokens=t_tokens,
+                    reasoning_content=full_reasoning_content or None,
+                    process_timeline=_final_process_timeline(process_timeline_state),
+                    tool_run_text=tool_run_text,
+                    merge_summary=execution_status == "success",
+                )
+            )
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
         asyncio.create_task(AuditManager.log_transaction(
@@ -2363,20 +3368,6 @@ class AgentService:
             process_timeline=_final_process_timeline(process_timeline_state),
         ))
 
-        if (
-            conversation_id
-            and execution_status == "success"
-            and full_response_content
-            and user_info
-            and user_info.get("user_id")
-        ):
-            from app.services.ai.session_summary_service import SessionSummaryService
-            asyncio.create_task(
-                SessionSummaryService.merge_session_summary(
-                    str(user_info.get("user_id")), conversation_id, full_response_content
-                )
-            )
-
     async def _restore_runner_execution_context(
         self,
         runner: Any,
@@ -2388,7 +3379,13 @@ class AgentService:
         effective_user_info = user_info or getattr(runner, "user_info", None)
         if effective_user_info and getattr(runner, "config", None) is not None:
             from app.services.ai.context_manager import AgentContextManager
-            runtime_model_info = await resolve_runtime_model_info(config=runner.config)
+            runtime_model_info = await self._resolve_runtime_model_info_safe(
+                config=runner.config,
+                debug_options=dict(getattr(runner, "debug_options", {}) or {}),
+            )
+            runtime_context_metadata = await self._runtime_context_metadata(
+                runtime_model_info
+            )
 
             await AgentContextManager.setup_context(
                 config=runner.config,
@@ -2400,7 +3397,7 @@ class AgentService:
                     or pending.snapshot.conversation_id
                 ),
                 trace_buffer=getattr(runner, "trace_buffer", None) or [],
-                runtime_model_info=runtime_model_info.public_dict(),
+                runtime_model_info=runtime_context_metadata,
             )
             return
         if hasattr(runner, "_ensure_agent_context"):
@@ -2593,21 +3590,32 @@ class AgentService:
         if conversation_id and full_response_content:
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
-            asyncio.create_task(memory_service.add_message(
-                u_id,
-                conversation_id,
-                "assistant",
-                full_response_content,
-                trace_id=pending.trace_id,
-                agent_name=handled_by,
-                agent_type=_public_agent_type(agent_config),
-                agent_display_name=(getattr(agent_config, "agent_display_name", None) or handled_by),
-                prompt_tokens=p_tokens,
-                completion_tokens=c_tokens,
-                total_tokens=t_tokens,
-                reasoning_content=full_reasoning_content or None,
-                process_timeline=_final_process_timeline(process_timeline_state),
-            ))
+            resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
+            tool_run_text = (
+                resolve_tool_run_text() or None
+                if callable(resolve_tool_run_text)
+                else None
+            )
+            _schedule_post_process(
+                _persist_assistant_message_and_summary(
+                    user_id=u_id,
+                    conversation_id=conversation_id,
+                    content=full_response_content,
+                    trace_id=pending.trace_id,
+                    agent_name=handled_by,
+                    agent_type=_public_agent_type(agent_config),
+                    agent_display_name=(
+                        getattr(agent_config, "agent_display_name", None) or handled_by
+                    ),
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens,
+                    total_tokens=t_tokens,
+                    reasoning_content=full_reasoning_content or None,
+                    process_timeline=_final_process_timeline(process_timeline_state),
+                    tool_run_text=tool_run_text,
+                    merge_summary=execution_status == "success",
+                )
+            )
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
         asyncio.create_task(AuditManager.log_transaction(

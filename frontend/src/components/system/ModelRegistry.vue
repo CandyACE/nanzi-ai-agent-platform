@@ -381,6 +381,14 @@ const testModel = async (model: AIModel) => {
     }
 }
 
+const normalizeOptionalInt = (val: any): number | null => {
+    if (val === null || val === undefined || val === '' || (typeof val === 'number' && isNaN(val))) {
+        return null
+    }
+    const parsed = parseInt(String(val), 10)
+    return isNaN(parsed) || parsed <= 0 ? null : parsed
+}
+
 const testCurrentModel = async () => {
     const modelId = String(modelForm.value.model_id || '').trim()
     const modelType = String(modelForm.value.type || '')
@@ -396,8 +404,8 @@ const testCurrentModel = async () => {
             model_id: modelId,
             api_base_url: modelForm.value.api_base_url,
             api_key: modelForm.value.api_key,
-            context_size: modelForm.value.context_size ?? null,
-            max_output_tokens: modelForm.value.max_output_tokens ?? null,
+            context_size: normalizeOptionalInt(modelForm.value.context_size),
+            max_output_tokens: normalizeOptionalInt(modelForm.value.max_output_tokens),
             model_config_id: modelForm.value.id,
         })
         if (response.data.status === 'success') {
@@ -466,8 +474,8 @@ const saveModel = async () => {
             name: modelForm.value.name,
             model_id: modelForm.value.model_id,
             api_base_url: modelForm.value.api_base_url,
-            context_size: modelForm.value.context_size ?? null,
-            max_output_tokens: modelForm.value.max_output_tokens ?? null,
+            context_size: normalizeOptionalInt(modelForm.value.context_size),
+            max_output_tokens: normalizeOptionalInt(modelForm.value.max_output_tokens),
             thinking_enable: modelForm.value.thinking_enable,
             thinking_only: modelForm.value.thinking_only,
             allow_disable_thinking: modelForm.value.allow_disable_thinking,

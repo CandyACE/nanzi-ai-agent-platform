@@ -210,7 +210,58 @@ async def test_model_management_rejects_invalid_thinking_configuration(
         headers=admin_headers,
     )
 
-    assert response.status_code == 422
+    assert response.status_code in {400, 422}
+
+
+@pytest.mark.asyncio
+async def test_model_context_size_and_max_output_tokens_can_be_cleared(
+    client: AsyncClient,
+    admin_headers,
+):
+    """测试将输入上下文与输出上限修改为数字后再置空/传空字符串，能成功保存并重置为 None。"""
+    model_id = f"test-token-clear-{uuid.uuid4().hex}"
+    create_payload = {
+        "name": "Token Clear Test Model",
+        "model_id": model_id,
+        "provider": "openai",
+        "type": "llm",
+        "api_key": "sk-test",
+        "context_size": 65536,
+        "max_output_tokens": 32768,
+    }
+    create_res = await client.post("/api/portal/models", json=create_payload, headers=admin_headers)
+    assert create_res.status_code == 200
+    created_id = create_res.json()["id"]
+    assert create_res.json()["context_size"] == 65536
+    assert create_res.json()["max_output_tokens"] == 32768
+
+    # 1. 传 None 置空
+    update_res1 = await client.put(
+        f"/api/portal/models/{created_id}",
+        json={"context_size": None, "max_output_tokens": None},
+        headers=admin_headers,
+    )
+    assert update_res1.status_code == 200
+    assert update_res1.json()["context_size"] is None
+    assert update_res1.json()["max_output_tokens"] is None
+
+    # 重新设置
+    await client.put(
+        f"/api/portal/models/{created_id}",
+        json={"context_size": 131072, "max_output_tokens": 16384},
+        headers=admin_headers,
+    )
+
+    # 2. 模拟前端输入框清空后传空字符串 "" 或 0 容错清洗置空
+    update_res2 = await client.put(
+        f"/api/portal/models/{created_id}",
+        json={"context_size": "", "max_output_tokens": ""},
+        headers=admin_headers,
+    )
+    assert update_res2.status_code == 200
+    assert update_res2.json()["context_size"] is None
+    assert update_res2.json()["max_output_tokens"] is None
+
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,12 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Protocol
 logger = logging.getLogger(__name__)
 
 
+def _get_env_once():
+    from app.utils.env import get_env
+
+    return get_env()
+
+
 class PendingInterruptHost(Protocol):
     trace_id: str
     conversation_id: str | None
@@ -34,6 +40,7 @@ def new_native_stream_state(
         "content_emitted": False,
         "used_tools": False,
         "synthesis_log_emitted": False,
+        "bash_env_emitted": False,
         "full_content": "",
         "pending_reply_text": "",
         "pending_reply_emitted": False,
@@ -409,6 +416,9 @@ async def map_standard_agentscope_event(
             "details": "参数: {}",
             "status": "pending",
         }
+        if tool_name == "Bash" and not state.get("bash_env_emitted"):
+            state["bash_env_emitted"] = True
+            yield {"type": "bash_env", "env": _get_env_once()}
         return
 
     if event_type == "TOOL_CALL_DELTA":

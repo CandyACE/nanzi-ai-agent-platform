@@ -1227,8 +1227,20 @@
         @dismiss-ltm="activeLtmPreference = null"
       >
         <template #banner>
-          <div v-if="activeTodoTimeline" class="mx-3 mt-2">
-            <ChatTodoCard :timeline="activeTodoTimeline" />
+          <div class="mx-3 mt-2">
+            <div v-if="activeTodoTimeline">
+              <ChatTodoCard :timeline="activeTodoTimeline" />
+            </div>
+            <div class="mt-2">
+              <Transition name="bash-banner-fade">
+                <BashEnvBanner
+                  v-if="showBashBanner"
+                  :env="bashBannerEnv!"
+                  @dismiss="bashBannerDismissed = true"
+                  @ignore="handleIgnoreBashBanner"
+                />
+              </Transition>
+            </div>
           </div>
         </template>
       </ChatInput>
@@ -2110,6 +2122,7 @@ import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
+import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -2734,6 +2747,29 @@ const closeMessageArtifacts = () => {
   artifactsOpenMsgId.value = "";
 };
 const isProcessing = ref(false);
+const bashBannerEnv = ref<"host" | "docker" | null>(null);
+const bashBannerDismissed = ref(false);
+const showBashBanner = computed(
+  () => bashBannerEnv.value !== null && !bashBannerDismissed.value && config.showBashBanner
+);
+const handleBashEnvEvent = (env: "host" | "docker") => {
+  bashBannerEnv.value = env;
+  bashBannerDismissed.value = false;
+};
+/** 统一开关 Bash 横幅提示：写入 config 并持久化到 localStorage（1=关，0=开） */
+const setBashBannerVisible = (visible: boolean) => {
+  config.showBashBanner = visible;
+  localStorage.setItem("bash_env_banner_ignored", visible ? "0" : "1");
+  bashBannerEnv.value = null;
+  bashBannerDismissed.value = false;
+  showToast(
+    visible ? "Bash 运行环境横幅提示已开启" : "Bash 运行环境横幅提示已关闭",
+    visible ? "success" : "info",
+  );
+};
+const handleIgnoreBashBanner = () => {
+  setBashBannerVisible(false);
+};
 const activeTodoTimeline = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const msg = messages.value[i];
@@ -2775,6 +2811,8 @@ const config = reactive({
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: true,
+  /** Bash 运行环境横幅提示开关（可在设置面板中切换，localStorage 持久化） */
+  showBashBanner: localStorage.getItem("bash_env_banner_ignored") !== "1",
 });
 type BrowserApprovalMode = "guarded" | "autopilot";
 const browserPanelVisible = ref(false);
@@ -6858,7 +6896,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
 
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
-  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream, messages.value)) {
+  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {
     if (data.type === "error") {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
@@ -7378,7 +7416,7 @@ const sendMessageInternal = async () => {
             }
           } else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
             // Additive ChatBI evidence event; answer content stays unchanged.
-          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) {
+          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {
             if (
               (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
               && thoughtTimer
@@ -7468,7 +7506,7 @@ const sendMessageInternal = async () => {
         applyStreamTraceId(agentMsg.value, data);
         if (data.type === "log") addEmbedLogFromStream(agentMsg.value, data);
         else if (mergeStreamCitations(agentMsg.value, data)) continue;
-        else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) continue;
+        else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) continue;
         else if (data.content) appendAssistantBodyDelta(agentMsg.value, sanitizeStreamContent(String(data.content)));
       } catch (e) {
         console.error("Failed to parse final SSE event:", dataStr, e);
@@ -7482,6 +7520,8 @@ const sendMessageInternal = async () => {
     }
   } finally {
     isProcessing.value = false;
+    bashBannerEnv.value = null;
+    bashBannerDismissed.value = false;
     agentMsg.value.isThinking = false;
     void refreshQuota();
     void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
@@ -7804,6 +7844,18 @@ onUnmounted(() => {
 .slide-fade-leave-to {
   opacity: 0;
   transform: translateY(-5px);
+}
+.bash-banner-fade-enter-active,
+.bash-banner-fade-leave-active {
+  transition: opacity 0.28s ease-out, transform 0.28s ease-out;
+}
+.bash-banner-fade-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.bash-banner-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;

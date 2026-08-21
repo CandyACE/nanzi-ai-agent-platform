@@ -169,6 +169,21 @@ const handleSetMessageBorder = (hidden: boolean) => {
     saveAndClose();
 };
 
+const handleSetBashBanner = (visible: boolean) => {
+    if (props.config.showBashBanner === visible) {
+      saveAndClose();
+      return;
+    }
+
+    props.config.showBashBanner = visible;
+    localStorage.setItem("bash_env_banner_ignored", visible ? "0" : "1");
+    showToast(
+      visible ? "Bash 运行环境横幅提示已开启" : "Bash 运行环境横幅提示已关闭",
+      visible ? "success" : "info",
+    );
+    saveAndClose();
+};
+
 const handleSetGrounding = (enabled: boolean) => {
     if (props.config.enableGrounding === enabled) {
       saveAndClose();
@@ -439,6 +454,20 @@ const handleLogout = () => {
                 </div>
               </div>
               <Switch :modelValue="!!config.hideMessageBorder" @update:modelValue="handleSetMessageBorder" class="scale-[0.8] origin-right" />
+            </div>
+
+            <!-- Bash 运行环境横幅提示 -->
+            <div class="flex items-start justify-between py-1">
+              <div class="flex items-start space-x-2.5 pr-2">
+                <div class="mt-0.5 text-gray-400 dark:text-gray-500 shrink-0">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9h8M8 13h5M8 17h8M4 4h16v16H4z" /></svg>
+                </div>
+                <div>
+                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">Bash 运行环境横幅提示</h5>
+                  <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">输入框上方提示 Bash 运行在宿主机或容器沙箱</p>
+                </div>
+              </div>
+              <Switch :modelValue="!!config.showBashBanner" @update:modelValue="handleSetBashBanner" class="scale-[0.8] origin-right" />
             </div>
           </div>
 
