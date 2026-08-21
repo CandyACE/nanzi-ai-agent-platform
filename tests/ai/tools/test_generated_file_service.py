@@ -1,9 +1,16 @@
 from pathlib import Path
+from datetime import timedelta
 
 import pytest
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_generated_file_default_ttl_is_one_week():
+    from app.services.ai.tools.generated_file_service import DEFAULT_TTL
+
+    assert DEFAULT_TTL == timedelta(days=7)
 
 
 def test_publish_generates_private_artifact_and_resolves_matching_token(tmp_path, monkeypatch):

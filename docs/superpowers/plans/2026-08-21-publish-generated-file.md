@@ -82,3 +82,8 @@
 - [x] Prefer the persisted system setting at runtime, with `APP_PUBLIC_URL` retained as a compatibility fallback.
 - [x] Add the General Settings input, ordering, and inline setup example.
 - [x] Verify the system-config contract and frontend type checking.
+
+### Task 7: Extend the default download-link lifetime
+
+- [x] Change the shared `DEFAULT_TTL` from 24 hours to 7 days.
+- [x] Add a regression test covering the one-week default.
