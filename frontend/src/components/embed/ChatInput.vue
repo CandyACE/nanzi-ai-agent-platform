@@ -8,10 +8,12 @@ import McpCascadeMenu from "@/components/embed/McpCascadeMenu.vue";
 import type { McpToolItem } from "@/components/embed/McpCascadeMenu.vue";
 import ExpertCascadeMenu from "@/components/embed/ExpertCascadeMenu.vue";
 import type { ReasoningEffort } from "@/api/model";
+import type { ContextCompactionRecord } from "@/api/agent";
+import ContextCompactionTimeline from "@/components/chat/ContextCompactionTimeline.vue";
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
-import { CloudIcon, ComputerDesktopIcon, CubeIcon, ServerIcon } from "@heroicons/vue/24/outline";
+import { CloudIcon, ComputerDesktopIcon, CubeIcon, ServerIcon, XMarkIcon } from "@heroicons/vue/24/outline";
 
 type ApprovalMode = "ask" | "allow" | "deny";
 
@@ -71,6 +73,14 @@ const props = defineProps<{
   availableModels?: ModelOption[];
   /** 当前会话的上下文使用情况，由页面通过只读接口刷新，不依赖 SSE。 */
   contextUsage?: ContextUsage | null;
+  /** 是否存在当前会话，用于显示压缩次数入口，即使当前次数为 0。 */
+  contextCompactionEnabled?: boolean;
+  /** 当前会话已记录的上下文压缩事件。 */
+  contextCompactionRecords?: ContextCompactionRecord[];
+  /** 当前会话压缩记录总数（平台摘录 + AgentScope 内部压缩）。 */
+  contextCompactionCount?: number;
+  contextCompactionLoading?: boolean;
+  contextCompactionError?: boolean;
   thinkingEnableOverride?: boolean | null;
   reasoningEffortOverride?: ReasoningEffort | null;
   activeLtmPreference?: any;
@@ -216,6 +226,7 @@ const emit = defineEmits<{
   (e: 'select-mcp-tool', tools: McpToolItem[]): void;
   (e: 'ignore-ltm'): void;
   (e: 'dismiss-ltm'): void;
+  (e: 'refresh-context-compactions'): void;
 }>();
 
 const formatLtmText = (pref: any): string => {
@@ -798,10 +809,20 @@ const showApprovalMenu = ref(false);
 const showContextUsageDetails = ref(false);
 const contextUsageDetailsRef = ref<HTMLElement | null>(null);
 const contextUsageDetailsPlacement = ref<'above' | 'below'>('above');
+const showContextCompactionDetails = ref(false);
+const contextCompactionDetailsRef = ref<HTMLElement | null>(null);
+const contextCompactionDetailsPlacement = ref<'above' | 'below'>('above');
+
+const contextCompactionCount = computed(() => Math.max(0, Number(props.contextCompactionCount || 0)));
 
 const closeContextUsageDetails = () => {
   showContextUsageDetails.value = false;
   contextUsageDetailsPlacement.value = 'above';
+};
+
+const closeContextCompactionDetails = () => {
+  showContextCompactionDetails.value = false;
+  contextCompactionDetailsPlacement.value = 'above';
 };
 
 const updateContextUsageDetailsPlacement = () => {
@@ -822,6 +843,7 @@ const updateContextUsageDetailsPlacement = () => {
 
 const toggleContextUsageDetails = async () => {
   if (props.isProcessing) return;
+  closeContextCompactionDetails();
   showContextUsageDetails.value = !showContextUsageDetails.value;
   if (showContextUsageDetails.value) {
     await nextTick();
@@ -829,8 +851,38 @@ const toggleContextUsageDetails = async () => {
   }
 };
 
+const updateContextCompactionDetailsPlacement = () => {
+  const container = contextUsageContainerRef.value;
+  const panel = contextCompactionDetailsRef.value;
+  if (!container || !panel) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const panelHeight = panel.getBoundingClientRect().height;
+  const gap = 8;
+  const aboveSpace = containerRect.top;
+  const belowSpace = window.innerHeight - containerRect.bottom;
+  const hasAboveSpace = aboveSpace >= panelHeight + gap;
+  const hasBelowSpace = belowSpace >= panelHeight + gap;
+
+  contextCompactionDetailsPlacement.value = hasAboveSpace || !hasBelowSpace ? 'above' : 'below';
+};
+
+const toggleContextCompactionDetails = async () => {
+  if (props.isProcessing || props.contextCompactionEnabled !== true) return;
+  closeContextUsageDetails();
+  showContextCompactionDetails.value = !showContextCompactionDetails.value;
+  if (showContextCompactionDetails.value) {
+    await nextTick();
+    updateContextCompactionDetailsPlacement();
+  }
+};
+
 watch(() => props.contextUsage?.physical_window, (window) => {
   if (!window) closeContextUsageDetails();
+});
+
+watch(() => props.contextCompactionEnabled, (enabled) => {
+  if (!enabled) closeContextCompactionDetails();
 });
 
 const approvalMenuPosition = reactive({
@@ -898,6 +950,9 @@ const handleGlobalClick = (event: MouseEvent) => {
   if (showContextUsageDetails.value && contextUsageContainerRef.value && !contextUsageContainerRef.value.contains(event.target as Node)) {
     closeContextUsageDetails();
   }
+  if (showContextCompactionDetails.value && contextUsageContainerRef.value && !contextUsageContainerRef.value.contains(event.target as Node)) {
+    closeContextCompactionDetails();
+  }
   if (showApprovalMenu.value) {
     const target = event.target as Node;
     const inTrigger = approvalTriggerWrapperRef.value?.contains(target);
@@ -936,6 +991,10 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
       closeContextUsageDetails();
       return;
     }
+    if (showContextCompactionDetails.value) {
+      closeContextCompactionDetails();
+      return;
+    }
     if (isDrawerExpanded.value) {
       isDrawerExpanded.value = false;
       return;
@@ -969,6 +1028,7 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
 const handleApprovalMenuLayout = () => {
   if (showApprovalMenu.value) updateApprovalMenuPosition();
   if (showContextUsageDetails.value) updateContextUsageDetailsPlacement();
+  if (showContextCompactionDetails.value) updateContextCompactionDetailsPlacement();
   if (showModelDropdown.value && isMobileViewport.value) updateModelDropdownPosition();
   if (showExpertSelector.value && !isMobileViewport.value) updateExpertMenuPosition();
   if (showNewConversationMenu.value) updateNewConversationMenuPosition();
@@ -984,6 +1044,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   closeContextUsageDetails();
+  closeContextCompactionDetails();
   document.removeEventListener('click', handleGlobalClick);
   document.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('resize', handleApprovalMenuLayout);
@@ -1601,6 +1662,29 @@ defineExpose({
                         </div>
                     </div>
                     <div
+                      v-if="contextCompactionEnabled"
+                      class="mt-2 flex items-center justify-between gap-3 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
+                    >
+                        <span class="flex items-center gap-1.5">
+                          <span class="h-1.5 w-1.5 rounded-full bg-violet-400" aria-hidden="true" />
+                          <span>上下文压缩</span>
+                        </span>
+                        <button
+                          type="button"
+                          data-testid="context-compaction-indicator"
+                          class="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-mono text-[9px] font-medium text-violet-700 transition-colors hover:bg-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-800/70 dark:bg-violet-950/30 dark:text-violet-300 dark:hover:bg-violet-950/50"
+                          :aria-expanded="showContextCompactionDetails"
+                          aria-haspopup="dialog"
+                          aria-controls="context-compaction-details"
+                          :aria-label="`上下文压缩 ${contextCompactionCount} 次`"
+                          :title="`上下文压缩 ${contextCompactionCount} 次`"
+                          :disabled="isProcessing"
+                          @click.stop="toggleContextCompactionDetails"
+                        >
+                          压缩 {{ contextCompactionCount }} 次
+                        </button>
+                    </div>
+                    <div
                       v-if="sandboxPolicyLabel"
                       class="mt-2 flex items-center justify-between gap-2 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
                     >
@@ -1614,6 +1698,45 @@ defineExpose({
                         >
                           {{ sandboxPolicyLabel }}
                         </span>
+                    </div>
+                </div>
+
+                <div
+                  v-if="showContextCompactionDetails"
+                  ref="contextCompactionDetailsRef"
+                  id="context-compaction-details"
+                  data-testid="context-compaction-details"
+                  role="dialog"
+                  aria-label="上下文压缩记录"
+                  aria-live="polite"
+                  class="absolute right-0 z-40 h-[min(70vh,32rem)] w-[min(90vw,30rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-violet-100 bg-white/95 text-[10px] shadow-xl dark:border-violet-900/60 dark:bg-gray-800/95"
+                  :class="contextCompactionDetailsPlacement === 'above'
+                    ? 'bottom-[calc(100%+0.5rem)]'
+                    : 'top-[calc(100%+0.5rem)]'"
+                  @click.stop
+                >
+                    <div class="flex h-full flex-col">
+                      <div class="flex shrink-0 items-center justify-between border-b border-violet-100 px-4 py-2 text-xs font-semibold text-gray-600 dark:border-violet-900/60 dark:text-gray-300">
+                        <span>上下文压缩记录</span>
+                        <button
+                          type="button"
+                          data-testid="context-compaction-close"
+                          class="rounded-md p-1 text-gray-400 transition-colors hover:bg-violet-50 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          aria-label="关闭上下文压缩记录"
+                          title="关闭"
+                          @click="closeContextCompactionDetails"
+                        >
+                          <XMarkIcon class="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div class="min-h-0 flex-1">
+                        <ContextCompactionTimeline
+                          :records="contextCompactionRecords || []"
+                          :loading="contextCompactionLoading"
+                          :error="contextCompactionError"
+                          @refresh="emit('refresh-context-compactions')"
+                        />
+                      </div>
                     </div>
                 </div>
             </div>

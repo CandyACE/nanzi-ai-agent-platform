@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.ai.agent_service import agent_service
+from app.services.ai.context_compaction_log_service import context_compaction_log_service
 from app.services.ai.context_usage import estimate_context_usage
 from app.services.ai.export_service import ExportService
 from app.services.config_service import ConfigService
@@ -885,6 +886,74 @@ class ModelCallStatDetail(BaseModel):
 
 class ModelCallStatsResponse(BaseModel):
     stats: List[ModelCallStatDetail] = Field(..., description="大模型调用指标列表")
+
+
+class ContextCompactionRecord(BaseModel):
+    event_id: str
+    conversation_id: str
+    event_type: str
+    source: str
+    stage: str
+    occurred_at: str
+    title: str = "上下文已压缩"
+    status: str = "success"
+    preview: str = ""
+    trace_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    model_name: Optional[str] = None
+    dropped: Optional[int] = None
+    kept: Optional[int] = None
+    origin: Optional[str] = None
+    token_used: Optional[int] = None
+    token_budget: Optional[int] = None
+    history_budget: Optional[int] = None
+    physical_window: Optional[int] = None
+    completion_reserve_tokens: Optional[int] = None
+    request_input_budget: Optional[int] = None
+    overhead_reservation_tokens: Optional[int] = None
+    prompt_overhead_reservation_tokens: Optional[int] = None
+    summary_chars: Optional[int] = None
+
+
+class ContextCompactionsResponse(BaseModel):
+    records: List[ContextCompactionRecord] = Field(default_factory=list)
+    count: int = 0
+    retention_seconds: int = context_compaction_log_service.TTL_SECONDS
+
+
+@router.get(
+    "/conversation/{conversation_id}/context_compactions",
+    response_model=StandardResponse[ContextCompactionsResponse],
+    summary="获取会话上下文压缩时间线",
+    description="读取当前用户当前会话最近七天的上下文压缩结构化记录。",
+)
+async def get_context_compactions(
+    conversation_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    raw_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
+    if raw_user_id is None or not str(raw_user_id).strip():
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+
+    raw_records = await context_compaction_log_service.list_records(
+        str(raw_user_id), conversation_id
+    )
+    records: List[ContextCompactionRecord] = []
+    for raw_record in raw_records:
+        try:
+            records.append(ContextCompactionRecord.model_validate(raw_record))
+        except Exception:
+            logger.warning(
+                "Skip invalid context compaction API record conversation=%s",
+                conversation_id,
+            )
+
+    return StandardResponse(
+        data=ContextCompactionsResponse(
+            records=records,
+            count=len(records),
+        )
+    )
 
 
 @router.get("/conversation/{conversation_id}/model_calls",

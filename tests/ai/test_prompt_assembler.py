@@ -82,6 +82,17 @@ def test_platform_prompt_exposes_explicit_authority_and_safe_meta_contract():
     assert "不得把 SQL、代码或物理表名" in prompt
 
 
+def test_platform_prompt_separates_current_task_from_historical_context():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=[]),
+    )
+
+    assert "最后一条用户消息决定本轮唯一可执行任务" in prompt
+    assert "历史消息、上下文压缩摘要、旧工具计划和旧搜索目标" in prompt
+    assert "只有当前用户明确引用或恢复历史任务时" in prompt
+
+
 def test_platform_prompt_guides_generic_capability_gap_recovery():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,

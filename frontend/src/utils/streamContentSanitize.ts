@@ -10,18 +10,28 @@ const INTERNAL_CONTEXT_BLOCKS = [
   "thought",
   "reasoning",
   "redacted_reasoning",
+  "historical_context",
+  "历史上下文",
 ] as const;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function stripInternalXmlBlocks(content: string, removeUnclosed: boolean): string {
   let text = content;
   for (const name of INTERNAL_CONTEXT_BLOCKS) {
+    const escapedName = escapeRegExp(name);
     const completeBlock = new RegExp(
-      `<\\s*${name}\\b[^>]*>[\\s\\S]*?<\\s*\\/\\s*${name}\\s*>`,
+      `<\\s*${escapedName}(?=[\\s>])[^>]*>[\\s\\S]*?<\\s*\\/\\s*${escapedName}\\s*>`,
       "gi",
     );
     text = text.replace(completeBlock, "");
     if (removeUnclosed) {
-      const unclosedBlock = new RegExp(`<\\s*${name}\\b[^>]*>[\\s\\S]*$`, "gi");
+      const unclosedBlock = new RegExp(
+        `<\\s*${escapedName}(?=[\\s>])[^>]*>[\\s\\S]*$`,
+        "gi",
+      );
       text = text.replace(unclosedBlock, "");
     }
   }

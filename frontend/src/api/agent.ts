@@ -131,7 +131,14 @@ export const agentApi = {
   }) => axios.get<StandardResponse<AgentExecutionHistoryListResponse>>('/api/v1/chat/history', { params }),
 
   // Get chat trace logs
-  getChatTrace: (traceId: string) => axios.get<StandardResponse<any>>(`/api/v1/chat/logs/${traceId}`)
+  getChatTrace: (traceId: string) => axios.get<StandardResponse<any>>(`/api/v1/chat/logs/${traceId}`),
+
+  // Get context compaction timeline for one conversation
+  getContextCompactions: (conversationId: string, config?: { headers?: Record<string, string> }) =>
+    axios.get<StandardResponse<ContextCompactionsResponse>>(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId)}/context_compactions`,
+      config,
+    ),
 }
 
 export interface AgentExecutionHistoryListResponse {
@@ -156,4 +163,37 @@ export interface AgentExecutionHistory {
   created_at: string
   turn_count?: number
   agent_display_name?: string
+}
+
+export interface ContextCompactionRecord {
+  event_id: string
+  conversation_id: string
+  event_type: 'context_summarized' | 'context_compression' | string
+  source: 'platform' | 'agentscope' | string
+  stage: 'pre_route' | 'resolved_model' | 'agent_runtime' | string
+  occurred_at: string
+  title: string
+  status: string
+  preview: string
+  trace_id?: string | null
+  agent_name?: string | null
+  model_name?: string | null
+  dropped?: number | null
+  kept?: number | null
+  origin?: string | null
+  token_used?: number | null
+  token_budget?: number | null
+  history_budget?: number | null
+  physical_window?: number | null
+  completion_reserve_tokens?: number | null
+  request_input_budget?: number | null
+  overhead_reservation_tokens?: number | null
+  prompt_overhead_reservation_tokens?: number | null
+  summary_chars?: number | null
+}
+
+export interface ContextCompactionsResponse {
+  records: ContextCompactionRecord[]
+  count: number
+  retention_seconds: number
 }

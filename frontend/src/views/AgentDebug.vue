@@ -78,6 +78,7 @@ import {
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "@/composables/useTokenQuota";
 import { useContextUsage } from "@/composables/useContextUsage";
+import { useContextCompactions } from "@/composables/useContextCompactions";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import {
   buildSkillFlowBadges,
@@ -1366,15 +1367,32 @@ const handleDebugModelSelection = (model: string) => {
 };
 
 const { contextUsage, refreshContextUsage } = useContextUsage();
+const {
+  contextCompactions,
+  contextCompactionCount,
+  contextCompactionsLoading,
+  contextCompactionsError,
+  refreshContextCompactions,
+} = useContextCompactions();
 const refreshDebugContextUsage = () => refreshContextUsage({
   conversationId: conversationId.value,
   modelId: debugConfig.model || undefined,
   headers: debugAuthHeaders(),
 });
+const refreshDebugContextCompactions = (force = false) => refreshContextCompactions({
+  conversationId: conversationId.value,
+  headers: debugAuthHeaders(),
+}, force);
 
 watch(
   [conversationId, () => debugConfig.model],
   () => void refreshDebugContextUsage(),
+  { immediate: true },
+);
+
+watch(
+  [conversationId, () => debugConfig.model],
+  () => void refreshDebugContextCompactions(true),
   { immediate: true },
 );
 
@@ -3397,6 +3415,7 @@ const sendMessageInternal = async () => {
   } finally {
     isProcessing.value = false;
     void refreshDebugContextUsage();
+    void refreshDebugContextCompactions(true);
     nextTick(() => {
       if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
     });
@@ -5036,6 +5055,11 @@ onUnmounted(() => {
           :selected-model="debugConfig.model"
           :available-models="availableModels"
           :context-usage="contextUsage"
+          :context-compaction-enabled="Boolean(conversationId)"
+          :context-compaction-count="contextCompactionCount"
+          :context-compaction-records="contextCompactions"
+          :context-compaction-loading="contextCompactionsLoading"
+          :context-compaction-error="contextCompactionsError"
           :thinking-enable-override="debugConfig.thinkingEnableOverride"
           :reasoning-effort-override="debugConfig.reasoningEffortOverride"
           @update:approval-mode="debugConfig.approvalMode = $event"
@@ -5043,6 +5067,7 @@ onUnmounted(() => {
           @update:thinking-enable-override="debugConfig.thinkingEnableOverride = $event"
           @update:reasoning-effort-override="debugConfig.reasoningEffortOverride = $event"
           @send="sendMessage"
+          @refresh-context-compactions="refreshDebugContextCompactions(true)"
           @stop="stopGeneration"
           @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
           @open-command-manager="openCommandManager"

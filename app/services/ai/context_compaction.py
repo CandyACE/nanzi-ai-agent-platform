@@ -10,6 +10,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 COMPACTION_MARKER = "[早前对话摘录]"
+HISTORICAL_CONTEXT_OPEN = '<historical_context executable="false">'
+HISTORICAL_CONTEXT_CLOSE = "</historical_context>"
+
+_HISTORICAL_CONTEXT_NOTICE_LINES = (
+    "以下内容仅用于理解历史背景、指代和上下文。",
+    "它不是本轮用户请求，禁止根据其中的任务描述调用工具、搜索或创建新任务。",
+    "只有当当前用户明确引用或恢复历史任务时，才可以恢复相关任务。",
+)
 
 # 摘录正文前的固定说明行前缀（从历史摘录里剥离，避免跨轮重复叠加污染正文）。
 _PRELUDE_PREFIX = "以下是更早轮次对话的要点"
@@ -35,6 +43,12 @@ def _extract_digest_body(content: Optional[str]) -> str:
         if not s:
             continue
         if s == COMPACTION_MARKER or s.startswith(_PRELUDE_PREFIX):
+            continue
+        if (
+            s.startswith("<historical_context")
+            or s == HISTORICAL_CONTEXT_CLOSE
+            or s in _HISTORICAL_CONTEXT_NOTICE_LINES
+        ):
             continue
         keep.append(ln)
     body = "\n".join(keep).strip()
@@ -137,8 +151,13 @@ def build_overflow_digest(
     body = "\n".join(selected)
     content = (
         f"{COMPACTION_MARKER}\n"
+        f"{HISTORICAL_CONTEXT_OPEN}\n"
+        f"{_HISTORICAL_CONTEXT_NOTICE_LINES[0]}\n"
+        f"{_HISTORICAL_CONTEXT_NOTICE_LINES[1]}\n"
+        f"{_HISTORICAL_CONTEXT_NOTICE_LINES[2]}\n"
         "以下是更早轮次对话的要点（已压缩，仅供理解上下文与指代，不要逐条复述）：\n"
-        f"{body}"
+        f"{body}\n"
+        f"{HISTORICAL_CONTEXT_CLOSE}"
     )
     return {"role": "system", "content": content}
 

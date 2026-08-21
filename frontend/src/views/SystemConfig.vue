@@ -2691,6 +2691,9 @@ onMounted(async () => {
                                   {{ preset.label }}
                                 </button>
                              </div>
+                             <p class="mt-2 text-[11px] text-gray-500 leading-relaxed">
+                                系统优先采用当前模型配置的上下文窗口；本配置仅在模型未配置有效上下文大小时作为兜底预算。
+                             </p>
                           </div>
                           <div v-else-if="item.key === 'agent_max_context_messages'">
                              <input

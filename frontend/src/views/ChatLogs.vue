@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
-import { agentApi, type AgentExecutionHistory, type AIAgent } from '../api/agent'
+import {
+  agentApi,
+  type AgentExecutionHistory,
+  type AIAgent,
+  type ContextCompactionRecord,
+} from '../api/agent'
 import {
   ChatBubbleLeftRightIcon,
   FunnelIcon,
@@ -26,6 +31,7 @@ import {
   type ChatTraceDetail,
 } from '@/utils/chatSessionExport'
 import { copyToClipboard } from '@/utils/clipboard'
+import ContextCompactionTimeline from '@/components/chat/ContextCompactionTimeline.vue'
 import {
   formatSubagentTraceSummary,
   normalizeSubagentTraceMeta,
@@ -59,10 +65,15 @@ const filters = ref({
 })
 
 const selectedId = ref<number | string | null>(null)
-const activeDetailTab = ref<'conversation' | 'trace'>('conversation')
+const activeDetailTab = ref<'conversation' | 'trace' | 'context'>('conversation')
 const replyViewMode = ref<'render' | 'source'>('render')
 const traceDetail = ref<any>(null)
 const traceLoading = ref(false)
+const contextCompactions = ref<ContextCompactionRecord[]>([])
+const contextLoading = ref(false)
+const contextError = ref(false)
+const contextLoadedFor = ref('')
+let contextRequestVersion = 0
 const exporting = ref(false)
 
 const selectedLog = computed(
@@ -162,6 +173,36 @@ const loadTrace = async (traceId?: string) => {
     showToast('获取执行链路失败', 'error')
   } finally {
     traceLoading.value = false
+  }
+}
+
+const loadContextCompactions = async (conversationId?: string, force = false) => {
+  const requestVersion = ++contextRequestVersion
+  const id = conversationId?.trim() || ''
+  if (!id) {
+    contextCompactions.value = []
+    contextLoadedFor.value = ''
+    contextError.value = false
+    contextLoading.value = false
+    return
+  }
+  if (!force && contextLoadedFor.value === id && !contextError.value) return
+
+  contextLoading.value = true
+  contextError.value = false
+  try {
+    const res = await agentApi.getContextCompactions(id)
+    if (requestVersion !== contextRequestVersion) return
+    contextCompactions.value = res.data.data.records || []
+    contextLoadedFor.value = id
+  } catch (e) {
+    if (requestVersion !== contextRequestVersion) return
+    console.error('Failed to fetch context compactions', e)
+    contextCompactions.value = []
+    contextLoadedFor.value = ''
+    contextError.value = true
+  } finally {
+    if (requestVersion === contextRequestVersion) contextLoading.value = false
   }
 }
 
@@ -428,6 +469,18 @@ const exportSession = async (log: AgentExecutionHistory) => {
 watch(selectedLog, (log) => {
   replyViewMode.value = 'render'
   void loadTrace(log?.trace_id)
+  contextCompactions.value = []
+  contextLoadedFor.value = ''
+  contextError.value = false
+  if (activeDetailTab.value === 'context') {
+    void loadContextCompactions(log?.conversation_id || undefined)
+  }
+})
+
+watch(activeDetailTab, (tab) => {
+  if (tab === 'context') {
+    void loadContextCompactions(selectedLog.value?.conversation_id || undefined)
+  }
 })
 
 watch([page, pageSize], () => {
@@ -758,6 +811,24 @@ onMounted(() => {
                   {{ traceDetail.steps.length }}
                 </span>
               </button>
+              <button
+                type="button"
+                class="py-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5"
+                :class="activeDetailTab === 'context'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'"
+                @click="activeDetailTab = 'context'"
+              >
+                <ExclamationCircleIcon class="w-4 h-4" />
+                上下文
+                <span
+                  v-if="contextCompactions.length"
+                  class="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none"
+                  :class="activeDetailTab === 'context' ? 'bg-primary/10 text-primary' : 'bg-gray-200/80 text-gray-600'"
+                >
+                  {{ contextCompactions.length }}
+                </span>
+              </button>
             </div>
             <div v-if="activeDetailTab === 'trace' && selectedLog.trace_id" class="flex items-center gap-2">
               <button
@@ -769,6 +840,18 @@ onMounted(() => {
               >
                 <ArrowPathIcon class="w-3.5 h-3.5" :class="{ 'animate-spin': traceLoading }" />
                 刷新链路
+              </button>
+            </div>
+            <div v-else-if="activeDetailTab === 'context'" class="flex items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-primary transition-colors"
+                @click="loadContextCompactions(selectedLog.conversation_id || undefined, true)"
+                :disabled="contextLoading"
+                title="重新加载上下文压缩记录"
+              >
+                <ArrowPathIcon class="w-3.5 h-3.5" :class="{ 'animate-spin': contextLoading }" />
+                刷新上下文
               </button>
             </div>
           </div>
@@ -1084,6 +1167,16 @@ onMounted(() => {
               </div>
             </div>
           </div>
+
+          <!-- Tab 3: Context Compaction Timeline -->
+          <ContextCompactionTimeline
+            v-show="activeDetailTab === 'context'"
+            :records="contextCompactions"
+            :loading="contextLoading"
+            :error="contextError"
+            :show-refresh="false"
+            @refresh="loadContextCompactions(selectedLog.conversation_id || undefined, true)"
+          />
         </template>
 
         <div

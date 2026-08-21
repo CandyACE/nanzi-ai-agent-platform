@@ -1194,6 +1194,11 @@
         :selected-model="config.overrideModel"
         :available-models="availableModels"
         :context-usage="contextUsage"
+        :context-compaction-enabled="Boolean(conversationId)"
+        :context-compaction-count="contextCompactionCount"
+        :context-compaction-records="contextCompactions"
+        :context-compaction-loading="contextCompactionsLoading"
+        :context-compaction-error="contextCompactionsError"
         :thinking-enable-override="thinkingEnableOverride"
         :reasoning-effort-override="reasoningEffortOverride"
         :active-ltm-preference="activeLtmPreference"
@@ -1208,6 +1213,7 @@
         @update:thinking-enable-override="thinkingEnableOverride = $event"
         @update:reasoning-effort-override="reasoningEffortOverride = $event"
         @send="sendMessage"
+        @refresh-context-compactions="refreshEmbedContextCompactions(true)"
         @stop="stopGeneration"
         @toggle-shortcuts="toggleShortcuts"
         @open-command-manager="showAddModal = true"
@@ -2051,6 +2057,7 @@ import { createConversationId } from "@/utils/conversationId";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
 import { useContextUsage } from "@/composables/useContextUsage";
+import { useContextCompactions } from "@/composables/useContextCompactions";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
 import { useDatasetMount } from "@/composables/useDatasetMount";
@@ -3834,15 +3841,32 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
 };
 
 const { contextUsage, refreshContextUsage } = useContextUsage();
+const {
+  contextCompactions,
+  contextCompactionCount,
+  contextCompactionsLoading,
+  contextCompactionsError,
+  refreshContextCompactions,
+} = useContextCompactions();
 const refreshEmbedContextUsage = () => refreshContextUsage({
   conversationId: conversationId.value,
   modelId: config.overrideModel || undefined,
   headers: embedAuthHeaders(),
 });
+const refreshEmbedContextCompactions = (force = false) => refreshContextCompactions({
+  conversationId: conversationId.value,
+  headers: embedAuthHeaders(),
+}, force);
 
 watch(
   [conversationId, () => config.overrideModel, () => config.token],
   () => void refreshEmbedContextUsage(),
+  { immediate: true },
+);
+
+watch(
+  [conversationId, () => config.overrideModel, () => config.token],
+  () => void refreshEmbedContextCompactions(true),
   { immediate: true },
 );
 
@@ -7549,6 +7573,7 @@ const sendMessageInternal = async () => {
     clearStalePendingTimer();
     showStalledPrompt.value = false;
     void refreshEmbedContextUsage();
+    void refreshEmbedContextCompactions(true);
     if (thoughtTimer) clearInterval(thoughtTimer);
     // Final cleanup: stop any remaining log spinners
     finalizeAllPendingStreamLogs(agentMsg.value);

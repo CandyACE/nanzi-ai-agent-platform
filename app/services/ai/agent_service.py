@@ -12,6 +12,7 @@ from app.services.ai.config import AgentConfigProvider, RuntimeModelInfo, resolv
 from app.services.ai.context_manager import AgentContextManager
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
+from app.services.ai.context_compaction_log_service import context_compaction_log_service
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.agent_types import AgentType
 from app.services.ai.prompt_assembler import (
@@ -365,6 +366,41 @@ class AgentService:
         Return a fixed welcome message.
         """
         return AgentServicePrompts.GREETING
+
+    async def _persist_context_compaction_event(
+        self,
+        event: Dict[str, Any],
+        *,
+        user_id: Any,
+        conversation_id: Optional[str],
+        trace_id: Optional[str],
+        source: str,
+        stage: str,
+        agent_name: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ) -> None:
+        """尽力记录压缩事件；Redis 故障不能影响当前 SSE 主链路。"""
+        if not user_id or not conversation_id or not event:
+            return
+        try:
+            await asyncio.wait_for(
+                context_compaction_log_service.append_event(
+                    event=event,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    trace_id=trace_id,
+                    source=source,
+                    stage=stage,
+                    agent_name=agent_name,
+                    model_name=model_name,
+                ),
+                timeout=context_compaction_log_service.APPEND_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.warning(
+                "[AgentService] Failed to persist context compaction event",
+                exc_info=True,
+            )
 
     async def _build_user_context_msg(self, user_info: Dict[str, Any]) -> Dict[str, str]:
         """
@@ -900,6 +936,15 @@ class AgentService:
                         if ctx_event:
                             ctx_event = dict(ctx_event)
                             ctx_event["type"] = "context_summarized"
+                            await self._persist_context_compaction_event(
+                                ctx_event,
+                                user_id=lane_user_id,
+                                conversation_id=conversation_id,
+                                trace_id=trace_id,
+                                source="platform",
+                                stage="pre_route",
+                                agent_name=agent_name,
+                            )
                             yield ctx_event
                         messages = context_history + [user_msg]
                     else:
@@ -940,6 +985,15 @@ class AgentService:
                         if ctx_event:
                             ctx_event = dict(ctx_event)
                             ctx_event["type"] = "context_summarized"
+                            await self._persist_context_compaction_event(
+                                ctx_event,
+                                user_id=lane_user_id,
+                                conversation_id=conversation_id,
+                                trace_id=trace_id,
+                                source="platform",
+                                stage="pre_route",
+                                agent_name=agent_name,
+                            )
                             yield ctx_event
 
                 from app.utils.skill_metadata import enrich_messages_with_skill_meta
@@ -2543,6 +2597,7 @@ class AgentService:
         has_data_output = False
         executor = None
         tool_run_text = None
+        lane_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
 
         try:
             # 1. Resolve and Verify Agent Configuration and Permissions
@@ -2632,6 +2687,16 @@ class AgentService:
                 "context_final_compaction_event", None
             )
             if final_context_event:
+                await self._persist_context_compaction_event(
+                    final_context_event,
+                    user_id=lane_user_id,
+                    conversation_id=conversation_id,
+                    trace_id=trace_id,
+                    source="platform",
+                    stage="resolved_model",
+                    agent_name=getattr(agent_config, "agent_name", None),
+                    model_name=getattr(agent_config, "model_name", None),
+                )
                 yield final_context_event
 
             context_history_budget = (shared_state or {}).get(

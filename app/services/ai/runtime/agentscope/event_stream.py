@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 import time
 import uuid
 from typing import Any, AsyncGenerator, Callable, Dict, List, Protocol
+
+from app.services.ai.context_compaction_log_service import context_compaction_log_service
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +359,39 @@ async def stream_observability_agentscope_events(
         return
 
 
+async def _persist_context_compression_event(
+    event: Dict[str, Any],
+    *,
+    runner: PendingInterruptHost | None,
+    agent_name: str | None,
+) -> None:
+    """在 AgentScope SSE 映射边界记录压缩事件，失败时不影响流。"""
+    if runner is None or not getattr(runner, "conversation_id", None):
+        return
+    user_id_getter = getattr(runner, "_runtime_user_id", None)
+    user_id = user_id_getter() if callable(user_id_getter) else None
+    if not user_id:
+        return
+    try:
+        await asyncio.wait_for(
+            context_compaction_log_service.append_event(
+                event=event,
+                user_id=user_id,
+                conversation_id=runner.conversation_id,
+                trace_id=getattr(runner, "trace_id", None),
+                source="agentscope",
+                stage="agent_runtime",
+                agent_name=agent_name,
+            ),
+            timeout=context_compaction_log_service.APPEND_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.warning(
+            "[AgentScope] Failed to persist context compression event",
+            exc_info=True,
+        )
+
+
 async def _maybe_await_pending_hook(
     hook: Callable[[Dict[str, Any]], Any] | None,
     state: Dict[str, Any],
@@ -388,6 +424,12 @@ async def map_standard_agentscope_event(
             agent=agent,
             agent_name=agent_name,
         ):
+            if chunk.get("type") == "context_compression":
+                await _persist_context_compression_event(
+                    chunk,
+                    runner=runner,
+                    agent_name=agent_name,
+                )
             yield chunk
 
     event_type = str(getattr(event, "type", ""))

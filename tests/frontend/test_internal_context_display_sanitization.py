@@ -47,6 +47,9 @@ return {
   reasoning: strip('前置<reasoning>内部推理</reasoning>正文'),
   redactedReasoning: strip('<redacted_reasoning>已脱敏推理</redacted_reasoning>正文'),
   systemBlock: strip('回答<!-- SYSTEM_BLOCK_START: 当前用户画像 -->内部画像<!-- SYSTEM_BLOCK_END: 当前用户画像 -->结尾'),
+  historical: strip('回答\\n<historical_context executable="false">历史任务：分析国产算力芯片</historical_context>\\n结尾'),
+  historicalChinese: strip('回答\\n<历史上下文 executable="false">历史任务：分析国产算力芯片</历史上下文>\\n结尾'),
+  historicalStream: api.sanitizeStreamContent('<historical_context executable="false">历史任务：分析国产算力芯片</historical_context>结尾'),
   plainMarkers: strip('[本回复由智能体「主助手(Main)」生成]\\n[早前对话摘录]\\n[上一轮可复用工具结果]\\n回答'),
   sqlPlan: strip('执行计划：<sql_plan>{"goal":"统计"}</sql_plan>'),
 };
@@ -59,6 +62,9 @@ return {
     assert result["reasoning"] == "前置正文"
     assert result["redactedReasoning"] == "正文"
     assert result["systemBlock"] == "回答结尾"
+    assert result["historical"] == "回答\n\n结尾"
+    assert result["historicalChinese"] == "回答\n\n结尾"
+    assert result["historicalStream"] == "结尾"
     assert result["plainMarkers"] == "回答"
     assert result["sqlPlan"] == '执行计划：<sql_plan>{"goal":"统计"}</sql_plan>'
 
@@ -70,8 +76,9 @@ def test_unclosed_internal_block_is_hidden_from_the_visible_tail():
  return {
    xml: api.stripInternalContextBlocks('正常回答\\n<backend_tool_run_summary>尚未闭合的内部内容'),
    system: api.stripInternalContextBlocks('正常回答\\n<!-- SYSTEM_BLOCK_START: 当前用户画像 -->\\n内部画像'),
+   historical: api.stripInternalContextBlocks('正常回答\\n<历史上下文 executable="false">尚未闭合的历史任务'),
  };
 """,
     )
 
-    assert result == {"xml": "正常回答", "system": "正常回答"}
+    assert result == {"xml": "正常回答", "system": "正常回答", "historical": "正常回答"}
