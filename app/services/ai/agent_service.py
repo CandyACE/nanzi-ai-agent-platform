@@ -1174,19 +1174,8 @@ class AgentService:
                 resolution_status="registry_unresolved",
             )
 
-    async def _resolve_history_context_budget(self, runtime_max_tokens: int) -> int:
-        """从模型窗口预算中扣除「非历史 overhead」，返回历史消息可用的 token 配额。
-
-        最终请求的实际组成远不止历史消息：还包括系统提示（含 grounding 安全前缀、
-        路由 hint、会话产物、时间锚点）、工具 schema、注入的技能提示、路由注入内容，
-        以及本轮用户消息。这些由 runner 在 ``agent_service`` 之外独立组装，
-        ``_window_for_context`` 无法对其做 token 预算，若不预留配额，历史消息会把
-        模型窗口占满，导致最终请求超窗被模型端截断。
-
-        因此这里按配置 ``agent_context_overhead_headroom_tokens``（默认 8192）预留
-        一段 overhead 配额，剩下的才作为历史可用预算；并保证历史至少保留窗口的
-        1/3，避免小窗口模型被 overhead 吃干导致历史几乎全被压缩。
-        """
+    async def _resolve_context_overhead_tokens(self) -> int:
+        """读取系统提示、工具 schema 等非历史内容的预留预算。"""
         from app.services.config_service import ConfigService
 
         try:
@@ -1196,8 +1185,37 @@ class AgentService:
             overhead = int(overhead_raw)
         except (TypeError, ValueError):
             overhead = 8192
-        if overhead < 0:
-            overhead = 0
+        return max(0, overhead)
+
+    async def _resolve_history_context_budget(
+        self,
+        runtime_max_tokens: int,
+        *,
+        max_output_tokens: Optional[int] = None,
+    ) -> int:
+        """从模型窗口预算中扣除输出和「非历史 overhead」。
+
+        最终请求的实际组成远不止历史消息：还包括系统提示（含 grounding 安全前缀、
+        路由 hint、会话产物、时间锚点）、工具 schema、注入的技能提示、路由注入内容，
+        以及本轮用户消息。这些由 runner 在 ``agent_service`` 之外独立组装，
+        ``_window_for_context`` 无法对其做 token 预算，若不预留配额，历史消息会把
+        模型窗口占满，导致最终请求超窗被模型端截断。
+
+        如果模型配置了 ``max_output_tokens``，它同样属于供应商的总上下文预算，必须
+        在历史截断前先扣除。否则 64K 上下文 + 32K 输出时，平台仍可能把输入送到
+        57K，最终被供应商按 ``input + completion`` 拒绝。
+
+        未配置输出上限时保持旧的 1/3 最低历史保留策略；配置了输出上限时以总预算安全
+        优先，不能为了保留 1/3 历史而重新侵占输出或 overhead 的预留空间。
+        """
+        runtime_max_tokens = max(1, int(runtime_max_tokens))
+        overhead = await self._resolve_context_overhead_tokens()
+        try:
+            completion_reserve = int(max_output_tokens or 0)
+        except (TypeError, ValueError):
+            completion_reserve = 0
+        if completion_reserve > 0:
+            return max(1, runtime_max_tokens - completion_reserve - overhead)
         return max(
             runtime_max_tokens - overhead,
             max(1, runtime_max_tokens // 3),
@@ -1220,7 +1238,10 @@ class AgentService:
                 resolved = 0
             if resolved > 0:
                 runtime_max_tokens = resolved
-        return await self._resolve_history_context_budget(runtime_max_tokens)
+        return await self._resolve_history_context_budget(
+            runtime_max_tokens,
+            max_output_tokens=runtime_model_info.max_output_tokens,
+        )
 
     @staticmethod
     def _configured_model_window(runtime_model_info: RuntimeModelInfo) -> int:
@@ -1232,6 +1253,14 @@ class AgentService:
             return 0
         try:
             value = int(runtime_model_info.context_size or 0)
+        except (TypeError, ValueError):
+            value = 0
+        return value if value > 0 else 0
+
+    @staticmethod
+    def _configured_model_output(runtime_model_info: RuntimeModelInfo) -> int:
+        try:
+            value = int(runtime_model_info.max_output_tokens or 0)
         except (TypeError, ValueError):
             value = 0
         return value if value > 0 else 0
@@ -1256,6 +1285,28 @@ class AgentService:
             if value > 0
         ]
         physical_window = min(windows) if windows else fallback_window
+        model_pairs = [
+            (
+                self._configured_model_window(runtime_model_info) or fallback_window,
+                self._configured_model_output(runtime_model_info),
+            )
+        ]
+        if synthesis_runtime_model_info is not None:
+            model_pairs.append(
+                (
+                    self._configured_model_window(synthesis_runtime_model_info)
+                    or fallback_window,
+                    self._configured_model_output(synthesis_runtime_model_info),
+                )
+            )
+        completion_reserves = [
+            output for window, output in model_pairs if window > 0 and output > 0
+        ]
+        request_input_budgets = [
+            max(1, window - output)
+            for window, output in model_pairs
+            if window > 0 and output > 0
+        ]
         if history_budget is None:
             history_budget = await self._history_budget_for_runtime_model_info(
                 runtime_model_info
@@ -1267,10 +1318,17 @@ class AgentService:
                     synthesis_runtime_model_info
                 ),
             )
+        prompt_overhead = await self._resolve_context_overhead_tokens()
+        completion_reserve = max(completion_reserves, default=0)
+        request_input_budget = min(request_input_budgets, default=physical_window)
         return {
             **runtime_model_info.public_dict(),
             "physical_window": physical_window,
             "history_budget": history_budget,
+            "completion_reserve_tokens": completion_reserve,
+            "request_input_budget": request_input_budget,
+            "prompt_overhead_reservation_tokens": prompt_overhead,
+            # 兼容旧字段：现在表示历史之外的总预留（输出 + prompt/tool overhead）。
             "overhead_reservation_tokens": max(0, physical_window - history_budget),
         }
 
@@ -1353,6 +1411,12 @@ class AgentService:
             if candidate_windows
             else await self._resolve_pre_route_context_budget()
         )
+        completion_reserve = max(
+            self._configured_model_output(runtime_model_info),
+            self._configured_model_output(synthesis_runtime_model_info)
+            if synthesis_runtime_model_info is not None
+            else 0,
+        )
         final_ctx_event: dict = {}
         compacted = await self._maybe_compact_overflow(
             _history_messages_for_context(source_history),
@@ -1366,6 +1430,7 @@ class AgentService:
             enable_llm_summary=True,
             out=final_ctx_event,
             physical_window=physical_window,
+            completion_reserve_tokens=completion_reserve,
         )
         shared_state["context_finalized_model"] = model_key
         shared_state["context_history_budget"] = target_history_budget
@@ -1391,6 +1456,7 @@ class AgentService:
         token_budget: Optional[int] = None,
         enable_llm_summary: bool = True,
         physical_window: Optional[int] = None,
+        completion_reserve_tokens: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """超出上下文窗口时，把被丢弃的旧消息压缩成一条 system 摘录注入窗口最前。
 
@@ -1519,6 +1585,7 @@ class AgentService:
                     digest_origin,
                     token_budget,
                     physical_window,
+                    completion_reserve_tokens,
                 )
             if user_id and conversation_id:
                 try:
@@ -1557,6 +1624,7 @@ class AgentService:
         origin: str,
         token_budget: Optional[int] = None,
         physical_window: Optional[int] = None,
+        completion_reserve_tokens: Optional[int] = None,
     ) -> None:
         """F 项：把真实溢出压缩的观测信息写入 ``out`` 容器，供 SSE 生成器发射卡片。
 
@@ -1588,7 +1656,7 @@ class AgentService:
             out["preview"] = preview
             out["title"] = "对话上下文已压缩（平台摘录）"
             # F 项增强：上下文使用率。token_used = 全量历史估算 token，
-            # token_budget = 上层传入的 token 预算（agent_context_max_tokens）。
+            # token_budget = 扣除输出与运行时开销后的历史预算。
             # 估算值来自 estimate_text_tokens（近似，非模型精确计数）。
             try:
                 token_used = sum(
@@ -1610,6 +1678,12 @@ class AgentService:
             out["physical_window"] = (
                 physical_window if isinstance(physical_window, int) and physical_window > 0
                 else None
+            )
+            out["completion_reserve_tokens"] = (
+                completion_reserve_tokens
+                if isinstance(completion_reserve_tokens, int)
+                and completion_reserve_tokens > 0
+                else 0
             )
             if out["physical_window"] is not None and out["history_budget"] is not None:
                 out["overhead_reservation_tokens"] = max(

@@ -532,6 +532,12 @@ export function handleContextSummarized<T extends AgentStreamMessage>(
       ? Number(data.token_budget)
       : 0;
   const physicalWindow = data.physical_window != null ? Number(data.physical_window) : 0;
+  const completionReserve = data.completion_reserve_tokens != null
+    ? Number(data.completion_reserve_tokens)
+    : 0;
+  const requestInputBudget = data.request_input_budget != null
+    ? Number(data.request_input_budget)
+    : 0;
   const detailLines: string[] = [];
   if (preview) detailLines.push(preview);
   if (dropped > 0) {
@@ -543,6 +549,12 @@ export function handleContextSummarized<T extends AgentStreamMessage>(
       ? `，模型物理窗口 ${physicalWindow.toLocaleString()} token`
       : "";
     detailLines.push(`压缩前历史预算使用率约 ${pct}%（${tokenUsed.toLocaleString()} / ${tokenBudget.toLocaleString()} 历史预算 token${windowLabel}）。`);
+  }
+  if (completionReserve > 0) {
+    const inputLabel = requestInputBudget > 0
+      ? `，请求输入上限 ${requestInputBudget.toLocaleString()} token`
+      : "";
+    detailLines.push(`已为单次输出预留 ${completionReserve.toLocaleString()} token${inputLabel}。`);
   }
   addLog(msg, {
     id: `context_summarized_${Date.now()}`,

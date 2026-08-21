@@ -68,6 +68,65 @@ def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
         return default
 
 
+async def _clamp_completion_to_context(
+    current_model: Any,
+    messages: list,
+    tools: list,
+) -> tuple[Any, Any, int | None]:
+    """在实际模型调用前按精确 AgentScope 估算保护总上下文预算。
+
+    平台的历史压缩使用的是独立的近似预算，系统提示和工具 schema 由 runner
+    在之后注入，因此这里再用当前模型的 ``count_tokens`` 做最后一道保护。只在
+    ``input + max_tokens`` 超过模型物理窗口时临时降低输出上限，并由调用方恢复
+    原值，避免一次边界请求污染后续工具轮次。
+    """
+    if current_model is None:
+        return None, None, None
+    parameters = _safe_getattr(current_model, "parameters")
+    requested = _safe_getattr(parameters, "max_tokens")
+    context_size = _safe_getattr(current_model, "context_size")
+    try:
+        requested = int(requested or 0)
+        context_size = int(context_size or 0)
+    except (TypeError, ValueError):
+        return parameters, None, None
+    if requested <= 0 or context_size <= 0:
+        return parameters, None, None
+
+    try:
+        input_tokens = int(
+            await current_model.count_tokens(messages=messages, tools=tools)
+        )
+    except Exception as exc:
+        logger.warning(
+            "[ModelCallStatsMiddleware] Failed to count model input for completion guard: %s",
+            exc,
+        )
+        return parameters, None, None
+
+    available = context_size - input_tokens
+    if available <= 0 or requested <= available:
+        return parameters, None, None
+    try:
+        parameters.max_tokens = available
+    except Exception as exc:
+        logger.warning(
+            "[ModelCallStatsMiddleware] Failed to clamp max_tokens for model call: %s",
+            exc,
+        )
+        return parameters, None, None
+    logger.warning(
+        "[ModelCallStatsMiddleware] Completion budget clamped: model=%s input=%d "
+        "context=%d requested_output=%d effective_output=%d",
+        _safe_getattr(current_model, "model", "unknown"),
+        input_tokens,
+        context_size,
+        requested,
+        available,
+    )
+    return parameters, requested, available
+
+
 def _is_async_iterable(obj: Any) -> bool:
     return _safe_getattr(obj, "__aiter__") is not None
 
@@ -253,6 +312,9 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         physical_window: int | None = None,
         history_budget: int | None = None,
         overhead_reservation: int | None = None,
+        completion_reserve: int | None = None,
+        request_input_budget: int | None = None,
+        prompt_overhead_reservation: int | None = None,
     ) -> None:
         self._user_id = user_id
         self._conversation_id = conversation_id
@@ -261,6 +323,9 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         self._physical_window = physical_window
         self._history_budget = history_budget
         self._overhead_reservation = overhead_reservation
+        self._completion_reserve = completion_reserve
+        self._request_input_budget = request_input_budget
+        self._prompt_overhead_reservation = prompt_overhead_reservation
         self._call_index = 0
         # 平台侧对话上下文预算（agent_context_max_tokens，默认 64k）的缓存与解析标记。
         # None 表示「尚未解析」，解析一次后缓存，避免每轮工具调用重复查配置。
@@ -318,7 +383,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         # 若模型未配置 context_size，则用平台侧对话上下文预算（agent_context_max_tokens）
         # 兜底，避免分母落到 agentscope 硬编码默认值造成百分比失真。
         context_size: int | None = getattr(current_model, "context_size", None)
-        # 平台侧实际截断水位线。默认读 agent_context_max_tokens（64k）兜底；
+        # 平台侧历史截断水位线。默认读 agent_context_max_tokens（64k）兜底；
         # 当模型显式配置了更大的物理窗口（current_model.context_size 由构造注入，
         # 仅显式配置时才存在），则同步抬高水位线，避免提前 compact——与
         # agent_service._resolve_runtime_context_budget 的截断逻辑保持一致。
@@ -334,7 +399,37 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         message_roles: dict[str, int] = _count_message_roles(input_messages)
         contains_compaction: bool = _contains_compaction(input_messages)
 
-        result = await next_handler(**input_kwargs)
+        parameters, original_max_tokens, effective_max_tokens = (
+            await _clamp_completion_to_context(
+                current_model,
+                input_messages,
+                tools,
+            )
+        )
+        try:
+            result = await next_handler(**input_kwargs)
+        finally:
+            if original_max_tokens is not None and parameters is not None:
+                try:
+                    parameters.max_tokens = original_max_tokens
+                except Exception:
+                    logger.warning(
+                        "[ModelCallStatsMiddleware] Failed to restore max_tokens "
+                        "after guarded model call"
+                    )
+
+        raw_model_output = _safe_getattr(
+            _safe_getattr(current_model, "parameters"), "max_tokens"
+        )
+        try:
+            model_completion_reserve = int(raw_model_output or 0)
+        except (TypeError, ValueError):
+            model_completion_reserve = 0
+        if model_completion_reserve <= 0:
+            try:
+                model_completion_reserve = int(self._completion_reserve or 0)
+            except (TypeError, ValueError):
+                model_completion_reserve = 0
 
         redis_key = _build_redis_key(self._user_id, self._conversation_id)
         record_base = {
@@ -352,6 +447,10 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             "context_budget": context_budget,
             "physical_window": physical_window,
             "history_budget": context_budget,
+            "completion_reserve_tokens": max(0, model_completion_reserve or 0),
+            "request_input_budget": self._request_input_budget,
+            "prompt_overhead_reservation_tokens": self._prompt_overhead_reservation,
+            "effective_completion_limit": effective_max_tokens,
             "overhead_reservation_tokens": (
                 self._overhead_reservation
                 if self._overhead_reservation is not None

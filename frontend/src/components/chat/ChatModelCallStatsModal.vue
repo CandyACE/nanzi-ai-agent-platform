@@ -280,6 +280,17 @@ const statsSummary = computed(() => {
                   含早前对话裁剪
                 </span>
               </div>
+              <div
+                v-if="stat.completion_reserve_tokens || stat.request_input_budget"
+                class="mt-1 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500"
+              >
+                <span v-if="stat.completion_reserve_tokens">
+                  输出预留 {{ formatTokens(stat.completion_reserve_tokens) }}
+                </span>
+                <span v-if="stat.request_input_budget">
+                  请求输入上限 {{ formatTokens(stat.request_input_budget) }}
+                </span>
+              </div>
             </div>
 
             <!-- Thoughts and Output Text Expansion Panel -->

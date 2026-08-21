@@ -361,6 +361,101 @@ class TestFinalRuntimeModelFallback:
 
 @pytest.mark.no_infrastructure
 class TestPostRouteContextBudget:
+    async def test_history_budget_reserves_configured_completion_tokens(self):
+        service = AgentService()
+
+        async def config_get(key, default=None):
+            return {
+                "agent_context_overhead_headroom_tokens": "8192",
+            }.get(key, default)
+
+        with patch(
+            "app.services.config_service.ConfigService.get",
+            new=AsyncMock(side_effect=config_get),
+        ):
+            result = await service._resolve_history_context_budget(
+                65536,
+                max_output_tokens=32768,
+            )
+
+        assert result == 24576
+
+    async def test_history_budget_keeps_legacy_fallback_when_output_is_unset(self):
+        service = AgentService()
+
+        with patch(
+            "app.services.config_service.ConfigService.get",
+            new=AsyncMock(return_value="8192"),
+        ):
+            result = await service._resolve_history_context_budget(65536)
+
+        assert result == 57344
+
+    async def test_runtime_context_metadata_exposes_completion_reserve(self):
+        service = AgentService()
+        runtime_info = RuntimeModelInfo(
+            configured_model="deepseek-v3.2",
+            effective_model_id="deepseek-v3.2",
+            source="agent_config",
+            context_size=65536,
+            max_output_tokens=32768,
+        )
+
+        async def config_get(key, default=None):
+            return {
+                "agent_context_max_tokens": "65536",
+                "agent_context_overhead_headroom_tokens": "8192",
+            }.get(key, default)
+
+        with patch(
+            "app.services.config_service.ConfigService.get",
+            new=AsyncMock(side_effect=config_get),
+        ):
+            metadata = await service._runtime_context_metadata(runtime_info)
+
+        assert metadata["physical_window"] == 65536
+        assert metadata["history_budget"] == 24576
+        assert metadata["completion_reserve_tokens"] == 32768
+        assert metadata["request_input_budget"] == 32768
+        assert metadata["prompt_overhead_reservation_tokens"] == 8192
+
+    async def test_runtime_context_metadata_uses_common_primary_and_synthesis_budget(self):
+        service = AgentService()
+        primary = RuntimeModelInfo(
+            configured_model="primary",
+            effective_model_id="primary",
+            source="agent_config",
+            context_size=65536,
+            max_output_tokens=32768,
+        )
+        synthesis = RuntimeModelInfo(
+            configured_model="synthesis",
+            effective_model_id="synthesis",
+            source="runtime_override",
+            context_size=16384,
+            max_output_tokens=4096,
+        )
+
+        async def config_get(key, default=None):
+            return {
+                "agent_context_max_tokens": "65536",
+                "agent_context_overhead_headroom_tokens": "8192",
+            }.get(key, default)
+
+        with patch(
+            "app.services.config_service.ConfigService.get",
+            new=AsyncMock(side_effect=config_get),
+        ):
+            metadata = await service._runtime_context_metadata(
+                primary,
+                synthesis_runtime_model_info=synthesis,
+            )
+
+        assert metadata["physical_window"] == 16384
+        assert metadata["history_budget"] == 4096
+        assert metadata["completion_reserve_tokens"] == 32768
+        assert metadata["request_input_budget"] == 12288
+
     async def test_pre_route_budget_uses_config_fallback_only(self):
         service = AgentService()
 

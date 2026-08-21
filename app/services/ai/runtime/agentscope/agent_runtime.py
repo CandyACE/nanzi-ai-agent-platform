@@ -99,6 +99,11 @@ def build_runtime_middlewares(
                 physical_window=runtime_info.get("physical_window"),
                 history_budget=runtime_info.get("history_budget"),
                 overhead_reservation=runtime_info.get("overhead_reservation_tokens"),
+                completion_reserve=runtime_info.get("completion_reserve_tokens"),
+                request_input_budget=runtime_info.get("request_input_budget"),
+                prompt_overhead_reservation=runtime_info.get(
+                    "prompt_overhead_reservation_tokens"
+                ),
             )
         )
     return middlewares

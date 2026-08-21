@@ -31,3 +31,7 @@ def test_context_observability_exposes_physical_window_and_history_budget():
     assert '"history_budget"' in middleware
     assert '"physical_window"' in session_status
     assert '"history_budget"' in session_status
+    assert '"completion_reserve_tokens"' in middleware
+    assert '"request_input_budget"' in middleware
+    assert '"completion_reserve_tokens"' in session_status
+    assert '"request_input_budget"' in session_status

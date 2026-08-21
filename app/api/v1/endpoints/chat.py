@@ -798,6 +798,13 @@ class ModelCallStatDetail(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="工具调用详情")
     context_size: Optional[int] = Field(None, description="模型物理上下文窗口大小(Token)")
     context_budget: Optional[int] = Field(None, description="平台侧上下文 Token 预算上限(agent_context_max_tokens，实际截断水位线)")
+    physical_window: Optional[int] = Field(None, description="最终模型物理上下文窗口大小(Token)")
+    history_budget: Optional[int] = Field(None, description="历史消息可用 Token 预算")
+    completion_reserve_tokens: Optional[int] = Field(None, description="单次输出预留 Token 上限")
+    request_input_budget: Optional[int] = Field(None, description="扣除输出后的单次请求输入预算")
+    prompt_overhead_reservation_tokens: Optional[int] = Field(None, description="系统提示和工具开销预留 Token")
+    effective_completion_limit: Optional[int] = Field(None, description="边界请求实际采用的输出上限")
+    overhead_reservation_tokens: Optional[int] = Field(None, description="历史之外的总预留 Token")
     message_roles: Optional[Dict[str, int]] = Field(default_factory=dict, description="各角色消息条数统计")
     contains_compaction: bool = Field(False, description="是否包含早前对话的裁剪摘录")
 

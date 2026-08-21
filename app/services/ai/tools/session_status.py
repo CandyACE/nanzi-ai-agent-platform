@@ -274,6 +274,9 @@ async def _context_usage_estimate(context: Any) -> dict[str, Any]:
         "token_budget": None,
         "physical_window": None,
         "history_budget": None,
+        "completion_reserve_tokens": None,
+        "request_input_budget": None,
+        "prompt_overhead_reservation_tokens": None,
         "overhead_reservation_tokens": None,
         "usage_percentage": None,
     }
@@ -335,11 +338,33 @@ async def _context_usage_estimate(context: Any) -> dict[str, Any]:
                 overhead = 8192
 
         try:
+            completion_reserve = max(0, int(info.get("completion_reserve_tokens") or 0))
+        except (TypeError, ValueError):
+            completion_reserve = 0
+        try:
+            prompt_overhead = max(
+                0, int(info.get("prompt_overhead_reservation_tokens") or 0)
+            )
+        except (TypeError, ValueError):
+            prompt_overhead = 0
+
+        try:
             budget = int(info.get("history_budget") or 0)
         except (TypeError, ValueError):
             budget = 0
         if budget <= 0:
-            budget = max(physical_window - overhead, max(1, physical_window // 3))
+            history_overhead = prompt_overhead or max(0, overhead - completion_reserve)
+            if completion_reserve > 0:
+                budget = max(1, physical_window - completion_reserve - history_overhead)
+            else:
+                budget = max(physical_window - overhead, max(1, physical_window // 3))
+
+        try:
+            request_input_budget = int(info.get("request_input_budget") or 0)
+        except (TypeError, ValueError):
+            request_input_budget = 0
+        if request_input_budget <= 0:
+            request_input_budget = max(1, physical_window - completion_reserve)
 
         remaining = max(0, budget - total_tokens)
         percentage = round(total_tokens / budget * 100, 1) if budget > 0 else 0.0
@@ -350,6 +375,9 @@ async def _context_usage_estimate(context: Any) -> dict[str, Any]:
             "token_budget": budget,
             "physical_window": physical_window,
             "history_budget": budget,
+            "completion_reserve_tokens": completion_reserve,
+            "request_input_budget": request_input_budget,
+            "prompt_overhead_reservation_tokens": prompt_overhead,
             "overhead_reservation_tokens": overhead,
             "usage_percentage": percentage,
         }
