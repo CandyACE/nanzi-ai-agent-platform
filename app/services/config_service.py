@@ -14,6 +14,36 @@ logger = logging.getLogger(__name__)
 
 CACHE_PREFIX = "sys_config:"
 CACHE_TTL = 300  # 5 minutes
+SANDBOX_POLICY_KEY = "sandbox_policy"
+SANDBOX_POLICY_DOCKER = "docker"
+
+
+def resolve_effective_sandbox_policy(
+    value: Optional[str],
+    default: str = "local",
+) -> str:
+    """解析当前部署环境允许实际执行的沙箱策略。
+
+    平台后端已经运行在容器内时，禁止再次创建 Docker 沙箱，避免依赖未挂载的
+    Docker daemon，也避免把平台容器误当成宿主机隔离边界。数据库中的历史值
+    ``docker`` 也必须在运行时降级为 ``local``。
+    """
+    normalized = str(value or default).strip().lower()
+    if normalized == SANDBOX_POLICY_DOCKER and get_env() == "docker":
+        return "local"
+    return normalized
+
+
+def validate_config_update(key: str, value: str) -> None:
+    """校验系统配置更新是否符合当前运行环境限制。"""
+    if (
+        key == SANDBOX_POLICY_KEY
+        and str(value or "").strip().lower() == SANDBOX_POLICY_DOCKER
+        and get_env() == "docker"
+    ):
+        raise ValueError(
+            "平台后端运行在 Docker 容器内，不能启用 docker 沙箱策略；请使用 local、e2b 或 ssh。"
+        )
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",
@@ -189,6 +219,7 @@ class ConfigService:
         Set configuration value in DB and update Redis.
         Now supports Audit Logging.
         """
+        validate_config_update(key, value)
         from app.services.auth_service import AuthService
         session, is_local = await AuthService._get_session(db)
         try:
@@ -276,7 +307,9 @@ class ConfigService:
                     display_value = display_value[:3] + "****" + display_value[-4:]
                 else:
                     display_value = "****"
-            
+            if key == SANDBOX_POLICY_KEY:
+                display_value = resolve_effective_sandbox_policy(display_value)
+
             grouped[cat].append({
                 "key": key,
                 "value": display_value, # Masked for display
@@ -303,6 +336,7 @@ class ConfigService:
         Update ONLY the configuration value in DB and Redis.
         Preserves other fields (category, description, is_secret).
         """
+        validate_config_update(key, value)
         old_value = None # Initialize old_value outside the session block
         async with AsyncSessionLocal() as session:
             try:
@@ -373,6 +407,12 @@ class ConfigService:
         Bulk update configs.
         updates: [{key, value}, ...]
         """
+        # 先整体校验，避免同一批配置在遇到被禁用的 docker 策略后只写入前半部分。
+        for item in updates:
+            key = item.get("key")
+            val = item.get("value")
+            if key is not None and val is not None:
+                validate_config_update(str(key), str(val))
         for item in updates:
             key = item.get('key')
             val = item.get('value')

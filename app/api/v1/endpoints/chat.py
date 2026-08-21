@@ -89,7 +89,12 @@ async def list_artifacts(
     db: AsyncSession = Depends(get_db_session),
 ):
     from app.models.artifact import AiArtifact
-    from app.services.ai.tools.generated_file_service import DEFAULT_TTL, _token_hash
+    from app.services.ai.tools.generated_file_service import (
+        DEFAULT_TTL,
+        _token_hash,
+        build_download_url,
+        get_download_url_prefix,
+    )
     from sqlalchemy import func, select
 
     raw_user_id = user_info.get("user_id") or user_info.get("id")
@@ -119,6 +124,7 @@ async def list_artifacts(
     rows = (await db.scalars(stmt)).all()
 
     now = datetime.now(timezone.utc)
+    public_base_url = await get_download_url_prefix()
     items: List[ArtifactListItem] = []
     # 数据库只存 token 哈希，无法还原旧 token。这里对新列出的每条记录新签发下载 token
     # 并回写 token_hash/expires_at，保证前端拿到的 download_url 可直接下载。
@@ -138,7 +144,11 @@ async def list_artifacts(
                 trace_id=row.trace_id,
                 created_at=row.created_at,
                 expires_at=new_expires_at,
-                download_url=f"/api/v1/chat/generated-files/{row.id}?token={token}",
+                download_url=build_download_url(
+                    row.id,
+                    token,
+                    public_base_url=public_base_url,
+                ),
             )
         )
     await db.commit()
@@ -791,8 +801,10 @@ async def get_conversation_context_usage(
         empty_history_is_zero=True,
     )
     try:
-        sandbox_policy = (
-            await ConfigService.get("sandbox_policy", "local") or "local"
+        from app.services.config_service import resolve_effective_sandbox_policy
+
+        sandbox_policy = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", "local"),
         ).strip().lower()
     except Exception as exc:
         logger.warning("读取 sandbox_policy 失败: %s", exc)

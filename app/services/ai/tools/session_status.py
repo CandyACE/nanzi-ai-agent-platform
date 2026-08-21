@@ -281,9 +281,14 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
         return empty, limitations
 
     try:
-        from app.services.config_service import ConfigService
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
 
-        sandbox_policy = (await ConfigService.get("sandbox_policy", "local") or "local").strip().lower()
+        sandbox_policy = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", "local"),
+        )
         root = await _maybe_await(resolve_workspace_root())
         user_id = getattr(context, "user_id", None)
         dimensions = dict(getattr(context, "user_dimensions", {}) or {})

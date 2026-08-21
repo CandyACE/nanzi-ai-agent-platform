@@ -593,6 +593,8 @@ async def update_system_configs(
                 logging.warning(f"Scheduler reload after timezone change failed: {sched_exc}")
 
         return {"status": "success", "message": "Configurations updated successfully."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logging.error(f"Failed to update configs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -727,4 +729,3 @@ async def manual_cleanup_logs(
     except Exception as e:
         logging.error(f"Failed to cleanup logs: {e}")
         raise HTTPException(status_code=500, detail=f"清理历史日志失败: {str(e)}")
-

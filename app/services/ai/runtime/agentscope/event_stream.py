@@ -25,11 +25,14 @@ async def _sandbox_bash_env() -> str:
     - ``sandbox_policy=local`` 时，Bash 后端进程内直接执行，回落为进程所在环境的
       容器/宿主探测结果（参见 :mod:`app.utils.env`）。
     """
-    from app.services.config_service import ConfigService
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
 
-    policy = (
-        await ConfigService.get("sandbox_policy", "local")
-    ).strip().lower()
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", "local"),
+    )
     if policy in ("docker", "e2b", "ssh"):
         return policy
     return _get_env_once()

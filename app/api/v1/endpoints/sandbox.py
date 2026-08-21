@@ -3,7 +3,7 @@
 当前提供 docker 策略沙箱镜像的预构建（预热）以及 E2B/SSH 连接测试能力：
 
 - ``GET  /admin/sandbox/docker/prebuild-status``：查询 docker 沙箱镜像是否已预构建
-  （仅本地 inspect，命中缓存 tag 即返回 ``prebuilt=True``，不触发构建）。
+  以及当前后端是否具备自动构建能力（仅本地 inspect，不触发构建）。
 - ``POST /admin/sandbox/docker/prebuild``：执行一次镜像预构建，使运行时
   docker 沙箱首次创建时不需现场构建（分钟级）而直接命中缓存（秒级）。
 - ``POST /admin/sandbox/{e2b|ssh}/test-connection``：按管理页面当前填写的配置
@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from app.core.dependencies import require_api_key
 from app.schemas.response import StandardResponse
 from app.services.ai.runtime.agentscope.docker_prebuild import (
-    docker_workspace_image_prebuilt,
+    docker_workspace_prebuild_status,
     prebuild_docker_workspace_image,
 )
 from app.services.ai.runtime.agentscope.workspace import (
@@ -52,16 +52,12 @@ def _require_admin(user_info: Dict[str, Any]) -> None:
 async def get_docker_prebuild_status(
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    """查询 Docker 沙箱基础镜像是否已命中本地缓存。
-
-    只做 ``images.inspect(tag)`` 判断，不触发构建，也不要求 Docker daemon 一定
-    在线（离线时返回 ``prebuilt=False``）。
-    """
+    """查询 Docker 镜像缓存和自动构建能力，离线时返回手动下载信息。"""
     _require_admin(user_info)
-    prebuilt = await docker_workspace_image_prebuilt()
+    status = await docker_workspace_prebuild_status()
     return StandardResponse(
-        data={"prebuilt": prebuilt},
-        message="success" if prebuilt else "镜像尚未预构建",
+        data=status,
+        message=status.get("message") or "success",
     )
 
 
@@ -79,15 +75,21 @@ async def trigger_docker_prebuild(
     一致；幂等：镜像已存在则直接返回 ``reused=True`` 不重复构建。构建成功后写入
     配置标记 ``sandbox_docker_prebuild_done``。
 
-    注意：这是一个**同步**长耗时操作（首次构建分钟级），会阻塞当前请求直到完成
-    或失败，便于管理端拿到确定结果后展示。
+    注意：这是一个**同步**长耗时操作（首次构建分钟级），会阻塞当前请求直到完成。
+    如果后端无法访问 Docker daemon，则返回 ``action=manual_download`` 和镜像导入
+    信息，不会把环境不支持误报成构建失败。
     """
     _require_admin(user_info)
     try:
         result = await prebuild_docker_workspace_image(force=False)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return StandardResponse(data=result, message="success")
+    return StandardResponse(
+        data=result,
+        message=result.get("message")
+        if result.get("action") == "manual_download"
+        else "success",
+    )
 
 
 class SandboxConnectionTestRequest(BaseModel):

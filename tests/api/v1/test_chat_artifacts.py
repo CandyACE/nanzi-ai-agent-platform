@@ -119,6 +119,30 @@ async def test_list_artifacts_returns_items_and_rotates_token():
 
 
 @pytest.mark.asyncio
+async def test_list_artifacts_uses_configured_public_url(monkeypatch):
+    a1 = _make_artifact(artifact_id="cc" * 16, filename="方案.docx")
+    session = _FakeSession(rows=[a1], count=1)
+    monkeypatch.setattr(
+        generated_file_service.settings,
+        "APP_PUBLIC_URL",
+        "https://files.example.com/",
+    )
+
+    app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key({"user_id": "7", "role": "user"})
+    app.dependency_overrides[get_db_session] = _db_override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/v1/chat/artifacts", headers={"X-API-Key": "test-key"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["items"][0]["download_url"].startswith(
+        "https://files.example.com/api/v1/chat/generated-files/"
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_artifacts_filters_by_owner_user_id():
     """他人产物（owner 不同）被排除，total 只统计本用户记录。"""
     a1 = _make_artifact(artifact_id="aa" * 16)

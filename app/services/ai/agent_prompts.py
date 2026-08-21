@@ -448,6 +448,9 @@ class AgentServicePrompts:
         if "todo_write" in tool_names:
             table_rows.append("| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |")
 
+        if "publish_generated_file" in tool_names:
+            table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
+
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
 

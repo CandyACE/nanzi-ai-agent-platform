@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import mimetypes
 import secrets
 import shutil
@@ -13,9 +14,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.config import settings
 from app.models.artifact import AiArtifact
 from app.core.orm import AsyncSessionLocal
+from app.services.config_service import ConfigService
 from app.utils.fs_paths import get_data_base_dir
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TTL = timedelta(hours=24)
 
@@ -23,6 +28,35 @@ _OFFICE_MIME_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+
+
+def _normalize_public_base_url(value: str | None) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+async def get_download_url_prefix() -> str:
+    """Read the system-configured download prefix with environment fallback."""
+    try:
+        configured = await ConfigService.get("download_url_prefix")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to read download_url_prefix from system config: %s", exc)
+        configured = None
+    configured_base = _normalize_public_base_url(configured)
+    return configured_base or _normalize_public_base_url(settings.APP_PUBLIC_URL)
+
+
+def build_download_url(
+    artifact_id: str,
+    token: str,
+    *,
+    public_base_url: str | None = None,
+) -> str:
+    """Build a download URL from a resolved public prefix."""
+    path = f"/api/v1/chat/generated-files/{artifact_id}?token={token}"
+    public_base = _normalize_public_base_url(
+        settings.APP_PUBLIC_URL if public_base_url is None else public_base_url
+    )
+    return f"{public_base}{path}" if public_base else path
 
 
 @dataclass(frozen=True)
@@ -33,10 +67,15 @@ class PublishedArtifact:
     mime_type: str
     size: int
     expires_at: datetime
+    public_base_url: str = ""
 
     @property
     def download_url(self) -> str:
-        return f"/api/v1/chat/generated-files/{self.artifact_id}?token={self.token}"
+        return build_download_url(
+            self.artifact_id,
+            self.token,
+            public_base_url=self.public_base_url,
+        )
 
     def to_tool_payload(self) -> dict[str, Any]:
         return {
@@ -169,6 +208,7 @@ async def register_artifact(
         session.add(artifact)
         await session.commit()
 
+    public_base_url = await get_download_url_prefix()
     return PublishedArtifact(
         artifact_id=artifact.id,
         token=token,
@@ -176,6 +216,7 @@ async def register_artifact(
         mime_type=artifact.mime_type,
         size=artifact.size,
         expires_at=expires_at,
+        public_base_url=public_base_url,
     )
 
 
@@ -221,6 +262,7 @@ def publish(
         mime_type=manifest["mime_type"],
         size=manifest["size"],
         expires_at=expires_at,
+        public_base_url=_normalize_public_base_url(settings.APP_PUBLIC_URL),
     )
 
 

@@ -84,7 +84,8 @@ async def word_document_read(action: str, path: str, start: int = 0, limit: int 
 async def word_document_write(action: str, output_filename: str, path: str | None = None, replacements: list[dict[str, str]] | None = None, paragraphs: list[str] | None = None, headers: list[str] | None = None, rows: list[list[str]] | None = None, title: str | None = None) -> dict[str, Any]:
     """Create or modify a Word document copy and return a download link.
 
-    Copy artifact.download_url verbatim in the final response; never add a protocol or host.
+    Copy artifact.download_url verbatim in the final response; do not alter its
+    protocol, host, path, or token.
     """
     if action not in {"create", "replace_text", "append_paragraphs", "append_table"}:
         raise DocumentPathError("word_document_write 不支持该操作")

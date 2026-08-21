@@ -131,6 +131,18 @@ def test_platform_prompt_guides_todo_for_multi_step_work():
     assert "单步问答、单次检索和单次查询不要调用" in prompt
 
 
+def test_platform_prompt_requires_publishing_generated_files_for_download():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={"Write", "publish_generated_file"},
+    )
+
+    assert "publish_generated_file" in prompt
+    assert "生成下载地址" in prompt
+    assert "download_url" in prompt
+    assert "不得返回物理路径或臆造链接" in prompt
+
+
 def test_platform_prompt_inventory_uses_effective_runtime_tool_names():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,

@@ -69,6 +69,7 @@ from app.services.ai.tools.browser_tools import (
 )
 from app.services.ai.tools.excel_document_tool import excel_document_read, excel_document_write
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
+from app.services.ai.tools.generated_file_tool import publish_generated_file
 from app.models.tool import SysApiTool
 from app.models.mcp import McpServer, McpToolCache
 from app.core.orm import AsyncSessionLocal
@@ -347,6 +348,7 @@ class ToolRegistry:
         "excel_document_write": excel_document_write,
         "word_document_read": word_document_read,
         "word_document_write": word_document_write,
+        "publish_generated_file": publish_generated_file,
     }
 
     # Cache for DB Tools
@@ -873,6 +875,7 @@ class ToolRegistry:
             request_user_confirmation,
             ask_user_question,
             session_status,
+            publish_generated_file,
             create_skills,
             list_available_skills,
             read_skill_instruction,

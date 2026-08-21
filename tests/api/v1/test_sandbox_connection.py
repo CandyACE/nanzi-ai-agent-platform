@@ -45,3 +45,31 @@ async def test_sandbox_connection_endpoint_closes_initialized_workspace(monkeypa
     assert captured["policy"] == "e2b"
     assert captured["config_overrides"]["sandbox_e2b_api_key"] == "e2b-test-key"
     assert workspace.closed is True
+
+
+@pytest.mark.asyncio
+async def test_docker_prebuild_status_returns_manual_download_state(monkeypatch):
+    from app.api.v1.endpoints.sandbox import get_docker_prebuild_status
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.docker_workspace_prebuild_status",
+        lambda: _async_value(
+            {
+                "prebuilt": False,
+                "docker_available": False,
+                "action": "manual_download",
+                "download_url": "https://downloads.example.com/agentscope-workspace.tar",
+                "required_image_tag": "agentscope-workspace:abc123def456",
+            },
+        ),
+    )
+
+    response = await get_docker_prebuild_status(user_info={"role": "admin"})
+
+    assert response.data["action"] == "manual_download"
+    assert response.data["docker_available"] is False
+    assert response.data["download_url"].startswith("https://")
+
+
+async def _async_value(value):
+    return value

@@ -248,6 +248,10 @@ const dockerPrebuildChecking = ref(false)
 const dockerPrebuilding = ref(false)
 const dockerPrebuildReused = ref(false)
 const dockerPrebuildTag = ref('')
+const dockerPrebuildAction = ref('')
+const dockerPrebuildMessage = ref('')
+const dockerManualDownloadUrl = ref('')
+const dockerManualImportCommand = ref('')
 const sandboxConnectionTesting = ref<'e2b' | 'ssh' | null>(null)
 
 const targetSandboxPolicy = () =>
@@ -267,13 +271,13 @@ const sandboxLocalExecDesc = computed(() =>
 
 /** sandbox_policy 短描述：local 部分随运行环境动态渲染 */
 const sandboxPolicyShortDesc = computed(() =>
-  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
+  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；${runtimeEnv.value === 'docker' ? 'docker 当前禁用（平台后端已运行在 Docker 容器内）' : 'docker 表示在自动构建的 Docker 容器内执行'}；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
 )
 
 /** sandbox_policy 详细说明：local 部分随运行环境动态渲染（用于说明弹窗） */
 const sandboxPolicyTip = computed(() => `安全沙箱执行策略：
 * local（默认）：Bash / 文件工具在${sandboxLocalExecDesc.value}，性能最好，但代码运行在${runtimeEnv.value === 'docker' ? '平台容器内部' : '宿主机上'}。
-* docker：在 Docker 容器内执行。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。
+* docker：${runtimeEnv.value === 'docker' ? '当前禁用，平台后端已经运行在 Docker 容器内，不能嵌套 Docker 沙箱。' : '在 Docker 容器内执行。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。'}
 * e2b：在 E2B 云端沙箱内执行。需在下方填写 API Key 或配置 E2B_API_KEY 环境变量。
 * ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
 注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`)
@@ -283,6 +287,7 @@ const sandboxPolicyOptions = computed(() => [
   {
     value: 'local',
     label: runtimeEnv.value === 'docker' ? 'local（平台后端容器内）' : 'local（宿主机）',
+    disabled: false,
     desc: runtimeEnv.value === 'docker'
       ? '在平台后端所在 Docker 容器内直接执行（默认）'
       : '在宿主机扩展进程内直接执行（默认，性能最好）',
@@ -290,16 +295,21 @@ const sandboxPolicyOptions = computed(() => [
   {
     value: 'docker',
     label: 'docker（Docker 容器）',
-    desc: '在自动构建的 Docker 容器内执行，工作区按用户隔离',
+    disabled: runtimeEnv.value === 'docker',
+    desc: runtimeEnv.value === 'docker'
+      ? '平台后端已经运行在 Docker 容器内，禁止嵌套 Docker 沙箱'
+      : '在自动构建的 Docker 容器内执行，工作区按用户隔离',
   },
   {
     value: 'e2b',
     label: 'e2b（E2B 云端）',
+    disabled: false,
     desc: '在 E2B 云端沙箱内执行，需配置 API Key 或 E2B_API_KEY',
   },
   {
     value: 'ssh',
     label: 'ssh（SSH 远程主机）',
+    disabled: false,
     desc: '通过 SSH 连接远程主机执行，支持密码与私钥两种认证',
   },
 ])
@@ -317,6 +327,11 @@ const currentSandboxPolicy = computed(() =>
 )
 const selectSandboxPolicy = (item: ConfigItem, value: string) => {
   if (isConfigItemDisabled(String('sandbox'), item)) return
+  if (value === 'docker' && runtimeEnv.value === 'docker') {
+    sandboxPolicyOpen.value = false
+    showToast('平台后端已经运行在 Docker 容器内，不能启用 docker 沙箱模式', 'warning')
+    return
+  }
   if (item.value === value) {
     sandboxPolicyOpen.value = false
     return
@@ -362,14 +377,36 @@ const toggleDockerBaseImage = (item: ConfigItem) => {
   if (dockerBaseImageOpen.value) dockerBaseImageShowCustom.value = false
 }
 
+const applyDockerPrebuildStatus = (data: any) => {
+  dockerPrebuilt.value = !!data?.prebuilt
+  dockerPrebuildAction.value = data?.action || (data?.docker_available === false ? 'manual_download' : '')
+  dockerPrebuildMessage.value = data?.message || ''
+  dockerManualDownloadUrl.value = data?.download_url || ''
+  dockerManualImportCommand.value = data?.manual_import_command || ''
+  dockerPrebuildTag.value = data?.tag || data?.required_image_tag || ''
+}
+
+const copyDockerManualImportCommand = async () => {
+  if (!dockerManualImportCommand.value) return
+  try {
+    await navigator.clipboard.writeText(dockerManualImportCommand.value)
+    showToast('手动导入命令已复制', 'success')
+  } catch {
+    showToast('复制失败，请手动选中命令复制', 'warning')
+  }
+}
+
 const refreshDockerPrebuildStatus = async (silent = false) => {
   if (targetSandboxPolicy() !== 'docker') return
   if (!silent) dockerPrebuildChecking.value = true
   try {
     const res = await axios.get('/api/v1/admin/sandbox/docker/prebuild-status')
     const data = res.data?.data ?? res.data
-    dockerPrebuilt.value = !!data?.prebuilt
+    applyDockerPrebuildStatus(data)
     dockerPrebuildChecking.value = false
+    if (!silent && data?.docker_available === false) {
+      showToast(data?.message || '当前环境不支持自动构建', 'warning')
+    }
   } catch (e: any) {
     dockerPrebuilt.value = false
     dockerPrebuildChecking.value = false
@@ -390,9 +427,12 @@ const executeDockerPrebuild = async () => {
       throw new Error((res.data as any)?.message || '预构建接口返回异常')
     }
     const data = res.data?.data ?? res.data
-    dockerPrebuilt.value = true
     dockerPrebuildReused.value = !!data?.reused
-    dockerPrebuildTag.value = data?.tag || ''
+    applyDockerPrebuildStatus(data)
+    if (data?.action === 'manual_download') {
+      showToast(data?.message || '当前环境不支持自动构建，请手动下载镜像', 'warning')
+      return
+    }
     showToast(
       data?.reused ? '已复用既有镜像缓存，无需重新构建' : 'Docker 沙箱镜像预构建完成',
       'success'
@@ -1148,6 +1188,7 @@ const handleDatasetSelect = (val: string | string[]) => {
 const configShortDescriptions: Record<string, string> = {
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
+  download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
   agent_context_max_tokens: '上下文 Token 预算上限 (默认 64k，超过则从最早历史开始截断)。',
   agent_max_context_messages: '发送给 LLM 的最大历史消息条目数 (Token 预算优先，此处作为绝对兜底上限，默认 60)。',
@@ -1156,6 +1197,7 @@ const configShortDescriptions: Record<string, string> = {
   agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
   sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（如 aliyun 镜像加速地址），留空使用默认 python:3.11-slim。',
+  sandbox_docker_manual_image_url: 'Docker daemon 不可用时，下载符合 AgentScope 规范的预构建镜像包（docker save 导出的 tar/tar.gz）的地址。',
   sandbox_e2b_api_key: 'e2b 策略使用的 E2B API Key，留空则读取 E2B_API_KEY 环境变量。',
   sandbox_e2b_template: 'e2b 策略使用的沙箱模板名，留空使用默认模板 base。',
   sandbox_e2b_timeout_seconds: 'e2b 策略沙箱超时时间（秒），默认 300。',
@@ -1213,6 +1255,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'platform_timezone',
       'agentscope_inject_runtime_state',
       'agentscope_inject_time_interval_hours',
+      'download_url_prefix',
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -1274,7 +1317,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
     const policy = targetSandboxPolicy()
     const policyKeySets: Record<string, string[]> = {
-      docker: ['sandbox_docker_base_image'],
+      docker: ['sandbox_docker_base_image', 'sandbox_docker_manual_image_url'],
       e2b: ['sandbox_e2b_api_key', 'sandbox_e2b_template', 'sandbox_e2b_timeout_seconds'],
       ssh: [
         'sandbox_ssh_host', 'sandbox_ssh_port', 'sandbox_ssh_user', 'sandbox_ssh_auth_type',
@@ -2242,8 +2285,10 @@ onMounted(async () => {
                                  type="button"
                                  role="option"
                                  :aria-selected="opt.value === item.value"
+                                 :aria-disabled="opt.disabled ? 'true' : 'false'"
                                  @click="selectSandboxPolicy(item, opt.value)"
-                                 class="flex w-full items-start gap-2.5 px-3 py-2.5 text-left hover:bg-indigo-50/80 focus:bg-indigo-50/80 transition-colors"
+                                 :disabled="isConfigItemDisabled(String(category), item) || opt.disabled"
+                                 class="flex w-full items-start gap-2.5 px-3 py-2.5 text-left hover:bg-indigo-50/80 focus:bg-indigo-50/80 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
                                  :class="opt.value === item.value ? 'bg-indigo-50/70 font-medium' : ''"
                                >
                                  <component
@@ -2260,6 +2305,9 @@ onMounted(async () => {
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                 切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
                              </p>
+                             <div v-if="runtimeEnv === 'docker'" class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                               当前智能体平台后端运行在 Docker 容器内，docker 沙箱模式已禁用，避免嵌套 Docker 及依赖不可用的 Docker daemon。可使用 local、e2b 或 ssh 模式。
+                             </div>
                              <div v-if="item.value === 'e2b'" class="mt-3 text-xs text-violet-700 bg-violet-50/60 p-3 rounded-xl border border-violet-100/60 leading-relaxed select-none space-y-1.5">
                                  <div>🌐 <strong>E2B 云端沙箱服务</strong>：E2B（<a href="https://e2b.dev" target="_blank" rel="noopener noreferrer" class="font-medium text-violet-800 underline decoration-violet-300 hover:decoration-violet-600">e2b.dev</a>）是第三方 AI 云端沙箱平台。选择本策略后，Bash 命令在 E2B 云端沙箱内执行；文件读写 / 搜索仍走平台上配置的本地工作目录，不随沙箱上传。</div>
                                  <div>🔑 <strong>API Key 来源</strong>：优先读取下方 <code class="font-mono text-violet-800">sandbox_e2b_api_key</code>；留空则读取进程环境变量 <code class="font-mono text-violet-800">E2B_API_KEY</code>。两者均无时，初始化 E2B 沙箱会失败。请先在 e2b.dev 注册登录并生成 <code class="font-mono text-violet-800">e2b_...</code> 形式的 Key。</div>
@@ -2285,6 +2333,19 @@ onMounted(async () => {
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                影响定时任务 Cron「每天 08:00」的解释与下次运行时间，以及平台时间展示。无法修改外部 MySQL 服务器时区时，仍以本项 + 应用容器 TZ 为准。
                              </p>
+                          </div>
+                          <div v-else-if="item.key === 'download_url_prefix'">
+                             <input
+                               type="url"
+                               v-model="item.value"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               placeholder="https://your-domain.example.com"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                             />
+                             <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
+                               <div>💡 <strong>设置示例：</strong>填写 <code class="font-mono text-blue-800">https://your-domain.example.com</code>，生成的下载地址会是 <code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code>。</div>
+                               <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code> 或相对地址。</div>
+                             </div>
                           </div>
                           <div v-else-if="item.key === 'sandbox_ssh_auth_type'">
                              <select
@@ -2785,6 +2846,30 @@ onMounted(async () => {
                              </div>
                              <div v-if="dockerPrebuildTag" class="mt-1.5 text-[11px] text-gray-500 leading-relaxed select-none">
                                当前预构建镜像 Tag：<code class="font-mono text-indigo-700">{{ dockerPrebuildTag }}</code>
+                             </div>
+                             <div v-if="dockerPrebuildAction === 'manual_download'" class="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                               <div class="font-medium">当前后端无法连接 Docker daemon，请手动导入符合 AgentScope 规范的镜像。</div>
+                               <a
+                                 v-if="dockerManualDownloadUrl"
+                                 :href="dockerManualDownloadUrl"
+                                 target="_blank"
+                                 rel="noopener noreferrer"
+                                 class="mt-1 inline-block break-all text-indigo-700 underline"
+                               >
+                                 下载 Docker 镜像包
+                               </a>
+                               <div v-else class="mt-1 text-amber-800">尚未配置镜像下载地址，请先填写上方“手动镜像下载地址”。</div>
+                               <div v-if="dockerManualImportCommand" class="mt-2 flex items-start gap-2">
+                                 <code class="min-w-0 flex-1 break-all rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-700">{{ dockerManualImportCommand }}</code>
+                                 <button
+                                   type="button"
+                                   @click="copyDockerManualImportCommand"
+                                   class="shrink-0 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] text-amber-800 hover:bg-amber-100"
+                                 >
+                                   复制命令
+                                 </button>
+                               </div>
+                               <div v-if="dockerPrebuildMessage" class="mt-1.5 text-[11px] text-amber-800">{{ dockerPrebuildMessage }}</div>
                              </div>
                           </div>
                           <div v-else>

@@ -25,3 +25,12 @@ def test_docker_prebuild_status_checks_after_configs_load_and_has_manual_refresh
     assert "await fetchConfigs()" in source
     assert "刷新状态" in source
     assert '@click="refreshDockerPrebuildStatus()"' in source
+
+
+def test_docker_prebuild_exposes_manual_download_fallback():
+    source = SETTINGS.read_text(encoding="utf-8")
+
+    assert "manual_download" in source
+    assert "download_url" in source
+    assert "manual_import_command" in source
+    assert "复制命令" in source

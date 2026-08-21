@@ -979,7 +979,10 @@ async def get_local_workspace(
     if not conversation_id:
         return None
 
-    from app.services.config_service import ConfigService
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
 
     root = await resolve_workspace_root()
     workdir = resolve_session_workdir(
@@ -1000,7 +1003,10 @@ async def get_local_workspace(
         if skills_custom
         else "all"
     )
-    policy = (await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL)).strip().lower()
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
     if policy not in KNOWN_SANDBOX_POLICIES:
         logger.warning("[workspace] Unknown sandbox_policy=%r, falling back to local", policy)
         policy = SANDBOX_POLICY_LOCAL
@@ -1219,9 +1225,14 @@ async def append_session_workspace_sandbox_to_system_prompt(
     logical_session_workdir = None
     logical_docs_dir = None
     try:
-        from app.services.config_service import ConfigService
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
 
-        policy = (await ConfigService.get("sandbox_policy", "local") or "local").strip().lower()
+        policy = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", "local"),
+        )
     except Exception:
         policy = "local"
     if policy == SANDBOX_POLICY_DOCKER:
