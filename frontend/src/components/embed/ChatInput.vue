@@ -11,6 +11,7 @@ import type { ReasoningEffort } from "@/api/model";
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
+import { CloudIcon, ComputerDesktopIcon, CubeIcon, ServerIcon } from "@heroicons/vue/24/outline";
 
 type ApprovalMode = "ask" | "allow" | "deny";
 
@@ -120,6 +121,28 @@ const sandboxPolicyLabel = computed(() => {
   return labels[policy] || policy;
 });
 
+const sandboxPolicyIcon = computed(() => {
+  const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
+  const runtimeEnv = String(props.contextUsage?.sandbox_runtime_env || "").trim().toLowerCase();
+  if (policy === "e2b") return CloudIcon;
+  if (policy === "ssh") return ServerIcon;
+  if (policy === "docker" || (policy === "local" && runtimeEnv === "docker")) {
+    return CubeIcon;
+  }
+  return ComputerDesktopIcon;
+});
+
+const sandboxPolicyBadgeClass = computed(() => {
+  const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
+  const runtimeEnv = String(props.contextUsage?.sandbox_runtime_env || "").trim().toLowerCase();
+  if (policy === "e2b") return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800/60 dark:bg-violet-950/30 dark:text-violet-300";
+  if (policy === "ssh") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800/60 dark:bg-sky-950/30 dark:text-sky-300";
+  if (policy === "docker" || (policy === "local" && runtimeEnv === "docker")) {
+    return "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800/60 dark:bg-indigo-950/30 dark:text-indigo-300";
+  }
+  return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300";
+});
+
 const contextRequestInputPercent = computed(() => {
   const physicalWindow = Number(props.contextUsage?.physical_window || 0);
   const requestInputBudget = Number(props.contextUsage?.request_input_budget || 0);
@@ -135,6 +158,7 @@ const contextUsageTone = computed(() => {
       text: "text-red-600 dark:text-red-400",
       track: "bg-red-500",
       marker: "bg-red-400",
+      dot: "bg-red-400",
       badge: "border-red-200/70 bg-red-50/70 text-red-600 hover:bg-red-100/80 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400 dark:hover:bg-red-950/35",
     };
   }
@@ -143,6 +167,7 @@ const contextUsageTone = computed(() => {
       text: "text-amber-600 dark:text-amber-400",
       track: "bg-amber-500",
       marker: "bg-amber-400",
+      dot: "bg-amber-400",
       badge: "border-amber-200/70 bg-amber-50/70 text-amber-600 hover:bg-amber-100/80 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-400 dark:hover:bg-amber-950/35",
     };
   }
@@ -150,8 +175,18 @@ const contextUsageTone = computed(() => {
     text: "text-emerald-600 dark:text-emerald-400",
     track: "bg-emerald-500",
     marker: "bg-rose-400",
-    badge: "border-emerald-200/70 bg-emerald-50/70 text-emerald-600 hover:bg-emerald-100/80 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-400 dark:hover:bg-emerald-950/35",
+    dot: "bg-emerald-400/80 dark:bg-emerald-400/70",
+    badge: "border-slate-200/80 bg-slate-50/80 text-slate-600 hover:bg-slate-100 dark:border-slate-700/70 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:bg-slate-700/80",
   };
+});
+
+const contextUsageStatusLabel = computed(() => {
+  const current = Number(props.contextUsage?.estimated_current_tokens || 0);
+  const requestInputBudget = Number(props.contextUsage?.request_input_budget || 0);
+  if (!requestInputBudget) return "暂无输入上限";
+  if (current >= requestInputBudget) return "已达输入上限";
+  if (current >= requestInputBudget * 0.9) return "接近上限";
+  return "使用正常";
 });
 
 const emit = defineEmits<{
@@ -1487,7 +1522,7 @@ defineExpose({
                   :title="`上下文使用 ${formatContextTokens(contextUsage.estimated_current_tokens)} / ${formatContextTokens(contextUsage.physical_window)}`"
                   @click.stop="toggleContextUsageDetails"
                 >
-                    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current" />
+                    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full" :class="contextUsageTone.dot" />
                     <span>{{ formatContextTokens(contextUsage.estimated_current_tokens) }}</span>
                     <span class="font-mono tabular-nums opacity-70">/ {{ formatContextTokens(contextUsage.physical_window) }}</span>
                 </button>
@@ -1500,20 +1535,28 @@ defineExpose({
                   role="dialog"
                   aria-label="上下文使用详情"
                   aria-live="polite"
-                  class="absolute right-0 z-40 w-60 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white/95 p-3 text-[10px] shadow-xl dark:border-gray-700 dark:bg-gray-800/95"
+                  class="absolute right-0 z-40 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white/95 p-3 text-[10px] shadow-xl dark:border-gray-700 dark:bg-gray-800/95"
                   :class="contextUsageDetailsPlacement === 'above'
                     ? 'bottom-[calc(100%+0.5rem)]'
                     : 'top-[calc(100%+0.5rem)]'"
                   @click.stop
                 >
                     <div class="flex items-center justify-between gap-2 text-gray-500 dark:text-gray-400">
-                        <span>上下文使用</span>
-                        <span class="flex items-center gap-1.5 font-mono tabular-nums" :class="contextUsageTone.text">
+                        <span class="font-medium">上下文使用</span>
+                        <span class="flex items-center gap-1.5">
+                            <span
+                              class="rounded-full border px-1.5 py-0.5 text-[9px] font-medium"
+                              :class="contextUsageTone.badge"
+                            >
+                              {{ contextUsageStatusLabel }}
+                            </span>
+                            <span class="flex items-center gap-1.5 font-mono tabular-nums" :class="contextUsageTone.text">
                             <span>
                                 {{ formatContextTokens(contextUsage.estimated_current_tokens) }} /
                                 {{ formatContextTokens(contextUsage.physical_window) }}
                             </span>
                             <span class="opacity-75">· {{ contextUsagePercentLabel }}</span>
+                            </span>
                         </span>
                     </div>
                     <div
@@ -1537,16 +1580,40 @@ defineExpose({
                           :title="`请求输入上限 ${formatContextTokens(contextUsage.request_input_budget)}`"
                         />
                     </div>
-                    <div class="mt-2 flex items-center justify-between gap-2 text-gray-400 dark:text-gray-500">
-                        <span>历史截断线 {{ formatContextTokens(contextUsage.history_budget) }}</span>
-                        <span>请求输入上限 {{ formatContextTokens(contextUsage.request_input_budget) }}</span>
+                    <div class="mt-2 space-y-1 text-gray-400 dark:text-gray-500">
+                        <div class="flex items-center justify-between gap-3">
+                          <span
+                            class="flex cursor-help items-center gap-1.5"
+                            title="达到此水位后，系统会整理较早对话，优先压缩成摘要。"
+                            aria-label="自动整理线：达到此水位后，系统会整理较早对话，优先压缩成摘要。"
+                          >
+                            <span class="h-1.5 w-1.5 rounded-full bg-rose-400" aria-hidden="true" />
+                            <span>自动整理线</span>
+                          </span>
+                          <span class="font-mono tabular-nums">{{ formatContextTokens(contextUsage.history_budget) }}</span>
+                        </div>
+                        <div class="flex items-center justify-between gap-3">
+                          <span class="flex items-center gap-1.5">
+                            <span class="h-1.5 w-1.5 rounded-full bg-red-400" aria-hidden="true" />
+                            <span>请求输入上限</span>
+                          </span>
+                          <span class="font-mono tabular-nums">{{ formatContextTokens(contextUsage.request_input_budget) }}</span>
+                        </div>
                     </div>
                     <div
                       v-if="sandboxPolicyLabel"
                       class="mt-2 flex items-center justify-between gap-2 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
                     >
-                        <span>Sandbox 策略</span>
-                        <span class="font-mono text-gray-600 dark:text-gray-300">{{ sandboxPolicyLabel }}</span>
+                        <span class="flex items-center gap-1.5">
+                          <component :is="sandboxPolicyIcon" class="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
+                          <span>Sandbox 策略</span>
+                        </span>
+                        <span
+                          class="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 font-mono text-[9px] font-medium"
+                          :class="sandboxPolicyBadgeClass"
+                        >
+                          {{ sandboxPolicyLabel }}
+                        </span>
                     </div>
                 </div>
             </div>
