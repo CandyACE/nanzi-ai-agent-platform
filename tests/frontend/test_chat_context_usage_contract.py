@@ -30,7 +30,14 @@ def test_chat_input_exposes_context_usage_indicator_and_both_chat_surfaces_refre
     assert "contextUsagePercentLabel" in chat_input
     assert "{{ contextUsagePercentLabel }}" in chat_input
     assert "sandbox_policy" in composable
+    assert "sandbox_runtime_env" in composable
     assert "sandboxPolicyLabel" in chat_input
+    assert "sandboxRuntimeEnvLabel" in chat_input
+    assert 'runtimeEnv === "docker"' in chat_input
+    assert 'runtimeEnv === "host"' in chat_input
+    assert 'return "平台 Docker 容器内"' in chat_input
+    assert 'return "宿主机"' in chat_input
+    assert '`local（${sandboxRuntimeEnvLabel.value}）`' in chat_input
     assert "Sandbox 策略" in chat_input
     assert "/api/v1/chat/conversation/" in composable
     assert "context-usage" in composable

@@ -25,6 +25,7 @@ from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
 from app.services.ai.business_context import sanitize_injected_context
+from app.utils.env import get_env
 import logging
 
 
@@ -809,7 +810,13 @@ async def get_conversation_context_usage(
     except Exception as exc:
         logger.warning("读取 sandbox_policy 失败: %s", exc)
         sandbox_policy = None
-    return StandardResponse(data={**usage, "sandbox_policy": sandbox_policy})
+    return StandardResponse(
+        data={
+            **usage,
+            "sandbox_policy": sandbox_policy,
+            "sandbox_runtime_env": get_env(),
+        }
+    )
 
 
 class ConversationFinalizeResponse(BaseModel):

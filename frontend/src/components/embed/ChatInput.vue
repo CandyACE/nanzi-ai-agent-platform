@@ -97,11 +97,22 @@ const contextUsagePercent = computed(() => {
 
 const contextUsagePercentLabel = computed(() => `${Math.round(contextUsagePercent.value)}%`);
 
+const sandboxRuntimeEnvLabel = computed(() => {
+  const runtimeEnv = String(props.contextUsage?.sandbox_runtime_env || "").trim().toLowerCase();
+  if (runtimeEnv === "docker") return "平台 Docker 容器内";
+  if (runtimeEnv === "host") return "宿主机";
+  return "";
+});
+
 const sandboxPolicyLabel = computed(() => {
   const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
   if (!policy) return "";
+  if (policy === "local") {
+    return sandboxRuntimeEnvLabel.value
+      ? `local（${sandboxRuntimeEnvLabel.value}）`
+      : "local（本地执行）";
+  }
   const labels: Record<string, string> = {
-    local: "local（本地执行）",
     docker: "docker（Docker 容器）",
     e2b: "e2b（E2B 云端）",
     ssh: "ssh（SSH 远程主机）",
