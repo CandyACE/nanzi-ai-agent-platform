@@ -4,6 +4,7 @@ import katex from 'katex'
 import texmath from 'markdown-it-texmath'
 import 'highlight.js/styles/github.css' // Base styles
 import 'katex/dist/katex.min.css'
+import { normalizeGroundingNoticeMarkdown } from './markdownNormalization'
 
 const mathOptions = {
   engine: katex,
@@ -137,7 +138,7 @@ const normalizePipeTables = (content: string) => {
 };
 
 export const renderMarkdown = (content: string) => {
-  return md.render(normalizePipeTables(content))
+  return md.render(normalizePipeTables(normalizeGroundingNoticeMarkdown(content)))
 }
 
 /** 画布/预览场景：保留单行换行，便于 .md 纯文本阅读 */
@@ -153,5 +154,5 @@ mdPreview.renderer.rules.fence = md.renderer.rules.fence!
 mdPreview.validateLink = md.validateLink
 
 export const renderMarkdownPreview = (content: string) => {
-  return mdPreview.render(normalizePipeTables(content))
+  return mdPreview.render(normalizePipeTables(normalizeGroundingNoticeMarkdown(content)))
 }

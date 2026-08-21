@@ -77,6 +77,7 @@ import {
 } from "@/utils/userQuestion";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "@/composables/useTokenQuota";
+import { useContextUsage } from "@/composables/useContextUsage";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import {
   buildSkillFlowBadges,
@@ -1363,6 +1364,20 @@ const handleDebugModelSelection = (model: string) => {
   debugConfig.thinkingEnableOverride = null;
   debugConfig.reasoningEffortOverride = null;
 };
+
+const { contextUsage, refreshContextUsage } = useContextUsage();
+const refreshDebugContextUsage = () => refreshContextUsage({
+  conversationId: conversationId.value,
+  modelId: debugConfig.model || undefined,
+  headers: debugAuthHeaders(),
+});
+
+watch(
+  [conversationId, () => debugConfig.model],
+  () => void refreshDebugContextUsage(),
+  { immediate: true },
+);
+
 const resetDebugThinkingOverrides = () => {
   debugConfig.thinkingEnableOverride = null;
   debugConfig.reasoningEffortOverride = null;
@@ -3381,6 +3396,7 @@ const sendMessageInternal = async () => {
     }
   } finally {
     isProcessing.value = false;
+    void refreshDebugContextUsage();
     nextTick(() => {
       if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
     });
@@ -5019,6 +5035,7 @@ onUnmounted(() => {
           :approval-mode="debugConfig.approvalMode"
           :selected-model="debugConfig.model"
           :available-models="availableModels"
+          :context-usage="contextUsage"
           :thinking-enable-override="debugConfig.thinkingEnableOverride"
           :reasoning-effort-override="debugConfig.reasoningEffortOverride"
           @update:approval-mode="debugConfig.approvalMode = $event"

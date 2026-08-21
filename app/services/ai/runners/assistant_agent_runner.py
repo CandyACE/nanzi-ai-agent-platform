@@ -84,6 +84,7 @@ from app.services.ai.runtime.agentscope.session_lock import (
 from app.services.ai.runtime.agentscope.workspace import (
     bind_configured_tools_to_workspace,
     get_local_workspace,
+    get_workspace_offloader,
 )
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import (
@@ -1418,7 +1419,7 @@ class AssistantAgentRunner(BaseExecutor):
             model=native_model,
             toolkit=toolkit,
             state=restored_state,
-            offloader=workspace,
+            offloader=get_workspace_offloader(workspace),
             model_config=model_config,
             context_config=context_config,
             injection_config=injection_config,

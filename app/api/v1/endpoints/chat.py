@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.ai.agent_service import agent_service
+from app.services.ai.context_usage import estimate_context_usage
 from app.services.ai.export_service import ExportService
+from app.services.config_service import ConfigService
 from app.core.context import set_debug_context
 from app.core.dependencies import require_api_key
 from app.schemas.response import StandardResponse, ListResponse
@@ -743,6 +745,59 @@ async def get_conversation_history(
         conversation_id=conversation_id,
         messages=history
     ))
+
+
+@router.get(
+    "/conversation/{conversation_id}/context-usage",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="获取会话上下文使用情况",
+    description="按 session_status 的同一估算口径返回当前会话上下文使用量，不触发模型调用。",
+)
+async def get_conversation_context_usage(
+    conversation_id: str,
+    model_id: Optional[str] = Query(None, description="当前输入框选中的模型 ID"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = user_info.get("user_id") if user_info else None
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+
+    runtime_model_info: Dict[str, Any] = {}
+    if model_id and db is not None:
+        from sqlalchemy import select
+
+        from app.models.ai_model import AIModel
+
+        result = await db.execute(
+            select(AIModel).where(
+                AIModel.model_id == model_id,
+                AIModel.is_active.is_(True),
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is not None:
+            runtime_model_info = {
+                "source": "runtime_override",
+                "effective_model_id": model.model_id,
+                "context_size": model.context_size,
+                "max_output_tokens": model.max_output_tokens,
+            }
+
+    usage = await estimate_context_usage(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        runtime_model_info=runtime_model_info,
+        empty_history_is_zero=True,
+    )
+    try:
+        sandbox_policy = (
+            await ConfigService.get("sandbox_policy", "local") or "local"
+        ).strip().lower()
+    except Exception as exc:
+        logger.warning("读取 sandbox_policy 失败: %s", exc)
+        sandbox_policy = None
+    return StandardResponse(data={**usage, "sandbox_policy": sandbox_policy})
 
 
 class ConversationFinalizeResponse(BaseModel):

@@ -206,6 +206,78 @@ async def test_map_standard_agentscope_event_interrupts_on_external_execution():
     assert any(c.get("type") == "external_execution_required" for c in chunks)
 
 
+@pytest.mark.asyncio
+async def test_bash_env_emission_follows_sandbox_policy(monkeypatch):
+    """bash_env SSE 事件的 env 取值随 sandbox_policy 多态变化。
+
+    非 local 策略（docker / e2b / ssh）直接以策略值上报；
+    local 策略回落为进程环境的容器/宿主探测结果。
+    """
+    from unittest.mock import AsyncMock
+
+    import app.services.config_service as cfg
+    import app.services.ai.runtime.agentscope.event_stream as es
+    import app.utils.env as env_mod
+
+    FALLBACK = "host"
+
+    async def _run(policy):
+        monkeypatch.setattr(
+            cfg.ConfigService, "get",
+            AsyncMock(return_value=policy),
+        )
+        # local 策略回落时才调用；其余策略不会触达探测函数
+        monkeypatch.setattr(env_mod, "get_env", lambda: FALLBACK)
+        state = new_native_stream_state()
+        event = SimpleNamespace(
+            type="TOOL_CALL_START",
+            tool_call_id="t1",
+            tool_call_name="Bash",
+        )
+        chunks = []
+        async for chunk in map_standard_agentscope_event(event, state=state):
+            chunks.append(chunk)
+        return [c for c in chunks if c.get("type") == "bash_env"][0][
+            "env"
+        ]
+
+    # 非 local 策略 → 直接以策略值上报
+    assert await _run("docker") == "docker"
+    assert await _run("e2b") == "e2b"
+    assert await _run("ssh") == "ssh"
+    # local 策略 → 回落为进程环境探测结果
+    assert await _run("local") == FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_bash_env_emitted_only_once_per_stream(monkeypatch):
+    """同一轮内多条 Bash 调用只上报一次 bash_env 事件（state 去重）。"""
+    from unittest.mock import AsyncMock
+
+    import app.services.config_service as cfg
+
+    monkeypatch.setattr(
+        cfg.ConfigService, "get", AsyncMock(return_value="docker"),
+    )
+    state = new_native_stream_state()
+    event = SimpleNamespace(
+        type="TOOL_CALL_START", tool_call_id="t1", tool_call_name="Bash"
+    )
+
+    async def drain():
+        out = []
+        async for chunk in map_standard_agentscope_event(
+            event, state=state, emit_observability=False
+        ):
+            out.append(chunk)
+        return out
+
+    first = [c for c in await drain() if c.get("type") == "bash_env"]
+    second = [c for c in await drain() if c.get("type") == "bash_env"]
+    assert len(first) == 1
+    assert second == []
+
+
 def test_is_interrupt_sse_chunk_only_pauses_for_pending_or_fatal_errors():
     assert is_interrupt_sse_chunk({"type": "permission_required", "permission_request_id": "p1"})
     assert is_interrupt_sse_chunk({"type": "external_execution_required", "external_execution_request_id": "e1"})

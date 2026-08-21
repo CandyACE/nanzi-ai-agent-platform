@@ -15,6 +15,26 @@ def _get_env_once():
     return get_env()
 
 
+async def _sandbox_bash_env() -> str:
+    """计算上报前端的 Bash 运行环境提示取值。
+
+    取值 ``host | docker | e2b | ssh``，与前端 BashEnvBanner 的多态提示一一对应：
+
+    - ``sandbox_policy`` 非 local（docker / e2b / ssh）时，Bash 经由对应沙箱执行，
+      直接以策略值作为 ``env`` 上报。
+    - ``sandbox_policy=local`` 时，Bash 后端进程内直接执行，回落为进程所在环境的
+      容器/宿主探测结果（参见 :mod:`app.utils.env`）。
+    """
+    from app.services.config_service import ConfigService
+
+    policy = (
+        await ConfigService.get("sandbox_policy", "local")
+    ).strip().lower()
+    if policy in ("docker", "e2b", "ssh"):
+        return policy
+    return _get_env_once()
+
+
 class PendingInterruptHost(Protocol):
     trace_id: str
     conversation_id: str | None
@@ -418,7 +438,7 @@ async def map_standard_agentscope_event(
         }
         if tool_name == "Bash" and not state.get("bash_env_emitted"):
             state["bash_env_emitted"] = True
-            yield {"type": "bash_env", "env": _get_env_once()}
+            yield {"type": "bash_env", "env": await _sandbox_bash_env()}
         return
 
     if event_type == "TOOL_CALL_DELTA":

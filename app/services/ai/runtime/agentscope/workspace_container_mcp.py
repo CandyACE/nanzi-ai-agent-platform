@@ -1,0 +1,175 @@
+# -*- coding: utf-8 -*-
+"""Sandbox container thin MCP server (Inline).
+
+This module builds the MCP client configuration handed to the
+AgentScope :class:`DockerWorkspace` / :class:`E2BWorkspace` via their
+``default_mcps`` argument.
+
+Constraint recap (see the platform design notes):
+
+* The platform cannot copy arbitrary modules into the runtime image —
+  ``extra_pip`` only pulls real PyPI packages and the gateway app is
+  owned by AgentScope. The gateway always ships ``mcp``, ``fastapi``
+  and ``uvicorn`` inside the container venv.
+* STDIO MCP servers are spawned by the in-container gateway as plain
+  subprocesses (``command`` + ``args`` as a list — no shell involved),
+  so we expose the container-side bash/file tools through an inline
+  ``python -c <script>`` FastMCP stdio server. ``BaseWorkspace`` uses
+  ``model_dump(mode="json")`` to push the configuration into the
+  gateway, which keeps this fully deterministic with zero image
+  changes.
+
+The script is kept as a single Python ``str`` so it can be compiled
+and unit-tested on the host while also being executable inside the
+container by ``python``.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from agentscope.mcp import MCPClient  # type: ignore[attr-defined]
+from agentscope.mcp import StdioMCPConfig  # type: ignore[attr-defined]
+
+# Name used for the injected container tool server. Stored under
+# ``<workdir>/.mcp`` and exposed to the model as ``<name>::<tool>``.
+CONTAINER_MCP_NAME = "sandbox"
+
+# Working directory inside the container/sandbox. Matches
+# AgentScope's ``CONTAINER_WORKDIR``.
+CONTAINER_WORKDIR = "/workspace"
+
+# The inline FastMCP stdio server. It must be syntactically valid
+# Python and use only the stdlib + ``mcp`` (already present in the
+# gateway venv). ``run(transport="stdio")`` blocks serving requests.
+_INLINE_SERVER = '''\
+import json
+import os
+import subprocess
+
+from mcp.server.fastmcp import FastMCP
+
+_ROOT = os.environ.get("SANDBOX_WORKDIR", "/workspace")
+mcp = FastMCP("sandbox")
+
+
+def _abspath(path: str) -> str:
+    p = os.path.abspath(os.path.join(_ROOT, os.path.expanduser(path)))
+    if not p.startswith(_ROOT):
+        raise ValueError("path escapes workspace: " + path)
+    return p
+
+
+@mcp.tool()
+def bash(command: str, cwd: str = ".") -> str:
+    """Run a shell command inside the sandbox and return its output.
+
+    Args:
+        command: The shell command line to execute.
+        cwd: Relative directory (under /workspace) to run in.
+    """
+    workdir = _ROOT if cwd in ("", ".") else _abspath(cwd)
+    try:
+        res = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        return json.dumps({"ok": False, "error": "command timed out"})
+    return json.dumps({
+        "ok": res.returncode == 0,
+        "exit_code": res.returncode,
+        "stdout": res.stdout[-100000:],
+        "stderr": res.stderr[-100000:],
+    })
+
+
+@mcp.tool()
+def read(path: str, offset: int = 0, limit: int = 2000) -> str:
+    """Read a text file inside the sandbox.
+
+    Args:
+        path: File path (relative to /workspace).
+        offset: Zero-based starting line.
+        limit: Max number of lines to return.
+    """
+    p = _abspath(path)
+    if not os.path.isfile(p):
+        return json.dumps({"ok": False, "error": "no such file: " + path})
+    try:
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"ok": False, "error": str(exc)})
+    chunk = lines[offset: offset + limit]
+    return json.dumps({
+        "ok": True,
+        "content": "".join(chunk),
+        "total_lines": len(lines),
+        "start_line": offset,
+    })
+
+
+@mcp.tool()
+def write(path: str, content: str) -> str:
+    """Create or overwrite a text file inside the sandbox.
+
+    Args:
+        path: File path (relative to /workspace). Parent dirs created.
+        content: Full file content to write.
+    """
+    p = _abspath(path)
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"ok": False, "error": str(exc)})
+    return json.dumps({"ok": True, "path": path})
+
+
+@mcp.tool()
+def glob(pattern: str, cwd: str = ".") -> str:
+    """List files under /workspace matching a glob pattern.
+
+    Args:
+        pattern: Glob pattern (relative to /workspace), e.g. **/*.py.
+        cwd: Subdirectory to search in.
+    """
+    import glob as _glob
+
+    base = _ROOT if cwd in ("", ".") else _abspath(cwd)
+    matches = _glob.glob(pattern, root_dir=base, recursive=True)
+    return json.dumps({"ok": True, "files": sorted(matches)[:500]})
+
+
+mcp.run(transport="stdio")
+'''
+
+
+def build_container_tool_mcp() -> MCPClient:
+    """Return the stateful STDIO MCP handshake for the sandbox tools.
+
+    The gateway (inside the container) spawns ``python -c <script>``
+    with its default inherited environment; we pin a container-side
+    working directory via ``cwd`` and expose it under
+    :data:`CONTAINER_MCP_NAME`.
+    """
+    return MCPClient(
+        name=CONTAINER_MCP_NAME,
+        is_stateful=True,
+        mcp_config=StdioMCPConfig(
+            command="python",
+            args=["-c", _INLINE_SERVER],
+            cwd=CONTAINER_WORKDIR,
+            env={"SANDBOX_WORKDIR": CONTAINER_WORKDIR},
+        ),
+    )
+
+
+def container_tool_mcp_spec() -> dict[str, Any]:
+    """Return the gateway-consumed JSON for the sandbox tool server."""
+    return build_container_tool_mcp().model_dump(mode="json")

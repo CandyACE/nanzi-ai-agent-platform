@@ -8,6 +8,7 @@ import McpCascadeMenu from "@/components/embed/McpCascadeMenu.vue";
 import type { McpToolItem } from "@/components/embed/McpCascadeMenu.vue";
 import ExpertCascadeMenu from "@/components/embed/ExpertCascadeMenu.vue";
 import type { ReasoningEffort } from "@/api/model";
+import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
 
@@ -67,6 +68,8 @@ const props = defineProps<{
   approvalMode?: ApprovalMode;
   selectedModel?: string;
   availableModels?: ModelOption[];
+  /** 当前会话的上下文使用情况，由页面通过只读接口刷新，不依赖 SSE。 */
+  contextUsage?: ContextUsage | null;
   thinkingEnableOverride?: boolean | null;
   reasoningEffortOverride?: ReasoningEffort | null;
   activeLtmPreference?: any;
@@ -83,6 +86,62 @@ const props = defineProps<{
   /** URL agent_id 深链锁定：隐藏专家切换/@，禁止切自动路由 */
   lockExpertAgent?: boolean;
 }>();
+
+const contextUsagePercent = computed(() => {
+  const current = Number(props.contextUsage?.estimated_current_tokens || 0);
+  const physicalWindow = Number(props.contextUsage?.physical_window || 0);
+  if (!physicalWindow) return 0;
+  const usage = (current / physicalWindow) * 100;
+  return Math.min(100, Math.max(0, Number.isFinite(usage) ? usage : 0));
+});
+
+const contextUsagePercentLabel = computed(() => `${Math.round(contextUsagePercent.value)}%`);
+
+const sandboxPolicyLabel = computed(() => {
+  const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
+  if (!policy) return "";
+  const labels: Record<string, string> = {
+    local: "local（本地执行）",
+    docker: "docker（Docker 容器）",
+    e2b: "e2b（E2B 云端）",
+    ssh: "ssh（SSH 远程主机）",
+  };
+  return labels[policy] || policy;
+});
+
+const contextRequestInputPercent = computed(() => {
+  const physicalWindow = Number(props.contextUsage?.physical_window || 0);
+  const requestInputBudget = Number(props.contextUsage?.request_input_budget || 0);
+  if (!physicalWindow || !requestInputBudget) return null;
+  return Math.min(100, Math.max(0, (requestInputBudget / physicalWindow) * 100));
+});
+
+const contextUsageTone = computed(() => {
+  const current = Number(props.contextUsage?.estimated_current_tokens || 0);
+  const requestInputBudget = Number(props.contextUsage?.request_input_budget || 0);
+  if (requestInputBudget > 0 && current >= requestInputBudget) {
+    return {
+      text: "text-red-600 dark:text-red-400",
+      track: "bg-red-500",
+      marker: "bg-red-400",
+      badge: "border-red-200/70 bg-red-50/70 text-red-600 hover:bg-red-100/80 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400 dark:hover:bg-red-950/35",
+    };
+  }
+  if (requestInputBudget > 0 && current >= requestInputBudget * 0.9) {
+    return {
+      text: "text-amber-600 dark:text-amber-400",
+      track: "bg-amber-500",
+      marker: "bg-amber-400",
+      badge: "border-amber-200/70 bg-amber-50/70 text-amber-600 hover:bg-amber-100/80 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-400 dark:hover:bg-amber-950/35",
+    };
+  }
+  return {
+    text: "text-emerald-600 dark:text-emerald-400",
+    track: "bg-emerald-500",
+    marker: "bg-rose-400",
+    badge: "border-emerald-200/70 bg-emerald-50/70 text-emerald-600 hover:bg-emerald-100/80 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-400 dark:hover:bg-emerald-950/35",
+  };
+});
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: string): void;
@@ -309,6 +368,7 @@ watch(() => props.isProcessing, (processing) => {
   if (processing) {
     showPlusMenu.value = false;
     showApprovalMenu.value = false;
+    closeContextUsageDetails();
     isDrawerExpanded.value = false;
     showCommandMenu.value = false;
     showMentionList.value = false;
@@ -684,10 +744,49 @@ const approvalTriggerToneClass = computed(() => {
 });
 
 const plusMenuContainerRef = ref<HTMLElement | null>(null);
+const contextUsageContainerRef = ref<HTMLElement | null>(null);
 const approvalTriggerWrapperRef = ref<HTMLElement | null>(null);
 const approvalMenuPanelRef = ref<HTMLElement | null>(null);
 const approvalTriggerRef = ref<HTMLButtonElement | null>(null);
 const showApprovalMenu = ref(false);
+const showContextUsageDetails = ref(false);
+const contextUsageDetailsRef = ref<HTMLElement | null>(null);
+const contextUsageDetailsPlacement = ref<'above' | 'below'>('above');
+
+const closeContextUsageDetails = () => {
+  showContextUsageDetails.value = false;
+  contextUsageDetailsPlacement.value = 'above';
+};
+
+const updateContextUsageDetailsPlacement = () => {
+  const container = contextUsageContainerRef.value;
+  const panel = contextUsageDetailsRef.value;
+  if (!container || !panel) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const panelHeight = panel.getBoundingClientRect().height;
+  const gap = 8;
+  const aboveSpace = containerRect.top;
+  const belowSpace = window.innerHeight - containerRect.bottom;
+  const hasAboveSpace = aboveSpace >= panelHeight + gap;
+  const hasBelowSpace = belowSpace >= panelHeight + gap;
+
+  contextUsageDetailsPlacement.value = hasAboveSpace || !hasBelowSpace ? 'above' : 'below';
+};
+
+const toggleContextUsageDetails = async () => {
+  if (props.isProcessing) return;
+  showContextUsageDetails.value = !showContextUsageDetails.value;
+  if (showContextUsageDetails.value) {
+    await nextTick();
+    updateContextUsageDetailsPlacement();
+  }
+};
+
+watch(() => props.contextUsage?.physical_window, (window) => {
+  if (!window) closeContextUsageDetails();
+});
+
 const approvalMenuPosition = reactive({
   bottom: 0,
   left: 0,
@@ -750,6 +849,9 @@ const handleGlobalClick = (event: MouseEvent) => {
     showPlusMenu.value = false;
     showSkillCascade.value = false;
   }
+  if (showContextUsageDetails.value && contextUsageContainerRef.value && !contextUsageContainerRef.value.contains(event.target as Node)) {
+    closeContextUsageDetails();
+  }
   if (showApprovalMenu.value) {
     const target = event.target as Node;
     const inTrigger = approvalTriggerWrapperRef.value?.contains(target);
@@ -784,6 +886,10 @@ const handleGlobalClick = (event: MouseEvent) => {
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
+    if (showContextUsageDetails.value) {
+      closeContextUsageDetails();
+      return;
+    }
     if (isDrawerExpanded.value) {
       isDrawerExpanded.value = false;
       return;
@@ -816,6 +922,7 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
 
 const handleApprovalMenuLayout = () => {
   if (showApprovalMenu.value) updateApprovalMenuPosition();
+  if (showContextUsageDetails.value) updateContextUsageDetailsPlacement();
   if (showModelDropdown.value && isMobileViewport.value) updateModelDropdownPosition();
   if (showExpertSelector.value && !isMobileViewport.value) updateExpertMenuPosition();
   if (showNewConversationMenu.value) updateNewConversationMenuPosition();
@@ -830,6 +937,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  closeContextUsageDetails();
   document.removeEventListener('click', handleGlobalClick);
   document.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('resize', handleApprovalMenuLayout);
@@ -1346,7 +1454,91 @@ defineExpose({
               </div>
             </div>
 
-            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100'" :placeholder="inputPlaceholder"></textarea>
+            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="[
+              isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100',
+              contextUsage && contextUsage.physical_window ? 'pr-24' : '',
+            ]" :placeholder="inputPlaceholder"></textarea>
+
+            <div
+              v-if="contextUsage && contextUsage.physical_window"
+              ref="contextUsageContainerRef"
+              class="absolute right-2 top-2 z-30"
+            >
+                <button
+                  type="button"
+                  data-testid="context-usage-indicator"
+                  class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  :class="contextUsageTone.badge"
+                  :aria-expanded="showContextUsageDetails"
+                  aria-haspopup="dialog"
+                  aria-controls="context-usage-details"
+                  :aria-label="`上下文使用 ${formatContextTokens(contextUsage.estimated_current_tokens)} / ${formatContextTokens(contextUsage.physical_window)}`"
+                  :title="`上下文使用 ${formatContextTokens(contextUsage.estimated_current_tokens)} / ${formatContextTokens(contextUsage.physical_window)}`"
+                  @click.stop="toggleContextUsageDetails"
+                >
+                    <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current" />
+                    <span>{{ formatContextTokens(contextUsage.estimated_current_tokens) }}</span>
+                    <span class="font-mono tabular-nums opacity-70">/ {{ formatContextTokens(contextUsage.physical_window) }}</span>
+                </button>
+
+                <div
+                  v-if="showContextUsageDetails"
+                  ref="contextUsageDetailsRef"
+                  id="context-usage-details"
+                  data-testid="context-usage-details"
+                  role="dialog"
+                  aria-label="上下文使用详情"
+                  aria-live="polite"
+                  class="absolute right-0 z-40 w-60 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white/95 p-3 text-[10px] shadow-xl dark:border-gray-700 dark:bg-gray-800/95"
+                  :class="contextUsageDetailsPlacement === 'above'
+                    ? 'bottom-[calc(100%+0.5rem)]'
+                    : 'top-[calc(100%+0.5rem)]'"
+                  @click.stop
+                >
+                    <div class="flex items-center justify-between gap-2 text-gray-500 dark:text-gray-400">
+                        <span>上下文使用</span>
+                        <span class="flex items-center gap-1.5 font-mono tabular-nums" :class="contextUsageTone.text">
+                            <span>
+                                {{ formatContextTokens(contextUsage.estimated_current_tokens) }} /
+                                {{ formatContextTokens(contextUsage.physical_window) }}
+                            </span>
+                            <span class="opacity-75">· {{ contextUsagePercentLabel }}</span>
+                        </span>
+                    </div>
+                    <div
+                      class="relative mt-2 h-1 overflow-visible rounded-full bg-gray-100 dark:bg-gray-700"
+                      role="progressbar"
+                      aria-label="上下文使用量"
+                      :aria-valuenow="contextUsagePercent"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                    >
+                        <div
+                          class="h-full rounded-full transition-all duration-300"
+                          :class="contextUsageTone.track"
+                          :style="{ width: `${contextUsagePercent}%` }"
+                        />
+                        <span
+                          v-if="contextRequestInputPercent !== null"
+                          class="absolute -top-0.5 h-2 w-0.5 rounded-full"
+                          :class="contextUsageTone.marker"
+                          :style="{ left: `${contextRequestInputPercent}%` }"
+                          :title="`请求输入上限 ${formatContextTokens(contextUsage.request_input_budget)}`"
+                        />
+                    </div>
+                    <div class="mt-2 flex items-center justify-between gap-2 text-gray-400 dark:text-gray-500">
+                        <span>历史截断线 {{ formatContextTokens(contextUsage.history_budget) }}</span>
+                        <span>请求输入上限 {{ formatContextTokens(contextUsage.request_input_budget) }}</span>
+                    </div>
+                    <div
+                      v-if="sandboxPolicyLabel"
+                      class="mt-2 flex items-center justify-between gap-2 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
+                    >
+                        <span>Sandbox 策略</span>
+                        <span class="font-mono text-gray-600 dark:text-gray-300">{{ sandboxPolicyLabel }}</span>
+                    </div>
+                </div>
+            </div>
 
             <div class="relative z-20 mt-1 flex min-h-7 flex-nowrap items-center gap-0.5 sm:gap-1.5">
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->

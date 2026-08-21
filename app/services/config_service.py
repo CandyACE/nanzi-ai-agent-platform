@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import AsyncSessionLocal
 from app.core.redis import get_redis
 from app.core.config import settings
+from app.utils.env import get_env
 
 logger = logging.getLogger(__name__)
 
@@ -280,8 +281,19 @@ class ConfigService:
                 "key": key,
                 "value": display_value, # Masked for display
                 "description": data['description'],
-                "is_secret": data['is_secret']
+                "is_secret": data['is_secret'],
+                "readonly": False
             })
+            
+        # 追加平台运行环境的只读探测结果（不落库），供前端按部署形态动态展示 local 文案
+        # local 沙箱策略 = 在后端进程内直接执行，而后端进程可能跑在宿主机或平台自身的 Docker 容器里
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_runtime_env",
+            "value": get_env(),  # "docker" | "host"
+            "description": "平台后端进程运行环境（自动探测）：docker=平台部署在容器内，host=平台运行在宿主机。local 沙箱策略即在该环境内直接执行。",
+            "is_secret": False,
+            "readonly": True
+        })
             
         return grouped
 

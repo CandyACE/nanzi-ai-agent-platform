@@ -1193,6 +1193,7 @@
         :approval-mode="config.approvalMode"
         :selected-model="config.overrideModel"
         :available-models="availableModels"
+        :context-usage="contextUsage"
         :thinking-enable-override="thinkingEnableOverride"
         :reasoning-effort-override="reasoningEffortOverride"
         :active-ltm-preference="activeLtmPreference"
@@ -2049,6 +2050,7 @@ import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
+import { useContextUsage } from "@/composables/useContextUsage";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
 import { useDatasetMount } from "@/composables/useDatasetMount";
@@ -2754,12 +2756,12 @@ const closeMessageArtifacts = () => {
   artifactsOpenMsgId.value = "";
 };
 const isProcessing = ref(false);
-const bashBannerEnv = ref<"host" | "docker" | null>(null);
+const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | null>(null);
 const bashBannerDismissed = ref(false);
 const showBashBanner = computed(
   () => bashBannerEnv.value !== null && !bashBannerDismissed.value && config.showBashBanner
 );
-const handleBashEnvEvent = (env: "host" | "docker") => {
+const handleBashEnvEvent = (env: "host" | "docker" | "e2b" | "ssh") => {
   bashBannerEnv.value = env;
   bashBannerDismissed.value = false;
 };
@@ -3830,6 +3832,19 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
     "X-API-Key": config.token,
   };
 };
+
+const { contextUsage, refreshContextUsage } = useContextUsage();
+const refreshEmbedContextUsage = () => refreshContextUsage({
+  conversationId: conversationId.value,
+  modelId: config.overrideModel || undefined,
+  headers: embedAuthHeaders(),
+});
+
+watch(
+  [conversationId, () => config.overrideModel, () => config.token],
+  () => void refreshEmbedContextUsage(),
+  { immediate: true },
+);
 
 const finalizeConversationInBackground = (cid: string) => {
   void finalizeConversation(cid, embedAuthHeaders());
@@ -7527,14 +7542,13 @@ const sendMessageInternal = async () => {
     }
   } finally {
     isProcessing.value = false;
-    bashBannerEnv.value = null;
-    bashBannerDismissed.value = false;
     agentMsg.value.isThinking = false;
     void refreshQuota();
     void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
     clearStallTimer();
     clearStalePendingTimer();
     showStalledPrompt.value = false;
+    void refreshEmbedContextUsage();
     if (thoughtTimer) clearInterval(thoughtTimer);
     // Final cleanup: stop any remaining log spinners
     finalizeAllPendingStreamLogs(agentMsg.value);

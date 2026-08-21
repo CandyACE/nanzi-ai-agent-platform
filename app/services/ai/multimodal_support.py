@@ -23,6 +23,14 @@ MULTIMODAL_CONFIG_KEY = "multimodal_model_name"
 
 MULTIMODAL_MODEL_TYPES = frozenset({"multimodal", "vision", "image2text"})
 
+_CONTEXT_WINDOW_ERROR_RE = re.compile(
+    r"maximum context length of\s*([\d,]+)\s*tokens"
+    r".*?total of\s*([\d,]+)\s*tokens:\s*([\d,]+)\s*tokens"
+    r"\s+from the input messages and\s*([\d,]+)\s*tokens"
+    r"\s+for the completion",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def get_last_user_message(history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     for message in reversed(history):
@@ -67,6 +75,30 @@ def is_multimodal_api_error(err: str) -> bool:
     return False
 
 
+def is_context_window_api_error(err: str) -> bool:
+    """识别模型输入加输出预留超过上下文窗口的错误。"""
+    lower = str(err or "").lower()
+    return "maximum context length" in lower and "requested token count" in lower
+
+
+def format_context_window_error(err: str) -> str:
+    """将上下文窗口超限错误转换为用户可执行的中文提示。"""
+    match = _CONTEXT_WINDOW_ERROR_RE.search(str(err or ""))
+    if not match:
+        return "输入内容过长，已超过当前模型的上下文上限。请减少输入内容，或分批发送。"
+
+    context_limit, total, input_tokens, completion_tokens = (
+        int(value.replace(",", "")) for value in match.groups()
+    )
+    overflow = max(total - context_limit, 0)
+    return (
+        f"输入内容过长：当前模型最多支持 {context_limit:,} tokens。"
+        f"本次输入约 {input_tokens:,} tokens，并预留了 {completion_tokens:,} tokens 输出，"
+        f"总计 {total:,} tokens，超出上限 {overflow:,} tokens。"
+        "请减少输入内容，或分批发送。"
+    )
+
+
 def _extract_model_from_error(err: str) -> Optional[str]:
     patterns = (
         r"'([^']+)'\s+is not a multimodal model",
@@ -82,6 +114,8 @@ def _extract_model_from_error(err: str) -> Optional[str]:
 
 def format_execution_error(err: str, model_name: Optional[str] = None) -> str:
     """将底层异常转为用户可理解的提示。"""
+    if is_context_window_api_error(err):
+        return format_context_window_error(err)
     if is_multimodal_api_error(err):
         resolved = model_name or _extract_model_from_error(err) or "当前模型"
         return AgentServicePrompts.multimodal_unsupported_message(resolved)

@@ -4,9 +4,10 @@
 1. agentscopeSseHandlers.ts 的 dispatchAgentscopeStreamEvent 支持可选的
    onBashEnv 回调，并针对 "bash_env" 事件 type 分发 broker 事件（bash_env）与 SSE
    type（process_tool_start / bash_env）两条链下的 payload。
-2. 组件 BashEnvBanner.vue 提供的容器/宿主机两种文案与配色、关闭按钮事件。
+2. 组件 BashEnvBanner.vue 提供的四种运行环境（host/docker/e2b/ssh）文案与配色、
+   关闭按钮事件。
 3. EmbedChat.vue 拉起横幅的状态接线：首次 bash 后置位 env、dismiss 逻辑、
-   stream 结束复位，以及 banner slot 与 TodoCard 共存。
+   stream 结束后保留，以及 banner slot 与 TodoCard 共存。
 """
 from pathlib import Path
 
@@ -23,28 +24,35 @@ SETTINGS = ROOT / "frontend/src/components/embed/ChatSettings.vue"
 
 def test_dispatch_accepts_optional_onbashenv_callback_and_handles_bash_env_event():
     source = HANDLER.read_text(encoding="utf-8")
-    assert "onBashEnv?: (env: \"host\" | \"docker\") => void" in source
+    assert (
+        'onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh") => void' in source
+    )
     assert "case \"bash_env\":" in source
-    # 仅当值为合法的 docker / host 时才回调，避免脏数据触发横幅
-    assert 'if (envVal === "docker" || envVal === "host")' in source
+    # 仅当值为合法的 host / docker / e2b / ssh 之一时才回调，避免脏数据触发横幅
+    assert (
+        'if (envVal === "docker" || envVal === "host" || envVal === "e2b" || envVal === "ssh")'
+        in source
+    )
     assert "onBashEnv(envVal)" in source
     # onBashEnv 为可选参数，默认不触发任何横幅逻辑，避免破坏其它调用点
-    assert "onBashEnv?: (env: \"host\" | \"docker\") => void" in source
+    assert (
+        'onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh") => void' in source
+    )
 
 
-def test_bash_env_banner_component_has_both_env_copy_and_dismiss():
+def test_bash_env_banner_component_has_env_variants_copy_and_dismiss():
     source = BANNER.read_text(encoding="utf-8")
-    # props: 容器/宿主机二值
-    assert 'docker' in source and 'host' in source
+    # props: 四种 env 多态（host / docker / e2b / ssh）
+    assert "env: 'host' | 'docker' | 'e2b' | 'ssh'" in source
     assert "defineProps" in source
-    # 文案与配色
-    assert "运行在容器环境" in source
-    assert "仍需遵守命令安全规则" in source
-    assert "宿主机" in source
-    assert "Docker 部署" in source
+    # 四种分支皆有文案与配色（字面量 class 保证 Tailwind JIT 提取）
+    assert "运行在 Docker 沙箱" in source
+    assert "运行在宿主机上" in source
+    assert "运行在 E2B 沙箱" in source
+    assert "运行在远端 SSH 主机" in source
     assert "sandbox" in source.lower()
-    assert "emerald" in source
-    assert "amber" in source
+    assert "emerald" in source and "amber" in source
+    assert "violet" in source and "sky" in source
     # 手动关闭
     assert "defineEmits" in source
     assert 'aria-label="关闭"' in source or 'aria-label="关闭横幅"' in source
@@ -54,7 +62,7 @@ def test_bash_env_banner_component_has_both_env_copy_and_dismiss():
     assert "emit('ignore')" in source
 
 
-def test_embed_chat_wires_bash_banner_state_and_reset():
+def test_embed_chat_keeps_bash_banner_after_stream_until_user_closes_it():
     source = EMBED.read_text(encoding="utf-8")
     assert 'import BashEnvBanner from "@/components/chat/BashEnvBanner.vue"' in source
     assert "bashBannerEnv" in source
@@ -79,8 +87,14 @@ def test_embed_chat_wires_bash_banner_state_and_reset():
     # 传递给 dispatchAgentscopeStreamEvent 的三处调用点都接了 onBashEnv 回调
     assert "handleBashEnvEvent" in source
     assert source.count("dispatchAgentscopeStreamEvent") >= 3
-    # stream 结束（finally）自动复位横幅
+    # stream 结束后不应自动清空横幅；横幅应保留到用户主动关闭或忽略
     assert "finally" in source
+    send_pos = source.find("const sendMessageInternal")
+    cleanup_pos = source.find("// Final cleanup", send_pos)
+    assert send_pos != -1 and cleanup_pos != -1
+    stream_cleanup = source[send_pos:cleanup_pos]
+    assert "bashBannerEnv.value = null" not in stream_cleanup
+    assert "bashBannerDismissed.value = false" not in stream_cleanup
 
 
 def test_bash_banner_has_settings_panel_switch():

@@ -11,10 +11,10 @@ from typing import Any
 
 from app.core.context import get_current_agent_context, get_debug_option
 from app.core.redis import get_redis
+from app.services.ai.context_usage import estimate_context_usage, estimate_text_tokens
 from app.services.ai.memory_service import memory_service
 from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
 from app.services.ai.tools.tool_compat import tool
-from app.services.schema_chunk_format import estimate_text_tokens
 
 
 _SAFE_MODEL_FIELDS = (
@@ -256,133 +256,14 @@ async def _last_model_call_stats(context: Any) -> dict[str, Any]:
 
 
 async def _context_usage_estimate(context: Any) -> dict[str, Any]:
-    """估算当前会话上下文的 Token 使用情况（全量历史 vs token 预算）。
-
-    口径与链路人压缩卡片（``agent_service._emit_compaction_card``）一致：
-    ``token_used`` = 全量历史 ``estimate_text_tokens(content + tool_run_text)`` 的近似和，
-    ``token_budget`` 取动态截断水位线：当 ``context.runtime_model_info`` 来源为显式
-    （``runtime_override`` / ``debug_override`` / ``agent_config``）且解析出有效
-    ``context_size`` 时采纳该模型窗口，否则回落 ``agent_context_max_tokens``（默认 64k）——
-    与 ``agent_service._resolve_runtime_context_budget`` 的截断逻辑保持一致。纯只读，任何
-    失败都返回 ``None`` 占位，不抛错、不写状态、不含密钥。这个估算在 ``session_status`` 运行时
-    通常会先于上下文压缩发生，因此反映的是当前持有历史的全量占用。
-    """
-    empty = {
-        "estimated_current_tokens": None,
-        "estimated_remaining_tokens": None,
-        "context_messages": None,
-        "token_budget": None,
-        "physical_window": None,
-        "history_budget": None,
-        "completion_reserve_tokens": None,
-        "request_input_budget": None,
-        "prompt_overhead_reservation_tokens": None,
-        "overhead_reservation_tokens": None,
-        "usage_percentage": None,
-    }
-    if context is None or not getattr(context, "conversation_id", None):
-        return empty
-
-    uid = str(getattr(context, "user_id", None) or "anonymous")
-    conversation_id = getattr(context, "conversation_id", None)
-    try:
-        full_history = await memory_service.get_history(uid, conversation_id)
-        if not full_history:
-            return empty
-
-        total_tokens = sum(
-            estimate_text_tokens(
-                str(msg.get("content") or "") + str(msg.get("tool_run_text") or "")
-            )
-            for msg in full_history
-            if isinstance(msg, dict)
-        )
-        total_tokens = int(total_tokens)
-
-        try:
-            from app.services.config_service import ConfigService
-
-            fallback_raw = await ConfigService.get("agent_context_max_tokens", "65536")
-            fallback_window = int(fallback_raw)
-        except (ValueError, TypeError):
-            fallback_window = 65536
-        if fallback_window <= 0:
-            fallback_window = 65536
-
-        info = dict(getattr(context, "runtime_model_info", {}) or {}) if context else {}
-        try:
-            physical_window = int(info.get("physical_window") or 0)
-        except (TypeError, ValueError):
-            physical_window = 0
-        if physical_window <= 0:
-            source = info.get("source")
-            if source in {"runtime_override", "debug_override", "agent_config"}:
-                try:
-                    physical_window = int(info.get("context_size") or 0)
-                except (TypeError, ValueError):
-                    physical_window = 0
-        if physical_window <= 0:
-            physical_window = fallback_window
-
-        try:
-            overhead = int(info.get("overhead_reservation_tokens") or 0)
-        except (TypeError, ValueError):
-            overhead = 0
-        if overhead <= 0:
-            try:
-                overhead_raw = await ConfigService.get(
-                    "agent_context_overhead_headroom_tokens", "8192"
-                )
-                overhead = max(0, int(overhead_raw))
-            except (ValueError, TypeError):
-                overhead = 8192
-
-        try:
-            completion_reserve = max(0, int(info.get("completion_reserve_tokens") or 0))
-        except (TypeError, ValueError):
-            completion_reserve = 0
-        try:
-            prompt_overhead = max(
-                0, int(info.get("prompt_overhead_reservation_tokens") or 0)
-            )
-        except (TypeError, ValueError):
-            prompt_overhead = 0
-
-        try:
-            budget = int(info.get("history_budget") or 0)
-        except (TypeError, ValueError):
-            budget = 0
-        if budget <= 0:
-            history_overhead = prompt_overhead or max(0, overhead - completion_reserve)
-            if completion_reserve > 0:
-                budget = max(1, physical_window - completion_reserve - history_overhead)
-            else:
-                budget = max(physical_window - overhead, max(1, physical_window // 3))
-
-        try:
-            request_input_budget = int(info.get("request_input_budget") or 0)
-        except (TypeError, ValueError):
-            request_input_budget = 0
-        if request_input_budget <= 0:
-            request_input_budget = max(1, physical_window - completion_reserve)
-
-        remaining = max(0, budget - total_tokens)
-        percentage = round(total_tokens / budget * 100, 1) if budget > 0 else 0.0
-        return {
-            "estimated_current_tokens": total_tokens,
-            "estimated_remaining_tokens": remaining,
-            "context_messages": len(full_history),
-            "token_budget": budget,
-            "physical_window": physical_window,
-            "history_budget": budget,
-            "completion_reserve_tokens": completion_reserve,
-            "request_input_budget": request_input_budget,
-            "prompt_overhead_reservation_tokens": prompt_overhead,
-            "overhead_reservation_tokens": overhead,
-            "usage_percentage": percentage,
-        }
-    except Exception:
-        return empty
+    """复用共享服务估算当前会话上下文，保持 session_status 原有空历史语义。"""
+    if context is None:
+        return await estimate_context_usage(user_id=None, conversation_id=None)
+    return await estimate_context_usage(
+        user_id=str(getattr(context, "user_id", None) or "anonymous"),
+        conversation_id=getattr(context, "conversation_id", None),
+        runtime_model_info=getattr(context, "runtime_model_info", {}) or {},
+    )
 
 
 async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
@@ -392,6 +273,7 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
         "docs_dir": None,
         "uploads_dir": None,
         "sandbox_dir": None,
+        "sandbox_policy": None,
     }
     limitations: list[str] = []
     if context is None or getattr(context, "user_id", None) is None:
@@ -399,6 +281,9 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
         return empty, limitations
 
     try:
+        from app.services.config_service import ConfigService
+
+        sandbox_policy = (await ConfigService.get("sandbox_policy", "local") or "local").strip().lower()
         root = await _maybe_await(resolve_workspace_root())
         user_id = getattr(context, "user_id", None)
         dimensions = dict(getattr(context, "user_dimensions", {}) or {})
@@ -429,6 +314,7 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
             "docs_dir": _directory_state(docs_path, scope="cross_session"),
             "uploads_dir": _directory_state(os.path.join(user_root, "uploads")),
             "sandbox_dir": _directory_state(os.path.join(user_root, "sandbox")),
+            "sandbox_policy": sandbox_policy,
         }, limitations
     except Exception:
         limitations.append("工作区路径解析失败，路径信息不可用")

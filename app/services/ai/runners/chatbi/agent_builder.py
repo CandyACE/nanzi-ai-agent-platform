@@ -56,7 +56,10 @@ async def build_native_agent(
         skills_custom=bool(getattr(runner.config, "skills_custom", False)),
         allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
     )
-    from app.services.ai.runtime.agentscope.workspace import bind_configured_tools_to_workspace
+    from app.services.ai.runtime.agentscope.workspace import (
+        bind_configured_tools_to_workspace,
+        get_workspace_offloader,
+    )
 
     tools = await bind_configured_tools_to_workspace(workspace, tools)
     toolkit = AgentScopeToolConsumer(builder=dar.build_toolkit).consume_specs(
@@ -93,7 +96,7 @@ async def build_native_agent(
     if restored_state is not None:
         kwargs["state"] = restored_state
     if workspace is not None:
-        kwargs["offloader"] = workspace
+        kwargs["offloader"] = get_workspace_offloader(workspace)
     if model_config is not None:
         kwargs["model_config"] = model_config
     if context_config is not None:

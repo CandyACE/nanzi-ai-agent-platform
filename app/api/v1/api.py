@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_api_key, verify_v1_api_access
-from app.api.v1.endpoints import browser, chat, schema, users, tasks, chatbi, fs, code_execution, embed
+from app.api.v1.endpoints import browser, chat, schema, users, tasks, chatbi, fs, code_execution, embed, sandbox
 
 # API Key + `verify_v1_api_access`（`chatbi.public_router` / `embed.public_router` 单独挂在下方，不经此依赖）
 v1_secured = APIRouter(dependencies=[Depends(require_api_key), Depends(verify_v1_api_access)])
@@ -14,6 +14,7 @@ v1_secured.include_router(chatbi.router, prefix="/chatbi", tags=["V1 ChatBI"])
 v1_secured.include_router(fs.router, prefix="/chat/fs", tags=["V1 文件系统浏览器"])
 v1_secured.include_router(code_execution.router, prefix="/chat/code-executions", tags=["V1 代码执行"])
 v1_secured.include_router(browser.router, prefix="/chat/browser", tags=["V1 服务端浏览器"])
+v1_secured.include_router(sandbox.router, tags=["V1 沙箱管理"])  # sandbox.router 内已携 /admin 前缀
 
 v1_router = APIRouter()
 v1_router.include_router(v1_secured)
