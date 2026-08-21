@@ -30,7 +30,32 @@ def test_chat_input_exposes_context_usage_indicator_and_both_chat_surfaces_refre
     assert "contextUsagePercentLabel" in chat_input
     assert "{{ contextUsagePercentLabel }}" in chat_input
     assert "sandbox_policy" in composable
+    assert "sandbox_runtime_env" in composable
     assert "sandboxPolicyLabel" in chat_input
+    assert "sandboxRuntimeEnvLabel" in chat_input
+    assert "sandboxPolicyIcon" in chat_input
+    assert "ComputerDesktopIcon" in chat_input
+    assert "CubeIcon" in chat_input
+    assert "CloudIcon" in chat_input
+    assert "ServerIcon" in chat_input
+    assert ':is="sandboxPolicyIcon"' in chat_input
+    assert "contextUsageStatusLabel" in chat_input
+    assert "使用正常" in chat_input
+    assert "接近上限" in chat_input
+    assert "已达输入上限" in chat_input
+    assert "自动整理线" in chat_input
+    assert "达到此水位后，系统会整理较早对话，优先压缩成摘要。" in chat_input
+    assert "border-slate-200/80" in chat_input
+    assert "bg-slate-50/80" in chat_input
+    assert "contextUsageTone.dot" in chat_input
+    assert "sandboxPolicyBadgeClass" in chat_input
+    assert "grid-cols-2" in chat_input
+    assert "w-72" in chat_input
+    assert 'runtimeEnv === "docker"' in chat_input
+    assert 'runtimeEnv === "host"' in chat_input
+    assert 'return "平台 Docker 容器内"' in chat_input
+    assert 'return "宿主机"' in chat_input
+    assert '`local（${sandboxRuntimeEnvLabel.value}）`' in chat_input
     assert "Sandbox 策略" in chat_input
     assert "/api/v1/chat/conversation/" in composable
     assert "context-usage" in composable

@@ -27,6 +27,12 @@ def test_docker_prebuild_status_checks_after_configs_load_and_has_manual_refresh
     assert '@click="refreshDockerPrebuildStatus()"' in source
 
 
+def test_docker_prebuild_success_reconciles_reused_or_built_state():
+    source = SETTINGS.read_text(encoding="utf-8")
+
+    assert "data?.reused || data?.built" in source
+
+
 def test_docker_prebuild_exposes_manual_download_fallback():
     source = SETTINGS.read_text(encoding="utf-8")
 

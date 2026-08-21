@@ -378,7 +378,8 @@ const toggleDockerBaseImage = (item: ConfigItem) => {
 }
 
 const applyDockerPrebuildStatus = (data: any) => {
-  dockerPrebuilt.value = !!data?.prebuilt
+  // 状态查询返回 prebuilt，预构建接口返回 reused / built；统一归一为页面状态。
+  dockerPrebuilt.value = !!(data?.prebuilt || data?.reused || data?.built)
   dockerPrebuildAction.value = data?.action || (data?.docker_available === false ? 'manual_download' : '')
   dockerPrebuildMessage.value = data?.message || ''
   dockerManualDownloadUrl.value = data?.download_url || ''

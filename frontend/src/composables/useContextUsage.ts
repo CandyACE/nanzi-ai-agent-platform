@@ -14,6 +14,7 @@ export interface ContextUsage {
   overhead_reservation_tokens?: number | null;
   usage_percentage: number | null;
   sandbox_policy?: string | null;
+  sandbox_runtime_env?: string | null;
 }
 
 export interface RefreshContextUsageOptions {

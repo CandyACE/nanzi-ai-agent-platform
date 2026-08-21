@@ -5,7 +5,7 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.mark.asyncio
-async def test_context_usage_endpoint_returns_shared_estimate_and_sandbox_policy(monkeypatch):
+async def test_context_usage_endpoint_returns_shared_estimate_and_effective_sandbox_runtime(monkeypatch):
     from app.api.v1.endpoints.chat import get_conversation_context_usage
 
     expected = {
@@ -35,6 +35,7 @@ async def test_context_usage_endpoint_returns_shared_estimate_and_sandbox_policy
         "app.api.v1.endpoints.chat.estimate_context_usage",
         fake_estimate_context_usage,
     )
+    monkeypatch.setattr("app.api.v1.endpoints.chat.get_env", lambda: "docker")
     monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_config_get)
 
     response = await get_conversation_context_usage(
@@ -44,4 +45,8 @@ async def test_context_usage_endpoint_returns_shared_estimate_and_sandbox_policy
         db=None,
     )
 
-    assert response.data == {**expected, "sandbox_policy": "docker"}
+    assert response.data == {
+        **expected,
+        "sandbox_policy": "docker",
+        "sandbox_runtime_env": "docker",
+    }
