@@ -46,19 +46,19 @@ const calcContextUsage = (stat: any): number => {
 };
 
 const contextUsageBarClass = (usage: number, stat: any = null): string => {
-  // 已越过截断水位线：即便未达到模型窗口 100%，也属危险区间
-  const budgetPct = contextBudgetPct(stat);
+  // 进度条统计的是完整请求输入，因此这里也使用同一口径的请求输入上限。
+  const budgetPct = requestInputBudgetPct(stat);
   if (budgetPct !== null && usage > budgetPct) return "bg-red-500";
   if (usage < 70) return "bg-emerald-500";
   if (usage < 90) return "bg-amber-500";
   return "bg-red-500";
 };
 
-// 截断水位线在进度条上的百分比位置（context_budget / context_size）。
-// 仅当 0 < 预算 < 模型窗口 时才有意义；窗口未配置(=预算)或预算缺失时不画标记。
-const contextBudgetPct = (stat: any): number | null => {
+// 总请求输入安全线在进度条上的百分比位置（request_input_budget / physical_window）。
+// 进度条的当前值是完整 input_tokens，不能直接和只针对历史的 history_budget 比较。
+const requestInputBudgetPct = (stat: any): number | null => {
   const ctx = Number(stat.physical_window || stat.context_size || 0);
-  const budget = Number(stat.history_budget || stat.context_budget || 0);
+  const budget = Number(stat.request_input_budget || 0);
   if (ctx > 0 && budget > 0 && budget < ctx) {
     return Math.min((budget / ctx) * 100, 100);
   }
@@ -255,12 +255,12 @@ const statsSummary = computed(() => {
                 aria-valuemin="0"
                 aria-valuemax="100"
               >
-                <!-- 截断水位线：平台侧 actual truncation 阈值（context_budget / context_size） -->
+                <!-- 请求输入安全线：与当前 input_tokens 使用同一条总请求输入口径 -->
                 <div
-                  v-if="contextBudgetPct(stat) !== null"
+                  v-if="requestInputBudgetPct(stat) !== null"
                   class="absolute top-0 bottom-0 w-[2px] bg-red-500/70 dark:bg-red-400/80 z-10"
-                  :style="{ left: contextBudgetPct(stat) + '%' }"
-                  :title="`截断水位线 ${formatTokens(stat.history_budget || stat.context_budget)}（达到即触发上下文裁剪）`"
+                  :style="{ left: requestInputBudgetPct(stat) + '%' }"
+                  :title="`请求输入线 ${formatTokens(stat.request_input_budget)}（接近此处将进入历史压缩/输出保护区）`"
                 ></div>
                 <div
                   class="h-full rounded-full transition-all"
@@ -271,11 +271,22 @@ const statsSummary = computed(() => {
               <div class="mt-0.5 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500">
                 <span>上下文占用 {{ calcContextUsage(stat).toFixed(2) }}%</span>
                 <span
-                  v-if="contextBudgetPct(stat) !== null"
+                  v-if="requestInputBudgetPct(stat) !== null"
                   class="text-red-500 dark:text-red-400 font-bold"
-                  :title="`达到 ${formatTokens(stat.history_budget || stat.context_budget)} tokens 即触发上下文裁剪`"
-                  >历史截断线 {{ formatTokens(stat.history_budget || stat.context_budget) }}</span
+                  :title="`完整请求输入安全线 ${formatTokens(stat.request_input_budget)} tokens`"
+                  >请求输入线 {{ formatTokens(stat.request_input_budget) }}</span
                 >
+              </div>
+              <div
+                v-if="stat.history_budget || stat.context_budget || stat.contains_compaction"
+                class="mt-0.5 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500"
+              >
+                <span
+                  v-if="stat.history_budget || stat.context_budget"
+                  :title="`只针对历史消息的 compact 判定预算 ${formatTokens(stat.history_budget || stat.context_budget)} tokens`"
+                >
+                  历史 compact 预算 {{ formatTokens(stat.history_budget || stat.context_budget) }}
+                </span>
                 <span v-if="stat.contains_compaction" class="text-amber-500 dark:text-amber-400 font-bold">
                   含早前对话裁剪
                 </span>

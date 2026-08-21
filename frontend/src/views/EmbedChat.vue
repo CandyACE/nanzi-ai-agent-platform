@@ -497,7 +497,7 @@
                 <span class="hidden sm:inline">编辑</span>
               </button>
               <button
-                @click="copyMessage(msg.content)"
+                @click="copyMessage(visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
@@ -630,7 +630,7 @@
                 :process-narration="msg.processNarration"
                 :process-narration-pending="msg.processNarrationPending"
                 :is-thinking="msg.isThinking"
-                :has-answer="Boolean(msg.content)"
+                :has-answer="Boolean(visibleStreamBody(msg))"
                 :thinking-text="msg.thinkingText"
                 :duration="msg.thoughtDuration"
                 :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
@@ -925,7 +925,7 @@
               class="flex flex-nowrap items-center space-x-2 mt-3"
             >
               <button
-                @click="copyMessage(msg.content)"
+                @click="copyMessage(visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
@@ -1100,9 +1100,9 @@
                   @action="(action) => handleChatBIResultAction(action, msg)"
                 />
                 <MessageContinueAnalysis
-                  v-if="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && msg.content"
+                  v-if="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && visibleStreamBody(msg)"
                   :is-mobile="isMobile"
-                  @select="(query) => handleQuickQuestion(query, 'send', msg.content)"
+                  @select="(query) => handleQuickQuestion(query, 'send', visibleStreamBody(msg))"
                 />
                 <button
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
@@ -1461,7 +1461,7 @@
                                     <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
                                     <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm leading-relaxed">
                                         <MessageRenderer
-                                          :content="turn.summary || 'N/A'"
+                                          :content="stripInternalContextBlocks(turn.summary || 'N/A')"
                                           :theme="config.markdownTheme"
                                           :conversation-id="conversationId"
                                         />
@@ -2153,7 +2153,10 @@ import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
 import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
 import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
-import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
+import {
+  sanitizeStreamContent,
+  stripInternalContextBlocks,
+} from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { modelApi, type AIModel, type ReasoningEffort } from "@/api/model";
@@ -2383,7 +2386,9 @@ const formatTimeLabel = (isoStr: string): string => {
 };
 
 function visibleStreamBody(msg: Message): string {
-  return msg.content || "";
+  return msg.role === "agent"
+    ? stripInternalContextBlocks(msg.content || "")
+    : (msg.content || "");
 }
 
 function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
@@ -2723,7 +2728,9 @@ const buildOutboundMessages = () => {
     }
     const msgObj: any = {
       role,
-      content: m.role === "user" ? resolveReqContent(m) : (m.content || ""),
+      content: m.role === "user"
+        ? resolveReqContent(m)
+        : stripInternalContextBlocks(m.content || ""),
     };
     if (m.role === "user" && m.files?.length) {
       msgObj.files = m.files;
@@ -7459,7 +7466,7 @@ const sendMessageInternal = async () => {
               }
             }
           } else if (data.type === "retraction") {
-            agentMsg.value.content = data.content;
+            agentMsg.value.content = stripInternalContextBlocks(String(data.content || ""));
             if (data.final !== false) {
               agentMsg.value.isThinking = false;
             }

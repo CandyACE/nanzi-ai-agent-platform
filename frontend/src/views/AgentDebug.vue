@@ -100,7 +100,10 @@ import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import { copyToClipboard } from "@/utils/clipboard";
 import { resolveGeneratedFileHref } from "@/utils/generatedFileUrl";
-import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
+import {
+  sanitizeStreamContent,
+  stripInternalContextBlocks,
+} from "@/utils/streamContentSanitize";
 import {
   canSaveGoldenReportFromMessage,
   resolveSavableSqlFromMessage,
@@ -360,7 +363,9 @@ const isGeneralAgentMessage = (msg: Message): boolean => {
 };
 
 const visibleStreamBody = (msg: Message): string => {
-  return msg.content || "";
+  return msg.role === "agent"
+    ? stripInternalContextBlocks(msg.content || "")
+    : (msg.content || "");
 };
 
 const showAgentDropdown = ref(false);
@@ -3263,7 +3268,7 @@ const sendMessageInternal = async () => {
             }
             // Handle Retraction Event
             else if (data.type === "retraction") {
-              agentMsg.value.content = data.content;
+              agentMsg.value.content = stripInternalContextBlocks(String(data.content || ""));
               if (data.final !== false) {
                 agentMsg.value.isThinking = false;
                 if (thoughtTimer) {
@@ -3645,7 +3650,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     msg.isThinking = false;
     msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
   } else if (data.type === "retraction") {
-    msg.content = data.content;
+    msg.content = stripInternalContextBlocks(String(data.content || ""));
     if (data.final !== false) {
       msg.isThinking = false;
       if (thoughtTimer) {
@@ -3852,7 +3857,7 @@ onUnmounted(() => {
                             </div>
                             <div>
                                 <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
-                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="turn.summary" @open-canvas="handleOpenCanvas" /></div>
+                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" /></div>
                             </div>
                         </div>
 
@@ -4600,7 +4605,7 @@ onUnmounted(() => {
                 :process-narration="msg.processNarration"
                 :process-narration-pending="msg.processNarrationPending"
                 :is-thinking="msg.isThinking"
-                :has-answer="Boolean(msg.content)"
+                :has-answer="Boolean(visibleStreamBody(msg))"
                 :thinking-text="msg.thinkingText"
                 :duration="msg.thoughtDuration"
                 :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
@@ -4812,7 +4817,7 @@ onUnmounted(() => {
                 <button
                   v-if="!msg.datasetNavigation?.groups?.length"
                   type="button"
-                  @click.stop="copyContent(msg.content, $event)"
+                  @click.stop="copyContent(visibleStreamBody(msg), $event)"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md transition-all opacity-0 group-hover/content:opacity-100 focus:opacity-100 z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
                 >
@@ -4864,10 +4869,10 @@ onUnmounted(() => {
                     @action="(action) => handleChatBIResultAction(action, msg)"
                   />
                 </div>
-                <div v-if="msg.role === 'agent' && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && msg.content" class="mt-2 flex justify-end">
+                <div v-if="msg.role === 'agent' && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && visibleStreamBody(msg)" class="mt-2 flex justify-end">
                   <MessageContinueAnalysis
                     :is-mobile="isMobile"
-                    @select="(query) => handleQuickQuestion(query, 'send', msg.content)"
+                    @select="(query) => handleQuickQuestion(query, 'send', visibleStreamBody(msg))"
                   />
                 </div>
                 <DatasetCapabilityMenu
@@ -4890,7 +4895,7 @@ onUnmounted(() => {
                   <button
                     v-if="msg.content"
                     type="button"
-                    @click.stop="copyContent(msg.content, $event)"
+                    @click.stop="copyContent(visibleStreamBody(msg), $event)"
                     class="flex items-center space-x-1 p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-primary transition-colors"
                     title="复制"
                   >
