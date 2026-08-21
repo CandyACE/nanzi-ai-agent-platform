@@ -38,6 +38,41 @@ const formatModelCallTime = (isoStr: string): string => {
   }
 };
 
+const calcContextUsage = (stat: any): number => {
+  const ctx = Number(stat.physical_window || stat.context_size || 0);
+  const inp = Number(stat.input_tokens || 0);
+  if (!ctx || ctx <= 0) return 0;
+  return Math.min((inp / ctx) * 100, 100);
+};
+
+const contextUsageBarClass = (usage: number, stat: any = null): string => {
+  // 进度条统计的是完整请求输入，因此这里也使用同一口径的请求输入上限。
+  const budgetPct = requestInputBudgetPct(stat);
+  if (budgetPct !== null && usage > budgetPct) return "bg-red-500";
+  if (usage < 70) return "bg-emerald-500";
+  if (usage < 90) return "bg-amber-500";
+  return "bg-red-500";
+};
+
+// 总请求输入安全线在进度条上的百分比位置（request_input_budget / physical_window）。
+// 进度条的当前值是完整 input_tokens，不能直接和只针对历史的 history_budget 比较。
+const requestInputBudgetPct = (stat: any): number | null => {
+  const ctx = Number(stat.physical_window || stat.context_size || 0);
+  const budget = Number(stat.request_input_budget || 0);
+  if (ctx > 0 && budget > 0 && budget < ctx) {
+    return Math.min((budget / ctx) * 100, 100);
+  }
+  return null;
+};
+
+// 1000+ 显示的简洁单位：例如 65536 -> 64k。
+const formatTokens = (n: number): string => {
+  if (!n || n <= 0) return "0";
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+};
+
 const statsSummary = computed(() => {
   const totalDuration = props.stats.reduce((acc: number, cur: any) => acc + (cur.elapsed_ms || 0), 0);
   const totalIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.input_tokens || 0), 0);
@@ -202,6 +237,70 @@ const statsSummary = computed(() => {
                 <div v-for="(call, cIdx) in stat.tool_calls" :key="cIdx" class="break-all whitespace-pre-wrap">
                   <span class="text-blue-500 dark:text-blue-400 font-bold">{{ call.name }}</span>(<span class="text-gray-600 dark:text-gray-400">{{ formatToolArgs(call.arguments) }}</span>)
                 </div>
+              </div>
+            </div>
+
+            <!-- Context Window Occupancy -->
+            <div v-if="stat.physical_window || stat.context_size" class="pt-2 border-t border-gray-100/50 dark:border-gray-700/20">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] text-gray-400 dark:text-gray-500">上下文窗口占用</span>
+                <span class="text-[10px] font-mono text-gray-500 dark:text-gray-400"
+                  >{{ stat.input_tokens || 0 }} / {{ stat.physical_window || stat.context_size }}</span
+                >
+              </div>
+              <div
+                class="mt-1 h-2 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden relative"
+                role="progressbar"
+                :aria-valuenow="calcContextUsage(stat)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <!-- 请求输入安全线：与当前 input_tokens 使用同一条总请求输入口径 -->
+                <div
+                  v-if="requestInputBudgetPct(stat) !== null"
+                  class="absolute top-0 bottom-0 w-[2px] bg-red-500/70 dark:bg-red-400/80 z-10"
+                  :style="{ left: requestInputBudgetPct(stat) + '%' }"
+                  :title="`请求输入线 ${formatTokens(stat.request_input_budget)}（接近此处将进入历史压缩/输出保护区）`"
+                ></div>
+                <div
+                  class="h-full rounded-full transition-all"
+                  :class="contextUsageBarClass(calcContextUsage(stat), stat)"
+                  :style="{ width: Math.min(calcContextUsage(stat), 100) + '%' }"
+                ></div>
+              </div>
+              <div class="mt-0.5 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500">
+                <span>上下文占用 {{ calcContextUsage(stat).toFixed(2) }}%</span>
+                <span
+                  v-if="requestInputBudgetPct(stat) !== null"
+                  class="text-red-500 dark:text-red-400 font-bold"
+                  :title="`完整请求输入安全线 ${formatTokens(stat.request_input_budget)} tokens`"
+                  >请求输入线 {{ formatTokens(stat.request_input_budget) }}</span
+                >
+              </div>
+              <div
+                v-if="stat.history_budget || stat.context_budget || stat.contains_compaction"
+                class="mt-0.5 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500"
+              >
+                <span
+                  v-if="stat.history_budget || stat.context_budget"
+                  :title="`只针对历史消息的 compact 判定预算 ${formatTokens(stat.history_budget || stat.context_budget)} tokens`"
+                >
+                  历史 compact 预算 {{ formatTokens(stat.history_budget || stat.context_budget) }}
+                </span>
+                <span v-if="stat.contains_compaction" class="text-amber-500 dark:text-amber-400 font-bold">
+                  含早前对话裁剪
+                </span>
+              </div>
+              <div
+                v-if="stat.completion_reserve_tokens || stat.request_input_budget"
+                class="mt-1 flex items-center justify-between text-[9px] font-mono text-gray-400 dark:text-gray-500"
+              >
+                <span v-if="stat.completion_reserve_tokens">
+                  输出预留 {{ formatTokens(stat.completion_reserve_tokens) }}
+                </span>
+                <span v-if="stat.request_input_budget">
+                  请求输入上限 {{ formatTokens(stat.request_input_budget) }}
+                </span>
               </div>
             </div>
 

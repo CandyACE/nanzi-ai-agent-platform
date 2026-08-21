@@ -477,6 +477,7 @@ const removeAiTag = (index: number) => {
 }
 
 const handleAiEnhance = async () => {
+  showAiConfirmModal.value = false
   if (!dataset.value?.id || enhancingDataset.value) return
   enhancingDataset.value = true
   try {

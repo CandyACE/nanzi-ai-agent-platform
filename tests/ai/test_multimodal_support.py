@@ -79,6 +79,21 @@ def test_format_execution_error_multimodal():
     assert "[系统错误]" not in msg
 
 
+def test_format_execution_error_context_window():
+    raw = """Error code: 400 - {'error': {'message': "Requested token count exceeds the model's maximum context length of 65536 tokens. You requested a total of 67298 tokens: 50914 tokens from the input messages and 16384 tokens for the completion. Please reduce the number of tokens in the input messages or the completion to fit within the limit.", 'type': 'bad_response_status_code'}}"""
+
+    msg = format_execution_error(raw)
+
+    assert "输入内容过长" in msg
+    assert "65,536" in msg
+    assert "50,914" in msg
+    assert "16,384" in msg
+    assert "67,298" in msg
+    assert "1,762" in msg
+    assert "请减少输入内容，或分批发送" in msg
+    assert "Requested token count exceeds" not in msg
+
+
 def test_format_execution_error_generic():
     msg = format_execution_error("connection reset")
     assert "[系统错误]" in msg

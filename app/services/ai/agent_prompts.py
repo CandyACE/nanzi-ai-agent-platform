@@ -715,13 +715,24 @@ class AgentServicePrompts:
         session_workdir: str,
         docs_dir: str,
         file_tool_names: List[str],
+        logical_workspace_root: str | None = None,
+        logical_session_workdir: str | None = None,
+        logical_docs_dir: str | None = None,
     ) -> str:
         """本会话 AgentScope workspace 与路径沙箱说明（仅在有文件/Shell 工具时注入）。"""
         tools_text = "、".join(file_tool_names) if file_tool_names else "Read/Write/Grep/Glob/Bash"
+        visible_session_workdir = logical_session_workdir or session_workdir
+        visible_docs_dir = logical_docs_dir or docs_dir
+        logical_root_text = (
+            f"- **统一工作区**：`{logical_workspace_root}`（Docker 模式下 Bash 与 Read/Write/Edit/Grep/Glob 共享此逻辑根目录；宿主机持久化路径由平台管理）\n"
+            if logical_workspace_root
+            else ""
+        )
         return (
             "[Session Workspace & Path Sandbox]\n"
-            f"- **会话工作目录**：`{session_workdir}`（本会话自动创建；Read/Write/Edit/Grep/Glob/Bash 的相对路径默认相对此目录，会话过程临时文件、工具落盘优先放这里）\n"
-            f"- **默认文档目录**：`{docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
+            + logical_root_text
+            + f"- **会话工作目录**：`{visible_session_workdir}`（本会话自动创建；Read/Write/Edit/Grep/Glob/Bash 的相对路径默认相对此目录，会话过程临时文件、工具落盘优先放这里）\n"
+            + f"- **默认文档目录**：`{visible_docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{visible_docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
             "- **平台共享目录仍在 `/app/data` 沙箱内、可访问**：用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件在 `/app/data/skills/...`。"
             " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"

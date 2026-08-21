@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import os
+import random
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +26,13 @@ from app.services.ai.browser.browser_policy import (
 
 class BrowserTargetStale(RuntimeError):
     """页面已经变化，调用方必须先重新获取快照。"""
+
+    def __init__(self, message: str, *, recoverable: bool = False):
+        super().__init__(message)
+        # 仅当目标语义可安全按最新 DOM 重新定位时才允许 stale 恢复自动重试。
+        # 目标解析类失败（快照里的 ref / 推断 index 已失配）不可自动恢复：用同名
+        # ref 去最新 DOM 上重定位会把动作静默落到一个语义完全不同的元素上。
+        self.recoverable = recoverable
 
 
 class BrowserWaitTimeout(TimeoutError):
@@ -57,10 +67,82 @@ CHROMIUM_LAUNCH_ARGS = [
 MANUAL_CLICK_LOAD_TIMEOUT_MS = 1500
 SNAPSHOT_NODE_SELECTOR = "body *"
 SNAPSHOT_MAX_ELEMENTS = 120
+# 抓取帧内交互候选元素；CSS 选择器默认穿透 open shadow DOM，因此对 Shadow DOM 元素同样生效。
+# 需以 "% SNAPSHOT_MAX_ELEMENTS" 作为参数格式化，故此处保留 %d 占位符。
+SNAPSHOT_JS = r"""
+(nodes) => {
+  const interactiveRoles = new Set([
+    'button', 'link', 'tab', 'option', 'menuitem', 'combobox',
+    'checkbox', 'radio', 'switch', 'listbox'
+  ]);
+  const nativeRoles = {
+    button: 'button', a: 'link', select: 'combobox', textarea: 'textbox',
+    input: (node) => (node.type === 'search' ? 'searchbox' : 'textbox')
+  };
+  const isVisible = (node) => {
+    const style = window.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && rect.width > 0 && rect.height > 0;
+  };
+  const cleanText = (value) => String(value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .trim()
+    .slice(0, 240);
+  const candidates = [];
+  for (let nodeIndex = 0; nodeIndex < nodes.length && candidates.length < %d; nodeIndex += 1) {
+    const node = nodes[nodeIndex];
+    const tagName = node.tagName.toLowerCase();
+    const roleAttribute = (node.getAttribute('role') || '').trim().toLowerCase();
+    const nativeRole = nativeRoles[tagName];
+    const resolvedNativeRole = typeof nativeRole === 'function' ? nativeRole(node) : nativeRole;
+    const inferredInteractive = !roleAttribute && !resolvedNativeRole && (
+      node.hasAttribute('onclick')
+      || (node.hasAttribute('tabindex') && Number(node.tabIndex) >= 0)
+      || node.hasAttribute('aria-haspopup')
+      || window.getComputedStyle(node).cursor === 'pointer'
+    );
+    const role = roleAttribute || resolvedNativeRole || (inferredInteractive ? 'button' : '');
+    const candidate = Boolean(resolvedNativeRole)
+      || (roleAttribute && interactiveRoles.has(roleAttribute))
+      || inferredInteractive;
+    if (!candidate || !isVisible(node)) continue;
+    const sensitive = tagName === 'input'
+      && (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')));
+    const rawName = cleanText(
+      node.getAttribute('aria-label')
+      || node.getAttribute('title')
+      || node.getAttribute('placeholder')
+      || node.innerText
+      || (node.value || '')
+    );
+    if (tagName === 'div' || tagName === 'section' || tagName === 'article') {
+      if (!resolvedNativeRole && !roleAttribute && rawName.length > 150) continue;
+    }
+    candidates.push({
+      role,
+      _role_source: roleAttribute ? 'explicit' : resolvedNativeRole ? 'native' : 'inferred',
+      _node_index: nodeIndex,
+      _in_shadow: (node.getRootNode && node.getRootNode() !== document),
+      sensitive,
+      name: rawName,
+      value: sensitive ? '' : cleanText(node.value || ''),
+      disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true',
+    });
+  }
+  return candidates;
+}
+"""
 SNAPSHOT_PAGE_TEXT_LIMIT = 6000
 SNAPSHOT_VISIBLE_TEXT_LIMIT = 12000
 SNAPSHOT_SETTLE_DELAY_MS = 150
 DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 1800  # 30 分钟无操作自动清理空闲 Chromium 实例
+# 动作失败时的自动恢复次数：stale/超时错误先刷新快照再重试，避免一次性失败直接中断流程。
+ACTION_RETRY_COUNT = 2
+# 动作完成后用于「拖后生效校验」的稳定等待下限（毫秒），不足则等满该值再取后置快照。
+POST_ACTION_SETTLE_MS = 300
 
 STEALTH_INIT_SCRIPT = """
 (() => {
@@ -106,6 +188,153 @@ STEALTH_INIT_SCRIPT = """
             );
         }
     } catch (_) {}
+
+    // —— 硬件与平台指纹兜底，与 macOS Chrome 默认值保持一致 ——
+    try {
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 8,
+            configurable: true,
+        });
+    } catch (_) {}
+
+    try {
+        Object.defineProperty(navigator, 'deviceMemory', {
+            get: () => 8,
+            configurable: true,
+        });
+    } catch (_) {}
+
+    try {
+        Object.defineProperty(navigator, 'platform', {
+            get: () => 'MacIntel',
+            configurable: true,
+        });
+    } catch (_) {}
+
+    try {
+        Object.defineProperty(navigator, 'maxTouchPoints', {
+            get: () => 0,
+            configurable: true,
+        });
+    } catch (_) {}
+
+    // 视口/屏幕尺寸统一，避免 headless 暴露异常窗口尺寸。
+    try {
+        if (window.screen) {
+            const fixScreen = (descriptor) => Object.defineProperties(window.screen, {
+                width: { get: () => descriptor.width, configurable: true },
+                height: { get: () => descriptor.height, configurable: true },
+                availWidth: { get: () => descriptor.width, configurable: true },
+                availHeight: { get: () => descriptor.height, configurable: true },
+            });
+            fixScreen({ width: 1280, height: 800 });
+        }
+        Object.defineProperties(window, {
+            outerWidth: { get: () => 1280, configurable: true },
+            outerHeight: { get: () => 800, configurable: true },
+            innerWidth: { get: () => 1280, configurable: true },
+            innerHeight: { get: () => 800, configurable: true },
+        });
+    } catch (_) {}
+
+    // 统一 WebGL 渲染信息，掩盖 headless 默认的 SwiftShader/Google 渲染器信号。
+    const spoofWebGl = (gl) => {
+        if (!gl) return;
+        const vendor = gl.getParameter(gl.VENDOR);
+        const renderer = gl.getParameter(gl.RENDERER);
+        if (vendor && String(vendor).toLowerCase().indexOf('google') !== -1) {
+            try {
+                gl.getParameter = ((original) => (name) => {
+                    if (name === gl.VENDOR) return 'Intel Inc.';
+                    if (name === gl.RENDERER) return 'Intel(R) UHD Graphics 630';
+                    return original(name);
+                })(gl.getParameter);
+            } catch (_) {}
+        }
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        if (ext) {
+            try {
+                gl.getParameter = ((original) => (name) => {
+                    if (name === ext.UNMASKED_VENDOR_WEBGL) return 'Intel Inc.';
+                    if (name === ext.UNMASKED_RENDERER_WEBGL) return 'Intel(R) UHD Graphics 630';
+                    return original(name);
+                })(gl.getParameter);
+            } catch (_) {}
+        }
+    };
+    try {
+        spoofWebGl(document.createElement('canvas').getContext('webgl'));
+    } catch (_) {}
+    try {
+        const canvases = document.querySelectorAll('canvas');
+        for (let i = 0; i < canvases.length && i < 8; i += 1) {
+            const gl = canvases[i].getContext('webgl') || canvases[i].getContext('experimental-webgl');
+            if (gl) spoofWebGl(gl);
+        }
+    } catch (_) {}
+
+    // —— C1：补充常见自动化检测面的指纹加固，进一步逼近 macOS Chrome 的默认外观 ——
+
+    // 1) 完善 window.chrome.runtime / app 结构：许多反爬脚本只检测属性存在与结构，
+    //    而不只是字段真假。补上典型 Chrome 扩展运行时对象的形状。
+    try {
+        const noop = function() {};
+        if (window.chrome) {
+            window.chrome.csi = window.chrome.csi || noop;
+            window.chrome.loadTimes = window.chrome.loadTimes || noop;
+            if (window.chrome.runtime) {
+                if (!('id' in window.chrome.runtime)) window.chrome.runtime.id = undefined;
+                window.chrome.runtime.getManifest = window.chrome.runtime.getManifest || (() => ({ manifest_version: 3 }));
+                window.chrome.runtime.connect = window.chrome.runtime.connect || noop;
+                window.chrome.runtime.sendMessage = window.chrome.runtime.sendMessage || noop;
+            }
+            if (window.chrome.app && !window.chrome.app.isInstalled) {
+                window.chrome.app.isInstalled = false;
+            }
+        }
+    } catch (_) {}
+
+    // 2) permissions.query 覆盖到常见权限名：通知、剪贴板、地理位置、摄像头、
+    //    麦克风、后台同步等，统一给「未请求」状态（'prompt'/'granted'），避免检测脚本
+    //    通过观察自动化环境里权限 API 报错或返回异值来识别。
+    try {
+        const originalQuery = window.navigator && window.navigator.permissions && window.navigator.permissions.query;
+        if (typeof originalQuery === 'function' && window.navigator.permissions) {
+            const realQuery = originalQuery;
+            window.navigator.permissions.query = (parameters) => {
+                const name = parameters && parameters.name;
+                const coordinators = ['geolocation', 'camera', 'microphone', 'midi', 'background-sync'];
+                if (name === 'notifications') {
+                    const state = (window.Notification && window.Notification.permission) || 'default';
+                    return Promise.resolve({ state: state === 'denied' ? 'denied' : 'prompt' });
+                }
+                if (coordinators.indexOf(name) !== -1) {
+                    return Promise.resolve({ state: 'prompt', onchange: null });
+                }
+                if (name === 'clipboard-read' || name === 'clipboard-write') {
+                    return Promise.resolve({ state: 'prompt', onchange: null });
+                }
+                return realQuery(parameters);
+            };
+        }
+    } catch (_) {}
+
+    // 3) 清理少数自动化注入会留下的标记属性：若页面环境带有这些探针属性，视为代理
+    //    伪造，直接移除/改值，避免被当成可点破的证据链。
+    try {
+        const markers = [
+            'cdc_adoQpoasnfa76pfcZLmcfl_Array',
+            'cdc_adoQpoasnfa76pfcZLmcfl_Promise',
+            'cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
+            '__injected',
+            '__selenium_evaluate',
+        ];
+        markers.forEach((marker) => {
+            if (marker in window) {
+                try { delete window[marker]; } catch (_) {}
+            }
+        });
+    } catch (_) {}
 })();
 """
 
@@ -116,6 +345,8 @@ class _BrowserHandle:
     page: Any
     browser: Any = None
     tab_ids: dict[int, str] = field(default_factory=dict)
+    page_status: dict[int, str] = field(default_factory=dict)
+    page_last_status: dict[int, int] = field(default_factory=dict)
     next_tab_number: int = 1
     last_active_at: float = field(default_factory=asyncio.get_event_loop().time if False else lambda: 0.0)
 
@@ -218,6 +449,14 @@ class BrowserWorker:
 
         await self._install_request_guard(context)
         page = await context.new_page()
+        handle = _BrowserHandle(context=context, page=page, browser=browser)
+        on_event = getattr(context, "on", None)
+        if callable(on_event):
+            try:
+                on_event("page", lambda new_page: self._track_new_page(handle, new_page))
+            except Exception:
+                pass
+        self._install_status_tracking(handle, page)
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             final_url = str(getattr(page, "url", url) or url)
@@ -228,11 +467,13 @@ class BrowserWorker:
                 await _maybe_await(browser.close())
             raise
 
-        handle = _BrowserHandle(context=context, page=page, browser=browser)
         handle.touch()
         self._handles[session_id] = handle
         self._snapshots.pop(session_id, None)
         return await self._page_info(page)
+
+    def _track_new_page(self, handle: _BrowserHandle, new_page: Any) -> None:
+        self._install_status_tracking(handle, new_page)
 
     async def _page_info(self, page: Any, *, focused_input: bool = False) -> BrowserPageInfo:
         url = str(getattr(page, "url", "") or "")
@@ -242,6 +483,46 @@ class BrowserWorker:
     async def current_page_info(self, session_id: str) -> BrowserPageInfo:
         """读取当前页面信息，供恢复已有会话时避免无意义的重复导航。"""
         return await self._page_info(self._handle(session_id).page)
+
+    def _install_status_tracking(self, handle: _BrowserHandle, page: Any) -> None:
+        """为页面挂载响应状态监听，用于快照中的 page_status 错误检测。"""
+        key = id(page)
+        handle.page_status.setdefault(key, "ready")
+        on_event = getattr(page, "on", None)
+        if not callable(on_event):
+            return
+        try:
+            def _on_response(response: Any) -> None:
+                try:
+                    status = int(getattr(response, "status", lambda: 0)() or 0)
+                except (TypeError, ValueError):
+                    status = 0
+                handle.page_last_status[key] = status
+                if status >= 400:
+                    handle.page_status[key] = "error"
+                else:
+                    handle.page_status[key] = "ready"
+
+            def _on_request_failed(_request: Any) -> None:
+                handle.page_status[key] = "error"
+
+            def _on_page_close() -> None:
+                handle.page_status.pop(key, None)
+                handle.page_last_status.pop(key, None)
+
+            on_event("response", _on_response)
+            on_event("requestfailed", _on_request_failed)
+            on_event("close", _on_page_close)
+        except Exception:
+            # 监听挂载失败不影响快照生成，回退为 ready。
+            pass
+
+    def _page_status(self, handle: _BrowserHandle, page: Any) -> str:
+        key = id(page)
+        status = handle.page_status.get(key, "ready")
+        if status == "error" and handle.page_last_status.get(key) == 404:
+            return "not_found"
+        return status
 
     def _tab_id(self, handle: _BrowserHandle, page: Any) -> str:
         key = id(page)
@@ -401,6 +682,28 @@ class BrowserWorker:
         except Exception:
             return False, None
 
+    async def _network_idle_or_timeout(self, page: Any, window: float) -> bool:
+        """在 window 秒内等待网络接近空闲，返回是否空闲。
+
+        Playwright 的 wait_for_load_state('networkidle') 会因长轮询/高频请求而长时间不返回，
+        因此这里仅在 window 内多次短等待；每次都命中即认为已空闲，避免永久阻塞。
+        """
+        deadline = asyncio.get_running_loop().time() + window
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            wait_state = getattr(page, "wait_for_load_state", None)
+            ready = False
+            if callable(wait_state):
+                try:
+                    await _maybe_await(wait_state("networkidle", timeout=min(250, max(50, int(remaining * 1000)))))
+                    ready = True
+                except Exception:
+                    ready = False
+            if ready:
+                return True
+
     def _handle(self, session_id: str) -> _BrowserHandle:
         try:
             handle = self._handles[session_id]
@@ -460,97 +763,57 @@ class BrowserWorker:
         info = await self._page_info(handle.page)
         captcha_detected, _captcha_reason = await self._detect_captcha(handle.page)
         page_context = await self._snapshot_page_context(handle.page)
+        # 主文档元素抓取走原 page.locator("body *") 路径（CSS 选择器默认穿透 open shadow DOM，
+        # 保证 _node_index 能通过 nth() 稳定重定位）；返回值按帧分组：main 帧 frame_index=None。
         locator = handle.page.locator(SNAPSHOT_NODE_SELECTOR)
-        raw_elements = await locator.evaluate_all(
-            r"""
-            (nodes) => {
-              const interactiveRoles = new Set([
-                'button', 'link', 'tab', 'option', 'menuitem', 'combobox',
-                'checkbox', 'radio', 'switch', 'listbox'
-              ]);
-              const nativeRoles = {
-                button: 'button', a: 'link', select: 'combobox', textarea: 'textbox',
-                input: (node) => (node.type === 'search' ? 'searchbox' : 'textbox')
-              };
-              const isVisible = (node) => {
-                const style = window.getComputedStyle(node);
-                const rect = node.getBoundingClientRect();
-                return style.display !== 'none' && style.visibility !== 'hidden'
-                  && rect.width > 0 && rect.height > 0;
-              };
-              const cleanText = (value) => String(value || '')
-                .replace(/\u00a0/g, ' ')
-                .replace(/[ \t]+/g, ' ')
-                .replace(/\s*\n\s*/g, '\n')
-                .trim()
-                .slice(0, 240);
-              const candidates = [];
-              for (let nodeIndex = 0; nodeIndex < nodes.length && candidates.length < %d; nodeIndex += 1) {
-                const node = nodes[nodeIndex];
-                const tagName = node.tagName.toLowerCase();
-                const roleAttribute = (node.getAttribute('role') || '').trim().toLowerCase();
-                const nativeRole = nativeRoles[tagName];
-                const resolvedNativeRole = typeof nativeRole === 'function' ? nativeRole(node) : nativeRole;
-                const inferredInteractive = !roleAttribute && !resolvedNativeRole && (
-                  node.hasAttribute('onclick')
-                  || (node.hasAttribute('tabindex') && Number(node.tabIndex) >= 0)
-                  || node.hasAttribute('aria-haspopup')
-                  || window.getComputedStyle(node).cursor === 'pointer'
-                );
-                const role = roleAttribute || resolvedNativeRole || (inferredInteractive ? 'button' : '');
-                const candidate = Boolean(resolvedNativeRole)
-                  || (roleAttribute && interactiveRoles.has(roleAttribute))
-                  || inferredInteractive;
-                if (!candidate || !isVisible(node)) continue;
-                const sensitive = tagName === 'input'
-                  && (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')));
-                const rawName = cleanText(
-                  node.getAttribute('aria-label')
-                  || node.getAttribute('title')
-                  || node.getAttribute('placeholder')
-                  || node.innerText
-                  || (node.value || '')
-                );
-                // 剔除包含大量嵌套重复文字的大文本容器节点或无语义名称的泛化容器，仅保留精简的叶子/语义节点
-                if (tagName === 'div' || tagName === 'section' || tagName === 'article') {
-                  if (!resolvedNativeRole && !roleAttribute && rawName.length > 150) continue;
-                }
-                candidates.push({
-                  role,
-                  _role_source: roleAttribute ? 'explicit' : resolvedNativeRole ? 'native' : 'inferred',
-                  _node_index: nodeIndex,
-                  sensitive,
-                  name: rawName,
-                  value: sensitive ? '' : cleanText(node.value || ''),
-                  disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true',
-                });
-              }
-              return candidates;
-            }
-            """
-            % SNAPSHOT_MAX_ELEMENTS
-        )
+        raw_elements = await locator.evaluate_all(SNAPSHOT_JS % SNAPSHOT_MAX_ELEMENTS)
+
+        # 聚合跨帧候选元素：主帧 (frame_index=None) + 每个 iframe 子帧。
+        # 所有 CSS 定位默认穿透 open shadow DOM，故此处对 Shadow DOM 无需特殊处理。
+        frame_groups: list[tuple[Any, list[dict[str, Any]]]] = []
+        if raw_elements:
+            frame_groups.append((None, raw_elements))
+        for frame_index, frame in enumerate(list(getattr(handle.page, "frames", []) or [])):
+            if frame_index == 0:
+                continue  # 主帧已在上方收集
+            frame_locator = getattr(frame, "locator", None)
+            if not callable(frame_locator):
+                continue
+            try:
+                sub_raw = await _maybe_await(
+                    frame_locator(SNAPSHOT_NODE_SELECTOR).evaluate_all(
+                        SNAPSHOT_JS % SNAPSHOT_MAX_ELEMENTS
+                    )
+                )
+            except Exception:
+                continue  # 子帧可能已销毁或跨域受限，忽略
+            if sub_raw:
+                frame_groups.append((frame_index, sub_raw))
 
         snapshot_id = uuid.uuid4().hex
         elements: list[BrowserElement] = []
         target_map: dict[str, dict[str, Any]] = {}
-        for index, raw in enumerate(raw_elements or [], start=1):
-            item = dict(raw or {})
-            ref = f"e{index}"
-            sensitive = bool(item.get("sensitive", False))
-            name = item.get("name")
-            if sensitive and name == item.get("value"):
-                name = None
-            element = BrowserElement(
-                ref=ref,
-                role=item.get("role"),
-                name=name,
-                value=None if sensitive else item.get("value"),
-                disabled=bool(item.get("disabled", False)),
-                sensitive=sensitive,
-            )
-            elements.append(element)
-            target_map[ref] = item
+        for group_index, (frame_index, items) in enumerate(frame_groups):
+            for inner_index, raw in enumerate(items or [], start=1):
+                index = group_index * SNAPSHOT_MAX_ELEMENTS + inner_index
+                item = dict(raw or {})
+                ref = f"e{index}"
+                if frame_index is not None:
+                    item["_frame_index"] = frame_index
+                sensitive = bool(item.get("sensitive", False))
+                name = item.get("name")
+                if sensitive and name == item.get("value"):
+                    name = None
+                element = BrowserElement(
+                    ref=ref,
+                    role=item.get("role"),
+                    name=name,
+                    value=None if sensitive else item.get("value"),
+                    disabled=bool(item.get("disabled", False)),
+                    sensitive=sensitive,
+                )
+                elements.append(element)
+                target_map[ref] = item
         if session_id not in self._snapshots:
             self._snapshots[session_id] = {}
         self._snapshots[session_id][snapshot_id] = target_map
@@ -568,6 +831,7 @@ class BrowserWorker:
             screenshot_ref=screenshot_ref,
             elements=elements,
             page_state="captcha" if captcha_detected else "ready",
+            page_status=self._page_status(handle, handle.page),
             scroll_x=page_context.get("scroll_x", 0),
             scroll_y=page_context.get("scroll_y", 0),
             viewport_width=page_context.get("viewport_width"),
@@ -709,11 +973,11 @@ class BrowserWorker:
         """等待受限页面条件满足后返回新快照，不执行任意页面脚本。"""
         handle = self._handle(session_id)
         normalized_condition = str(condition or "text").strip().lower()
-        if normalized_condition not in {"text", "url", "target", "page_state"}:
-            raise ValueError("等待条件必须是 text、url、target 或 page_state")
-        timeout = max(100, min(int(timeout_ms or 5000), 10000))
+        if normalized_condition not in {"text", "url", "target", "page_state", "element", "network_idle"}:
+            raise ValueError("等待条件必须是 text、url、target、page_state、element 或 network_idle")
+        timeout = max(100, min(int(timeout_ms or 5000), 15000))
         expected = str(value or "").strip()
-        if not expected:
+        if normalized_condition != "network_idle" and not expected:
             raise ValueError("等待条件值不能为空")
         deadline = asyncio.get_running_loop().time() + (timeout / 1000)
         while True:
@@ -730,14 +994,31 @@ class BrowserWorker:
                 current_state = "captcha" if captcha else "ready"
                 if expected.casefold() == current_state:
                     return await self.snapshot(session_id)
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
+            if normalized_condition == "element":
+                try:
+                    locator = handle.page.locator(expected)
+                    is_visible = getattr(locator, "is_visible", None)
+                    visible = bool(is_visible and await _maybe_await(is_visible()))
+                except Exception:
+                    visible = False
+                if visible:
+                    return await self.snapshot(session_id)
+            remaining_sec = deadline - asyncio.get_running_loop().time()
+            if remaining_sec <= 0:
                 raise BrowserWaitTimeout(f"等待浏览器条件超时：{normalized_condition}={expected}")
+            # network_idle：等待高频加载/轮询请求逐渐平息，而不是瞬时空闲。
+            if normalized_condition == "network_idle":
+                idle_ready = await self._network_idle_or_timeout(handle.page, min(2.0, max(0.1, remaining_sec)))
+                if idle_ready:
+                    return await self.snapshot(session_id)
+                remaining_sec = deadline - asyncio.get_running_loop().time()
+                if remaining_sec <= 0:
+                    raise BrowserWaitTimeout(f"等待浏览器条件超时：{normalized_condition}=<network-idle>")
             wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
             if callable(wait_for_timeout):
-                await _maybe_await(wait_for_timeout(min(250, max(1, int(remaining * 1000)))))
+                await _maybe_await(wait_for_timeout(min(250, max(1, int(remaining_sec * 1000)))))
             else:
-                await asyncio.sleep(min(0.25, remaining))
+                await asyncio.sleep(min(0.25, remaining_sec))
 
     async def read_visible(self, session_id: str) -> dict[str, Any]:
         handle = self._handle(session_id)
@@ -845,10 +1126,116 @@ class BrowserWorker:
         target_locator = self._locator_for(handle.page, target)
         await self._validate_inferred_target(source_locator, source)
         await self._validate_inferred_target(target_locator, target)
+        await self._ensure_actionable(source_locator, what="拖拽源元素")
+        await self._ensure_actionable(target_locator, what="拖拽目标元素")
         await _maybe_await(source_locator.drag_to(target_locator))
         info = await self._page_info(handle.page)
         self._snapshots.pop(session_id, None)
         return BrowserToolResult(session_id=session_id, action="drag", url=info.url, title=info.title)
+
+    async def slider_drag(
+        self,
+        session_id: str,
+        *,
+        source_ref: str,
+        snapshot: BrowserSnapshot,
+        distance_px: int | None = None,
+        gap_target_ref: str | None = None,
+    ) -> BrowserToolResult:
+        """拟人轨迹的坐标级滑块拖拽。
+
+        两种触发方式（至少提供其一）：
+
+        * ``distance_px``：直接指定要横向拖动的像素距离；
+        * ``gap_target_ref``：指定缺口(落点)元素，方法会用滑块与缺口的
+          bounding box 中心差值自动测量所需拖动距离（间距测量）。
+
+        拖拽本身为非对抗性的拟人化：分段移动、可变步长、轻微 y 抖动与末尾
+        过冲回弹，仅模拟人手拖动滑块的自然物理特性，不绕过任何反爬逻辑。
+        """
+        if distance_px is None and gap_target_ref is None:
+            raise ValueError("slider_drag 需要提供 distance_px 或 gap_target_ref 之一")
+
+        handle = self._handle(session_id)
+        source = self._target(session_id, snapshot, source_ref)
+        source_locator = self._locator_for(handle.page, source)
+        await self._validate_inferred_target(source_locator, source)
+        await self._ensure_actionable(source_locator, what="滑块元素")
+
+        source_box = await _maybe_await(source_locator.bounding_box())
+        if not source_box or source_box.get("width", 0) <= 0:
+            raise BrowserTargetStale("无法定位滑块元素，请重新获取快照")
+        sx = source_box["x"] + source_box["width"] / 2.0
+        sy = source_box["y"] + source_box["height"] / 2.0
+
+        measured: int | None = None
+        if gap_target_ref is not None:
+            gap = self._target(session_id, snapshot, gap_target_ref)
+            gap_locator = self._locator_for(handle.page, gap)
+            await self._validate_inferred_target(gap_locator, gap)
+            await self._ensure_actionable(gap_locator, what="滑块缺口元素")
+            gap_box = await _maybe_await(gap_locator.bounding_box())
+            if not gap_box:
+                raise BrowserTargetStale("无法定位滑块缺口元素，请重新获取快照")
+            gx = gap_box["x"] + gap_box["width"] / 2.0
+            measured = int(round(gx - sx))
+
+        travel = int(distance_px) if distance_px is not None else measured
+        if not travel or travel <= 0:
+            raise ValueError("滑块拖动距离无效或非正数")
+
+        points = self._slider_trajectory(sx, sy, travel)
+        await _maybe_await(handle.page.mouse.move(sx, sy))
+        await _maybe_await(handle.page.mouse.down())
+        for x, y, delay in points:
+            await _maybe_await(handle.page.mouse.move(x, y))
+            await asyncio.sleep(delay)
+        await _maybe_await(handle.page.mouse.up())
+
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="slider_drag",
+            url=info.url,
+            title=info.title,
+            data={
+                "distance_px": travel,
+                "steps": len(points),
+                "measured_gap_px": measured,
+            },
+        )
+
+    def _slider_trajectory(
+        self, start_x: float, start_y: float, travel_px: int
+    ) -> list[tuple[float, float, float]]:
+        """生成拟人滑块拖拽轨迹点 ``(x, y, 段间延时秒)``。
+
+        * 分段数随距离增长但封顶；
+        * 水平位移采用 smoothstep 缓入缓出（起速慢、中段快、末端回落），叠加
+          轻微 y 抖动，模拟人手拖动时先慢后快再减速收尾的自然物理特征；
+        * 距离较大时末尾加入一次小的过冲回弹，模拟人手惯性后略微回位。
+        """
+        distance = float(abs(travel_px))
+        segments = int(min(6 + distance / 40.0, 22))
+        if segments < 1:
+            segments = 1
+        base_delay = random.uniform(0.012, 0.026)
+        points: list[tuple[float, float, float]] = []
+        for i in range(segments):
+            t = (i + 1) / segments
+            # smoothstep（三次 Hermite）：0→0 起、0.5→中、1→终，缓入缓出。
+            ease = t * t * (3.0 - 2.0 * t)
+            speed = math.sin(math.pi * t) ** 1.5
+            x = start_x + travel_px * ease
+            jitter = math.sin(i * 1.7 + random.uniform(0, 0.6)) * random.uniform(0.6, 1.6)
+            delay = base_delay * random.uniform(0.7, 1.5) / (0.5 + speed)
+            points.append((x, start_y + jitter, delay))
+        if distance > 40:
+            overshoot_target = start_x + travel_px * 1.012
+            points.append((overshoot_target, start_y + random.uniform(-1, 1), base_delay * 1.2))
+            points.append((start_x + travel_px, start_y, base_delay * 0.8))
+        return points
 
     async def upload(
         self,
@@ -1027,17 +1414,29 @@ class BrowserWorker:
             raise BrowserTargetStale("浏览器页面已变化，请先重新获取页面快照")
         return snapshot_map[target_ref]
 
+    def _frame_for(self, page: Any, target: dict[str, Any]) -> Any:
+        """根据 target 的 _frame_index 返回目标所在 frame，无法解析时回退主帧 page。"""
+        frame_index = target.get("_frame_index")
+        if isinstance(frame_index, int) and frame_index >= 1:
+            frames = list(getattr(page, "frames", []) or [])
+            if frame_index < len(frames):
+                frame = frames[frame_index]
+                if callable(getattr(frame, "locator", None)):
+                    return frame
+        return page
+
     def _locator_for(self, page: Any, target: dict[str, Any]) -> Any:
+        container = self._frame_for(page, target)
         if target.get("_role_source") == "inferred":
             node_index = target.get("_node_index")
             if isinstance(node_index, int) and node_index >= 0:
-                return page.locator(SNAPSHOT_NODE_SELECTOR).nth(node_index)
+                return container.locator(SNAPSHOT_NODE_SELECTOR).nth(node_index)
         role = str(target.get("role") or "").strip()
         name = str(target.get("name") or "").strip()
         if role and name:
-            return page.get_by_role(role, name=name, exact=True)
+            return container.get_by_role(role, name=name, exact=True)
         if role:
-            return page.get_by_role(role)
+            return container.get_by_role(role)
         raise BrowserTargetStale("目标缺少可复现的语义定位信息，请刷新页面快照")
 
     async def _validate_inferred_target(self, locator: Any, target: dict[str, Any]) -> None:
@@ -1068,6 +1467,109 @@ class BrowserWorker:
         if expected_name and current_name and expected_name not in current_name and current_name not in expected_name:
             raise BrowserTargetStale("浏览器页面已变化，请先重新获取页面快照")
 
+    async def _ensure_actionable(
+        self, locator: Any, *, timeout_ms: int = 5000, what: str = "目标元素"
+    ) -> None:
+        """动作前置保障：等待定位元素处于可见/可交互状态。
+
+        仅当底层定位对象实现了 ``wait_for`` 时才执行（Playwright 定位器有该
+        方法；测试用 fake/独立定位对象可能没有，此时静默跳过等待，仍保留后续
+        动作自身的重试兜底），避免页面尚未渲染完成就落点导致点击/输入落到错误
+        元素上。等待超时统一抛出 :class:`BrowserWaitTimeout`。
+        """
+        wait_for = getattr(locator, "wait_for", None)
+        if not callable(wait_for):
+            return
+        try:
+            await _maybe_await(wait_for(state="visible", timeout=timeout_ms))
+        except (BrowserWaitTimeout, TimeoutError) as exc:
+            raise BrowserWaitTimeout(
+                f"等待{what}可交互超时，请刷新页面快照后重试"
+            ) from exc
+        except Exception as exc:  # WaitTimeoutError / TimeoutError 命名空间各异
+            if exc.__class__.__name__ in {"TimeoutError", "TimeoutError"}:
+                raise BrowserWaitTimeout(
+                    f"等待{what}可交互超时，请刷新页面快照后重试"
+                ) from exc
+            raise
+
+    async def _run_with_stale_recovery(
+        self,
+        session_id: str,
+        action_fn,
+        *,
+        action_name: str,
+        snapshot: BrowserSnapshot,
+        retries: int = ACTION_RETRY_COUNT,
+    ) -> BrowserToolResult:
+        """动作失败恢复统一：stale/超时归一化 + 自动重试刷新快照。
+
+        ``action_fn`` 是一个可重入的协程工厂，签名 ``(snapshot) -> BrowserToolResult``，
+        内部必须基于传入的 ``snapshot`` 重新解析目标。首轮使用调用方提供的
+        ``snapshot``；当执行抛出 ``BrowserWaitTimeout``、``TimeoutError`` 或 Playwright
+        的 stale-element/timeout 错误时，本方法刷新快照、弹出旧目标映射后重新调用
+        ``action_fn``，最多重试 ``retries`` 次；仍失败则抛出抽取自底层异常的归一化
+        异常，供上层统一处理。目标解析类失败（``BrowserTargetStale`` 默认不可恢复，
+        即 ref 已失配、推断 index 已漂移）则不做自动重试，立即原样上抛，由上层引导
+        用户重取快照后再指定目标，避免重定位静默落到语义不同的元素上。
+        """
+        current_snapshot = snapshot
+        attempt = 0
+        last_error: Exception | None = None
+        while attempt <= retries:
+            try:
+                result = await action_fn(current_snapshot)
+                if result is not None:
+                    return result
+            except Exception as exc:
+                if not self._is_recoverable_action_error(exc):
+                    raise
+                last_error = exc
+            attempt += 1
+            if attempt > retries:
+                break
+            # 刷新快照后重试，让目标以最新 DOM 重新解析。
+            try:
+                current_snapshot = await self.snapshot(session_id)
+            except Exception:
+                break  # 快照刷新本身就失败，直接放弃重试
+        if isinstance(last_error, (BrowserTargetStale, BrowserWaitTimeout)):
+            raise last_error
+        return self._raise_normalized_action_error(last_error, action_name)
+
+    def _is_recoverable_action_error(self, exc: Exception) -> bool:
+        """判断异常是否为可自动恢复的 stale / 超时类错误。
+
+        目标解析类失败（``BrowserTargetStale`` 默认不可恢复）不做自愈重试：快照里的
+        ref / 推断 index 已失配时，用同名 ref 去最新 DOM 上重新定位会把动作静默落到
+        语义完全不同的元素上，属危险的行为错位，必须让上层引导用户重新获取快照后再
+        指定目标。仅当 ``recoverable=True``（真·执行期 transient stale，目标可安全按
+        最新 DOM 重定位）或等待超时类错误时才进入自动恢复重试。
+        """
+        if isinstance(exc, BrowserTargetStale):
+            return bool(getattr(exc, "recoverable", False))
+        if isinstance(exc, (BrowserWaitTimeout, TimeoutError)):
+            return True
+        name = exc.__class__.__name__.lower()
+        return ("stale" in name or "timeout" in name) and isinstance(exc, Exception)
+
+    def _raise_normalized_action_error(self, error: Exception | None, action_name: str):
+        raise BrowserTargetStale(
+            f"{action_name} 连续执行失败，请刷新页面快照后重试或调整目标"
+        ) from error
+
+    async def _post_action_settle(self, page: Any) -> None:
+        """动作后稳定等待：等待剪影页面在触发副作用后平稳下来。
+
+        仅在底层页面实现了 ``wait_for_timeout`` 时才真正等待（Playwright 的 Page
+        有该方法；测试用 fake 页面没有时静默跳过）。作用于动画、重排、后端更新
+        落地等场景，避免紧接着采集的验证快照落在中间态上。
+        """
+        wait_for_timeout = getattr(page, "wait_for_timeout", None)
+        if not callable(wait_for_timeout):
+            return await asyncio.sleep(POST_ACTION_SETTLE_MS / 1000.0)
+        await _maybe_await(wait_for_timeout(POST_ACTION_SETTLE_MS))
+
     async def click(
         self,
         session_id: str,
@@ -1077,7 +1579,6 @@ class BrowserWorker:
         approval_mode: str = "guarded",
         confirmed: bool = False,
     ) -> BrowserToolResult:
-        handle = self._handle(session_id)
         target = self._target(session_id, snapshot, target_ref)
         action_class: BrowserActionClass = classify_browser_action(
             role=target.get("role"), name=target.get("name")
@@ -1085,12 +1586,35 @@ class BrowserWorker:
         decision = decide_browser_action(approval_mode, action_class)
         if decision.requires_confirmation and not confirmed:
             raise BrowserActionConfirmationRequired(decision.reason)
-        locator = self._locator_for(handle.page, target)
-        await self._validate_inferred_target(locator, target)
-        await locator.click()
-        info = await self._page_info(handle.page)
-        self._snapshots.pop(session_id, None)
-        return BrowserToolResult(session_id=session_id, action="click", url=info.url, title=info.title)
+        # 动作执行失败时按 stale/超时归一化并自动刷新快照重试（A2）。
+        return await self._run_with_stale_recovery(
+            session_id,
+            self._click_exec(session_id, target_ref),
+            action_name="点击",
+            snapshot=snapshot,
+        )
+
+    def _click_exec(self, session_id: str, target_ref: str):
+        """点击动作的可重入执行体，供 stale 恢复重试。"""
+
+        async def exec_(snapshot):
+            handle = self._handle(session_id)
+            target = self._target(session_id, snapshot, target_ref)
+            locator = self._locator_for(handle.page, target)
+            await self._validate_inferred_target(locator, target)
+            await self._ensure_actionable(locator, what="目标元素")
+            await locator.click()
+            await self._post_action_settle(handle.page)
+            info = await self._page_info(handle.page)
+            self._snapshots.pop(session_id, None)
+            return BrowserToolResult(
+                session_id=session_id,
+                action="click",
+                url=info.url,
+                title=info.title,
+            )
+
+        return exec_
 
     async def fill(
         self,
@@ -1101,23 +1625,39 @@ class BrowserWorker:
         snapshot: BrowserSnapshot,
         sensitive: bool | None = None,
     ) -> BrowserToolResult:
-        handle = self._handle(session_id)
-        target = self._target(session_id, snapshot, target_ref)
-        locator = self._locator_for(handle.page, target)
-        await self._validate_inferred_target(locator, target)
-        await locator.fill(value)
-        info = await self._page_info(handle.page)
-        # 页面快照推断的敏感性是下限，调用方只能追加标记，不能用 False 覆盖密码字段。
-        is_sensitive = bool(target.get("sensitive", False)) or bool(sensitive)
-        payload = redact_browser_arguments({"value": value, "sensitive": is_sensitive})
-        self._snapshots.pop(session_id, None)
-        return BrowserToolResult(
-            session_id=session_id,
-            action="fill",
-            url=info.url,
-            title=info.title,
-            data=payload,
+        # 动作执行失败时按 stale/超时归一化并自动刷新快照重试（A2）。
+        return await self._run_with_stale_recovery(
+            session_id,
+            self._fill_exec(session_id, target_ref, value, sensitive=sensitive),
+            action_name="输入",
+            snapshot=snapshot,
         )
+
+    def _fill_exec(self, session_id: str, target_ref: str, value: str, *, sensitive: bool | None):
+        """输入动作的可重入执行体，供 stale 恢复重试。"""
+
+        async def exec_(snapshot):
+            handle = self._handle(session_id)
+            target = self._target(session_id, snapshot, target_ref)
+            locator = self._locator_for(handle.page, target)
+            await self._validate_inferred_target(locator, target)
+            await self._ensure_actionable(locator, what="目标元素")
+            await locator.fill(value)
+            await self._post_action_settle(handle.page)
+            info = await self._page_info(handle.page)
+            # 页面快照推断的敏感性是下限，调用方只能追加标记，不能用 False 覆盖密码字段。
+            is_sensitive = bool(target.get("sensitive", False)) or bool(sensitive)
+            payload = redact_browser_arguments({"value": value, "sensitive": is_sensitive})
+            self._snapshots.pop(session_id, None)
+            return BrowserToolResult(
+                session_id=session_id,
+                action="fill",
+                url=info.url,
+                title=info.title,
+                data=payload,
+            )
+
+        return exec_
 
     async def close(self, session_id: str) -> None:
         handle = self._handles.pop(session_id, None)

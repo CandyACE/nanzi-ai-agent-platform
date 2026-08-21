@@ -58,6 +58,12 @@ def build_runtime_middlewares(
         ModelCallStatsMiddleware,
         ToolPermissionMiddleware,
     )
+    from app.core.context import get_current_agent_context
+
+    runtime_context = get_current_agent_context()
+    runtime_info = dict(
+        getattr(runtime_context, "runtime_model_info", {}) or {}
+    ) if runtime_context else {}
 
     async def _forbidden_tools_deny_override(
         *,
@@ -90,6 +96,14 @@ def build_runtime_middlewares(
                 conversation_id=conversation_id,
                 agent_name=agent_name,
                 trace_id=trace_id,
+                physical_window=runtime_info.get("physical_window"),
+                history_budget=runtime_info.get("history_budget"),
+                overhead_reservation=runtime_info.get("overhead_reservation_tokens"),
+                completion_reserve=runtime_info.get("completion_reserve_tokens"),
+                request_input_budget=runtime_info.get("request_input_budget"),
+                prompt_overhead_reservation=runtime_info.get(
+                    "prompt_overhead_reservation_tokens"
+                ),
             )
         )
     return middlewares

@@ -53,6 +53,7 @@ class AgentContextManager:
         enable_multi_agent: bool = True,
         user_info: Optional[Dict[str, Any]] = None,
         force_data_query: bool = False,
+        conversation_id: Optional[str] = None,
     ):
         """
         Resolve the appropriate AgentConfig based on inputs or routing.
@@ -121,6 +122,26 @@ class AgentContextManager:
                         last_agent_name = msg["agent_name"]
                         break
 
+                # D 项：路由决策复用早期压缩摘录。
+                # 当无显式 agent 身份、需走 router_service.route_query 路由时，
+                # 把跨轮持久化的 digest（早期轮次被压缩溢出的历史要点）作为
+                # early_context 随路由上下文交给路由模型，使路由判断能基于完整上下文，
+                # 而非仅当前窗口内的 history（避免多轮后路由失真）。
+                early_context = None
+                if agent_config is None and route_user_id is not None and conversation_id:
+                    try:
+                        from app.services.ai.memory_service import memory_service
+
+                        early_digest = await memory_service.get_digest(
+                            str(route_user_id), conversation_id
+                        )
+                        if early_digest:
+                            early_context = early_digest
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "[AgentContextManager] Failed to load early digest for routing: %s", e
+                        )
+
                 if agent_config is None:
                     route_result = await router_service.route_query(
                         last_user_msg,
@@ -130,6 +151,7 @@ class AgentContextManager:
                         is_admin=route_is_admin,
                         last_agent_name=last_agent_name,
                         user_name=route_user_name,
+                        early_context=early_context,
                     )
                     route_details = route_result
 

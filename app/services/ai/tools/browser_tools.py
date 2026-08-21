@@ -193,6 +193,31 @@ async def browser_drag(
     return await _browser_result_json(context, result)
 
 
+@tool
+async def browser_slider_drag(
+    source_ref: str,
+    snapshot_id: str,
+    distance_px: int | None = None,
+    gap_target_ref: str | None = None,
+) -> str:
+    """对滑块做拟人轨迹的坐标级拖拽，可配合缺口间距测量。
+
+    - 提供 ``distance_px``：直接横向拖动指定的像素距离；
+    - 或提供 ``gap_target_ref``：自动测量滑块与缺口元素的间距后拖动到缺口；
+    - 两者至少提供其一。用于处理滑块验证图片等场景。
+    """
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.slider_drag(
+        session.id,
+        source_ref=source_ref,
+        snapshot_id=snapshot_id,
+        distance_px=distance_px,
+        gap_target_ref=gap_target_ref,
+    )
+    return await _browser_result_json(context, result)
+
+
 async def _browser_history_action(action: Literal["back", "forward", "reload"]) -> str:
     context = _context_or_error()
     session = await _owned_session(context)

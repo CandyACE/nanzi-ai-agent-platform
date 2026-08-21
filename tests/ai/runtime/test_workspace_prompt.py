@@ -80,6 +80,36 @@ async def test_append_workspace_prompt_when_file_tools_and_conversation(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_append_docker_workspace_prompt_uses_container_logical_paths(monkeypatch):
+    async def _root():
+        return "/tmp/workspaces"
+
+    async def _config(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        _root,
+    )
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        _config,
+    )
+
+    result = await append_session_workspace_sandbox_to_system_prompt(
+        "Base prompt",
+        user_id="u1",
+        conversation_id="conv-1",
+        tools=[SimpleNamespace(name="Read")],
+    )
+
+    assert "`/workspace`" in result
+    assert "/workspace/sessions/conv-1" in result
+    assert "/workspace/docs" in result
+    assert "/tmp/workspaces/u1" not in result
+
+
+@pytest.mark.asyncio
 async def test_append_workspace_prompt_skips_without_conversation_or_file_tools():
     tools = [SimpleNamespace(name="memory_search")]
     result = await append_session_workspace_sandbox_to_system_prompt(

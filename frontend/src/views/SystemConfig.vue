@@ -26,6 +26,10 @@ import {
   WrenchScrewdriverIcon,
   TrashIcon,
   ServerStackIcon,
+  ComputerDesktopIcon,
+  CubeIcon,
+  CloudIcon,
+  ServerIcon,
   PlayIcon,
   ArrowPathIcon,
   PaintBrushIcon
@@ -238,6 +242,169 @@ const clearLogs = () => {
   logs.value = []
 }
 
+// --- Docker 沙箱预构建 ---
+const dockerPrebuilt = ref(false)
+const dockerPrebuildChecking = ref(false)
+const dockerPrebuilding = ref(false)
+const dockerPrebuildReused = ref(false)
+const dockerPrebuildTag = ref('')
+const sandboxConnectionTesting = ref<'e2b' | 'ssh' | null>(null)
+
+const targetSandboxPolicy = () =>
+  configGroups.value?.sandbox?.find(x => x.key === 'sandbox_policy')?.value ?? 'local'
+
+/** 平台后端进程运行环境：docker=部署在容器内，host=运行在宿主机（由后端动态探测注入） */
+const runtimeEnv = computed(() =>
+  configGroups.value?.sandbox?.find(x => x.key === 'sandbox_runtime_env')?.value ?? 'host',
+)
+
+/** local 策略实际执行位置的动态描述（随平台部署环境变化） */
+const sandboxLocalExecDesc = computed(() =>
+  runtimeEnv.value === 'docker'
+    ? '平台后端所在 Docker 容器内直接执行'
+    : '宿主机扩展进程内直接执行（当前默认）',
+)
+
+/** sandbox_policy 短描述：local 部分随运行环境动态渲染 */
+const sandboxPolicyShortDesc = computed(() =>
+  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
+)
+
+/** sandbox_policy 详细说明：local 部分随运行环境动态渲染（用于说明弹窗） */
+const sandboxPolicyTip = computed(() => `安全沙箱执行策略：
+* local（默认）：Bash / 文件工具在${sandboxLocalExecDesc.value}，性能最好，但代码运行在${runtimeEnv.value === 'docker' ? '平台容器内部' : '宿主机上'}。
+* docker：在 Docker 容器内执行。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。
+* e2b：在 E2B 云端沙箱内执行。需在下方填写 API Key 或配置 E2B_API_KEY 环境变量。
+* ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
+注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`)
+
+/** sandbox_policy 自定义双行下拉选项：名称 + 备注说明 */
+const sandboxPolicyOptions = computed(() => [
+  {
+    value: 'local',
+    label: runtimeEnv.value === 'docker' ? 'local（平台后端容器内）' : 'local（宿主机）',
+    desc: runtimeEnv.value === 'docker'
+      ? '在平台后端所在 Docker 容器内直接执行（默认）'
+      : '在宿主机扩展进程内直接执行（默认，性能最好）',
+  },
+  {
+    value: 'docker',
+    label: 'docker（Docker 容器）',
+    desc: '在自动构建的 Docker 容器内执行，工作区按用户隔离',
+  },
+  {
+    value: 'e2b',
+    label: 'e2b（E2B 云端）',
+    desc: '在 E2B 云端沙箱内执行，需配置 API Key 或 E2B_API_KEY',
+  },
+  {
+    value: 'ssh',
+    label: 'ssh（SSH 远程主机）',
+    desc: '通过 SSH 连接远程主机执行，支持密码与私钥两种认证',
+  },
+])
+const sandboxPolicyIcons = {
+  local: ComputerDesktopIcon,
+  docker: CubeIcon,
+  e2b: CloudIcon,
+  ssh: ServerIcon,
+} as const
+const getSandboxPolicyIcon = (value: string) =>
+  sandboxPolicyIcons[value as keyof typeof sandboxPolicyIcons] ?? ComputerDesktopIcon
+const sandboxPolicyOpen = ref(false)
+const currentSandboxPolicy = computed(() =>
+  sandboxPolicyOptions.value.find(o => o.value === (targetSandboxPolicy() || 'local')) ?? sandboxPolicyOptions.value[0],
+)
+const selectSandboxPolicy = (item: ConfigItem, value: string) => {
+  if (isConfigItemDisabled(String('sandbox'), item)) return
+  if (item.value === value) {
+    sandboxPolicyOpen.value = false
+    return
+  }
+  item.value = value
+  sandboxPolicyOpen.value = false
+  refreshDockerPrebuildStatus(true)
+}
+
+/** docker 基础镜像候选清单：同一 python 镜像的多地域加速源（仅作为 Dockerfile FROM 的 python 基座，均可被容器内烤入 agentscope MCP gateway）；
+ * 另含「自定义…」手动输入。OpenSandbox 为运行时编排框架、非 python base 镜像，已排除。 */
+const dockerBaseImagePresets: { label: string; value: string }[] = [
+  { label: 'python:3.11-slim（Docker Hub，默认）', value: 'python:3.11-slim' },
+  { label: 'python:3.11（Docker Hub）', value: 'python:3.11' },
+  { label: '阿里云加速 python:3.11-slim', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim' },
+  { label: '阿里云加速 python:3.11', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11' },
+  { label: '华为云加速 python:3.11-slim', value: 'swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.11-slim' },
+  { label: '腾讯云加速 python:3.11-slim', value: 'mirror.ccs.tencentyun.com/library/python:3.11-slim' },
+]
+const dockerBaseImageOpen = ref(false)
+const dockerBaseImageShowCustom = ref(false)
+/** 当前值是否命中所选预设，用于展示按钮文案 */
+const currentDockerBaseImageLabel = computed(() => {
+  const cur = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value ?? 'python:3.11-slim'
+  return dockerBaseImagePresets.find(p => p.value === cur)?.label || '自定义镜像地址…'
+})
+/** 点击预设后写入 item.value 并关闭面板 */
+const selectDockerBaseImage = (item: ConfigItem, preset: string) => {
+  if (preset === '_custom') {
+    dockerBaseImageShowCustom.value = true
+    dockerBaseImageOpen.value = false
+    return
+  }
+  item.value = preset
+  dockerBaseImageShowCustom.value = false
+  dockerBaseImageOpen.value = false
+  refreshDockerPrebuildStatus(true)
+}
+/** 拉起/收起下拉时联动重置自定义输入显隐 */
+const toggleDockerBaseImage = (item: ConfigItem) => {
+  if (isConfigItemDisabled(String('sandbox'), item)) return
+  dockerBaseImageOpen.value = !dockerBaseImageOpen.value
+  if (dockerBaseImageOpen.value) dockerBaseImageShowCustom.value = false
+}
+
+const refreshDockerPrebuildStatus = async (silent = false) => {
+  if (targetSandboxPolicy() !== 'docker') return
+  if (!silent) dockerPrebuildChecking.value = true
+  try {
+    const res = await axios.get('/api/v1/admin/sandbox/docker/prebuild-status')
+    const data = res.data?.data ?? res.data
+    dockerPrebuilt.value = !!data?.prebuilt
+    dockerPrebuildChecking.value = false
+  } catch (e: any) {
+    dockerPrebuilt.value = false
+    dockerPrebuildChecking.value = false
+    if (!silent) {
+      const msg = e.response?.data?.detail || e.message
+      showToast(`预构建状态查询失败: ${msg}`, 'error')
+    }
+  }
+}
+
+const executeDockerPrebuild = async () => {
+  dockerPrebuilding.value = true
+  dockerPrebuildReused.value = false
+  dockerPrebuildTag.value = ''
+  try {
+    const res = await axios.post('/api/v1/admin/sandbox/docker/prebuild')
+    if (res.data?.code !== 200 && res.data?.code != null) {
+      throw new Error((res.data as any)?.message || '预构建接口返回异常')
+    }
+    const data = res.data?.data ?? res.data
+    dockerPrebuilt.value = true
+    dockerPrebuildReused.value = !!data?.reused
+    dockerPrebuildTag.value = data?.tag || ''
+    showToast(
+      data?.reused ? '已复用既有镜像缓存，无需重新构建' : 'Docker 沙箱镜像预构建完成',
+      'success'
+    )
+  } catch (e: any) {
+    const msg = e.response?.data?.detail || e.message
+    showToast(`Docker 镜像预构建失败: ${msg}`, 'error')
+  } finally {
+    dockerPrebuilding.value = false
+  }
+}
+
 // --- Model Data for Param Configs ---
 const models = ref<AIModel[]>([])
 const fetchModelsForConfigs = async () => {
@@ -258,9 +425,14 @@ interface ConfigItem {
 }
 
 const configGroups = ref<{ [category: string]: ConfigItem[] }>({})
+const collapsedConfigGroups = ref<Set<string>>(new Set())
+const sandboxSshAuthType = computed(() => {
+  const configured = configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_auth_type')?.value
+  return configured === 'key' || configured === 'private_key' ? 'key' : 'password'
+})
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
-  const order = ['general', 'agent', 'metadata', 'data_api', 'knowledge', 'other']
+  const order = ['general', 'agent_context', 'agent', 'metadata', 'data_api', 'knowledge', 'sandbox', 'other']
   const keys = Object.keys(configGroups.value)
   return keys.sort((a, b) => {
     const idxA = order.indexOf(a)
@@ -271,6 +443,27 @@ const orderedCategories = computed(() => {
     return a.localeCompare(b)
   })
 })
+
+const isConfigGroupCollapsed = (category: string) =>
+  collapsedConfigGroups.value.has(category)
+
+const toggleConfigGroup = (category: string) => {
+  const next = new Set(collapsedConfigGroups.value)
+  if (next.has(category)) {
+    next.delete(category)
+  } else {
+    next.add(category)
+  }
+  collapsedConfigGroups.value = next
+}
+
+const expandAllConfigGroups = () => {
+  collapsedConfigGroups.value = new Set()
+}
+
+const collapseAllConfigGroups = () => {
+  collapsedConfigGroups.value = new Set(orderedCategories.value)
+}
 
 const metadataProvider = computed(() => {
   if (!configGroups.value) return 'local'
@@ -580,11 +773,13 @@ const toggleSecret = (key: string) => {
 
 const getCategoryLabel = (cat: string) => {
   const map: Record<string, string> = {
+    'agent_context': '上下文管理 (Context Management)',
     'data_api': '智能报表 (ChatBI)',
     'metadata': '元数据与 RAG 设置 (Metadata & RAG)',
     'knowledge': '知识库设置 (Knowledge Base)',
     'agent': '智能体设置 (AI Agent)',
     'general': '常规设置 (General Settings)',
+    'sandbox': '安全沙箱 (Sandbox)',
     'other': '其他参数 (Other Parameters)'
   }
   return map[cat] || cat.toUpperCase()
@@ -593,9 +788,11 @@ const getCategoryLabel = (cat: string) => {
 const getCategoryIcon = (cat: string) => {
   const map: Record<string, any> = {
     'data_api': CircleStackIcon,
+    'agent_context': ArrowPathIcon,
     'agent': CpuChipIcon,
     'metadata': SparklesIcon,
     'knowledge': ServerStackIcon,
+    'sandbox': CommandLineIcon,
     'general': AdjustmentsHorizontalIcon
   }
   return map[cat] || AdjustmentsHorizontalIcon
@@ -753,8 +950,20 @@ const getCategoryTip = (key: string) => {
 * 如果问题比较多样化、偏口语表述，调高该值（如 0.6 ~ 0.7）以强化语义召回。`,
     'knowledge_ragflow_metadata_top_k': '知识库问答检索时，最大召回匹配的候选文档片段数。值越大参考条数越多，但会消耗更多的模型 Token。',
     'knowledge_base_enabled': '总开关：关闭后隐藏下方 RAGFlow 配置项，并禁用知识库管理、检索测试及智能体的 search_knowledge_base 工具。',
-    'third_party_user_sync_config': '配置从外部数据源定时同步用户信息到本平台的参数。包含启用状态、连接源、表名、字段对应关系和同步周期。此配置已在【用户管理】页面统一维护，在此处仅提供只读展示。'
+    'third_party_user_sync_config': '配置从外部数据源定时同步用户信息到本平台的参数。包含启用状态、连接源、表名、字段对应关系和同步周期。此配置已在【用户管理】页面统一维护，在此处仅提供只读展示。',
+    'agent_context_max_tokens': '发送给 LLM 的上下文 Token 预算上限（默认 65536 即 64k）。当历史会话上下文超过此预算时，系统优先触发早期对话压缩摘录或截断，避免超出大模型的上下文窗口限制。',
+    'agent_max_context_messages': '发送给 LLM 的最大历史消息条目数（Token 预算优先，此处作为绝对兜底上限，默认 60 条）。',
+    'agent_context_compaction_enabled': '上下文超预算时，是否把早期历史对话压缩为摘录注入上下文，保留关键信息而非直接丢弃。',
+    'agent_context_compaction_max_chars': '溢出压缩摘录中正文部分的最大字符数（默认 1200），用于控制历史摘录的体积，防止摘录过大挤占新对话空间。',
+    'agent_context_llm_summary_enabled': '是否用当前会话模型对超长历史做语义摘要（LLM 智能摘要）；若模型摘要失败或超时，系统将自动降级为确定性首末尾摘录，保证对话稳定性。',
+    'sandbox_policy': `安全沙箱执行策略：
+* local（默认）：Bash / 文件工具在宿主机扩展进程内直接执行，性能最好，但代码运行在宿主机上。
+* docker：在 Docker 容器内执行。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。
+* e2b：在 E2B 云端沙箱内执行。需在下方填写 API Key 或配置 E2B_API_KEY 环境变量。
+* ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
+注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`
   }
+  if (key === 'sandbox_policy') return sandboxPolicyTip.value
   return tips[key] || ''
 }
 
@@ -830,6 +1039,47 @@ const findConfigItemByKey = (key: string): ConfigItem | null => {
   return null
 }
 
+const sandboxConnectionConfigKeys: Record<'e2b' | 'ssh', string[]> = {
+  e2b: [
+    'sandbox_e2b_api_key',
+    'sandbox_e2b_template',
+    'sandbox_e2b_timeout_seconds',
+  ],
+  ssh: [
+    'sandbox_ssh_host',
+    'sandbox_ssh_port',
+    'sandbox_ssh_user',
+    'sandbox_ssh_auth_type',
+    'sandbox_ssh_password',
+    'sandbox_ssh_private_key',
+    'sandbox_ssh_remote_workdir',
+  ],
+}
+
+const testSandboxConnection = async (policy: 'e2b' | 'ssh') => {
+  if (sandboxConnectionTesting.value) return
+
+  const values = Object.fromEntries(
+    sandboxConnectionConfigKeys[policy].map((key) => [
+      key,
+      findConfigItemByKey(key)?.value ?? '',
+    ])
+  )
+  sandboxConnectionTesting.value = policy
+  try {
+    await axios.post(`/api/v1/admin/sandbox/${policy}/test-connection`, values)
+    showToast(
+      policy === 'e2b' ? 'E2B 沙箱连接测试成功' : 'SSH 沙箱连接测试成功',
+      'success'
+    )
+  } catch (e: any) {
+    const detail = e.response?.data?.detail || e.message || '未知错误'
+    showToast(`连接测试失败：${detail}`, 'error')
+  } finally {
+    sandboxConnectionTesting.value = null
+  }
+}
+
 const loadEmbedConfigFromModel = () => {
   if (!canSave) return
   const model = embeddingModelsForConfig.value.find((m) => m.id === selectedEmbedModelId.value)
@@ -899,6 +1149,23 @@ const configShortDescriptions: Record<string, string> = {
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
+  agent_context_max_tokens: '上下文 Token 预算上限 (默认 64k，超过则从最早历史开始截断)。',
+  agent_max_context_messages: '发送给 LLM 的最大历史消息条目数 (Token 预算优先，此处作为绝对兜底上限，默认 60)。',
+  agent_context_compaction_enabled: '上下文超预算时，是否把早期对话压缩为摘录注入，避免丢失关键信息。',
+  agent_context_compaction_max_chars: '溢出压缩摘录中正文部分的最大字符数，过大会挤占新对话空间。',
+  agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
+  sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
+  sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（如 aliyun 镜像加速地址），留空使用默认 python:3.11-slim。',
+  sandbox_e2b_api_key: 'e2b 策略使用的 E2B API Key，留空则读取 E2B_API_KEY 环境变量。',
+  sandbox_e2b_template: 'e2b 策略使用的沙箱模板名，留空使用默认模板 base。',
+  sandbox_e2b_timeout_seconds: 'e2b 策略沙箱超时时间（秒），默认 300。',
+  sandbox_ssh_host: 'ssh 策略连接的远程主机地址（IP 或域名），必填。',
+  sandbox_ssh_port: 'ssh 策略连接的远程主机端口，默认 22。',
+  sandbox_ssh_user: 'ssh 策略登录的远程用户名，可留空（SSH 默认使用当前用户）。',
+  sandbox_ssh_auth_type: 'ssh 策略认证方式：password 表示密码认证（依赖 sshpass），key 表示私钥认证。',
+  sandbox_ssh_password: 'ssh 策略密码认证的登录密码（敏感信息），仅在认证方式为 password 时使用。',
+  sandbox_ssh_private_key: 'ssh 策略私钥认证的私钥内容（敏感信息），仅在认证方式为 key 时使用。',
+  sandbox_ssh_remote_workdir: 'ssh 策略远程沙箱的工作目录（默认 /workspace），由平台自动创建 data/skills/sessions 等子目录。',
 }
 
 const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
@@ -906,7 +1173,6 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   let list = [...items]
   if (category === 'agent') {
     const order = [
-      'agent_max_context_messages',
       'agent_max_iterations',
       'llm_model_name',
       'multimodal_model_name',
@@ -915,6 +1181,23 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'embed_api_key',
       'embed_model_name',
       'embed_dimensions'
+    ]
+    list.sort((a, b) => {
+      const idxA = order.indexOf(a.key)
+      const idxB = order.indexOf(b.key)
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB
+      if (idxA !== -1) return -1
+      if (idxB !== -1) return 1
+      return a.key.localeCompare(b.key)
+    })
+  }
+  if (category === 'agent_context') {
+    const order = [
+      'agent_context_max_tokens',
+      'agent_max_context_messages',
+      'agent_context_compaction_enabled',
+      'agent_context_compaction_max_chars',
+      'agent_context_llm_summary_enabled'
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -976,6 +1259,39 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'knowledge_ragflow_vector_weight',
       'knowledge_ragflow_metadata_top_k'
     ]
+    list.sort((a, b) => {
+      const idxA = order.indexOf(a.key)
+      const idxB = order.indexOf(b.key)
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB
+      if (idxA !== -1) return -1
+      if (idxB !== -1) return 1
+      return a.key.localeCompare(b.key)
+    })
+  }
+  if (category === 'sandbox') {
+    // 内部键不对用户展示：预构建标记 + 平台运行环境（后者仅用于 local 文案动态显示）
+    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env')
+    // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
+    const policy = targetSandboxPolicy()
+    const policyKeySets: Record<string, string[]> = {
+      docker: ['sandbox_docker_base_image'],
+      e2b: ['sandbox_e2b_api_key', 'sandbox_e2b_template', 'sandbox_e2b_timeout_seconds'],
+      ssh: [
+        'sandbox_ssh_host', 'sandbox_ssh_port', 'sandbox_ssh_user', 'sandbox_ssh_auth_type',
+        'sandbox_ssh_password', 'sandbox_ssh_private_key', 'sandbox_ssh_remote_workdir'
+      ],
+      local: []
+    }
+    const visibleForPolicy = policyKeySets[policy] || []
+    const order = ['sandbox_policy', ...visibleForPolicy]
+    list = list.filter(x => x.key === 'sandbox_policy' || visibleForPolicy.includes(x.key))
+    if (policy === 'ssh') {
+      list = list.filter(item => {
+        if (item.key === 'sandbox_ssh_password') return sandboxSshAuthType.value !== 'key'
+        if (item.key === 'sandbox_ssh_private_key') return sandboxSshAuthType.value === 'key'
+        return true
+      })
+    }
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
       const idxB = order.indexOf(b.key)
@@ -1172,17 +1488,18 @@ const executeDeleteKey = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (route.query.tab === 'mcp') {
     router.replace('/dashboard/mcp')
     return
   }
-  fetchConfigs()
+  await fetchConfigs()
   fetchBrandingConfig()
   fetchModelsForConfigs()
   if (userInfo.value?.role === 'admin') {
     fetchLogConfig()
     fetchPartitions()
+    refreshDockerPrebuildStatus(true)
   }
 })
 </script>
@@ -1758,14 +2075,48 @@ onMounted(() => {
              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
          </div>
          <div v-else class="space-y-8 max-w-4xl">
-             <div v-for="category in orderedCategories" :key="category" class="bg-white shadow rounded-lg overflow-hidden">
-                <div class="bg-gray-50 px-6 py-3 border-b border-gray-200 flex items-center">
+             <div v-if="orderedCategories.length" class="flex justify-end gap-2 -mb-4">
+               <button
+                 type="button"
+                 @click="expandAllConfigGroups"
+                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+               >
+                 <span aria-hidden="true">▾</span>
+                 全部展开
+               </button>
+               <button
+                 type="button"
+                 @click="collapseAllConfigGroups"
+                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+               >
+                 <span aria-hidden="true">▸</span>
+                 全部折叠
+               </button>
+             </div>
+             <div v-for="category in orderedCategories" :key="category" class="bg-white shadow rounded-lg">
+                <button
+                  type="button"
+                  class="w-full bg-gray-50 px-6 py-3 border-b border-gray-200 rounded-t-lg flex items-center text-left transition-colors hover:bg-gray-100"
+                  :aria-expanded="!isConfigGroupCollapsed(String(category))"
+                  :aria-controls="`config-group-${category}`"
+                  @click="toggleConfigGroup(String(category))"
+                >
                    <div class="p-1.5 bg-white rounded-md shadow-sm border border-gray-100 mr-3">
                        <component :is="getCategoryIcon(String(category))" class="h-5 w-5 text-primary" />
                    </div>
                    <h3 class="text-md font-medium text-gray-800">{{ getCategoryLabel(String(category)) }}</h3>
-                </div>
-                 <div class="p-6 space-y-5">
+                   <span class="ml-auto flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                     {{ isConfigGroupCollapsed(String(category)) ? '展开' : '收起' }}
+                     <span aria-hidden="true" class="text-base leading-none">
+                       {{ isConfigGroupCollapsed(String(category)) ? '▸' : '▾' }}
+                     </span>
+                   </span>
+                </button>
+                 <div
+                   v-if="!isConfigGroupCollapsed(String(category))"
+                   :id="`config-group-${category}`"
+                   class="p-6 space-y-5"
+                 >
                     <div v-if="category === 'agent'" class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-md text-sm text-amber-900 flex items-start space-x-2 mb-4">
                        <span class="text-amber-500 font-bold shrink-0">⚠️ 提示：</span>
                        <div>
@@ -1794,7 +2145,7 @@ onMounted(() => {
                             </button>
                          </label>
                          <p class="text-xs text-gray-500 mt-1">
-                           {{ configShortDescriptions[item.key] || item.description }}
+                           {{ item.key === 'sandbox_policy' ? sandboxPolicyShortDesc : (configShortDescriptions[item.key] || item.description) }}
                          </p>
                       </div>
                        <div class="md:col-span-2 relative">
@@ -1852,6 +2203,70 @@ onMounted(() => {
                                 <option value="local">local (本地数据源直连执行)</option>
                              </select>
                           </div>
+                          <div v-else-if="item.key === 'sandbox_policy'" class="relative">
+                             <button
+                               type="button"
+                               @click="!isConfigItemDisabled(String(category), item) && (sandboxPolicyOpen = !sandboxPolicyOpen)"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               aria-haspopup="listbox"
+                               :aria-expanded="sandboxPolicyOpen"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 text-left disabled:opacity-70 disabled:cursor-not-allowed"
+                             >
+                               <span class="flex min-w-0 items-center gap-2 pr-5">
+                                 <component
+                                   :is="getSandboxPolicyIcon(currentSandboxPolicy.value)"
+                                   class="h-5 w-5 shrink-0 text-indigo-500"
+                                   aria-hidden="true"
+                                 />
+                                 <span class="min-w-0">
+                                   <span class="block font-medium text-gray-700">{{ currentSandboxPolicy.label }}</span>
+                                   <span class="block text-[11px] text-gray-500 leading-snug">{{ currentSandboxPolicy.desc }}</span>
+                                 </span>
+                               </span>
+                             </button>
+                             <ChevronDownIcon class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                             <div
+                               v-if="sandboxPolicyOpen"
+                               class="fixed inset-0 z-40"
+                               @click="sandboxPolicyOpen = false"
+                               @contextmenu.prevent="sandboxPolicyOpen = false"
+                             ></div>
+                             <div
+                               v-if="sandboxPolicyOpen"
+                               class="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-xl overflow-hidden divide-y divide-gray-100 ring-1 ring-black/5"
+                               role="listbox"
+                             >
+                               <button
+                                 v-for="opt in sandboxPolicyOptions"
+                                 :key="opt.value"
+                                 type="button"
+                                 role="option"
+                                 :aria-selected="opt.value === item.value"
+                                 @click="selectSandboxPolicy(item, opt.value)"
+                                 class="flex w-full items-start gap-2.5 px-3 py-2.5 text-left hover:bg-indigo-50/80 focus:bg-indigo-50/80 transition-colors"
+                                 :class="opt.value === item.value ? 'bg-indigo-50/70 font-medium' : ''"
+                               >
+                                 <component
+                                   :is="getSandboxPolicyIcon(opt.value)"
+                                   class="mt-0.5 h-5 w-5 shrink-0 text-indigo-500"
+                                   aria-hidden="true"
+                                 />
+                                 <span class="min-w-0">
+                                   <span class="block text-sm font-medium text-gray-800">{{ opt.label }}</span>
+                                   <span class="mt-0.5 block text-[11px] text-gray-500 leading-snug">{{ opt.desc }}</span>
+                                 </span>
+                               </button>
+                             </div>
+                             <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                                切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
+                             </p>
+                             <div v-if="item.value === 'e2b'" class="mt-3 text-xs text-violet-700 bg-violet-50/60 p-3 rounded-xl border border-violet-100/60 leading-relaxed select-none space-y-1.5">
+                                 <div>🌐 <strong>E2B 云端沙箱服务</strong>：E2B（<a href="https://e2b.dev" target="_blank" rel="noopener noreferrer" class="font-medium text-violet-800 underline decoration-violet-300 hover:decoration-violet-600">e2b.dev</a>）是第三方 AI 云端沙箱平台。选择本策略后，Bash 命令在 E2B 云端沙箱内执行；文件读写 / 搜索仍走平台上配置的本地工作目录，不随沙箱上传。</div>
+                                 <div>🔑 <strong>API Key 来源</strong>：优先读取下方 <code class="font-mono text-violet-800">sandbox_e2b_api_key</code>；留空则读取进程环境变量 <code class="font-mono text-violet-800">E2B_API_KEY</code>。两者均无时，初始化 E2B 沙箱会失败。请先在 e2b.dev 注册登录并生成 <code class="font-mono text-violet-800">e2b_...</code> 形式的 Key。</div>
+                                 <div>💰 <strong>云端付费</strong>：E2B 沙箱运行在第三方云端，按需创建、消耗配额并产生计费；会话结束后暂停（pause）保存磁盘供下次复用，请留意用量与费用。</div>
+                                 <div>🛠 <strong>相关配置</strong>：沙箱模板（<code class="font-mono text-violet-800">sandbox_e2b_template</code>）为空时使用 E2B 默认模板；超时时间（<code class="font-mono text-violet-800">sandbox_e2b_timeout_seconds</code>）默认 300 秒。</div>
+                             </div>
+                          </div>
                           <div v-else-if="item.key === 'platform_timezone'">
                              <select
                                v-model="item.value"
@@ -1869,6 +2284,20 @@ onMounted(() => {
                              </select>
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                影响定时任务 Cron「每天 08:00」的解释与下次运行时间，以及平台时间展示。无法修改外部 MySQL 服务器时区时，仍以本项 + 应用容器 TZ 为准。
+                             </p>
+                          </div>
+                          <div v-else-if="item.key === 'sandbox_ssh_auth_type'">
+                             <select
+                               v-model="item.value"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                             >
+                               <option value="password">密码认证（需要 sshpass）</option>
+                               <option value="key">私钥认证（推荐）</option>
+                               <option v-if="item.value === 'private_key'" value="private_key">私钥认证（历史配置值）</option>
+                             </select>
+                             <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                               密码认证使用 sshpass 连接；私钥认证使用下方私钥内容，切换方式只隐藏另一字段，不会自动清空已保存内容。
                              </p>
                           </div>
                           <div v-else-if="item.is_secret" class="relative">
@@ -2150,6 +2579,12 @@ onMounted(() => {
                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                              >{{ item.description }}</p>
                           </div>
+                          <div v-else-if="['agent_context_compaction_enabled', 'agent_context_llm_summary_enabled'].includes(item.key)">
+                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                                <option value="true">true (开启)</option>
+                                <option value="false">false (关闭)</option>
+                             </select>
+                          </div>
                           <div v-else-if="item.key === 'embedchat_watermark_style'">
                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                 <option value="user_time">用户名 + 时间戳</option>
@@ -2162,11 +2597,230 @@ onMounted(() => {
                                  💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
                              </p>
                           </div>
+                          <div v-else-if="item.key === 'agent_context_max_tokens'">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               placeholder="如 65536"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in [
+                                    { label: '16k', value: '16384' },
+                                    { label: '32k', value: '32768' },
+                                    { label: '64k (推荐)', value: '65536' },
+                                    { label: '128k', value: '131072' },
+                                    { label: '256k', value: '262144' },
+                                  ]"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
+                          </div>
+                          <div v-else-if="item.key === 'agent_max_context_messages'">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               placeholder="如 60"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in [
+                                    { label: '30 条', value: '30' },
+                                    { label: '60 条 (推荐)', value: '60' },
+                                    { label: '100 条', value: '100' },
+                                    { label: '200 条', value: '200' },
+                                  ]"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
+                          </div>
+                          <div v-else-if="item.key === 'agent_context_compaction_max_chars'">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               placeholder="如 1200"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in [
+                                    { label: '600 字', value: '600' },
+                                    { label: '1200 字 (推荐)', value: '1200' },
+                                    { label: '2000 字', value: '2000' },
+                                    { label: '3000 字', value: '3000' },
+                                  ]"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
+                          </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
+                          <div v-else-if="item.key === 'sandbox_docker_base_image'" class="relative">
+                             <button
+                               type="button"
+                               @click="toggleDockerBaseImage(item)"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               aria-haspopup="listbox"
+                               :aria-expanded="dockerBaseImageOpen"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 text-left disabled:opacity-70 disabled:cursor-not-allowed"
+                               title="选择内置镜像或自定义镜像地址"
+                             >
+                               <span class="block font-medium text-gray-700 truncate">{{ currentDockerBaseImageLabel }}</span>
+                             </button>
+                             <ChevronDownIcon class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                             <div
+                               v-if="dockerBaseImageOpen"
+                               class="fixed inset-0 z-30"
+                               @click="dockerBaseImageOpen = false"
+                               @contextmenu.prevent="dockerBaseImageOpen = false"
+                             ></div>
+                             <div
+                               v-if="dockerBaseImageOpen"
+                               class="absolute left-0 top-full mt-1 w-full z-40 bg-white rounded-lg border border-gray-200 shadow-lg py-1 max-h-72 overflow-y-auto"
+                               role="listbox"
+                             >
+                               <button
+                                 v-for="preset in dockerBaseImagePresets"
+                                 :key="preset.value"
+                                 type="button"
+                                 @click="selectDockerBaseImage(item, preset.value)"
+                                 role="option"
+                                 :aria-selected="item.value === preset.value"
+                                 class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                 :class="item.value === preset.value ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                               >
+                                 <span class="block">{{ preset.label }}</span>
+                               </button>
+                               <button
+                                 type="button"
+                                 @click="selectDockerBaseImage(item, '_custom')"
+                                 role="option"
+                                 :aria-selected="dockerBaseImageShowCustom"
+                                 class="block w-full px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700"
+                               >
+                                 自定义镜像地址…
+                               </button>
+                             <div v-if="dockerBaseImageShowCustom" class="px-3 py-2 border-t border-gray-100">
+                                 <input
+                                   type="text"
+                                   v-model="item.value"
+                                   :disabled="isConfigItemDisabled(String(category), item)"
+                                   class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-50 p-2 font-mono disabled:opacity-70 disabled:cursor-not-allowed"
+                                   placeholder="如 registry.example.com/library/python:3.11-slim"
+                                 />
+                               </div>
+                             </div>
+                             <div v-if="!isConfigItemDisabled(String(category), item)" class="mt-3 flex flex-wrap items-center gap-3">
+                               <button
+                                 type="button"
+                                 @click="refreshDockerPrebuildStatus()"
+                                 :disabled="dockerPrebuilding || dockerPrebuildChecking"
+                                 class="inline-flex shrink-0 items-center justify-center py-2 px-3 border border-gray-200 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+                                 title="只查询当前 Docker 沙箱镜像是否已预构建，不会触发构建"
+                               >
+                                 <ArrowPathIcon :class="['h-4 w-4 mr-1.5', dockerPrebuildChecking ? 'animate-spin' : '']" />
+                                 {{ dockerPrebuildChecking ? '检查中...' : '刷新状态' }}
+                               </button>
+                               <button
+                                 type="button"
+                                 @click="executeDockerPrebuild"
+                                 :disabled="dockerPrebuilding || dockerPrebuildChecking"
+                                 class="inline-flex shrink-0 items-center justify-center py-2 px-3 border border-indigo-200 rounded-md shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 whitespace-nowrap"
+                                 title="按当前 sandbox_docker_base_image 预构建/复用沙箱镜像，避免首个会话等待构建"
+                               >
+                                 <ArrowPathIcon v-if="!dockerPrebuilding" class="h-4 w-4 mr-1.5" />
+                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-indigo-400 border-t-transparent rounded-full"></span>
+                                 {{ dockerPrebuilding ? '预构建中...' : (dockerPrebuilt ? '重新预构建' : '预构建镜像') }}
+                               </button>
+                               <span v-if="dockerPrebuildChecking" class="text-xs text-gray-500">正在检查预构建状态...</span>
+                               <span v-else-if="dockerPrebuilt" class="text-xs text-green-700 bg-green-50 border border-green-100 rounded-md px-2.5 py-1">
+                                 ✅ 镜像已预构建
+                                 <template v-if="dockerPrebuildReused">（复用了既有缓存）</template>
+                               </span>
+                               <span v-else class="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
+                                 ⚠ 镜像尚未预构建，首个 docker 沙箱会话需等待构建
+                               </span>
+                             </div>
+                             <div v-if="dockerPrebuildTag" class="mt-1.5 text-[11px] text-gray-500 leading-relaxed select-none">
+                               当前预构建镜像 Tag：<code class="font-mono text-indigo-700">{{ dockerPrebuildTag }}</code>
+                             </div>
+                          </div>
                           <div v-else>
                              <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                             <div v-if="canSave && item.key === 'sandbox_e2b_timeout_seconds'" class="mt-3">
+                               <button
+                                 type="button"
+                                 @click="testSandboxConnection('e2b')"
+                                 :disabled="sandboxConnectionTesting !== null"
+                                 class="inline-flex items-center justify-center py-2 px-3 border border-violet-200 rounded-md shadow-sm text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-50 whitespace-nowrap"
+                                 title="按当前页面填写的 E2B 配置创建一次临时沙箱并立即释放"
+                               >
+                                 <ArrowPathIcon v-if="sandboxConnectionTesting !== 'e2b'" class="h-4 w-4 mr-1.5" />
+                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-violet-400 border-t-transparent rounded-full"></span>
+                                 {{ sandboxConnectionTesting === 'e2b' ? '测试中...' : '测试连接' }}
+                               </button>
+                               <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                                 使用当前填写值测试，不会保存配置；E2B 会创建临时云沙箱并消耗配额。
+                               </p>
+                             </div>
+                             <div v-else-if="canSave && item.key === 'sandbox_ssh_remote_workdir'" class="mt-3">
+                               <button
+                                 type="button"
+                                 @click="testSandboxConnection('ssh')"
+                                 :disabled="sandboxConnectionTesting !== null"
+                                 class="inline-flex items-center justify-center py-2 px-3 border border-sky-200 rounded-md shadow-sm text-sm font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
+                                 title="按当前页面填写的 SSH 配置执行一次真实连接与远程工作目录检查"
+                               >
+                                 <ArrowPathIcon v-if="sandboxConnectionTesting !== 'ssh'" class="h-4 w-4 mr-1.5" />
+                                 <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-sky-400 border-t-transparent rounded-full"></span>
+                                 {{ sandboxConnectionTesting === 'ssh' ? '测试中...' : '测试连接' }}
+                               </button>
+                               <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                                 使用当前填写值测试，不会保存配置；会检查 SSH 认证和远程工作目录。
+                               </p>
+                             </div>
                           </div>
                        </div>
                    </div>
@@ -2405,7 +3059,7 @@ onMounted(() => {
           <div class="space-y-2">
             <span class="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">功能描述</span>
             <p class="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100 whitespace-pre-wrap">
-              {{ activeExplanationItem.description || '暂无描述信息。' }}
+              {{ activeExplanationItem.key === 'sandbox_policy' ? sandboxPolicyTip : (activeExplanationItem.description || '暂无描述信息。') }}
             </p>
           </div>
           

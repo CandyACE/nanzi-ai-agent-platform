@@ -1,4 +1,5 @@
 import os
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,6 +12,20 @@ from app.services.ai.runtime.agentscope.workspace import (
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.fixture(autouse=True)
+def _local_policy_without_redis(monkeypatch):
+    """避免真实 get_local_workspace 依赖 Redis 读取 sandbox_policy。
+
+    这些测试标记了 no_infrastructure（不初始化 DB/Redis），而 get_local_workspace
+    内部会 ConfigService.get("sandbox_policy", ...) 走 Redis。这里固定返回 local
+    policy，使测试在零 Redis 环境下自足可跑，且不依赖测试执行顺序。
+    """
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="local"),
+    )
 
 
 async def _noop_tool(**kwargs):
@@ -38,6 +53,7 @@ async def test_build_workspace_toolkit_uses_workspace_builtins_and_keeps_platfor
 
     workspace = await get_local_workspace(user_id="u1", conversation_id="c1")
     assert workspace is not None
+    _, local_ws = workspace
 
     builtin_spec = RuntimeToolSpec(
         name="Bash",
@@ -65,7 +81,7 @@ async def test_build_workspace_toolkit_uses_workspace_builtins_and_keeps_platfor
     )
 
     toolkit = await build_workspace_toolkit(
-        workspace,
+        local_ws,
         [builtin_spec, platform_spec, skill_spec],
     )
 
@@ -106,6 +122,7 @@ async def test_bind_configured_tools_to_workspace_sets_bash_cwd_without_injectin
         conversation_id="conv-bash",
     )
     assert workspace is not None
+    _, local_ws = workspace
 
     specs = await ToolRegistry.get_runtime_tools(["exec_command", "search_knowledge_base"])
     unbound_bash = next(spec for spec in specs if spec.name == "Bash")
@@ -122,7 +139,7 @@ async def test_bind_configured_tools_to_workspace_sets_bash_cwd_without_injectin
     assert [spec.name for spec in bound] == [spec.name for spec in specs]
     bound_bash = next(spec for spec in bound if spec.name == "Bash")
     assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(expected_cwd)
-    assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(workspace.workdir)
+    assert os.path.abspath(bound_bash.native_tool._cwd) == os.path.abspath(local_ws.workdir)
     from app.services.ai.runtime.conversation_run_subprocess import CancellableLocalBackend
 
     assert isinstance(bound_bash.native_tool._backend, CancellableLocalBackend)

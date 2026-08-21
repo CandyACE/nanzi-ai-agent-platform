@@ -2,6 +2,9 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote
+
+from redis.exceptions import WatchError
+
 from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,39 @@ class MemoryService:
         uid = str(user_id) if user_id else "anonymous"
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.SESSION_TOOL_ARTIFACT_SUFFIX}"
 
+    def _get_digest_key(self, user_id: str, conversation_id: str) -> str:
+        """跨轮溢出摘录（digest）的独立 Redis key。
+
+        与 history（LIST）分开存储，保证不进入 get_conversation_history 的展示路径。
+        仅保存本轮压缩得到的 system 摘录文本。
+        """
+        uid = str(user_id) if user_id else "anonymous"
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:digest"
+
+    def _get_digest_meta_key(
+        self,
+        user_id: str,
+        conversation_id: str,
+        field: str,
+    ) -> str:
+        uid = str(user_id) if user_id else "anonymous"
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:digest_{field}"
+
+    def _get_seq_counter_key(self, user_id: str, conversation_id: str) -> str:
+        """会话内消息单调序号计数器的 Redis key。
+
+        该计数器与 history LIST 的索引解耦：即使 `ltrim` 压缩了列表索引，
+        新追加消息的 seq 仍保持严格单调递增，供摘要游标（synced_seq）判定增量窗口，
+        且编辑重发（截断后重发）时新消息 seq 更大，能使摘要基于当前分支重算。
+        """
+        uid = str(user_id) if user_id else "anonymous"
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:seq_counter"
+
+    def _get_context_revision_key(self, user_id: str, conversation_id: str) -> str:
+        """Return the branch revision used to invalidate in-flight digest tasks."""
+        uid = str(user_id) if user_id else "anonymous"
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:context_revision"
+
     async def get_data_result_stack(
         self,
         user_id: str,
@@ -96,6 +132,230 @@ class MemoryService:
             )
         except Exception as e:
             logger.error("[MemoryService] Failed to push data result stack key %s: %s", key, e)
+
+    async def get_digest(self, user_id: str, conversation_id: str) -> Optional[str]:
+        """读取跨轮溢出摘录（digest）文本。
+
+        用独立 key 存储，不进入展示路径；无摘录或读取失败均返回 ``None``
+        （由调用方降级为确定性压缩，不影响主流程）。
+        """
+        redis = await get_redis()
+        if not redis:
+            return None
+        key = self._get_digest_key(user_id, conversation_id)
+        try:
+            raw = await redis.get(key)
+            if not raw:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            return raw
+        except Exception as e:
+            logger.error("[MemoryService] Failed to get digest key %s: %s", key, e)
+            return None
+
+    async def get_context_revision(self, user_id: str, conversation_id: str) -> int:
+        """Read the current conversation branch revision for async derived state."""
+        redis = await get_redis()
+        if not redis:
+            return 0
+
+        key = self._get_context_revision_key(user_id, conversation_id)
+        try:
+            return int(await redis.get(key) or 0)
+        except Exception as e:
+            logger.warning(
+                "[MemoryService] Failed to get context revision key %s: %s",
+                key,
+                e,
+            )
+            return 0
+
+    async def get_current_seq(self, user_id: str, conversation_id: str) -> int:
+        """读取当前会话已分配的最高消息序号。"""
+        redis = await get_redis()
+        if not redis:
+            return 0
+        try:
+            return int(await redis.get(self._get_seq_counter_key(user_id, conversation_id)) or 0)
+        except Exception as e:
+            logger.warning(
+                "[MemoryService] Failed to get seq counter for %s:%s: %s",
+                user_id,
+                conversation_id,
+                e,
+            )
+            return 0
+
+    async def set_digest(self, user_id: str, conversation_id: str, content: str) -> None:
+        """写入跨轮溢出摘录（digest）文本，沿用会话 TTL（默认 7 天）。"""
+        redis = await get_redis()
+        if not redis:
+            return
+        key = self._get_digest_key(user_id, conversation_id)
+        meta_keys = [
+            self._get_digest_meta_key(user_id, conversation_id, field)
+            for field in ("seq", "revision", "quality")
+        ]
+        try:
+            if not content:
+                await redis.delete(key, *meta_keys)
+            else:
+                await redis.set(key, content, ex=self.ttl)
+                await redis.delete(*meta_keys)
+        except Exception as e:
+            logger.error("[MemoryService] Failed to set digest key %s: %s", key, e)
+
+    async def set_digest_if_current(
+        self,
+        user_id: str,
+        conversation_id: str,
+        content: str,
+        *,
+        source_seq: int,
+        source_revision: Optional[int] = None,
+        quality: int = 0,
+        allow_newer_seq: bool = False,
+    ) -> bool:
+        """仅在摘要来源仍对应当前历史时写入 digest。
+
+        先用 seq counter 做快速淘汰，再用 Redis WATCH/MULTI 保护检查与写入之间的
+        竞态，避免较旧的后台摘要覆盖更新历史对应的摘要。上下文压缩摘要可以
+        ``allow_newer_seq=True``：同一分支在摘要生成期间追加 assistant 消息不应让
+        这个“历史前缀摘要”失效；分支 revision 变化和更高 source_seq 的摘要仍会淘汰它。
+        """
+        redis = await get_redis()
+        if not redis:
+            return False
+        seq_key = self._get_seq_counter_key(user_id, conversation_id)
+        revision_key = self._get_context_revision_key(user_id, conversation_id)
+        digest_key = self._get_digest_key(user_id, conversation_id)
+        digest_seq_key = self._get_digest_meta_key(user_id, conversation_id, "seq")
+        digest_revision_key = self._get_digest_meta_key(user_id, conversation_id, "revision")
+        digest_quality_key = self._get_digest_meta_key(user_id, conversation_id, "quality")
+        try:
+            current_raw = await redis.get(seq_key)
+            current_seq = int(current_raw or 0)
+            if not allow_newer_seq and current_seq > int(source_seq):
+                return False
+            if source_revision is not None:
+                current_revision = int(await redis.get(revision_key) or 0)
+                if current_revision != int(source_revision):
+                    return False
+            stored_seq = int(await redis.get(digest_seq_key) or -1)
+            stored_quality = int(await redis.get(digest_quality_key) or -1)
+            if stored_seq > int(source_seq) or (
+                stored_seq == int(source_seq) and stored_quality >= int(quality)
+            ):
+                return False
+
+            async with redis.pipeline() as pipe:
+                # redis-py accepts multiple WATCH names, while lightweight test
+                # doubles may accept only one key. Repeated WATCH calls are
+                # equivalent and keep the atomic check portable.
+                watch_keys = [seq_key, digest_seq_key, digest_quality_key]
+                if source_revision is not None:
+                    watch_keys.extend([revision_key, digest_revision_key])
+                for watch_key in watch_keys:
+                    await pipe.watch(watch_key)
+                current_raw = await pipe.get(seq_key)
+                current_seq = int(current_raw or 0)
+                if not allow_newer_seq and current_seq > int(source_seq):
+                    await pipe.reset()
+                    return False
+                if source_revision is not None:
+                    current_revision = int(await pipe.get(revision_key) or 0)
+                    if current_revision != int(source_revision):
+                        await pipe.reset()
+                        return False
+                stored_seq = int(await pipe.get(digest_seq_key) or -1)
+                stored_quality = int(await pipe.get(digest_quality_key) or -1)
+                if stored_seq > int(source_seq) or (
+                    stored_seq == int(source_seq) and stored_quality >= int(quality)
+                ):
+                    await pipe.reset()
+                    return False
+                pipe.multi()
+                if content:
+                    pipe.set(digest_key, content, ex=self.ttl)
+                    pipe.set(digest_seq_key, int(source_seq), ex=self.ttl)
+                    pipe.set(
+                        digest_quality_key,
+                        int(quality),
+                        ex=self.ttl,
+                    )
+                    if source_revision is not None:
+                        pipe.set(
+                            digest_revision_key,
+                            int(source_revision),
+                            ex=self.ttl,
+                        )
+                else:
+                    pipe.delete(
+                        digest_key,
+                        digest_seq_key,
+                        digest_revision_key,
+                        digest_quality_key,
+                    )
+                await pipe.execute()
+            return True
+        except WatchError:
+            return False
+        except Exception as e:
+            logger.error(
+                "[MemoryService] Failed to conditionally set digest key %s: %s",
+                digest_key,
+                e,
+            )
+            return False
+
+    async def reset_context_state(
+        self,
+        user_id: str,
+        conversation_id: str,
+        *,
+        delete_summary: bool = True,
+    ) -> None:
+        """清理历史截断后不能继续复用的上下文派生状态。
+
+        seq counter 必须保留单调性；其余状态都必须从当前历史重新建立，避免
+        编辑重发后把旧分支摘要合入新分支。
+        """
+        redis = await get_redis()
+        if redis:
+            try:
+                revision_key = self._get_context_revision_key(user_id, conversation_id)
+                # seq counter is intentionally preserved, while the revision changes
+                # on every branch reset so an already-running digest task cannot
+                # repopulate the old branch after truncation/clear.
+                await redis.incr(revision_key)
+                await redis.expire(revision_key, self.ttl)
+                await redis.delete(self._get_digest_key(user_id, conversation_id))
+                await redis.delete(
+                    self._get_digest_meta_key(user_id, conversation_id, "seq"),
+                    self._get_digest_meta_key(user_id, conversation_id, "revision"),
+                    self._get_digest_meta_key(user_id, conversation_id, "quality"),
+                )
+                await redis.delete(f"memory:debounce:{user_id}:{conversation_id}")
+            except Exception as e:
+                logger.warning(
+                    "[MemoryService] Failed to reset context cache for %s:%s: %s",
+                    user_id,
+                    conversation_id,
+                    e,
+                )
+        if delete_summary:
+            try:
+                from app.services.ai.memory_index_service import MemoryIndexService
+
+                await MemoryIndexService.delete_summary(str(user_id), conversation_id)
+            except Exception as e:
+                logger.warning(
+                    "[MemoryService] Failed to reset structured summary for %s:%s: %s",
+                    user_id,
+                    conversation_id,
+                    e,
+                )
 
     async def get_current_data_result(
         self,
@@ -154,7 +414,7 @@ class MemoryService:
 
         return history
 
-    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None):
+    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None):
         """
         Append a single message to the conversation history.
         Now supports trace_id, attachment files, and token usage values.
@@ -163,6 +423,8 @@ class MemoryService:
         用于后续路由的会话粘性（让追问沿用上一轮智能体）。
         agent_type: 处理该轮的智能体类型（如 system/agent/rag 等主类型）。仅对 assistant 消息记录。
         agent_display_name: 处理该轮的智能体展示名。仅对 assistant 消息记录。
+        tool_run_text: A 项——本轮工具调用转录纯文本（独立字段，不拼入 content），
+        仅用于后续轮上下文重建，不直接展示给用户。
         """
         redis = await get_redis()
         if not redis:
@@ -196,8 +458,15 @@ class MemoryService:
         message["completion_tokens"] = _completion_tokens
         message["total_tokens"] = int(total_tokens or (_prompt_tokens + _completion_tokens))
         message["has_data_output"] = bool(has_data_output or False)
+        if tool_run_text:
+            message["tool_run_text"] = tool_run_text
 
-        
+        # 单调 seq：独立计数器分配，与 list 索引解耦。
+        # 先 INCR 取新 seq（在 rpush 之前已知），供摘要游标 synced_seq 判定增量窗口。
+        seq_key = self._get_seq_counter_key(user_id, conversation_id)
+        assigned_seq = await redis.incr(seq_key)
+        message["seq"] = assigned_seq
+
         # Push to list
         try:
             val = json.dumps(message, ensure_ascii=False)
@@ -205,6 +474,7 @@ class MemoryService:
                 await pipe.rpush(key, val)
                 await pipe.ltrim(key, -self.max_history_len, -1)
                 await pipe.expire(key, self.ttl)
+                await pipe.expire(seq_key, self.ttl)
                 await pipe.execute()
             logger.info(f"[MemoryService] Added message to key: {key}. TraceID: {trace_id}")
         except Exception as e:
@@ -262,6 +532,7 @@ class MemoryService:
                 await redis.ltrim(key, 0, keep_count - 1)
                 await redis.expire(key, self.ttl)
                 logger.info(f"[MemoryService] Truncated history key: {key} to {keep_count} items")
+            await self.reset_context_state(user_id, conversation_id)
             return True
         except Exception as e:
             logger.error(f"[MemoryService] Failed to truncate history for key {key}: {e}")
@@ -358,6 +629,7 @@ class MemoryService:
         await redis.delete(self._get_data_result_key(user_id, conversation_id))
         await redis.delete(self._get_data_result_stack_key(user_id, conversation_id))
         await redis.delete(self._get_session_tool_artifact_key(user_id, conversation_id))
+        await self.reset_context_state(user_id, conversation_id)
 
     async def delete_session_memory(
         self,

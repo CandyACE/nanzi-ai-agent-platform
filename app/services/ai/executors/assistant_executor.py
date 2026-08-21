@@ -20,6 +20,7 @@ class AssistantExecutor(BaseExecutor):
     ):
         super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
         self.turn_decision = turn_decision
+        self._runner: Optional[AssistantAgentRunner] = None
 
     async def execute(
         self,
@@ -35,9 +36,22 @@ class AssistantExecutor(BaseExecutor):
             conversation_id=self.conversation_id,
             turn_decision=self.turn_decision,
         )
+        self._runner = runner
         runner.step_counter = self.step_counter
 
         async for chunk in runner.execute(history):
             yield chunk
 
         self.step_counter = runner.step_counter
+
+    def resolve_has_tool_meta(self) -> bool:
+        """A 项：本轮是否有待跨轮持久化的工具元数据。"""
+        if self._runner is None:
+            return False
+        return self._runner.resolve_has_tool_meta()
+
+    def resolve_tool_run_text(self, *, max_total_chars: int = 4000) -> str:
+        """A 项：本轮工具调用转录文本（供保存点持久化）。"""
+        if self._runner is None:
+            return ""
+        return self._runner.resolve_tool_run_text(max_total_chars=max_total_chars)

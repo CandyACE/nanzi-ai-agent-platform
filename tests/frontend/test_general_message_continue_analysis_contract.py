@@ -39,7 +39,7 @@ def test_generic_continue_analysis_is_wired_to_non_chatbi_agent_messages():
         assert 'import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue"' in source
         assert "<MessageContinueAnalysis" in source
         assert ":is-mobile=" in source
-        assert "@select=\"(query) => handleQuickQuestion(query, 'send', msg.content)\"" in source
+        assert "@select=\"(query) => handleQuickQuestion(query, 'send', visibleStreamBody(msg))\"" in source
         assert "msg.agentType === 'GENERAL'" in source or 'msg.agentType === "GENERAL"' in source
         assert "isGeneralAgentMessage(msg)" in source
         assert "!msg.chatbiInsight?.actions?.length" in source

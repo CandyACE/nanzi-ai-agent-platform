@@ -428,6 +428,21 @@ def convert_history_to_messages(history: List[Dict[str, str]], strip_thought: bo
                 messages.append(HumanMessage(content=final_text))
         elif role == "assistant":
             cleaned_content = _clean_assistant_text(content, strip_thought=strip_thought)
+            # F 项：窗口内保留 agent 元数据——将上一轮处理智能体的展示名导入 LLM 上下文，
+            # 让后续轮模型知道自己处于哪个智能体的处理链路上（用于追问/指代/风格延续）。
+            agent_display = (m.get("agent_display_name") or "").strip()
+            if agent_display:
+                cleaned_content = f"[本回复由智能体「{agent_display}」生成]\n\n{cleaned_content}".strip()
+            # A 项：本轮工具调用转录只注入 LLM 上下文，不落到展示用 server history 的 content。
+            tool_text = (m.get("tool_run_text") or "").strip()
+            if tool_text:
+                cleaned_content = (
+                    f"{cleaned_content}\n\n"
+                    f"<backend_tool_run_summary>"
+                    f"\n以下为本轮执行过程中调用的工具及其关键结果（供你理解上一轮工具执行情况）：\n"
+                    f"{tool_text}"
+                    f"\n</backend_tool_run_summary>"
+                ).strip()
             messages.append(AIMessage(content=cleaned_content))
         elif role == "system":
             messages.append(SystemMessage(content=content))

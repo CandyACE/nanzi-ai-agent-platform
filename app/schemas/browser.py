@@ -78,6 +78,7 @@ class BrowserSnapshot(BaseModel):
     screenshot_ref: Optional[str] = None
     elements: list[BrowserElement] = Field(default_factory=list)
     page_state: str = "ready"
+    page_status: str = "ready"
     scroll_x: float = 0
     scroll_y: float = 0
     viewport_width: Optional[int] = None

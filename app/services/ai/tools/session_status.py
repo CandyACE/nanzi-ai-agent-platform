@@ -5,10 +5,13 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import platform
+import sys
 from typing import Any
 
 from app.core.context import get_current_agent_context, get_debug_option
 from app.core.redis import get_redis
+from app.services.ai.context_usage import estimate_context_usage, estimate_text_tokens
 from app.services.ai.memory_service import memory_service
 from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
 from app.services.ai.tools.tool_compat import tool
@@ -122,6 +125,42 @@ def _client_summary() -> dict[str, Any]:
     }
 
 
+def _runtime_env_summary() -> dict[str, Any]:
+    """只读的运行环境事实（后端进程所在的机器 / 容器环境）。
+
+    全部字段来自 Python 运行时（``sys``/``platform``）与进程级缓存的环境探测，
+    不启动任何子进程、不做耗时探测，也不公开用户身份等敏感信息。任何字段探测
+    失败都返回 ``None`` 并交由调用方计入 ``limitations``，不抛错。
+    """
+    env_kind: str | None = None
+    try:
+        # 惰性导入规避 import 环；get_env() 进程级只探一次并缓存。
+        from app.utils.env import get_env
+
+        env_kind = get_env()
+    except Exception:
+        env_kind = None
+
+    vi = sys.version_info
+    return {
+        "env_kind": env_kind,
+        "python": {
+            "version": platform.python_version(),
+            "major": vi.major,
+            "minor": vi.minor,
+            "micro": vi.micro,
+            "implementation": platform.python_implementation(),
+            "interpreter": sys.executable,
+        },
+        "platform": {
+            "os": sys.platform,
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+    }
+
+
 def _model_summary(context: Any) -> dict[str, Any]:
     info = dict(getattr(context, "runtime_model_info", {}) or {}) if context else {}
     result = {field: info.get(field) for field in _SAFE_MODEL_FIELDS}
@@ -216,6 +255,17 @@ async def _last_model_call_stats(context: Any) -> dict[str, Any]:
     return result
 
 
+async def _context_usage_estimate(context: Any) -> dict[str, Any]:
+    """复用共享服务估算当前会话上下文，保持 session_status 原有空历史语义。"""
+    if context is None:
+        return await estimate_context_usage(user_id=None, conversation_id=None)
+    return await estimate_context_usage(
+        user_id=str(getattr(context, "user_id", None) or "anonymous"),
+        conversation_id=getattr(context, "conversation_id", None),
+        runtime_model_info=getattr(context, "runtime_model_info", {}) or {},
+    )
+
+
 async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
     empty = {
         "user_root": None,
@@ -223,6 +273,7 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
         "docs_dir": None,
         "uploads_dir": None,
         "sandbox_dir": None,
+        "sandbox_policy": None,
     }
     limitations: list[str] = []
     if context is None or getattr(context, "user_id", None) is None:
@@ -230,6 +281,9 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
         return empty, limitations
 
     try:
+        from app.services.config_service import ConfigService
+
+        sandbox_policy = (await ConfigService.get("sandbox_policy", "local") or "local").strip().lower()
         root = await _maybe_await(resolve_workspace_root())
         user_id = getattr(context, "user_id", None)
         dimensions = dict(getattr(context, "user_dimensions", {}) or {})
@@ -260,6 +314,7 @@ async def _workspace_summary(context: Any) -> tuple[dict[str, Any], list[str]]:
             "docs_dir": _directory_state(docs_path, scope="cross_session"),
             "uploads_dir": _directory_state(os.path.join(user_root, "uploads")),
             "sandbox_dir": _directory_state(os.path.join(user_root, "sandbox")),
+            "sandbox_policy": sandbox_policy,
         }, limitations
     except Exception:
         limitations.append("工作区路径解析失败，路径信息不可用")
@@ -307,23 +362,29 @@ def _resource_summary(context: Any) -> dict[str, Any]:
 async def session_status() -> str:
     """读取当前 AI 会话的只读运行时信息。
 
-    当不确定会话、设备、模型上下文窗口、工作区、文档目录、用户身份或最近
-    Token 统计时调用；这些信息不可用时返回 null 或限制说明，不要猜测。
-    不接受参数，不修改任何会话状态。
+    当不确定会话、设备、模型上下文窗口、工作区、文档目录、用户身份、最近
+    Token 统计或运行环境（容器 / 宿主机、Python 与系统版本）时调用；这些信息
+    不可用时返回 null 或限制说明，不要猜测。不接受参数，不修改任何会话状态。
     """
     context = get_current_agent_context()
     workspace, workspace_limitations = await _workspace_summary(context)
     usage = await _last_model_call_stats(context)
+    estimate = await _context_usage_estimate(context)
+    runtime_env = _runtime_env_summary()
 
     limitations = [
         "device_type 和 display_hint 来自客户端请求，仅作为客户端上报信息",
         "Token 使用量仅代表最近一次已完成模型调用的统计",
+        "estimated_* 为全量历史基于 estimate_text_tokens 的粗略估算",
         "当前上下文 Token 和剩余容量没有可靠实时估算时返回 null",
         "当前 AgentContext 未保存已绑定 MCP 工具列表",
+        "runtime_env 描述的是后端进程所在机器/容器，可能与用户客户端环境不同",
         *workspace_limitations,
     ]
     if context is None:
         limitations.insert(0, "当前请求没有可用的 AgentContext，未对环境信息进行猜测")
+    if runtime_env["env_kind"] is None:
+        limitations.insert(0, "运行环境（容器/宿主机）探测失败，env_kind 不可用")
 
     payload = {
         "schema_version": 1,
@@ -333,11 +394,11 @@ async def session_status() -> str:
         "model": _model_summary(context),
         "context_usage": {
             **usage,
-            "estimated_current_tokens": None,
-            "estimated_remaining_tokens": None,
+            **estimate,
         },
         "user": _user_summary(context),
         "workspace": workspace,
+        "runtime_env": runtime_env,
         "resources": _resource_summary(context),
         "attachments": _attachments_summary(context),
         "limitations": limitations,

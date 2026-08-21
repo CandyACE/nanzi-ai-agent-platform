@@ -438,6 +438,7 @@ function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
 function iconFor(item: ProcessTimelineLogItem): string {
   if (item.category === "tool_resolution") return item.status === "error" ? "⚠️" : "🧭";
   if (item.status === "error") return "⚠️";
+  if (item.category === "context_summarized" || item.title.includes("平台摘录")) return "📋";
   if (item.subagent || item.category === "agent") return "🤖";
   if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return "🔧";
   if (item.category === "model" || item.title.includes("模型")) return "✦";

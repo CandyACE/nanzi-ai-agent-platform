@@ -622,8 +622,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         system_content = append_time_anchor_for_user_question(system_content, user_question)
         tools = filter_redundant_time_tools(tools, system_content)
 
-        # 仅保留最近 5 轮历史对话（最多 10 条消息）
-        history = history[-10:]
+        # AgentService 已按最终模型的 history_budget 完成窗口选择和摘录；
+        # 知识库 runner 不能再次按固定条数截断，避免丢掉平台摘要。
         runtime_messages = [SystemMessage(content=system_content)]
         runtime_messages.extend(convert_history_to_messages(history, strip_thought=True))
         runtime_messages = normalize_messages_for_llm(runtime_messages)

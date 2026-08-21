@@ -497,7 +497,7 @@
                 <span class="hidden sm:inline">编辑</span>
               </button>
               <button
-                @click="copyMessage(msg.content)"
+                @click="copyMessage(visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
@@ -630,7 +630,7 @@
                 :process-narration="msg.processNarration"
                 :process-narration-pending="msg.processNarrationPending"
                 :is-thinking="msg.isThinking"
-                :has-answer="Boolean(msg.content)"
+                :has-answer="Boolean(visibleStreamBody(msg))"
                 :thinking-text="msg.thinkingText"
                 :duration="msg.thoughtDuration"
                 :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
@@ -640,7 +640,7 @@
               <!-- Tool Permission Confirmation -->
               <div
                 v-if="msg.pendingPermission"
-                class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-900/20 p-3 text-xs"
+                class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-900/20 p-3 text-xs transition-all"
               >
                 <div class="flex items-start gap-2">
                   <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
@@ -649,53 +649,90 @@
                     </svg>
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="font-bold text-amber-900 dark:text-amber-100 truncate">
-                        {{ msg.pendingPermission.title || '工具调用确认' }}
-                      </div>
-                      <span
-                        class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
-                        :class="{
-                          'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': msg.pendingPermission.status === 'pending',
-                          'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': msg.pendingPermission.status === 'approved',
-                          'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': msg.pendingPermission.status === 'rejected',
-                          'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': msg.pendingPermission.status === 'error' || msg.pendingPermission.status === 'expired'
-                        }"
-                      >
-                        {{ formatPermissionStatus(msg.pendingPermission.status) }}
-                      </span>
-                    </div>
-                    <div class="mt-1 text-amber-800/80 dark:text-amber-200/80 break-words">
-                      {{ msg.pendingPermission.details }}
-                    </div>
+                    <!-- Card Header with Toggle -->
                     <div
-                      v-if="msg.pendingPermission.tool_call?.name"
-                      class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-amber-100 dark:border-amber-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto"
+                      class="flex items-center justify-between gap-2 cursor-pointer select-none group"
+                      :title="(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) ? '点击收起' : '点击展开'"
+                      @click="msg.pendingPermission.expanded = !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending'))"
                     >
-                      <span>{{ msg.pendingPermission.tool_call.name }}</span>
-                      <span v-if="msg.pendingPermission.tool_call.args"> {{ JSON.stringify(msg.pendingPermission.tool_call.args) }}</span>
+                      <div class="flex min-w-0 flex-1 items-center gap-2">
+                        <div class="font-bold text-amber-900 dark:text-amber-100 shrink-0">
+                          {{ msg.pendingPermission.title || '工具调用确认' }}
+                        </div>
+                        <!-- Collapsed summary preview -->
+                        <span
+                          v-if="!(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) && (msg.pendingPermission.tool_call?.name || msg.pendingPermission.details)"
+                          class="min-w-0 flex-1 truncate text-[11px] text-amber-800/70 dark:text-amber-200/70 font-normal"
+                        >
+                          {{ msg.pendingPermission.tool_call?.name ? `${msg.pendingPermission.tool_call.name}${msg.pendingPermission.tool_call.args ? ': ' + JSON.stringify(msg.pendingPermission.tool_call.args) : ''}` : msg.pendingPermission.details }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <span
+                          class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+                          :class="{
+                            'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': msg.pendingPermission.status === 'pending',
+                            'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': msg.pendingPermission.status === 'approved',
+                            'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': msg.pendingPermission.status === 'rejected',
+                            'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': msg.pendingPermission.status === 'error' || msg.pendingPermission.status === 'expired'
+                          }"
+                        >
+                          {{ formatPermissionStatus(msg.pendingPermission.status) }}
+                        </span>
+                        <!-- Fold/Unfold Arrow -->
+                        <button
+                          type="button"
+                          class="flex h-5 w-5 items-center justify-center rounded text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200 transition-colors"
+                          :aria-label="(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) ? '收起确认' : '展开确认'"
+                          @click.stop="msg.pendingPermission.expanded = !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending'))"
+                        >
+                          <svg
+                            class="h-3.5 w-3.5 transition-transform duration-200"
+                            :class="{ 'rotate-180': !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 15-7-7-7 7" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="msg.pendingPermission.status === 'pending'" class="mt-3 flex items-center gap-2">
-                      <button
-                        @click="confirmPendingPermission(msg, true)"
-                        :disabled="msg.pendingPermission.isSubmitting"
-                        class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+
+                    <!-- Expanded Content -->
+                    <div v-show="msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')" class="mt-2">
+                      <div class="text-amber-800/80 dark:text-amber-200/80 break-words">
+                        {{ msg.pendingPermission.details }}
+                      </div>
+                      <div
+                        v-if="msg.pendingPermission.tool_call?.name"
+                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-amber-100 dark:border-amber-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
                       >
-                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
-                        </svg>
-                        允许
-                      </button>
-                      <button
-                        @click="confirmPendingPermission(msg, false)"
-                        :disabled="msg.pendingPermission.isSubmitting"
-                        class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
-                      >
-                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18 18 6M6 6l12 12" />
-                        </svg>
-                        拒绝
-                      </button>
+                        <div class="font-semibold text-amber-900 dark:text-amber-200 mb-0.5">{{ msg.pendingPermission.tool_call.name }}</div>
+                        <pre v-if="msg.pendingPermission.tool_call.args" class="whitespace-pre-wrap break-all font-mono">{{ JSON.stringify(msg.pendingPermission.tool_call.args, null, 2) }}</pre>
+                      </div>
+                      <div v-if="msg.pendingPermission.status === 'pending'" class="mt-3 flex items-center gap-2">
+                        <button
+                          @click="confirmPendingPermission(msg, true)"
+                          :disabled="msg.pendingPermission.isSubmitting"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
+                          </svg>
+                          允许
+                        </button>
+                        <button
+                          @click="confirmPendingPermission(msg, false)"
+                          :disabled="msg.pendingPermission.isSubmitting"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18 18 6M6 6l12 12" />
+                          </svg>
+                          拒绝
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -703,7 +740,7 @@
               <!-- External Tool Execution -->
               <div
                 v-if="msg.pendingExternalExecution"
-                class="mt-3 rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50/80 dark:bg-sky-900/20 p-3 text-xs"
+                class="mt-3 rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50/80 dark:bg-sky-900/20 p-3 text-xs transition-all"
               >
                 <div class="flex items-start gap-2">
                   <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300">
@@ -712,38 +749,75 @@
                     </svg>
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="font-bold text-sky-900 dark:text-sky-100 truncate">
-                        {{ msg.pendingExternalExecution.title || '外部工具执行' }}
-                      </div>
-                      <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                        {{ formatExternalExecutionStatus(msg.pendingExternalExecution.status) }}
-                      </span>
-                    </div>
-                    <div class="mt-1 text-sky-800/80 dark:text-sky-200/80 break-words">
-                      {{ msg.pendingExternalExecution.details }}
-                    </div>
+                    <!-- Card Header with Toggle -->
                     <div
-                      v-if="msg.pendingExternalExecution.tool_call?.name"
-                      class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-sky-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto"
+                      class="flex items-center justify-between gap-2 cursor-pointer select-none group"
+                      :title="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '点击收起' : '点击展开'"
+                      @click="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
                     >
-                      <span>{{ msg.pendingExternalExecution.tool_call.name }}</span>
-                      <span v-if="msg.pendingExternalExecution.tool_call.args"> {{ JSON.stringify(msg.pendingExternalExecution.tool_call.args) }}</span>
+                      <div class="flex min-w-0 flex-1 items-center gap-2">
+                        <div class="font-bold text-sky-900 dark:text-sky-100 shrink-0">
+                          {{ msg.pendingExternalExecution.title || '外部工具执行' }}
+                        </div>
+                        <!-- Collapsed summary preview -->
+                        <span
+                          v-if="!(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) && (msg.pendingExternalExecution.tool_call?.name || msg.pendingExternalExecution.details)"
+                          class="min-w-0 flex-1 truncate text-[11px] text-sky-800/70 dark:text-sky-200/70 font-normal"
+                        >
+                          {{ msg.pendingExternalExecution.tool_call?.name ? `${msg.pendingExternalExecution.tool_call.name}${msg.pendingExternalExecution.tool_call.args ? ': ' + JSON.stringify(msg.pendingExternalExecution.tool_call.args) : ''}` : msg.pendingExternalExecution.details }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                          {{ formatExternalExecutionStatus(msg.pendingExternalExecution.status) }}
+                        </span>
+                        <!-- Fold/Unfold Arrow -->
+                        <button
+                          type="button"
+                          class="flex h-5 w-5 items-center justify-center rounded text-sky-600 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200 transition-colors"
+                          :aria-label="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '收起执行' : '展开执行'"
+                          @click.stop="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
+                        >
+                          <svg
+                            class="h-3.5 w-3.5 transition-transform duration-200"
+                            :class="{ 'rotate-180': !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 15-7-7-7 7" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="msg.pendingExternalExecution.status === 'pending'" class="mt-3 space-y-2">
-                      <textarea
-                        v-model="msg.pendingExternalExecution.outputDraft"
-                        rows="4"
-                        placeholder="在此粘贴客户端执行该工具后的输出结果..."
-                        class="w-full rounded-md border border-sky-200 dark:border-sky-800 bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-                      />
-                      <button
-                        @click="submitPendingExternalExecution(msg)"
-                        :disabled="msg.pendingExternalExecution.isSubmitting"
-                        class="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+
+                    <!-- Expanded Content -->
+                    <div v-show="msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')" class="mt-2">
+                      <div class="text-sky-800/80 dark:text-sky-200/80 break-words">
+                        {{ msg.pendingExternalExecution.details }}
+                      </div>
+                      <div
+                        v-if="msg.pendingExternalExecution.tool_call?.name"
+                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-sky-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
                       >
-                        提交结果并继续
-                      </button>
+                        <div class="font-semibold text-sky-900 dark:text-sky-200 mb-0.5">{{ msg.pendingExternalExecution.tool_call.name }}</div>
+                        <pre v-if="msg.pendingExternalExecution.tool_call.args" class="whitespace-pre-wrap break-all font-mono">{{ JSON.stringify(msg.pendingExternalExecution.tool_call.args, null, 2) }}</pre>
+                      </div>
+                      <div v-if="msg.pendingExternalExecution.status === 'pending'" class="mt-3 space-y-2">
+                        <textarea
+                          v-model="msg.pendingExternalExecution.outputDraft"
+                          rows="4"
+                          placeholder="在此粘贴客户端执行该工具后的输出结果..."
+                          class="w-full rounded-md border border-sky-200 dark:border-sky-800 bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+                        />
+                        <button
+                          @click="submitPendingExternalExecution(msg)"
+                          :disabled="msg.pendingExternalExecution.isSubmitting"
+                          class="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          提交结果并继续
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -851,7 +925,7 @@
               class="flex flex-nowrap items-center space-x-2 mt-3"
             >
               <button
-                @click="copyMessage(msg.content)"
+                @click="copyMessage(visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
@@ -1026,9 +1100,9 @@
                   @action="(action) => handleChatBIResultAction(action, msg)"
                 />
                 <MessageContinueAnalysis
-                  v-if="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && msg.content"
+                  v-if="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && visibleStreamBody(msg)"
                   :is-mobile="isMobile"
-                  @select="(query) => handleQuickQuestion(query, 'send', msg.content)"
+                  @select="(query) => handleQuickQuestion(query, 'send', visibleStreamBody(msg))"
                 />
                 <button
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
@@ -1119,6 +1193,7 @@
         :approval-mode="config.approvalMode"
         :selected-model="config.overrideModel"
         :available-models="availableModels"
+        :context-usage="contextUsage"
         :thinking-enable-override="thinkingEnableOverride"
         :reasoning-effort-override="reasoningEffortOverride"
         :active-ltm-preference="activeLtmPreference"
@@ -1153,8 +1228,20 @@
         @dismiss-ltm="activeLtmPreference = null"
       >
         <template #banner>
-          <div v-if="activeTodoTimeline" class="mx-3 mt-2">
-            <ChatTodoCard :timeline="activeTodoTimeline" />
+          <div class="mx-3 mt-2">
+            <div v-if="activeTodoTimeline">
+              <ChatTodoCard :timeline="activeTodoTimeline" />
+            </div>
+            <div class="mt-2">
+              <Transition name="bash-banner-fade">
+                <BashEnvBanner
+                  v-if="showBashBanner"
+                  :env="bashBannerEnv!"
+                  @dismiss="bashBannerDismissed = true"
+                  @ignore="handleIgnoreBashBanner"
+                />
+              </Transition>
+            </div>
           </div>
         </template>
       </ChatInput>
@@ -1375,7 +1462,7 @@
                                     <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
                                     <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm leading-relaxed">
                                         <MessageRenderer
-                                          :content="turn.summary || 'N/A'"
+                                          :content="stripInternalContextBlocks(turn.summary || 'N/A')"
                                           :theme="config.markdownTheme"
                                           :conversation-id="conversationId"
                                         />
@@ -1963,6 +2050,7 @@ import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
+import { useContextUsage } from "@/composables/useContextUsage";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
 import { useDatasetMount } from "@/composables/useDatasetMount";
@@ -2036,6 +2124,7 @@ import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
+import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -2066,7 +2155,10 @@ import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
 import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
 import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
-import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
+import {
+  sanitizeStreamContent,
+  stripInternalContextBlocks,
+} from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { modelApi, type AIModel, type ReasoningEffort } from "@/api/model";
@@ -2296,7 +2388,9 @@ const formatTimeLabel = (isoStr: string): string => {
 };
 
 function visibleStreamBody(msg: Message): string {
-  return msg.content || "";
+  return msg.role === "agent"
+    ? stripInternalContextBlocks(msg.content || "")
+    : (msg.content || "");
 }
 
 function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
@@ -2636,7 +2730,9 @@ const buildOutboundMessages = () => {
     }
     const msgObj: any = {
       role,
-      content: m.role === "user" ? resolveReqContent(m) : (m.content || ""),
+      content: m.role === "user"
+        ? resolveReqContent(m)
+        : stripInternalContextBlocks(m.content || ""),
     };
     if (m.role === "user" && m.files?.length) {
       msgObj.files = m.files;
@@ -2660,6 +2756,29 @@ const closeMessageArtifacts = () => {
   artifactsOpenMsgId.value = "";
 };
 const isProcessing = ref(false);
+const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | null>(null);
+const bashBannerDismissed = ref(false);
+const showBashBanner = computed(
+  () => bashBannerEnv.value !== null && !bashBannerDismissed.value && config.showBashBanner
+);
+const handleBashEnvEvent = (env: "host" | "docker" | "e2b" | "ssh") => {
+  bashBannerEnv.value = env;
+  bashBannerDismissed.value = false;
+};
+/** 统一开关 Bash 横幅提示：写入 config 并持久化到 localStorage（1=关，0=开） */
+const setBashBannerVisible = (visible: boolean) => {
+  config.showBashBanner = visible;
+  localStorage.setItem("bash_env_banner_ignored", visible ? "0" : "1");
+  bashBannerEnv.value = null;
+  bashBannerDismissed.value = false;
+  showToast(
+    visible ? "Bash 运行环境横幅提示已开启" : "Bash 运行环境横幅提示已关闭",
+    visible ? "success" : "info",
+  );
+};
+const handleIgnoreBashBanner = () => {
+  setBashBannerVisible(false);
+};
 const activeTodoTimeline = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const msg = messages.value[i];
@@ -2701,6 +2820,8 @@ const config = reactive({
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: true,
+  /** Bash 运行环境横幅提示开关（可在设置面板中切换，localStorage 持久化） */
+  showBashBanner: localStorage.getItem("bash_env_banner_ignored") !== "1",
 });
 type BrowserApprovalMode = "guarded" | "autopilot";
 const browserPanelVisible = ref(false);
@@ -3711,6 +3832,19 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
     "X-API-Key": config.token,
   };
 };
+
+const { contextUsage, refreshContextUsage } = useContextUsage();
+const refreshEmbedContextUsage = () => refreshContextUsage({
+  conversationId: conversationId.value,
+  modelId: config.overrideModel || undefined,
+  headers: embedAuthHeaders(),
+});
+
+watch(
+  [conversationId, () => config.overrideModel, () => config.token],
+  () => void refreshEmbedContextUsage(),
+  { immediate: true },
+);
 
 const finalizeConversationInBackground = (cid: string) => {
   void finalizeConversation(cid, embedAuthHeaders());
@@ -6784,7 +6918,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
 
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
-  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream, messages.value)) {
+  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {
     if (data.type === "error") {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
@@ -7304,7 +7438,7 @@ const sendMessageInternal = async () => {
             }
           } else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
             // Additive ChatBI evidence event; answer content stays unchanged.
-          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) {
+          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {
             if (
               (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
               && thoughtTimer
@@ -7347,7 +7481,7 @@ const sendMessageInternal = async () => {
               }
             }
           } else if (data.type === "retraction") {
-            agentMsg.value.content = data.content;
+            agentMsg.value.content = stripInternalContextBlocks(String(data.content || ""));
             if (data.final !== false) {
               agentMsg.value.isThinking = false;
             }
@@ -7394,7 +7528,7 @@ const sendMessageInternal = async () => {
         applyStreamTraceId(agentMsg.value, data);
         if (data.type === "log") addEmbedLogFromStream(agentMsg.value, data);
         else if (mergeStreamCitations(agentMsg.value, data)) continue;
-        else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)) continue;
+        else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) continue;
         else if (data.content) appendAssistantBodyDelta(agentMsg.value, sanitizeStreamContent(String(data.content)));
       } catch (e) {
         console.error("Failed to parse final SSE event:", dataStr, e);
@@ -7414,6 +7548,7 @@ const sendMessageInternal = async () => {
     clearStallTimer();
     clearStalePendingTimer();
     showStalledPrompt.value = false;
+    void refreshEmbedContextUsage();
     if (thoughtTimer) clearInterval(thoughtTimer);
     // Final cleanup: stop any remaining log spinners
     finalizeAllPendingStreamLogs(agentMsg.value);
@@ -7730,6 +7865,18 @@ onUnmounted(() => {
 .slide-fade-leave-to {
   opacity: 0;
   transform: translateY(-5px);
+}
+.bash-banner-fade-enter-active,
+.bash-banner-fade-leave-active {
+  transition: opacity 0.28s ease-out, transform 0.28s ease-out;
+}
+.bash-banner-fade-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.bash-banner-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;

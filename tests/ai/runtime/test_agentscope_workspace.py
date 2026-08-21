@@ -1,4 +1,5 @@
 import os
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,6 +17,20 @@ from app.services.ai.runtime.agentscope.workspace import (
 )
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.fixture(autouse=True)
+def _local_policy_without_redis(monkeypatch):
+    """避免真实 get_local_workspace 依赖 Redis 读取 sandbox_policy。
+
+    这些测试标记了 no_infrastructure（不初始化 DB/Redis），而 get_local_workspace
+    内部会 ConfigService.get("sandbox_policy", ...) 走 Redis。这里固定返回 local
+    policy，使测试在零 Redis 环境下自足可跑，且不依赖测试执行顺序。
+    """
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="local"),
+    )
 
 
 def test_resolve_workspace_user_key_uses_name_and_id():
@@ -81,8 +96,9 @@ async def test_get_local_workspace_offloader_initializes_workdir(tmp_path, monke
         user_name="bob",
         conversation_id="c1",
     )
-    assert workspace is not None
-    assert workspace.is_alive is True
+    local_ws = workspace
+    assert local_ws is not None
+    assert local_ws.is_alive is True
     workdir = resolve_session_workdir(
         root=str(tmp_path),
         user_id=1,
@@ -91,6 +107,817 @@ async def test_get_local_workspace_offloader_initializes_workdir(tmp_path, monke
     )
     assert os.path.isdir(workdir)
     assert os.path.isdir(os.path.join(workdir, "skills"))
+
+
+def test_ssh_inline_server_is_valid_and_does_not_put_password_in_argv():
+    from app.services.ai.runtime.agentscope.workspace_ssh import _SSH_INLINE_SERVER
+
+    compile(_SSH_INLINE_SERVER, "<ssh-inline-server>", "exec")
+    assert "StrictHostKeyChecking=yes" in _SSH_INLINE_SERVER
+    assert "StrictHostKeyChecking=no" not in _SSH_INLINE_SERVER
+    assert '["sshpass", "-d"' in _SSH_INLINE_SERVER
+    assert '["sshpass", "-p"' not in _SSH_INLINE_SERVER
+
+
+def test_ssh_command_uses_password_file_descriptor_and_known_hosts():
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(
+        host="remote.example.com",
+        auth_type="password",
+        password="do-not-leak",
+    )
+
+    args = workspace._ssh_args()
+    assert "StrictHostKeyChecking=yes" in args
+    assert "StrictHostKeyChecking=no" not in args
+    assert "UserKnownHostsFile=/dev/null" not in args
+
+    command = workspace._build_ssh_command(["echo", "ok"], password_fd=9)
+    assert command[:3] == ["sshpass", "-d", "9"]
+    assert "do-not-leak" not in command
+    assert command[:2] != ["sshpass", "-p"]
+
+
+def test_get_workspace_offloader_extracts_local_workspace_from_pair():
+    from app.services.ai.runtime.agentscope.workspace import get_workspace_offloader
+
+    sandbox = object()
+    local = object()
+    assert get_workspace_offloader((sandbox, local)) is local
+    assert get_workspace_offloader(local) is local
+    assert get_workspace_offloader(None) is None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_bash_resolves_async_gateway_mcp_and_is_connected(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    class FakeClient:
+        name = "sandbox"
+        is_connected = True
+
+        def __init__(self):
+            self.connect_called = False
+
+        async def connect(self):
+            self.connect_called = True
+            raise AssertionError("an already-connected gateway MCP must not reconnect")
+
+        async def get_tool(self, name):
+            assert name == "bash"
+            return "docker-bash-tool"
+
+    client = FakeClient()
+
+    async def list_mcps():
+        return [client]
+
+    tool = await workspace_module._sandbox_bash_tool_from_mcps(list_mcps())
+
+    assert tool == "docker-bash-tool"
+    assert client.connect_called is False
+
+
+@pytest.mark.asyncio
+async def test_bind_docker_workspace_fails_closed_when_bash_mcp_missing():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    class FakeSandbox:
+        async def list_mcps(self):
+            return []
+
+    class FakeNativeBash:
+        name = "Bash"
+
+    async def fake_call(**kwargs):
+        return kwargs
+
+    spec = RuntimeToolSpec(
+        name="Bash",
+        description="bash",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=fake_call,
+        native_tool=FakeNativeBash(),
+        permission_scope="ask",
+    )
+
+    with pytest.raises(RuntimeError, match="Docker sandbox Bash MCP is unavailable"):
+        await workspace_module.bind_configured_tools_to_workspace(
+            (FakeSandbox(), None),
+            [spec],
+        )
+
+
+@pytest.mark.asyncio
+async def test_bind_sandbox_mcp_bash_as_canonical_bash_tool_name():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    class FakeMcpBash:
+        name = "mcp__sandbox__bash"
+        description = "sandbox bash"
+        input_schema = {"type": "object", "properties": {"command": {"type": "string"}}}
+        is_read_only = False
+
+        async def __call__(self, **kwargs):
+            return kwargs["command"]
+
+    class FakeClient:
+        name = "sandbox"
+        is_connected = True
+
+        async def get_tool(self, name):
+            assert name == "bash"
+            return FakeMcpBash()
+
+    class FakeSandbox:
+        async def list_mcps(self):
+            return [FakeClient()]
+
+    async def fake_call(**kwargs):
+        return kwargs
+
+    spec = RuntimeToolSpec(
+        name="Bash",
+        description="bash",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=fake_call,
+        native_tool=type("FakeNativeBash", (), {"name": "Bash"})(),
+        permission_scope="ask",
+    )
+
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (FakeSandbox(), None),
+        [spec],
+    )
+
+    assert bound[0].name == "Bash"
+    assert bound[0].native_tool.name == "Bash"
+    assert await bound[0].callable(command="hostname") == "hostname"
+
+    from app.services.ai.runtime.agentscope.tools import build_toolkit
+
+    toolkit = build_toolkit(bound)
+    schemas = await toolkit.get_tool_schemas()
+    visible_names = {item["function"]["name"] for item in schemas}
+    assert "Bash" in visible_names
+    assert "mcp__sandbox__bash" not in visible_names
+
+
+def test_docker_workspace_path_mapping_uses_one_logical_root_and_rejects_escape():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_root = "/srv/agent_workspaces/alice__1"
+
+    mapped = workspace_module._map_docker_workspace_tool_input(
+        "Read",
+        {"file_path": "/workspace/sessions/conversation-1/report.md"},
+        host_root,
+    )
+    assert mapped["file_path"] == (
+        "/srv/agent_workspaces/alice__1/sessions/conversation-1/report.md"
+    )
+
+    relative = workspace_module._map_docker_workspace_tool_input(
+        "Write",
+        {"file_path": "docs/report.md"},
+        host_root,
+    )
+    assert relative["file_path"] == "/srv/agent_workspaces/alice__1/docs/report.md"
+
+    with pytest.raises(ValueError, match="escapes Docker workspace"):
+        workspace_module._map_docker_workspace_tool_input(
+            "Read",
+            {"file_path": "/workspace/../other-user/secret.txt"},
+            host_root,
+        )
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_root():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    calls = []
+
+    class FakeRead:
+        name = "Read"
+        description = "read"
+        input_schema = {"type": "object", "properties": {}}
+        is_read_only = True
+
+        async def __call__(self, **kwargs):
+            calls.append(kwargs)
+            return "read-ok"
+
+    class FakeLocalWorkspace:
+        workdir = "/srv/agent_workspaces/alice__1/sessions/conversation-1"
+        workspace_user_root = "/srv/agent_workspaces/alice__1"
+
+        async def list_tools(self):
+            return [FakeRead()]
+
+    class FakeDockerSandbox:
+        _platform_sandbox_policy = "docker"
+
+    async def fake_call(**kwargs):
+        return kwargs
+
+    spec = RuntimeToolSpec(
+        name="Read",
+        description="read",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=fake_call,
+        native_tool=type("FakeNativeRead", (), {"name": "Read"})(),
+        permission_scope="read",
+    )
+
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (FakeDockerSandbox(), FakeLocalWorkspace()),
+        [spec],
+    )
+
+    assert await bound[0].callable(
+        file_path="/workspace/sessions/conversation-1/report.md",
+    ) == "read-ok"
+    assert calls == [
+        {
+            "file_path": (
+                "/srv/agent_workspaces/alice__1/sessions/conversation-1/report.md"
+            ),
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_docker_bash_defaults_to_the_current_session_logical_directory():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    calls = []
+
+    class FakeMcpBash:
+        name = "mcp__sandbox__bash"
+        description = "sandbox bash"
+        input_schema = {"type": "object", "properties": {}}
+        is_read_only = False
+
+        async def __call__(self, **kwargs):
+            calls.append(kwargs)
+            return "pwd-ok"
+
+    class FakeClient:
+        name = "sandbox"
+        is_connected = True
+
+        async def get_tool(self, name):
+            assert name == "bash"
+            return FakeMcpBash()
+
+    class FakeDockerSandbox:
+        _platform_sandbox_policy = "docker"
+
+        async def list_mcps(self):
+            return [FakeClient()]
+
+    class FakeLocalWorkspace:
+        workdir = "/srv/agent_workspaces/alice__1/sessions/conversation-1"
+        workspace_user_root = "/srv/agent_workspaces/alice__1"
+
+        async def list_tools(self):
+            return []
+
+    spec = RuntimeToolSpec(
+        name="Bash",
+        description="bash",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=lambda **kwargs: kwargs,
+        native_tool=type("FakeNativeBash", (), {"name": "Bash"})(),
+        permission_scope="ask",
+    )
+
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (FakeDockerSandbox(), FakeLocalWorkspace()),
+        [spec],
+    )
+
+    assert await bound[0].callable(command="pwd") == "pwd-ok"
+    assert calls == [{"command": "pwd", "cwd": "sessions/conversation-1"}]
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_is_reused_per_user_and_isolated_between_users(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        fake_root,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
+        lambda **kwargs: [],
+    )
+
+    class FakeSandbox:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakeLocalWorkspace:
+        def __init__(self, **kwargs):
+            self.workdir = kwargs["workdir"]
+
+        async def initialize(self):
+            return None
+
+        async def close(self):
+            return None
+
+    created: list[FakeSandbox] = []
+
+    async def fake_policy(_skill_paths, **kwargs):
+        sandbox = FakeSandbox()
+        created.append(sandbox)
+        return sandbox
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace._policy_docker_workspace",
+        fake_policy,
+    )
+    monkeypatch.setattr("agentscope.workspace.LocalWorkspace", FakeLocalWorkspace)
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    first = await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="c1",
+    )
+    second = await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="c2",
+    )
+    other_user = await workspace_module.get_local_workspace(
+        user_id=2,
+        user_name="bob",
+        conversation_id="c3",
+    )
+
+    assert first is not None and second is not None and other_user is not None
+    assert first[0] is second[0]
+    assert first[0] is not other_user[0]
+    assert len(created) == 2
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_closes_only_after_last_user_conversation_is_deleted(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        fake_root,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
+        lambda **kwargs: [],
+    )
+
+    class FakeSandbox:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakeLocalWorkspace:
+        def __init__(self, **kwargs):
+            self.workdir = kwargs["workdir"]
+
+        async def initialize(self):
+            return None
+
+        async def close(self):
+            return None
+
+    sandbox = FakeSandbox()
+
+    async def fake_policy(_skill_paths, **kwargs):
+        return sandbox
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace._policy_docker_workspace",
+        fake_policy,
+    )
+    monkeypatch.setattr("agentscope.workspace.LocalWorkspace", FakeLocalWorkspace)
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="c1",
+    )
+    await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="c2",
+    )
+
+    await workspace_module.delete_workspace_for_session(1, "c1", user_name="alice")
+    assert sandbox.closed is False
+
+    await workspace_module.delete_workspace_for_session(1, "c2", user_name="alice")
+    assert sandbox.closed is True
+
+
+@pytest.mark.asyncio
+async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
+    monkeypatch,
+    tmp_path,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    class FakeDockerWorkspace:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.__class__.instances.append(self)
+
+        async def initialize(self):
+            return None
+
+    async def fake_config_get(key, default=None):
+        if key == "sandbox_docker_host_workdir":
+            raise AssertionError("Docker must not read the configurable host workdir")
+        return default
+
+    monkeypatch.setattr("agentscope.workspace.DockerWorkspace", FakeDockerWorkspace)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    await workspace_module._policy_docker_workspace(
+        [],
+        workspace_id="alice__1",
+        sandbox_user_key="alice__1",
+        workspace_root=str(tmp_path),
+    )
+
+    kwargs = FakeDockerWorkspace.instances[0].kwargs
+    assert kwargs["workspace_id"] == "alice__1"
+    assert kwargs["host_workdir"] == str(tmp_path / "alice__1")
+
+
+@pytest.mark.asyncio
+async def test_idle_docker_workspace_is_reaped_and_recreated_on_next_request(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        fake_root,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
+        lambda **kwargs: [],
+    )
+
+    class FakeSandbox:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakeLocalWorkspace:
+        def __init__(self, **kwargs):
+            self.workdir = kwargs["workdir"]
+            self.closed = False
+
+        async def initialize(self):
+            return None
+
+        async def close(self):
+            self.closed = True
+
+    created: list[FakeSandbox] = []
+
+    async def fake_policy(_skill_paths, **kwargs):
+        sandbox = FakeSandbox()
+        created.append(sandbox)
+        return sandbox
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace._policy_docker_workspace",
+        fake_policy,
+    )
+    monkeypatch.setattr("agentscope.workspace.LocalWorkspace", FakeLocalWorkspace)
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    first = await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="c1",
+    )
+    assert first is not None
+    cache_key = next(iter(workspace_module._docker_workspace_cache))
+    workspace_module._docker_workspace_last_used[cache_key] = 0
+
+    await workspace_module.reap_idle_docker_workspaces(
+        idle_seconds=30,
+        now=31,
+    )
+
+    assert created[0].closed is True
+    assert workspace_module._docker_workspace_cache == {}
+    assert workspace_module._workspace_cache == {}
+
+    second = await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="c2",
+    )
+    assert second is not None
+    assert second[0] is not first[0]
+    assert len(created) == 2
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_reaper_can_start_and_stop():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+    task = workspace_module.start_docker_workspace_reaper(
+        idle_seconds=30,
+        interval_seconds=3600,
+    )
+
+    assert task.done() is False
+    await workspace_module.stop_docker_workspace_reaper()
+    assert task.done() is True
+
+
+@pytest.mark.asyncio
+async def test_ssh_close_closes_connected_mcps_and_removes_key(tmp_path):
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    class FakeMcp:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    workspace = SshWorkspace(host="remote.example.com")
+    key_path = tmp_path / "ssh-key.pem"
+    key_path.write_text("private-key", encoding="utf-8")
+    workspace._local_key_path = str(key_path)
+    password_path = tmp_path / "ssh-password"
+    password_path.write_text("secret\n", encoding="utf-8")
+    workspace._local_password_path = str(password_path)
+    mcp = FakeMcp()
+    workspace._mcps = [mcp]
+
+    await workspace.close()
+
+    assert mcp.closed is True
+    assert workspace._mcps == []
+    assert not key_path.exists()
+    assert not password_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_ssh_connect_test_executes_remote_probe_in_worker_thread(monkeypatch):
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key")
+    calls = []
+
+    def fake_run(remote_args, *, timeout):
+        calls.append((remote_args, timeout))
+        return CompletedProcess(["ssh"], 0, b"dsh-ssh-ok\n", b"")
+
+    monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
+
+    assert await workspace._connect_test() is True
+    assert calls == [((["echo", "dsh-ssh-ok"]), 45)]
+
+
+def test_ssh_mcp_config_passes_password_file_path_not_secret(monkeypatch, tmp_path):
+    from app.services.ai.runtime.agentscope import workspace_ssh as ssh_module
+
+    captured = {}
+
+    class FakeMcp:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(ssh_module, "MCPClient", FakeMcp)
+    password_path = tmp_path / "ssh-password"
+
+    ssh_module.build_ssh_tool_mcp(
+        host="remote.example.com",
+        auth_type="password",
+        password_file_path=str(password_path),
+    )
+
+    env = captured["mcp_config"].env
+    assert env["SSH_PASSWORD_FILE"] == str(password_path)
+    assert "SSH_PASSWORD" not in env
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_closes_when_initialization_fails(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    class FakeDockerWorkspace:
+        def __init__(self, **kwargs):
+            self.closed = False
+
+        async def initialize(self):
+            raise RuntimeError("docker init failed")
+
+        async def close(self):
+            self.closed = True
+
+    monkeypatch.setattr("agentscope.workspace.DockerWorkspace", FakeDockerWorkspace)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
+        lambda: object(),
+    )
+
+    async def fake_config_get(key, default=None):
+        return default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    with pytest.raises(RuntimeError, match="docker init failed"):
+        await workspace_module._policy_docker_workspace([])
+
+
+@pytest.mark.asyncio
+async def test_get_local_workspace_closes_sandbox_when_local_init_fails(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        fake_root,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
+        lambda **kwargs: [],
+    )
+
+    class FakeSandbox:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    sandbox = FakeSandbox()
+
+    async def fake_policy(_skill_paths, **kwargs):
+        return sandbox
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace._policy_docker_workspace",
+        fake_policy,
+    )
+
+    class FailingLocalWorkspace:
+        def __init__(self, **kwargs):
+            pass
+
+        async def initialize(self):
+            raise RuntimeError("local init failed")
+
+    monkeypatch.setattr("agentscope.workspace.LocalWorkspace", FailingLocalWorkspace)
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    result = await workspace_module.get_local_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-cleanup",
+    )
+
+    assert result is None
+    assert sandbox.closed is True
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_for_session_closes_cached_sandbox(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        fake_root,
+    )
+
+    class FakeSandbox:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    sandbox = FakeSandbox()
+    workdir = workspace_module.resolve_session_workdir(
+        root=str(tmp_path),
+        user_id=2,
+        user_name="bob",
+        conversation_id="conv-delete",
+    )
+    os.makedirs(workdir, exist_ok=True)
+    workspace_module._workspace_cache[f"{workdir}::all::docker"] = (sandbox, object())
+
+    await workspace_module.delete_workspace_for_session(
+        2,
+        "conv-delete",
+        user_name="bob",
+    )
+
+    assert sandbox.closed is True
+    assert not os.path.exists(workdir)
 
 
 @pytest.mark.asyncio
@@ -141,3 +968,107 @@ def test_resolve_user_workspace_root_missing_directory(tmp_path):
         user_name="frank",
     )
     assert resolved is None
+
+
+@pytest.mark.asyncio
+async def test_ssh_private_key_legacy_auth_value_is_normalized(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    config_values = {
+        "sandbox_ssh_auth_type": "private_key",
+        "sandbox_ssh_password": "",
+        "sandbox_ssh_private_key": "PRIVATE KEY",
+        "sandbox_ssh_remote_workdir": "/workspace",
+        "sandbox_ssh_host": "remote.example.com",
+        "sandbox_ssh_port": "22",
+        "sandbox_ssh_user": "runner",
+    }
+
+    async def fake_config_get(key, default=None):
+        return config_values.get(key, default)
+
+    class FakeWorkspace:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self._local_key_path = None
+            self.default_mcps = []
+            self.is_alive = False
+            self.__class__.instances.append(self)
+
+        def _materialize_key(self):
+            self._local_key_path = "/tmp/normalized-key.pem"
+
+        def _materialize_password(self):
+            self._local_password_path = None
+
+        async def initialize(self):
+            self.is_alive = True
+
+    captured_mcp_kwargs = {}
+
+    def fake_build_ssh_tool_mcp(**kwargs):
+        captured_mcp_kwargs.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_ssh.SshWorkspace",
+        FakeWorkspace,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_ssh.build_ssh_tool_mcp",
+        fake_build_ssh_tool_mcp,
+    )
+
+    await workspace_module._policy_ssh_workspace(skill_paths=[])
+
+    assert FakeWorkspace.instances[0].auth_type == "key"
+    assert FakeWorkspace.instances[0].private_key == "PRIVATE KEY"
+    assert captured_mcp_kwargs["auth_type"] == "key"
+
+
+@pytest.mark.asyncio
+async def test_e2b_workspace_uses_page_overrides_and_falls_back_for_masked_key(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    async def fake_config_get(key, default=None):
+        return {"sandbox_e2b_api_key": "saved-e2b-key"}.get(key, default)
+
+    class FakeE2BWorkspace:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.__class__.instances.append(self)
+
+        async def initialize(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setattr("agentscope.workspace.E2BWorkspace", FakeE2BWorkspace)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
+        lambda: object(),
+    )
+
+    await workspace_module._policy_e2b_workspace(
+        skill_paths=[],
+        config_overrides={
+            "sandbox_e2b_api_key": "sav****-key",
+            "sandbox_e2b_template": "custom-template",
+            "sandbox_e2b_timeout_seconds": "45",
+        },
+    )
+
+    kwargs = FakeE2BWorkspace.instances[0].kwargs
+    assert kwargs["api_key"] == "saved-e2b-key"
+    assert kwargs["template"] == "custom-template"
+    assert kwargs["timeout_seconds"] == 45

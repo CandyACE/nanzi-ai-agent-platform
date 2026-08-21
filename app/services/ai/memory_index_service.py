@@ -15,6 +15,11 @@ SUMMARY_KEY_PREFIX = "memory:summary:"
 # RediSearch 索引名（固定，不可通过 memory_service_configs 修改）
 MEMORY_REDIS_INDEX_NAME = "nanzi:idx:memory:session_summary"
 
+# 进程内 ensure_index 缓存：避免每次 upsert 前都打一次 FT.INFO/FT.CREATE。
+# 仅缓存“已确认存在”的成功结果约 300s；失败不缓存，下次调用仍会重试。
+_ENSURE_INDEX_CACHE_TTL = 300.0
+_ensure_index_cache: Dict[str, tuple] = {}  # idx -> (ok_expires_monotonic, ok_bool)
+
 
 def _doc_key(user_id: str, conversation_id: str) -> str:
     return f"{SUMMARY_KEY_PREFIX}{user_id}:{conversation_id}"
@@ -94,15 +99,29 @@ class MemoryIndexService:
         return max(1, days) * 86400
 
     @staticmethod
-    async def ensure_index() -> bool:
+    async def ensure_index(force: bool = False) -> bool:
+        """Ensure the RediSearch index exists. Cached in-process (≈300s) on
+        success only, so per-upsert calls avoid redundant FT.INFO round-trips.
+        Startup/manual callers pass `force=True` to always round-trip and create
+        when missing."""
+        idx = await MemoryIndexService.index_name()
+        now = time.monotonic()
+        if not force:
+            hit = _ensure_index_cache.get(idx)
+            if hit:
+                expires, ok = hit
+                if now < expires:
+                    return ok
+                _ensure_index_cache.pop(idx, None)
+
         redis = await get_redis()
         if not redis:
             return False
-        idx = await MemoryIndexService.index_name()
         dim = await EmbeddingClient.get_dimensions()
         try:
             info = await redis.execute_command("FT.INFO", idx)
             if info:
+                _ensure_index_cache[idx] = (now + _ENSURE_INDEX_CACHE_TTL, True)
                 return True
         except Exception:
             pass
@@ -141,6 +160,7 @@ class MemoryIndexService:
                 "COSINE",
             )
             logger.info("[MemoryIndex] Created index %s dim=%s", idx, dim)
+            _ensure_index_cache[idx] = (time.monotonic() + _ENSURE_INDEX_CACHE_TTL, True)
             return True
         except Exception as e:
             logger.warning("[MemoryIndex] FT.CREATE failed: %s", e)
@@ -159,10 +179,12 @@ class MemoryIndexService:
         open_items: Optional[List[str]] = None,
         entities: Optional[List[str]] = None,
         memory_type: str = "general",
-    ) -> None:
+        expected_seq: Optional[int] = None,
+        expected_revision: Optional[int] = None,
+    ) -> bool:
         redis = await get_redis()
         if not redis:
-            return
+            return False
         key = _doc_key(user_id, conversation_id)
         now = int(time.time())
         mapping = {
@@ -181,13 +203,57 @@ class MemoryIndexService:
         }
         if embedding:
             mapping["embedding"] = _vector_to_bytes(embedding)
-        await redis.hset(key, mapping=mapping)
-        try:
-            await redis.hsetnx(key, "reference_count", "0")
-        except Exception as ex:
-            logger.warning("[MemoryIndex] failed to hsetnx reference_count for %s: %s", key, ex)
-        await redis.expire(key, await MemoryIndexService.summary_ttl_seconds())
+            mapping["embedding_missing"] = "0"
+        else:
+            # Ghost record: no vector stored. Remove any previous vector first;
+            # otherwise the marker and RediSearch index disagree and an old
+            # vector can still make a failed embedding look searchable.
+            mapping["embedding_missing"] = "1"
+
+        ttl = await MemoryIndexService.summary_ttl_seconds()
+        seq_key = f"conversation:{user_id}:{conversation_id}:seq_counter"
+        revision_key = f"conversation:{user_id}:{conversation_id}:context_revision"
+        if expected_seq is not None or expected_revision is not None:
+            try:
+                async with redis.pipeline() as pipe:
+                    for watch_key in (seq_key, revision_key):
+                        await pipe.watch(watch_key)
+                    current_seq = int(await pipe.get(seq_key) or 0)
+                    current_revision = int(await pipe.get(revision_key) or 0)
+                    if (
+                        expected_seq is not None
+                        and current_seq > int(expected_seq)
+                    ) or (
+                        expected_revision is not None
+                        and current_revision != int(expected_revision)
+                    ):
+                        await pipe.reset()
+                        return False
+                    pipe.multi()
+                    if not embedding:
+                        pipe.hdel(key, "embedding")
+                    pipe.hset(key, mapping=mapping)
+                    pipe.hsetnx(key, "reference_count", "0")
+                    pipe.expire(key, ttl)
+                    await pipe.execute()
+            except Exception as ex:
+                logger.warning(
+                    "[MemoryIndex] conditional summary write failed for %s: %s",
+                    key,
+                    ex,
+                )
+                return False
+        else:
+            if not embedding:
+                await redis.hdel(key, "embedding")
+            await redis.hset(key, mapping=mapping)
+            try:
+                await redis.hsetnx(key, "reference_count", "0")
+            except Exception as ex:
+                logger.warning("[MemoryIndex] failed to hsetnx reference_count for %s: %s", key, ex)
+            await redis.expire(key, ttl)
         await MemoryIndexService.ensure_index()
+        return True
 
     @staticmethod
     def _hash_field_name(key: Any) -> str:
@@ -220,14 +286,24 @@ class MemoryIndexService:
                 continue
             out[field] = MemoryIndexService._hash_text_value(v)
 
-        out["has_embedding"] = bool(
+        has_vector = bool(
             emb_raw and isinstance(emb_raw, bytes) and len(emb_raw) > 0
         )
+        # Ghost-flag: explicit marker authoritative; fall back to presence of a
+        # consumable vector only when the marker is absent (legacy records).
+        marker = str(out.get("embedding_missing") or "").strip().lower()
+        if marker in ("1", "true", "yes"):
+            out["embedding_missing"] = True
+            out["has_embedding"] = False
+        else:
+            out["has_embedding"] = has_vector
+            out["embedding_missing"] = not has_vector
         if isinstance(emb_raw, bytes) and emb_raw:
-            try:
-                out["_embedding_vec"] = _bytes_to_vector(emb_raw)
-            except Exception:
-                out["_embedding_vec"] = None
+            if out["has_embedding"]:
+                try:
+                    out["_embedding_vec"] = _bytes_to_vector(emb_raw)
+                except Exception:
+                    out["_embedding_vec"] = None
         out["last_active"] = int(out.get("last_active") or 0)
         out["turn_count"] = int(out.get("turn_count") or 0)
         try:
@@ -322,9 +398,25 @@ class MemoryIndexService:
     ) -> List[Dict[str, Any]]:
         if query_embedding:
             try:
-                return await MemoryIndexService._search_summaries_knn(
+                items = await MemoryIndexService._search_summaries_knn(
                     user_id, query_embedding, limit
                 )
+                # Only scan ghost records when the vector query did not fill the
+                # requested page and a lexical query exists. A successful KNN
+                # page should not trigger an unconditional O(N) Redis SCAN.
+                ghost: List[Dict[str, Any]] = []
+                if query and not items:
+                    ghost = await MemoryIndexService._ghost_records_by_text(
+                        user_id, query, limit=max(1, limit * 3)
+                    )
+                if ghost:
+                    items = items + ghost
+                    items.sort(
+                        key=lambda x: x.get("final_score", x.get("score") or 0.0),
+                        reverse=True,
+                    )
+                    items = items[:limit]
+                return items
             except Exception as e:
                 logger.warning("[MemoryIndex] KNN search failed, falling back to SCAN: %s", e)
 
@@ -404,8 +496,49 @@ class MemoryIndexService:
         
         # 引入艾宾浩斯时间衰减重排
         from app.services.memory_config_service import MemoryConfigService
-        base_half_life = await MemoryConfigService.get_float("memory_base_half_life", 7.0)
+        try:
+            base_half_life = await MemoryConfigService.get_float("memory_base_half_life", 7.0)
+        except Exception:
+            # 配置存储瞬时异常不能丢弃已经拿到的 KNN 结果，使用文档默认值。
+            base_half_life = 7.0
         return MemoryIndexService._apply_ebbinghaus_decay(items, base_half_life)
+
+    @staticmethod
+    async def _ghost_records_by_text(
+        user_id: str,
+        query: Optional[str],
+        limit: int = 15,
+    ) -> List[Dict[str, Any]]:
+        """Return no-vector (ghost) session summaries whose summary/title still
+        match the text query. Scored lexically (capped below genuine vector
+        hits) then passed through the same Ebbinghaus decay so recalled ghosts
+        stay discoverable without out-ranking semantically matched hashing."""
+        q = (query or "").strip().lower()
+        if not q:
+            return []
+        items = await MemoryIndexService.list_summaries(user_id, limit=200)
+        from app.services.memory_config_service import MemoryConfigService
+        try:
+            base_half_life = await MemoryConfigService.get_float("memory_base_half_life", 7.0)
+        except Exception:
+            base_half_life = 7.0
+        ghost: List[Dict[str, Any]] = []
+        for item in items:
+            if item.get("has_embedding"):
+                continue
+            summary = (item.get("summary") or "").lower()
+            title = (item.get("title") or "").lower()
+            if not (q in summary or q in title):
+                continue
+            # Lexical relevance, deliberately capped below the KNN cosine band
+            # so ghost records never out-rank real vector hits at the same
+            # relevance; Ebbinghaus decay then differentiates within the ghosts.
+            item["score"] = 0.35
+            item["_embedding_vec"] = None
+            ghost.append(item)
+        if not ghost:
+            return []
+        return MemoryIndexService._apply_ebbinghaus_decay(ghost, base_half_life)
 
     @staticmethod
     def _parse_knn_response(raw: Any) -> List[Dict[str, Any]]:
@@ -455,9 +588,20 @@ class MemoryIndexService:
                 ref_count = int(item.get("reference_count") or 0)
             except (TypeError, ValueError):
                 ref_count = 0
-                
+
+            # 冷启动：从未被引用(new/ref_count==0)的会话，用 turn_count 作为记忆强度
+            # 下界（上限掐到 4 轮），避免刚生成的深度会话因无引用即被快速遗忘；
+            # 一旦有引用(reference_count>0)则保持原始公式不被改动。
+            effective_ref = ref_count
+            if ref_count <= 0:
+                try:
+                    turn = int(item.get("turn_count") or 0)
+                except (TypeError, ValueError):
+                    turn = 0
+                effective_ref = max(ref_count, min(turn, 4))
+
             # 记忆强度对数放大
-            S = base_half_life * (1.0 + math.log1p(ref_count))
+            S = base_half_life * (1.0 + math.log1p(effective_ref))
             
             # 艾宾浩斯记忆保留度计算
             R = math.exp(-t / S)
@@ -684,7 +828,7 @@ class MemoryIndexService:
 
     @staticmethod
     async def rebuild_index() -> Dict[str, Any]:
-        await MemoryIndexService.ensure_index()
+        await MemoryIndexService.ensure_index(force=True)
         return {"status": "success", "message": "索引已检查/创建（已有 HASH 文档会自动纳入 PREFIX 索引）"}
 
 
@@ -703,7 +847,7 @@ async def maybe_ensure_memory_index_on_startup() -> None:
         logger.info("[startup] memory_service_enabled=false; skip memory index ensure")
         return
     try:
-        ok = await MemoryIndexService.ensure_index()
+        ok = await MemoryIndexService.ensure_index(force=True)
         idx = await MemoryIndexService.index_name()
         if ok:
             logger.info("[startup] Memory index ready: %s", idx)

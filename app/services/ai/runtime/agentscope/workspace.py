@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -7,7 +8,9 @@ import logging
 import os
 import re
 import shutil
+import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -17,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 WORKSPACE_BUILTIN_TOOL_NAMES = frozenset(
     {"Bash", "Read", "Write", "Edit", "Glob", "Grep"}
+)
+DOCKER_WORKSPACE_LOGICAL_ROOT = "/workspace"
+DOCKER_WORKSPACE_FILE_TOOL_NAMES = frozenset(
+    WORKSPACE_BUILTIN_TOOL_NAMES - {"Bash"}
 )
 WORKSPACE_PROMPT_TOOL_NAMES = WORKSPACE_BUILTIN_TOOL_NAMES
 WORKSPACE_REPLACED_PLATFORM_TOOL_NAMES = frozenset(
@@ -29,6 +36,12 @@ WORKSPACE_REPLACED_PLATFORM_TOOL_NAMES = frozenset(
 )
 
 _workspace_cache: dict[str, Any] = {}
+_docker_workspace_cache: dict[str, Any] = {}
+_docker_workspace_refcounts: dict[str, int] = {}
+_docker_workspace_locks: dict[str, asyncio.Lock] = {}
+_docker_workspace_last_used: dict[str, float] = {}
+_workspace_sandbox_refs: dict[str, str] = {}
+_docker_workspace_reaper_task: asyncio.Task[None] | None = None
 
 
 WORKSPACE_USER_KEY_SEP = "__"
@@ -467,6 +480,480 @@ def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
             logger.warning("[workspace] Failed to write .skills at %s: %s", skills_dir, exc)
 
 
+SANDBOX_POLICY_LOCAL = "local"
+SANDBOX_POLICY_DOCKER = "docker"
+SANDBOX_POLICY_E2B = "e2b"
+SANDBOX_POLICY_SSH = "ssh"
+DOCKER_WORKSPACE_IDLE_SECONDS = 30 * 60
+DOCKER_WORKSPACE_REAPER_INTERVAL_SECONDS = 60
+KNOWN_SANDBOX_POLICIES = frozenset(
+    {
+        SANDBOX_POLICY_LOCAL,
+        SANDBOX_POLICY_DOCKER,
+        SANDBOX_POLICY_E2B,
+        SANDBOX_POLICY_SSH,
+    }
+)
+
+
+async def _policy_docker_workspace(
+    skill_paths: list[str] | None,
+    *,
+    workspace_id: str | None = None,
+    sandbox_user_key: str | None = None,
+    workspace_root: str | None = None,
+) -> Any:
+    """Build an initialized DockerWorkspace (containerized sandbox).
+
+    Runs in a container built from ``base_image`` (or the AgentScope default).
+    Bash/file tools are exposed through the container's inline FastMCP stdio
+    server seeded via ``default_mcps`` (see workspace_container_mcp). A user
+    sandbox mounts exactly ``<workspace_root>/<sandbox_user_key>`` at
+    ``/workspace``; the old configurable host directory is intentionally ignored.
+    """
+    from app.services.config_service import ConfigService
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        build_container_tool_mcp,
+    )
+    from agentscope.workspace import DockerWorkspace
+
+    base_image = (await ConfigService.get("sandbox_docker_base_image", "")).strip() or None
+    host_workdir = None
+    if workspace_root and sandbox_user_key:
+        host_workdir = os.path.join(
+            os.path.abspath(workspace_root),
+            sandbox_user_key,
+        )
+
+    kwargs: dict[str, Any] = {
+        "host_workdir": host_workdir,  # None => ephemeral container
+        "default_mcps": [build_container_tool_mcp()],
+        "skill_paths": skill_paths,
+    }
+    if workspace_id:
+        kwargs["workspace_id"] = workspace_id
+    if base_image:
+        kwargs["base_image"] = base_image
+
+    workspace = DockerWorkspace(**kwargs)
+    try:
+        await workspace.initialize()
+    except Exception:
+        await _close_workspace_safely(workspace, reason="Docker initialization failure")
+        raise
+    workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
+    return workspace
+
+
+async def _close_workspace_safely(workspace: Any, *, reason: str) -> None:
+    """初始化失败时尽力释放已创建的沙箱或临时凭据。"""
+    close = getattr(workspace, "close", None)
+    if not callable(close):
+        return
+    try:
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[workspace] Failed to close workspace after %s error_type=%s",
+            reason,
+            type(exc).__name__,
+        )
+
+
+def _resolve_sandbox_user_key(
+    *,
+    user_id: str | int | None,
+    user_name: str | None,
+    user_info: dict[str, Any] | None,
+) -> str | None:
+    """Return a stable user scope, or None when no authenticated identity exists."""
+    resolved_user_id, resolved_user_name = extract_workspace_identity(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if resolved_user_id is None and not resolved_user_name:
+        return None
+    return resolve_workspace_user_key(
+        user_id=resolved_user_id,
+        user_name=resolved_user_name,
+    )
+
+
+async def _acquire_docker_workspace(
+    *,
+    root: str,
+    user_key: str,
+    skill_paths: list[str] | None,
+) -> tuple[Any, str]:
+    """Acquire one process-local Docker workspace reference per user."""
+    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_DOCKER}"
+    lock = _docker_workspace_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        workspace = _docker_workspace_cache.get(cache_key)
+        if workspace is None or getattr(workspace, "is_alive", True) is False:
+            workspace = await _policy_docker_workspace(
+                skill_paths,
+                workspace_id=user_key,
+                sandbox_user_key=user_key,
+                workspace_root=root,
+            )
+            _docker_workspace_cache[cache_key] = workspace
+            _docker_workspace_refcounts[cache_key] = 0
+        _docker_workspace_refcounts[cache_key] = (
+            _docker_workspace_refcounts.get(cache_key, 0) + 1
+        )
+        _docker_workspace_last_used[cache_key] = time.monotonic()
+    return workspace, cache_key
+
+
+async def _release_docker_workspace(cache_key: str, *, reason: str) -> None:
+    """Release one conversation reference and close the user container at zero."""
+    lock = _docker_workspace_locks.get(cache_key)
+    if lock is None:
+        return
+    workspace = None
+    async with lock:
+        current = _docker_workspace_refcounts.get(cache_key, 0)
+        if current > 1:
+            _docker_workspace_refcounts[cache_key] = current - 1
+            return
+        workspace = _docker_workspace_cache.pop(cache_key, None)
+        _docker_workspace_refcounts.pop(cache_key, None)
+        _docker_workspace_last_used.pop(cache_key, None)
+    if workspace is not None:
+        await _close_workspace_safely(workspace, reason=reason)
+
+
+def _touch_docker_workspace(cache_key: str) -> None:
+    if cache_key in _docker_workspace_cache:
+        _docker_workspace_last_used[cache_key] = time.monotonic()
+
+
+async def _evict_docker_workspace_cache_entry(
+    cache_key: str,
+    *,
+    reason: str,
+    expected_last_used: float | None = None,
+) -> int:
+    """Evict one user Docker workspace and all conversation cache entries using it."""
+    lock = _docker_workspace_locks.get(cache_key)
+    if lock is None:
+        return 0
+
+    cached_pairs: list[Any] = []
+    async with lock:
+        if (
+            expected_last_used is not None
+            and _docker_workspace_last_used.get(cache_key) != expected_last_used
+        ):
+            return 0
+        sandbox_ws = _docker_workspace_cache.pop(cache_key, None)
+        _docker_workspace_refcounts.pop(cache_key, None)
+        _docker_workspace_last_used.pop(cache_key, None)
+        for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
+            if sandbox_ref != cache_key:
+                continue
+            cached = _workspace_cache.pop(workspace_cache_key, None)
+            _workspace_sandbox_refs.pop(workspace_cache_key, None)
+            if cached is not None:
+                cached_pairs.append(cached)
+
+    to_close: list[Any] = []
+    if sandbox_ws is not None:
+        to_close.append(sandbox_ws)
+    for cached in cached_pairs:
+        sandbox, local = _normalize_workspace_pair(cached)
+        to_close.extend((sandbox, local))
+
+    closed_ids: set[int] = set()
+    for workspace in to_close:
+        if workspace is None or id(workspace) in closed_ids:
+            continue
+        closed_ids.add(id(workspace))
+        await _close_workspace_safely(workspace, reason=reason)
+    return 1 if sandbox_ws is not None else 0
+
+
+async def reap_idle_docker_workspaces(
+    *,
+    idle_seconds: float = DOCKER_WORKSPACE_IDLE_SECONDS,
+    now: float | None = None,
+) -> int:
+    """Close user Docker workspaces idle for at least ``idle_seconds``."""
+    if idle_seconds < 0:
+        raise ValueError("idle_seconds must be non-negative")
+    current = time.monotonic() if now is None else now
+    stale_keys = [
+        cache_key
+        for cache_key, last_used in list(_docker_workspace_last_used.items())
+        if current - last_used >= idle_seconds
+    ]
+
+    reaped = 0
+    for cache_key in stale_keys:
+        lock = _docker_workspace_locks.get(cache_key)
+        if lock is None:
+            continue
+        async with lock:
+            last_used = _docker_workspace_last_used.get(cache_key)
+            if last_used is None or current - last_used < idle_seconds:
+                continue
+        reaped += await _evict_docker_workspace_cache_entry(
+            cache_key,
+            reason="Docker workspace idle timeout",
+            expected_last_used=last_used,
+        )
+    return reaped
+
+
+async def _docker_workspace_reaper_loop(
+    *,
+    idle_seconds: float,
+    interval_seconds: float,
+) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await reap_idle_docker_workspaces(idle_seconds=idle_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("[workspace] Docker workspace reaper iteration failed")
+
+
+def start_docker_workspace_reaper(
+    *,
+    idle_seconds: float = DOCKER_WORKSPACE_IDLE_SECONDS,
+    interval_seconds: float = DOCKER_WORKSPACE_REAPER_INTERVAL_SECONDS,
+) -> asyncio.Task[None]:
+    """Start the process-local Docker idle reaper once."""
+    global _docker_workspace_reaper_task
+    if _docker_workspace_reaper_task is not None and not _docker_workspace_reaper_task.done():
+        return _docker_workspace_reaper_task
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be positive")
+    _docker_workspace_reaper_task = asyncio.create_task(
+        _docker_workspace_reaper_loop(
+            idle_seconds=idle_seconds,
+            interval_seconds=interval_seconds,
+        )
+    )
+    return _docker_workspace_reaper_task
+
+
+async def stop_docker_workspace_reaper() -> None:
+    """Stop the idle reaper and close remaining cached Docker workspaces."""
+    global _docker_workspace_reaper_task
+    task = _docker_workspace_reaper_task
+    _docker_workspace_reaper_task = None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    for cache_key in list(_docker_workspace_cache):
+        await _evict_docker_workspace_cache_entry(
+            cache_key,
+            reason="application shutdown",
+        )
+
+
+async def _policy_e2b_workspace(
+    skill_paths: list[str] | None,
+    config_overrides: Mapping[str, Any] | None = None,
+) -> Any:
+    """Build an initialized E2BWorkspace (E2B cloud sandbox)."""
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        build_container_tool_mcp,
+    )
+    from agentscope.workspace import E2BWorkspace
+
+    template = (await _sandbox_config_value(
+        "sandbox_e2b_template", "", config_overrides
+    )).strip() or None
+    api_key = (await _sandbox_config_value(
+        "sandbox_e2b_api_key", "", config_overrides
+    )).strip() or None
+    timeout_raw = (await _sandbox_config_value(
+        "sandbox_e2b_timeout_seconds", "300", config_overrides
+    )).strip() or "300"
+
+    try:
+        timeout_seconds = int(timeout_raw)
+    except (TypeError, ValueError):
+        timeout_seconds = 300
+    if timeout_seconds <= 0:
+        timeout_seconds = 300
+
+    kwargs: dict[str, Any] = {
+        "timeout_seconds": timeout_seconds,
+        "default_mcps": [build_container_tool_mcp()],
+        "skill_paths": skill_paths,
+    }
+    if template:
+        kwargs["template"] = template
+    if api_key:
+        kwargs["api_key"] = api_key
+
+    workspace = E2BWorkspace(**kwargs)
+    try:
+        await workspace.initialize()
+    except Exception:
+        await _close_workspace_safely(workspace, reason="E2B initialization failure")
+        raise
+    return workspace
+
+
+async def _policy_ssh_workspace(
+    skill_paths: list[str] | None,
+    config_overrides: Mapping[str, Any] | None = None,
+) -> Any:
+    """Build an initialized SshWorkspace (remote host reached over SSH).
+
+    The platform host connects to a remote sandbox host through its own
+    ``ssh`` CLI.  Bash/file tools are exposed through the SSH inline
+    FastMCP stdio server seeded via ``default_mcps`` (see
+    workspace_ssh.build_ssh_tool_mcp).  Key authentication is used
+    directly; password authentication requires the ``sshpass`` CLI on
+    the platform host.
+    """
+    from app.services.ai.runtime.agentscope.workspace_ssh import (
+        SshWorkspace,
+        _have_sshpass,
+        build_ssh_tool_mcp,
+    )
+
+    auth_type = (
+        await _sandbox_config_value(
+            "sandbox_ssh_auth_type", "password", config_overrides
+        )
+    ).strip().lower() or "password"
+    if auth_type == "private_key":
+        # 兼容早期迁移/手工配置中的旧值，运行时统一使用 SshWorkspace 识别的 key。
+        auth_type = "key"
+    password = (
+        await _sandbox_config_value(
+            "sandbox_ssh_password", "", config_overrides
+        )
+    ).strip()
+    private_key = (
+        await _sandbox_config_value(
+            "sandbox_ssh_private_key", "", config_overrides
+        )
+    ).strip()
+    remote_workdir = (
+        await _sandbox_config_value(
+            "sandbox_ssh_remote_workdir", "/workspace", config_overrides
+        )
+    ).strip() or "/workspace"
+
+    if auth_type == "password" and not password:
+        raise RuntimeError(
+            "sandbox_policy=ssh with password auth requires a non-empty password"
+        )
+    if auth_type == "password" and not _have_sshpass():
+        raise RuntimeError(
+            "sandbox_policy=ssh with password auth requires the 'sshpass' "
+            "CLI on the platform host (or use a private key instead)"
+        )
+
+    kwargs: dict[str, Any] = {
+        "host": (await _sandbox_config_value(
+            "sandbox_ssh_host", "", config_overrides
+        )).strip(),
+        "port": int(
+            (
+                await _sandbox_config_value(
+                    "sandbox_ssh_port", "22", config_overrides
+                )
+            ).strip() or "22"
+        ),
+        "auth_type": auth_type,
+        "remote_workdir": remote_workdir,
+        "skill_paths": skill_paths,
+    }
+    user = (await _sandbox_config_value(
+        "sandbox_ssh_user", "", config_overrides
+    )).strip()
+    if user:
+        kwargs["user"] = user
+    if auth_type == "password" and password:
+        kwargs["password"] = password
+    elif auth_type == "key" and private_key:
+        kwargs["private_key"] = private_key
+
+    # Defer the tool MCP construction until after the key is materialized
+    # so the inline server can reference the private-key temp file.
+    workspace = SshWorkspace(**kwargs)
+    try:
+        workspace._materialize_key()
+        workspace._materialize_password()
+        kwargs_extra = {
+            "default_mcps": [
+                build_ssh_tool_mcp(
+                    host=workspace.host,
+                    port=workspace.port,
+                    user=workspace.user,
+                    auth_type=workspace.auth_type,
+                    password_file_path=workspace._local_password_path,
+                    private_key_path=workspace._local_key_path,
+                    remote_workdir=workspace.remote_workdir,
+                )
+            ]
+        }
+        # The sandbox tool MCP is not a constructor arg; adopt it as the
+        # default so initialize()'s _restore_or_seed_mcps() seeds it into
+        # self._mcps when there is no remote .mcp yet.
+        workspace.default_mcps = kwargs_extra["default_mcps"]
+
+        await workspace.initialize()
+    except Exception:
+        await _close_workspace_safely(workspace, reason="SSH initialization failure")
+        raise
+    return workspace
+
+
+async def _sandbox_config_value(
+    key: str,
+    default: str,
+    config_overrides: Mapping[str, Any] | None,
+) -> str:
+    """读取沙箱配置，测试请求未覆盖时回退到持久化配置。
+
+    管理端接口会对密钥脱敏。页面没有修改密钥时会把带 ``****`` 的展示值
+    一并提交，此时必须忽略该展示值并从服务端读取真实密钥；空字符串则保留，
+    以支持显式清空配置并回退到环境变量的场景。
+    """
+    from app.services.config_service import ConfigService
+
+    if config_overrides is not None and key in config_overrides:
+        value = config_overrides[key]
+        if value is not None:
+            text = str(value)
+            if "****" not in text:
+                return text
+    value = await ConfigService.get(key, default)
+    return default if value is None else str(value)
+
+
+async def build_sandbox_workspace_for_test(
+    policy: str,
+    config_overrides: Mapping[str, Any] | None = None,
+) -> Any:
+    """按指定的临时配置初始化 E2B/SSH 沙箱，用于管理员连通性测试。"""
+    normalized = str(policy or "").strip().lower()
+    if normalized == SANDBOX_POLICY_E2B:
+        return await _policy_e2b_workspace([], config_overrides)
+    if normalized == SANDBOX_POLICY_SSH:
+        return await _policy_ssh_workspace([], config_overrides)
+    raise ValueError("仅支持 e2b 或 ssh 沙箱连接测试")
+
+
 async def get_local_workspace(
     *,
     user_id: str | int | None,
@@ -475,10 +962,24 @@ async def get_local_workspace(
     user_info: dict[str, Any] | None = None,
     skills_custom: bool = False,
     allowed_global_skills: list[str] | None = None,
-) -> Any | None:
-    """Return an initialized LocalWorkspace for the conversation."""
+) -> tuple[Any, Any] | None:
+    """Return ``(sandbox_ws, local_ws)`` for the conversation.
+
+    Responsibility split (定稿): the sandbox (docker/e2b/ssh) only executes
+    Bash; no host directory is bound into it. Read/Write/Edit/Glob/Grep are
+    served by the host ``local_ws`` (a LocalWorkspace over the session workdir
+    in the user's host directory).
+
+    Return value is a 2-tuple ``(sandbox_ws, local_ws)`` whenever a
+    ``conversation_id`` is available; either element may be ``None``:
+      - local policy            -> ``(None, LocalWorkspace)``
+      - docker/e2b/ssh policy   -> ``(sandbox_ws, LocalWorkspace)``
+      - init failure / no id    -> ``None`` (backward-safe: callers treat as no-op)
+    """
     if not conversation_id:
         return None
+
+    from app.services.config_service import ConfigService
 
     root = await resolve_workspace_root()
     workdir = resolve_session_workdir(
@@ -499,33 +1000,84 @@ async def get_local_workspace(
         if skills_custom
         else "all"
     )
-    cache_key = f"{workdir}::{skills_fp}"
+    policy = (await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL)).strip().lower()
+    if policy not in KNOWN_SANDBOX_POLICIES:
+        logger.warning("[workspace] Unknown sandbox_policy=%r, falling back to local", policy)
+        policy = SANDBOX_POLICY_LOCAL
+    # Ensure each (workdir, skills, policy) caches independently so an in-flight
+    # policy switch never hands back a workspace built under another strategy.
+    cache_key = f"{workdir}::{skills_fp}::{policy}"
     cached = _workspace_cache.get(cache_key)
     if cached is not None:
+        sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
+        if sandbox_cache_key is not None:
+            _touch_docker_workspace(sandbox_cache_key)
         return cached
 
+    is_sandbox = policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH)
+
+    sandbox_ws = None
+    sandbox_cache_key: str | None = None
+    sandbox_user_key: str | None = None
     try:
+        if is_sandbox:
+            if policy == SANDBOX_POLICY_DOCKER:
+                sandbox_user_key = _resolve_sandbox_user_key(
+                    user_id=user_id,
+                    user_name=user_name,
+                    user_info=user_info,
+                )
+                if not sandbox_user_key:
+                    raise RuntimeError(
+                        "Docker sandbox requires an authenticated user identity"
+                    )
+                sandbox_ws, sandbox_cache_key = await _acquire_docker_workspace(
+                    root=root,
+                    user_key=sandbox_user_key,
+                    skill_paths=skill_paths,
+                )
+            elif policy == SANDBOX_POLICY_E2B:
+                sandbox_ws = await _policy_e2b_workspace(skill_paths)
+            else:
+                sandbox_ws = await _policy_ssh_workspace(skill_paths)
+        else:
+            sandbox_ws = None
+
+        # Host local workspace serving file tools (Read/Write/Edit/Glob/Grep).
+        # For the local policy this is the sole workspace; for sandbox policies
+        # it backs the file tools against the user's host session workdir.
         from agentscope.workspace import LocalWorkspace
-    except Exception as exc:
-        logger.warning("[workspace] LocalWorkspace unavailable: %s", exc)
-        return None
 
-    workspace = LocalWorkspace(
-        workdir=workdir,
-        skill_paths=skill_paths,
-    )
-    try:
-        # Pre-seed session skills/ with hard links + matching .skills index so
-        # AgentScope's initialize() hash-skips all copies instead of duplicating
-        # every skill into each session directory.
+        # Pre-seed session skills/ with hard links + matching .skills index
+        # so AgentScope's initialize() hash-skips all copies instead of
+        # duplicating every skill into each session directory.
         _preseed_session_skills(workdir, skill_paths)
-        await workspace.initialize()
+        local_ws = LocalWorkspace(
+            workdir=workdir,
+            skill_paths=skill_paths,
+        )
+        if policy == SANDBOX_POLICY_DOCKER and sandbox_user_key:
+            local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
+        await local_ws.initialize()
     except Exception as exc:
-        logger.warning("[workspace] Failed to initialize LocalWorkspace workdir=%s: %s", workdir, exc)
+        if sandbox_cache_key is not None:
+            await _release_docker_workspace(
+                sandbox_cache_key,
+                reason="host LocalWorkspace initialization failure",
+            )
+        elif sandbox_ws is not None:
+            await _close_workspace_safely(
+                sandbox_ws,
+                reason="host LocalWorkspace initialization failure",
+            )
+        logger.warning("[workspace] Failed to initialize %s workspace workdir=%s: %s", policy, workdir, exc)
         return None
 
-    _workspace_cache[cache_key] = workspace
-    return workspace
+    pair = (sandbox_ws, local_ws)
+    _workspace_cache[cache_key] = pair
+    if sandbox_cache_key is not None:
+        _workspace_sandbox_refs[cache_key] = sandbox_cache_key
+    return pair
 
 
 async def get_local_workspace_offloader(
@@ -537,8 +1089,8 @@ async def get_local_workspace_offloader(
     skills_custom: bool = False,
     allowed_global_skills: list[str] | None = None,
 ) -> Any | None:
-    """Backward-compatible alias for get_local_workspace."""
-    return await get_local_workspace(
+    """Return the host LocalWorkspace used as AgentScope's offloader."""
+    workspace = await get_local_workspace(
         user_id=user_id,
         conversation_id=conversation_id,
         user_name=user_name,
@@ -546,6 +1098,19 @@ async def get_local_workspace_offloader(
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
     )
+    return get_workspace_offloader(workspace)
+
+
+def get_workspace_offloader(workspace: Any) -> Any | None:
+    """Extract the host LocalWorkspace from the modern workspace pair.
+
+    The sandbox workspace only owns Bash execution. AgentScope context and
+    tool-result offloading must remain on the host LocalWorkspace, which
+    implements the ``Offloader`` protocol.
+    """
+    if isinstance(workspace, (tuple, list)) and len(workspace) == 2:
+        return workspace[1]
+    return workspace
 
 
 async def delete_workspace_for_session(
@@ -564,11 +1129,31 @@ async def delete_workspace_for_session(
         user_info=user_info,
         conversation_id=conversation_id,
     )
-    _workspace_cache.pop(workdir, None)
     prefix = f"{workdir}::"
+    cached_workspaces: list[tuple[Any, str | None]] = []
     for key in list(_workspace_cache.keys()):
         if key == workdir or (isinstance(key, str) and key.startswith(prefix)):
-            _workspace_cache.pop(key, None)
+            cached = _workspace_cache.pop(key, None)
+            if cached is not None:
+                cached_workspaces.append(
+                    (cached, _workspace_sandbox_refs.pop(key, None))
+                )
+
+    closed_ids: set[int] = set()
+    for cached, sandbox_cache_key in cached_workspaces:
+        sandbox_ws, local_ws = _normalize_workspace_pair(cached)
+        if sandbox_cache_key is not None:
+            await _release_docker_workspace(
+                sandbox_cache_key,
+                reason="session deletion",
+            )
+            sandbox_ws = None
+        for workspace in (sandbox_ws, local_ws):
+            if workspace is None or id(workspace) in closed_ids:
+                continue
+            closed_ids.add(id(workspace))
+            await _close_workspace_safely(workspace, reason="session deletion")
+
     if not os.path.isdir(workdir):
         return
     try:
@@ -579,6 +1164,11 @@ async def delete_workspace_for_session(
 
 def clear_workspace_cache() -> None:
     _workspace_cache.clear()
+    _workspace_sandbox_refs.clear()
+    _docker_workspace_cache.clear()
+    _docker_workspace_refcounts.clear()
+    _docker_workspace_locks.clear()
+    _docker_workspace_last_used.clear()
 
 
 def normalize_workspace_tool_names(tool_names: set[str] | frozenset[str]) -> set[str]:
@@ -625,6 +1215,27 @@ async def append_session_workspace_sandbox_to_system_prompt(
 
     from app.services.ai.agent_prompts import AgentServicePrompts
 
+    logical_workspace_root = None
+    logical_session_workdir = None
+    logical_docs_dir = None
+    try:
+        from app.services.config_service import ConfigService
+
+        policy = (await ConfigService.get("sandbox_policy", "local") or "local").strip().lower()
+    except Exception:
+        policy = "local"
+    if policy == SANDBOX_POLICY_DOCKER:
+        logical_workspace_root = DOCKER_WORKSPACE_LOGICAL_ROOT
+        logical_session_workdir = os.path.join(
+            DOCKER_WORKSPACE_LOGICAL_ROOT,
+            USER_SESSIONS_DIR_NAME,
+            _clean_key_part(conversation_id, "conversation"),
+        )
+        logical_docs_dir = os.path.join(
+            DOCKER_WORKSPACE_LOGICAL_ROOT,
+            USER_DOCS_DIR_NAME,
+        )
+
     root = await resolve_workspace_root()
     session_workdir = resolve_session_workdir(
         root=root,
@@ -643,6 +1254,9 @@ async def append_session_workspace_sandbox_to_system_prompt(
         session_workdir=session_workdir,
         docs_dir=docs_dir,
         file_tool_names=sorted(file_tools),
+        logical_workspace_root=logical_workspace_root,
+        logical_session_workdir=logical_session_workdir,
+        logical_docs_dir=logical_docs_dir,
     )
     base = (system_content or "").strip()
     if base:
@@ -662,42 +1276,286 @@ def _workspace_native_name_for_spec(spec: Any) -> str | None:
     return None
 
 
+async def _sandbox_bash_tool_from_mcps(mcps: Any) -> Any | None:
+    """Resolve the sandbox ``bash`` tool from the sandbox's MCP collection.
+
+    Docker/E2B return connected ``GatewayMCPClient`` (name="sandbox") whose
+    ``get_tool("bash")`` is a stateless HTTP tool (no connect needed). SSH
+    returns a local stdio ``MCPClient`` (also name="sandbox") that must be
+    ``connect()``-ed before ``get_tool("bash")``; the resulting stateful tool
+    stays alive after binding (never closed here).
+    """
+    try:
+        listed = mcps
+        if inspect.isawaitable(listed):
+            listed = await listed
+        if not isinstance(listed, (list, tuple)):
+            listed = list(listed or [])
+    except Exception:
+        return None
+    if not listed:
+        return None
+    for client in listed:
+        name = str(getattr(client, "name", "") or "")
+        if name != "sandbox":
+            continue
+        try:
+            # Docker/E2B GatewayMCPClient is already connected; SSH stateful
+            # MCPClient needs an explicit connect before get_tool.
+            is_connected = getattr(
+                client,
+                "is_connected",
+                getattr(client, "connected", False),
+            )
+            if not bool(is_connected):
+                connect = getattr(client, "connect", None)
+                if connect is None:
+                    continue
+                res = connect()
+                if inspect.isawaitable(res):
+                    await res
+            get_tool = getattr(client, "get_tool", None)
+            if get_tool is None:
+                continue
+            tool = get_tool("bash")
+            if inspect.isawaitable(tool):
+                tool = await tool
+            if tool is not None:
+                return tool
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[workspace] Failed to fetch bash from sandbox MCP %r: %s", name, exc)
+            continue
+    return None
+
+
+def _map_docker_workspace_path(path: str | None, host_root: str) -> str:
+    """Map a model-visible Docker path to the host user's workspace root."""
+    root = os.path.abspath(host_root)
+    raw = "" if path is None else str(path).strip()
+    if not raw:
+        return root
+
+    logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
+    is_logical_path = raw == logical_root or raw.startswith(f"{logical_root}/")
+    if is_logical_path:
+        relative = raw[len(logical_root):].lstrip("/\\")
+        candidate = os.path.abspath(os.path.join(root, relative))
+    elif os.path.isabs(raw):
+        # Preserve platform paths such as /app/data/uploads supplied by the
+        # user; only the canonical Docker workspace namespace is translated.
+        return raw
+    else:
+        candidate = os.path.abspath(os.path.join(root, raw))
+
+    root_real = os.path.realpath(root)
+    candidate_real = os.path.realpath(candidate)
+    try:
+        is_inside = os.path.commonpath((root_real, candidate_real)) == root_real
+    except ValueError:
+        is_inside = False
+    if not is_inside:
+        raise ValueError(f"path escapes Docker workspace: {path}")
+    return candidate
+
+
+def _map_docker_workspace_tool_input(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+    host_root: str,
+) -> dict[str, Any]:
+    """Translate the shared ``/workspace`` contract for host file tools."""
+    mapped = dict(tool_input)
+    if tool_name in {"Read", "Write", "Edit"} and "file_path" in mapped:
+        mapped["file_path"] = _map_docker_workspace_path(
+            mapped.get("file_path"),
+            host_root,
+        )
+
+    if tool_name in {"Glob", "Grep"}:
+        if mapped.get("path"):
+            mapped["path"] = _map_docker_workspace_path(mapped["path"], host_root)
+        else:
+            mapped["path"] = os.path.abspath(host_root)
+
+    if tool_name == "Glob":
+        pattern = str(mapped.get("pattern") or "")
+        logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
+        if pattern == logical_root or pattern.startswith(f"{logical_root}/"):
+            mapped["pattern"] = pattern[len(logical_root):].lstrip("/\\") or "**"
+
+    return mapped
+
+
+def _logicalize_docker_workspace_result(result: Any, host_root: str) -> Any:
+    """Hide host-only prefixes from file-tool results returned to the model."""
+    host_prefix = os.path.abspath(host_root).rstrip(os.sep)
+    if not host_prefix:
+        return result
+    if isinstance(result, str):
+        return result.replace(host_prefix, DOCKER_WORKSPACE_LOGICAL_ROOT)
+
+    for block in getattr(result, "content", []) or []:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            try:
+                block.text = text.replace(host_prefix, DOCKER_WORKSPACE_LOGICAL_ROOT)
+            except Exception:  # noqa: BLE001
+                pass
+    return result
+
+
+class _DockerLogicalWorkspaceNativeTool:
+    """Make host-backed file tools use the same ``/workspace`` namespace."""
+
+    def __init__(self, native_tool: Any, host_root: str) -> None:
+        self._native_tool = native_tool
+        self._host_root = os.path.abspath(host_root)
+        self.name = getattr(native_tool, "name", "")
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._native_tool, attribute)
+
+    def _map(self, tool_input: Mapping[str, Any]) -> dict[str, Any]:
+        return _map_docker_workspace_tool_input(self.name, tool_input, self._host_root)
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        result = self._native_tool(**self._map(kwargs))
+        if inspect.isawaitable(result):
+            result = await result
+        return _logicalize_docker_workspace_result(result, self._host_root)
+
+    async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
+        checker = getattr(self._native_tool, "check_permissions", None)
+        if checker is None:
+            return None
+        result = checker(self._map(tool_input), context)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        checker = getattr(self._native_tool, "check_read_only", None)
+        if checker is None:
+            return bool(getattr(self._native_tool, "is_read_only", False))
+        result = checker(self._map(tool_input))
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
+
+    def match_rule(self, rule_content: str | None, tool_input: dict[str, Any]) -> bool:
+        matcher = getattr(self._native_tool, "match_rule", None)
+        if matcher is None:
+            return rule_content is None
+        return bool(matcher(rule_content, self._map(tool_input)))
+
+    def generate_suggestions(self, tool_input: dict[str, Any]) -> list[Any]:
+        generator = getattr(self._native_tool, "generate_suggestions", None)
+        if generator is None:
+            return []
+        suggestions = generator(self._map(tool_input))
+        for suggestion in suggestions or []:
+            rule_content = getattr(suggestion, "rule_content", None)
+            if isinstance(rule_content, str):
+                suggestion.rule_content = rule_content.replace(
+                    self._host_root,
+                    DOCKER_WORKSPACE_LOGICAL_ROOT,
+                )
+        return suggestions
+
+
+class _DockerSessionBashNativeTool:
+    """Keep Docker Bash's default cwd aligned with the current session."""
+
+    def __init__(self, native_tool: Any, host_root: str, session_workdir: str) -> None:
+        self._native_tool = native_tool
+        self._host_root = os.path.abspath(host_root)
+        self._session_workdir = os.path.abspath(session_workdir)
+        self.name = getattr(native_tool, "name", "")
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._native_tool, attribute)
+
+    def _default_cwd(self) -> str:
+        relative = os.path.relpath(self._session_workdir, self._host_root)
+        return "." if relative == "." else relative
+
+    def _map_cwd(self, cwd: Any) -> Any:
+        if not cwd:
+            return self._default_cwd()
+        raw = str(cwd)
+        logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
+        if raw == logical_root or raw.startswith(f"{logical_root}/"):
+            return raw[len(logical_root):].lstrip("/\\") or "."
+        return raw
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        mapped = dict(kwargs)
+        mapped["cwd"] = self._map_cwd(mapped.get("cwd"))
+        result = self._native_tool(**mapped)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+
+class _CanonicalWorkspaceNativeTool:
+    """Expose an MCP-backed workspace tool under the platform tool name."""
+
+    def __init__(self, native_tool: Any, name: str) -> None:
+        self._native_tool = native_tool
+        self.name = name
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._native_tool, attribute)
+
+    def __call__(self, **kwargs: Any) -> Any:
+        return self._native_tool(**kwargs)
+
+
 async def bind_configured_tools_to_workspace(
     workspace: Any,
     tool_specs: list[Any] | None,
 ) -> list[Any]:
     """Bind configured Bash/Read/Write/Edit/Glob/Grep to the session workspace.
 
-    Replaces already-configured native tools with LocalWorkspace copies so Bash
-    starts in ``workspace.workdir``. Does not inject extra builtins the agent
-    did not configure. Returns the original list when workspace is missing.
+    Responsibility split (定稿): Bash binds to the sandbox (docker/e2b/ssh).
+    For Docker, host-backed file tools translate the same logical ``/workspace``
+    path into the per-user host root before execution. Other policies retain
+    their existing host ``local_ws`` behavior.
+
+    ``workspace`` may be ``(sandbox_ws, local_ws)`` (modern) or a single
+    workspace (legacy local-only). Falls back to returning ``specs`` unchanged
+    when no matching workspace / tool is available.
     """
     specs = list(tool_specs or [])
     if workspace is None or not specs:
         return specs
 
-    list_tools = getattr(workspace, "list_tools", None)
-    if list_tools is None:
-        return specs
+    sandbox_ws, local_ws = _normalize_workspace_pair(workspace)
+    docker_host_root = None
+    if (
+        sandbox_ws is not None
+        and getattr(sandbox_ws, "_platform_sandbox_policy", None)
+        == SANDBOX_POLICY_DOCKER
+        and local_ws is not None
+    ):
+        docker_host_root = getattr(local_ws, "workspace_user_root", None)
 
-    try:
-        listed = list_tools()
-        if inspect.isawaitable(listed):
-            listed = await listed
-    except Exception as exc:
-        logger.warning("[workspace] Failed to list workspace tools: %s", exc)
-        return specs
+    # Collect file tools from the host local workspace (Read/Write/Edit/Glob/Grep).
+    local_tools: dict[str, Any] = {}
+    if local_ws is not None:
+        local_tools = await _as_workspace_tool_map(local_ws)
+    # Collect bash from the sandbox (docker/e2b/ssh) via its MCP bash tool.
+    sandbox_bash: Any | None = None
+    if sandbox_ws is not None:
+        list_mcps = getattr(sandbox_ws, "list_mcps", None)
+        sandbox_bash = await _sandbox_bash_tool_from_mcps(
+            list_mcps() if callable(list_mcps) else None
+        )
 
-    if not isinstance(listed, (list, tuple)):
-        return specs
-
-    workspace_tools = {
-        str(getattr(tool, "name", "") or ""): tool
-        for tool in (listed or [])
-        if getattr(tool, "name", None)
-    }
-    if not workspace_tools:
-        return specs
+        if sandbox_bash is None and any(
+            _workspace_native_name_for_spec(spec) == "Bash" for spec in specs
+        ):
+            raise RuntimeError("Docker sandbox Bash MCP is unavailable")
 
     from app.services.ai.runtime.agentscope.tools import (
         runtime_tool_spec_from_native_agentscope_tool,
@@ -706,11 +1564,19 @@ async def bind_configured_tools_to_workspace(
     bound: list[Any] = []
     for spec in specs:
         native_name = _workspace_native_name_for_spec(spec)
-        workspace_tool = workspace_tools.get(native_name or "")
+        if native_name == "Bash":
+            # Sandbox policies: Bash is served only by the sandbox. Local policy:
+            # served by the host LocalWorkspace's Bash (a cancellable host
+            # subprocess over the session workdir).
+            workspace_tool = (
+                sandbox_bash if sandbox_ws is not None else local_tools.get("Bash")
+            )
+        else:
+            workspace_tool = local_tools.get(native_name or "")
         if workspace_tool is None:
             bound.append(spec)
             continue
-        if native_name == "Bash":
+        if native_name == "Bash" and sandbox_ws is None:
             try:
                 from app.services.ai.runtime.conversation_run_subprocess import (
                     attach_cancellable_backend,
@@ -719,6 +1585,27 @@ async def bind_configured_tools_to_workspace(
                 attach_cancellable_backend(workspace_tool)
             except Exception:
                 pass
+        if (
+            docker_host_root
+            and native_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES
+        ):
+            workspace_tool = _DockerLogicalWorkspaceNativeTool(
+                workspace_tool,
+                docker_host_root,
+            )
+        if (
+            docker_host_root
+            and native_name == "Bash"
+            and local_ws is not None
+            and getattr(local_ws, "workdir", None)
+        ):
+            workspace_tool = _DockerSessionBashNativeTool(
+                workspace_tool,
+                docker_host_root,
+                local_ws.workdir,
+            )
+        if native_name == "Bash" and getattr(workspace_tool, "name", None) != "Bash":
+            workspace_tool = _CanonicalWorkspaceNativeTool(workspace_tool, "Bash")
         rebound = runtime_tool_spec_from_native_agentscope_tool(
             workspace_tool,
             source_type=getattr(spec, "source_type", "system"),
@@ -738,6 +1625,35 @@ async def bind_configured_tools_to_workspace(
             )
         )
     return bound
+
+
+def _normalize_workspace_pair(workspace: Any) -> tuple[Any, Any]:
+    """Extract ``(sandbox_ws, local_ws)`` from tuple or legacy single value."""
+    if isinstance(workspace, (tuple, list)) and len(workspace) == 2:
+        return workspace[0], workspace[1]
+    # Legacy: a single workspace object is treated as the local workspace.
+    return None, workspace
+
+
+async def _as_workspace_tool_map(ws: Any) -> dict[str, Any]:
+    """Run ``ws.list_tools()`` (sync or async) and return a name->tool map."""
+    list_tools = getattr(ws, "list_tools", None)
+    if list_tools is None:
+        return {}
+    try:
+        listed = list_tools()
+        if inspect.isawaitable(listed):
+            listed = await listed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] Failed to list workspace tools: %s", exc)
+        return {}
+    if not isinstance(listed, (list, tuple)):
+        return {}
+    return {
+        str(getattr(tool, "name", "") or ""): tool
+        for tool in (listed or [])
+        if getattr(tool, "name", None)
+    }
 
 
 def is_workspace_managed_tool_spec(spec: Any) -> bool:
