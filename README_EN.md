@@ -20,15 +20,19 @@
 **NanZi AI Agent Platform** is an AI intelligence center purpose-built for complex enterprise scenarios.
 
 The platform revolves around the following core capability matrix:
-*   💬 **Deep Interactive Dialogue**: High-performance streaming chat with auto-routing, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call bound tools; the main assistant supports **skill auto-scan** and permission suspend/resume; slash commands, multimodal attachments, and Vision Q&A.
-*   🧠 **Long-Term & Cross-Session Memory**: LTM preference injection plus on-demand **`memory_search`** over session/daily summaries; Memory Management Console for vector ops and governance.
-*   🧩 **Code Canvas & Workspace Execution**: Stream, stop, and inspect Python / Shell runs inside a private user workspace.
-*   🔌 **Flexible Embedded Integration**: Embed Chat SDK for enterprise portals with existing auth, tenant isolation, and compliance.
-*   📊 **Native Enterprise ChatBI**: Data sources, metadata sync, case-library Few-Shot, SQL self-healing, and optional **sql_plan** structured plans; **My Data Portal** via `/dataset_portal`; direct physical SQL and golden report stash.
-*   🤝 **Ecosystem Integration**: **RAGFlow** managed agents & knowledge bases; **OpenClaw🦞** LLM security gateway with user identity and dataset context passthrough.
-*   📚 **Knowledge Base Center**: Tree document management, recall testing, semantic merge; **Knowledge executor** auto-retrieves before ReAct with citation cards.
+*   💬 **Deep Interactive Dialogue**: High-performance streaming chat with auto-routing, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call tools; integrated `ask_user_question` smart cards (single/multi-choice, text input), **Todo task lists** with step-by-step progress tracking, and skill auto-scan with permission suspend/resume.
+*   🛡️ **Multi-Policy Sandbox & Isolation**: Native support for **Local** (host process), **Docker** (isolated private container), **E2B** (cloud sandbox), and **SSH** (remote secure channel) policies. Docker containers mount user workspaces at **identical absolute paths** for seamless canvas preview and edit persistence; idle auto-reaper (30m timeout), graceful shutdown cleanup, and chat popover control with **live second-by-second uptime tracking**.
+*   🌐 **Persistent Browser & Live Takeover**: Server-side persistent browser sessions with complete automation toolsets (navigation, click, fill, human-like trajectory slider dragging, scroll, keys, snapshot, file upload, multi-tabs); frontend right-side **live Web interactive drawer** with stream rendering and human-in-the-loop takeover.
+*   📊 **Native Enterprise ChatBI & Self-Healing**: Data sources, metadata sync, case-library Few-Shot, SQL self-healing, and optional **sql_plan** structured plans; **My Data Portal** via `/dataset_portal`; direct physical SQL and golden report stash.
+*   🧠 **Long-Term & Cross-Session Memory**: LTM preference injection plus on-demand **`memory_search`** over session/daily summaries; Memory Management Console for vector ops and governance; full-lifecycle Redis memory and compaction logs **TTL extended to 30 days**.
+*   📊 **Context Breakdown & Overflow Compaction**: Fine-grained Token breakdown across System Prompt, Tools Schema, Memory/History, and Current Turn; smart two-stage structured overflow compaction (`_structured_tool_block` with multimodal tag preservation).
+*   🧩 **Code Canvas & Workspace Execution**: Stream, stop, and inspect Python / Shell runs inside a private user workspace; `publish_generated_file` for downloadable artifacts.
+*   📚 **Knowledge Base Center (RAG & Knowledge Hub)**: Tree document management, recall testing, semantic merge; **Knowledge executor** auto-retrieves before ReAct with citation cards.
+*   🔌 **Open Plugin Ecosystem (MCP Integration)**: Fully compliant with Anthropic's Model Context Protocol to connect Jira, Email, GitLab, etc.
+*   🔌 **Flexible Embedded Integration**: Embed Chat SDK for enterprise portals with existing auth, tenant isolation, granular RBAC, and watermark compliance.
+*   ⏰ **Task Scheduler & Multi-Channel Notifications**: Distributed APScheduler + Redis scheduling under agent identities for Cron/periodic/one-off tasks; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**); auto-cleans thinking streams for clean deliveries with overflow protection and ChatBI golden report threshold alerts.
 *   🛠️ **Debug & Trace**: Decision chains, tool calls, SQL plan cards; CSV/Excel export for structured query results.
-*   ⚙️ **APIs & Scheduling**: Standard V1 APIs; APScheduler + Redis task center under agent identities.
+*   ⚙️ **Open Standard APIs**: Standard V1 API suite for third-party systems to trigger agent workflows and queries programmatically.
 *   🎯 **Prompt Factory**: System prompt versioning and drafts under `architech/prompts/`.
 
 ---
@@ -59,21 +63,21 @@ The platform revolves around the following core capability matrix:
 ┌─────────────────────────────▼────────────────────────────┐
 │                        Expert Pool                       │
 │   ┌──────────────┐      ┌──────────────┐     ┌─────────┐  │
-│   │ChatBI Expert │      │  RAG Expert  │     │PluginAst│  │
+│   │ ChatBI Expert│      │  RAG Expert  │     │ Plugins │  │
 │   └──────┬───────┘      └──────┬───────┘     └───┬─────┘  │
 └──────────┼─────────────────────┼─────────────────┼────────┘
            │ (ReAct Loop)        │ (Managed Route) │ (Tool Chain)
 ┌──────────▼─────────────────────▼─────────────────▼────────┐
-│                     Execution Engines                    │
+│                     Execution Engines                     │
 │  ┌──────────────────┐  ┌──────────────┐  ┌─────────────┐  │
-│  │ AgentScope ReAct │  │RAGFlow Agent │  │  OpenClaw🦞 │  │
-│  │ (Loop & SelfSQL) │  │(Managed Bot) │  │(AUTHContext)│  │
+│  │ AgentScope ReAct │  │ RAGFlow Agent│  │  OpenClaw🦞 │  │
+│  │(Loop/Self-Heal)  │  │(Managed Bot) │  │(AUTH Context│  │
 │  └────────┬─────────┘  └──────┬───────┘  └──────┬──────┘  │
 └───────────┼───────────────────┼─────────────────┼─────────┘
             │                   │                 │
 ┌───────────▼───────┐ ┌─────────▼─────┐ ┌─────────▼────────┐
-│ Enterprise DBs    │ │ RAGFlow KBs   │ │   MCP Server     │
-│ (Oracle/CK/MySQL) │ │ (Unstructured)│ │ (Ext System/API) │
+│ Multi-Source DBs  │ │ RAGFlow KB    │ │   MCP Server     │
+│ (Oracle/CK/MySQL) │ │(Unstructured) │ │(Ext System/API)  │
 └───────────────────┘ └───────────────┘ └──────────────────┘
 ```
 
@@ -83,19 +87,17 @@ The platform revolves around the following core capability matrix:
 
 | 📊 Overview Dashboard | 💬 AI Chat |
 | :---: | :---: |
-| ![Dashboard Overview](docs/snapshot/overview.png) | ![AI Chat](docs/snapshot/ai-chat.png) |
-| **🧠 Memory & LTM** | **🔍 Memory Control Console** |
-| ![Memory & LTM](docs/snapshot/chat-with-memory.png) | ![Memory Management](docs/snapshot/memory-manage.png) |
-| **🛠️ Trace Timeline** | **📚 Knowledge Base Workbench** |
-| ![Trace Details](docs/snapshot/chat-debug.png) | ![Knowledge Hub](docs/snapshot/knowledge.png) |
+| ![Overview Dashboard](docs/snapshot/overview.png) | ![AI Chat](docs/snapshot/ai-chat.png) |
+| **🧠 Memory & LTM** | **🔍 Memory Management Console** |
+| ![Memory & Preference](docs/snapshot/chat-with-memory.png) | ![Memory Console](docs/snapshot/memory-manage.png) |
+| **🛠️ Trace Timeline Debug** | **📚 Knowledge Hub** |
+| ![Trace Timeline](docs/snapshot/chat-debug.png) | ![Knowledge Hub](docs/snapshot/knowledge.png) |
 | **🤖 Agent Studio** | **📝 Prompt Playground** |
-| ![Agent Management](docs/snapshot/bot-list.png) | ![Prompt Studio](docs/snapshot/prompt_studio.png) |
-| **🔌 Direct Data Sources** | **📊 Metadata Management** |
-| ![Data Sources](docs/snapshot/datasource.png) | ![Metadata Management](docs/snapshot/meta-list.png) |
+| ![Agent Studio](docs/snapshot/bot-list.png) | ![Prompt Studio](docs/snapshot/prompt_studio.png) |
+| **🔌 Physical Data Sources** | **📊 Metadata Builder** |
+| ![Data Sources](docs/snapshot/datasource.png) | ![Metadata](docs/snapshot/meta-list.png) |
 | **⚡ Dynamic Agent Skills** | **⚙️ System Settings** |
-| ![Agent Skills](docs/snapshot/skills-manage.png) | ![System Config](docs/snapshot/system.png) |
-
-
+| ![Skills](docs/snapshot/skills-manage.png) | ![System Settings](docs/snapshot/system.png) |
 
 ---
 
@@ -105,12 +107,27 @@ The platform revolves around the following core capability matrix:
 *   **Smart routing**: When no agent is specified, heuristic shortcuts (greetings, web search, ChatBI session break) run before LLM semantic routing; multi-intent parallel execution with Synthesizer aggregation.
 *   **Direct expert selection**: Embed expert mode, `agent_id`, or `@mention` skips auto-routing and loads the chosen agent.
 *   **AgentScope ReAct**: Assistant / ChatBI / Knowledge run on AgentScope Agent + Toolkit with permission suspend/resume.
+*   **Thinking model compatibility**: Built-in `tool_choice_for_model` support and 6-tier `reasoning_effort` tuning for DeepSeek-R1, Kimi, GLM, etc.
 *   **Main assistant extras**: Tool preflight (relevance-based nudge), skill auto-scan, anti–business-data hallucination guard with one-click ChatBI switch.
 *   **RAGFlow managed agents**: Connect to RAGFlow-hosted bots for retrieval and streaming dialogue.
 *   **OpenClaw🦞 gateway**: Passes `AUTH_CONTEXT` (identity, channel, accessible datasets) for tenant isolation.
-*   **Code Canvas**: User-confirmed Python / Shell execution with streaming output, timeout, output limits, and stop control.
 
-### 2. 📊 Intelligent Warehouse Analysis (ChatBI & Self-Healing)
+### 2. 🛡️ Multi-Policy Sandbox & Execution Isolation
+*   **Four sandbox policies**: Native support for `Local` (host process), `Docker` (private container), `E2B` (cloud sandbox), and `SSH` (remote secure host).
+*   **Docker same-path workspace mounting**: User workspaces are mounted to identical absolute paths inside the container, mapping `/workspace/...` logical paths back to host files with real-time canvas preview and editing.
+*   **Automated lifecycle management**: 30-minute idle reaper, graceful shutdown container cleanup, and prebuild enhancements.
+*   **Chat input popover console**: Live status badge (🟢Running/🟡Starting/🔴Error/⚪Stopped), assigned container ID, **second-by-second live runtime counter**, and manual start/refresh controls.
+
+### 3. 🌐 Persistent Browser & Live Takeover
+*   **Comprehensive automation toolkit**: Navigation, element click, text input, human-like trajectory slider dragging, smart wait, keypress, full-page scroll, file upload, screenshots, and multi-tab management.
+*   **Right-side Web interactive drawer**: Live stream snapshot rendering, allowing users to manually take over interaction or solve captchas at any time.
+
+### 4. 📊 Context Management & Observability
+*   **4-tier Token breakdown**: Visual breakdown across System Prompt, Tools Schema, Memory/History, and Current Turn.
+*   **Two-stage structured compaction**: Automatic watermark trigger with `_structured_tool_block` extraction and multimodal tag preservation.
+*   **30-Day long-term retention**: Redis session history, compaction logs, and artifact download links extended to 30 days.
+
+### 5. 📊 Intelligent Warehouse Analysis (ChatBI & Self-Healing)
 *   **Text-to-SQL loop**: Metadata injection, schema gates, and layered SQL guards.
 *   **My Data Portal**: Slash command `/dataset_portal` (legacy `/dataset_menu` still works) for permission-aware navigation and quick follow-ups.
 *   **Case library & Few-Shot**: Audited experience base with dynamic head-of-prompt injection.
@@ -118,17 +135,19 @@ The platform revolves around the following core capability matrix:
 *   **Clarification short-circuit**: Non-data chit-chat clarified at classification without forcing SQL.
 *   **Data sources**: Visual Oracle / ClickHouse / MySQL management, DDL sync, golden report stash, and direct physical SQL execution.
 
-### 3. 🔌 Open Plugin Ecosystem (MCP Integration)
+### 6. 🔌 Open Plugin Ecosystem (MCP Integration)
 *   **Native MCP Support**: Fully compliant with Anthropic's Model Context Protocol.
 *   **Infinite Extensibility**: Seamlessly connect to external productivity tools like Jira, Email, GitLab, etc. via MCP servers without modifying core code.
 
-### 4. 📚 Deep Knowledge Enhancement & Integration (RAG & Knowledge Hub)
+### 7. 📚 Deep Knowledge Enhancement & Integration (RAG & Knowledge Hub)
 *   **Knowledge workbench**: Tree document management, slice preview, recall testing, semantic merge, lifecycle audit.
 *   **Knowledge executor**: Auto `search_knowledge_base` prefetch before ReAct; citation cards; blocks uncited factual answers when retrieval is empty.
 *   **RAGFlow managed path**: Optionally connect RAGFlow-hosted knowledge agents instead.
 
-### 5. 🛠️ Enterprise Security, Audit & Utilities
-*   **Task center**: APScheduler + Redis for periodic/one-off jobs under agent identities.
+### 8. 🛠️ Enterprise Security, Audit & Utilities
+*   **Automated Task Center & Notifications**: Distributed APScheduler + Redis scheduling under agent identities for Cron/periodic/one-off tasks; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**) with thinking stream stripping and overflow protection.
+*   **ChatBI Golden Report Alerts**: Scheduled report inspection with threshold-hit, deviation rate, consecutive hits, and no-data anomaly alerts.
+*   **Multi-Provider Model Registry**: Built-in presets for OpenAI, Azure, DeepSeek, Kimi, Zhipu GLM, SiliconFlow, Alibaba DashScope, Volcengine Ark (Doubao), Ollama with smart endpoint normalization.
 *   **Platform timezone**: System jobs and subscriptions without an explicit timezone use `platform_timezone` (default `Asia/Shanghai`).
 *   **Granular RBAC**: User, role, menu, and element-level permissions.
 *   **SSO & masking**: Toggleable SSO; audit logs mask passwords and API keys.

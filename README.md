@@ -22,15 +22,19 @@
 **NanZi 智能体平台** 是专为企业级复杂场景打造的 AI 智能中枢。
 
 平台核心聚焦于以下能力矩阵：
-*   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持自动路由与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用已绑定工具；主助手支持 **Skill 自动扫描** 与权限挂起恢复；支持快捷指令、多模态附件与 Vision 识图。
-*   🧠 **长期记忆与跨会话回顾**：LTM 偏好注入 + 内置 `memory_search` 按需检索会话/每日摘要；记忆管理中心提供向量检索运维与数据治理。
-*   🧩 **代码画布与工作区执行**：支持 Python / Shell 代码的流式运行、停止、输出回传与私有工作区文件预览。
-*   🔌 **灵活的嵌入式 (Embed) 集成**：通过嵌入式 Chat SDK 快速集成至企业业务系统，对接现有鉴权体系，实现租户隔离与安全合规。
-*   📊 **原生企业级 ChatBI**：数据源与元数据管理、案例集 Few-Shot、SQL 自愈与 **sql_plan 结构化计划**；**我的数据门户**（`/dataset_portal`）个性化导航；支持直连物理 SQL 与黄金报表暂存。
-*   🤝 **开箱即用的主流生态集成**：对接 **RAGFlow** 托管智能体与知识库；集成 **OpenClaw🦞** 大模型安全网关，透传用户身份与数据集权限上下文。
-*   📚 **可视化知识库管理中心**：非结构化文档树形管理、召回测试、语义合并；**Knowledge 执行器**在 ReAct 前自动检索并注入引用。
+*   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持自动路由与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用工具；支持 `ask_user_question` 智能提问卡（单选/多选/输入）、**Todo 任务清单** 分步执行与常驻跟踪；主助手支持 **Skill 自动扫描** 与权限挂起恢复。
+*   🛡️ **多策略安全沙箱与隔离执行 (Multi-Policy Sandbox)**：原生支持 **Local**（本机进程）、**Docker**（私有容器隔离）、**E2B**（云端安全沙箱）、**SSH**（远端安全通道）四大执行策略；Docker 容器与宿主机工作区**同绝对路径挂载**，支持在代码画布中直接打开预览并保存回宿主机物理文件；支持镜像预构建、空闲 30 分钟自动回收（Idle Reaper）、优雅停机清理及输入框浮标面板一键探测与**秒级运行时长监控**。
+*   🌐 **持久化浏览器会话与实时接管面板 (Persistent Browser & Live Takeover)**：服务端持久化浏览器会话与全套自动化工具（网页访问、点击、输入、拟人滑块轨迹拖拽、按键、滚动、截图与多标签）；前端右侧提供**实时 Web 交互面板**，支持快照串流渲染与无缝人机协同交互接管。
+*   📊 **原生企业级 ChatBI 与自愈分析 (ChatBI & Self-Healing)**：数据源与元数据管理、案例集 Few-Shot、SQL 自愈与 **sql_plan 结构化计划**；**我的数据门户**（`/dataset_portal`）个性化导航；支持直连物理 SQL 与黄金报表暂存订阅。
+*   🧠 **长期记忆与跨会话回顾 (Memory & LTM)**：LTM 偏好注入 + 内置 `memory_search` 按需检索会话/每日摘要；记忆管理中心提供向量检索运维与数据治理；全链路 Redis 会话记忆与压缩日志 **TTL 全面升级为 30 天**。
+*   📊 **上下文分项拆解观测与溢出智能压缩 (Context Observability & Compaction)**：精准实时拆解 System Prompt、Tools Schema、Memory/History 与 Current Turn 四大项 Token 占比；支持自动水位线告警与两阶段结构化压缩（`_structured_tool_block` 精准提炼、保留多模态附件标记）。
+*   🧩 **代码画布与工作区执行 (Code Canvas & Workspace)**：支持 Python / Shell 代码的流式运行、停止、输出回传与私有工作区文件预览；支持 `publish_generated_file` 智能工件发布与有效期管理。
+*   📚 **可视化知识库管理中心 (RAG & Knowledge Hub)**：非结构化文档树形管理、召回测试、语义合并；**Knowledge 执行器**在 ReAct 前自动检索并注入引用。
+*   🔌 **开放插件生态 (MCP Integration)**：遵循 Anthropic Model Context Protocol 标准，无缝连接 Jira、Email、GitLab 等外部生产力系统。
+*   🔌 **灵活的嵌入式 (Embed) 集成**：通过嵌入式 Chat SDK 快速集成至企业业务系统，对接现有鉴权体系，实现租户隔离、RBAC 权限与水印安全合规。
+*   ⏰ **自动化任务中心与多通道推送 (Task Scheduler & Notifications)**：APScheduler + Redis 分布式任务调度，模拟智能体身份自主执行周期（Cron）、定时与间隔任务；支持 **多通道智能触达**（企业微信、钉钉、飞书、邮件、自定义 Webhook 及站内信通知中心）；内置自动剥离思考过程（纯净业务摘要推送）、超长截断保护与黄金报表异常阈值告警。
 *   🛠️ **全链路 Debug 与 Trace**：决策链、工具调用、SQL 计划卡片可视化；结构化查数结果 CSV/Excel 导出。
-*   ⚙️ **API 与分布式调度**：标准化 V1 API；APScheduler + Redis 任务中心，模拟智能体身份执行周期任务。
+*   ⚙️ **标准化 API 开放**：标准化 V1 API 接口，支持外部系统通过 API 直接调用智能体编排与执行能力。
 *   🎯 **提示词工厂 (Prompt Factory)**：系统提示词版本管理与草稿（`architech/prompts/`），生产行为可控可审计。
 
 ---
@@ -110,12 +114,26 @@
 *   **专家直选**：Embed 专家模式、`agent_id` 或 `@` 提及可跳过自动路由，直达指定智能体。
 *   **AgentScope ReAct**：Assistant / ChatBI / Knowledge 基于 AgentScope Agent + Toolkit，闭环调度本地工具，支持权限挂起与恢复。
 *   **主助手增强**：工具预检（按绑定工具相关度促发调用）、Skill 自动扫描、反业务数据幻觉 Guard（可一键切换 ChatBI）。
+*   **思考模型兼容层**：支持 DeepSeek-R1、Kimi 等思考模型展开与 6 级 `reasoning_effort` 调优，自动挂载 `tool_choice_for_model` 确保工具稳定触发。
 *   **RAGFlow 托管 Agent**：对接 RAGFlow 在线托管智能体，复用其检索与流式对话能力。
 *   **OpenClaw🦞 安全网关**：通过 `AUTH_CONTEXT` 透传用户身份、频道及可访问数据集，保障租户隔离。
-*   **代码画布**：在用户确认的工作区内运行 Python / Shell，支持流式输出、超时、输出上限和停止控制。
 
+### 2. 🛡️ 多策略安全沙箱与隔离执行 (Multi-Policy Sandbox & Isolation)
+*   **四大沙箱策略**：原生支持 `Local`（本机安全隔离）、`Docker`（私有容器隔离）、`E2B`（云端安全沙箱）、`SSH`（远程服务器安全通道）。
+*   **Docker 绝对路径同径挂载**：用户工作区直接挂载进容器同绝对路径，自动将 `/workspace/...` 容器内逻辑绝对路径转义映射至宿主机物理文件，支持右侧代码画布直接打开、预览并保存回物理磁盘。
+*   **沙箱生命周期自动化**：支持后台 30 分钟空闲自动销毁（Idle Reaper）、服务重启优雅停机清理，确保无残留孤儿容器。
+*   **输入框浮标控制台**：右上角上下文浮标无缝聚合 Docker 沙箱状态（🟢已运行/🟡启动中/🔴失败/⚪未启动）、当前分配容器 ID、**实时秒级运行时长（`5分20秒`）**以及手动「启动容器/重试启动/常驻手动刷新」控制。
 
-### 2. 📊 智能数仓分析 (ChatBI & Self-Healing)
+### 3. 🌐 服务端持久化浏览器会话与实时接管 (Persistent Browser & Live Takeover)
+*   **完整自动化套件**：支持打开网页、元素点击、表单输入、拟人轨迹滑块拖拽、智能等待、按键、全页滚动、文件上传、截图与多标签页管理。
+*   **右侧 Web 交互面板**：前端支持持久化浏览器面板，快照串流实时呈现；支持用户随时点击接管人工输入或验证码交互，人机协同闭环。
+
+### 4. 📊 上下文智能预算与溢出压缩 (Context Management & Observability)
+*   **四维分项拆解与可视化**：精确估算并呈现 System Prompt、Tools Schema、Memory/History 与 Current Turn 的 Token 占比条形图。
+*   **智能溢出压缩**：触发物理窗口阈值时自动触发两阶段结构化压缩，提炼工具调用产物（`_structured_tool_block`）并保留重要多模态图片标识。
+*   **30 天长期记忆缓存**：全链路 Redis 记忆会话、压缩日志与生成工件下载链接全面升级为 30 天长效保存。
+
+### 5. 📊 智能数仓分析 (ChatBI & Self-Healing)
 *   **Text-to-SQL 闭环**：元数据注入 + Schema 门禁 + 多层 SQL 护栏，自然语言直查业务库。
 *   **我的数据门户**：系统指令 `/dataset_portal`（兼容旧 `/dataset_menu`），按权限生成数据集导航与 quick 追问。
 *   **案例集与 Few-Shot**：经验库审核入库、相似案例动态注入提示词头部，提升专有 SQL 准确率。
@@ -125,18 +143,19 @@
 *   **分析交付闭环**：查询结果可一键生成证据化 Markdown/Word 业务简报，或转为黄金报表订阅，配置阈值、变化率、连续命中和无数据告警。
 *   **数据源管理**：可视化管理 Oracle / ClickHouse / MySQL 等连接，支持 DDL 抓取与连接别名唯一校验；支持黄金报表暂存与直连物理 SQL 执行。
 
-
-### 3. 🔌 开放插件生态 (MCP Integration)
+### 6. 🔌 开放插件生态 (MCP Integration)
 *   **原生支持 MCP**：遵循 Anthropic 的 Model Context Protocol。
 *   **无限扩展**：无需修改核心代码，即可通过 MCP 服务器连接 Jira、Email、GitLab 等外部生产力工具。
 
-### 4. 📚 深度知识增强与集成 (RAG & Knowledge Hub)
+### 7. 📚 深度知识增强与集成 (RAG & Knowledge Hub)
 *   **一站式知识库管理**：树形文档管理、切片预览、召回测试、语义合并与生命周期审计。
 *   **Knowledge 执行器**：对话中自动 `search_knowledge_base` 预检索，ReAct 阶段注入引用卡片，空召回/无引用回答可拦截。
 *   **RAGFlow 托管路径**：亦可一键对接 RAGFlow 托管知识智能体，复用外部检索与流式底座。
 
-### 5. 🛠️ 企业级配套与安全审计 (Enterprise Toolkit & RBAC)
-*   **分布式任务中心**：APScheduler + Redis 调度，支持模拟智能体身份执行周期/单次任务。
+### 8. 🛠️ 企业级配套与安全审计 (Enterprise Toolkit & RBAC)
+*   **自动化任务中心与多通道推送**：APScheduler + Redis 分布式调度，支持模拟智能体身份执行周期（Cron）与定时任务；支持**企微、钉钉、飞书、邮件、Webhook 与站内信 (Inbox)** 多通道智能触达，自带思考内容清洗（正文纯净推送）与超长截断保护。
+*   **黄金报表智能告警**：支持 ChatBI 报表定时巡检，配置阈值告警、变化率偏离、连续命中与无数据告警并自动推送通知。
+*   **多提供商模型管理**：内置 OpenAI, Azure, DeepSeek, Kimi, 智谱 AI, 硅基流动, 阿里云百炼, 火山引擎 (Ark/豆包), Ollama 等模型预设与 Endpoint 智能版本号规范化。
 *   **平台时区配置**：系统调度和未单独指定时区的订阅按 `platform_timezone` 解释时间，默认 `Asia/Shanghai`。
 *   **精细化 RBAC**：用户、角色、菜单与元素级权限，读写操作隔离。
 *   **SSO 与脱敏**：SSO 登录可后台开关；审计日志自动脱敏密码、API Key 等敏感字段。
