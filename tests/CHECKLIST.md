@@ -2,6 +2,10 @@
 
 # 自动化测试验收清单 (Automated Test Checklist)
 
+| 建立平台全功能模块 FAQ 疑难解答与排查手册 (Comprehensive FAQ.md Across All Platform Modules) | `FAQ.md`, `app/services/ai/runtime/agentscope/docker_prebuild.py`, `frontend/src/views/SystemConfig.vue` | **创建全模块 FAQ 常见问题手册**：在仓库根目录建立规范化的 [`FAQ.md`](file:///Users/chenxiaolong/workspace/nanzi-ai-agent-platform/FAQ.md) 疑难排查手册，目录大纲与平台左侧菜单分类体系（一、平台概览与启动；二、智能助手与交互画布；三、智能体开发平台；四、ChatBI；五、知识库；六、日志与Token分析；七、系统管理与配置）严格全量对齐并系统化补齐运行依赖、启动调试、画布协同、安全沙箱、模型注册、通知集成及双库维护规范。 | ✅ 文档齐备与链接对齐 | 2026-08-22 |
+
+| 默认选用阿里云加速镜像与移除手动镜像 URL 引导至 FAQ (Default to Aliyun Python Image & FAQ Guide) | `app/services/ai/runtime/agentscope/docker_prebuild.py`, `app/services/ai/runtime/agentscope/workspace.py`, `frontend/src/views/SystemConfig.vue`, `tests/ai/runtime/test_docker_prebuild.py`, `tests/frontend/test_sandbox_docker_prebuild_placement_contract.py` | **Docker 基础镜像默认选用阿里云加速源与 FAQ 引导**：将沙箱 Docker 基础镜像默认值调整为国内高速拉取的 `registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim`（前端下拉菜单第一项推荐默认，后端缺省回退）；移除废弃的 `sandbox_docker_manual_image_url` 配置；当后端环境缺少 aiodocker 或无法连接 Docker daemon 时，统一返回 `help_url` 引导至官方 FAQ 离线沙箱排查文档；单测与契约测试全量通过。 | ✅ 单测与契约覆盖 | 2026-08-22 |
+
 | Docker 沙箱用户工作区端点 V1 API 白名单权限修复 (Docker Sandbox User Workspace V1 API Whitelist Fix) | `app/core/v1_api_access.py`, `tests/core/test_v1_api_access.py` | **Docker 沙箱用户工作区端点白名单放行**：修复普通用户在对话界面启动或查询自己的 Docker 工作区容器时，因 `/sandbox/docker/workspace` 遗漏在 `is_v1_api_whitelisted` 白名单之外被 `verify_v1_api_access` 拦截报 `403 Forbidden` 的问题；在白名单中放行 `/sandbox/docker/workspace` 用户私有端点（管理端点 `/admin/sandbox/...` 仍严格受 `_require_admin` 守护）；完备单元测试断言覆盖。 | ✅ 单测全量通过 | 2026-08-22 |
 
 | 前端 TypeScript 严格构建错误清理与类型安全加固 (Frontend TypeScript Strict Build & Type Safety Hardening) | `frontend/src/types/markdownTheme.ts`, `frontend/src/utils/`, `frontend/src/composables/`, `frontend/src/components/`, `frontend/src/views/`, `docs/superpowers/plans/2026-08-22-frontend-typescript-build-cleanup.md` | **前端 TypeScript 严格类型清理与构建防护**：全面清理前端在开启 `vue-tsc -b` 严格模式下的类型阻断错误；补齐数据接口（如 `BrowserSnapshot`、`CanvasPanelData` 等）与联合字面量收窄；加固数组索引、时间线和工具处理中的 Null/Undefined 越界安全防护；清理 TS6133 废弃无用引用；`vue-tsc` 严格类型检查 0 错误全部通过。 | ✅ 类型与构建全量通过 | 2026-08-22 |
@@ -401,8 +405,7 @@
 | 浏览器面板刷新优化与动作触发刷新 (Browser Panel Refresh Rate & Action Triggered Refresh) | `BrowserPanel.vue`, `EmbedChat.vue`, `browser_events.py`, `assistant_agent_runner.py`, `tests/services/ai/test_browser_events.py`, `tests/frontend/test_browser_panel_contract.py` | **降低轮询开销与即时刷新结合**：将浏览器面板自动轮询间隔由 2 秒调整为 5 秒降低网络和服务器负载；当 AI 执行 `browser_click`/`browser_fill` 等操作后，后端向前端推送轻量 `browser_refresh` 事件，面板即时触发单次快照刷新，确保界面与 AI 操作同步。 | ✅ 契约与单测通过 | 2026-08-19 |
 | 浏览器面板地址栏协议自动补全 (Browser Panel URL Protocol Normalization) | `BrowserPanel.vue`, `tests/frontend/test_browser_panel_contract.py` | **地址自动补全协议**：优化人工操作地址栏体验，支持未带 `http(s)://` 协议的网址（如 `www.baidu.com`）在打开或回车时自动补全 `https://` 前缀并同步回显输入框，避免直接转发无效协议。 | ✅ 契约测试通过 | 2026-08-19 |
 | 浏览器自动化工具套件与全能交互能力扩展 (Browser Automation Toolkit Suite) | `browser_tools.py`, `browser_worker.py`, `browser_runtime.py`, `registry.py`, `tools.py`, `browser_events.py`, `BrowserPanel.vue` | **浏览器自动化能力闭环**：扩展浏览器智能体交互工具矩阵（包含 `browser_scroll`、`browser_press_key`、`browser_hover`、`browser_select_option`、`browser_drag_and_drop`、`browser_upload_files`、`browser_download_file`、`browser_evaluate_js`、`browser_open_tab`、`browser_switch_tab`、`browser_close_tab`、`browser_read_visible` 等）；统一权限预检与动作触发即时刷新事件通道。 | ✅ 契约与单测通过 | 2026-08-19 |
-| 刷新模式事实缺证据提醒优化 (Fresh-mode Ungrounded Fact Warning) | `grounding/policy.py`, `grounding/service.py`, `tests/ai/grounding/` | **事实接地策略变更**：在 `block_unsupported_facts=True`（刷新语义）下，仅对包含事实信号但缺少新鲜、相关证据的回答保留正文并追加 `HIGH` 风险提示，同时展示用户可读的中文原因；拒答、澄清和非事实性过程说明直接放行，避免标准路径误伤。 | ✅ 单测通过 | 2026-08-22 |
-
+| 刷新模式事实缺证据提醒优化 (Fresh-mode Ungrounded Fact Warning) | `grounding/policy.py`, `tests/ai/grounding/` | **事实接地策略变更**：在 `block_unsupported_facts=True`（刷新语义）下，仅对包含事实信号但缺少新鲜、相关证据的回答保留正文并追加 `HIGH` 风险提示；拒答、澄清和非事实性过程说明直接放行，避免标准路径误伤。 | ✅ 单测通过 | 2026-08-22 |
 
 
 

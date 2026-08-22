@@ -573,7 +573,12 @@ async def _policy_docker_workspace(
     )
     from agentscope.workspace import DockerWorkspace
 
-    base_image = (await ConfigService.get("sandbox_docker_base_image", "")).strip() or None
+    DEFAULT_DOCKER_BASE_IMAGE = (
+        "registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim"
+    )
+    base_image = (
+        await ConfigService.get("sandbox_docker_base_image", "")
+    ).strip() or DEFAULT_DOCKER_BASE_IMAGE
     host_workdir = None
     if workspace_root and sandbox_user_key:
         host_workdir = os.path.join(
@@ -587,11 +592,10 @@ async def _policy_docker_workspace(
         "host_workdir": host_workdir,  # None => ephemeral container
         "default_mcps": [default_mcp],
         "skill_paths": skill_paths,
+        "base_image": base_image,
     }
     if workspace_id:
         kwargs["workspace_id"] = workspace_id
-    if base_image:
-        kwargs["base_image"] = base_image
 
     for attempt in range(2):
         workspace = DockerWorkspace(**kwargs)

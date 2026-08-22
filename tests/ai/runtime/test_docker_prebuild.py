@@ -21,7 +21,7 @@ async def test_check_docker_daemon_reports_missing_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_prebuild_returns_manual_download_info_when_daemon_unavailable(
+async def test_prebuild_returns_faq_help_when_daemon_unavailable(
     monkeypatch, tmp_path
 ):
     from app.services.ai.runtime.agentscope import docker_prebuild
@@ -53,22 +53,13 @@ async def test_prebuild_returns_manual_download_info_when_daemon_unavailable(
         "check_docker_daemon",
         fake_check_docker_daemon,
     )
-    monkeypatch.setattr(
-        docker_prebuild,
-        "get_manual_image_download_url",
-        lambda: _async_value("https://downloads.example.com/agentscope-workspace.tar"),
-    )
 
     result = await docker_prebuild.prebuild_docker_workspace_image()
 
-    assert result["action"] == "manual_download"
     assert result["docker_available"] is False
+    assert result["reason_code"] == "docker_daemon_unavailable"
     assert result["tag"] == "agentscope-workspace:abc123def456"
-    assert (
-        result["download_url"]
-        == "https://downloads.example.com/agentscope-workspace.tar"
-    )
-    assert "docker load" in result["manual_import_command"]
+    assert "FAQ.md" in result["help_url"]
     assert events == ["check", "context"]
 
 
@@ -90,18 +81,13 @@ async def test_image_prebuilt_check_returns_false_when_daemon_is_unavailable(
             ("/tmp/unused-context", "agentscope-workspace:abc123def456")
         ),
     )
-    monkeypatch.setattr(
-        docker_prebuild,
-        "get_manual_image_download_url",
-        lambda: _async_value(None),
-    )
     monkeypatch.setitem(__import__("sys").modules, "aiodocker", FakeAioDocker)
 
     assert await docker_prebuild.docker_workspace_image_prebuilt() is False
 
 
 @pytest.mark.asyncio
-async def test_prebuild_returns_manual_download_info_when_aiodocker_is_missing(
+async def test_prebuild_returns_faq_help_when_aiodocker_is_missing(
     monkeypatch,
 ):
     from app.services.ai.runtime.agentscope import docker_prebuild
@@ -112,18 +98,13 @@ async def test_prebuild_returns_manual_download_info_when_aiodocker_is_missing(
         "_prepare_context",
         lambda: _async_value((context_dir, "agentscope-workspace:abc123def456")),
     )
-    monkeypatch.setattr(
-        docker_prebuild,
-        "get_manual_image_download_url",
-        lambda: _async_value("https://downloads.example.com/agentscope-workspace.tar"),
-    )
     monkeypatch.setitem(__import__("sys").modules, "aiodocker", None)
 
     result = await docker_prebuild.prebuild_docker_workspace_image()
 
-    assert result["action"] == "manual_download"
+    assert result["docker_available"] is False
     assert result["reason_code"] == "aiodocker_unavailable"
-    assert result["download_url"].startswith("https://")
+    assert "FAQ.md" in result["help_url"]
 
 
 async def _async_value(value):

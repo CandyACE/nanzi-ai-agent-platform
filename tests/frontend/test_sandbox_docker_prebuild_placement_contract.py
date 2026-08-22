@@ -33,10 +33,9 @@ def test_docker_prebuild_success_reconciles_reused_or_built_state():
     assert "data?.reused || data?.built" in source
 
 
-def test_docker_prebuild_exposes_manual_download_fallback():
+def test_docker_prebuild_exposes_faq_help_fallback():
     source = SETTINGS.read_text(encoding="utf-8")
 
-    assert "manual_download" in source
-    assert "download_url" in source
-    assert "manual_import_command" in source
-    assert "复制命令" in source
+    assert "FAQ.md" in source
+    assert "dockerPrebuildHelpUrl" in source
+    assert "查看 FAQ" in source

@@ -248,10 +248,8 @@ const dockerPrebuildChecking = ref(false)
 const dockerPrebuilding = ref(false)
 const dockerPrebuildReused = ref(false)
 const dockerPrebuildTag = ref('')
-const dockerPrebuildAction = ref('')
 const dockerPrebuildMessage = ref('')
-const dockerManualDownloadUrl = ref('')
-const dockerManualImportCommand = ref('')
+const dockerPrebuildHelpUrl = ref('https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md')
 const sandboxConnectionTesting = ref<'e2b' | 'ssh' | null>(null)
 
 const targetSandboxPolicy = () =>
@@ -343,13 +341,15 @@ const selectSandboxPolicy = (item: ConfigItem, value: string) => {
   refreshDockerPrebuildStatus(true)
 }
 
+const DEFAULT_DOCKER_BASE_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim'
+
 /** docker 基础镜像候选清单：同一 python 镜像的多地域加速源（仅作为 Dockerfile FROM 的 python 基座，均可被容器内烤入 agentscope MCP gateway）；
  * 另含「自定义…」手动输入。OpenSandbox 为运行时编排框架、非 python base 镜像，已排除。 */
 const dockerBaseImagePresets: { label: string; value: string }[] = [
-  { label: 'python:3.11-slim（Docker Hub，默认）', value: 'python:3.11-slim' },
-  { label: 'python:3.11（Docker Hub）', value: 'python:3.11' },
-  { label: '阿里云加速 python:3.11-slim', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim' },
+  { label: '阿里云加速 python:3.11-slim（推荐，默认）', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim' },
   { label: '阿里云加速 python:3.11', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11' },
+  { label: 'python:3.11-slim（Docker Hub 官方）', value: 'python:3.11-slim' },
+  { label: 'python:3.11（Docker Hub 官方）', value: 'python:3.11' },
   { label: '华为云加速 python:3.11-slim', value: 'swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.11-slim' },
   { label: '腾讯云加速 python:3.11-slim', value: 'mirror.ccs.tencentyun.com/library/python:3.11-slim' },
 ]
@@ -357,7 +357,7 @@ const dockerBaseImageOpen = ref(false)
 const dockerBaseImageShowCustom = ref(false)
 /** 当前值是否命中所选预设，用于展示按钮文案 */
 const currentDockerBaseImageLabel = computed(() => {
-  const cur = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value ?? 'python:3.11-slim'
+  const cur = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value || DEFAULT_DOCKER_BASE_IMAGE
   return dockerBaseImagePresets.find(p => p.value === cur)?.label || '自定义镜像地址…'
 })
 /** 点击预设后写入 item.value 并关闭面板 */
@@ -382,20 +382,10 @@ const toggleDockerBaseImage = (item: ConfigItem) => {
 const applyDockerPrebuildStatus = (data: any) => {
   // 状态查询返回 prebuilt，预构建接口返回 reused / built；统一归一为页面状态。
   dockerPrebuilt.value = !!(data?.prebuilt || data?.reused || data?.built)
-  dockerPrebuildAction.value = data?.action || (data?.docker_available === false ? 'manual_download' : '')
   dockerPrebuildMessage.value = data?.message || ''
-  dockerManualDownloadUrl.value = data?.download_url || ''
-  dockerManualImportCommand.value = data?.manual_import_command || ''
   dockerPrebuildTag.value = data?.tag || data?.required_image_tag || ''
-}
-
-const copyDockerManualImportCommand = async () => {
-  if (!dockerManualImportCommand.value) return
-  try {
-    await navigator.clipboard.writeText(dockerManualImportCommand.value)
-    showToast('手动导入命令已复制', 'success')
-  } catch {
-    showToast('复制失败，请手动选中命令复制', 'warning')
+  if (data?.help_url) {
+    dockerPrebuildHelpUrl.value = data.help_url
   }
 }
 
@@ -432,8 +422,8 @@ const executeDockerPrebuild = async () => {
     const data = res.data?.data ?? res.data
     dockerPrebuildReused.value = !!data?.reused
     applyDockerPrebuildStatus(data)
-    if (data?.action === 'manual_download') {
-      showToast(data?.message || '当前环境不支持自动构建，请手动下载镜像', 'warning')
+    if (data?.docker_available === false) {
+      showToast(data?.message || '当前环境不支持自动构建，请参考 FAQ 帮助文档', 'warning')
       return
     }
     showToast(
@@ -1199,8 +1189,7 @@ const configShortDescriptions: Record<string, string> = {
   agent_context_compaction_max_chars: '溢出压缩摘录中正文部分的最大字符数，过大会挤占新对话空间。',
   agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
-  sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（如 aliyun 镜像加速地址），留空使用默认 python:3.11-slim。',
-  sandbox_docker_manual_image_url: 'Docker daemon 不可用时，下载符合 AgentScope 规范的预构建镜像包（docker save 导出的 tar/tar.gz）的地址。',
+  sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用阿里云加速源 registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim）。',
   sandbox_e2b_api_key: 'e2b 策略使用的 E2B API Key，留空则读取 E2B_API_KEY 环境变量。',
   sandbox_e2b_template: 'e2b 策略使用的沙箱模板名，留空使用默认模板 base。',
   sandbox_e2b_timeout_seconds: 'e2b 策略沙箱超时时间（秒），默认 300。',
@@ -1320,7 +1309,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
     const policy = targetSandboxPolicy()
     const policyKeySets: Record<string, string[]> = {
-      docker: ['sandbox_docker_base_image', 'sandbox_docker_manual_image_url'],
+      docker: ['sandbox_docker_base_image'],
       e2b: ['sandbox_e2b_api_key', 'sandbox_e2b_template', 'sandbox_e2b_timeout_seconds'],
       ssh: [
         'sandbox_ssh_host', 'sandbox_ssh_port', 'sandbox_ssh_user', 'sandbox_ssh_auth_type',
@@ -2853,29 +2842,16 @@ onMounted(async () => {
                              <div v-if="dockerPrebuildTag" class="mt-1.5 text-[11px] text-gray-500 leading-relaxed select-none">
                                当前预构建镜像 Tag：<code class="font-mono text-indigo-700">{{ dockerPrebuildTag }}</code>
                              </div>
-                             <div v-if="dockerPrebuildAction === 'manual_download'" class="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                               <div class="font-medium">当前后端无法连接 Docker daemon，请手动导入符合 AgentScope 规范的镜像。</div>
+                             <div v-if="dockerPrebuildMessage && !dockerPrebuilt" class="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                               <div class="font-medium">{{ dockerPrebuildMessage }}</div>
                                <a
-                                 v-if="dockerManualDownloadUrl"
-                                 :href="dockerManualDownloadUrl"
+                                 :href="dockerPrebuildHelpUrl"
                                  target="_blank"
                                  rel="noopener noreferrer"
-                                 class="mt-1 inline-block break-all text-indigo-700 underline"
+                                 class="mt-1.5 inline-flex items-center gap-1 text-indigo-700 underline hover:text-indigo-900 font-medium"
                                >
-                                 下载 Docker 镜像包
+                                 📖 查看 FAQ 离线镜像与沙箱环境排查指南 ↗
                                </a>
-                               <div v-else class="mt-1 text-amber-800">尚未配置镜像下载地址，请先填写上方“手动镜像下载地址”。</div>
-                               <div v-if="dockerManualImportCommand" class="mt-2 flex items-start gap-2">
-                                 <code class="min-w-0 flex-1 break-all rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-700">{{ dockerManualImportCommand }}</code>
-                                 <button
-                                   type="button"
-                                   @click="copyDockerManualImportCommand"
-                                   class="shrink-0 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] text-amber-800 hover:bg-amber-100"
-                                 >
-                                   复制命令
-                                 </button>
-                               </div>
-                               <div v-if="dockerPrebuildMessage" class="mt-1.5 text-[11px] text-amber-800">{{ dockerPrebuildMessage }}</div>
                              </div>
                           </div>
                           <div v-else>
