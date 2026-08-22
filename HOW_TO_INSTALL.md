@@ -352,28 +352,67 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 ### 3.4 方案 B：本地源码开发调试部署
 适合日常编写业务逻辑、开发调试新功能时采用。
 
-1.  **后端启动 (FastAPI)**：
-    ```bash
-    # 激活 Python 环境并安装依赖
-    source venv/bin/activate
-    pip install -r requirements.txt
-    
-    # 在项目根目录下，拷贝并配置本地 .env 文件
-    cp env.example .env
-    # 编辑 .env：选择配置 MySQL 或 PostgreSQL，并配置 Redis；ENCRYPTION_KEY 若改动需重新创建 admin
-    # MySQL（默认）：DATABASE_TYPE=mysql
-    # PostgreSQL：DATABASE_TYPE=postgresql，并填写 POSTGRES_* 参数
-    
-    # 启动后端 Uvicorn 调试服务
-    uvicorn app.main:app --reload --port 8001
-    ```
-2.  **前端启动 (Vue 3 + Vite)**：
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
-    *注：推荐在开发联调时，直接运行项目根目录下的 `./dev.sh` 集成开发脚本，能以前台交互形式一键编译前端并拉起后端，极为高效。*
+#### 1. 环境准备 (Python 3.11+)
+平台要求至少 **Python 3.11** 运行环境。推荐使用 `uv` 极速管理 Python 版本与虚拟环境：
+
+```bash
+# 1. 安装 Python 3.11（若系统已有 Python 3.11+ 可跳过）
+uv python install 3.11
+
+# 2. 进入项目根目录
+cd nanzi-ai-agent-platform
+
+# 3. 创建并激活虚拟环境
+uv venv --python 3.11 .venv
+source .venv/bin/activate
+
+# 4. 验证 Python 版本
+python --version  # 应输出 Python 3.11.x
+
+# 5. 升级 pip 并安装后端依赖
+pip install -U pip
+pip install -r requirements.txt
+
+# 6. 配置本地环境变量
+cp env.example .env
+# 编辑 .env：选择配置 MySQL 或 PostgreSQL，并配置 Redis；ENCRYPTION_KEY 若改动需重新创建 admin
+```
+
+#### 2. 一键编译与启动 (`./dev.sh`)
+
+平台提供了高度集成的启动工具 [`dev.sh`](dev.sh)，内置**前端依赖自动感知安装**、**动态读取 .env 端口**与**旧进程自动清理**：
+
+```bash
+# 用法 1：前台调试启动（实时查看前端构建与后端日志，按 Ctrl+C 退出）
+./dev.sh
+
+# 用法 2：后台常驻启动（推荐）
+./dev.sh -d
+```
+
+**后台启动示例输出 (`./dev.sh -d`)：**
+```text
+==================================================
+       NanZi AI 开源智能体平台 · 本地开发启动工具         
+       用法: ./dev.sh (前台调试) | ./dev.sh -d (后台常驻) 
+==================================================
+
+🛑 [1/3] 正在检查并停止旧服务 (Port 8001)...
+✅ 端口 8001 空闲，无需停止
+
+🚀 [2/3] 正在编译前端 (Building Frontend)...
+✓ built in 55.83s
+✅ 前端编译成功！
+
+🔥 [3/3] 正在后台启动后端服务 (Starting Backend in Daemon Mode)...
+✅ 后端服务已在后台启动！
+   ➜ 服务 PID: 75039
+   ➜ 访问端口: http://0.0.0.0:8001
+   ➜ 日志文件: server.log
+   ➜ 查看实时日志命令: tail -f server.log
+```
+
+*(若需手动分步启动，也可进入 `frontend` 执行 `npm install && npm run dev`，并在根目录执行 `uvicorn app.main:app --reload --port 8001`)*
 
 ---
 
