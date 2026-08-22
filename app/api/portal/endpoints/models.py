@@ -479,13 +479,10 @@ def _embedding_request_url(
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("API Base URL 必须是有效的 HTTP/HTTPS 地址")
-    if parsed.path.rstrip("/").endswith("/embeddings"):
-        return base_url, {}
-    if parsed.path.rstrip("/").endswith("/v1"):
-        path = f"{parsed.path.rstrip('/')}/embeddings"
-    else:
-        path = f"{parsed.path.rstrip('/')}/v1/embeddings"
-    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, "")), {}
+
+    from app.utils.model_providers import normalize_embedding_endpoint
+
+    return normalize_embedding_endpoint(base_url), {}
 
 
 async def _test_embedding_connection(

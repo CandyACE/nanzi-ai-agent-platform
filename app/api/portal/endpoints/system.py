@@ -147,14 +147,10 @@ async def test_connection(
             
             if not test_url or not test_key:
                 raise Exception("Embedding API URL 或 Key 为空，未完成配置。")
-                
-            base = test_url.rstrip("/")
-            if base.endswith("/embeddings"):
-                url = base
-            elif base.endswith("/v1"):
-                url = f"{base}/embeddings"
-            else:
-                url = f"{base}/v1/embeddings"
+
+            from app.utils.model_providers import normalize_embedding_endpoint
+
+            url = normalize_embedding_endpoint(test_url)
                 
             log(f"Sending test vector request to: {url}")
             

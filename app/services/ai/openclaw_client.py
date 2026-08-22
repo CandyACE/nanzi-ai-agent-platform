@@ -130,8 +130,14 @@ class OpenClawClient:
 
         if base_url.endswith("/"):
             base_url = base_url[:-1]
-            
-        url = f"{base_url}/v1/chat/completions"
+
+        import re
+        if base_url.endswith("/chat/completions"):
+            url = base_url
+        elif re.search(r"/v\d+(?:[a-zA-Z0-9_\.-]+)?$", base_url, re.IGNORECASE):
+            url = f"{base_url}/chat/completions"
+        else:
+            url = f"{base_url}/v1/chat/completions"
         
         # Prepare headers
         headers = {"Content-Type": "application/json"}

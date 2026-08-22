@@ -59,13 +59,9 @@ class EmbeddingClient:
                 "Embedding API 未配置：请在系统配置中配置全局 Embedding URL 与 Key"
             )
 
-        base = base_url.rstrip("/")
-        if base.endswith("/embeddings"):
-            url = base
-        elif base.endswith("/v1"):
-            url = f"{base}/embeddings"
-        else:
-            url = f"{base}/v1/embeddings"
+        from app.utils.model_providers import normalize_embedding_endpoint
+
+        url = normalize_embedding_endpoint(base_url)
 
         payload = {"model": model, "input": text}
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
