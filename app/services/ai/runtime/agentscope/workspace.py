@@ -551,6 +551,41 @@ KNOWN_SANDBOX_POLICIES = frozenset(
 )
 
 
+def _resolve_docker_sandbox_host_workdir(
+    workspace_root: str | None,
+    sandbox_user_key: str | None,
+) -> str | None:
+    """计算下发给宿主机 Docker Daemon 的沙箱挂载真实物理路径。
+
+    当平台部署在 Docker 容器内（DooD 架构）时：
+    1. 优先读取环境变量 HOST_DATA_DIR / AGENTSCOPE_WORKSPACE_HOST_ROOT；
+    2. 若配置了 HOST_DATA_DIR 且容器内 workspace_root 以 /app/data 开头，
+       自动将其映射为宿主机对应的真实物理路径；
+    3. 宿主机直跑环境下直接使用 os.path.abspath(workspace_root)。
+    """
+    if not workspace_root or not sandbox_user_key:
+        return None
+
+    abs_root = os.path.abspath(workspace_root)
+    host_data_dir = (
+        os.getenv("HOST_DATA_DIR", "").strip()
+        or os.getenv("AGENTSCOPE_WORKSPACE_HOST_ROOT", "").strip()
+    )
+
+    if host_data_dir:
+        # 如果容器内根路径以 /app/data 开头（标准 Docker 镜像内工作目录）
+        if abs_root.startswith("/app/data"):
+            rel_part = os.path.relpath(abs_root, "/app/data")
+            if rel_part and rel_part != ".":
+                return os.path.join(host_data_dir, rel_part, sandbox_user_key)
+            return os.path.join(host_data_dir, sandbox_user_key)
+        # 如果 host_data_dir 直接作为宿主机 workspace root
+        if not abs_root.startswith(host_data_dir):
+            return os.path.join(host_data_dir, sandbox_user_key)
+
+    return os.path.join(abs_root, sandbox_user_key)
+
+
 async def _policy_docker_workspace(
     skill_paths: list[str] | None,
     *,
@@ -577,12 +612,10 @@ async def _policy_docker_workspace(
     base_image = (
         await ConfigService.get("sandbox_docker_base_image", "")
     ).strip() or DEFAULT_DOCKER_BASE_IMAGE
-    host_workdir = None
-    if workspace_root and sandbox_user_key:
-        host_workdir = os.path.join(
-            os.path.abspath(workspace_root),
-            sandbox_user_key,
-        )
+    host_workdir = _resolve_docker_sandbox_host_workdir(
+        workspace_root=workspace_root,
+        sandbox_user_key=sandbox_user_key,
+    )
 
     default_mcp = build_container_tool_mcp()
 
