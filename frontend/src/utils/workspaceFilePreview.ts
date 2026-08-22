@@ -115,7 +115,7 @@ export function buildGeneratedWorkspaceFilename(
 export function shouldAttachWorkspaceSourcePath(path: string, name: string): boolean {
   if (!canWriteWorkspaceFile(name)) return false
   const normalized = path.replace(/\\/g, '/')
-  return normalized.includes('/agent_workspaces/')
+  return normalized.includes('/agent_workspaces/') || normalized.startsWith('/workspace') || normalized.startsWith('workspace/')
 }
 
 export function buildWorkspaceCanvasPayload(path: string, name: string) {

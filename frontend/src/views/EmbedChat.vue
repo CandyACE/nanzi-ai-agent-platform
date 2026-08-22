@@ -1210,6 +1210,8 @@
         :lock-expert-agent="isRoutingSettingsLocked"
         :docker-workspace-status="dockerWorkspaceStatus"
         :docker-workspace-container-id="dockerWorkspaceContainerId"
+        :docker-workspace-started-at="dockerWorkspaceStartedAt"
+        :docker-workspace-uptime-seconds="dockerWorkspaceUptimeSeconds"
         :docker-workspace-error="dockerWorkspaceError"
         @start-docker-workspace="ensureDockerWorkspace"
         @refresh-docker-workspace="refreshDockerWorkspaceStatus"
@@ -3888,6 +3890,8 @@ const dockerWorkspaceStatus = ref<DockerWorkspaceStatus>("idle");
 const dockerWorkspaceStatusLoaded = ref(false);
 const dockerWorkspaceError = ref("");
 const dockerWorkspaceContainerId = ref<string | null>(null);
+const dockerWorkspaceStartedAt = ref<string | null>(null);
+const dockerWorkspaceUptimeSeconds = ref<number | null>(null);
 const dockerWorkspaceBannerDismissed = ref(readDockerWorkspaceBannerDismissed());
 const effectiveSandboxPolicy = computed(() => (
   String(contextUsage.value?.sandbox_policy || "").trim().toLowerCase()
@@ -3917,6 +3921,8 @@ const resetDockerWorkspaceState = () => {
   dockerWorkspaceStatusLoaded.value = false;
   dockerWorkspaceError.value = "";
   dockerWorkspaceContainerId.value = null;
+  dockerWorkspaceStartedAt.value = null;
+  dockerWorkspaceUptimeSeconds.value = null;
   dockerWorkspaceBannerDismissed.value = readDockerWorkspaceBannerDismissed();
 };
 
@@ -3927,7 +3933,7 @@ const dismissDockerWorkspaceBanner = () => {
   } catch {}
 };
 
-const refreshDockerWorkspaceStatus = async () => {
+const refreshDockerWorkspaceStatus = async (showFeedback = false) => {
   if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
   if (dockerWorkspaceStatus.value === "starting") return;
   const requestedConversationId = conversationId.value;
@@ -3945,8 +3951,18 @@ const refreshDockerWorkspaceStatus = async () => {
       throw new Error("Docker 沙箱状态返回了错误的执行后端");
     }
     dockerWorkspaceContainerId.value = data.container_id || null;
+    dockerWorkspaceStartedAt.value = data.started_at || null;
+    dockerWorkspaceUptimeSeconds.value = typeof data.uptime_seconds === "number" ? data.uptime_seconds : null;
     dockerWorkspaceStatus.value = data.status === "running" ? "running" : "idle";
     dockerWorkspaceError.value = "";
+    if (showFeedback) {
+      if (dockerWorkspaceStatus.value === "running") {
+        const shortId = (dockerWorkspaceContainerId.value || "").slice(0, 12);
+        showToast(shortId ? `Docker 沙箱运行中 (${shortId})` : "Docker 沙箱运行中", "success");
+      } else {
+        showToast("Docker 沙箱状态已刷新：容器未启动", "info");
+      }
+    }
   } catch (error: any) {
     if (conversationId.value !== requestedConversationId) return;
     const detail = error?.response?.data?.detail;
@@ -3954,6 +3970,11 @@ const refreshDockerWorkspaceStatus = async () => {
       ? detail
       : String(detail?.message || error?.message || "Docker 沙箱状态查询失败");
     dockerWorkspaceStatus.value = "error";
+    dockerWorkspaceStartedAt.value = null;
+    dockerWorkspaceUptimeSeconds.value = null;
+    if (showFeedback) {
+      showToast(dockerWorkspaceError.value, "error");
+    }
   } finally {
     if (conversationId.value === requestedConversationId) {
       dockerWorkspaceStatusLoaded.value = true;
@@ -3962,7 +3983,7 @@ const refreshDockerWorkspaceStatus = async () => {
 };
 
 const ensureDockerWorkspace = async () => {
-  if (!showDockerWorkspaceControl.value || !conversationId.value) return;
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
   if (dockerWorkspaceStatus.value === "starting") return;
   const requestedConversationId = conversationId.value;
   dockerWorkspaceStatus.value = "starting";
@@ -3980,6 +4001,8 @@ const ensureDockerWorkspace = async () => {
     }
     dockerWorkspaceStatus.value = "running";
     dockerWorkspaceContainerId.value = data.container_id || null;
+    dockerWorkspaceStartedAt.value = data.started_at || null;
+    dockerWorkspaceUptimeSeconds.value = typeof data.uptime_seconds === "number" ? data.uptime_seconds : 0;
     showToast("Docker 沙箱容器已启动", "success");
   } catch (error: any) {
     if (conversationId.value !== requestedConversationId) return;

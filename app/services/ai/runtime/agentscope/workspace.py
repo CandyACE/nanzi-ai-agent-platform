@@ -615,6 +615,8 @@ async def _policy_docker_workspace(
         )
         container = getattr(workspace, "_container", None)
         workspace._platform_container_id = getattr(container, "id", None)
+        from datetime import datetime, timezone
+        workspace._platform_started_at = datetime.now(timezone.utc).isoformat()
         return workspace
 
     raise AssertionError("Docker workspace initialization retry loop did not return")
@@ -1341,6 +1343,17 @@ async def docker_workspace_status(
 
     state = details.get("State") if isinstance(details, dict) else None
     running = bool(state.get("Running")) if isinstance(state, dict) else False
+    started_at = state.get("StartedAt") if isinstance(state, dict) else None
+    uptime_seconds: int | None = None
+    if running and started_at:
+        try:
+            from datetime import datetime, timezone
+            clean_ts = re.sub(r'(\.\d{6})\d+', r'\1', str(started_at).replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(clean_ts)
+            uptime_seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+        except Exception:
+            uptime_seconds = None
+
     return {
         "status": "running" if running else "stopped",
         "execution_backend": SANDBOX_POLICY_DOCKER,
@@ -1350,6 +1363,8 @@ async def docker_workspace_status(
             if isinstance(details, dict)
             else getattr(container, "id", None)
         ),
+        "started_at": started_at if running else None,
+        "uptime_seconds": uptime_seconds if running else None,
     }
 
 
@@ -1359,6 +1374,7 @@ def docker_workspace_runtime_metadata(workspace: Any) -> dict[str, Any]:
     if not container_id:
         container = getattr(workspace, "_container", None)
         container_id = getattr(container, "id", None)
+    started_at = getattr(workspace, "_platform_started_at", None)
     return {
         "status": "running" if getattr(workspace, "is_alive", True) else "stopped",
         "execution_backend": getattr(
@@ -1369,6 +1385,8 @@ def docker_workspace_runtime_metadata(workspace: Any) -> dict[str, Any]:
         "workspace_id": getattr(workspace, "_platform_workspace_id", None)
         or getattr(workspace, "workspace_id", None),
         "container_id": container_id,
+        "started_at": started_at,
+        "uptime_seconds": 0 if started_at else None,
     }
 
 

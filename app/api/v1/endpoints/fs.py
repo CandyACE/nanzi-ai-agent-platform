@@ -371,70 +371,122 @@ def _resolve_fs_file_path(
     )
 
     safe_path: str | None = None
+    root = workspace_root
+    raw_path = str(path or "").strip()
+    user_id = user_info.get("user_id") or user_info.get("id")
+    user_name = user_info.get("user_name") or user_info.get("username")
 
-    if conversation_id and not path.startswith("/") and not path.startswith("/app/data"):
-        root = workspace_root
+    user_workspaces_root = resolve_user_workspace_root(
+        root=root,
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+
+    # 1. 优先处理 /workspace 容器沙箱逻辑路径（自动映射到当前用户的宿主机工作区）
+    is_logical_workspace = (
+        raw_path == "/workspace"
+        or raw_path.startswith("/workspace/")
+        or raw_path == "workspace"
+        or raw_path.startswith("workspace/")
+    )
+    if is_logical_workspace and user_workspaces_root:
+        if raw_path in {"/workspace", "workspace"}:
+            rel_part = ""
+        elif raw_path.startswith("/workspace/"):
+            rel_part = raw_path[len("/workspace/"):].lstrip("/\\")
+        else:
+            rel_part = raw_path[len("workspace/"):].lstrip("/\\")
+
+        # 1.1 直接在 user_workspaces_root 下匹配物理文件
+        if os.path.isdir(user_workspaces_root) or not must_exist:
+            candidate = normalize_under_base(rel_part, user_workspaces_root)
+            if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+                safe_path = candidate
+
+        # 1.2 若未直接命中，尝试在当前会话的 session_workdir 中匹配
+        if not safe_path and conversation_id and rel_part:
+            session_workdir = resolve_session_workdir(
+                root=root,
+                user_id=user_id,
+                user_name=user_name,
+                user_info=user_info,
+                conversation_id=conversation_id,
+            )
+            if os.path.isdir(session_workdir):
+                candidate = normalize_under_base(rel_part, session_workdir)
+                if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+                    safe_path = candidate
+
+        # 1.3 若未命中，尝试在 docs_workdir 中匹配
+        if not safe_path and rel_part:
+            docs_workdir = resolve_user_docs_dir(
+                root=root,
+                user_id=user_id,
+                user_name=user_name,
+                user_info=user_info,
+            )
+            if os.path.isdir(docs_workdir):
+                candidate = normalize_under_base(rel_part, docs_workdir)
+                if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+                    safe_path = candidate
+
+    if not safe_path and conversation_id and not raw_path.startswith("/") and not raw_path.startswith("/app/data"):
         docs_workdir = resolve_user_docs_dir(
             root=root,
-            user_id=user_info.get("user_id") or user_info.get("id"),
-            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_id=user_id,
+            user_name=user_name,
             user_info=user_info,
         )
         if os.path.isdir(docs_workdir) or not must_exist:
-            candidate = normalize_under_base(path, docs_workdir)
+            candidate = normalize_under_base(raw_path, docs_workdir)
             if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
                 safe_path = candidate
 
         if not safe_path:
             session_workdir = resolve_session_workdir(
                 root=root,
-                user_id=user_info.get("user_id") or user_info.get("id"),
-                user_name=user_info.get("user_name") or user_info.get("username"),
+                user_id=user_id,
+                user_name=user_name,
                 user_info=user_info,
                 conversation_id=conversation_id,
             )
             if os.path.isdir(session_workdir):
-                candidate = normalize_under_base(path, session_workdir)
+                candidate = normalize_under_base(raw_path, session_workdir)
                 if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
                     safe_path = candidate
 
         if not safe_path:
             legacy_session_workdir = resolve_legacy_session_workdir(
                 root=root,
-                user_id=user_info.get("user_id") or user_info.get("id"),
-                user_name=user_info.get("user_name") or user_info.get("username"),
+                user_id=user_id,
+                user_name=user_name,
                 user_info=user_info,
                 conversation_id=conversation_id,
             )
             if legacy_session_workdir != session_workdir and os.path.isdir(legacy_session_workdir):
-                candidate = normalize_under_base(path, legacy_session_workdir)
+                candidate = normalize_under_base(raw_path, legacy_session_workdir)
                 if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
                     safe_path = candidate
 
         if not safe_path:
-            user_workspaces_root = resolve_user_workspace_root(
-                root=root,
-                user_id=user_info.get("user_id") or user_info.get("id"),
-                user_name=user_info.get("user_name") or user_info.get("username"),
-                user_info=user_info,
-            )
             if user_workspaces_root and os.path.isdir(user_workspaces_root):
                 for cid_dir in os.listdir(user_workspaces_root):
                     candidate_dir = os.path.join(user_workspaces_root, cid_dir)
                     if not os.path.isdir(candidate_dir):
                         continue
-                    candidate = normalize_under_base(path, candidate_dir)
+                    candidate = normalize_under_base(raw_path, candidate_dir)
                     if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
                         safe_path = candidate
                         break
 
     if not safe_path:
-        candidate = normalize_fs_path(path)
+        candidate = normalize_fs_path(raw_path)
         if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
             safe_path = candidate
 
     if not safe_path:
-        candidate = normalize_fs_path(path)
+        candidate = normalize_fs_path(raw_path)
         if candidate and not is_path_allowed(candidate, user_info):
             raise HTTPException(
                 status_code=403,
