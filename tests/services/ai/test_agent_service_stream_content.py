@@ -1,11 +1,16 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.services.ai.agent_service import (
     _accumulate_reasoning_content,
     _accumulate_stream_content,
+    _finalize_todo_success,
     _final_process_timeline,
+    _restore_todo_snapshot_from_pending,
     _track_process_timeline,
 )
+from app.services.ai.runtime.agentscope.process_timeline_snapshot import capture_todo_update
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -110,6 +115,81 @@ def test_todo_update_reaches_agent_service_timeline_without_becoming_model_conte
             {"content": "整理答案", "status": "in_progress"},
         ],
         "counts": {"pending": 0, "in_progress": 1, "completed": 1},
+    }]
+
+
+def test_success_finalization_completes_remaining_todos_and_returns_update_event():
+    state = [{
+        "kind": "todo",
+        "id": "todo_current",
+        "title": "任务清单",
+        "todos": [
+            {"content": "已完成步骤", "status": "completed"},
+            {"content": "遗漏步骤", "status": "in_progress"},
+        ],
+        "counts": {"pending": 0, "in_progress": 1, "completed": 1},
+    }]
+
+    event = _finalize_todo_success(state, execution_status="success")
+
+    assert event == {
+        "type": "todo_update",
+        "todos": [
+            {"content": "已完成步骤", "status": "completed"},
+            {"content": "遗漏步骤", "status": "completed"},
+        ],
+        "counts": {"pending": 0, "in_progress": 0, "completed": 2},
+    }
+    assert _final_process_timeline(state)[0]["counts"] == {
+        "pending": 0,
+        "in_progress": 0,
+        "completed": 2,
+    }
+
+
+def test_success_finalization_does_not_duplicate_already_completed_todos():
+    state = [{
+        "kind": "todo",
+        "todos": [{"content": "已完成步骤", "status": "completed"}],
+    }]
+
+    assert _finalize_todo_success(state, execution_status="success") is None
+
+
+@pytest.mark.parametrize(
+    "execution_status",
+    ["error", "cancelled", "awaiting_permission", "awaiting_external_execution", "awaiting_user"],
+)
+def test_non_success_finalization_preserves_todo_status(execution_status):
+    state = [{
+        "kind": "todo",
+        "todos": [{"content": "未完成步骤", "status": "in_progress"}],
+    }]
+
+    assert _finalize_todo_success(state, execution_status=execution_status) is None
+    assert state[0]["todos"][0]["status"] == "in_progress"
+
+
+def test_todo_snapshot_is_restored_when_a_pending_execution_resumes():
+    pending_stream_state = {}
+    capture_todo_update(pending_stream_state, {
+        "type": "todo_update",
+        "todos": [{"content": "等待确认后继续", "status": "in_progress"}],
+    })
+    pending = SimpleNamespace(
+        state={},
+        snapshot=SimpleNamespace(stream_state=pending_stream_state),
+    )
+    process_timeline_state = []
+
+    _restore_todo_snapshot_from_pending(process_timeline_state, pending)
+
+    assert process_timeline_state == [{
+        "kind": "todo",
+        "id": "todo_current",
+        "title": "任务清单",
+        "todos": [{"content": "等待确认后继续", "status": "in_progress"}],
+        "counts": {"pending": 0, "in_progress": 1, "completed": 0},
     }]
 
 

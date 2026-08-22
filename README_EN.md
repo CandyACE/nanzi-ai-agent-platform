@@ -103,6 +103,8 @@ The platform revolves around the following core capability matrix:
 
 ## 🌟 Core Capabilities
 
+![NanZi Core Capabilities Matrix](docs/images/core.png)
+
 ### 1. 🧠 Multi-Engine & Hybrid Orchestration
 *   **Smart routing**: When no agent is specified, heuristic shortcuts (greetings, web search, ChatBI session break) run before LLM semantic routing; multi-intent parallel execution with Synthesizer aggregation.
 *   **Direct expert selection**: Embed expert mode, `agent_id`, or `@mention` skips auto-routing and loads the chosen agent.

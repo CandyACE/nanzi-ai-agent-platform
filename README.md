@@ -109,6 +109,8 @@
 
 ## 🌟 核心能力 (Core Capabilities)
 
+![NanZi 核心能力矩阵](docs/images/core.png)
+
 ### 1. 🧠 多引擎与混合编排 (Multi-Engine & Hybrid Orchestration)
 *   **智能路由**：未指定智能体时，先走问候/联网/ChatBI 会话亲和性（`KEEP`/`BREAK`/`UNCERTAIN`）等启发式短路，再 LLM 语义路由；支持多意图并行与 Synthesizer 聚合。
 *   **专家直选**：Embed 专家模式、`agent_id` 或 `@` 提及可跳过自动路由，直达指定智能体。

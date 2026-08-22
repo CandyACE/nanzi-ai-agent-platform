@@ -628,6 +628,8 @@ class AssistantAgentRunner(BaseExecutor):
 
         from app.core.context import set_agent_context
         import asyncio
+        from app.services.ai.runtime.agentscope.process_timeline_snapshot import capture_todo_update
+
         event_queue = asyncio.Queue()
         ctx.event_queue = event_queue
 
@@ -670,6 +672,8 @@ class AssistantAgentRunner(BaseExecutor):
                         if tag == "core":
                             yield val
                         elif tag == "queue":
+                            if isinstance(val, dict):
+                                capture_todo_update(state, val)
                             yield val
                         elif tag == "cancelled":
                             raise asyncio.CancelledError()

@@ -202,6 +202,41 @@ def _final_process_timeline(state: Optional[List[Dict[str, Any]]]):
     return finalize_process_timeline(state)
 
 
+def _finalize_todo_success(
+    state: Optional[List[Dict[str, Any]]],
+    *,
+    execution_status: str,
+) -> Optional[Dict[str, Any]]:
+    """仅对成功结束的当前轮 Todo 做后端收尾。"""
+    if execution_status != "success":
+        return None
+    from app.services.ai.runtime.agentscope.process_timeline_snapshot import complete_todo_items
+
+    event = complete_todo_items(state)
+    if event:
+        logger.info(
+            "[Todo] Backend finalized checklist after successful execution: completed=%d",
+            int((event.get("counts") or {}).get("completed", 0)),
+        )
+    return event
+
+
+def _restore_todo_snapshot_from_pending(
+    process_timeline_state: List[Dict[str, Any]],
+    pending: Any,
+) -> None:
+    """恢复挂起前的 Todo 快照，确保确认/外部执行恢复仍能完成原清单。"""
+    pending_state = getattr(pending, "state", None)
+    snapshot_state = getattr(getattr(pending, "snapshot", None), "stream_state", None)
+    for candidate in (pending_state, snapshot_state):
+        if not isinstance(candidate, dict):
+            continue
+        todo_snapshot = candidate.get("todo_snapshot")
+        if isinstance(todo_snapshot, dict):
+            _track_process_timeline(process_timeline_state, todo_snapshot)
+            return
+
+
 def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。
 
@@ -3217,6 +3252,13 @@ class AgentService:
                     "content": no_tool_message,
                 }
 
+            todo_completion = _finalize_todo_success(
+                (shared_state or {}).get("process_timeline"),
+                execution_status=execution_status,
+            )
+            if todo_completion:
+                yield todo_completion
+
             p_tokens, c_tokens, t_tokens = 0, 0, 0
             try:
                 from app.services.ai.audit import aggregate_tokens_from_trace_buffer
@@ -3434,6 +3476,7 @@ class AgentService:
         )
 
         process_timeline_state: List[Dict[str, Any]] = []
+        _restore_todo_snapshot_from_pending(process_timeline_state, pending)
         permission_chunk = {
             "type": "permission_result",
             "status": "success" if confirmed else "rejected",
@@ -3477,6 +3520,13 @@ class AgentService:
                 "content": "当前会话正在处理中，请稍后再试。",
             }
             return
+
+        todo_completion = _finalize_todo_success(
+            process_timeline_state,
+            execution_status=execution_status,
+        )
+        if todo_completion:
+            yield todo_completion
 
         p_tokens, c_tokens, t_tokens = 0, 0, 0
         trace_buffer = runner.trace_buffer
@@ -3699,6 +3749,7 @@ class AgentService:
         execution_results = self._build_external_execution_results(results)
 
         process_timeline_state: List[Dict[str, Any]] = []
+        _restore_todo_snapshot_from_pending(process_timeline_state, pending)
         external_chunk = {
             "type": "external_execution_result",
             "status": "success",
@@ -3741,6 +3792,13 @@ class AgentService:
                 "content": "当前会话正在处理中，请稍后再试。",
             }
             return
+
+        todo_completion = _finalize_todo_success(
+            process_timeline_state,
+            execution_status=execution_status,
+        )
+        if todo_completion:
+            yield todo_completion
 
         p_tokens, c_tokens, t_tokens = 0, 0, 0
         trace_buffer = runner.trace_buffer
