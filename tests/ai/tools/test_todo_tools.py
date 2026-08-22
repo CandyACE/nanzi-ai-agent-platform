@@ -20,7 +20,8 @@ def _context(queue=None):
 @pytest.mark.asyncio
 async def test_todo_write_replaces_full_list_and_emits_json_safe_snapshot(monkeypatch):
     queue = asyncio.Queue()
-    monkeypatch.setattr(todo_tools, "get_current_agent_context", lambda: _context(queue))
+    context = _context(queue)
+    monkeypatch.setattr(todo_tools, "get_current_agent_context", lambda: context)
 
     result = await todo_tools.todo_write.ainvoke(
         {
@@ -41,6 +42,11 @@ async def test_todo_write_replaces_full_list_and_emits_json_safe_snapshot(monkey
         "counts": {"pending": 1, "in_progress": 1, "completed": 1},
     }
     assert queue.get_nowait() == {
+        "type": "todo_update",
+        "todos": result["todos"],
+        "counts": result["counts"],
+    }
+    assert context.todo_snapshot == {
         "type": "todo_update",
         "todos": result["todos"],
         "counts": result["counts"],

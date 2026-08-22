@@ -83,6 +83,9 @@ class AgentContext(BaseModel):
     # Queue for streaming sub-agent log/progress chunks back to client
     event_queue: Optional[Any] = None
 
+    # Latest current-turn Todo snapshot for pending confirmation/external resume.
+    todo_snapshot: Optional[Dict[str, Any]] = None
+
 agent_context: ContextVar[Optional[AgentContext]] = ContextVar("agent_context", default=None)
 
 def get_current_agent_context() -> Optional[AgentContext]:

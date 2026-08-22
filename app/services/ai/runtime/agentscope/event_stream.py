@@ -132,6 +132,13 @@ def _pending_request_id_field(kind: str) -> str:
     return "permission_request_id" if kind == "permission" else "external_execution_request_id"
 
 
+def _sync_todo_snapshot_from_context(state: Dict[str, Any], context: Any) -> None:
+    """在挂起快照注册前复制当前轮 Todo，避免恢复时丢失清单。"""
+    snapshot = getattr(context, "todo_snapshot", None) if context is not None else None
+    if isinstance(snapshot, dict):
+        state["todo_snapshot"] = dict(snapshot)
+
+
 async def stream_pending_tool_interrupt(
     *,
     event: Any,
@@ -146,6 +153,7 @@ async def stream_pending_tool_interrupt(
     from app.services.ai.runtime.agentscope.confirmations import (
         pending_agentscope_confirmations,
     )
+    from app.core.context import get_current_agent_context
 
     request_id_field = _pending_request_id_field(kind)
     for tool_call in getattr(event, "tool_calls", []) or []:
@@ -162,6 +170,7 @@ async def stream_pending_tool_interrupt(
             from app.services.ai.browser.browser_policy import redact_browser_arguments
 
             tool_args = redact_browser_arguments({**tool_args, "sensitive": True})
+        _sync_todo_snapshot_from_context(state, get_current_agent_context())
         pending = await pending_agentscope_confirmations.register(
             kind=kind,
             agent=agent,

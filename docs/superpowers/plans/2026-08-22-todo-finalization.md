@@ -4,7 +4,7 @@
 
 **Goal:** 在任务正常成功结束时，由后端将当前轮 Todo 中剩余的 `pending` / `in_progress` 项统一收尾为 `completed`，避免模型忘记最后一次更新。
 
-**Architecture:** 在时间线快照模块增加一个纯内存 Todo 收尾 helper，负责校验当前快照、原地更新状态并返回一次 `todo_update` 事件。AgentScope 运行时状态保存最近 Todo 快照，挂起恢复时先还原该快照。AgentService 仅在 `execution_status == "success"` 的普通执行、权限恢复和外部执行恢复路径调用该 helper，并在最终持久化前 yield 事件；其他状态不调用，保留原快照。
+**Architecture:** 在时间线快照模块增加一个纯内存 Todo 收尾 helper，负责校验当前快照、原地更新状态并返回一次 `todo_update` 事件。请求级 AgentContext 保存最近 Todo 快照，挂起注册前复制到 AgentScope 运行时状态，恢复时先还原该快照。AgentService 仅在 `execution_status == "success"` 的普通执行、权限恢复和外部执行恢复路径调用该 helper，并在最终持久化前 yield 事件；其他状态不调用，保留原快照。
 
 **Tech Stack:** Python 3.11、FastAPI 服务层、pytest、现有 `process_timeline_snapshot` 时间线快照协议。
 
@@ -162,7 +162,7 @@ if todo_completion:
 
 - [x] **Step 2: 在权限恢复和外部执行恢复路径复用同一门控**
 
-在两处恢复方法开始时从 pending stream state 还原最近 Todo 快照；执行流结束后、token 汇总前分别加入同样的 `todo_completion` 片段，使用各自的 `process_timeline_state` 和 `execution_status`。AgentScope runner 在转发 `todo_update` 队列事件时同步写入运行时状态，供 Redis/内存挂起快照保存。
+在两处恢复方法开始时从 pending stream state 还原最近 Todo 快照；执行流结束后、token 汇总前分别加入同样的 `todo_completion` 片段，使用各自的 `process_timeline_state` 和 `execution_status`。`todo_write` 将快照写入 AgentContext，挂起注册前由 event stream 复制到 Redis/内存挂起状态，避免依赖异步队列消费时序。
 
 - [x] **Step 3: 运行静态和 focused 回归**
 

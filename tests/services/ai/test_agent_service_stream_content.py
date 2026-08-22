@@ -10,7 +10,7 @@ from app.services.ai.agent_service import (
     _restore_todo_snapshot_from_pending,
     _track_process_timeline,
 )
-from app.services.ai.runtime.agentscope.process_timeline_snapshot import capture_todo_update
+from app.services.ai.runtime.agentscope.event_stream import _sync_todo_snapshot_from_context
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -171,11 +171,13 @@ def test_non_success_finalization_preserves_todo_status(execution_status):
 
 
 def test_todo_snapshot_is_restored_when_a_pending_execution_resumes():
-    pending_stream_state = {}
-    capture_todo_update(pending_stream_state, {
-        "type": "todo_update",
-        "todos": [{"content": "等待确认后继续", "status": "in_progress"}],
-    })
+    pending_stream_state = {
+        "todo_snapshot": {
+            "type": "todo_update",
+            "todos": [{"content": "等待确认后继续", "status": "in_progress"}],
+            "counts": {"pending": 0, "in_progress": 1, "completed": 0},
+        },
+    }
     pending = SimpleNamespace(
         state={},
         snapshot=SimpleNamespace(stream_state=pending_stream_state),
@@ -191,6 +193,29 @@ def test_todo_snapshot_is_restored_when_a_pending_execution_resumes():
         "todos": [{"content": "等待确认后继续", "status": "in_progress"}],
         "counts": {"pending": 0, "in_progress": 1, "completed": 0},
     }]
+
+
+def test_todo_snapshot_is_copied_from_agent_context_before_pending_registration():
+    stream_state = {}
+    context = SimpleNamespace(todo_snapshot={
+        "type": "todo_update",
+        "todos": [{"content": "挂起前的任务", "status": "in_progress"}],
+        "counts": {"pending": 0, "in_progress": 1, "completed": 0},
+    })
+
+    _sync_todo_snapshot_from_context(stream_state, context)
+
+    assert stream_state["todo_snapshot"] == context.todo_snapshot
+
+
+def test_runner_does_not_reference_unscoped_core_stream_state_for_todo_events():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "app/services/ai/runners/assistant_agent_runner.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "capture_todo_update(state, val)" not in source
 
 
 def test_accumulate_reasoning_content_is_stored_separately():

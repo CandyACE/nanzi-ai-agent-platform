@@ -235,23 +235,6 @@ def complete_todo_items(state: Optional[List[Dict[str, Any]]]) -> Optional[Dict[
     return None
 
 
-def capture_todo_update(state: Dict[str, Any], chunk: Dict[str, Any]) -> None:
-    """把最近一次 Todo 快照放入可跨挂起恢复的运行时状态。"""
-    if str(chunk.get("type") or "") != "todo_update":
-        return
-    normalized = _normalize_todo_update(chunk)
-    if normalized is None:
-        return
-    if not normalized["todos"]:
-        state.pop("todo_snapshot", None)
-        return
-    state["todo_snapshot"] = {
-        "type": "todo_update",
-        "todos": normalized["todos"],
-        "counts": normalized["counts"],
-    }
-
-
 def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
     """Mutate ``state`` with one user-visible thinking-card event."""
     if not isinstance(chunk, dict):

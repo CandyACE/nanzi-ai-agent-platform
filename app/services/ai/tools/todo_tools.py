@@ -97,6 +97,8 @@ class TodoWriteTool(BaseTool):
             "counts": counts,
         }
         context = get_current_agent_context()
+        if context is not None:
+            context.todo_snapshot = event if todos else None
         event_queue = getattr(context, "event_queue", None) if context else None
         if event_queue is not None:
             try:
