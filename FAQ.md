@@ -1121,12 +1121,33 @@ Docker 沙箱运行依赖 AgentScope 规范的专用执行基座镜像（内置 
 ```bash
 # 检查当前预构建状态
 curl -X GET "http://127.0.0.1:8001/api/v1/admin/sandbox/docker/prebuild-status" \
-     -H "Authorization: Bearer <ADMIN_TOKEN>"
+     -H "X-API-Key: <ADMIN_API_KEY>"
 
 # 强制触发预构建
 curl -X POST "http://127.0.0.1:8001/api/v1/admin/sandbox/docker/prebuild?force=true" \
-     -H "Authorization: Bearer <ADMIN_TOKEN>"
+     -H "X-API-Key: <ADMIN_API_KEY>"
 ```
+
+##### 4. 运维脚本直接构建与代理支持（推荐排查方案）
+
+在需要网络代理才能拉取 Docker 镜像或安装 pip 依赖的受限网络环境中，您可直接在宿主机或进入平台 Docker 容器内部运行预构建运维脚本：
+
+```bash
+# 1. 带 HTTP/HTTPS 代理执行预构建（实时流式查看 Docker build 进度）
+./prebuild-sandbox.sh --proxy http://10.0.0.1:7890
+
+# 2. 或在环境中预设代理环境变量后直接运行（自动识别）
+export HTTP_PROXY=http://10.0.0.1:7890 HTTPS_PROXY=http://10.0.0.1:7890
+./prebuild-sandbox.sh
+
+# 3. 仅检查预构建状态与确定性 Tag
+./prebuild-sandbox.sh --status
+
+# 4. 指定特定基础镜像或强制重建
+./prebuild-sandbox.sh --base-image python:3.11-slim --force --proxy http://10.0.0.1:7890
+```
+
+> 💡 **提示**：通过 `./prebuild-sandbox.sh` 直接构建属于服务器本地/容器内部运维操作，**无需传递 API Key**。构建成功后会自动将预构建完成标记写入数据库与 Redis，回到前端管理页面刷新即可看到已就绪状态。
 
 ---
 
@@ -1180,9 +1201,10 @@ sequenceDiagram
 
 ##### Q2: 预构建阶段拉取基础镜像卡住、超时或报 `access denied`
  
-- **原因**：部分公有云加速地址（如阿里云未登录状态）会拦截匿名拉取报 access denied，或直接访问 Docker Hub 发生网络阻塞。
+- **原因**：部分公有云加速地址（如阿里云未登录状态）会拦截匿名拉取报 access denied，或直接访问 Docker Hub / PyPI 发生网络阻塞。
 - **解决方案**：
-  在【系统配置】->【安全沙箱】中确保选用官方标准 **`python:3.11-slim`**，并在本地 Docker daemon 配置合法镜像加速器/代理；或选择「自定义镜像地址…」填入企业私有 Harbor 镜像地址后点击预构建。
+  1. 在【系统配置】->【安全沙箱】中确保选用官方标准 **`python:3.11-slim`**，并在本地 Docker daemon 配置合法镜像加速器/代理；或选择「自定义镜像地址…」填入企业私有 Harbor 镜像地址后点击预构建；
+  2. 若当前机器需要 HTTP/HTTPS 代理才能访问外部网络，可直接在宿主机或进入容器终端运行 `./prebuild-sandbox.sh --proxy http://<代理IP>:<端口>` 进行构建，可实时流式观察下载与编译日志并自动落库。
 
 ##### Q3: 普通用户提示 `403 Forbidden` 无法启动沙箱
 
