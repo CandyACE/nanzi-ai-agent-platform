@@ -313,3 +313,17 @@ def test_multi_agent_toggle_has_single_toast_source():
     assert "多智能体协同已关闭" in settings_source
     assert "triggerMultiAgentHint" not in embed_source
     assert "watch(() => config.enableMultiAgent" not in embed_source
+
+
+def test_markdown_code_block_renders_clear_foreground_and_fence_structure():
+    md_source = _source("frontend/src/utils/markdown.ts")
+    renderer_source = _source("frontend/src/components/MessageRenderer.vue")
+    embed_source = _source("frontend/src/views/EmbedChat.vue")
+
+    assert "code-block-wrapper" in md_source
+    assert "hljs-code" in md_source
+    assert "color: #0f172a !important" in renderer_source
+    assert "color: #f1f5f9 !important" in renderer_source
+    assert "ui-monospace" in renderer_source
+    assert "ui-monospace" in embed_source
+

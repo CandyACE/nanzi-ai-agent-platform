@@ -22,10 +22,10 @@ class MemoryService:
     DATA_RESULT_STACK_SUFFIX = "data_result_stack_v1"
     SESSION_TOOL_ARTIFACT_SUFFIX = "session_tool_artifact_v1"
     
-    def __init__(self, max_history_turns: int = 50, ttl: int = 604800):
+    def __init__(self, max_history_turns: int = 50, ttl: int = 2592000):
         """
         :param max_history_turns: Maximum number of dialogue turns (user + assistant) to keep.
-        :param ttl: Time-to-live for the conversation in seconds (default 7 days).
+        :param ttl: Time-to-live for the conversation in seconds (default 30 days).
         """
         self.max_history_len = max_history_turns * 2
         self.ttl = ttl
@@ -188,7 +188,7 @@ class MemoryService:
             return 0
 
     async def set_digest(self, user_id: str, conversation_id: str, content: str) -> None:
-        """写入跨轮溢出摘录（digest）文本，沿用会话 TTL（默认 7 天）。"""
+        """写入跨轮溢出摘录（digest）文本，沿用会话 TTL（默认 30 天）。"""
         redis = await get_redis()
         if not redis:
             return

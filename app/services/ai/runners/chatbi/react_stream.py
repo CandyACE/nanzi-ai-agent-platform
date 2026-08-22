@@ -7,13 +7,14 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict
 
 from app.schemas.agent import AgentExecutionStep
 from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content, map_sql_tool_error_for_user
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk, map_standard_agentscope_event
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.sql_result_compact import (
     mark_successful_nonempty_sql,
@@ -49,6 +50,9 @@ async def stream_agentscope_events(
     stream_meta = stream_meta or {}
     runner._last_run_state = state
     stream_state = runner._build_stream_state(state, stream_meta)
+    execution_backend = getattr(runner, "_execution_backend", None)
+    if execution_backend:
+        stream_state.setdefault("execution_backend", execution_backend)
 
     async def on_before_pending_interrupt(pending_state: Dict[str, Any]) -> None:
         runner._sync_pending_data_run_state(state, pending_state)

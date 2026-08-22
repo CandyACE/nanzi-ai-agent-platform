@@ -2024,6 +2024,47 @@ const resolveReqContent = (msg: Message) => {
   return reqContent;
 };
 
+/** 发给 API 的消息：已有会话只发送当前轮 user，历史由服务端 Redis 负责提供。 */
+const buildOutboundMessages = () => {
+  const sendable = messages.value.filter(isChatContextMessage);
+  if (conversationId.value) {
+    const latestUser = [...sendable].reverse().find((m) => m.role === "user");
+    if (latestUser) {
+      const msgObj: any = {
+        role: "user",
+        content: resolveReqContent(latestUser),
+      };
+      if (latestUser.files?.length) {
+        msgObj.files = latestUser.files;
+      }
+      return [msgObj];
+    }
+    return [];
+  }
+
+  const lastUserIdx = sendable.reduce(
+    (last, m, i) => (m.role === "user" ? i : last),
+    -1,
+  );
+  return sendable.map((m, idx) => {
+    const role = m.role === "agent" ? "assistant" : m.role;
+    if (m.role === "user" && idx !== lastUserIdx) {
+      return {
+        role,
+        content: splitUserMessageContent(m.content || "").userPart,
+      };
+    }
+    const msgObj: any = {
+      role,
+      content: m.role === "user" ? resolveReqContent(m) : (m.content || ""),
+    };
+    if (m.role === "user" && m.files?.length) {
+      msgObj.files = m.files;
+    }
+    return msgObj;
+  });
+};
+
 const collectKnowledgeDatasetIds = (): string[] => {
   const ids: string[] = [];
   const pushId = (raw: string) => {
@@ -3159,30 +3200,7 @@ const sendMessageInternal = async () => {
 
     const knowledgeDatasetIds = collectKnowledgeDatasetIds();
     const requestBody: Record<string, unknown> = {
-        messages: (() => {
-          const sendable = messages.value.filter(isChatContextMessage);
-          const lastUserIdx = sendable.reduce(
-            (last, m, i) => (m.role === "user" ? i : last),
-            -1
-          );
-          return sendable.map((m, idx) => {
-            const role = m.role === "agent" ? "assistant" : m.role;
-            if (m.role === "user" && idx !== lastUserIdx) {
-              return {
-                role,
-                content: splitUserMessageContent(m.content || "").userPart,
-              };
-            }
-            const msgObj: any = {
-              role,
-              content: m.role === "user" ? resolveReqContent(m) : (m.content || ""),
-            };
-            if (m.role === "user" && m.files?.length) {
-              msgObj.files = m.files;
-            }
-            return msgObj;
-          });
-        })(),
+        messages: buildOutboundMessages(),
         stream: true,
         enable_multi_agent: debugConfig.enableMultiAgent,
         debug_options: debugOptions,

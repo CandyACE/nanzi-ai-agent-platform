@@ -105,6 +105,7 @@ class DataAgentRunner(BaseExecutor):
         self._active_history: List[Dict[str, str]] = []
         self._mixed_task_plan_active = False
         self._evidence_metadata: Dict[str, Any] = {}
+        self._execution_backend: str | None = None
 
     def _ensure_grounding_ledger(self) -> EvidenceLedger:
         """Share one ledger with native tools and the final ChatBI guard."""

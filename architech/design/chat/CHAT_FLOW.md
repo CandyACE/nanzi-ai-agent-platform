@@ -218,7 +218,7 @@ nanzi:agent:ltm:{user_id}
 |------|--------|------|
 | `max_history_turns` | 50 | 最多保留 50 **轮**对话 |
 | `max_history_len` | 100 | LIST 最多 **100 条**消息（user + assistant 各算一条） |
-| `ttl` | 604800（7 天） | 每次 `add_message` 刷新过期时间 |
+| `ttl` | 2592000（30 天） | 每次 `add_message` 刷新过期时间 |
 
 #### 三层「条数」限制（勿混淆）
 

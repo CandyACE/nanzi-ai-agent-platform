@@ -34,9 +34,10 @@ md.renderer.rules.fence = function (tokens, idx, _options, _env, _self) {
     langName = info.split(/\s+/g)[0] || '';
   }
 
-  if (langName && hljs.getLanguage(langName)) {
+  const effectiveLang = langName.toLowerCase();
+  if (effectiveLang && hljs.getLanguage(effectiveLang)) {
     try {
-      highlighted = hljs.highlight(token.content, { language: langName, ignoreIllegals: true }).value;
+      highlighted = hljs.highlight(token.content, { language: effectiveLang, ignoreIllegals: true }).value;
     } catch (_) {
       highlighted = md.utils.escapeHtml(token.content);
     }
@@ -44,8 +45,9 @@ md.renderer.rules.fence = function (tokens, idx, _options, _env, _self) {
     highlighted = md.utils.escapeHtml(token.content);
   }
 
-  // Custom wrapper structure
-  return `<div class="code-block-wrapper"><pre class="hljs"><code>${highlighted}</code></pre><span class="code-copy-btn" title="复制代码"></span></div>`;
+  const langClass = effectiveLang ? ` language-${md.utils.escapeHtml(effectiveLang)}` : '';
+  // Custom wrapper structure with clear code styling
+  return `<div class="code-block-wrapper"><pre class="hljs${langClass}"><code class="hljs-code">${highlighted}</code></pre><span class="code-copy-btn" title="复制代码"></span></div>`;
 };
 
 // Allow "quick:" protocol in links

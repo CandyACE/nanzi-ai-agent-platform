@@ -207,21 +207,16 @@ async def test_map_standard_agentscope_event_interrupts_on_external_execution():
 
 
 @pytest.mark.asyncio
-async def test_bash_env_emission_follows_sandbox_policy(monkeypatch):
-    """bash_env SSE 事件的 env 取值随 sandbox_policy 多态变化。
-
-    非 local 策略（docker / e2b / ssh）直接以策略值上报；
-    local 策略回落为进程环境的容器/宿主探测结果。
-    """
+async def test_bash_env_emission_follows_bound_execution_backend(monkeypatch):
+    """bash_env SSE 事件必须反映实际绑定的工具后端，而不是配置猜测。"""
     from unittest.mock import AsyncMock
 
     import app.services.config_service as cfg
-    import app.services.ai.runtime.agentscope.event_stream as es
     import app.utils.env as env_mod
 
     FALLBACK = "host"
 
-    async def _run(policy):
+    async def _run(policy, execution_backend):
         monkeypatch.setattr(
             cfg.ConfigService, "get",
             AsyncMock(return_value=policy),
@@ -229,6 +224,7 @@ async def test_bash_env_emission_follows_sandbox_policy(monkeypatch):
         # local 策略回落时才调用；其余策略不会触达探测函数
         monkeypatch.setattr(env_mod, "get_env", lambda: FALLBACK)
         state = new_native_stream_state()
+        state["execution_backend"] = execution_backend
         event = SimpleNamespace(
             type="TOOL_CALL_START",
             tool_call_id="t1",
@@ -241,12 +237,28 @@ async def test_bash_env_emission_follows_sandbox_policy(monkeypatch):
             "env"
         ]
 
-    # 非 local 策略 → 直接以策略值上报
-    assert await _run("docker") == "docker"
-    assert await _run("e2b") == "e2b"
-    assert await _run("ssh") == "ssh"
-    # local 策略 → 回落为进程环境探测结果
-    assert await _run("local") == FALLBACK
+    assert await _run("docker", "host") == "host"
+    assert await _run("docker", "docker") == "docker"
+    assert await _run("e2b", "e2b") == "e2b"
+    assert await _run("ssh", "ssh") == "ssh"
+    assert await _run("local", FALLBACK) == FALLBACK
+
+
+def test_chatbi_stream_state_preserves_bound_execution_backend():
+    from app.services.ai.runners.chatbi.state_serialization import (
+        build_stream_state,
+        pending_state_to_data_run_state,
+    )
+
+    pending_state = {
+        "execution_backend": "docker",
+        "data_run_state": {},
+    }
+
+    data_state, stream_meta = pending_state_to_data_run_state(pending_state)
+    stream_state = build_stream_state(data_state, stream_meta)
+
+    assert stream_state["execution_backend"] == "docker"
 
 
 @pytest.mark.asyncio

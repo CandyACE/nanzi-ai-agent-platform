@@ -22,7 +22,7 @@ from app.utils.fs_paths import get_data_base_dir
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TTL = timedelta(days=7)
+DEFAULT_TTL = timedelta(days=30)
 
 _OFFICE_MIME_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

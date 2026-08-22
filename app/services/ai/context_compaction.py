@@ -62,7 +62,13 @@ _ROLE_LABELS = {
 
 
 def _flatten_content(content: Any) -> str:
-    """将可能为多模态结构的 content 归一为纯文本。"""
+    """将可能为多模态结构的 content 归一为纯文本。
+
+    结构化保留策略（方案 B）：对于「有名字、可被描述」的载体（图片、附件），
+    优先输出其文件名/描述字段以便模型理解内容，而不是一律丢弃为 ``[图片]``。
+    仅当没有任何可用的描述性信息时才回退到 ``[图片]`` 占位。真正的二进制内容
+    永不进入纯文本。
+    """
     if content is None:
         return ""
     if isinstance(content, str):
@@ -71,14 +77,48 @@ def _flatten_content(content: Any) -> str:
         parts: List[str] = []
         for item in content:
             if isinstance(item, dict):
-                if item.get("type") == "text" and item.get("text"):
+                kind = item.get("type")
+                if kind == "text" and item.get("text"):
                     parts.append(str(item["text"]))
-                elif item.get("type") == "image_url":
-                    parts.append("[图片]")
+                elif kind == "image_url" or "image_url" in item:
+                    parts.append(_image_placeholder(item))
+                elif "image" in item or kind == "image":
+                    parts.append(_image_placeholder(item))
+                else:
+                    # 其它未知结构化 dict：尽量收集可读的文本字段，避免整体丢弃。
+                    label = _pick_readable_label(item)
+                    if label:
+                        parts.append(label)
             elif isinstance(item, str):
                 parts.append(item)
         return " ".join(p for p in parts if p)
     return str(content)
+
+
+def _pick_readable_label(item: Dict[str, Any]) -> str:
+    """从未知结构化 dict 中挑选最可读的字段作为标签；无则返回空串。"""
+    for key in ("name", "file_name", "filename", "description", "title", "text"):
+        val = item.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        if isinstance(val, dict):
+            nested = _pick_readable_label(val)
+            if nested:
+                return nested
+    return ""
+
+
+def _image_placeholder(item: Dict[str, Any]) -> str:
+    """把图片/附件载体归一为带描述的占位符。
+
+    形如 ``{"url": "http://x"}`` 的裸 URL 无描述，仍输出 ``[图片]``；若载体同时
+    带 ``name``/``file_name``/``description`` 等字段（如上传附件），则输出
+    ``[图片: 文件名]`` 以便模型理解内容。
+    """
+    label = _pick_readable_label(item)
+    if label:
+        return f"[图片: {label}]"
+    return "[图片]"
 
 
 def _condense(text: str, limit: int) -> str:
@@ -86,6 +126,50 @@ def _condense(text: str, limit: int) -> str:
     if len(collapsed) <= limit:
         return collapsed
     return collapsed[: max(1, limit - 1)].rstrip() + "…"
+
+
+def _structured_tool_block(tool_run_text: Any, per_message_chars: int) -> str:
+    """把某条消息的工具转录 ``tool_run_text`` 解析为「结构化优先」的摘要行。
+
+    现网 ``tool_run_text`` 由 ``assistant_agent_runner.resolve_tool_run_text`` 生成，
+    形如每行一个工具：``{tool_name}: {arg_preview} -> {output} (data_blocks=N)``。
+    方案 B 在此做「结构化优先，超出截断」：
+
+    - 优先保留**工具名 + 结论**（``-> `` 之后的输出/摘要），因为结论是模型真正
+      需要的对下游有用的部分；中间的入参 ``arg_preview`` 通常很长且价值低，优先剔除。
+    - 每个工具块尽力压缩到 ``per_message_chars`` 配额内；整段总长再受外层 max_chars
+      约束。与旧的「纯文本单行平铺」相比，不会被一条超长工具结果挤占全段配额。
+
+    返回一行规范化文本；无可用工具信息时返回空串。
+    """
+    if not tool_run_text:
+        return ""
+    raw = _flatten_content(tool_run_text)
+    if not raw:
+        return ""
+    blocks: List[str] = []
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # 解析成 工具名 + 结论。形如 "tool: arg -> out(data_blocks=N)"。
+        tool_name, _, rest = line.partition(":")
+        name = tool_name.strip()
+        if rest:
+            # 去掉入参段，跳转到 "->" 之后的结论。
+            _, arrow, output = rest.partition("->")
+            if arrow and output.strip():
+                core = output.strip()
+                # 结尾形如 (data_blocks=N) 的计数对模型价值低，去掉避免占用配额。
+                if core.endswith(")") and "(data_blocks=" in core:
+                    core = core[: core.rindex("(data_blocks=")].rstrip()
+                blocks.append(_condense(f"[{name}] {core}", per_message_chars))
+                continue
+        # 无 "->" 或没有结论：退化为工具名 + 原行（截断）。
+        blocks.append(_condense(f"[{name or '工具'}] {line}", per_message_chars))
+    if not blocks:
+        return ""
+    return " · ".join(b for b in blocks if b)
 
 
 def build_overflow_digest(
@@ -112,15 +196,17 @@ def build_overflow_digest(
         text = _condense(_flatten_content(msg.get("content")), per_message_chars)
         # 工具结果（tool_run_text）同样会随 content 一起注入模型上下文（见
         # convert_history_to_messages），摘录也应收纳，否则工具返回的结论在压缩
-        # 后会断档。工具结果单独截断、标签区分，避免挤占本人的文本配额。
-        tool_text = _condense(
-            _flatten_content(msg.get("tool_run_text")), per_message_chars
-        )
-        if tool_text:
-            text = f"{text} · 工具结果：{tool_text}".strip(" ·") if text else tool_text
-        if not text:
-            continue
-        lines.append(f"- {_ROLE_LABELS[role]}：{text}")
+        # 后会断档。方案 B：按工具结构化解析，优先保留「工具名 + 结论」，超出
+        # per_message_chars 再截断；并以独立「工具 ▸」标签区分，避免与正文平铺
+        # 一锅、被单条超长工具结果挤占全文配额。
+        tool_text = _structured_tool_block(msg.get("tool_run_text"), per_message_chars)
+        if text and tool_text:
+            lines.append(f"- {_ROLE_LABELS[role]}：{text} · 工具 ▸ {tool_text}")
+        elif text:
+            lines.append(f"- {_ROLE_LABELS[role]}：{text}")
+        elif tool_text:
+            lines.append(f"- {_ROLE_LABELS[role]} · 工具 ▸ {tool_text}")
+        # 复杂度防御：正文与工具结论都为空时，不产出"只有角色"的空壳行。
 
     # 更早的跨轮摘录作为背景行（保证最差也能保留一段），本轮新丢弃片段在其后。
     prev_items: List[str] = []

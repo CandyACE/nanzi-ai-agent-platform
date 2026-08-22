@@ -1,6 +1,11 @@
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
+from app.schemas.agent import ChatConfig
 from app.services.ai import agent_service
+from app.services.ai.agent_service import AgentService
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -16,3 +21,98 @@ def test_client_prefix_history_length_ignores_ui_system_messages():
 
     assert hasattr(agent_service, "_client_prefix_history_len")
     assert agent_service._client_prefix_history_len(messages) == 2
+
+
+def test_regular_completion_history_policy_does_not_truncate_server_history():
+    server_history = [{"role": "user", "content": "历史问题"}]
+    incoming_messages = [
+        {"role": "user", "content": "历史问题"},
+        {"role": "assistant", "content": "历史回答"},
+        {"role": "user", "content": "本轮问题"},
+    ]
+
+    assert agent_service._regular_completion_history(server_history, incoming_messages) == server_history
+
+
+def test_chat_history_boundary_prompt_marks_only_latest_user_as_current():
+    prompt = agent_service.build_chat_history_boundary_prompt("原有系统提示")
+
+    assert "历史" in prompt
+    assert "只有最新一条 user 消息" in prompt
+    assert "原有系统提示" in prompt
+
+
+@pytest.mark.asyncio
+async def test_regular_completion_does_not_truncate_server_history():
+    class NoopExecutor:
+        async def execute(self, messages):
+            yield {"content": "ok"}
+
+    service = AgentService()
+    config = ChatConfig(
+        agent_id="agent-1",
+        agent_name="helper",
+        agent_display_name="Helper",
+        model_name="test-model",
+        temperature=0,
+        system_prompt="Base prompt",
+        tools=[],
+    )
+
+    async def fake_dispatch(*args, **kwargs):
+        return NoopExecutor()
+
+    @asynccontextmanager
+    async def noop_lane_hold(*args, **kwargs):
+        yield False
+
+    with (
+        patch.object(service, "_quota_block_message", AsyncMock(return_value=None)),
+        patch(
+            "app.services.ai.context_manager.AgentContextManager.resolve_agent_config",
+            AsyncMock(return_value=(config, None)),
+        ),
+        patch(
+            "app.services.ai.context_manager.AgentContextManager.setup_context",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.ai.agent_service.memory_service.get_history",
+            AsyncMock(return_value=[{"role": "user", "content": "旧问题"}]),
+        ),
+        patch("app.services.ai.agent_service.memory_service.add_message", AsyncMock()),
+        patch(
+            "app.services.ai.agent_service.memory_service.truncate_history",
+            AsyncMock(),
+        ) as truncate_history,
+        patch(
+            "app.services.ai.agent_service.AgentDispatcher.dispatch",
+            side_effect=fake_dispatch,
+        ),
+        patch(
+            "app.services.ai.agent_service.conversation_run_lane.hold",
+            side_effect=noop_lane_hold,
+        ),
+        patch(
+            "app.services.ai.agent_service.AuditManager.log_transaction",
+            AsyncMock(),
+        ),
+        patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="20")),
+    ):
+        chunks = [
+            chunk
+            async for chunk in service.chat_completion_stream(
+                [
+                    {"role": "user", "content": "旧问题"},
+                    {"role": "assistant", "content": "旧回答"},
+                    {"role": "user", "content": "本轮问题"},
+                ],
+                agent_id="agent-1",
+                conversation_id="conversation-1",
+                user_info={"user_id": "1", "role": "admin", "user_name": "admin"},
+                enable_multi_agent=False,
+            )
+        ]
+
+    assert any(chunk.get("content") == "ok" for chunk in chunks)
+    truncate_history.assert_not_awaited()

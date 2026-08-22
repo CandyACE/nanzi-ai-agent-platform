@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Mapping, Sequence
 
+from app.core.redis import get_redis
 from app.services.ai.memory_service import memory_service
 from app.services.config_service import ConfigService
 from app.services.schema_chunk_format import estimate_text_tokens
+
+logger = logging.getLogger(__name__)
+
+
+def _empty_context_breakdown() -> dict[str, Any]:
+    return {
+        "system_prompt_tokens": 0,
+        "tools_tokens": 0,
+        "conversation_tokens": 0,
+        "total_tokens": 0,
+        "estimated": False,
+        "source": "unavailable",
+    }
 
 
 def empty_context_usage() -> dict[str, Any]:
@@ -22,7 +38,48 @@ def empty_context_usage() -> dict[str, Any]:
         "prompt_overhead_reservation_tokens": None,
         "overhead_reservation_tokens": None,
         "usage_percentage": None,
+        "context_breakdown": None,
     }
+
+
+async def _latest_runtime_context_breakdown(
+    *,
+    user_id: Any,
+    conversation_id: str,
+) -> dict[str, Any] | None:
+    """读取最近一次运行上下文的固定开销，供会话总量只合并一次。"""
+    if user_id is None or not conversation_id:
+        return None
+
+    try:
+        from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
+
+        uid = str(user_id)
+        key = f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:{STATS_KEY_SUFFIX}"
+        redis = await get_redis()
+        if not redis:
+            return None
+        rows = await redis.lrange(key, -1, -1)
+        if not rows:
+            return None
+        raw = rows[-1]
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        record = json.loads(raw) if isinstance(raw, str) else raw
+        breakdown = record.get("context_breakdown") if isinstance(record, Mapping) else None
+        if not isinstance(breakdown, Mapping):
+            return None
+
+        normalized = {
+            "system_prompt_tokens": max(0, int(breakdown.get("system_prompt_tokens") or 0)),
+            "tools_tokens": max(0, int(breakdown.get("tools_tokens") or 0)),
+        }
+        if not any(normalized.values()):
+            return None
+        return normalized
+    except Exception as exc:
+        logger.debug("读取最近运行上下文构成失败: %s", exc)
+        return None
 
 
 async def estimate_context_usage(
@@ -48,7 +105,7 @@ async def estimate_context_usage(
         if not history and not empty_history_is_zero:
             return empty
 
-        total_tokens = int(
+        history_tokens = int(
             sum(
                 estimate_text_tokens(
                     str(message.get("content") or "")
@@ -58,6 +115,33 @@ async def estimate_context_usage(
                 if isinstance(message, Mapping)
             )
         )
+
+        runtime_breakdown = await _latest_runtime_context_breakdown(
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        if runtime_breakdown:
+            context_breakdown = {
+                "system_prompt_tokens": runtime_breakdown["system_prompt_tokens"],
+                "tools_tokens": runtime_breakdown["tools_tokens"],
+                "conversation_tokens": history_tokens,
+                "total_tokens": (
+                    runtime_breakdown["system_prompt_tokens"]
+                    + runtime_breakdown["tools_tokens"]
+                    + history_tokens
+                ),
+                "estimated": True,
+                "source": "session_history_plus_latest_runtime_context",
+            }
+        else:
+            context_breakdown = {
+                **_empty_context_breakdown(),
+                "conversation_tokens": history_tokens,
+                "total_tokens": history_tokens,
+                "estimated": True,
+                "source": "session_history_estimate",
+            }
+        total_tokens = context_breakdown["total_tokens"]
 
         try:
             fallback_raw = await ConfigService.get("agent_context_max_tokens", "65536")
@@ -144,6 +228,7 @@ async def estimate_context_usage(
             "prompt_overhead_reservation_tokens": prompt_overhead,
             "overhead_reservation_tokens": overhead,
             "usage_percentage": percentage,
+            "context_breakdown": context_breakdown,
         }
     except Exception:
         return empty

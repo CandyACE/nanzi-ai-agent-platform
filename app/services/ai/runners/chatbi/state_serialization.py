@@ -57,7 +57,7 @@ def pending_state_to_data_run_state(
     data_state = DataRunState(**kwargs)
     stream_meta = {
         key: pending_state[key]
-        for key in ("system_content", "max_steps")
+        for key in ("system_content", "max_steps", "execution_backend")
         if key in pending_state
     }
     return data_state, stream_meta

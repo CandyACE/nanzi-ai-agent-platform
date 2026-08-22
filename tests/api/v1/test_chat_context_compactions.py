@@ -38,7 +38,7 @@ async def test_context_compactions_returns_current_users_conversation_timeline()
         "title": "上下文已压缩",
         "status": "success",
     }
-    assert response.data.retention_seconds == 604800
+    assert response.data.retention_seconds == 2592000
 
 
 @pytest.mark.asyncio

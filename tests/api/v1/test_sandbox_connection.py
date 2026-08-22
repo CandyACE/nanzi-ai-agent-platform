@@ -71,5 +71,121 @@ async def test_docker_prebuild_status_returns_manual_download_state(monkeypatch)
     assert response.data["download_url"].startswith("https://")
 
 
+@pytest.mark.asyncio
+async def test_ensure_docker_workspace_returns_running_metadata(monkeypatch):
+    from app.api.v1.endpoints.sandbox import (
+        DockerWorkspaceEnsureRequest,
+        ensure_docker_workspace_endpoint,
+    )
+
+    fake_workspace = type(
+        "FakeWorkspace",
+        (),
+        {
+            "_platform_sandbox_policy": "docker",
+            "_platform_execution_backend": "docker",
+            "_platform_workspace_id": "alice__1",
+            "_platform_container_id": "container-1",
+            "is_alive": True,
+        },
+    )()
+    captured = {}
+
+    async def fake_ensure(**kwargs):
+        captured.update(kwargs)
+        return fake_workspace
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.ensure_docker_workspace_runtime",
+        fake_ensure,
+    )
+
+    response = await ensure_docker_workspace_endpoint(
+        body=DockerWorkspaceEnsureRequest(conversation_id="c1"),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+    )
+
+    assert response.data == {
+        "status": "running",
+        "execution_backend": "docker",
+        "workspace_id": "alice__1",
+        "container_id": "container-1",
+    }
+    assert captured["user_id"] == 1
+    assert captured["user_name"] == "alice"
+    assert captured["conversation_id"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_ensure_docker_workspace_rejects_non_docker_policy(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.v1.endpoints.sandbox import (
+        DockerWorkspaceEnsureRequest,
+        ensure_docker_workspace_endpoint,
+    )
+    from app.services.ai.runtime.agentscope.workspace import DockerSandboxUnavailableError
+
+    async def fake_ensure(**kwargs):
+        raise DockerSandboxUnavailableError(
+            "sandbox policy is local",
+            reason_code="docker_policy_not_effective",
+            user_message="当前不是 Docker 沙箱模式，无需启动用户 Docker 容器。",
+        )
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.ensure_docker_workspace_runtime",
+        fake_ensure,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ensure_docker_workspace_endpoint(
+            body=DockerWorkspaceEnsureRequest(conversation_id="c1"),
+            user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {
+        "reason_code": "docker_policy_not_effective",
+        "message": "当前不是 Docker 沙箱模式，无需启动用户 Docker 容器。",
+    }
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_status_returns_existing_container_metadata(monkeypatch):
+    from app.api.v1.endpoints.sandbox import get_docker_workspace_status_endpoint
+
+    captured = {}
+
+    async def fake_status(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "running",
+            "execution_backend": "docker",
+            "workspace_id": "alice__1",
+            "container_id": "container-1",
+        }
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.docker_workspace_status_runtime",
+        fake_status,
+    )
+
+    response = await get_docker_workspace_status_endpoint(
+        conversation_id="c1",
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+    )
+
+    assert response.data == {
+        "status": "running",
+        "execution_backend": "docker",
+        "workspace_id": "alice__1",
+        "container_id": "container-1",
+    }
+    assert captured["conversation_id"] == "c1"
+    assert captured["user_id"] == 1
+    assert captured["user_name"] == "alice"
+
+
 async def _async_value(value):
     return value

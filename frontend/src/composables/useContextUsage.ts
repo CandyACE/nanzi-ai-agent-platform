@@ -1,6 +1,15 @@
 import { ref } from "vue";
 import axios from "@/utils/axios";
 
+export interface ContextBreakdown {
+  system_prompt_tokens: number;
+  tools_tokens: number;
+  conversation_tokens: number;
+  total_tokens: number;
+  estimated: boolean;
+  source: string;
+}
+
 export interface ContextUsage {
   estimated_current_tokens: number | null;
   estimated_remaining_tokens: number | null;
@@ -13,6 +22,7 @@ export interface ContextUsage {
   prompt_overhead_reservation_tokens?: number | null;
   overhead_reservation_tokens?: number | null;
   usage_percentage: number | null;
+  context_breakdown?: ContextBreakdown | null;
   sandbox_policy?: string | null;
   sandbox_runtime_env?: string | null;
 }

@@ -96,6 +96,12 @@ const props = defineProps<{
   isLoadingAgents?: boolean;
   /** URL agent_id 深链锁定：隐藏专家切换/@，禁止切自动路由 */
   lockExpertAgent?: boolean;
+  /** Docker 沙箱工作区运行状态 */
+  dockerWorkspaceStatus?: "idle" | "starting" | "running" | "error";
+  /** 当前用户分配的 Docker 容器 ID */
+  dockerWorkspaceContainerId?: string | null;
+  /** Docker 沙箱错误信息 */
+  dockerWorkspaceError?: string;
 }>();
 
 const contextUsagePercent = computed(() => {
@@ -199,6 +205,42 @@ const contextUsageStatusLabel = computed(() => {
   return "使用正常";
 });
 
+const sessionContextBreakdown = computed(() => {
+  const breakdown = props.contextUsage?.context_breakdown;
+  return breakdown && Number(breakdown.total_tokens || 0) > 0 ? breakdown : null;
+});
+
+const sessionContextBreakdownItems = computed(() => {
+  const breakdown = sessionContextBreakdown.value;
+  if (!breakdown) return [];
+  return [
+    {
+      label: "系统提示词",
+      value: Number(breakdown.system_prompt_tokens || 0),
+      color: "bg-slate-400",
+      key: "system",
+    },
+    {
+      label: "工具 schema",
+      value: Number(breakdown.tools_tokens || 0),
+      color: "bg-violet-400",
+      key: "tools",
+    },
+    {
+      label: "对话消息",
+      value: Number(breakdown.conversation_tokens || 0),
+      color: "bg-blue-400",
+      key: "conversation",
+    },
+  ];
+});
+
+const contextBreakdownSegmentWidth = (value: number) => {
+  const total = Number(sessionContextBreakdown.value?.total_tokens || 0);
+  if (!total) return "0%";
+  return `${Math.min(100, Math.max(0, (value / total) * 100))}%`;
+};
+
 const emit = defineEmits<{
   (e: 'update:modelValue', val: string): void;
   (e: 'update:approvalMode', val: ApprovalMode): void;
@@ -227,7 +269,14 @@ const emit = defineEmits<{
   (e: 'ignore-ltm'): void;
   (e: 'dismiss-ltm'): void;
   (e: 'refresh-context-compactions'): void;
+  (e: 'start-docker-workspace'): void;
+  (e: 'refresh-docker-workspace'): void;
 }>();
+
+const isDockerSandboxPolicy = computed(() => {
+  const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
+  return policy === "docker";
+});
 
 const formatLtmText = (pref: any): string => {
   if (!pref) return '';
@@ -1629,6 +1678,22 @@ defineExpose({
                       aria-valuemax="100"
                     >
                         <div
+                          v-if="sessionContextBreakdown"
+                          class="flex h-full overflow-hidden rounded-full transition-all duration-300"
+                          :style="{ width: `${contextUsagePercent}%` }"
+                          data-testid="session-context-breakdown-segment"
+                        >
+                          <div
+                            v-for="item in sessionContextBreakdownItems"
+                            :key="item.key"
+                            class="h-full transition-all duration-300"
+                            :class="item.color"
+                            :style="{ width: contextBreakdownSegmentWidth(item.value) }"
+                            :title="`${item.label} ${formatContextTokens(item.value)}`"
+                          />
+                        </div>
+                        <div
+                          v-else
                           class="h-full rounded-full transition-all duration-300"
                           :class="contextUsageTone.track"
                           :style="{ width: `${contextUsagePercent}%` }"
@@ -1662,6 +1727,30 @@ defineExpose({
                         </div>
                     </div>
                     <div
+                      v-if="sessionContextBreakdown"
+                      class="mt-2 border-t border-gray-100 pt-2 text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                    >
+                      <div class="flex items-center justify-between gap-3">
+                        <span class="font-medium">会话整体构成</span>
+                        <span class="font-mono text-[9px]">
+                          估算 {{ formatContextTokens(sessionContextBreakdown.total_tokens) }}
+                        </span>
+                      </div>
+                      <div class="mt-1.5 space-y-1">
+                        <div
+                          v-for="item in sessionContextBreakdownItems"
+                          :key="item.key"
+                          class="flex items-center justify-between gap-3 text-[10px]"
+                        >
+                          <span class="flex items-center gap-1.5">
+                            <span class="h-1.5 w-1.5 rounded-sm" :class="item.color" aria-hidden="true" />
+                            <span>{{ item.label }}</span>
+                          </span>
+                          <span class="font-mono tabular-nums">{{ formatContextTokens(item.value) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div
                       v-if="contextCompactionEnabled"
                       class="mt-2 flex items-center justify-between gap-3 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
                     >
@@ -1686,18 +1775,74 @@ defineExpose({
                     </div>
                     <div
                       v-if="sandboxPolicyLabel"
-                      class="mt-2 flex items-center justify-between gap-2 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
+                      class="mt-2 flex flex-col gap-1.5 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
                     >
-                        <span class="flex items-center gap-1.5">
-                          <component :is="sandboxPolicyIcon" class="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
-                          <span>Sandbox 策略</span>
-                        </span>
-                        <span
-                          class="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 font-mono text-[9px] font-medium"
-                          :class="sandboxPolicyBadgeClass"
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="flex items-center gap-1.5">
+                            <component :is="sandboxPolicyIcon" class="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
+                            <span>Sandbox 策略</span>
+                          </span>
+                          <span
+                            class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9px] font-medium"
+                            :class="sandboxPolicyBadgeClass"
+                          >
+                            {{ sandboxPolicyLabel }}
+                          </span>
+                        </div>
+
+                        <!-- Docker 容器运行状态与控制明细 -->
+                        <div
+                          v-if="isDockerSandboxPolicy"
+                          class="flex items-center justify-between gap-2 rounded-lg bg-gray-50/90 dark:bg-gray-800/70 px-2 py-1.5 text-[10px] font-mono border border-gray-100/90 dark:border-gray-700/70"
                         >
-                          {{ sandboxPolicyLabel }}
-                        </span>
+                          <div class="flex items-center gap-1.5 min-w-0">
+                            <span
+                              class="inline-block h-2 w-2 shrink-0 rounded-full"
+                              :class="{
+                                'bg-emerald-500 shadow-sm shadow-emerald-500/50': (dockerWorkspaceStatus || 'idle') === 'running',
+                                'bg-amber-400 animate-pulse': (dockerWorkspaceStatus || 'idle') === 'starting',
+                                'bg-rose-500 shadow-sm shadow-rose-500/50': (dockerWorkspaceStatus || 'idle') === 'error',
+                                'bg-gray-300 dark:bg-gray-600': (dockerWorkspaceStatus || 'idle') === 'idle'
+                              }"
+                            ></span>
+                            <span class="font-medium text-gray-700 dark:text-gray-200">
+                              {{
+                                (dockerWorkspaceStatus || 'idle') === 'running' ? '容器已运行' :
+                                (dockerWorkspaceStatus || 'idle') === 'starting' ? '容器启动中...' :
+                                (dockerWorkspaceStatus || 'idle') === 'error' ? '容器启动失败' : '容器未启动'
+                              }}
+                            </span>
+                            <span
+                              v-if="dockerWorkspaceContainerId"
+                              class="truncate text-[9px] text-gray-400 dark:text-gray-500 max-w-[130px]"
+                              :title="`当前容器 ID: ${dockerWorkspaceContainerId}`"
+                            >
+                              {{ dockerWorkspaceContainerId.slice(0, 12) }}
+                            </span>
+                          </div>
+
+                          <div class="shrink-0 flex items-center gap-1.5">
+                            <button
+                              v-if="(dockerWorkspaceStatus || 'idle') === 'idle' || (dockerWorkspaceStatus || 'idle') === 'error'"
+                              type="button"
+                              class="rounded bg-indigo-600 px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition-all disabled:opacity-50"
+                              :disabled="isProcessing"
+                              :title="(dockerWorkspaceStatus || 'idle') === 'error' ? (dockerWorkspaceError || '重试启动 Docker 沙箱') : '启动当前用户的 Docker 沙箱容器'"
+                              @click.stop="emit('start-docker-workspace')"
+                            >
+                              {{ (dockerWorkspaceStatus || 'idle') === 'error' ? '重试启动' : '启动容器' }}
+                            </button>
+                            <button
+                              v-else-if="(dockerWorkspaceStatus || 'idle') === 'running'"
+                              type="button"
+                              class="rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors"
+                              title="刷新容器运行状态"
+                              @click.stop="emit('refresh-docker-workspace')"
+                            >
+                              刷新
+                            </button>
+                          </div>
+                        </div>
                     </div>
                 </div>
 

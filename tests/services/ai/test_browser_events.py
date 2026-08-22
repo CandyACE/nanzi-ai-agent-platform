@@ -106,9 +106,9 @@ def test_all_state_changing_browser_tools_refresh_the_viewer(tool_name):
     assert event == {"type": "browser_refresh", "session_id": "bs-1"}
 
 
-def test_browser_tools_are_implicit_first_party_agent_tools():
+def test_browser_tools_are_explicit_first_party_agent_tools():
     names = {getattr(tool, "name", "") for tool in ToolRegistry.get_system_implicit_tools()}
-    assert {
+    assert not {
         "browser_open",
         "browser_snapshot",
         "browser_click",
@@ -128,7 +128,7 @@ def test_browser_tools_are_implicit_first_party_agent_tools():
         "browser_close_tab",
         "browser_upload",
         "browser_download",
-    }.issubset(names)
+    }.intersection(names)
 
 
 def test_browser_tools_do_not_expose_confirmation_or_sensitive_override():

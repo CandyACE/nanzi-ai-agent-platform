@@ -1208,6 +1208,11 @@
         :expert-agent-id="config.expertAgentId"
         :is-loading-agents="isLoadingAgents"
         :lock-expert-agent="isRoutingSettingsLocked"
+        :docker-workspace-status="dockerWorkspaceStatus"
+        :docker-workspace-container-id="dockerWorkspaceContainerId"
+        :docker-workspace-error="dockerWorkspaceError"
+        @start-docker-workspace="ensureDockerWorkspace"
+        @refresh-docker-workspace="refreshDockerWorkspaceStatus"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
         @update:selected-model="handleEmbedModelSelection"
         @update:thinking-enable-override="thinkingEnableOverride = $event"
@@ -1239,6 +1244,17 @@
               <ChatTodoCard :timeline="activeTodoTimeline" />
             </div>
             <div class="mt-2">
+              <Transition name="bash-banner-fade">
+                <DockerWorkspaceBanner
+                  v-if="showDockerWorkspaceControl"
+                  :workspace-status="dockerWorkspaceStatus"
+                  :workspace-error="dockerWorkspaceError"
+                  :container-id="dockerWorkspaceContainerId"
+                  @start="ensureDockerWorkspace"
+                  @refresh="refreshDockerWorkspaceStatus"
+                  @close="dismissDockerWorkspaceBanner"
+                />
+              </Transition>
               <Transition name="bash-banner-fade">
                 <BashEnvBanner
                   v-if="showBashBanner"
@@ -2132,6 +2148,7 @@ import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
+import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -2719,9 +2736,24 @@ const isChatContextMessage = (message: Message): boolean => (
   Boolean(message.content || message.files?.length)
 );
 
-/** 发给 API 的消息：仅当前轮 user 保留附件，历史轮次只传纯文字 */
+/** 发给 API 的消息：已有会话只发送当前轮 user，历史由服务端 Redis 提供。 */
 const buildOutboundMessages = () => {
   const sendable = messages.value.filter(isChatContextMessage);
+  if (conversationId.value) {
+    const latestUser = [...sendable].reverse().find((m) => m.role === "user");
+    if (latestUser) {
+      const msgObj: any = {
+        role: "user",
+        content: resolveReqContent(latestUser),
+      };
+      if (latestUser.files?.length) {
+        msgObj.files = latestUser.files;
+      }
+      return [msgObj];
+    }
+    return [];
+  }
+
   const lastUserIdx = sendable.reduce(
     (last, m, i) => (m.role === "user" ? i : last),
     -1,
@@ -3840,7 +3872,145 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
   };
 };
 
+const DOCKER_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_docker_workspace_banner";
+
+const readDockerWorkspaceBannerDismissed = (): boolean => {
+  try {
+    return localStorage.getItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+};
+
 const { contextUsage, refreshContextUsage } = useContextUsage();
+type DockerWorkspaceStatus = "idle" | "starting" | "running" | "error";
+const dockerWorkspaceStatus = ref<DockerWorkspaceStatus>("idle");
+const dockerWorkspaceStatusLoaded = ref(false);
+const dockerWorkspaceError = ref("");
+const dockerWorkspaceContainerId = ref<string | null>(null);
+const dockerWorkspaceBannerDismissed = ref(readDockerWorkspaceBannerDismissed());
+const effectiveSandboxPolicy = computed(() => (
+  String(contextUsage.value?.sandbox_policy || "").trim().toLowerCase()
+));
+const showDockerWorkspaceControl = computed(() => {
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) {
+    return false;
+  }
+  // 首次状态查询完成前静默，彻底消除页面刷新时的横条闪烁
+  if (!dockerWorkspaceStatusLoaded.value) {
+    return false;
+  }
+  // 正常运行态自动隐藏（状态收拢至输入框浮标）
+  if (dockerWorkspaceStatus.value === "running") {
+    return false;
+  }
+  // 异常态强制显示，方便用户排查
+  if (dockerWorkspaceStatus.value === "error") {
+    return true;
+  }
+  // 其他状态（idle / starting）在有效 docker 策略下尊重用户的关闭偏好
+  return effectiveSandboxPolicy.value === "docker" && !dockerWorkspaceBannerDismissed.value;
+});
+
+const resetDockerWorkspaceState = () => {
+  dockerWorkspaceStatus.value = "idle";
+  dockerWorkspaceStatusLoaded.value = false;
+  dockerWorkspaceError.value = "";
+  dockerWorkspaceContainerId.value = null;
+  dockerWorkspaceBannerDismissed.value = readDockerWorkspaceBannerDismissed();
+};
+
+const dismissDockerWorkspaceBanner = () => {
+  dockerWorkspaceBannerDismissed.value = true;
+  try {
+    localStorage.setItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY, "true");
+  } catch {}
+};
+
+const refreshDockerWorkspaceStatus = async () => {
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
+  if (dockerWorkspaceStatus.value === "starting") return;
+  const requestedConversationId = conversationId.value;
+  try {
+    const response = await axios.get(
+      "/api/v1/sandbox/docker/workspace/status",
+      {
+        params: { conversation_id: requestedConversationId },
+        headers: embedAuthHeaders(),
+      },
+    );
+    if (conversationId.value !== requestedConversationId) return;
+    const data = response.data?.data ?? response.data;
+    if (data?.execution_backend !== "docker") {
+      throw new Error("Docker 沙箱状态返回了错误的执行后端");
+    }
+    dockerWorkspaceContainerId.value = data.container_id || null;
+    dockerWorkspaceStatus.value = data.status === "running" ? "running" : "idle";
+    dockerWorkspaceError.value = "";
+  } catch (error: any) {
+    if (conversationId.value !== requestedConversationId) return;
+    const detail = error?.response?.data?.detail;
+    dockerWorkspaceError.value = typeof detail === "string"
+      ? detail
+      : String(detail?.message || error?.message || "Docker 沙箱状态查询失败");
+    dockerWorkspaceStatus.value = "error";
+  } finally {
+    if (conversationId.value === requestedConversationId) {
+      dockerWorkspaceStatusLoaded.value = true;
+    }
+  }
+};
+
+const ensureDockerWorkspace = async () => {
+  if (!showDockerWorkspaceControl.value || !conversationId.value) return;
+  if (dockerWorkspaceStatus.value === "starting") return;
+  const requestedConversationId = conversationId.value;
+  dockerWorkspaceStatus.value = "starting";
+  dockerWorkspaceError.value = "";
+  try {
+    const response = await axios.post(
+      "/api/v1/sandbox/docker/workspace/ensure",
+      { conversation_id: requestedConversationId },
+      { headers: embedAuthHeaders() },
+    );
+    if (conversationId.value !== requestedConversationId) return;
+    const data = response.data?.data ?? response.data;
+    if (data?.execution_backend !== "docker" || data?.status !== "running") {
+      throw new Error("Docker 沙箱容器未返回运行中状态");
+    }
+    dockerWorkspaceStatus.value = "running";
+    dockerWorkspaceContainerId.value = data.container_id || null;
+    showToast("Docker 沙箱容器已启动", "success");
+  } catch (error: any) {
+    if (conversationId.value !== requestedConversationId) return;
+    const detail = error?.response?.data?.detail;
+    dockerWorkspaceError.value = typeof detail === "string"
+      ? detail
+      : String(detail?.message || error?.message || "Docker 沙箱容器启动失败");
+    dockerWorkspaceStatus.value = "error";
+    showToast(dockerWorkspaceError.value, "error");
+  }
+};
+
+watch(
+  [conversationId, effectiveSandboxPolicy],
+  ([conversation, policy], previous) => {
+    const previousConversation = String(previous?.[0] || "");
+    const previousPolicy = String(previous?.[1] || "");
+    if (
+      policy !== "docker"
+      || !conversation
+      || conversation !== previousConversation
+      || policy !== previousPolicy
+    ) {
+      resetDockerWorkspaceState();
+      if (policy === "docker" && conversation) {
+        void refreshDockerWorkspaceStatus();
+      }
+    }
+  },
+  { immediate: true },
+);
 const {
   contextCompactions,
   contextCompactionCount,
@@ -7967,17 +8137,26 @@ onUnmounted(() => {
   background-color: transparent;
   padding: 0;
   color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 :deep(.markdown-body pre) {
   margin-top: 1em;
   margin-bottom: 1em;
   padding: 1.25em 1em 1em 1em;
-  background-color: #ffffff;
+  background-color: #f8fafc;
+  color: #0f172a;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: auto;
   position: relative;
   box-shadow: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.6;
+}
+.dark :deep(.markdown-body pre) {
+  background-color: #0f172a;
+  color: #f1f5f9;
+  border-color: #1e293b;
 }
 :deep(.markdown-body pre):before {
   content: "";

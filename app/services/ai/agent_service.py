@@ -59,6 +59,21 @@ AWAITING_RESUME_STATUSES = frozenset(
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
 
 
+def _format_execution_error_for_user(
+    exc: BaseException,
+    *,
+    model_name: Optional[str] = None,
+) -> str:
+    """Use safe, actionable text for sandbox failures without leaking internals."""
+    from app.services.ai.runtime.agentscope.workspace import DockerSandboxUnavailableError
+
+    if isinstance(exc, DockerSandboxUnavailableError):
+        return exc.user_message
+    from app.services.ai.multimodal_support import format_execution_error
+
+    return format_execution_error(str(exc), model_name=model_name)
+
+
 async def _persist_assistant_message_and_summary(
     *,
     user_id: Any,
@@ -267,6 +282,21 @@ def _client_prefix_history_len(messages: List[Dict[str, Any]]) -> int:
         if isinstance(message, dict)
         and message.get("role") in {"user", "assistant"}
     )
+
+
+def _regular_completion_history(
+    server_history: Optional[List[Dict[str, Any]]],
+    _client_messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """普通完成请求始终以服务端会话历史为准，不按客户端展示历史裁剪。"""
+    return list(server_history or [])
+
+
+def build_chat_history_boundary_prompt(system_prompt: Optional[str]) -> str:
+    """在最终系统提示中明确区分历史背景和本轮当前请求。"""
+    boundary = AgentServicePrompts.CHAT_HISTORY_BOUNDARY_PROMPT.strip()
+    existing = str(system_prompt or "").strip()
+    return f"{boundary}\n\n{existing}" if existing else boundary
 
 
 def _trace_has_tool_call(trace_buffer: Optional[List[AgentExecutionStep]]) -> bool:
@@ -873,22 +903,24 @@ class AgentService:
 
                 # --- Memory Integration ---
                 # If conversation_id is provided, we use server-side history
+                user_msg = (
+                    messages[-1]
+                    if messages
+                    and isinstance(messages[-1], dict)
+                    and messages[-1].get("role") == "user"
+                    else None
+                )
+
                 if conversation_id:
                     u_id = lane_user_id
-                    server_history = await memory_service.get_history(u_id, conversation_id)
-                    user_msg = messages[-1] if messages else None
+                    server_history = _regular_completion_history(
+                        await memory_service.get_history(u_id, conversation_id),
+                        messages,
+                    )
 
                     # 路由前只使用平台兜底预算；真实目标 agent/model 在内部 runner
                     # 完成路由后再按最终模型重建一次上下文。
                     runtime_max_tokens = await self._resolve_pre_route_context_budget()
-
-                    # 检测客户端历史截断（如编辑重发或分支）：仅在客户端显式传递了前缀历史且短于服务端时裁剪对齐
-                    client_prefix_history_len = _client_prefix_history_len(messages)
-                    if len(messages) > 1 and server_history and len(server_history) > client_prefix_history_len:
-                        await memory_service.truncate_history(
-                            u_id, conversation_id, client_prefix_history_len
-                        )
-                        server_history = server_history[:client_prefix_history_len]
 
                     if user_msg and user_msg.get("role") == "user":
                         await memory_service.add_message(
@@ -1000,7 +1032,7 @@ class AgentService:
 
                 enrich_messages_with_skill_meta(messages)
 
-                user_query = messages[-1]["content"] if messages else ""
+                user_query = str(user_msg.get("content") or "").strip() if user_msg else ""
 
                 if user_question_cancelled:
                     cancellation_message = "已取消本次提问，本次任务已停止。"
@@ -3036,6 +3068,12 @@ class AgentService:
                     }
                     messages.insert(1, injection_msg)
 
+            # 普通历史只提供背景；当前轮由请求最后一条 user 消息决定。
+            # 放在调试覆盖之后，确保调试模式也不会丢失这条安全边界。
+            agent_config.system_prompt = build_chat_history_boundary_prompt(
+                agent_config.system_prompt
+            )
+
             if debug_options and debug_options.get("return_raw_prompt"):
                 raw_messages = []
                 raw_messages.extend(messages)
@@ -3232,12 +3270,10 @@ class AgentService:
         except Exception as e:
             logger.error(f"Execution Error: {str(e)}", exc_info=True)
             execution_status = "error"
-            from app.services.ai.multimodal_support import format_execution_error
-
             model_name = getattr(agent_config, "model_name", None) if agent_config else None
             yield {
                 "type": "error",
-                "content": format_execution_error(str(e), model_name=model_name),
+                "content": _format_execution_error_for_user(e, model_name=model_name),
                 "status": "error",
             }
         finally:

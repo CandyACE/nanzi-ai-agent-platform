@@ -165,7 +165,7 @@ digest 存于 **独立 Redis key**，与 history（LIST 展示路径）分开：
 conversation:{user_id}:{conversation_id}:digest
 ```
 
-`user_id` 取 `str(user_id)`，为空时为 `"anonymous"`。TTL 沿用会话默认 **7 天**（`MemoryService.ttl`，604800s）。
+`user_id` 取 `str(user_id)`，为空时为 `"anonymous"`。TTL 沿用会话默认 **30 天**（`MemoryService.ttl`，2592000s）。
 
 接口（均为 async）：
 - `await MemoryService().get_digest(user_id, conversation_id) -> Optional[str]`：无摘录 / redis 不可用 / 读取异常均返回 `None`（调用方降级为确定性压缩）。

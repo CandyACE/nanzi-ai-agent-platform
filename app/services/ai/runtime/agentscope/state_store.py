@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 STATE_KEY_SUFFIX = "agent_state"
 SCHEMA_VERSION = 1
-DEFAULT_TTL_SECONDS = 604800
+DEFAULT_TTL_SECONDS = 2592000  # 30 天
 
 
 @dataclass(frozen=True)

@@ -88,6 +88,74 @@ def test_build_overflow_digest_flattens_multimodal():
     assert "[图片]" in digest["content"]
 
 
+def test_build_overflow_digest_preserves_image_name_when_available():
+    """方案 B：图片载体带文件名时，摘录应保留 [图片: 名称] 而非一律 [图片]。"""
+    dropped = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "分析这张架构图"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "http://x/arch.png"},
+                    "name": "architecture.pdf",
+                    "description": "系统架构",
+                },
+            ],
+        }
+    ]
+    digest = build_overflow_digest(dropped)
+    assert digest is not None
+    assert "分析这张架构图" in digest["content"]
+    assert "[图片: architecture.pdf]" in digest["content"]
+
+
+def test_build_overflow_digest_keeps_tool_name_and_conclusion_over_args():
+    """方案 B：工具结果结构化优先——保留工具名与结论，剔除冗长入参与计数。"""
+    dropped = [
+        {
+            "role": "assistant",
+            "content": "我查一下",
+            "tool_run_text": (
+                "search_huggingface: {'q': <很长很长很长的入参 pre 略>} "
+                "-> 找到 3 个匹配模型：deepseek-r1、llama-3、qwen-2.5"
+                " (data_blocks=2)\n"
+                "get_model_size: {\"model\": \"deepseek-r1\"} "
+                "-> 671B MoE (data_blocks=0)"
+            ),
+        }
+    ]
+    digest = build_overflow_digest(dropped)
+    assert digest is not None
+    assert "search_huggingface" in digest["content"]
+    assert "找到 3 个匹配模型" in digest["content"]
+    assert "deepseek-r1" in digest["content"]
+    assert "get_model_size" in digest["content"]
+    # 冗长入参（'q': ...)与 data 计数不应出现在结论优先的摘录里
+    assert "已经入参" not in digest["content"]
+    assert "data_blocks" not in digest["content"]
+
+
+def test_build_overflow_digest_truncates_overlong_tool_output_per_tool():
+    """方案 B：单个超长工具输出被截断，但不会挤占整段摘录（还可容纳后续工具）。"""
+    dropped = [
+        {
+            "role": "assistant",
+            "content": "结果如下",
+            "tool_run_text": (
+                "render_report: {} -> " + ("长" * 500) + " (data_blocks=1)\n"
+                "send_email: {} -> 已发送给 user\n"
+            ),
+        }
+    ]
+    digest = build_overflow_digest(dropped)
+    assert digest is not None
+    # 超长工具结论被截断（出现省略号）
+    assert "…" in digest["content"]
+    # 后续工具仍被保留（说明单条超长没有耗尽配额）
+    assert "已发送给 user" in digest["content"]
+
+
 def test_apply_context_compaction_no_overflow_returns_window():
     hist = _history(5)
     window = hist  # 没有溢出

@@ -58,10 +58,12 @@ async def build_native_agent(
     )
     from app.services.ai.runtime.agentscope.workspace import (
         bind_configured_tools_to_workspace,
+        get_workspace_execution_backend,
         get_workspace_offloader,
     )
 
     tools = await bind_configured_tools_to_workspace(workspace, tools)
+    runner._execution_backend = get_workspace_execution_backend(workspace)
     toolkit = AgentScopeToolConsumer(builder=dar.build_toolkit).consume_specs(
         tools,
         approval_mode=runner.permission_options.get("approval_mode"),
