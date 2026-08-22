@@ -24,26 +24,16 @@ def resolve_effective_sandbox_policy(
 ) -> str:
     """解析当前部署环境允许实际执行的沙箱策略。
 
-    平台后端已经运行在容器内时，禁止再次创建 Docker 沙箱，避免依赖未挂载的
-    Docker daemon，也避免把平台容器误当成宿主机隔离边界。数据库中的历史值
-    ``docker`` 也必须在运行时降级为 ``local``。
+    无论平台后端运行在宿主机还是 Docker 容器中（挂载 /var/run/docker.sock 后支持 DooD 模式），
+    均原生支持执行用户配置的有效沙箱策略（local / docker / e2b / ssh）。
     """
     normalized = str(value or default).strip().lower()
-    if normalized == SANDBOX_POLICY_DOCKER and get_env() == "docker":
-        return "local"
     return normalized
 
 
 def validate_config_update(key: str, value: str) -> None:
-    """校验系统配置更新是否符合当前运行环境限制。"""
-    if (
-        key == SANDBOX_POLICY_KEY
-        and str(value or "").strip().lower() == SANDBOX_POLICY_DOCKER
-        and get_env() == "docker"
-    ):
-        raise ValueError(
-            "平台后端运行在 Docker 容器内，不能启用 docker 沙箱策略；请使用 local、e2b 或 ssh。"
-        )
+    """校验系统配置更新是否合法。"""
+    pass
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",

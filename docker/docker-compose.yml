@@ -9,6 +9,8 @@ services:
     volumes:
       - ./data:/app/data
       - ~/.agents/skills:/app/data/skills
+      # 挂载宿主机 Docker Socket，支持平台在容器化部署时通过宿主机 Docker 动态创建与管理沙箱容器 (DooD 架构)
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # Service Config
       - API_SERVICE_ENV=${API_SERVICE_ENV:-dev}

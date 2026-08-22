@@ -269,13 +269,13 @@ const sandboxLocalExecDesc = computed(() =>
 
 /** sandbox_policy 短描述：local 部分随运行环境动态渲染 */
 const sandboxPolicyShortDesc = computed(() =>
-  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；${runtimeEnv.value === 'docker' ? 'docker 当前禁用（平台后端已运行在 Docker 容器内）' : 'docker 表示在自动构建的 Docker 容器内执行'}；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
+  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；docker 表示在自动构建的 Docker 容器内执行${runtimeEnv.value === 'docker' ? '（通过宿主机 Docker Socket 隔离）' : ''}；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
 )
 
 /** sandbox_policy 详细说明：local 部分随运行环境动态渲染（用于说明弹窗） */
 const sandboxPolicyTip = computed(() => `安全沙箱执行策略：
 * local（默认）：Bash / 文件工具在${sandboxLocalExecDesc.value}，性能最好，但代码运行在${runtimeEnv.value === 'docker' ? '平台容器内部' : '宿主机上'}。
-* docker：${runtimeEnv.value === 'docker' ? '当前禁用，平台后端已经运行在 Docker 容器内，不能嵌套 Docker 沙箱。' : '在 Docker 容器内执行。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。'}
+* docker：在 Docker 容器内执行${runtimeEnv.value === 'docker' ? '（平台通过挂载的宿主机 Docker Socket 动态创建与管理沙箱容器）' : ''}。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。
 * e2b：在 E2B 云端沙箱内执行。需在下方填写 API Key 或配置 E2B_API_KEY 环境变量。
 * ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
 注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`)
@@ -293,9 +293,9 @@ const sandboxPolicyOptions = computed(() => [
   {
     value: 'docker',
     label: 'docker（Docker 容器）',
-    disabled: runtimeEnv.value === 'docker',
+    disabled: false,
     desc: runtimeEnv.value === 'docker'
-      ? '平台后端已经运行在 Docker 容器内，禁止嵌套 Docker 沙箱'
+      ? '通过宿主机 Docker Socket 动态创建沙箱容器执行，工作区按用户隔离'
       : '在自动构建的 Docker 容器内执行，工作区按用户隔离',
   },
   {
