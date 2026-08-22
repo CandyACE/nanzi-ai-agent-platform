@@ -43,7 +43,7 @@
 *   **业务场景**: 存储 AI 与用户的对话上下文历史，用于 LLM 多轮对话。
 *   **Key 模式**: `conversation:{user_id}:{conversation_id}:history`
 *   **数据结构**: `List` (JSON Strings)
-*   **过期时间 (TTL)**: 7 天 (604800s)
+*   **过期时间 (TTL)**: 30 天 (2592000s)
 *   **代码位置**: `app/services/ai/memory_service.py`
 *   **说明**: 
     *   使用 Redis List 结构，推入新消息时自动刷新过期时间。

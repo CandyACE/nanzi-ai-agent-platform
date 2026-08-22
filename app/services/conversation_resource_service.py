@@ -118,7 +118,7 @@ class ConversationResourceService:
         try:
             redis = await get_redis()
             if redis:
-                await redis.set(cls._key(user_id, conversation_id), json.dumps(normalized, ensure_ascii=False), ex=604800)
+                await redis.set(cls._key(user_id, conversation_id), json.dumps(normalized, ensure_ascii=False), ex=2592000)
         except Exception:
             pass
         return normalized

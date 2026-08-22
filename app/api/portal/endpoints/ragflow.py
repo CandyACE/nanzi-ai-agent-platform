@@ -1025,9 +1025,9 @@ async def get_document_portal_recommendations(
                                     })
                                 res_payload = {"questions": dynamic_questions}
                                 
-                                # 写入 Redis 缓存（有效期 7 天：604800 秒）
+                                # 写入 Redis 缓存（有效期 30 天：2592000 秒）
                                 try:
-                                    await redis_client.setex(cache_key, 604800, json.dumps(res_payload, ensure_ascii=False))
+                                    await redis_client.setex(cache_key, 2592000, json.dumps(res_payload, ensure_ascii=False))
                                 except Exception as cache_err:
                                     import logging
                                     logging.warning(f"Failed to write Redis cache for document portal: {str(cache_err)}")

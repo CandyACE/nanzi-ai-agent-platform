@@ -289,3 +289,32 @@ def test_static_tool_groups_offer_group_level_select_all():
     assert "@click.stop=\"emit('toggleSelectAllStatic', group.label)\"" in drawer
     assert "isAllStaticGroupSelected(group.label)" in drawer
     assert '@toggle-select-all-static="toggleSelectAllStatic"' in management
+
+
+def test_browser_automation_tools_are_available_in_a_dedicated_group():
+    management = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert "浏览器自动化" in management
+    for tool_name in (
+        "browser_open",
+        "browser_snapshot",
+        "browser_click",
+        "browser_fill",
+        "browser_scroll",
+        "browser_press",
+        "browser_wait_for",
+        "browser_select_option",
+        "browser_read_visible",
+        "browser_hover",
+        "browser_drag",
+        "browser_back",
+        "browser_forward",
+        "browser_reload",
+        "browser_tabs",
+        "browser_switch_tab",
+        "browser_close_tab",
+        "browser_upload",
+        "browser_download",
+    ):
+        assert tool_name in management
+    assert "groups.browser.tools.push(tool)" in management

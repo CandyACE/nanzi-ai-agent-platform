@@ -20,7 +20,7 @@ from .context_breakdown import estimate_context_breakdown
 logger = logging.getLogger(__name__)
 
 STATS_KEY_SUFFIX = "model_call_stats"
-STATS_TTL_SECONDS = 604800  # 7 天
+STATS_TTL_SECONDS = 2592000  # 30 天
 
 
 def _build_redis_key(user_id: str | int | None, conversation_id: str) -> str:

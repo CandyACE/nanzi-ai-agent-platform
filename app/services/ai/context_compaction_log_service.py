@@ -23,7 +23,7 @@ class ContextCompactionLogService:
 
     KEY_PREFIX = "conversation"
     KEY_SUFFIX = "context_compactions_v1"
-    TTL_SECONDS = 7 * 24 * 60 * 60
+    TTL_SECONDS = 30 * 24 * 60 * 60
     MAX_RECORDS = 500
     PREVIEW_LIMIT = 300
     APPEND_TIMEOUT_SECONDS = 0.5

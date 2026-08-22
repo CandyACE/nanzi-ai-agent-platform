@@ -640,6 +640,101 @@ const availableTools = [
     description: "并行委派多个彼此独立的子智能体任务，并聚合返回结果（适合多维度并发汇总）",
     isSystem: true,
   },
+  {
+    name: "browser_open",
+    description: "打开或复用持久化浏览器会话",
+    isSystem: true,
+  },
+  {
+    name: "browser_snapshot",
+    description: "获取当前浏览器页面快照和可交互元素",
+    isSystem: true,
+  },
+  {
+    name: "browser_click",
+    description: "点击浏览器页面中的目标元素",
+    isSystem: true,
+  },
+  {
+    name: "browser_fill",
+    description: "向浏览器页面输入框填充内容",
+    isSystem: true,
+  },
+  {
+    name: "browser_scroll",
+    description: "滚动浏览器页面并刷新可视区域",
+    isSystem: true,
+  },
+  {
+    name: "browser_press",
+    description: "在浏览器页面执行键盘按键操作",
+    isSystem: true,
+  },
+  {
+    name: "browser_wait_for",
+    description: "等待浏览器页面或元素满足条件",
+    isSystem: true,
+  },
+  {
+    name: "browser_select_option",
+    description: "选择浏览器页面下拉选项",
+    isSystem: true,
+  },
+  {
+    name: "browser_read_visible",
+    description: "读取浏览器当前可见文本内容",
+    isSystem: true,
+  },
+  {
+    name: "browser_hover",
+    description: "将鼠标悬停到浏览器页面目标元素",
+    isSystem: true,
+  },
+  {
+    name: "browser_drag",
+    description: "拖拽浏览器页面元素",
+    isSystem: true,
+  },
+  {
+    name: "browser_back",
+    description: "返回浏览器历史页面",
+    isSystem: true,
+  },
+  {
+    name: "browser_forward",
+    description: "前进到浏览器历史页面",
+    isSystem: true,
+  },
+  {
+    name: "browser_reload",
+    description: "重新加载当前浏览器页面",
+    isSystem: true,
+  },
+  {
+    name: "browser_tabs",
+    description: "查看当前浏览器会话的标签页",
+    isSystem: true,
+  },
+  {
+    name: "browser_switch_tab",
+    description: "切换当前浏览器会话标签页",
+    isSystem: true,
+  },
+  {
+    name: "browser_close_tab",
+    description: "关闭当前浏览器会话标签页",
+    isSystem: true,
+  },
+  {
+    name: "browser_upload",
+    description: "向浏览器页面上传文件",
+    isSystem: true,
+  },
+  {
+    name: "browser_download",
+    description: "下载浏览器页面指定文件",
+    isSystem: true,
+  },
 ];
 
 const dynamicTools = ref<SysApiTool[]>([]);
@@ -1049,7 +1144,7 @@ const allAvailableTools = computed(() => {
   return combined;
 });
 
-type ToolGroupKey = 'chatbi' | 'knowledge' | 'web' | 'system' | 'office' | 'notification' | 'memory' | 'delegation' | 'other';
+type ToolGroupKey = 'chatbi' | 'knowledge' | 'web' | 'browser' | 'system' | 'office' | 'notification' | 'memory' | 'delegation' | 'other';
 type ToolGroup = { label: string; icon: string; tools: any[] };
 
 const groupedTools = computed(() => {
@@ -1057,6 +1152,7 @@ const groupedTools = computed(() => {
     chatbi: { label: 'ChatBI 数据分析', icon: '📊', tools: [] },
     knowledge: { label: '知识库检索 (RAG)', icon: '📖', tools: [] },
     web: { label: '联网搜索', icon: '🌐', tools: [] },
+    browser: { label: '浏览器自动化', icon: '🧭', tools: [] },
     system: { label: '系统自治工具', icon: '💻', tools: [] },
     office: { label: '办公协作', icon: '💼', tools: [] },
     notification: { label: '消息通知', icon: '💬', tools: [] },
@@ -1076,6 +1172,8 @@ const groupedTools = computed(() => {
       groups.office.tools.push(tool);
     } else if (name.includes('knowledge') || name.includes('rag') || name.includes('kb_') || name.includes('document')) {
       groups.knowledge.tools.push(tool);
+    } else if (name.startsWith('browser_')) {
+      groups.browser.tools.push(tool);
     } else if (
       name.includes('web_search') ||
       name.includes('static_web') ||
