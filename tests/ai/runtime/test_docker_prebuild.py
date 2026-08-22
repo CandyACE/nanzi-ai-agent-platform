@@ -31,7 +31,7 @@ async def test_prebuild_returns_faq_help_when_daemon_unavailable(
 
     events = []
 
-    async def fake_prepare_context():
+    async def fake_prepare_context(base_image_override=None):
         events.append("context")
         return str(context_dir), "agentscope-workspace:abc123def456"
 
@@ -77,7 +77,7 @@ async def test_image_prebuilt_check_returns_false_when_daemon_is_unavailable(
     monkeypatch.setattr(
         docker_prebuild,
         "_prepare_context",
-        lambda: _async_value(
+        lambda _override=None: _async_value(
             ("/tmp/unused-context", "agentscope-workspace:abc123def456")
         ),
     )
@@ -96,7 +96,7 @@ async def test_prebuild_returns_faq_help_when_aiodocker_is_missing(
     monkeypatch.setattr(
         docker_prebuild,
         "_prepare_context",
-        lambda: _async_value((context_dir, "agentscope-workspace:abc123def456")),
+        lambda _override=None: _async_value((context_dir, "agentscope-workspace:abc123def456")),
     )
     monkeypatch.setitem(__import__("sys").modules, "aiodocker", None)
 
@@ -143,7 +143,7 @@ async def test_prebuild_passes_fileobj_to_aiodocker(monkeypatch, tmp_path):
     monkeypatch.setattr(
         docker_prebuild,
         "_prepare_context",
-        lambda: _async_value((str(context_dir), "agentscope-workspace:test123456")),
+        lambda _override=None: _async_value((str(context_dir), "agentscope-workspace:test123456")),
     )
     monkeypatch.setattr(
         docker_prebuild,
@@ -153,7 +153,7 @@ async def test_prebuild_passes_fileobj_to_aiodocker(monkeypatch, tmp_path):
     monkeypatch.setattr(
         docker_prebuild,
         "_mark_prebuilt",
-        lambda: _async_value(None),
+        lambda _base=None: _async_value(None),
     )
     monkeypatch.setitem(__import__("sys").modules, "aiodocker", FakeAioDockerModule)
 
@@ -166,4 +166,54 @@ async def test_prebuild_passes_fileobj_to_aiodocker(monkeypatch, tmp_path):
     assert "fileobj" in build_calls[0]
     assert build_calls[0]["tag"] == "agentscope-workspace:test123456"
     assert build_calls[0]["encoding"] == "identity"
+
+
+@pytest.mark.asyncio
+async def test_prebuild_with_custom_base_image(monkeypatch, tmp_path):
+    from app.services.ai.runtime.agentscope import docker_prebuild
+
+    context_dir = tmp_path / "context_custom"
+    context_dir.mkdir()
+
+    called_images = []
+
+    async def fake_prepare(override=None):
+        called_images.append(override)
+        return str(context_dir), f"agentscope-workspace:tag-{override}"
+
+    class FakeImages:
+        async def inspect(self, tag):
+            return True
+
+    class FakeDocker:
+        def __init__(self):
+            self.images = FakeImages()
+
+        async def close(self):
+            pass
+
+    class FakeAioDockerModule:
+        Docker = FakeDocker
+
+    saved_base_images = []
+
+    async def fake_mark(base=None):
+        saved_base_images.append(base)
+
+    monkeypatch.setattr(docker_prebuild, "_prepare_context", fake_prepare)
+    monkeypatch.setattr(
+        docker_prebuild,
+        "check_docker_daemon",
+        lambda _aiodocker: _async_value({"available": True, "reason_code": None, "message": "ok"}),
+    )
+    monkeypatch.setattr(docker_prebuild, "_mark_prebuilt", fake_mark)
+    monkeypatch.setitem(__import__("sys").modules, "aiodocker", FakeAioDockerModule)
+
+    result = await docker_prebuild.prebuild_docker_workspace_image(base_image="python:3.11")
+
+    assert result["reused"] is True
+    assert result["tag"] == "agentscope-workspace:tag-python:3.11"
+    assert called_images == ["python:3.11"]
+    assert saved_base_images == ["python:3.11"]
+
 

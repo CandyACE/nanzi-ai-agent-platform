@@ -58,11 +58,12 @@ def _require_admin(user_info: Dict[str, Any]) -> None:
     summary="查询 Docker 沙箱镜像是否已预构建",
 )
 async def get_docker_prebuild_status(
+    base_image: str | None = Query(None, description="临时指定的 Docker 基础镜像，为空则使用系统配置"),
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
     """查询 Docker 镜像缓存和自动构建能力，离线时返回手动下载信息。"""
     _require_admin(user_info)
-    status = await docker_workspace_prebuild_status()
+    status = await docker_workspace_prebuild_status(base_image=base_image)
     return StandardResponse(
         data=status,
         message=status.get("message") or "success",
@@ -75,6 +76,7 @@ async def get_docker_prebuild_status(
     summary="预构建 Docker 沙箱镜像（预热）",
 )
 async def trigger_docker_prebuild(
+    base_image: str | None = Query(None, description="临时指定的 Docker 基础镜像，为空则使用系统配置"),
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
     """强制构建（或复用已存在）Docker 沙箱基础镜像。
@@ -89,7 +91,10 @@ async def trigger_docker_prebuild(
     """
     _require_admin(user_info)
     try:
-        result = await prebuild_docker_workspace_image(force=False)
+        result = await prebuild_docker_workspace_image(
+            base_image=base_image,
+            force=False,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return StandardResponse(

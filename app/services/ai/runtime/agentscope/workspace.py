@@ -573,9 +573,7 @@ async def _policy_docker_workspace(
     )
     from agentscope.workspace import DockerWorkspace
 
-    DEFAULT_DOCKER_BASE_IMAGE = (
-        "registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim"
-    )
+    DEFAULT_DOCKER_BASE_IMAGE = "python:3.11-slim"
     base_image = (
         await ConfigService.get("sandbox_docker_base_image", "")
     ).strip() or DEFAULT_DOCKER_BASE_IMAGE

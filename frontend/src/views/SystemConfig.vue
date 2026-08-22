@@ -341,26 +341,40 @@ const selectSandboxPolicy = (item: ConfigItem, value: string) => {
   refreshDockerPrebuildStatus(true)
 }
 
-const DEFAULT_DOCKER_BASE_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim'
+const DEFAULT_DOCKER_BASE_IMAGE = 'python:3.11-slim'
 
-/** docker 基础镜像候选清单：同一 python 镜像的多地域加速源（仅作为 Dockerfile FROM 的 python 基座，均可被容器内烤入 agentscope MCP gateway）；
- * 另含「自定义…」手动输入。OpenSandbox 为运行时编排框架、非 python base 镜像，已排除。 */
+/** docker 基础镜像候选清单：官方标准镜像（作为 Dockerfile FROM 的 python 基座，烤入 agentscope MCP gateway）；
+ * 另含「自定义…」手动输入（可填入私有仓库或镜像加速地址）。 */
 const dockerBaseImagePresets: { label: string; value: string }[] = [
-  { label: '阿里云加速 python:3.11-slim（推荐，默认）', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim' },
-  { label: '阿里云加速 python:3.11', value: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11' },
-  { label: 'python:3.11-slim（Docker Hub 官方）', value: 'python:3.11-slim' },
-  { label: 'python:3.11（Docker Hub 官方）', value: 'python:3.11' },
-  { label: '华为云加速 python:3.11-slim', value: 'swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.11-slim' },
-  { label: '腾讯云加速 python:3.11-slim', value: 'mirror.ccs.tencentyun.com/library/python:3.11-slim' },
+  { label: 'python:3.11-slim（官方标准，默认）', value: 'python:3.11-slim' },
+  { label: 'python:3.11（官方完整版）', value: 'python:3.11' },
 ]
 const dockerBaseImageOpen = ref(false)
 const dockerBaseImageShowCustom = ref(false)
+
+const isCustomDockerBaseImage = computed(() => {
+  const cur = (configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value ?? '').trim()
+  if (dockerBaseImageShowCustom.value) return true
+  if (!cur) return false
+  return !dockerBaseImagePresets.some(p => p.value === cur)
+})
+
 /** 当前值是否命中所选预设，用于展示按钮文案 */
 const currentDockerBaseImageLabel = computed(() => {
-  const cur = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value || DEFAULT_DOCKER_BASE_IMAGE
-  return dockerBaseImagePresets.find(p => p.value === cur)?.label || '自定义镜像地址…'
+  const cur = (configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value ?? '').trim()
+  if (isCustomDockerBaseImage.value) {
+    return cur ? `自定义镜像：${cur}` : '自定义镜像地址…'
+  }
+  const matched = dockerBaseImagePresets.find(p => p.value === cur)
+  return matched ? matched.label : (cur ? `自定义镜像：${cur}` : (dockerBaseImagePresets[0]?.label || 'python:3.11-slim'))
 })
-/** 点击预设后写入 item.value 并关闭面板 */
+/** 当前选中的 docker 基础镜像地址 */
+const getTargetDockerBaseImage = () => {
+  const cur = configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_base_image')?.value
+  return (cur || '').trim()
+}
+
+/** 点击预设后写入 item.value 并关闭面板，同时实时更新该镜像对应的预构建状态 */
 const selectDockerBaseImage = (item: ConfigItem, preset: string) => {
   if (preset === '_custom') {
     dockerBaseImageShowCustom.value = true
@@ -370,13 +384,12 @@ const selectDockerBaseImage = (item: ConfigItem, preset: string) => {
   item.value = preset
   dockerBaseImageShowCustom.value = false
   dockerBaseImageOpen.value = false
-  refreshDockerPrebuildStatus(true)
+  refreshDockerPrebuildStatus(true, preset)
 }
-/** 拉起/收起下拉时联动重置自定义输入显隐 */
+/** 拉起/收起下拉时联动重置 */
 const toggleDockerBaseImage = (item: ConfigItem) => {
   if (isConfigItemDisabled(String('sandbox'), item)) return
   dockerBaseImageOpen.value = !dockerBaseImageOpen.value
-  if (dockerBaseImageOpen.value) dockerBaseImageShowCustom.value = false
 }
 
 const applyDockerPrebuildStatus = (data: any) => {
@@ -389,11 +402,14 @@ const applyDockerPrebuildStatus = (data: any) => {
   }
 }
 
-const refreshDockerPrebuildStatus = async (silent = false) => {
+const refreshDockerPrebuildStatus = async (silent = false, baseImageOverride?: string) => {
   if (targetSandboxPolicy() !== 'docker') return
   if (!silent) dockerPrebuildChecking.value = true
   try {
-    const res = await axios.get('/api/v1/admin/sandbox/docker/prebuild-status')
+    const baseImage = (baseImageOverride ?? getTargetDockerBaseImage()) || DEFAULT_DOCKER_BASE_IMAGE
+    const res = await axios.get('/api/v1/admin/sandbox/docker/prebuild-status', {
+      params: baseImage ? { base_image: baseImage } : {}
+    })
     const data = res.data?.data ?? res.data
     applyDockerPrebuildStatus(data)
     dockerPrebuildChecking.value = false
@@ -415,7 +431,10 @@ const executeDockerPrebuild = async () => {
   dockerPrebuildReused.value = false
   dockerPrebuildTag.value = ''
   try {
-    const res = await axios.post('/api/v1/admin/sandbox/docker/prebuild')
+    const baseImage = getTargetDockerBaseImage() || DEFAULT_DOCKER_BASE_IMAGE
+    const res = await axios.post('/api/v1/admin/sandbox/docker/prebuild', null, {
+      params: baseImage ? { base_image: baseImage } : {}
+    })
     if (res.data?.code !== 200 && res.data?.code != null) {
       throw new Error((res.data as any)?.message || '预构建接口返回异常')
     }
@@ -1189,7 +1208,7 @@ const configShortDescriptions: Record<string, string> = {
   agent_context_compaction_max_chars: '溢出压缩摘录中正文部分的最大字符数，过大会挤占新对话空间。',
   agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
-  sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用阿里云加速源 registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim）。',
+  sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用官方标准镜像 python:3.11-slim）。',
   sandbox_e2b_api_key: 'e2b 策略使用的 E2B API Key，留空则读取 E2B_API_KEY 环境变量。',
   sandbox_e2b_template: 'e2b 策略使用的沙箱模板名，留空使用默认模板 base。',
   sandbox_e2b_timeout_seconds: 'e2b 策略沙箱超时时间（秒），默认 300。',
@@ -2753,62 +2772,72 @@ onMounted(async () => {
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
-                          <div v-else-if="item.key === 'sandbox_docker_base_image'" class="relative">
-                             <button
-                               type="button"
-                               @click="toggleDockerBaseImage(item)"
-                               :disabled="isConfigItemDisabled(String(category), item)"
-                               aria-haspopup="listbox"
-                               :aria-expanded="dockerBaseImageOpen"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 text-left disabled:opacity-70 disabled:cursor-not-allowed"
-                               title="选择内置镜像或自定义镜像地址"
-                             >
-                               <span class="block font-medium text-gray-700 truncate">{{ currentDockerBaseImageLabel }}</span>
-                             </button>
-                             <ChevronDownIcon class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                             <div
-                               v-if="dockerBaseImageOpen"
-                               class="fixed inset-0 z-30"
-                               @click="dockerBaseImageOpen = false"
-                               @contextmenu.prevent="dockerBaseImageOpen = false"
-                             ></div>
-                             <div
-                               v-if="dockerBaseImageOpen"
-                               class="absolute left-0 top-full mt-1 w-full z-40 bg-white rounded-lg border border-gray-200 shadow-lg py-1 max-h-72 overflow-y-auto"
-                               role="listbox"
-                             >
-                               <button
-                                 v-for="preset in dockerBaseImagePresets"
-                                 :key="preset.value"
-                                 type="button"
-                                 @click="selectDockerBaseImage(item, preset.value)"
-                                 role="option"
-                                 :aria-selected="item.value === preset.value"
-                                 class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                 :class="item.value === preset.value ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
-                               >
-                                 <span class="block">{{ preset.label }}</span>
-                               </button>
-                               <button
-                                 type="button"
-                                 @click="selectDockerBaseImage(item, '_custom')"
-                                 role="option"
-                                 :aria-selected="dockerBaseImageShowCustom"
-                                 class="block w-full px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700"
-                               >
-                                 自定义镜像地址…
-                               </button>
-                             <div v-if="dockerBaseImageShowCustom" class="px-3 py-2 border-t border-gray-100">
-                                 <input
-                                   type="text"
-                                   v-model="item.value"
-                                   :disabled="isConfigItemDisabled(String(category), item)"
-                                   class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-50 p-2 font-mono disabled:opacity-70 disabled:cursor-not-allowed"
-                                   placeholder="如 registry.example.com/library/python:3.11-slim"
-                                 />
-                               </div>
-                             </div>
-                             <div v-if="!isConfigItemDisabled(String(category), item)" class="mt-3 flex flex-wrap items-center gap-3">
+                          <div v-else-if="item.key === 'sandbox_docker_base_image'" class="space-y-2.5">
+                            <div class="relative">
+                              <button
+                                type="button"
+                                @click="toggleDockerBaseImage(item)"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                aria-haspopup="listbox"
+                                :aria-expanded="dockerBaseImageOpen"
+                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 text-left disabled:opacity-70 disabled:cursor-not-allowed"
+                                title="选择内置镜像或自定义镜像地址"
+                              >
+                                <span class="block font-medium text-gray-700 truncate">{{ currentDockerBaseImageLabel }}</span>
+                              </button>
+                              <ChevronDownIcon class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                              <div
+                                v-if="dockerBaseImageOpen"
+                                class="fixed inset-0 z-30"
+                                @click="dockerBaseImageOpen = false"
+                                @contextmenu.prevent="dockerBaseImageOpen = false"
+                              ></div>
+                              <div
+                                v-if="dockerBaseImageOpen"
+                                class="absolute left-0 top-full mt-1 w-full z-40 bg-white rounded-lg border border-gray-200 shadow-lg py-1 max-h-72 overflow-y-auto"
+                                role="listbox"
+                              >
+                                <button
+                                  v-for="preset in dockerBaseImagePresets"
+                                  :key="preset.value"
+                                  type="button"
+                                  @click="selectDockerBaseImage(item, preset.value)"
+                                  role="option"
+                                  :aria-selected="item.value === preset.value && !isCustomDockerBaseImage"
+                                  class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value && !isCustomDockerBaseImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                >
+                                  <span class="block">{{ preset.label }}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  @click="selectDockerBaseImage(item, '_custom')"
+                                  role="option"
+                                  :aria-selected="isCustomDockerBaseImage"
+                                  class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
+                                  :class="isCustomDockerBaseImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                >
+                                  自定义镜像地址…
+                                </button>
+                              </div>
+                            </div>
+
+                            <div v-if="isCustomDockerBaseImage" class="pt-0.5">
+                              <input
+                                type="text"
+                                @change="refreshDockerPrebuildStatus(true)"
+                                @input="refreshDockerPrebuildStatus(true)"
+                                v-model="item.value"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white p-2 font-mono disabled:opacity-70 disabled:cursor-not-allowed"
+                                placeholder="如 registry.example.com/ai/python:3.11-slim"
+                              />
+                              <p class="mt-1 text-[11px] text-gray-500">
+                                请填写可拉取的 Docker 镜像完整路径（需内置 Python 3.10+ 与 Debian/Ubuntu apt 环境）。
+                              </p>
+                            </div>
+
+                            <div v-if="!isConfigItemDisabled(String(category), item)" class="mt-3 flex flex-wrap items-center gap-3">
                                <button
                                  type="button"
                                  @click="refreshDockerPrebuildStatus()"

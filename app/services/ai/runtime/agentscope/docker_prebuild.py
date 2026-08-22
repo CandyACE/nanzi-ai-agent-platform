@@ -38,12 +38,10 @@ PREBUILD_CONFIG_KEY = "sandbox_docker_prebuild_done"
 FAQ_HELP_URL = "https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md"
 
 
-DEFAULT_DOCKER_BASE_IMAGE = (
-    "registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim"
-)
+DEFAULT_DOCKER_BASE_IMAGE = "python:3.11-slim"
 
 
-async def _prepare_context() -> tuple[str, str]:
+async def _prepare_context(base_image_override: str | None = None) -> tuple[str, str]:
     """按运行时 docker 策略相同参数生成构建上下文，返回 ``(ctx_dir, tag)``。
 
     ``ctx_dir`` 由调用方负责在 finally 中清理。
@@ -55,9 +53,12 @@ async def _prepare_context() -> tuple[str, str]:
         prepare_build_context,
     )
 
-    base_image = (
-        await ConfigService.get("sandbox_docker_base_image", "")
-    ).strip() or DEFAULT_DOCKER_BASE_IMAGE
+    if base_image_override is not None and base_image_override.strip():
+        base_image = base_image_override.strip()
+    else:
+        base_image = (
+            await ConfigService.get("sandbox_docker_base_image", "")
+        ).strip() or DEFAULT_DOCKER_BASE_IMAGE
 
     ctx_args: dict[str, object] = {
         "gateway_home": GATEWAY_HOME,
@@ -73,17 +74,19 @@ async def _prepare_context() -> tuple[str, str]:
     return str(ctx_dir), tag
 
 
-async def docker_workspace_image_prebuilt() -> bool:
+async def docker_workspace_image_prebuilt(base_image: str | None = None) -> bool:
     """查询 docker 沙箱镜像是否已存在于本地（命中缓存 tag）。
 
     ``True`` 表示镜像已存在，运行时 docker 策略将秒级拉起；``False`` 表示首次
     使用仍需现场构建。仅做本地 inspect 判断，不触发构建。
     """
-    status = await docker_workspace_prebuild_status()
+    status = await docker_workspace_prebuild_status(base_image=base_image)
     return bool(status.get("prebuilt"))
 
 
-async def docker_workspace_prebuild_status() -> dict[str, Any]:
+async def docker_workspace_prebuild_status(
+    base_image: str | None = None,
+) -> dict[str, Any]:
     """返回镜像预构建状态及 Docker 环境能力状态。"""
     try:
         import aiodocker
@@ -102,7 +105,7 @@ async def docker_workspace_prebuild_status() -> dict[str, Any]:
 
     daemon_status = await check_docker_daemon(aiodocker)
     if not daemon_status["available"]:
-        tag = await _try_prepare_context_tag()
+        tag = await _try_prepare_context_tag(base_image)
         return {
             "prebuilt": False,
             "tag": tag,
@@ -115,7 +118,7 @@ async def docker_workspace_prebuild_status() -> dict[str, Any]:
     ctx_dir: str | None = None
     client: Any | None = None
     try:
-        ctx_dir, tag = await _prepare_context()
+        ctx_dir, tag = await _prepare_context(base_image)
         result: dict[str, Any] = {
             "prebuilt": False,
             "tag": tag,
@@ -151,7 +154,11 @@ async def docker_workspace_prebuild_status() -> dict[str, Any]:
                 pass
 
 
-async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, Any]:
+async def prebuild_docker_workspace_image(
+    *,
+    base_image: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
     """预构建 docker 沙箱镜像（一次性的运维/预热操作）。
 
     流程与运行时 ``DockerWorkspace._build_or_reuse_image`` 完全一致：
@@ -161,6 +168,7 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
     尾部日志）。构建成功后写入配置标记 ``sandbox_docker_prebuild_done``。
 
     Args:
+        base_image: 可选指定的基础镜像（覆盖系统配置）。
         force: 是否强制重新构建（跳过 inspect 缓存命中判断）。默认 ``False``
             幂等（镜像已存在则直接返回、不重复构建）。
 
@@ -174,7 +182,7 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
     try:
         import aiodocker
     except ImportError as exc:
-        tag = await _try_prepare_context_tag()
+        tag = await _try_prepare_context_tag(base_image)
         return {
             "reused": False,
             "built": False,
@@ -190,7 +198,7 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
 
     daemon_status = await check_docker_daemon(aiodocker)
     if not daemon_status["available"]:
-        tag = await _try_prepare_context_tag()
+        tag = await _try_prepare_context_tag(base_image)
         return {
             "reused": False,
             "built": False,
@@ -204,7 +212,7 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
     ctx_dir: str | None = None
     client: Any | None = None
     try:
-        ctx_dir, tag = await _prepare_context()
+        ctx_dir, tag = await _prepare_context(base_image)
         try:
             client = aiodocker.Docker()
         except Exception as exc:
@@ -222,7 +230,7 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
         # 命中已有镜像且非 force => 幂等跳过（与运行时 _build_or_reuse_image 相同）。
         if not force and await _image_exists(client, tag):
             logger.info("[docker_prebuild] image cache hit %r, skip build", tag)
-            await _mark_prebuilt()
+            await _mark_prebuilt(base_image)
             return {"reused": True, "built": False, "tag": tag}
 
         logger.info("[docker_prebuild] building image %r", tag)
@@ -256,8 +264,8 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
             tail = "\n".join(build_output[-20:])
             raise RuntimeError(f"docker build 异常: {exc}\n--- build log tail ---\n{tail}") from exc
 
-        # 构建成功，写入 prebuilt 标记
-        await _mark_prebuilt()
+        # 构建成功，写入 prebuilt 标记并持久化 base_image（如有传入）
+        await _mark_prebuilt(base_image)
         logger.info("[docker_prebuild] successfully built image %r", tag)
         return {"reused": False, "built": True, "tag": tag}
     finally:
@@ -278,7 +286,7 @@ async def _image_exists(client: Any, tag: str) -> bool:
         return False
 
 
-async def _mark_prebuilt() -> None:
+async def _mark_prebuilt(base_image: str | None = None) -> None:
     from app.services.config_service import ConfigService
 
     try:
@@ -288,6 +296,13 @@ async def _mark_prebuilt() -> None:
             category="sandbox",
             description="Docker 沙箱镜像预构建状态标记（内部使用，非空表示已预构建）",
         )
+        if base_image and base_image.strip():
+            await ConfigService.set(
+                "sandbox_docker_base_image",
+                base_image.strip(),
+                category="sandbox",
+                description="docker 策略使用的容器基础镜像（留空默认使用阿里云加速源）",
+            )
     except Exception as exc:
         logger.warning("[docker_prebuild] failed to write prebuild mark: %s", exc)
 
@@ -333,11 +348,13 @@ def _docker_unavailable_status(exc: Exception) -> dict[str, Any]:
     }
 
 
-async def _try_prepare_context_tag() -> str | None:
+async def _try_prepare_context_tag(
+    base_image_override: str | None = None,
+) -> str | None:
     """尽力计算运行时 Tag；失败时不影响返回。"""
     ctx_dir: str | None = None
     try:
-        ctx_dir, tag = await _prepare_context()
+        ctx_dir, tag = await _prepare_context(base_image_override)
         return tag
     except Exception as exc:
         logger.warning(
