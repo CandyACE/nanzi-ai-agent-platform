@@ -36,7 +36,11 @@ async def normalize_resource_scope_for_user(
     from sqlalchemy.orm import joinedload
 
     raw_scope = raw_scope if isinstance(raw_scope, dict) else {}
-    user_id = user_info.get("user_id") or user_info.get("id")
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    try:
+        user_id = int(raw_user_id) if raw_user_id is not None else None
+    except (TypeError, ValueError):
+        user_id = None
     is_admin = user_info.get("role") == "admin"
     datasets = await MetadataService.list_accessible_dataset_options(
         db, user_id=user_id, is_admin=is_admin, status=1

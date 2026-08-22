@@ -16,6 +16,7 @@ from app.schemas.task import (
 from app.services.task_center_service import TaskCenterService
 from app.schemas.response import StandardResponse, ListResponse
 from app.models.saved_report import PortalSavedReport, PortalSavedReportRun, PortalSavedReportSubscription
+from app.models.task import AgentScheduledTask
 from app.models.user import User
 from app.services.resource_scope_normalizer import (
     has_any_resource,
@@ -31,7 +32,11 @@ router = APIRouter()
 
 async def _task_owner_info(db: AsyncSession, owner_user_id: Any) -> Dict[str, Any]:
     """任务按所有者身份执行，资源范围也必须按所有者的授权目录校验。"""
-    owner = (await db.execute(select(User).where(User.id == owner_user_id))).scalar_one_or_none()
+    try:
+        parsed_user_id = int(owner_user_id)
+    except (TypeError, ValueError):
+        parsed_user_id = owner_user_id
+    owner = (await db.execute(select(User).where(User.id == parsed_user_id))).scalar_one_or_none()
     if owner is None:
         raise HTTPException(status_code=404, detail="任务所有者不存在")
     return {
@@ -86,7 +91,8 @@ async def create_task(
     """
     Create a new scheduled task.
     """
-    user_id = user_info.get("user_id")
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = int(raw_user_id) if raw_user_id is not None else None
     owner_info = await _task_owner_info(db, user_id)
     config = await _sanitize_task_config(db, owner_info, task_in.config)
     task = await TaskCenterService.create_task(
@@ -102,7 +108,8 @@ async def list_tasks(
     """
     List all scheduled tasks for the current user.
     """
-    user_id = user_info.get("user_id")
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = int(raw_user_id) if raw_user_id is not None else None
     is_admin = user_info.get("role") == "admin"
     tasks = await TaskCenterService.list_tasks(db, user_id, is_admin)
     return StandardResponse(data=[TaskResponse.from_orm(t) for t in tasks])
@@ -228,7 +235,8 @@ async def list_execution_history(
     db: AsyncSession = Depends(get_db_session),
 ):
     is_admin = user_info.get("role") == "admin"
-    owner_user_id = user_info.get("user_id") or user_info.get("id")
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    owner_user_id = int(raw_user_id) if raw_user_id is not None and not is_admin else None
     items, total = await TaskCenterService.list_execution_history(
         db,
         page=page,
@@ -238,7 +246,7 @@ async def list_execution_history(
         q=q,
         start_at=start_at,
         end_at=end_at,
-        owner_user_id=None if is_admin else owner_user_id,
+        owner_user_id=owner_user_id,
         is_admin=is_admin,
     )
     return StandardResponse(
@@ -249,6 +257,14 @@ async def list_execution_history(
             page_size=page_size,
         )
     )
+
+
+def _check_task_ownership(task: AgentScheduledTask, user_info: Dict[str, Any]) -> None:
+    if user_info.get("role") == "admin":
+        return
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    if raw_user_id is None or int(task.user_id) != int(raw_user_id):
+        raise HTTPException(status_code=403, detail="Permission denied")
 
 
 @router.get("/{task_id}", response_model=StandardResponse[TaskResponse])
@@ -264,10 +280,7 @@ async def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    # print(f"DEBUG: task.user_id={task.user_id} ({type(task.user_id)}), user_info.user_id={user_info.get('user_id')} ({type(user_info.get('user_id'))})")
-    if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
-        
+    _check_task_ownership(task, user_info)
     return StandardResponse(data=TaskResponse.from_orm(task))
 
 @router.patch("/{task_id}", response_model=StandardResponse[TaskResponse])
@@ -284,9 +297,7 @@ async def update_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    # print(f"DEBUG: task.user_id={task.user_id} ({type(task.user_id)}), user_info.user_id={user_info.get('user_id')} ({type(user_info.get('user_id'))})")
-    if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+    _check_task_ownership(task, user_info)
 
     payload = task_in.model_dump(exclude_unset=True)
     if "config" in payload:
@@ -309,9 +320,7 @@ async def delete_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    # print(f"DEBUG: task.user_id={task.user_id} ({type(task.user_id)}), user_info.user_id={user_info.get('user_id')} ({type(user_info.get('user_id'))})")
-    if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+    _check_task_ownership(task, user_info)
         
     await TaskCenterService.delete_task(db, task_id)
     return StandardResponse(data={"success": True})
@@ -331,10 +340,7 @@ async def run_task_immediately(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    # Check permission
-    # print(f"DEBUG: task.user_id={task.user_id} ({type(task.user_id)}), user_info.user_id={user_info.get('user_id')} ({type(user_info.get('user_id'))})")
-    if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+    _check_task_ownership(task, user_info)
     
     # Trigger async
     import asyncio
@@ -357,9 +363,7 @@ async def get_task_logs(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    # print(f"DEBUG: task.user_id={task.user_id} ({type(task.user_id)}), user_info.user_id={user_info.get('user_id')} ({type(user_info.get('user_id'))})")
-    if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+    _check_task_ownership(task, user_info)
         
     logs, total = await TaskCenterService.get_task_logs(db, task_id, page, page_size)
     items = [TaskLogResponse.from_orm(l) for l in logs]

@@ -419,3 +419,26 @@ def test_data_previous_result_visualization_can_delegate_to_data_query():
     assert decision.should_delegate is True
     assert decision.delegate_capability == "data_query"
     assert decision.allows_data_route is True
+
+
+def test_todo_or_task_list_query_stays_general():
+    """任务列表、待办任务查询必须由主助手处理，禁止委派到 ChatBI 数据智能体。"""
+    for query in (
+        "看看我的任务列表",
+        "查看待办列表",
+        "我的待办事项有哪些",
+        "显示今日任务清单",
+        "看看我的 todo list",
+    ):
+        decision = resolve_request_decision(
+            query,
+            semantic_intent=IntentType.DATA_QUERY,
+            semantic_confidence=0.95,
+        )
+
+        assert decision.source == RequestSource.GENERAL
+        assert decision.capability == RequestCapability.ANSWER
+        assert decision.should_delegate is False
+        assert decision.delegate_capability is None
+        assert decision.allows_data_route is False
+

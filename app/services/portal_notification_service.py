@@ -21,8 +21,9 @@ class PortalNotificationService:
         resource_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> PortalNotification:
+        target_uid = int(user_id) if user_id is not None else 0
         row = PortalNotification(
-            user_id=user_id, title=title[:200], content=content, level=level,
+            user_id=target_uid, title=title[:200], content=content, level=level,
             category=category, resource_type=resource_type, resource_id=resource_id,
             meta_info=metadata or {},
         )
@@ -32,7 +33,8 @@ class PortalNotificationService:
 
     @staticmethod
     async def list_for_user(db: AsyncSession, user_id: int, *, limit: int, offset: int, unread_only: bool):
-        stmt = select(PortalNotification).where(PortalNotification.user_id == user_id)
+        target_uid = int(user_id) if user_id is not None else 0
+        stmt = select(PortalNotification).where(PortalNotification.user_id == target_uid)
         if unread_only:
             stmt = stmt.where(PortalNotification.read_at.is_(None))
         result = await db.execute(stmt.order_by(desc(PortalNotification.created_at)).offset(offset).limit(limit))
@@ -40,16 +42,18 @@ class PortalNotificationService:
 
     @staticmethod
     async def unread_count(db: AsyncSession, user_id: int) -> int:
+        target_uid = int(user_id) if user_id is not None else 0
         result = await db.execute(select(func.count()).select_from(PortalNotification).where(
-            PortalNotification.user_id == user_id, PortalNotification.read_at.is_(None)
+            PortalNotification.user_id == target_uid, PortalNotification.read_at.is_(None)
         ))
         return int(result.scalar() or 0)
 
     @staticmethod
     async def mark_read(db: AsyncSession, user_id: int, notification_id: int) -> bool:
+        target_uid = int(user_id) if user_id is not None else 0
         result = await db.execute(update(PortalNotification).where(
             PortalNotification.id == notification_id,
-            PortalNotification.user_id == user_id,
+            PortalNotification.user_id == target_uid,
             PortalNotification.read_at.is_(None),
         ).values(read_at=datetime.now()))
         await db.flush()
@@ -57,8 +61,9 @@ class PortalNotificationService:
 
     @staticmethod
     async def mark_all_read(db: AsyncSession, user_id: int) -> int:
+        target_uid = int(user_id) if user_id is not None else 0
         result = await db.execute(update(PortalNotification).where(
-            PortalNotification.user_id == user_id,
+            PortalNotification.user_id == target_uid,
             PortalNotification.read_at.is_(None),
         ).values(read_at=datetime.now()))
         await db.flush()
@@ -66,9 +71,10 @@ class PortalNotificationService:
 
     @staticmethod
     async def delete_one(db: AsyncSession, user_id: int, notification_id: int) -> bool:
+        target_uid = int(user_id) if user_id is not None else 0
         result = await db.execute(delete(PortalNotification).where(
             PortalNotification.id == notification_id,
-            PortalNotification.user_id == user_id,
+            PortalNotification.user_id == target_uid,
         ))
         await db.flush()
         return bool(result.rowcount)

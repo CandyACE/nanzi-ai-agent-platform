@@ -1,4 +1,4 @@
-# 南孜智能体平台嵌入式组件集成指南 (EmbedChat Integration Guide)
+# NanZi智能体平台嵌入式组件集成指南 (EmbedChat Integration Guide)
 
 本文档旨在指导第三方业务系统（如 OA 协同、CRM 客户管理、ERP 系统、运维监控、数据门户等）如何安全、高效、深度地集成南孜 AI Agent 对话组件（EmbedChat）。
 
@@ -14,7 +14,7 @@
 6. [双向通信协议 (PostMessage Protocol)](#六双向通信协议-postmessage-protocol)
 7. [会话生命周期与滑动续期机制](#七会话生命周期与滑动续期机制)
 8. [样式、主题与品牌定制 (Theming)](#八样式主题与品牌定制)
-9. [常见问题与排错指南 (FAQ & Troubleshooting)](#九常见问题与排错指南)
+9. [常见问题与排错指南 (FAQ &amp; Troubleshooting)](#九常见问题与排错指南)
 
 ---
 
@@ -54,18 +54,19 @@ sequenceDiagram
 
 ## 二、认证与凭证模式对比
 
-| 维度 | ⭐ Embed Ticket 模式（生产推荐） | API Key 直传模式（传统兼容） |
-|---|---|---|
-| **安全性** | ⭐️⭐️⭐️⭐️⭐️ **最高**。长期 Key 永不离开内网服务器，浏览器仅接触 5 分钟一次性门票。 | ⭐️⭐️ **较低**。长期 Key 直接暴露在浏览器 URL 或 JavaScript 内存中。 |
-| **防盗链/防重放** | **支持**。Ticket 兑换后立即原子删除（`GETDEL` 阅后即焚），他人无法盗用链接。 | **不支持**。复制 URL 即可被他人打开或长期利用。 |
-| **会话续期** | **活跃滑动续期 (Sliding TTL)**。持续交互自动维持 24 小时有效时间，闲置自动释放。 | 永久有效（除非手动重置 Key）。 |
-| **适用场景** | 企业内网/外网生产系统、多租户门户、移动端 H5 嵌入。 | 本地 MVP 原型验证、内网快速临时调试。 |
+| 维度                    | ⭐ Embed Ticket 模式（生产推荐）                                                                 | API Key 直传模式（传统兼容）                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| **安全性**        | ⭐️⭐️⭐️⭐️⭐️**最高**。长期 Key 永不离开内网服务器，浏览器仅接触 5 分钟一次性门票。 | ⭐️⭐️**较低**。长期 Key 直接暴露在浏览器 URL 或 JavaScript 内存中。 |
+| **防盗链/防重放** | **支持**。Ticket 兑换后立即原子删除（`GETDEL` 阅后即焚），他人无法盗用链接。             | **不支持**。复制 URL 即可被他人打开或长期利用。                        |
+| **会话续期**      | **活跃滑动续期 (Sliding TTL)**。持续交互自动维持 24 小时有效时间，闲置自动释放。           | 永久有效（除非手动重置 Key）。                                               |
+| **适用场景**      | 企业内网/外网生产系统、多租户门户、移动端 H5 嵌入。                                              | 本地 MVP 原型验证、内网快速临时调试。                                        |
 
 ---
 
 ## 三、服务端 Ticket 签发接口规范
 
 ### 1. 签发 Ticket (Create Embed Ticket)
+
 - **请求方式**：`POST /api/v1/embed/tickets`
 - **请求头**：
   ```http
@@ -74,13 +75,13 @@ sequenceDiagram
   ```
 - **请求参数 (JSON Body)**：
 
-| 字段名 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---|---|---|
-| `username` | string | 否 | 当前调用者 | 目标业务用户的用户名（代表哪个用户进行对话）。 |
-| `user_id` | integer | 否 | - | 目标用户的 ID（与 `username` 二选一）。 |
-| `agent_id` | string | 否 | 内置通用助手 | 锁定对话的智能体 ID（如 `sys-agent-chatbi`、`sys-agent-data`）。 |
-| `allowed_origins` | list[string] | 否 | `[]` (不限制) | 限定允许嵌入该 Ticket 的前端域名列表（如 `["https://crm.company.com"]`）。 |
-| `expires_in` | integer | 否 | `300` | Ticket 兑换有效时长（秒），取值范围 60 ~ 1800 秒。 |
+| 字段名              | 类型         | 必填 | 默认值          | 说明                                                                        |
+| ------------------- | ------------ | ---- | --------------- | --------------------------------------------------------------------------- |
+| `username`        | string       | 否   | 当前调用者      | 目标业务用户的用户名（代表哪个用户进行对话）。                              |
+| `user_id`         | integer      | 否   | -               | 目标用户的 ID（与`username` 二选一）。                                    |
+| `agent_id`        | string       | 否   | 内置通用助手    | 锁定对话的智能体 ID（如`sys-agent-chatbi`、`sys-agent-data`）。         |
+| `allowed_origins` | list[string] | 否   | `[]` (不限制) | 限定允许嵌入该 Ticket 的前端域名列表（如`["https://crm.company.com"]`）。 |
+| `expires_in`      | integer      | 否   | `300`         | Ticket 兑换有效时长（秒），取值范围 60 ~ 1800 秒。                          |
 
 - **响应格式 (JSON)**：
   ```json
@@ -175,7 +176,7 @@ async def get_ai_embed_ticket(current_username: str = "zhangsan"):
         )
         if resp.status_code != 200:
             raise HTTPException(status_code=500, detail="Failed to issue embed ticket")
-        
+      
         data = resp.json()
         return {"ticket": data["data"]["ticket"]}
 ```
@@ -433,33 +434,34 @@ document.getElementById('nanzi-close-btn').onclick = () => {
 ## 六、双向通信协议 (PostMessage Protocol)
 
 ### 1. 协议规范
+
 - **组件发出的消息**：固定包含 `{ source: "nanzi-agent-embed" }`；
 - **宿主发出的消息**：支持传递 `instance_id` 用于多实例隔离。
 
 ### 2. 下行指令集 (Host -> Widget)
 
-| 指令类型 (Type) | 参数结构 | 说明 |
-|---|---|---|
-| `INIT_CONFIG` | `{ ticket, agent_id, theme, business_context, styleVars }` | **初始化指令**。<br>优先传 `ticket`（推荐），支持注入业务上下文与品牌色。 |
-| `RESET_SESSION` | `{ ticket }` (推荐) 或 `{ new_token }` | **重置会话/超时续期**。当旧会话过期时，宿主传入新 Ticket 实现静默重连。 |
-| `UPDATE_CONTEXT`| `{ payload: { ... } }` | 动态更新宿主业务上下文（如同步用户当前选中的订单号、设备 ID）。 |
-| `SYNC_STATE` | `{ payload: { ... } }` | 同步宿主页面状态，效果同 `UPDATE_CONTEXT`。 |
-| `SET_THEME` | `{ theme: 'light'\|'dark', styleVars: { ... } }` | 动态切换亮暗模式或更新主色调。 |
-| `STOP_GENERATION` | `{}` | 强制打断 AI 正在进行的流式生成。 |
-| `CLEAR_SESSION` | `{}` | 清空当前对话界面，开启新会话。 |
-| `SEND_COMMAND` | `{ command: '/new' }` | 触发组件内置指令。 |
+| 指令类型 (Type)     | 参数结构                                                     | 说明                                                                          |
+| ------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `INIT_CONFIG`     | `{ ticket, agent_id, theme, business_context, styleVars }` | **初始化指令**。优先传 `ticket`（推荐），支持注入业务上下文与品牌色。 |
+| `RESET_SESSION`   | `{ ticket }` (推荐) 或 `{ new_token }`                   | **重置会话/超时续期**。当旧会话过期时，宿主传入新 Ticket 实现静默重连。 |
+| `UPDATE_CONTEXT`  | `{ payload: { ... } }`                                     | 动态更新宿主业务上下文（如同步用户当前选中的订单号、设备 ID）。               |
+| `SYNC_STATE`      | `{ payload: { ... } }`                                     | 同步宿主页面状态，效果同`UPDATE_CONTEXT`。                                  |
+| `SET_THEME`       | `{ theme: 'light'\|'dark', styleVars: { ... } }`            | 动态切换亮暗模式或更新主色调。                                                |
+| `STOP_GENERATION` | `{}`                                                       | 强制打断 AI 正在进行的流式生成。                                              |
+| `CLEAR_SESSION`   | `{}`                                                       | 清空当前对话界面，开启新会话。                                                |
+| `SEND_COMMAND`    | `{ command: '/new' }`                                      | 触发组件内置指令。                                                            |
 
 ### 3. 上行事件集 (Widget -> Host)
 
-| 事件类型 (Type) | 关键参数 | 说明 |
-|---|---|---|
-| `NANZI_WIDGET_READY` | `{}` | 组件 DOM 与 JavaScript 已完成加载，等待宿主发送 `INIT_CONFIG`。 |
-| `INIT_SUCCESS` | `{}` | 组件已成功完成鉴权与智能体初始化，用户可开始对话。 |
-| `INIT_FAILURE` | `{ reason: "invalid_ticket" \| "missing_token" \| "invalid_token" }` | 鉴权失败或会话超时通知。 |
-| `GENERATION_STOPPED` | `{}` | 确认 AI 回复生成已成功中断。 |
-| `CONVERSATION_CHANGED` | `{ conversation_id, clear_host_conversation_pin }` | 会话发生切换或重置时通知宿主。 |
-| `USER_FEEDBACK` | `{ message_id, trace_id, feedback: "up" \| "down" \| null }` | 用户点击点赞、点踩或取消反馈时触发。 |
-| `OPEN_DATA_PORTAL_FULL` | `{}` | 用户点击数据门户卡片，请求宿主跳转至完整门户大屏。 |
+| 事件类型 (Type)           | 关键参数                                                             | 说明                                                             |
+| ------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `NANZI_WIDGET_READY`    | `{}`                                                               | 组件 DOM 与 JavaScript 已完成加载，等待宿主发送`INIT_CONFIG`。 |
+| `INIT_SUCCESS`          | `{}`                                                               | 组件已成功完成鉴权与智能体初始化，用户可开始对话。               |
+| `INIT_FAILURE`          | `{ reason: "invalid_ticket" \| "missing_token" \| "invalid_token" }` | 鉴权失败或会话超时通知。                                         |
+| `GENERATION_STOPPED`    | `{}`                                                               | 确认 AI 回复生成已成功中断。                                     |
+| `CONVERSATION_CHANGED`  | `{ conversation_id, clear_host_conversation_pin }`                 | 会话发生切换或重置时通知宿主。                                   |
+| `USER_FEEDBACK`         | `{ message_id, trace_id, feedback: "up" \| "down" \| null }`         | 用户点击点赞、点踩或取消反馈时触发。                             |
+| `OPEN_DATA_PORTAL_FULL` | `{}`                                                               | 用户点击数据门户卡片，请求宿主跳转至完整门户大屏。               |
 
 ---
 
@@ -513,18 +515,22 @@ frame.contentWindow.postMessage({
 ## 九、常见问题与排错指南 (FAQ & Troubleshooting)
 
 ### Q1: 为什么我的 Ticket 只能兑换一次，刷新网页后报 `invalid_ticket`？
+
 - **解答**：Ticket 设计为**一次性门票（One-Time Token）**。为了杜绝链接外泄或被盗用，IFrame 在首次兑换成功后服务端会立即核销该 Ticket。
 - **解决方案**：前端每次重新加载或刷新页面时，应通过宿主后端接口重新申请一张崭新的 Ticket。
 
 ### Q2: 宿主后端调用 `/api/v1/embed/tickets` 报 `403 Forbidden`？
+
 - **解答**：若在请求体中指定了其他用户的 `username` 或 `user_id` 进行代客签发（Impersonation），调用方必须具备代客权限。
 - **解决方案**：请确保调用该接口的服务账号具备管理员权限（`admin`）或在权限管理中已分配 `GET:/api/v1/users/profile`（获取用户画像）API 权限。普通用户若未获授权只能为自身签发 Ticket。
 
 ### Q3: 报错 `404 Target user not found`？
+
 - **解答**：传给 `username` 的用户在南孜平台尚不存在。
 - **解决方案**：南孜平台需提前同步该用户账号，或在创建 Ticket 前先通过用户管理接口确保账号已创建。
 
 ### Q4: 移动端 H5 嵌入时如何防止横向滚动？
+
 - **解答**：建议在宿主页面将 IFrame 容器设置为固定铺满：
   ```html
   <div style="position: fixed; inset: 0; width: 100vw; height: 100vh; overflow: hidden;">

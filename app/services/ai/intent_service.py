@@ -91,6 +91,10 @@ _FOLLOWUP_KEYWORDS = [
     "格式", "规范", "渲染", "排版", "不符合", "不符", "重新输出", "重新展示", "重新生成", "重新排版", "重新渲染", "重新格式化",
     "visual", "chart", "plot", "graph", "analyze", "summarize", "format", "render",
 ]
+_DATA_QUERY_SIGNALS = [
+    "查询", "查一下", "查下", "统计", "多少", "趋势",
+    "最近", "今天", "本月", "上月", "top", "明细", "汇总", "对比",
+]
 _NEW_QUERY_KEYWORDS = [
     "重新查", "再查", "查询", "查一下", "查下", "统计", "列出", "列表", "筛选", "过滤", "最近",
     "今天", "昨天", "本周", "上周", "本月", "上月", "新增条件", "换成条件",
@@ -192,17 +196,72 @@ _CURRENT_MODEL_IDENTITY_PATTERNS = (
     re.compile(r"(?:current|active)\s+model(?:\s+name)?", re.IGNORECASE),
 )
 _DATA_QUERY_SIGNALS = [
-    "查询", "查一下", "查下", "统计", "多少", "列表", "记录", "趋势",
+    "查询", "查一下", "查下", "统计", "多少", "趋势",
     "最近", "今天", "本月", "上月", "top", "明细", "汇总", "对比",
 ]
 _DATA_QUERY_GENERIC_VERBS = ["查询", "查一下", "查下", "查", "看看", "查看"]
 _DATA_QUERY_STRONG_SIGNALS = [
-    "统计", "多少", "列表", "记录", "趋势", "top", "明细", "汇总", "对比",
+    "统计", "多少", "趋势", "top", "明细", "汇总", "对比",
     "数量", "报表", "指标", "数据集", "数据库", "sql", "工单", "告警记录",
-    "故障记录", "操作日志", "设备清单", "资产列表",
-    "count", "list", "record", "records", "table", "metric", "metrics", "report",
+    "故障记录", "操作日志", "设备清单", "资产列表", "数据列表", "明细列表",
+    "订单列表", "客户列表", "用户列表", "产品列表", "告警列表", "故障列表", "工单列表",
+    "count", "records", "table", "metric", "metrics", "report",
 ]
 
+_TODO_TASK_PATTERNS = (
+    "任务列表",
+    "待办列表",
+    "待办任务",
+    "待办事项",
+    "我的任务",
+    "我的待办",
+    "我的代办",
+    "代办列表",
+    "代办事项",
+    "代办任务",
+    "任务清单",
+    "计划清单",
+    "计划列表",
+    "今日待办",
+    "今日任务",
+    "todo list",
+    "todo",
+    "todos",
+    "task list",
+)
+_TODO_BUSINESS_DATA_BLOCKERS = (
+    "订单",
+    "销售",
+    "资产",
+    "工单",
+    "告警",
+    "故障",
+    "数据库",
+    "数据集",
+    "sql",
+    "dataset",
+    "database",
+)
+
+
+def looks_like_todo_or_task_management_query(user_question: str) -> bool:
+    """判断是否为个人待办、TODO 或任务列表管理，而非业务数据库查数。"""
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    if any(blocker in q for blocker in _TODO_BUSINESS_DATA_BLOCKERS):
+        return False
+    return any(sig in q for sig in _TODO_TASK_PATTERNS)
+
+
+def looks_like_strong_business_data_request(user_question: str) -> bool:
+    """低置信度兜底用：只有明确业务数据对象/指标/记录信号才算强查数。"""
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    if looks_like_todo_or_task_management_query(q):
+        return False
+    return any(sig in q for sig in _DATA_QUERY_STRONG_SIGNALS)
 _RUNTIME_LOCAL_CONTEXT_SIGNALS = [
     "当前系统", "当前服务器", "当前机器", "当前这台", "当前平台", "当前环境",
     "本机", "本地", "我机器", "我的机器", "我的服务器", "我的主机",
@@ -219,15 +278,6 @@ _RUNTIME_COMMAND_SIGNALS = [
 _RUNTIME_DEFINITION_SIGNALS = [
     "是什么意思", "什么是", "指什么", "如何理解",
 ]
-
-
-
-def looks_like_strong_business_data_request(user_question: str) -> bool:
-    """低置信度兜底用：只有明确业务数据对象/指标/记录信号才算强查数。"""
-    q = (user_question or "").strip().lower()
-    if not q:
-        return False
-    return any(sig in q for sig in _DATA_QUERY_STRONG_SIGNALS)
 
 
 def looks_like_runtime_diagnostic_query(user_question: str) -> bool:
@@ -507,6 +557,7 @@ def resolve_data_agent_session_affinity(user_question: str) -> DataSessionAffini
         or looks_like_web_search_query(q)
         or looks_like_public_profile_lookup(q)
         or looks_like_platform_self_service_query(q)
+        or looks_like_todo_or_task_management_query(q)
         or looks_like_runtime_diagnostic_query(q)
         or looks_like_accessible_resource_catalog_query(q)
     ):

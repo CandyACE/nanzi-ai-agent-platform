@@ -248,11 +248,15 @@ async def list_agent_executions(
     
     # Filter by user if not admin
     if user.get('role') != 'admin':
-        # Assuming user dict has 'id' or 'user_name' to match against AgentExecutionHistory
-        # If user_id is in the user dict, use it. Otherwise fall back to user_name?
-        # Standardize on user_id if possible. 
-        # Checking schema: AgentExecutionHistory has user_id and username.
-        stmt = stmt.where(AgentExecutionHistory.user_id == user.get('id'))
+        raw_uid = user.get('user_id') or user.get('id')
+        try:
+            target_uid = int(raw_uid) if raw_uid is not None else None
+        except (TypeError, ValueError):
+            target_uid = None
+        if target_uid is not None:
+            stmt = stmt.where(AgentExecutionHistory.user_id == target_uid)
+        else:
+            stmt = stmt.where(AgentExecutionHistory.username == user.get('user_name'))
 
     stmt = stmt.order_by(desc(AgentExecutionHistory.created_at)).limit(limit)
     

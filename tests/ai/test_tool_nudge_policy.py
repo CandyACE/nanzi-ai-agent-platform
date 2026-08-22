@@ -985,3 +985,23 @@ def test_multi_sub_agents_fallback_to_single_when_batch_tool_missing():
     assert nudge.tool_name == "sub_agent_call"
     assert nudge.score == 1.0
     assert "agent_name='chat-bi'" in nudge.message
+
+
+def test_todo_and_task_list_does_not_nudge_data_sub_agent():
+    """查看任务列表、待办列表等请求绝不强推数据查询子代理。"""
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    for q in ("看看我的任务列表", "查看待办事项清单", "我的待办有哪些", "todo list"):
+        nudge = resolve_tool_nudge(
+            q,
+            tools,
+            available_sub_agent_names={"data-agent"},
+            sub_agent_candidates_by_capability={"data_query": ["data-agent"]},
+            semantic_intent=IntentType.DATA_QUERY,
+            semantic_confidence=0.9,
+        )
+
+        assert nudge is None
+

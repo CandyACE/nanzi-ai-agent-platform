@@ -82,16 +82,20 @@ class MetadataService:
         if not is_admin:
             if user_id is None:
                 return []
+            try:
+                parsed_user_id = int(user_id)
+            except (TypeError, ValueError):
+                return []
             from app.models.permission import ResourcePermission, UserRoleRelation
 
             user_roles_stmt = select(UserRoleRelation.role_id).where(
-                UserRoleRelation.user_id == user_id
+                UserRoleRelation.user_id == parsed_user_id
             )
             permitted_ids_stmt = select(cast(ResourcePermission.resource_id, Integer)).where(
                 ResourcePermission.resource_type == "metadata",
                 ResourcePermission.enabled == True,
                 or_(
-                    ResourcePermission.user_id == user_id,
+                    ResourcePermission.user_id == parsed_user_id,
                     ResourcePermission.role_id.in_(user_roles_stmt),
                 ),
             )
@@ -112,10 +116,14 @@ class MetadataService:
 
         # 1. Permission Filtering (if not admin)
         if not is_admin and user_id is not None:
+            try:
+                parsed_user_id = int(user_id)
+            except (TypeError, ValueError):
+                parsed_user_id = user_id
             from app.models.permission import ResourcePermission, UserRoleRelation
             
             # Subquery to find role IDs for the user
-            user_roles_stmt = select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == user_id)
+            user_roles_stmt = select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == parsed_user_id)
             
             # Subquery to check if user/role has permission for this specific dataset
             # resource_type='metadata' is used for datasets
@@ -124,7 +132,7 @@ class MetadataService:
                 ResourcePermission.resource_id == str(dataset_id),
                 ResourcePermission.enabled == True,
                 or_(
-                    ResourcePermission.user_id == user_id,
+                    ResourcePermission.user_id == parsed_user_id,
                     ResourcePermission.role_id.in_(user_roles_stmt)
                 )
             )
@@ -153,8 +161,7 @@ class MetadataService:
     @staticmethod
     async def search_datasets(
         db: AsyncSession, 
-        keyword: Optional[str] = None, # Changed param name to match usage, or keep as 'query'? Original was 'keyword' in this file but 'query' in others. Let's align with call usage. data_api calls with `query=dataset_name` passed to `search_datasets(..., query=...)`. Wait, data_api calls `search_datasets(session, query=dataset_name, ...)`. The signature in data_api call is `query`. The signature in this file was `keyword`.
-        # Let's standardize on `query` to match the caller in data_api.py update.
+        keyword: Optional[str] = None,
         query: Optional[str] = None,
         status: int = 1,
         user_id: Optional[int] = None,
@@ -167,13 +174,17 @@ class MetadataService:
         
         # 1. Permission Filtering (if not admin)
         if not is_admin and user_id is not None:
+            try:
+                parsed_user_id = int(user_id)
+            except (TypeError, ValueError):
+                parsed_user_id = user_id
             from app.models.permission import ResourcePermission, UserRoleRelation
             
             # Subquery to find all resource_ids (dataset ids) this user has access to
             # via direct permission OR via role permission
             
             # 1. Get User's Role IDs
-            user_roles_stmt = select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == user_id)
+            user_roles_stmt = select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == parsed_user_id)
             
             # 2. Get Permitted Resource IDs (Union of User-based and Role-based)
             # We match resource_type='metadata' (as established for datasets in this context)
@@ -181,7 +192,7 @@ class MetadataService:
                 ResourcePermission.resource_type == 'metadata',
                 ResourcePermission.enabled == True,
                 or_(
-                    ResourcePermission.user_id == user_id,
+                    ResourcePermission.user_id == parsed_user_id,
                     ResourcePermission.role_id.in_(user_roles_stmt)
                 )
             )

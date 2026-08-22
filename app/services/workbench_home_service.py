@@ -272,10 +272,11 @@ async def _load_tasks(
     from app.models.task import AgentScheduledTask
 
     _ = user  # 保留签名兼容调用方
+    target_uid = int(user_id) if user_id is not None else 0
 
     result = await db.execute(
         select(AgentScheduledTask)
-        .where(AgentScheduledTask.user_id == user_id)
+        .where(AgentScheduledTask.user_id == target_uid)
         .order_by(desc(AgentScheduledTask.updated_at))
         .limit(20)
     )

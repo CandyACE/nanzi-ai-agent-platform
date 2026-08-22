@@ -7,7 +7,8 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - ./data:/app/data
+      # 宿主机数据目录对齐挂载：支持通过 HOST_DATA_DIR 指定宿主机绝对路径，默认使用相对路径 ./data
+      - ${HOST_DATA_DIR:-./data}:/app/data
       - ~/.agents/skills:/app/data/skills
       # 挂载宿主机 Docker Socket，支持平台在容器化部署时通过宿主机 Docker 动态创建与管理沙箱容器 (DooD 架构)
       - /var/run/docker.sock:/var/run/docker.sock
@@ -15,6 +16,8 @@ services:
       # Service Config
       - API_SERVICE_ENV=${API_SERVICE_ENV:-dev}
       - API_SERVICE_LOG_LEVEL=${API_SERVICE_LOG_LEVEL:-INFO}
+      # 宿主机数据目录真实物理路径（DooD 沙箱容器挂载对齐，留空则自动按容器工作区解析）
+      - HOST_DATA_DIR=${HOST_DATA_DIR:-}
       # 业务默认时区（与系统配置 platform_timezone 默认值一致；无法改 MySQL 时仍可对齐应用写入时间）
       - TZ=${TZ:-Asia/Shanghai}
       - PLATFORM_TIMEZONE=${PLATFORM_TIMEZONE:-Asia/Shanghai}
