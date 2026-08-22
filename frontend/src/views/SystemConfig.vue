@@ -2311,9 +2311,7 @@ onMounted(async () => {
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
                                 切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
                              </p>
-                             <div v-if="runtimeEnv === 'docker'" class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-                               当前智能体平台后端运行在 Docker 容器内，docker 沙箱模式已禁用，避免嵌套 Docker 及依赖不可用的 Docker daemon。可使用 local、e2b 或 ssh 模式。
-                             </div>
+
                              <div v-if="item.value === 'e2b'" class="mt-3 text-xs text-violet-700 bg-violet-50/60 p-3 rounded-xl border border-violet-100/60 leading-relaxed select-none space-y-1.5">
                                  <div>🌐 <strong>E2B 云端沙箱服务</strong>：E2B（<a href="https://e2b.dev" target="_blank" rel="noopener noreferrer" class="font-medium text-violet-800 underline decoration-violet-300 hover:decoration-violet-600">e2b.dev</a>）是第三方 AI 云端沙箱平台。选择本策略后，Bash 命令在 E2B 云端沙箱内执行；文件读写 / 搜索仍走平台上配置的本地工作目录，不随沙箱上传。</div>
                                  <div>🔑 <strong>API Key 来源</strong>：优先读取下方 <code class="font-mono text-violet-800">sandbox_e2b_api_key</code>；留空则读取进程环境变量 <code class="font-mono text-violet-800">E2B_API_KEY</code>。两者均无时，初始化 E2B 沙箱会失败。请先在 e2b.dev 注册登录并生成 <code class="font-mono text-violet-800">e2b_...</code> 形式的 Key。</div>
