@@ -369,9 +369,9 @@ source .venv/bin/activate
 # 4. 验证 Python 版本
 python --version  # 应输出 Python 3.11.x
 
-# 5. 升级 pip 并安装后端依赖
-pip install -U pip
-pip install -r requirements.txt
+# 5. 升级 pip 并安装后端依赖（推荐带上国内阿里源加速）
+pip install -U pip -i https://mirrors.aliyun.com/pypi/simple/
+pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # 6. 配置本地环境变量
 cp env.example .env
