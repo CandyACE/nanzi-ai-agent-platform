@@ -20,6 +20,8 @@ export type CanvasPanelData = {
   sourcePath?: string
   compareContent?: string
   compareTitle?: string
+  langName?: string
+  runnable?: boolean
 }
 
 export function normalizeWorkspacePath(path: string): string {

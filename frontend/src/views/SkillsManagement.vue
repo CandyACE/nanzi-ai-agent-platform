@@ -299,7 +299,6 @@ const createAssetTargetLabel = computed(() => {
 })
 
 // 拖拽上传相关
-const dragActive = ref(false)
 const uploadFolder = ref('') // 上传到技能目录下的子文件夹路径 (可选)
 const uploading = ref(false)
 const uploadType = ref<'normal' | 'archive'>('normal')
@@ -317,6 +316,7 @@ const showImportModal = ref(false)
 const importOverwrite = ref(false)
 const importingSkill = ref(false)
 const importFile = ref<File | null>(null)
+const importFileInput = ref<HTMLInputElement | null>(null)
 const importDragActive = ref(false)
 
 // 个人技能发布与管理员审核
@@ -966,26 +966,6 @@ const handleFileUpload = async (event: Event) => {
   await uploadFiles(files)
 }
 
-// 处理拖拽
-const handleDragOver = (e: DragEvent) => {
-  e.preventDefault()
-  dragActive.value = true
-}
-
-const handleDragLeave = (e: DragEvent) => {
-  e.preventDefault()
-  dragActive.value = false
-}
-
-const handleDrop = async (e: DragEvent) => {
-  e.preventDefault()
-  dragActive.value = false
-  const files = e.dataTransfer?.files
-  if (files && files.length > 0) {
-    await uploadFiles(files)
-  }
-}
-
 // 物理上传执行 (单文件限 10MB / 压缩包限 20MB)
 const uploadFiles = async (files: FileList) => {
   uploading.value = true
@@ -1235,11 +1215,16 @@ const openImportModal = () => {
   showImportModal.value = true
 }
 
+const openImportFilePicker = () => {
+  importFileInput.value?.click()
+}
+
 const handleImportFileChange = (e: Event) => {
   const target = e.target as HTMLInputElement
   const files = target.files
   if (files && files.length > 0) {
     const file = files[0]
+    if (!file) return
     const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
     if (!['.zip', '.tar', '.gz', '.tgz', '.bz2'].includes(ext)) {
       showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
@@ -1269,6 +1254,7 @@ const handleImportDrop = (e: DragEvent) => {
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
     const file = files[0]
+    if (!file) return
     const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
     if (!['.zip', '.tar', '.gz', '.tgz', '.bz2'].includes(ext)) {
       showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
@@ -2561,7 +2547,7 @@ onUnmounted(() => {
         @dragover="handleImportDragOver"
         @dragleave="handleImportDragLeave"
         @drop="handleImportDrop"
-        @click="() => $refs.importFileInput.click()"
+        @click="openImportFilePicker"
         class="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center"
         :class="[
           importDragActive 

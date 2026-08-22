@@ -81,7 +81,7 @@ const { homePayload, scenePayload, allReports, homeLoading, sceneLoading, homeEr
 const validReportFilters: DataPortalReportFilter[] = ["all", "subscribed", "pinned", "favorite", "shared", "recent"];
 const reportFilter = ref<DataPortalReportFilter>(validReportFilters.includes(route.query.filter as DataPortalReportFilter) ? route.query.filter as DataPortalReportFilter : "all");
 const current = computed(() => sections.find((item) => item.value === activeSection.value) || sections[0]);
-const pageTitle = computed(() => activeSection.value === "home" ? "我的数据首页" : current.value.label);
+const pageTitle = computed(() => activeSection.value === "home" ? "我的数据首页" : current.value?.label || "我的数据门户");
 const pageSubtitle = computed(() => activeSection.value === "home" ? "先看今天需要关注的数据，再继续最近的分析。" : "所有内容均基于当前账号的数据权限。" );
 
 const setSection = (section: Section) => {

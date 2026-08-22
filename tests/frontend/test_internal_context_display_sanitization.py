@@ -82,3 +82,61 @@ def test_unclosed_internal_block_is_hidden_from_the_visible_tail():
     )
 
     assert result == {"xml": "正常回答", "system": "正常回答", "historical": "正常回答"}
+
+
+def test_stream_sanitizer_preserves_markdown_boundary_whitespace():
+    result = _run_typescript(
+        "frontend/src/utils/streamContentSanitize.ts",
+        """
+const nl = String.fromCharCode(10);
+const chunks = [
+  '查询成功。' + nl,
+  nl + '## 📊 上海各园区' + nl,
+  '| 排名 | 园区 |' + nl,
+  '| --- | --- |' + nl,
+  '| 1 | EW1 |' + nl + nl,
+  '```chart' + nl,
+  '{\"series\":[]}' + nl,
+  '```' + nl,
+];
+return chunks.map((chunk) => api.sanitizeStreamContent(chunk)).join('');
+""",
+    )
+
+    assert result == (
+        "查询成功。\n\n"
+        "## 📊 上海各园区\n"
+        "| 排名 | 园区 |\n"
+        "| --- | --- |\n"
+        "| 1 | EW1 |\n\n"
+        "```chart\n"
+        "{\"series\":[]}\n"
+        "```\n"
+    )
+
+
+def test_stream_sanitizer_hides_split_internal_block_from_cumulative_display():
+    result = _run_typescript(
+        "frontend/src/utils/streamContentSanitize.ts",
+        """
+const chunks = [
+  '可见前文\\n',
+  '<backend_tool_run_summary>内部\\n',
+  '结果</backend_tool_run_summary>\\n## 结论\\n',
+];
+let accumulated = '';
+const visibleByChunk = [];
+for (const chunk of chunks) {
+  accumulated += api.sanitizeStreamContent(chunk);
+  visibleByChunk.push(api.stripInternalContextBlocks(accumulated));
+}
+return { visibleByChunk, accumulated };
+""",
+    )
+
+    assert result["visibleByChunk"] == [
+        "可见前文",
+        "可见前文",
+        "可见前文\n\n## 结论",
+    ]
+    assert "内部" in result["accumulated"]

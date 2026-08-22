@@ -243,7 +243,7 @@ const subscriptionClass = computed(() => {
 const subscriptionScheduleLabel = computed(() => {
   const parts = String(props.report.subscription_cron_expr || "").trim().split(/\s+/);
   if (parts.length !== 5) return props.report.subscription_cron_expr || "";
-  const [minute, hour, monthday, month, weekday] = parts;
+  const [minute = "", hour = "", monthday = "", month = "", weekday = ""] = parts;
   if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return props.report.subscription_cron_expr;
   const time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   if (month === "*" && weekday === "*" && monthday === "*") return `每天 ${time}`;

@@ -578,6 +578,14 @@ def evaluate_grounding(
 ) -> GroundingDecision:
     text = str(candidate_text or "").strip()
     available_types = ledger.available_evidence_types
+    fact_bearing = _contains_structural_external_fact(text)
+    if requirement.block_unsupported_facts and not fact_bearing:
+        return GroundingDecision(
+            GroundingAction.PASS,
+            "fresh-data response contains no independently verifiable factual claim",
+            requirement.accepted_types,
+            available_types,
+        )
     exact_evidence_exists = bool(
         requirement.accepted_types
         and ledger.has_fresh_evidence(
@@ -594,7 +602,6 @@ def evaluate_grounding(
         and not exact_evidence_exists
     )
     if exact_evidence_exists:
-        fact_bearing = _contains_structural_external_fact(text)
         receipt_correlated = ledger.has_candidate_overlap(
             text,
             requirement.accepted_types,
@@ -609,8 +616,8 @@ def evaluate_grounding(
             )
         if requirement.block_unsupported_facts:
             return GroundingDecision(
-                GroundingAction.BLOCK_UNGROUNDED_FACTS,
-                "fresh-data request is backed only by an empty or unrelated result",
+                GroundingAction.PASS_WITH_WARNING,
+                "fresh-data request is backed only by an empty or unrelated result; response retained with a high-risk warning",
                 requirement.accepted_types,
                 available_types,
                 GroundingRiskLevel.HIGH,
@@ -618,10 +625,10 @@ def evaluate_grounding(
 
     if requirement.required:
         if stale_exact_evidence_exists:
-            if requirement.block_unsupported_facts and _contains_structural_external_fact(text):
+            if requirement.block_unsupported_facts:
                 return GroundingDecision(
-                    GroundingAction.BLOCK_UNGROUNDED_FACTS,
-                    "fresh-data request has only stale evidence for a concrete fact",
+                    GroundingAction.PASS_WITH_WARNING,
+                    "fresh-data request has only stale evidence for a concrete fact; response retained with a high-risk warning",
                     requirement.accepted_types,
                     available_types,
                     GroundingRiskLevel.HIGH,
@@ -679,33 +686,25 @@ def evaluate_grounding(
         internal_requirement = bool(requirement.accepted_types & _INTERNAL_TRUSTED_TYPES)
         internal_evidence = bool(available_types & _INTERNAL_TRUSTED_TYPES)
         if internal_requirement and internal_evidence:
-            high_risk = (
-                EvidenceType.INTERNAL_DATA in requirement.accepted_types
-                and _looks_like_internal_business_fact(text)
-                and _contains_structural_external_fact(text)
-            )
             return GroundingDecision(
-                (
-                    GroundingAction.BLOCK_UNGROUNDED_FACTS
-                    if requirement.block_unsupported_facts and _contains_structural_external_fact(text)
-                    else GroundingAction.PASS_WITH_WARNING
-                ),
+                GroundingAction.PASS_WITH_WARNING,
                 "compatible internal evidence exists but the source type is not an exact match",
                 requirement.accepted_types,
                 available_types,
-                GroundingRiskLevel.HIGH if high_risk else GroundingRiskLevel.LOW,
+                (
+                    GroundingRiskLevel.HIGH
+                    if requirement.block_unsupported_facts
+                    else GroundingRiskLevel.LOW
+                ),
             )
         return GroundingDecision(
-            (
-                GroundingAction.BLOCK_UNGROUNDED_FACTS
-                if requirement.block_unsupported_facts
-                and _contains_structural_external_fact(text)
-                else GroundingAction.PASS_WITH_WARNING
-            ),
+            GroundingAction.PASS_WITH_WARNING,
             "required evidence receipt is missing",
             requirement.accepted_types,
             available_types,
-            resolve_soft_warning_risk_level(
+            GroundingRiskLevel.HIGH
+            if requirement.block_unsupported_facts
+            else resolve_soft_warning_risk_level(
                 requirement=requirement,
                 candidate_text=text,
                 ledger=ledger,

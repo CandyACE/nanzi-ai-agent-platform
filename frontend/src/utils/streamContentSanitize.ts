@@ -46,10 +46,11 @@ function stripInternalXmlBlocks(content: string, removeUnclosed: boolean): strin
  */
 export function stripInternalContextBlocks(
   content: string,
-  options: { removeUnclosed?: boolean } = {},
+  options: { removeUnclosed?: boolean; normalizeWhitespace?: boolean } = {},
 ): string {
   if (!content) return "";
   const removeUnclosed = options.removeUnclosed !== false;
+  const normalizeWhitespace = options.normalizeWhitespace !== false;
   let text = stripInternalXmlBlocks(String(content), removeUnclosed);
 
   // normalize_messages_for_llm 包装的系统上下文区块，模型偶尔会原样复述。
@@ -69,6 +70,8 @@ export function stripInternalContextBlocks(
     .replace(/^[ \t]*〔更早轮次对话要点〕[ \t]*\r?\n?/gim, "")
     .replace(/^[ \t]*以下是更早轮次对话的要点.*\r?\n?/gim, "");
 
+  if (!normalizeWhitespace) return text;
+
   return text
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -79,5 +82,10 @@ export function stripInternalContextBlocks(
 export function sanitizeStreamContent(content: string): string {
   // 流式 chunk 可能只包含开始标签；保留原始半截内容，交给完整回答展示层
   // 在累计全文上处理，避免下一 chunk 的内部正文失去“正在内部块内”的上下文。
-  return stripInternalContextBlocks(content, { removeUnclosed: false });
+  // 这里不能 trim：Markdown 标题、表格和 fenced code block 的换行可能正好
+  // 位于两个 SSE chunk 的边界，逐片 trim 会把它们粘成普通文本。
+  return stripInternalContextBlocks(content, {
+    removeUnclosed: false,
+    normalizeWhitespace: false,
+  });
 }

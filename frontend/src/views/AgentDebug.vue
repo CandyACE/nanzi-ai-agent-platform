@@ -509,6 +509,7 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
   let files: ChatFile[] = [];
   for (let i = idx - 1; i >= 0; i--) {
     const prev = allMessages[i];
+    if (!prev) continue;
     if (prev.role === 'user') {
       files = prev.files || [];
       break;
@@ -1334,6 +1335,11 @@ interface Message {
   completion_tokens?: number;
 }
 
+const isAgentTimelineMessage = (msg: Message): boolean => {
+  const role = (msg as unknown as { role?: string }).role;
+  return role === "agent" || role === "assistant";
+};
+
 const isChatContextMessage = (message: Message): boolean => (
   !message.isThinking &&
   (message.role === "user" || message.role === "agent") &&
@@ -2003,6 +2009,7 @@ const {
   normalizeDirectPayloadTitle: true,
   isMobile: () => isMobile.value,
 });
+onUnmounted(() => revokeActiveBlobUrl());
 
 const isImageFile = isImageAttachment;
 
@@ -2225,7 +2232,8 @@ const isProcessing = ref(false);
 const activeTodoTimeline = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const msg = messages.value[i];
-    if (msg.role === 'agent' || msg.role === 'assistant') {
+    if (!msg) continue;
+    if (isAgentTimelineMessage(msg)) {
       const hasTodo = msg.processTimeline?.some((item) => item.kind === 'todo');
       if (hasTodo) {
         return msg.processTimeline;
@@ -2558,7 +2566,7 @@ const mountMcpToolToSession = async (
       { headers: debugAuthHeaders() },
     );
     showToast(
-      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0].name}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
+      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0]?.name || ''}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
       "success",
     );
   } catch (error) {

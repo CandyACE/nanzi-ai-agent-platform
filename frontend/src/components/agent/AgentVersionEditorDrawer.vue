@@ -5,6 +5,7 @@ import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
+import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
 
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
@@ -188,7 +189,7 @@ const setWelcomeMode = (mode: 'manual' | 'ai') => {
 
 // AI 消息排版样式选择与效果预览变量
 const showThemePreviewHelp = ref(false);
-const previewTheme = ref("default");
+const previewTheme = ref<MarkdownTheme>("default");
 const markdownThemeOptions = [
   { value: 'default', label: '现代', emoji: '✨' },
   { value: 'minimal', label: '极简', emoji: '🍃' },
@@ -199,7 +200,7 @@ const markdownThemeOptions = [
   { value: 'bauhaus', label: '包豪斯', emoji: '📐' },
   { value: 'editorial', label: '日报', emoji: '📰' },
   { value: 'zen', label: '禅意', emoji: '🍃' },
-];
+] as const;
 const previewMarkdownContent = ref(
   "# 南孜数据智能分析报告 📊\n\n我们已为您完成数据检索，本次对比分析了 2026 年度的核心业务指标。点击 [查看详情链接](https://example.com) 可以获取完整报表。\n\n> **业务目标**：通过多端排版持久化，解决多平台多终端切换下的个性化体验断层。\n\n### 1. 核心数据对比\n\n| 业务方向 | 现代风格 | 极简主义 | 包豪斯 / 日报 |\n| :--- | :--- | :--- | :--- |\n| **排版对齐** | 居左对齐 | 两端对齐 | 极致秩序感 |\n| **视觉呈现** | 渐变圆角 | 灰度卡片 | 直角/人文宋体 |\n| **阅读体验** | 现代极速 | 禅意放松 | 纸质印刷级 |\n\n### 2. 核心代码规范\n\n- **单向数据流**：Props 单向绑定，避免双向脏数据。\n- **持久化策略**：前端首屏加载时首选 Redis 用户偏好，辅以 LocalStorage 容错兜底。\n\n```python\n# 核心数据同步逻辑\ndef sync_theme_preference(user_id: int, theme: str):\n    print(f\"Syncing theme {theme} to Redis for user {user_id}\")\n    return {\"status\": \"success\", \"code\": 200}\n```\n\n如有任何疑问，请随时联系管理员或在下方继续提问。"
 );
@@ -546,7 +547,7 @@ const externalCreationMissingFields = computed(() => {
                   class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
                   aria-label="查看排版样式效果预览说明"
                   title="查看排版样式效果预览说明"
-                  @click="previewTheme = agentForm.engine_config?.default_markdown_theme || 'default'; showThemePreviewHelp = true"
+                  @click="previewTheme = normalizeMarkdownTheme(agentForm.engine_config?.default_markdown_theme); showThemePreviewHelp = true"
                 >?</button>
               </div>
               <p class="mt-1 text-xs text-gray-500">指定该智能体默认推荐给用户的 Markdown 排版呈现样式，历史数据未指定则默认为现代样式。</p>

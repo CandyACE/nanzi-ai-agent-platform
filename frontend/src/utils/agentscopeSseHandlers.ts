@@ -636,14 +636,14 @@ function visibleSuffixAfterWhitespacePrefix(prefix: string, text: string): strin
   let j = 0;
   const isWs = (ch: string) => /\s/.test(ch);
   while (i < prefix.length && j < text.length) {
-    while (i < prefix.length && isWs(prefix[i])) i += 1;
-    while (j < text.length && isWs(text[j])) j += 1;
+    while (i < prefix.length && isWs(prefix.charAt(i))) i += 1;
+    while (j < text.length && isWs(text.charAt(j))) j += 1;
     if (i >= prefix.length || j >= text.length) break;
-    if (prefix[i] !== text[j]) return null;
+    if (prefix.charAt(i) !== text.charAt(j)) return null;
     i += 1;
     j += 1;
   }
-  while (i < prefix.length && isWs(prefix[i])) i += 1;
+  while (i < prefix.length && isWs(prefix.charAt(i))) i += 1;
   if (i < prefix.length) return null;
   return text.slice(j);
 }

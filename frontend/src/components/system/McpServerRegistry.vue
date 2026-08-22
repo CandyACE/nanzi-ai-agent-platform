@@ -445,6 +445,11 @@ const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
     return false
   }
   const entry = result.entries[0]
+  if (!entry) {
+    mcpJsonPasteHint.value = '未解析到有效的 MCP 配置'
+    showToast(mcpJsonPasteHint.value, 'warning')
+    return false
+  }
   newServer.value.sse_url = entry.url
 
   const headerEntries = Object.entries(entry.headers || {})
