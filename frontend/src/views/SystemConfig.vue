@@ -323,7 +323,9 @@ const getSandboxPolicyIcon = (value: string) =>
   sandboxPolicyIcons[value as keyof typeof sandboxPolicyIcons] ?? ComputerDesktopIcon
 const sandboxPolicyOpen = ref(false)
 const currentSandboxPolicy = computed(() =>
-  sandboxPolicyOptions.value.find(o => o.value === (targetSandboxPolicy() || 'local')) ?? sandboxPolicyOptions.value[0],
+  sandboxPolicyOptions.value.find(o => o.value === (targetSandboxPolicy() || 'local'))
+    ?? sandboxPolicyOptions.value[0]
+    ?? { value: 'local', label: 'local（平台本地）', disabled: false, desc: '' },
 )
 const selectSandboxPolicy = (item: ConfigItem, value: string) => {
   if (isConfigItemDisabled(String('sandbox'), item)) return

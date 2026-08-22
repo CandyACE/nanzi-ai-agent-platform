@@ -506,9 +506,10 @@ const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-10
         const token = integrationApiKey.value;
         const encodedToken = encodeURIComponent(token);
         const theme = config.theme || 'light';
+        // 保留该参数生成器作为接入代码兼容入口；Ticket 模式通过 body 传 agent_id。
         const agentQueryParam = buildAgentQueryParam();
+        void agentQueryParam;
         const agentInitLine = buildAgentInitLine();
-        const tokenPoint = integrationHasRealApiKey.value ? '已带入当前登录用户 API Key' : '当前浏览器没有明文 API Key 时会保留占位值';
 
         return [
         {

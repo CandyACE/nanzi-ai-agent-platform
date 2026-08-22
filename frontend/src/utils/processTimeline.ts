@@ -168,7 +168,9 @@ export function upsertTimelineTodo(
     counts: todoCounts(todos),
   };
   if (indexes.length) {
-    items[indexes[0]] = todo;
+    const firstIndex = indexes[0];
+    if (firstIndex === undefined) return;
+    items[firstIndex] = todo;
     for (const index of indexes.slice(1).reverse()) items.splice(index, 1);
   } else {
     items.push(todo);
@@ -493,9 +495,13 @@ export function upsertTimelineLog(
       return false;
     });
     if (existingContainer) {
-      const containerLog = existingContainer.kind === "log"
-        ? existingContainer
-        : (existingContainer.children || []).find((c) => String(c.id).startsWith("subagent_"));
+      let containerLog: ProcessTimelineLogItem | undefined;
+      if (existingContainer.kind === "log") {
+        containerLog = existingContainer;
+      } else if (existingContainer.kind === "text") {
+        containerLog = (existingContainer.children || [])
+          .find((c: ProcessTimelineLogItem) => String(c.id).startsWith("subagent_"));
+      }
       if (containerLog) {
         if (data.execution_time_ms !== undefined) containerLog.execution_time_ms = data.execution_time_ms;
         if (data.status !== undefined) containerLog.status = data.status;
@@ -770,9 +776,9 @@ export function hydrateHistoryProcessTimeline(
     children: (log.children || []).map(mapLog),
   });
 
-  const rawItems: ProcessTimelineItem[] = (Array.isArray(stored) ? stored : []).filter((item) => !(
+  const rawItems = (Array.isArray(stored) ? stored : []).filter((item) => !(
     item?.kind === "text" && item.textKind === "narration" && item.pending
-  )).map((item) => {
+  )).map((item): ProcessTimelineItem | null => {
     if (item.kind === "text") {
       return {
         ...item,

@@ -30,7 +30,9 @@ type KnowledgeBase = {
   can_view_chunks?: boolean
   is_read_only?: boolean
   local_metadata?: {
-    extra_config?: Record<string, unknown>
+    extra_config?: Record<string, unknown> & {
+      folder_structure?: Record<string, string[]>
+    }
   }
 }
 

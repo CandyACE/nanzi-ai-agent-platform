@@ -7,6 +7,7 @@ import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from
 import { applyChartViewMode, buildChartTableRows, getAvailableChartViewModes, getChartViewModeLabel, mergeChartDefaults, parseChartOptions, resolveActiveChartViewMode, type ChartViewMode } from '@/utils/chartRenderer';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
 import { copyToClipboard } from '@/utils/clipboard';
+import type { MarkdownTheme } from '@/types/markdownTheme';
 import MermaidRenderer from './MermaidRenderer.vue';
 import SqlPlanCard from './SqlPlanCard.vue';
 
@@ -52,7 +53,7 @@ use([
 
 const props = withDefaults(defineProps<{
   content: string;
-  theme?: 'default' | 'minimal' | 'academic' | 'apple' | 'warm' | 'compact';
+  theme?: MarkdownTheme;
   /** EmbedChat 传入当前会话，避免文件预览回退到其他实例的 legacy 会话。 */
   conversationId?: string;
   /** 为 true 时不渲染 quick 按钮（例如同条消息已有业务确认卡） */

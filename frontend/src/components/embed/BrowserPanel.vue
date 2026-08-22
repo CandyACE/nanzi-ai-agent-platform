@@ -266,6 +266,7 @@
             </div>
             <div v-if="screenshotUrl" class="relative">
               <img
+                v-if="snapshot"
                 :key="snapshot.snapshot_id"
                 :src="screenshotUrl"
                 alt="远程浏览器画面"
@@ -369,6 +370,7 @@ type BrowserSnapshot = {
   document_height?: number | null;
   page_text?: string;
   visible_text?: string;
+  page_state?: string | null;
 };
 type RemotePoint = { x: number; y: number };
 const BROWSER_PANEL_REFRESH_INTERVAL_MS = 5000;

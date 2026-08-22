@@ -202,7 +202,7 @@ export const extractColumnMetaFromAgentMessage = (msg: any): Record<string, any>
       const content = String(msg?.content || "");
       const tableMatch = content.match(/\n\|([^\n]+)\|\n\|(?:\s*:?-{3,}:?\s*\|)+\n/);
       if (tableMatch && columns.length) {
-        const headers = tableMatch[1]
+        const headers = (tableMatch[1] || "")
           .split("|")
           .map((item) => item.trim())
           .filter(Boolean);
@@ -212,7 +212,8 @@ export const extractColumnMetaFromAgentMessage = (msg: any): Record<string, any>
             const col = columns[index];
             if (!col) return;
             if (!col.term || !looksChinese(col.term)) col.term = header;
-            labels[col.name] = header;
+            const columnName = col.name;
+            if (columnName) labels[columnName] = header;
           });
         }
       }

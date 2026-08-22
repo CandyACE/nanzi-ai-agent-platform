@@ -861,7 +861,7 @@
                                                                   @open-canvas="handleOpenCanvas"
                                                                 />
                                                                 <DatasetCapabilityMenu
-                                                                  v-else
+                                                                  v-else-if="msg.datasetNavigation"
                                                                   :payload="msg.datasetNavigation"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
@@ -961,11 +961,11 @@
               <!-- Artifacts Button -->
               <button
                 v-if="msg.trace_id && hasArtifacts(msg.trace_id)"
-                @click="toggleMessageArtifacts(msg.id)"
+                @click="toggleMessageArtifacts(String(msg.id))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="[
                   windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5',
-                  artifactsOpenMsgId === msg.id ? 'text-primary bg-gray-100 dark:bg-gray-800' : '',
+                  artifactsOpenMsgId === String(msg.id) ? 'text-primary bg-gray-100 dark:bg-gray-800' : '',
                 ]"
                 title="查看该消息产生的文件产物"
               >
@@ -1626,7 +1626,15 @@
       v-model:active-tab="personalResourcesTab"
       @open-report="handlePersonalResourceOpenReport"
       @open-conversation="handlePersonalResourceOpenConversation"
-      @open-question="handlePersonalResourceOpenQuestion"
+      @open-question="(payload) => {
+        if (!payload || typeof payload !== 'object') return;
+        const question = payload as { query?: unknown; action?: unknown };
+        if (typeof question.query !== 'string') return;
+        handlePersonalResourceOpenQuestion({
+          query: question.query,
+          action: question.action === 'fill' ? 'fill' : 'send',
+        });
+      }"
     />
     <!-- Embed 内独立站内消息弹层：iframe / 外部集成不依赖 Dashboard 顶栏铃铛 -->
     <PortalNotificationBell
@@ -2387,6 +2395,12 @@ interface Message {
   userQuestion?: UserQuestionState;
   _hasSilentlyRefreshed?: boolean;
 }
+
+const isAgentTimelineMessage = (msg: Message): boolean => {
+  const role = (msg as unknown as { role?: string }).role;
+  return role === "agent" || role === "assistant";
+};
+
 // Helper: Check Role
 const checkRole = (msg: Message, role: string): boolean => {
   return msg.role === role;
@@ -2426,6 +2440,7 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
   let files: ChatFile[] = [];
   for (let i = idx - 1; i >= 0; i--) {
     const prev = allMessages[i];
+    if (!prev) continue;
     if (prev.role === 'user') {
       files = prev.files || [];
       break;
@@ -2577,9 +2592,6 @@ const toggleWorkspaceDrawer = () => {
   openWorkspaceDrawer();
 };
 
-const openMyArtifactsDrawer = () => {
-  showMyArtifactsDrawer.value = true;
-};
 const toggleMyArtifactsDrawer = () => {
   showMyArtifactsDrawer.value = !showMyArtifactsDrawer.value;
 };
@@ -2823,7 +2835,8 @@ const handleIgnoreBashBanner = () => {
 const activeTodoTimeline = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const msg = messages.value[i];
-    if (msg.role === 'agent' || msg.role === 'assistant') {
+    if (!msg) continue;
+    if (isAgentTimelineMessage(msg)) {
       const hasTodo = msg.processTimeline?.some((item) => item.kind === 'todo');
       if (hasTodo) {
         return msg.processTimeline;
@@ -3281,7 +3294,7 @@ watch(conversationId, () => void loadArtifactCounts());
 /** 当前展开「产物」面板对应消息的 trace_id */
 const activeArtifactsTraceId = computed(() => {
   if (!artifactsOpenMsgId.value) return "";
-  const msg = messages.value.find((m) => m.id === artifactsOpenMsgId.value);
+  const msg = messages.value.find((m) => String(m.id) === artifactsOpenMsgId.value);
   return msg?.trace_id || "";
 });
 const showResourceScopeModal = ref(false);
@@ -3295,8 +3308,8 @@ const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_
 const resourceOptionsLoading = ref(false);
 const resourceOptionsLoaded = ref(false);
 const resourceOptionSearch = reactive<Record<string, string>>({ datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
-const resourceOptions = reactive<Record<string, any[]>>({ datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] });
 type ResourceScopeGroupKey = 'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools';
+const resourceOptions = reactive<Record<ResourceScopeGroupKey, any[]>>({ datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] });
 
 const emptyResourceScopeState = () => ({
   project_name: '',
@@ -3466,9 +3479,9 @@ const resourceModalOptionSelected = (type: ResourceScopeGroupKey, option: any) =
   modalDraftSelections(type).some((item) => resourceEntryMatchesOption(item, option));
 
 const resourceOptionInitial = (option: any) => String(option.name || option.id || '?').trim().charAt(0).toUpperCase();
-const resourceOptionAccent = (index: number) => ['bg-teal-500', 'bg-lime-500', 'bg-violet-500', 'bg-green-500', 'bg-sky-500'][index % 5];
+const resourceOptionAccent = (index: number) => ['bg-teal-500', 'bg-lime-500', 'bg-violet-500', 'bg-green-500', 'bg-sky-500'][index % 5] || 'bg-teal-500';
 
-const filteredResourceOptions = (type: string) => {
+const filteredResourceOptions = (type: ResourceScopeGroupKey) => {
   const query = (resourceOptionSearch[type] || '').trim().toLowerCase();
   return (resourceOptions[type] || []).filter((item: any) =>
     !query
@@ -3734,7 +3747,7 @@ const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: strin
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
     showToast(
-      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0].name}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
+      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0]?.name || ''}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
       'success',
     );
   } catch (error) {
@@ -4790,6 +4803,7 @@ const {
   showToast,
   isMobile: () => isMobile.value,
 });
+onUnmounted(() => revokeActiveBlobUrl());
 
 // Long-Term Memory States
 const activeLtmPreference = ref<any>(null);

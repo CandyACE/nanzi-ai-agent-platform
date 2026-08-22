@@ -57,7 +57,6 @@ const filteredConfigs = computed(() => {
       .some((value) => String(value || '').toLowerCase().includes(q))
   )
 })
-const isEditing = computed(() => editingId.value !== null)
 const dataSourcePrefix = computed(() => `${form.type}_`)
 const dataSourceName = computed(() => `${dataSourcePrefix.value}${form.nameSuffix.trim()}`)
 
@@ -742,29 +741,29 @@ onUnmounted(() => {
                   <span class="px-2 py-0.5 rounded border text-[10px] font-black uppercase shrink-0" :class="dbTypeColor(item.db_type)">{{ item.db_type }}</span>
                   <!-- 摸排完成的精致徽章 -->
                   <span 
-                    v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 2" 
+                    v-if="profilingTasks[item.id]?.status === 2"
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-black shrink-0 shadow-sm shadow-emerald-50"
                   >
                     <span>🤖</span>
-                    <span>已生成 {{ profilingTasks[item.id].total_tables }} 张表画像</span>
+                    <span>已生成 {{ profilingTasks[item.id]?.total_tables }} 张表画像</span>
                   </span>
                   <!-- 摸排失败提示 -->
                   <span 
-                    v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 3" 
+                    v-if="profilingTasks[item.id]?.status === 3"
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100 text-[10px] font-bold shrink-0"
-                    :title="profilingTasks[item.id].error_message"
+                    :title="profilingTasks[item.id]?.error_message"
                   >
                     <span>⚠️</span>
                     <span>分析中断</span>
                   </span>
                   <!-- 用户主动中断 -->
                   <span
-                    v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 4"
+                    v-if="profilingTasks[item.id]?.status === 4"
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100 text-[10px] font-bold shrink-0"
-                    :title="profilingTasks[item.id].error_message"
+                    :title="profilingTasks[item.id]?.error_message"
                   >
                     <span>⏸</span>
-                    <span>已中断 {{ profilingTasks[item.id].processed_tables }}/{{ profilingTasks[item.id].total_tables }}</span>
+                    <span>已中断 {{ profilingTasks[item.id]?.processed_tables }}/{{ profilingTasks[item.id]?.total_tables }}</span>
                   </span>
                 </div>
                 <p class="text-xs font-mono text-gray-500 truncate">{{ item.host }}:{{ item.port }} / {{ item.database_name }}</p>
@@ -781,20 +780,20 @@ onUnmounted(() => {
                   </div>
 
                   <!-- 正在摸排任务进度提示 (轻量化展示在用途旁) -->
-                  <div v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 1" class="inline-flex items-center gap-2 bg-blue-50/50 border border-blue-100 rounded-lg px-2.5 py-1.5 text-xs">
+                  <div v-if="profilingTasks[item.id]?.status === 1" class="inline-flex items-center gap-2 bg-blue-50/50 border border-blue-100 rounded-lg px-2.5 py-1.5 text-xs">
                     <span class="font-bold text-primary animate-pulse shrink-0 flex items-center gap-1">
                       <span>🤖 摸排中</span>
-                      <span class="font-mono text-gray-500">({{ profilingTasks[item.id].processed_tables }}/{{ profilingTasks[item.id].total_tables }})</span>
+                      <span class="font-mono text-gray-500">({{ profilingTasks[item.id]?.processed_tables }}/{{ profilingTasks[item.id]?.total_tables }})</span>
                     </span>
                     <!-- 进度条 -->
                     <div class="w-20 bg-gray-200 rounded-full h-1 overflow-hidden shrink-0">
                       <div 
                         class="bg-primary h-full transition-all duration-300"
-                        :style="{ width: `${(profilingTasks[item.id].processed_tables / profilingTasks[item.id].total_tables) * 100}%` }"
+                        :style="{ width: `${((profilingTasks[item.id]?.processed_tables || 0) / (profilingTasks[item.id]?.total_tables || 1)) * 100}%` }"
                       ></div>
                     </div>
-                    <span v-if="profilingTasks[item.id].current_table" class="text-[10px] text-gray-400 truncate max-w-[200px]">
-                      分析中: {{ profilingTasks[item.id].current_table }}
+                    <span v-if="profilingTasks[item.id]?.current_table" class="text-[10px] text-gray-400 truncate max-w-[200px]">
+                      分析中: {{ profilingTasks[item.id]?.current_table }}
                     </span>
                   </div>
                 </div>
@@ -848,7 +847,7 @@ onUnmounted(() => {
                         <div class="text-[10px] text-gray-400 mt-0.5">仅处理未完成及新增表</div>
                       </button>
                       <button
-                        v-if="profilingTasks[item.id] && [2, 3, 4].includes(profilingTasks[item.id].status)"
+                        v-if="[2, 3, 4].includes(profilingTasks[item.id]?.status || 0)"
                         @click="handleProfileMenuAction(item, 'full')"
                         class="w-full text-left px-3 py-2 text-orange-600 hover:bg-orange-50 font-bold border-t border-gray-100"
                       >

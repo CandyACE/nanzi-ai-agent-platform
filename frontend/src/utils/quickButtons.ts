@@ -132,7 +132,7 @@ function isEmptyListMarkerLine(line: string): boolean {
 
 function lookAheadHasQuickLine(lines: string[], fromIndex: number): boolean {
   for (let index = fromIndex; index < lines.length; index += 1) {
-    const line = lines[index];
+    const line = lines[index] || "";
     if (!line.trim() || isMarkdownSeparatorLine(line)) continue;
     return lineHasQuickButton(line);
   }
@@ -192,7 +192,7 @@ export function stripQuickButtons(text: string): string {
   const kept: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+    const line = lines[index] || "";
 
     if (lineHasQuickButton(line)) {
       continue;
@@ -203,7 +203,7 @@ export function stripQuickButtons(text: string): string {
     }
 
     if (isMarkdownSeparatorLine(line) && lookAheadHasQuickLine(lines, index + 1)) {
-      const prev = kept.length > 0 ? kept[kept.length - 1] : "";
+      const prev = kept.length > 0 ? (kept[kept.length - 1] || "") : "";
       if (!prev.trim() || isQuickIntroLine(prev)) {
         continue;
       }

@@ -109,10 +109,14 @@ export const parseMcpServersPaste = (raw: string): ParseMcpServersPasteResult =>
   if (!entries.length) {
     return { ok: false, error: '配置中未找到有效的 url / serverUrl 字段' }
   }
+  const firstEntry = entries[0]
+  if (!firstEntry) {
+    return { ok: false, error: '配置中未找到有效的服务条目' }
+  }
 
   let warning: string | undefined
   if (entries.length > 1) {
-    warning = `检测到 ${entries.length} 个服务，已默认填入第一个「${entries[0].key}」，可修改地址后继续`
+    warning = `检测到 ${entries.length} 个服务，已默认填入第一个「${firstEntry.key}」，可修改地址后继续`
   }
   const unsupported = entries.filter(
     (e) => e.type && !/sse|http|streamable|streamable_http|streamable-http/i.test(e.type),

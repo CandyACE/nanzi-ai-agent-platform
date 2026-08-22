@@ -23,7 +23,7 @@ export interface WorkspaceCanvasPayload {
 export interface UseWorkspaceCanvasOptions {
   getConversationId: () => string;
   resolveFileUrl: (url: string) => string;
-  showToast: (message: string, type?: "success" | "error" | "info") => void;
+  showToast: (message: string, type?: "success" | "error" | "warning" | "info") => void;
   normalizeDirectPayloadTitle?: boolean;
   /** 窄屏：画布全屏置顶遮罩，不自动钉住侧栏（工作区可保持打开） */
   isMobile?: () => boolean;

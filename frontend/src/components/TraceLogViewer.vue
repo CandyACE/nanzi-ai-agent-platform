@@ -169,28 +169,6 @@ const escapeHtml = (unsafe: unknown): string => {
     .replace(/'/g, '&#039;')
 }
 
-const formatJson = (data: any) => {
-  if (data == null) return ''
-  let obj = data
-  if (typeof data === 'string') {
-    const trimmed = data.trim()
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-      try {
-        obj = JSON.parse(trimmed)
-      } catch {
-        return data
-      }
-    } else {
-      return data
-    }
-  }
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch (e) {
-    return String(data)
-  }
-}
-
 const highlightJsonHtml = (val: unknown): string => {
   if (val == null) return '<span class="text-slate-400">null</span>'
   let obj = val

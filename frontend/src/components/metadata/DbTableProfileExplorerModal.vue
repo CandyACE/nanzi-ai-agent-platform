@@ -170,9 +170,12 @@ const loadResults = async (opts?: { silent?: boolean }) => {
         loadRelatedTables(previewTable.value)
       }
     } else if (!previewTable.value && items.value.length) {
-      previewTable.value = items.value[0].table_name
-      loadPreviewDetail(previewTable.value)
-      loadRelatedTables(previewTable.value)
+      const nextPreviewTable = items.value[0]?.table_name
+      if (nextPreviewTable) {
+        previewTable.value = nextPreviewTable
+        loadPreviewDetail(nextPreviewTable)
+        loadRelatedTables(nextPreviewTable)
+      }
     }
   } catch {
     if (!silent) {

@@ -555,12 +555,6 @@ const isCurrentDataset = (tableId: number) => {
   return props.tables.some((t) => t.id === tableId);
 };
 
-// 获取表名（支持跨数据集，回显格式为 "数据集名.表名"）
-const getTableName = (id: number) => {
-  const meta = getTableMeta(id);
-  return meta.fullName;
-};
-
 // Interactive ER Graph Canvas Logic
 const chartContainer = ref<HTMLElement | null>(null);
 const chartInstance = shallowRef<echarts.ECharts | null>(null);
