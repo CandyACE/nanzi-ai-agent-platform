@@ -15,6 +15,52 @@ from app.services.ai.grounding.policy import (
 )
 
 
+_EVIDENCE_TYPE_LABELS = {
+    EvidenceType.INTERNAL_DATA: "内部数据",
+    EvidenceType.INTERNAL_KNOWLEDGE: "知识库资料",
+    EvidenceType.PUBLIC_WEB: "公开网络资料",
+    EvidenceType.RUNTIME_STATE: "运行状态",
+    EvidenceType.USER_FILE: "用户文件",
+    EvidenceType.EXTERNAL_TOOL: "外部工具结果",
+    EvidenceType.CONVERSATION_MEMORY: "会话记忆",
+}
+
+
+def _format_evidence_type_labels(evidence_types: frozenset[EvidenceType]) -> str:
+    labels = [
+        _EVIDENCE_TYPE_LABELS.get(item, item.value)
+        for item in sorted(evidence_types, key=lambda value: value.value)
+    ]
+    return "、".join(labels) if labels else "无"
+
+
+def _humanize_grounding_reason(
+    reason: str,
+    *,
+    required_types: frozenset[EvidenceType],
+    available_types: frozenset[EvidenceType],
+) -> str:
+    """将策略层原因转换为面向用户的说明，同时保留原始 reason 供诊断。"""
+    normalized = str(reason or "").strip()
+    required = _format_evidence_type_labels(required_types)
+    available = _format_evidence_type_labels(available_types)
+    if normalized == "required evidence receipt is missing":
+        if required_types and not available_types:
+            return f"本轮没有找到与回答对应的{required}证据。"
+        return f"本轮没有找到与回答对应的证据，需要{required}，当前获得的是{available}。"
+    if "stale evidence" in normalized.lower():
+        return f"本轮{required}证据已经过期，不能证明当前状态。"
+    if "compatible internal evidence" in normalized.lower():
+        return f"本轮获得了{available}，但本次回答需要{required}，来源类型不完全匹配。"
+    if "empty or unrelated result" in normalized.lower():
+        return f"本轮虽然获得了{available}，但结果为空或与回答内容不对应。"
+    if "not correlated" in normalized.lower() or "uncorrelated" in normalized.lower():
+        return "本轮证据类型匹配，但回答内容无法与证据结果对应。"
+    if any("\u4e00" <= char <= "\u9fff" for char in normalized):
+        return normalized
+    return "本轮证据校验未完全通过，请结合原始数据核对。"
+
+
 @dataclass(frozen=True)
 class GroundingAuditResult:
     """A policy decision plus the optional user-visible soft warning."""
@@ -73,6 +119,11 @@ class GroundingService:
         required_types: frozenset[EvidenceType] = frozenset(),
         available_types: frozenset[EvidenceType] = frozenset(),
     ) -> dict[str, object]:
+        user_reason = _humanize_grounding_reason(
+            reason,
+            required_types=required_types,
+            available_types=available_types,
+        )
         if risk_level == GroundingRiskLevel.LOW:
             notice = (
                 "> **信息来源提示**：本回答基于知识库或已授权文件资料，"
@@ -89,10 +140,11 @@ class GroundingService:
                 "可能存在偏差。重要操作或正式决策前，请以原始数据源为准。"
             )
         return {
-            "content": f"\n\n{notice}",
+            "content": f"\n\n{notice}\n> **原因**：{user_reason}",
             "grounding_risk": {
                 "level": risk_level.value,
                 "reason": reason,
+                "user_reason": user_reason,
                 "required_evidence_types": sorted(
                     item.value for item in required_types
                 ),

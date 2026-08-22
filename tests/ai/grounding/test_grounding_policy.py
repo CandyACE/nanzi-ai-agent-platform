@@ -143,7 +143,7 @@ def test_unknown_dynamic_fact_without_evidence_returns_warning():
     assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
-def test_explicit_fresh_data_request_blocks_unsupported_numeric_fact():
+def test_explicit_fresh_data_request_retains_unsupported_numeric_fact_with_high_warning():
     request = resolve_request_decision(
         "查询本周订单数",
         semantic_intent="DATA_QUERY",
@@ -162,7 +162,8 @@ def test_explicit_fresh_data_request_blocks_unsupported_numeric_fact():
         ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
 
 
 def test_explicit_fresh_data_request_allows_evidence_free_no_result_statement():
@@ -856,6 +857,166 @@ def test_stale_runtime_evidence_returns_warning_instead_of_silent_pass():
     assert decision.action == GroundingAction.PASS_WITH_WARNING
     assert "stale" in decision.reason
     assert decision.risk_level == GroundingRiskLevel.MEDIUM
+
+
+def test_fresh_stale_evidence_allows_refusal_without_warning():
+    now = datetime.now(timezone.utc)
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="runtime-old-refusal",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2},
+        observed_at=now - timedelta(seconds=31),
+        freshness=FactFreshness.REALTIME,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.RUNTIME_STATE}),
+            freshness=FactFreshness.REALTIME,
+            max_age_seconds=30,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="我暂时无法读取运行状态，请稍后重试。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS
+    assert decision.risk_level == GroundingRiskLevel.NONE
+
+
+def test_fresh_compatible_internal_evidence_allows_non_factual_clarification():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="kb-clarification",
+        producer="search_knowledge_base",
+        evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+        result={"content": "业务指标口径说明"},
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.INTERNAL_DATA}),
+            block_unsupported_facts=True,
+        ),
+        candidate_text="我需要先确认你的指标口径。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS
+    assert decision.risk_level == GroundingRiskLevel.NONE
+
+
+def test_fresh_missing_evidence_allows_non_factual_progress_update():
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.INTERNAL_DATA}),
+            block_unsupported_facts=True,
+        ),
+        candidate_text="我会继续查询相关数据。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.PASS
+    assert decision.risk_level == GroundingRiskLevel.NONE
+
+
+def test_fresh_stale_factual_answer_is_retained_with_high_warning():
+    now = datetime.now(timezone.utc)
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="runtime-old-fact",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2},
+        observed_at=now - timedelta(seconds=31),
+        freshness=FactFreshness.REALTIME,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.RUNTIME_STATE}),
+            freshness=FactFreshness.REALTIME,
+            max_age_seconds=30,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="server-1 当前负载为 0.2。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
+
+
+def test_fresh_compatible_internal_fact_is_retained_with_high_warning():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="kb-fact",
+        producer="search_knowledge_base",
+        evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+        result={"content": "业务指标口径说明"},
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.INTERNAL_DATA}),
+            block_unsupported_facts=True,
+        ),
+        candidate_text="当前销售额排名第一的是王强，金额为 663.98 万元。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
+
+
+def test_fresh_missing_factual_answer_is_retained_with_high_warning():
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.INTERNAL_DATA}),
+            block_unsupported_facts=True,
+        ),
+        candidate_text="当前销售额排名第一的是王强，金额为 663.98 万元。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
+
+
+def test_fresh_unrelated_exact_evidence_is_retained_with_high_warning():
+    now = datetime.now(timezone.utc)
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="runtime-current",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"host": "server-1", "load": 0.2},
+        observed_at=now,
+        freshness=FactFreshness.REALTIME,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.RUNTIME_STATE}),
+            freshness=FactFreshness.REALTIME,
+            max_age_seconds=30,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="server-2 当前负载为 0.8。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level == GroundingRiskLevel.HIGH
 
 
 def test_global_tiering_mcp_partial_overlap_uses_medium_warning():

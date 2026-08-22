@@ -399,8 +399,7 @@
 | 浏览器面板刷新优化与动作触发刷新 (Browser Panel Refresh Rate & Action Triggered Refresh) | `BrowserPanel.vue`, `EmbedChat.vue`, `browser_events.py`, `assistant_agent_runner.py`, `tests/services/ai/test_browser_events.py`, `tests/frontend/test_browser_panel_contract.py` | **降低轮询开销与即时刷新结合**：将浏览器面板自动轮询间隔由 2 秒调整为 5 秒降低网络和服务器负载；当 AI 执行 `browser_click`/`browser_fill` 等操作后，后端向前端推送轻量 `browser_refresh` 事件，面板即时触发单次快照刷新，确保界面与 AI 操作同步。 | ✅ 契约与单测通过 | 2026-08-19 |
 | 浏览器面板地址栏协议自动补全 (Browser Panel URL Protocol Normalization) | `BrowserPanel.vue`, `tests/frontend/test_browser_panel_contract.py` | **地址自动补全协议**：优化人工操作地址栏体验，支持未带 `http(s)://` 协议的网址（如 `www.baidu.com`）在打开或回车时自动补全 `https://` 前缀并同步回显输入框，避免直接转发无效协议。 | ✅ 契约测试通过 | 2026-08-19 |
 | 浏览器自动化工具套件与全能交互能力扩展 (Browser Automation Toolkit Suite) | `browser_tools.py`, `browser_worker.py`, `browser_runtime.py`, `registry.py`, `tools.py`, `browser_events.py`, `BrowserPanel.vue` | **浏览器自动化能力闭环**：扩展浏览器智能体交互工具矩阵（包含 `browser_scroll`、`browser_press_key`、`browser_hover`、`browser_select_option`、`browser_drag_and_drop`、`browser_upload_files`、`browser_download_file`、`browser_evaluate_js`、`browser_open_tab`、`browser_switch_tab`、`browser_close_tab`、`browser_read_visible` 等）；统一权限预检与动作触发即时刷新事件通道。 | ✅ 契约与单测通过 | 2026-08-19 |
-
-
+| 刷新模式事实缺证据提醒优化 (Fresh-mode Ungrounded Fact Warning) | `grounding/policy.py`, `grounding/service.py`, `tests/ai/grounding/` | **事实接地策略变更**：在 `block_unsupported_facts=True`（刷新语义）下，仅对包含事实信号但缺少新鲜、相关证据的回答保留正文并追加 `HIGH` 风险提示，同时展示用户可读的中文原因；拒答、澄清和非事实性过程说明直接放行，避免标准路径误伤。 | ✅ 单测通过 | 2026-08-22 |
 
 
 

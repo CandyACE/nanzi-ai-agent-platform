@@ -55,6 +55,7 @@ def test_audit_returns_standard_warning_payload_for_missing_evidence():
     assert result.warning_chunk["grounding_risk"] == {
         "level": "high",
         "reason": "required evidence receipt is missing",
+        "user_reason": "本轮没有找到与回答对应的内部数据证据。",
         "required_evidence_types": ["internal_data"],
         "available_evidence_types": [],
     }
@@ -99,6 +100,31 @@ def test_warning_chunk_can_reuse_an_external_guard_reason():
     assert chunk["grounding_risk"]["required_evidence_types"] == [
         "internal_knowledge"
     ]
+
+
+def test_warning_chunk_includes_user_readable_reason_for_missing_evidence():
+    chunk = GroundingService.warning_chunk(
+        risk_level=GroundingRiskLevel.HIGH,
+        reason="required evidence receipt is missing",
+        required_types=frozenset({EvidenceType.INTERNAL_DATA}),
+    )
+
+    assert "原因" in chunk["content"]
+    assert "没有找到与回答对应的内部数据证据" in chunk["content"]
+    assert chunk["grounding_risk"]["user_reason"] == "本轮没有找到与回答对应的内部数据证据。"
+
+
+def test_warning_chunk_includes_user_readable_reason_for_stale_evidence():
+    chunk = GroundingService.warning_chunk(
+        risk_level=GroundingRiskLevel.HIGH,
+        reason="fresh-data request has only stale evidence for a concrete fact; response retained with a high-risk warning",
+        required_types=frozenset({EvidenceType.RUNTIME_STATE}),
+    )
+
+    assert "证据已经过期" in chunk["content"]
+    assert chunk["grounding_risk"]["user_reason"] == (
+        "本轮运行状态证据已经过期，不能证明当前状态。"
+    )
 
 
 def test_audit_converts_legacy_block_decision_to_soft_warning():
