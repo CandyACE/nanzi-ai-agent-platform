@@ -327,11 +327,6 @@ const currentSandboxPolicy = computed(() =>
 )
 const selectSandboxPolicy = (item: ConfigItem, value: string) => {
   if (isConfigItemDisabled(String('sandbox'), item)) return
-  if (value === 'docker' && runtimeEnv.value === 'docker') {
-    sandboxPolicyOpen.value = false
-    showToast('平台后端已经运行在 Docker 容器内，不能启用 docker 沙箱模式', 'warning')
-    return
-  }
   if (item.value === value) {
     sandboxPolicyOpen.value = false
     return
