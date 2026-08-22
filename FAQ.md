@@ -412,13 +412,144 @@ sequenceDiagram
 
 #### 3.2.3 嵌入式发布与一键共享 (Embed Chat)
 
-在智能体中心配置完成后，支持多种发布方式：
+【嵌入式对话组件】（Embed Chat，路由地址 `/embed/chat`）是平台面向企业第三方系统（如内部 OA、CRM、ERP、运维监控看板、Wiki 文档库、客服门户或官网）提供的高性能、零侵入、自适应嵌入方案。
 
-1. **平台工作台直达**：分配给特定角色或全体员工在控制台内使用；
-2. **免登录 Embed iframe 挂载**：
-   - 智能体支持生成专属嵌入式 URL（如 `http://domain/embed/chat?agent_id=xxx&token=yyy`）；
-   - 一键复制 `<iframe>` 嵌入代码，可无缝嵌入到企业内部 OA、Wiki 知识库、钉钉工作台或官网门户中；
-   - 界面自适应极简布局，支持多端适配。
+---
+
+##### 1. 为什么选择 Embed Chat 嵌入集成？
+
+- **全功能开箱即用**：内置多模态附件上传、交互画布抽屉（代码高亮/Markdown渲染/图表生成/工件下载）、多轮记忆控制、快捷指令库与独立站内消息弹窗；
+- **自适应响应式布局**：无论是 380px 的右下角悬浮气泡挂件，还是 100% 宽高的全屏嵌入，均可自动适配亮色/暗色主题；
+- **全隔离多实例机制**：支持通过 `instance_id` 在同一页面挂载多个独立的智能体挂件，会话与上下文互不串扰。
+
+---
+
+##### 2. 企业级生产架构：Embed Ticket 临时票据体系
+
+为彻底避免在前端浏览器中暴露长期 API Key，生产环境**强烈推荐使用 Embed Ticket 三步安全时序**：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 业务系统员工 (User)
+    participant HostFront as 宿主系统前端 (CRM/OA)
+    participant HostBack as 宿主系统后端 (Server)
+    participant NanziAPI as 平台接口 (NanZi Backend)
+    participant EmbedFrame as EmbedChat IFrame
+
+    User->>HostFront: 登录并打开业务工单/分析页面
+    HostFront->>HostBack: 请求加载 AI 助手
+    HostBack->>NanziAPI: POST /api/v1/embed/tickets (携带系统 Master Key & username)
+    Note over HostBack,NanziAPI: 长期 API Key 留在宿主后端环境变量，绝不出内网
+    NanziAPI-->>HostBack: 返回 5 分钟一次性 Ticket (如 emt_a8f9c2d1...)
+    HostBack-->>HostFront: 下发 ticket
+    HostFront->>EmbedFrame: 挂载 IFrame: /embed/chat?ticket=emt_xxx
+    EmbedFrame->>NanziAPI: 自动核销 Ticket 并兑换 24 小时短期 Session Token (阅后即焚)
+    NanziAPI-->>EmbedFrame: 鉴权通过，建立 SSE 流式连接
+    EmbedFrame->>EmbedFrame: 渲染专属对话面板，就绪可用
+    Note over EmbedFrame,NanziAPI: 持续聊天时自动触发活跃滑动续期 (Sliding TTL)
+```
+
+---
+
+##### 3. 服务端签发 Ticket 示例与标准 IFrame 挂载
+
+###### ① 宿主后端签发 Ticket 接口规范：
+- **请求方式**：`POST /api/v1/embed/tickets`
+- **请求头**：`X-API-Key: YOUR_SYSTEM_MASTER_KEY`
+- **请求体 (JSON)**：
+  ```json
+  {
+    "username": "zhangsan",          // 必填：目标员工用户名（代表谁提问，自动关联该用户权限与记忆）
+    "agent_id": "sys-agent-chatbi",  // 可选：指定初始锁定的智能体 ID（留空则走全局智能路由）
+    "expires_in": 300                // 可选：Ticket 有效期（秒，默认 300 秒，一次性核销）
+  }
+  ```
+
+###### ② 宿主前端 HTML 嵌入代码：
+```html
+<!-- 宿主前端：直接传入 ticket 渲染 IFrame -->
+<iframe
+  src="https://your-nanzi-platform.com/embed/chat?ticket=emt_a8f9c2d1e0b3456789abcdef&theme=light"
+  width="100%"
+  height="680"
+  frameborder="0"
+  allow="clipboard-read; clipboard-write"
+  style="border: 0; border-radius: 12px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);"
+></iframe>
+```
+
+---
+
+##### 4. 高级进阶：PostMessage 双向通信与业务上下文注入
+
+当宿主页面需要动态向智能体注入业务上下文（如当前正在浏览的工单详情、设备资产编号、客户档案），或实现会话超时无感自动重连时，推荐使用 **PostMessage 标准协议**：
+
+```html
+<iframe
+  id="nanzi-agent-frame"
+  src="https://your-nanzi-platform.com/embed/chat?instance_id=crm-assistant"
+  width="100%"
+  height="680"
+  frameborder="0"
+></iframe>
+
+<script>
+const frame = document.getElementById('nanzi-agent-frame');
+const nanziOrigin = 'https://your-nanzi-platform.com';
+
+// 监听 EmbedChat 组件生命周期与上行事件
+window.addEventListener('message', async (event) => {
+  if (event.origin !== nanziOrigin) return;
+  const { source, type, payload } = event.data || {};
+  if (source !== 'nanzi-agent-embed') return;
+
+  // 1. 组件就绪：发送 Ticket 鉴权并注入业务上下文
+  if (type === 'NANZI_WIDGET_READY') {
+    const ticket = await fetchMyHostTicket(); // 从宿主后端申请 Ticket
+    frame.contentWindow.postMessage({
+      source: 'nanzi-host',
+      type: 'INIT_CONFIG',
+      payload: {
+        ticket: ticket,
+        theme: 'light',
+        business_context: {
+          order_id: 'ORD-2026-0822',
+          customer_name: '阿里云计算有限公司',
+          environment: '生产机房A区'
+        }
+      }
+    }, nanziOrigin);
+  }
+
+  // 2. 会话闲置超 24h 断开：自动静默重新申请 Ticket 续期
+  if (type === 'INIT_FAILURE' && payload?.reason === 'session_expired') {
+    const newTicket = await fetchMyHostTicket();
+    frame.contentWindow.postMessage({
+      source: 'nanzi-host',
+      type: 'RESET_SESSION',
+      payload: { ticket: newTicket }
+    }, nanziOrigin);
+  }
+});
+</script>
+```
+
+---
+
+##### 5. Embed Chat 常用 URL 参数速查表
+
+| 参数名 | 类型 | 示例值 | 作用说明 |
+| :--- | :--- | :--- | :--- |
+| `ticket` | String | `emt_xxx` | 服务端签发的一次性免登票据（推荐生产使用，阅后即焚）。 |
+| `agent_id` | String | `sys-agent-chatbi` | 锁定初始运行的智能体 ID；不传则为默认主助手并走自动意图调度。 |
+| `theme` | String | `light` / `dark` / `auto` | 界面色彩模式；`auto` 自动跟随宿主系统/浏览器深浅色设置。 |
+| `instance_id` | String | `ticket-ops-drawer` | 实例唯一标记，用于在同一宿主页面挂载多个 iframe 时隔离 postMessage 消息通道。 |
+| `strict_token` | Boolean | `1` / `0` | 开启严格鉴权模式（未提供合法 Ticket/Token 时禁止任何访客级试用）。 |
+
+> 📖 **完整技术集成规范与多语言 Demo**：
+> 更多关于 Java (Spring Boot) / Python (FastAPI) / Go (Gin) 服务端完整代码、Vue 3 / React / 悬浮球组件示例及 PostMessage 协议字典，请参阅：
+> 👉 **[`docs/md/embed_integration_guide.md`](file:///Users/chenxiaolong/workspace/nanzi-ai-agent-platform/docs/md/embed_integration_guide.md)** (NanZi 智能体平台嵌入式组件集成指南)
 
 ---
 

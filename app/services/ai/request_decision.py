@@ -33,6 +33,7 @@ from app.services.ai.intent_service import (
     looks_like_runtime_diagnostic_query,
     looks_like_short_field_or_continuation_followup,
     looks_like_strong_business_data_request,
+    looks_like_todo_or_task_management_query,
     looks_like_web_search_query,
 )
 
@@ -324,6 +325,16 @@ def _resolve_request_decision(
             RequestCapability.ANSWER,
             0.0,
             "empty query",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+
+    if looks_like_todo_or_task_management_query(q):
+        return _decision(
+            RequestSource.GENERAL,
+            RequestCapability.ANSWER,
+            0.95,
+            "todo or task list management query handled by main assistant",
             semantic_name=effective_intent,
             semantic_confidence=semantic_score,
         )
