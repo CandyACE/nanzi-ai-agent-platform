@@ -2,6 +2,8 @@
 
 欢迎查阅 **NanZi AI 开源智能体平台** 常见问题与疑难解答手册。本手册按照平台左侧功能菜单结构进行编排分类，包含通俗易懂的原理机制解析、小白用户常见概念混淆答疑，以及各类运行环境配置与异常排查方法。
 
+![NanZi AI FAQ Overview](docs/images/faq.png)
+
 ---
 
 ## 📑 目录导航 (Table of Contents)

@@ -235,7 +235,7 @@ async def prebuild_docker_workspace_image(*, force: bool = False) -> dict[str, A
         build_output: list[str] = []
         try:
             async for chunk in client.images.build(
-                data=tar_buf,
+                fileobj=tar_buf,
                 tag=tag,
                 stream=True,
                 rm=True,
