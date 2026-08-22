@@ -32,9 +32,13 @@ class PermissionService:
         return f"sys:auth:permissions:v3:user:{user_id}"
 
     async def get_user_permissions(self, user_id: int) -> UserPermissionsResponse:
+        try:
+            parsed_uid = int(user_id)
+        except (TypeError, ValueError):
+            parsed_uid = user_id
         # 1. Try Cache
         redis = await self._get_redis()
-        cache_key = await self._get_cache_key(user_id)
+        cache_key = await self._get_cache_key(parsed_uid)
         if redis:
             cached_data = await redis.get(cache_key)
             if cached_data:
@@ -52,7 +56,7 @@ class PermissionService:
         user_roles_list = []
 
         # A. Fetch User & System Role
-        user_stmt = select(User).where(User.id == user_id)
+        user_stmt = select(User).where(User.id == parsed_uid)
         user_result = await self.db.execute(user_stmt)
         user = user_result.scalar_one_or_none()
 
@@ -60,14 +64,14 @@ class PermissionService:
             user_roles_list.append(user.role) # Add 'admin' or 'user'
 
         # B. Fetch Business Roles
-        role_stmt = select(Role.code).join(UserRoleRelation, Role.id == UserRoleRelation.role_id).where(UserRoleRelation.user_id == user_id)
+        role_stmt = select(Role.code).join(UserRoleRelation, Role.id == UserRoleRelation.role_id).where(UserRoleRelation.user_id == parsed_uid)
         role_result = await self.db.execute(role_stmt)
         business_roles = role_result.scalars().all()
         user_roles_list.extend(business_roles)
 
         # C. Fetch Direct Permissions
         direct_stmt = select(ResourcePermission).where(
-            ResourcePermission.user_id == user_id,
+            ResourcePermission.user_id == parsed_uid,
             ResourcePermission.enabled == True
         )
         direct_perms = (await self.db.execute(direct_stmt)).scalars().all()
@@ -78,7 +82,7 @@ class PermissionService:
         role_perm_stmt = select(ResourcePermission).join(
             UserRoleRelation, ResourcePermission.role_id == UserRoleRelation.role_id
         ).where(
-            UserRoleRelation.user_id == user_id,
+            UserRoleRelation.user_id == parsed_uid,
             ResourcePermission.enabled == True
         )
         role_perms = (await self.db.execute(role_perm_stmt)).scalars().all()

@@ -50,10 +50,11 @@ class TaskCenterService:
     ) -> AgentScheduledTask:
         # Generate a dedicated conversation_id for this task
         conversation_id = f"task_conv_{uuid.uuid4().hex[:12]}"
+        int_user_id = int(user_id) if user_id is not None else 0
         
         new_task = AgentScheduledTask(
             name=name,
-            user_id=user_id,
+            user_id=int_user_id,
             agent_id=agent_id,
             conversation_id=conversation_id,
             cron_expr=cron_expr,
@@ -87,8 +88,12 @@ class TaskCenterService:
             .outerjoin(AIAgent, AgentScheduledTask.agent_id == AIAgent.id)
         )
         
-        if not is_admin and user_id:
-            stmt = stmt.where(AgentScheduledTask.user_id == user_id)
+        if not is_admin and user_id is not None:
+            try:
+                target_user_id = int(user_id)
+                stmt = stmt.where(AgentScheduledTask.user_id == target_user_id)
+            except (ValueError, TypeError):
+                stmt = stmt.where(AgentScheduledTask.user_id == user_id)
         
         stmt = stmt.order_by(desc(AgentScheduledTask.created_at))
         result = await db.execute(stmt)
