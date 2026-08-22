@@ -199,6 +199,42 @@ const contextUsageStatusLabel = computed(() => {
   return "使用正常";
 });
 
+const sessionContextBreakdown = computed(() => {
+  const breakdown = props.contextUsage?.context_breakdown;
+  return breakdown && Number(breakdown.total_tokens || 0) > 0 ? breakdown : null;
+});
+
+const sessionContextBreakdownItems = computed(() => {
+  const breakdown = sessionContextBreakdown.value;
+  if (!breakdown) return [];
+  return [
+    {
+      label: "系统提示词",
+      value: Number(breakdown.system_prompt_tokens || 0),
+      color: "bg-slate-400",
+      key: "system",
+    },
+    {
+      label: "工具 schema",
+      value: Number(breakdown.tools_tokens || 0),
+      color: "bg-violet-400",
+      key: "tools",
+    },
+    {
+      label: "对话消息",
+      value: Number(breakdown.conversation_tokens || 0),
+      color: "bg-blue-400",
+      key: "conversation",
+    },
+  ];
+});
+
+const contextBreakdownSegmentWidth = (value: number) => {
+  const total = Number(sessionContextBreakdown.value?.total_tokens || 0);
+  if (!total) return "0%";
+  return `${Math.min(100, Math.max(0, (value / total) * 100))}%`;
+};
+
 const emit = defineEmits<{
   (e: 'update:modelValue', val: string): void;
   (e: 'update:approvalMode', val: ApprovalMode): void;
@@ -1629,6 +1665,22 @@ defineExpose({
                       aria-valuemax="100"
                     >
                         <div
+                          v-if="sessionContextBreakdown"
+                          class="flex h-full overflow-hidden rounded-full transition-all duration-300"
+                          :style="{ width: `${contextUsagePercent}%` }"
+                          data-testid="session-context-breakdown-segment"
+                        >
+                          <div
+                            v-for="item in sessionContextBreakdownItems"
+                            :key="item.key"
+                            class="h-full transition-all duration-300"
+                            :class="item.color"
+                            :style="{ width: contextBreakdownSegmentWidth(item.value) }"
+                            :title="`${item.label} ${formatContextTokens(item.value)}`"
+                          />
+                        </div>
+                        <div
+                          v-else
                           class="h-full rounded-full transition-all duration-300"
                           :class="contextUsageTone.track"
                           :style="{ width: `${contextUsagePercent}%` }"
@@ -1660,6 +1712,30 @@ defineExpose({
                           </span>
                           <span class="font-mono tabular-nums">{{ formatContextTokens(contextUsage.request_input_budget) }}</span>
                         </div>
+                    </div>
+                    <div
+                      v-if="sessionContextBreakdown"
+                      class="mt-2 border-t border-gray-100 pt-2 text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                    >
+                      <div class="flex items-center justify-between gap-3">
+                        <span class="font-medium">会话整体构成</span>
+                        <span class="font-mono text-[9px]">
+                          估算 {{ formatContextTokens(sessionContextBreakdown.total_tokens) }}
+                        </span>
+                      </div>
+                      <div class="mt-1.5 space-y-1">
+                        <div
+                          v-for="item in sessionContextBreakdownItems"
+                          :key="item.key"
+                          class="flex items-center justify-between gap-3 text-[10px]"
+                        >
+                          <span class="flex items-center gap-1.5">
+                            <span class="h-1.5 w-1.5 rounded-sm" :class="item.color" aria-hidden="true" />
+                            <span>{{ item.label }}</span>
+                          </span>
+                          <span class="font-mono tabular-nums">{{ formatContextTokens(item.value) }}</span>
+                        </div>
+                      </div>
                     </div>
                     <div
                       v-if="contextCompactionEnabled"

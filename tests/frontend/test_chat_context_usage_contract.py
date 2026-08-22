@@ -57,8 +57,19 @@ def test_chat_input_exposes_context_usage_indicator_and_both_chat_surfaces_refre
     assert 'return "宿主机"' in chat_input
     assert '`local（${sandboxRuntimeEnvLabel.value}）`' in chat_input
     assert "Sandbox 策略" in chat_input
+    assert "最近一次实际请求" not in chat_input
+    assert "会话整体构成" in chat_input
+    assert "sessionContextBreakdownItems" in chat_input
+    assert "context_breakdown" in composable
+    assert "contextBreakdownSegmentWidth" in chat_input
+    assert "session-context-breakdown-segment" in chat_input
+    assert "system_prompt_tokens" in chat_input
+    assert "tools_tokens" in chat_input
+    assert "conversation_tokens" in chat_input
     assert "/api/v1/chat/conversation/" in composable
     assert "context-usage" in composable
+    assert "model_calls" not in composable
+    assert "last_model_call_context_breakdown" not in composable
     assert "useContextUsage" in embed_chat
     assert "useContextUsage" in agent_debug
     assert ':context-usage="contextUsage"' in embed_chat

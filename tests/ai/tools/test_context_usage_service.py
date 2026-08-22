@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 
@@ -46,3 +48,79 @@ async def test_context_usage_service_returns_budget_for_an_empty_conversation(mo
     assert usage["history_budget"] == 40960
     assert usage["request_input_budget"] == 49152
     assert usage["usage_percentage"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_context_usage_aggregates_session_breakdown_without_repeating_runtime_overhead(monkeypatch):
+    from app.services.ai.context_usage import estimate_context_usage
+
+    async def fake_get_history(user_id, conversation_id, limit=None, offset=0):
+        del user_id, conversation_id, limit, offset
+        return [{"role": "user", "content": "hello"}]
+
+    async def fake_config_get(key, default=None):
+        return {
+            "agent_context_max_tokens": "100",
+            "agent_context_overhead_headroom_tokens": "20",
+        }.get(key, default)
+
+    class FakeRedis:
+        async def lrange(self, key, start, end):
+            assert key.endswith(":user-1:conversation-1:model_call_stats")
+            assert (start, end) == (-1, -1)
+            return [
+                json.dumps(
+                    {
+                        "context_breakdown": {
+                            "system_prompt_tokens": 3,
+                            "tools_tokens": 11,
+                            "conversation_tokens": 7,
+                            "total_tokens": 21,
+                            "estimated": True,
+                            "source": "agentscope_count_tokens",
+                        }
+                    }
+                )
+            ]
+
+    async def fake_get_redis():
+        return FakeRedis()
+
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.memory_service.get_history",
+        fake_get_history,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.get_redis",
+        fake_get_redis,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.estimate_text_tokens",
+        lambda value: 40 if value == "hello" else 0,
+    )
+
+    usage = await estimate_context_usage(
+        user_id="user-1",
+        conversation_id="conversation-1",
+        runtime_model_info={
+            "source": "runtime_override",
+            "context_size": 100,
+            "completion_reserve_tokens": 20,
+        },
+    )
+
+    assert usage["estimated_current_tokens"] == 54
+    assert usage["estimated_remaining_tokens"] == 26
+    assert usage["usage_percentage"] == 67.5
+    assert usage["context_breakdown"] == {
+        "system_prompt_tokens": 3,
+        "tools_tokens": 11,
+        "conversation_tokens": 40,
+        "total_tokens": 54,
+        "estimated": True,
+        "source": "session_history_plus_latest_runtime_context",
+    }

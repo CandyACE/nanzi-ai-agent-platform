@@ -852,6 +852,17 @@ async def finalize_conversation(
     )
 
 
+class ContextBreakdown(BaseModel):
+    """一次模型请求的上下文组成估算。"""
+
+    system_prompt_tokens: int = Field(0, description="系统提示词估算 Token")
+    tools_tokens: int = Field(0, description="工具 schema 估算 Token")
+    conversation_tokens: int = Field(0, description="对话消息估算 Token")
+    total_tokens: int = Field(0, description="三项合计的估算 Token")
+    estimated: bool = Field(True, description="是否为平台估算值")
+    source: str = Field("agentscope_count_tokens", description="Token 估算来源")
+
+
 class ModelCallStatDetail(BaseModel):
     call_index: int = Field(..., description="调用序号")
     timestamp: str = Field(..., description="时间戳")
@@ -882,6 +893,10 @@ class ModelCallStatDetail(BaseModel):
     overhead_reservation_tokens: Optional[int] = Field(None, description="历史之外的总预留 Token")
     message_roles: Optional[Dict[str, int]] = Field(default_factory=dict, description="各角色消息条数统计")
     contains_compaction: bool = Field(False, description="是否包含早前对话的裁剪摘录")
+    context_breakdown: Optional[ContextBreakdown] = Field(
+        None,
+        description="系统提示词、工具 schema 和对话消息的 Token 组成估算",
+    )
 
 
 class ModelCallStatsResponse(BaseModel):

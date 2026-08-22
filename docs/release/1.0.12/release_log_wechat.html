@@ -1,0 +1,352 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.12
+  风格：墨色编辑风（少渐变、少彩虹色块、优雅深墨色调）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图可在编辑器中自行上传替换
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#44403c;line-height:1.85;letter-spacing:0.3px;text-align:justify;font-family:Georgia,'Songti SC','Noto Serif SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei',serif;">
+
+  <!-- 标题区：实底墨色，无渐变光晕 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:#1c1917;border-radius:2px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#a8a29e;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.12</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#d6d3d1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">安全沙箱多策略 · Docker 预构建加速 · 服务端浏览器会话 · 上下文预算管控 · 思考模型工具兼容</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e7e5e4;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#1c1917;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#57534e;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#1c1917;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习与打磨。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #1c1917;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#1c1917;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#44403c;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 28px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#292524;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#1c1917;">v1.0.12</strong> 版本！本次迭代以 <strong>多策略安全沙箱与 Docker 预构建加速、服务端持久化浏览器会话与实时人机协同面板</strong> 为核心领衔，并全面推进 <strong>智能体上下文预算管控与溢出压缩、推理思考模型强制工具调用兼容层、AI 交付物工件与长效下载管理、AI 主动提问与全卡片折叠交互重构、子代理专属会话委派与层级时间线，以及元数据批量治理与聊天日志双 Tab 链路追踪</strong>。
+    </p>
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f5f5f4;padding:2px 6px;border-radius:2px;color:#44403c;">43c634f4</code> 至 <code style="font-size:12px;background:#f5f5f4;padding:2px 6px;border-radius:2px;color:#44403c;">091236a1</code>，共 <strong>59 个提交</strong>（52 个非 Merge 提交），变更 <strong>352 个文件</strong>。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 1. 安全沙箱多策略扩展与 Docker 预构建加速 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. 🛡️ 安全沙箱多策略扩展与 Docker 预构建加速
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">四大沙箱策略全面支持</strong>：系统配置新增 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">sandbox_policy</code>，支持 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">local</code>（本机）、<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">docker</code>（容器隔离）、<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">e2b</code>（云端安全沙箱）、<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">ssh</code>（远程主机）四类策略，动态展现专属参数。</li>
+        <li><strong style="color:#1c1917;">Docker 沙箱工作区同绝对路径挂载</strong>：解决容器内 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">/workspace</code> 与宿主机物理路径不一致导致的工件下载错位问题；支持直接挂载宿主机同名绝对路径并软链兼容。</li>
+        <li><strong style="color:#1c1917;">Docker 镜像预构建加速</strong>：提供后台一键预构建端点，实现「首次分钟级预构建 + 后续秒级会话冷启动」；新增 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">sandbox_docker_manual_image_url</code> 支持自定义远程镜像与多地域 Python 加速源预设。</li>
+        <li><strong style="color:#1c1917;">Bash 执行环境探测与风险提示</strong>：自动识别当前服务运行环境（容器/宿主机），在前端输入框渲染自适应安全警示横幅，支持一键折叠与本地记忆。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：安全沙箱多策略配置、Docker 预构建状态与 Bash 宿主机警示横幅</p>
+      </section>
+    </section>
+
+    <!-- 2. 服务端持久化浏览器会话与实时人机协同面板 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. 🌐 服务端持久化浏览器会话与实时人机协同面板
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">持久化浏览器会话</strong>：基于 Playwright 构建用户级持久化浏览器工具套件（打开/快照/点击/输入/拖拽/多标签页）与数据库存储模型。</li>
+        <li><strong style="color:#1c1917;">WebSocket 实时协同面板</strong>：前端右侧抽屉式浏览器面板支持实时画面流串流，用户可随时接管进行鼠标点击、拖拽、滚轮滚动与键盘输入。</li>
+        <li><strong style="color:#1c1917;">拟人滑块拖拽与 Stale 自动恢复</strong>：支持拟人贝塞尔缓入缓出轨迹与垂直抖动模拟；增加元素就绪等待与执行期 Transient Stale 异常自动刷新自愈机制。</li>
+        <li><strong style="color:#1c1917;">严格安全防护与缓存抹除</strong>：内置 SSRF 防护（拦截内网与元数据 IP）与高风险操作确认；支持在个人中心一键物理抹除浏览器底层数据目录。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：右侧实时浏览器交互面板、拟人滑块拖拽与人机接管操作演示</p>
+      </section>
+    </section>
+
+    <!-- 3. 上下文预算管控、溢出压缩与水位线浮标 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. 🧠 上下文预算管控、溢出压缩与水位线浮标
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">预算管控与溢出压缩</strong>：引入 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">agent_context</code> 预算管理，支持 Token 上限预设（16k~256k）；逼近上限时自动触发确定性摘录压缩与 LLM 语义摘要。</li>
+        <li><strong style="color:#1c1917;">结构化摘要（结论优先）</strong>：优先保留工具名与输出核心结论，剔除冗长入参；单工具块独立配额截断；多模态图片保留文件名信息。</li>
+        <li><strong style="color:#1c1917;">输入框上下文水位线浮标</strong>：聊天输入框右上角增加环形/徽标浮标，展示 Token 用量、预算占比与当前沙箱执行环境。</li>
+        <li><strong style="color:#1c1917;">物理窗口动态夹紧保护</strong>：请求输入逼近窗口时动态将 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">max_tokens</code> 夹紧至可用空间，杜绝 API 超限报错。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：输入框环形水位线浮标、上下文压缩观测面板与系统配置快捷预设</p>
+      </section>
+    </section>
+
+    <!-- 4. 推理思考模型强制工具调用兼容层 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 🧩 推理思考模型强制工具调用兼容层
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">解决思考模型工具调用冲突</strong>：解决 DeepSeek-R1 / QwQ 等思考模型在强约束强制调用场景下先输出 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">&lt;think&gt;</code> 导致的死循环与解析崩溃问题。</li>
+        <li><strong style="color:#1c1917;">tool_choice_for_model 适配层</strong>：构建兼容适配层与 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">ThinkingToolChoiceCompatAgent</code>，智能解析思考块并规范化 tool_call 分发。</li>
+      </ul>
+    </section>
+
+    <!-- 5. AI 交付物工件与长效下载管理 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        5. 📦 AI 交付物工件与长效下载管理
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">工件发布工具（publish_generated_file）</strong>：新增系统工具与 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">ai_artifacts</code> 表，支持将工作区文件发布为结构化工件。</li>
+        <li><strong style="color:#1c1917;">7天下载有效期与前缀配置</strong>：下载链接默认有效期延长至 7 天；新增 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">file_download_url_prefix</code> 支持自定义下载域名/前缀。</li>
+      </ul>
+    </section>
+
+    <!-- 6. AI 主动提问与全卡片折叠交互重构 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        6. 💬 AI 主动提问与全卡片折叠交互重构
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">AI 主动提问交互（ask_user_question）</strong>：支持单选/多选/补充输入，通过独立卡片中断当前 ReAct，支持用户提交与取消拦截。</li>
+        <li><strong style="color:#1c1917;">全量卡片折叠交互</strong>：工具权限确认卡、外部执行卡、AI 提问卡与业务确认卡统一支持展开/折叠，完成状态自动折叠，消除长脚本霸屏。</li>
+        <li><strong style="color:#1c1917;">TODO 清单常驻与记忆关闭</strong>：TODO 任务清单在输入框正上方常驻展示；全部完成自动折叠；手动关闭后持久化记忆。</li>
+      </ul>
+    </section>
+
+    <!-- 7. 子代理独立会话委派与层级时间线 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        7. 🤝 子代理独立会话委派与层级时间线
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">专属会话隔离</strong>：子智能体使用独立 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">child_session_id</code> 命名空间，父子通过 ID 严格关联。</li>
+        <li><strong style="color:#1c1917;">多层嵌套时间线</strong>：子代理步骤收拢在「调用子代理」父级容器下，支持分析、SQL 与工具调用分级展开；新增 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">list_available_agents</code> 目录发现工具。</li>
+      </ul>
+    </section>
+
+    <!-- 8. 元数据批量治理与聊天日志双 Tab -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        8. 🗃️ 元数据批量治理与聊天日志双 Tab
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">元数据批量删除与 N+1 消除</strong>：支持数据表/指标/关系批量删除，优化跨库关系短路与权限查询性能。</li>
+        <li><strong style="color:#1c1917;">聊天日志「对话/轨迹」双 Tab</strong>：右侧详情区新增双 Tab 切换，所有 Step 节点补充 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">HH:mm:ss</code> 触发时间。</li>
+        <li><strong style="color:#1c1917;">Toast 淡彩微磨砂重构</strong>：微光淡彩渐变 + 状态色环境弥散阴影，视觉层次显著提升。</li>
+      </ul>
+    </section>
+  </section>
+
+  <!-- 章节二：破坏性变更与注意事项（表格） -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 破坏性变更与升级注意事项 (Breaking Changes)
+    </p>
+
+    <!-- 红色特别提醒卡片 -->
+    <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:2px;font-size:13px;color:#991b1b;line-height:1.75;">
+      <p style="margin:0;font-weight:bold;color:#b91c1c;">🚨 升级特别注意：</p>
+      <p style="margin:4px 0 0 0;">
+        1. <strong>必须执行数据库增量迁移</strong>：由于引入了沙箱多策略、浏览器持久化会话、工件表与上下文预算配置，升级后请务必执行 MySQL (<code style="background:#fee2e2;padding:1px 4px;border-radius:2px;">V122~V129</code>) 或 PostgreSQL (<code style="background:#fee2e2;padding:1px 4px;border-radius:2px;">V22~V29</code>)。<br>
+        2. <strong>Docker 沙箱路径升级</strong>：若先前已挂载容器沙箱，现已统一对齐为宿主机同绝对路径挂载与软链兼容，无需手动做路径软链调整。
+      </p>
+    </section>
+
+    <p style="margin:0 0 12px 0;font-size:14px;color:#57534e;">
+      从 v1.0.11 升级至 v1.0.12 时，请特别注意以下变更：
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr style="background:#1c1917;color:#fafaf9;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;width:28%;">变更项目</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;">详细说明与迁移指引</th>
+        </tr>
+      </thead>
+      <tbody style="color:#44403c;">
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;font-weight:bold;">安全沙箱多策略配置</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">系统配置新增 <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">sandbox_policy</code> 分组与相关配置项；需执行 MySQL <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V127~V128</code> 或 PG <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V27~V28</code> 升级。</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;font-weight:bold;">服务端浏览器会话持久化</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">新增浏览器持久化会话与 Profile 存储表；需执行 MySQL <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V122</code> 或 PG <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V22</code> 升级。</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;font-weight:bold;">AI 交付物工件与文件下载前缀</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">新增 <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">ai_artifacts</code> 工件表与 <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">file_download_url_prefix</code> 配置；需执行 MySQL <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V124, V129</code> 或 PG <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V24, V29</code> 升级。</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;font-weight:bold;">上下文预算管控系统配置</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">系统配置新增 <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">agent_context_*</code> 预算与溢出压缩配置项；需执行 MySQL <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V126</code> 或 PG <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V26</code> 升级。</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;font-weight:bold;">指标标签与历史数据标记</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">执行历史表与指标表扩展字段；需执行 MySQL <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V123, V125</code> 或 PG <code style="font-size:12px;background:#e7e5e4;padding:1px 4px;border-radius:2px;">V23, V25</code> 升级。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 章节三：数据库增量升级说明（表格展示） -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库增量升级说明 (Database Migrations)
+    </p>
+
+    <p style="margin:0 0 12px 0;font-size:14px;color:#57534e;">
+      本版本在 MySQL（<code style="font-size:12px;background:#f5f5f4;padding:2px 5px;">db-prod/</code>）与 PostgreSQL（<code style="font-size:12px;background:#f5f5f4;padding:2px 5px;">db-prod-pg/</code>）双引擎下同步提供了 <strong>8 个</strong>对应的增量迁移脚本：
+    </p>
+
+    <table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr style="background:#1c1917;color:#fafaf9;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;width:22%;">MySQL 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;width:18%;">PG 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #1c1917;">核心变更说明</th>
+        </tr>
+      </thead>
+      <tbody style="color:#44403c;">
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V122</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V22</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">新增服务端持久化浏览器会话表 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">ai_browser_sessions</code> 与配置表 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">ai_browser_profiles</code></td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V123</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V23</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">执行历史表增加 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">has_data_output</code> 数据产出标记字段</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V124</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V24</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">新增 AI 生成文件与交付物工件表 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">ai_artifacts</code></td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V125</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V25</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">指标表 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">metadata_metrics</code> 增加 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">tags</code> 标签字段</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V126</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V26</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">系统配置新增上下文预算上限与历史溢出压缩配置项</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V127</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V27</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">系统配置新增安全沙箱多策略（<code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">local/docker/e2b/ssh</code>）配置项</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V128</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V28</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">系统配置新增 Docker 沙箱自定义远程镜像地址配置</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V129</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;"><code style="font-size:12px;font-weight:bold;">V29</code></td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">系统配置新增生成文件下载链接前缀配置 <code style="font-size:12px;background:#e7e5e4;padding:1px 3px;border-radius:2px;">file_download_url_prefix</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 章节四：快速升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📦 快速升级指南 (Upgrade Guide)
+    </p>
+
+    <section style="margin:0 0 16px 0;padding:10px 14px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:2px;font-size:13px;color:#991b1b;">
+      ⚠️ <strong>升级前置提醒</strong>：无论采用源码还是 Docker 升级，请务必先备份数据库，并在服务启动前执行数据库升级脚本！
+    </section>
+
+    <!-- 方式一：源码直接升级 -->
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;">方式一：源码直接升级（本地 / 虚机部署）</p>
+    <section style="margin:0 0 16px 0;padding:14px;background:#1c1917;border-radius:2px;color:#e7e5e4;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#a8a29e;"># 1. 拉取最新代码</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">git fetch origin && git checkout main && git pull origin main</p>
+      <p style="margin:0;color:#a8a29e;"># 2. 更新 Python 依赖</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">pip install -r requirements.txt</p>
+      <p style="margin:0;color:#a8a29e;"># 3. 执行数据库升级 (V122~V129)</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">./db-prod/apply-sql-native.sh  <span style="color:#a8a29e;"># PG: ./db-prod-pg/apply-sql.sh</span></p>
+      <p style="margin:0;color:#a8a29e;"># 4. 重新编译前端并启动</p>
+      <p style="margin:0;color:#fafaf9;">cd frontend && npm install && npm run build && cd .. && ./dev.sh</p>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1c1917;">方式二：Docker 容器化升级（生产环境 / 容器集群）</p>
+    
+    <!-- 场景 A: Release 镜像加载 -->
+    <p style="margin:0 0 6px 0;font-size:13px;color:#57534e;"><strong>场景 A：从 Release 下载镜像离线加载（推荐）</strong></p>
+    <section style="margin:0 0 12px 0;padding:14px;background:#1c1917;border-radius:2px;color:#e7e5e4;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#a8a29e;"># 1. 下载并加载镜像归档（按架构选择）</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">docker load -i nanzi-ai-agent_1.0.12_linux-amd64_*.tar  <span style="color:#a8a29e;"># ARM: arm64_*.tar</span></p>
+      <p style="margin:0;color:#a8a29e;"># 2. 执行数据库升级</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">./db-prod/apply-sql-native.sh  <span style="color:#a8a29e;"># PG: ./db-prod-pg/apply-sql.sh</span></p>
+      <p style="margin:0;color:#a8a29e;"># 3. 启动 / 重启容器</p>
+      <p style="margin:0;color:#fafaf9;">cd docker && ./start-nanzi-ai-agent.sh</p>
+    </section>
+
+    <!-- 场景 B: 自主构建镜像 -->
+    <p style="margin:0 0 6px 0;font-size:13px;color:#57534e;"><strong>场景 B：本地 / 服务器自主构建镜像</strong></p>
+    <section style="margin:0 0 16px 0;padding:14px;background:#1c1917;border-radius:2px;color:#e7e5e4;font-family:Consolas,Monaco,'Andale Mono',monospace;font-size:13px;line-height:1.6;">
+      <p style="margin:0;color:#a8a29e;"># 1. 拉取最新代码并执行数据库迁移</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">git pull origin main && ./db-prod/apply-sql-native.sh</p>
+      <p style="margin:0;color:#a8a29e;"># 2. 构建 v1.0.12 镜像并重启</p>
+      <p style="margin:0 0 6px 0;color:#fafaf9;">cd docker && ./build_linux_x86.sh 1.0.12  <span style="color:#a8a29e;"># ARM: ./build_linux_arm.sh 1.0.12</span></p>
+      <p style="margin:0;color:#fafaf9;">./start-nanzi-ai-agent.sh</p>
+    </section>
+  </section>
+
+  <!-- 章节五：资源资产与下载 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      💾 资产包下载 (Downloads / Assets)
+    </p>
+    <ul style="margin:0 0 14px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.85;">
+      <li>🐳 <strong>Docker Image (x86_64)</strong>：<code style="font-size:12px;background:#f5f5f4;padding:2px 4px;">nanzi-ai-agent_1.0.12_linux-amd64_*.tar</code></li>
+      <li>🐳 <strong>Docker Image (arm64)</strong>：<code style="font-size:12px;background:#f5f5f4;padding:2px 4px;">nanzi-ai-agent_1.0.12_linux-arm64_*.tar</code></li>
+      <li>⚙️ <strong>Compose 编排文件</strong>：<code style="font-size:12px;background:#f5f5f4;padding:2px 4px;">docker-compose.ai-agent.yml</code> / <code style="font-size:12px;background:#f5f5f4;padding:2px 4px;">docker-compose.yml</code></li>
+    </ul>
+    <section style="padding:12px 16px;background:#f5f5f4;border-radius:2px;text-align:center;">
+      <p style="margin:0;font-size:14px;color:#44403c;">
+        🔗 <strong>发布页下载：</strong>
+        <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.12" style="color:#1c1917;font-weight:bold;text-decoration:underline;">GitHub Releases v1.0.12</a>
+      </p>
+    </section>
+  </section>
+
+  <!-- 结语区 -->
+  <section style="margin:0;padding:20px 18px;background:#fafaf9;border:1px solid #e7e5e4;border-radius:2px;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">感谢每一位开发者的支持与陪伴</p>
+    <p style="margin:0;font-size:13px;color:#78716c;line-height:1.75;">
+      欢迎在 GitHub 提交 Issue 与 PR，一起打造更极致的开源智能体协作体验！🌟
+    </p>
+  </section>
+
+</section>

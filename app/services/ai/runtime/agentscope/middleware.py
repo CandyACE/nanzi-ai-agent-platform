@@ -15,6 +15,8 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Union
 
 from agentscope.middleware import MiddlewareBase
 
+from .context_breakdown import estimate_context_breakdown
+
 logger = logging.getLogger(__name__)
 
 STATS_KEY_SUFFIX = "model_call_stats"
@@ -398,6 +400,11 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         # 各角色的消息条数统计（便于前端可视化上下文构成），以及是否包含早前对话的裁剪摘录。
         message_roles: dict[str, int] = _count_message_roles(input_messages)
         contains_compaction: bool = _contains_compaction(input_messages)
+        context_breakdown = await estimate_context_breakdown(
+            current_model,
+            input_messages,
+            tools,
+        )
 
         parameters, original_max_tokens, effective_max_tokens = (
             await _clamp_completion_to_context(
@@ -458,6 +465,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             ),
             "message_roles": message_roles,
             "contains_compaction": contains_compaction,
+            "context_breakdown": context_breakdown,
         }
 
         # ── 流式响应：return 包装后的 async generator ──────────────────────

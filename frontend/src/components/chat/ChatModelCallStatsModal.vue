@@ -73,6 +73,24 @@ const formatTokens = (n: number): string => {
   return String(n);
 };
 
+const contextBreakdownItems = (stat: any) => [
+  {
+    label: "系统提示词",
+    value: Number(stat.context_breakdown?.system_prompt_tokens || 0),
+    color: "bg-slate-400",
+  },
+  {
+    label: "工具 schema",
+    value: Number(stat.context_breakdown?.tools_tokens || 0),
+    color: "bg-violet-400",
+  },
+  {
+    label: "对话消息",
+    value: Number(stat.context_breakdown?.conversation_tokens || 0),
+    color: "bg-blue-400",
+  },
+];
+
 const statsSummary = computed(() => {
   const totalDuration = props.stats.reduce((acc: number, cur: any) => acc + (cur.elapsed_ms || 0), 0);
   const totalIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.input_tokens || 0), 0);
@@ -301,6 +319,33 @@ const statsSummary = computed(() => {
                 <span v-if="stat.request_input_budget">
                   请求输入上限 {{ formatTokens(stat.request_input_budget) }}
                 </span>
+              </div>
+            </div>
+
+            <!-- Context composition estimate -->
+            <div
+              v-if="stat.context_breakdown && stat.context_breakdown.total_tokens > 0"
+              class="pt-2 border-t border-gray-100/50 dark:border-gray-700/20"
+            >
+              <div class="flex items-center justify-between text-[10px] text-gray-400 dark:text-gray-500">
+                <span>最近一次请求构成</span>
+                <span class="font-mono text-gray-500 dark:text-gray-400">
+                  估算 {{ formatTokens(stat.context_breakdown.total_tokens) }}
+                  <span v-if="stat.input_tokens" class="text-gray-400">· 实际输入 {{ formatTokens(stat.input_tokens) }}</span>
+                </span>
+              </div>
+              <div class="mt-1.5 space-y-1 text-[10px]">
+                <div
+                  v-for="item in contextBreakdownItems(stat)"
+                  :key="item.label"
+                  class="flex items-center justify-between gap-3 text-gray-500 dark:text-gray-400"
+                >
+                  <span class="flex items-center gap-1.5">
+                    <span class="h-1.5 w-1.5 rounded-sm" :class="item.color" aria-hidden="true" />
+                    <span>{{ item.label }}</span>
+                  </span>
+                  <span class="font-mono tabular-nums">{{ formatTokens(item.value) }}</span>
+                </div>
               </div>
             </div>
 
