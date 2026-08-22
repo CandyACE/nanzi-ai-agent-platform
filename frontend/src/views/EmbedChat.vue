@@ -1239,6 +1239,15 @@
               <ChatTodoCard :timeline="activeTodoTimeline" />
             </div>
             <div class="mt-2">
+              <DockerWorkspaceBanner
+                v-if="showDockerWorkspaceControl"
+                :workspace-status="dockerWorkspaceStatus"
+                :workspace-error="dockerWorkspaceError"
+                :container-id="dockerWorkspaceContainerId"
+                @start="ensureDockerWorkspace"
+                @refresh="refreshDockerWorkspaceStatus"
+                @close="dismissDockerWorkspaceBanner"
+              />
               <Transition name="bash-banner-fade">
                 <BashEnvBanner
                   v-if="showBashBanner"
@@ -2132,6 +2141,7 @@ import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
+import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -3840,7 +3850,135 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
   };
 };
 
+const DOCKER_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_docker_workspace_banner";
+
+const readDockerWorkspaceBannerDismissed = (): boolean => {
+  try {
+    return localStorage.getItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+};
+
 const { contextUsage, refreshContextUsage } = useContextUsage();
+type DockerWorkspaceStatus = "idle" | "starting" | "running" | "error";
+const dockerWorkspaceStatus = ref<DockerWorkspaceStatus>("idle");
+const dockerWorkspaceError = ref("");
+const dockerWorkspaceContainerId = ref<string | null>(null);
+const dockerWorkspaceBannerDismissed = ref(readDockerWorkspaceBannerDismissed());
+const effectiveSandboxPolicy = computed(() => (
+  String(contextUsage.value?.sandbox_policy || "").trim().toLowerCase()
+));
+const showDockerWorkspaceControl = computed(() => {
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) {
+    return false;
+  }
+  // 正常运行态自动隐藏（状态收拢至输入框浮标）
+  if (dockerWorkspaceStatus.value === "running") {
+    return false;
+  }
+  // 异常态强制显示，方便用户排查
+  if (dockerWorkspaceStatus.value === "error") {
+    return true;
+  }
+  // 其他状态（idle / starting）在有效 docker 策略下尊重用户的关闭偏好
+  return effectiveSandboxPolicy.value === "docker" && !dockerWorkspaceBannerDismissed.value;
+});
+
+const resetDockerWorkspaceState = () => {
+  dockerWorkspaceStatus.value = "idle";
+  dockerWorkspaceError.value = "";
+  dockerWorkspaceContainerId.value = null;
+  dockerWorkspaceBannerDismissed.value = readDockerWorkspaceBannerDismissed();
+};
+
+const dismissDockerWorkspaceBanner = () => {
+  dockerWorkspaceBannerDismissed.value = true;
+  try {
+    localStorage.setItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY, "true");
+  } catch {}
+};
+
+const refreshDockerWorkspaceStatus = async () => {
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
+  if (dockerWorkspaceStatus.value === "starting") return;
+  const requestedConversationId = conversationId.value;
+  try {
+    const response = await axios.get(
+      "/api/v1/sandbox/docker/workspace/status",
+      {
+        params: { conversation_id: requestedConversationId },
+        headers: embedAuthHeaders(),
+      },
+    );
+    if (conversationId.value !== requestedConversationId) return;
+    const data = response.data?.data ?? response.data;
+    if (data?.execution_backend !== "docker") {
+      throw new Error("Docker 沙箱状态返回了错误的执行后端");
+    }
+    dockerWorkspaceContainerId.value = data.container_id || null;
+    dockerWorkspaceStatus.value = data.status === "running" ? "running" : "idle";
+    dockerWorkspaceError.value = "";
+  } catch (error: any) {
+    if (conversationId.value !== requestedConversationId) return;
+    const detail = error?.response?.data?.detail;
+    dockerWorkspaceError.value = typeof detail === "string"
+      ? detail
+      : String(detail?.message || error?.message || "Docker 沙箱状态查询失败");
+    dockerWorkspaceStatus.value = "error";
+  }
+};
+
+const ensureDockerWorkspace = async () => {
+  if (!showDockerWorkspaceControl.value || !conversationId.value) return;
+  if (dockerWorkspaceStatus.value === "starting") return;
+  const requestedConversationId = conversationId.value;
+  dockerWorkspaceStatus.value = "starting";
+  dockerWorkspaceError.value = "";
+  try {
+    const response = await axios.post(
+      "/api/v1/sandbox/docker/workspace/ensure",
+      { conversation_id: requestedConversationId },
+      { headers: embedAuthHeaders() },
+    );
+    if (conversationId.value !== requestedConversationId) return;
+    const data = response.data?.data ?? response.data;
+    if (data?.execution_backend !== "docker" || data?.status !== "running") {
+      throw new Error("Docker 沙箱容器未返回运行中状态");
+    }
+    dockerWorkspaceStatus.value = "running";
+    dockerWorkspaceContainerId.value = data.container_id || null;
+    showToast("Docker 沙箱容器已启动", "success");
+  } catch (error: any) {
+    if (conversationId.value !== requestedConversationId) return;
+    const detail = error?.response?.data?.detail;
+    dockerWorkspaceError.value = typeof detail === "string"
+      ? detail
+      : String(detail?.message || error?.message || "Docker 沙箱容器启动失败");
+    dockerWorkspaceStatus.value = "error";
+    showToast(dockerWorkspaceError.value, "error");
+  }
+};
+
+watch(
+  [conversationId, effectiveSandboxPolicy],
+  ([conversation, policy], previous) => {
+    const previousConversation = String(previous?.[0] || "");
+    const previousPolicy = String(previous?.[1] || "");
+    if (
+      policy !== "docker"
+      || !conversation
+      || conversation !== previousConversation
+      || policy !== previousPolicy
+    ) {
+      resetDockerWorkspaceState();
+      if (policy === "docker" && conversation) {
+        void refreshDockerWorkspaceStatus();
+      }
+    }
+  },
+  { immediate: true },
+);
 const {
   contextCompactions,
   contextCompactionCount,

@@ -59,6 +59,21 @@ AWAITING_RESUME_STATUSES = frozenset(
 NO_TOOL_EXECUTION_MESSAGE = "自动任务未实际调用任何工具"
 
 
+def _format_execution_error_for_user(
+    exc: BaseException,
+    *,
+    model_name: Optional[str] = None,
+) -> str:
+    """Use safe, actionable text for sandbox failures without leaking internals."""
+    from app.services.ai.runtime.agentscope.workspace import DockerSandboxUnavailableError
+
+    if isinstance(exc, DockerSandboxUnavailableError):
+        return exc.user_message
+    from app.services.ai.multimodal_support import format_execution_error
+
+    return format_execution_error(str(exc), model_name=model_name)
+
+
 async def _persist_assistant_message_and_summary(
     *,
     user_id: Any,
@@ -3232,12 +3247,10 @@ class AgentService:
         except Exception as e:
             logger.error(f"Execution Error: {str(e)}", exc_info=True)
             execution_status = "error"
-            from app.services.ai.multimodal_support import format_execution_error
-
             model_name = getattr(agent_config, "model_name", None) if agent_config else None
             yield {
                 "type": "error",
-                "content": format_execution_error(str(e), model_name=model_name),
+                "content": _format_execution_error_for_user(e, model_name=model_name),
                 "status": "error",
             }
         finally:

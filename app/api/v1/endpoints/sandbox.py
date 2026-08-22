@@ -6,12 +6,16 @@
   以及当前后端是否具备自动构建能力（仅本地 inspect，不触发构建）。
 - ``POST /admin/sandbox/docker/prebuild``：执行一次镜像预构建，使运行时
   docker 沙箱首次创建时不需现场构建（分钟级）而直接命中缓存（秒级）。
+- ``POST /sandbox/docker/workspace/ensure``：当前登录用户手动启动或复用自己的
+  Docker 工作区容器，不执行用户命令。
+- ``GET  /sandbox/docker/workspace/status``：只读查询当前登录用户的 Docker
+  工作区容器状态，不触发初始化。
 - ``POST /admin/sandbox/{e2b|ssh}/test-connection``：按管理页面当前填写的配置
   初始化一次真实沙箱，完成连通性/初始化检查后立即释放资源。
 
 这些端点都挂在 ``v1_secured`` 下（继承 ``require_api_key`` +
-``verify_v1_api_access``），并在函数内额外校验 ``role == "admin"`` 才放行，
-避免普通 API 用户触发构建 / 读取环境信息。
+``verify_v1_api_access``）。镜像预构建和 E2B/SSH 连通性测试额外校验
+``role == "admin"``；用户工作区 ensure 接口只使用当前登录用户身份。
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import inspect
 import logging
 from typing import Any, Dict, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.dependencies import require_api_key
@@ -30,7 +34,11 @@ from app.services.ai.runtime.agentscope.docker_prebuild import (
     prebuild_docker_workspace_image,
 )
 from app.services.ai.runtime.agentscope.workspace import (
+    DockerSandboxUnavailableError,
     build_sandbox_workspace_for_test,
+    docker_workspace_status as docker_workspace_status_runtime,
+    docker_workspace_runtime_metadata,
+    ensure_docker_workspace as ensure_docker_workspace_runtime,
 )
 
 router = APIRouter()
@@ -89,6 +97,90 @@ async def trigger_docker_prebuild(
         message=result.get("message")
         if result.get("action") == "manual_download"
         else "success",
+    )
+
+
+class DockerWorkspaceEnsureRequest(BaseModel):
+    """当前用户手动启动 Docker 工作区所需的会话标识。"""
+
+    conversation_id: str
+
+
+@router.post(
+    "/sandbox/docker/workspace/ensure",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="启动或复用当前用户的 Docker 沙箱容器",
+)
+async def ensure_docker_workspace_endpoint(
+    body: DockerWorkspaceEnsureRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只确保当前用户容器运行，不在容器内执行用户命令。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        workspace = await ensure_docker_workspace_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except DockerSandboxUnavailableError as exc:
+        status_code = (
+            409
+            if exc.reason_code == "docker_policy_not_effective"
+            else 503
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=docker_workspace_runtime_metadata(workspace),
+        message="Docker 沙箱容器已运行。",
+    )
+
+
+@router.get(
+    "/sandbox/docker/workspace/status",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="查询当前用户的 Docker 沙箱容器状态",
+)
+async def get_docker_workspace_status_endpoint(
+    conversation_id: str = Query(..., min_length=1),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只查询当前用户容器，不触发 DockerWorkspace 初始化。"""
+    conversation_id = conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        status = await docker_workspace_status_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except DockerSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "docker_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=status,
+        message="Docker 沙箱状态查询完成。",
     )
 
 

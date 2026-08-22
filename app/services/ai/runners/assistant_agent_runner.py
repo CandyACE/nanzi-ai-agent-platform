@@ -84,6 +84,7 @@ from app.services.ai.runtime.agentscope.session_lock import (
 from app.services.ai.runtime.agentscope.workspace import (
     bind_configured_tools_to_workspace,
     get_local_workspace,
+    get_workspace_execution_backend,
     get_workspace_offloader,
 )
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
@@ -167,6 +168,7 @@ class AssistantAgentRunner(BaseExecutor):
         # A 项：本轮工具调用元数据（tool_names/args/outputs/data）流结束后落于此，
         # 供保存点读取并跨轮持久化，避免污染 assistant 展示内容。
         self._last_turn_tool_meta: Optional[Dict[str, Any]] = None
+        self._execution_backend: str | None = None
 
     def _runtime_user_id(self) -> str | None:
         if not self.user_info:
@@ -1302,6 +1304,7 @@ class AssistantAgentRunner(BaseExecutor):
                     system_content=system_content,
                     max_steps=max_steps,
                 )
+                state["execution_backend"] = self._execution_backend
                 self._session_artifact_turn = {
                     "user_question": "",
                     "trace_id": self.trace_id,
@@ -1404,6 +1407,7 @@ class AssistantAgentRunner(BaseExecutor):
         )
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(workspace, tools)
+        self._execution_backend = get_workspace_execution_backend(workspace)
         toolkit = AgentScopeToolConsumer(builder=build_toolkit).consume_specs(
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
@@ -1972,6 +1976,7 @@ class AssistantAgentRunner(BaseExecutor):
             loop_detector=loop_detector,
         )
         state = pending.state or dict(pending.snapshot.stream_state or {})
+        state.setdefault("execution_backend", self._execution_backend)
         if "tool_data" not in state:
             state["tool_data"] = {}
         return agent, tools, native_model, state

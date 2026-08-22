@@ -156,9 +156,9 @@ def build_container_tool_mcp(workdir: str = CONTAINER_WORKDIR) -> MCPClient:
     The gateway (inside the container) spawns ``python -c <script>``
     with its default inherited environment; we pin a container-side
     working directory via ``cwd`` and expose it under
-    :data:`CONTAINER_MCP_NAME`. Docker sandboxes pass the same absolute
-    path as the host-side user workspace so tool results can be consumed
-    directly by the platform's file preview endpoint.
+    :data:`CONTAINER_MCP_NAME`. Docker sandboxes bind the user's host
+    workspace to this logical path; the platform's host-side file tools
+    translate it back to the real user workspace for previews and artifacts.
     """
     resolved_workdir = str(workdir or CONTAINER_WORKDIR).strip()
     if not resolved_workdir.startswith("/"):

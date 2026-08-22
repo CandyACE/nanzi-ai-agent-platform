@@ -204,7 +204,10 @@ async def test_bind_docker_workspace_fails_closed_when_bash_mcp_missing():
         permission_scope="ask",
     )
 
-    with pytest.raises(RuntimeError, match="Docker sandbox Bash MCP is unavailable"):
+    with pytest.raises(
+        workspace_module.DockerSandboxUnavailableError,
+        match="Docker sandbox Bash MCP is unavailable",
+    ):
         await workspace_module.bind_configured_tools_to_workspace(
             (FakeSandbox(), None),
             [spec],
@@ -598,17 +601,19 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
             raise AssertionError("Docker must not read the configurable host workdir")
         return default
 
+    mcp_kwargs = {}
+
     monkeypatch.setattr("agentscope.workspace.DockerWorkspace", FakeDockerWorkspace)
     monkeypatch.setattr(
         "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
-        lambda **_kwargs: object(),
+        lambda **kwargs: mcp_kwargs.update(kwargs) or object(),
     )
     monkeypatch.setattr(
         "app.services.config_service.ConfigService.get",
         fake_config_get,
     )
 
-    await workspace_module._policy_docker_workspace(
+    result = await workspace_module._policy_docker_workspace(
         [],
         workspace_id="alice__1",
         sandbox_user_key="alice__1",
@@ -616,82 +621,21 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
     )
 
     kwargs = FakeDockerWorkspace.instances[0].kwargs
+    assert result.__class__ is FakeDockerWorkspace
     assert kwargs["workspace_id"] == "alice__1"
     assert kwargs["host_workdir"] == str(tmp_path / "alice__1")
+    assert mcp_kwargs == {}
 
 
-@pytest.mark.asyncio
-async def test_docker_workspace_mounts_user_root_at_the_same_container_path(tmp_path):
-    from app.services.ai.runtime.agentscope import workspace as workspace_module
-
-    class BaseWorkspace:
-        def __init__(self, *, workspace_id=None, host_workdir=None, **_kwargs):
-            self.workspace_id = workspace_id or "workspace"
-            self.host_workdir = host_workdir
-
-    class FakeContainer:
-        async def start(self):
-            return None
-
-        async def show(self):
-            return {
-                "NetworkSettings": {
-                    "Ports": {"5600/tcp": [{"HostPort": "4567"}]},
-                },
-            }
-
-    class FakeContainers:
-        def __init__(self):
-            self.config = None
-
-        async def create_or_replace(self, *, name, config):
-            self.config = config
-            return FakeContainer()
-
-    class FakeClient:
-        def __init__(self):
-            self.containers = FakeContainers()
-
-    user_root = tmp_path / "alice__1"
-    workspace_cls = workspace_module._make_same_path_docker_workspace_class(
-        BaseWorkspace,
-    )
-    workspace = workspace_cls(
-        workspace_id="alice__1",
-        host_workdir=str(user_root),
-    )
-    workspace._client = FakeClient()
-    workspace._image_tag = "agentscope-workspace:test"
-    workspace.gateway_port = 5600
-    workspace.env = {}
-    workspace._port_mapping = {}
-
-    async def fake_exec(_command):
-        return None
-
-    workspace._exec = fake_exec
-
-    await workspace._create_and_start_container()
-
-    config = workspace._client.containers.config
-    assert config["WorkingDir"] == str(user_root)
-    assert config["HostConfig"]["Binds"] == [
-        f"{user_root}:{user_root}:rw",
-    ]
-    assert str(user_root) in config["Cmd"][2]
-    assert "/workspace" in config["Cmd"][2]
-
-
-def test_container_tool_mcp_uses_the_same_absolute_workspace_path():
+def test_container_tool_mcp_uses_logical_workspace_path():
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
         build_container_tool_mcp,
     )
 
-    workspace_path = "/app/data/agent_workspaces/alice__1"
-    spec = build_container_tool_mcp(workdir=workspace_path).model_dump(mode="json")
+    spec = build_container_tool_mcp().model_dump(mode="json")
 
-    assert spec["mcp_config"]["cwd"] == workspace_path
-    assert spec["mcp_config"]["env"]["SANDBOX_WORKDIR"] == workspace_path
+    assert spec["mcp_config"]["cwd"] == "/workspace"
+    assert spec["mcp_config"]["env"]["SANDBOX_WORKDIR"] == "/workspace"
 
 
 @pytest.mark.asyncio
@@ -901,6 +845,267 @@ async def test_docker_workspace_closes_when_initialization_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_docker_workspace_retries_transient_initialize_once(monkeypatch, tmp_path):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    attempts = 0
+
+    class FakeDockerWorkspace:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.is_alive = False
+            self._container = type("Container", (), {"id": "container-1"})()
+            self.__class__.instances.append(self)
+
+        async def initialize(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ConnectionError("temporary daemon connection reset")
+            self.is_alive = True
+
+        async def close(self):
+            self.is_alive = False
+
+    monkeypatch.setattr("agentscope.workspace.DockerWorkspace", FakeDockerWorkspace)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(workspace_module.asyncio, "sleep", AsyncMock())
+
+    async def fake_config_get(key, default=None):
+        return default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    result = await workspace_module._policy_docker_workspace(
+        [],
+        workspace_id="alice__1",
+        sandbox_user_key="alice__1",
+        workspace_root=str(tmp_path),
+    )
+
+    assert result._platform_sandbox_policy == "docker"
+    assert result._platform_execution_backend == "docker"
+    assert result._platform_container_id == "container-1"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_does_not_retry_permission_failure(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    attempts = 0
+
+    class FakeDockerWorkspace:
+        def __init__(self, **kwargs):
+            self.is_alive = False
+
+        async def initialize(self):
+            nonlocal attempts
+            attempts += 1
+            raise PermissionError("docker socket denied")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("agentscope.workspace.DockerWorkspace", FakeDockerWorkspace)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace_container_mcp.build_container_tool_mcp",
+        lambda **_kwargs: object(),
+    )
+
+    async def fake_config_get(key, default=None):
+        return default
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        fake_config_get,
+    )
+
+    with pytest.raises(workspace_module.DockerSandboxUnavailableError) as exc_info:
+        await workspace_module._policy_docker_workspace([])
+
+    assert attempts == 1
+    assert exc_info.value.reason_code == "docker_daemon_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_get_local_workspace_docker_failure_is_not_silently_ignored(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    workspace_module.clear_workspace_cache()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    async def fail_policy(_skill_paths, **kwargs):
+        raise workspace_module.DockerSandboxUnavailableError(
+            "docker daemon unavailable",
+            reason_code="docker_daemon_unavailable",
+            user_message="Docker 沙箱不可用，Bash 未执行。",
+        )
+
+    monkeypatch.setattr(workspace_module, "resolve_workspace_root", fake_root)
+    monkeypatch.setattr(workspace_module, "discover_platform_skill_paths", lambda **kwargs: [])
+    monkeypatch.setattr(workspace_module, "_policy_docker_workspace", fail_policy)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_config_get)
+
+    with pytest.raises(workspace_module.DockerSandboxUnavailableError) as exc_info:
+        await workspace_module.get_local_workspace(
+            user_id=1,
+            user_name="alice",
+            conversation_id="conv-docker-failure",
+        )
+
+    assert exc_info.value.reason_code == "docker_daemon_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_ensure_docker_workspace_reuses_bound_user_container(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    sandbox = type(
+        "FakeSandbox",
+        (),
+        {"_platform_sandbox_policy": "docker"},
+    )()
+    get_workspace = AsyncMock(return_value=(sandbox, object()))
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(workspace_module, "get_local_workspace", get_workspace)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_config_get)
+
+    result = await workspace_module.ensure_docker_workspace(
+        user_id=1,
+        user_name="alice",
+        user_info={"user_id": 1, "user_name": "alice"},
+        conversation_id="c1",
+    )
+
+    assert result is sandbox
+    get_workspace.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_status_inspects_existing_container_without_initializing(
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    captured = {}
+
+    class FakeContainer:
+        id = "container-1"
+
+        async def show(self):
+            return {
+                "Id": self.id,
+                "State": {"Running": True},
+            }
+
+    class FakeContainers:
+        async def get(self, name):
+            captured["name"] = name
+            return FakeContainer()
+
+    class FakeDockerClient:
+        def __init__(self):
+            self.containers = FakeContainers()
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakeAioDocker:
+        Docker = FakeDockerClient
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_config_get)
+    monkeypatch.setitem(__import__("sys").modules, "aiodocker", FakeAioDocker)
+    monkeypatch.setattr(
+        workspace_module,
+        "get_local_workspace",
+        AsyncMock(side_effect=AssertionError("status must not initialize workspace")),
+    )
+
+    result = await workspace_module.docker_workspace_status(
+        user_id=1,
+        user_name="alice",
+        user_info={"user_id": 1, "user_name": "alice"},
+        conversation_id="c1",
+    )
+
+    assert result == {
+        "status": "running",
+        "execution_backend": "docker",
+        "workspace_id": "alice__1",
+        "container_id": "container-1",
+    }
+    assert captured["name"] == "as_ws_alice__1"
+
+
+@pytest.mark.asyncio
+async def test_ensure_docker_workspace_rejects_effective_local_without_initializing(
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    get_workspace = AsyncMock()
+
+    async def fake_config_get(key, default=None):
+        return "local" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(workspace_module, "get_local_workspace", get_workspace)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_config_get)
+
+    with pytest.raises(workspace_module.DockerSandboxUnavailableError) as exc_info:
+        await workspace_module.ensure_docker_workspace(
+            user_id=1,
+            user_name="alice",
+            conversation_id="c1",
+        )
+
+    assert exc_info.value.reason_code == "docker_policy_not_effective"
+    get_workspace.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_local_workspace_docker_requires_conversation_id(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    async def fake_config_get(key, default=None):
+        return "docker" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_config_get)
+
+    with pytest.raises(workspace_module.DockerSandboxUnavailableError) as exc_info:
+        await workspace_module.get_local_workspace(
+            user_id=1,
+            user_name="alice",
+            conversation_id=None,
+        )
+
+    assert exc_info.value.reason_code == "docker_workspace_start_failed"
+
+
+@pytest.mark.asyncio
 async def test_get_local_workspace_closes_sandbox_when_local_init_fails(tmp_path, monkeypatch):
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
@@ -952,13 +1157,14 @@ async def test_get_local_workspace_closes_sandbox_when_local_init_fails(tmp_path
         fake_config_get,
     )
 
-    result = await workspace_module.get_local_workspace(
-        user_id=1,
-        user_name="alice",
-        conversation_id="conv-cleanup",
-    )
+    with pytest.raises(workspace_module.DockerSandboxUnavailableError) as exc_info:
+        await workspace_module.get_local_workspace(
+            user_id=1,
+            user_name="alice",
+            conversation_id="conv-cleanup",
+        )
 
-    assert result is None
+    assert exc_info.value.reason_code == "docker_workspace_start_failed"
     assert sandbox.closed is True
 
 

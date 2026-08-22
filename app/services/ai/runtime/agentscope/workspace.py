@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import shutil
 import time
 import uuid
@@ -43,6 +42,61 @@ _docker_workspace_locks: dict[str, asyncio.Lock] = {}
 _docker_workspace_last_used: dict[str, float] = {}
 _workspace_sandbox_refs: dict[str, str] = {}
 _docker_workspace_reaper_task: asyncio.Task[None] | None = None
+
+DOCKER_WORKSPACE_INIT_RETRY_DELAY_SECONDS = 0.5
+
+
+class DockerSandboxUnavailableError(RuntimeError):
+    """Docker 沙箱未能初始化，调用方不得回退到宿主 Bash。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "docker_workspace_start_failed",
+        user_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.user_message = user_message or (
+            "Docker 沙箱不可用，Bash 未执行。请检查 Docker daemon、镜像和权限。"
+        )
+
+
+def _docker_init_reason_code(exc: BaseException) -> str:
+    """把 Docker 初始化异常归一为前端/API 可识别的稳定错误码。"""
+    text = str(exc).lower()
+    if isinstance(exc, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
+        return "docker_daemon_unavailable"
+    if isinstance(exc, PermissionError) or any(
+        marker in text
+        for marker in (
+            "permission denied",
+            "access denied",
+            "unauthorized",
+            "docker socket",
+        )
+    ):
+        return "docker_daemon_unavailable"
+    if any(
+        marker in text
+        for marker in (
+            "no such image",
+            "image not found",
+            "manifest unknown",
+            "pull access denied",
+        )
+    ):
+        return "docker_image_unavailable"
+    return "docker_workspace_start_failed"
+
+
+def _docker_init_is_retryable(exc: BaseException) -> bool:
+    """只重试连接瞬断和容器创建竞争，不重试权限/镜像/配置错误。"""
+    if isinstance(exc, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    text = str(exc).lower()
+    return "connection reset" in text or "container is already in use" in text
 
 
 WORKSPACE_USER_KEY_SEP = "__"
@@ -497,99 +551,6 @@ KNOWN_SANDBOX_POLICIES = frozenset(
 )
 
 
-def _make_same_path_docker_workspace_class(base_cls: type[Any]) -> type[Any]:
-    """Adapt AgentScope DockerWorkspace to bind a user root at itself.
-
-    AgentScope currently hard-codes ``/workspace`` as the container-side
-    bind target. The platform's file preview and artifact APIs operate on
-    the backend's real user workspace path, so a persistent user sandbox
-    must expose that same absolute path inside the container. The legacy
-    ``/workspace`` path remains a symlink for AgentScope internals that
-    still use its fixed constants.
-    """
-
-    class SamePathDockerWorkspace(base_cls):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            host_workdir = kwargs.get("host_workdir")
-            self._same_path_workdir = os.path.abspath(
-                str(host_workdir or DOCKER_WORKSPACE_LOGICAL_ROOT),
-            )
-            super().__init__(*args, **kwargs)
-            self.workdir = self._same_path_workdir
-
-        async def get_instructions(self) -> str:
-            return self.instructions.format(workdir=self._same_path_workdir)
-
-        async def _create_and_start_container(self) -> None:
-            container_workdir = self._same_path_workdir
-            command = ["sleep", "infinity"]
-            if container_workdir != DOCKER_WORKSPACE_LOGICAL_ROOT:
-                workspace_link = shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT)
-                target = shlex.quote(container_workdir)
-                command = [
-                    "sh",
-                    "-lc",
-                    f"rm -rf {workspace_link} && "
-                    f"ln -s {target} {workspace_link} && "
-                    "exec sleep infinity",
-                ]
-
-            config: dict[str, Any] = {
-                "Image": self._image_tag,
-                "Cmd": command,
-                "WorkingDir": container_workdir,
-                "Labels": {
-                    "agentscope.workspace": "true",
-                    "agentscope.workspace.id": self.workspace_id,
-                },
-                "ExposedPorts": {f"{self.gateway_port}/tcp": {}},
-            }
-            if self.env:
-                config["Env"] = [f"{k}={v}" for k, v in self.env.items()]
-
-            host_config: dict[str, Any] = {
-                "PortBindings": {
-                    f"{self.gateway_port}/tcp": [
-                        {"HostIp": "127.0.0.1", "HostPort": ""},
-                    ],
-                },
-            }
-            if self.host_workdir is not None:
-                host_workdir = os.path.abspath(self.host_workdir)
-                os.makedirs(host_workdir, exist_ok=True)
-                host_config["Binds"] = [
-                    f"{host_workdir}:{container_workdir}:rw",
-                ]
-            config["HostConfig"] = host_config
-
-            self._container = await self._client.containers.create_or_replace(
-                name=f"as_ws_{self.workspace_id}",
-                config=config,
-            )
-            await self._container.start()
-
-            info = await self._container.show()
-            ports_info = info.get("NetworkSettings", {}).get("Ports") or {}
-            bindings = ports_info.get(f"{self.gateway_port}/tcp", []) or []
-            if not bindings:
-                raise RuntimeError(
-                    f"gateway port {self.gateway_port} did not bind to a host port",
-                )
-            self._port_mapping[self.gateway_port] = int(bindings[0]["HostPort"])
-
-            # AgentScope's inherited internals still address /workspace;
-            # the startup command above makes it resolve to the same bind.
-            await self._exec(
-                "mkdir -p "
-                f"{shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT + '/data')} "
-                f"{shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT + '/skills')} "
-                f"{shlex.quote(DOCKER_WORKSPACE_LOGICAL_ROOT + '/sessions')}"
-            )
-
-    SamePathDockerWorkspace.__name__ = f"SamePath{base_cls.__name__}"
-    return SamePathDockerWorkspace
-
-
 async def _policy_docker_workspace(
     skill_paths: list[str] | None,
     *,
@@ -602,9 +563,9 @@ async def _policy_docker_workspace(
     Runs in a container built from ``base_image`` (or the AgentScope default).
     Bash/file tools are exposed through the container's inline FastMCP stdio
     server seeded via ``default_mcps`` (see workspace_container_mcp). A user
-    sandbox mounts exactly ``<workspace_root>/<sandbox_user_key>`` at the same
-    absolute path inside the container; the old configurable host directory is
-    intentionally ignored.
+    sandbox mounts exactly ``<workspace_root>/<sandbox_user_key>`` at the
+    AgentScope logical path ``/workspace``; the old configurable host directory
+    is intentionally ignored.
     """
     from app.services.config_service import ConfigService
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
@@ -620,15 +581,7 @@ async def _policy_docker_workspace(
             sandbox_user_key,
         )
 
-    container_workdir = host_workdir or DOCKER_WORKSPACE_LOGICAL_ROOT
-    docker_workspace_cls = DockerWorkspace
-    if host_workdir:
-        docker_workspace_cls = _make_same_path_docker_workspace_class(DockerWorkspace)
-    default_mcp = (
-        build_container_tool_mcp(workdir=container_workdir)
-        if host_workdir
-        else build_container_tool_mcp()
-    )
+    default_mcp = build_container_tool_mcp()
 
     kwargs: dict[str, Any] = {
         "host_workdir": host_workdir,  # None => ephemeral container
@@ -640,14 +593,31 @@ async def _policy_docker_workspace(
     if base_image:
         kwargs["base_image"] = base_image
 
-    workspace = docker_workspace_cls(**kwargs)
-    try:
-        await workspace.initialize()
-    except Exception:
-        await _close_workspace_safely(workspace, reason="Docker initialization failure")
-        raise
-    workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
-    return workspace
+    for attempt in range(2):
+        workspace = DockerWorkspace(**kwargs)
+        try:
+            await workspace.initialize()
+        except Exception as exc:  # noqa: BLE001
+            await _close_workspace_safely(workspace, reason="Docker initialization failure")
+            if attempt == 0 and _docker_init_is_retryable(exc):
+                await asyncio.sleep(DOCKER_WORKSPACE_INIT_RETRY_DELAY_SECONDS)
+                continue
+            reason_code = _docker_init_reason_code(exc)
+            raise DockerSandboxUnavailableError(
+                str(exc),
+                reason_code=reason_code,
+            ) from exc
+
+        workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
+        workspace._platform_execution_backend = SANDBOX_POLICY_DOCKER
+        workspace._platform_workspace_id = workspace_id or getattr(
+            workspace, "workspace_id", None
+        )
+        container = getattr(workspace, "_container", None)
+        workspace._platform_container_id = getattr(container, "id", None)
+        return workspace
+
+    raise AssertionError("Docker workspace initialization retry loop did not return")
 
 
 async def _close_workspace_safely(workspace: Any, *, reason: str) -> None:
@@ -1079,9 +1049,25 @@ async def get_local_workspace(
     ``conversation_id`` is available; either element may be ``None``:
       - local policy            -> ``(None, LocalWorkspace)``
       - docker/e2b/ssh policy   -> ``(sandbox_ws, LocalWorkspace)``
-      - init failure / no id    -> ``None`` (backward-safe: callers treat as no-op)
+      - no id                   -> ``None``
+      - Docker init failure     -> ``DockerSandboxUnavailableError`` (fail-closed)
     """
     if not conversation_id:
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
+
+        policy_without_conversation = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+            SANDBOX_POLICY_LOCAL,
+        )
+        if policy_without_conversation == SANDBOX_POLICY_DOCKER:
+            raise DockerSandboxUnavailableError(
+                "Docker sandbox requires a conversation_id",
+                reason_code="docker_workspace_start_failed",
+                user_message="缺少会话 ID，Docker 沙箱未启动，Bash 未执行。",
+            )
         return None
 
     from app.services.config_service import (
@@ -1170,6 +1156,9 @@ async def get_local_workspace(
         if policy == SANDBOX_POLICY_DOCKER and sandbox_user_key:
             local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
         await local_ws.initialize()
+        if sandbox_ws is not None:
+            sandbox_ws._platform_sandbox_policy = policy
+            sandbox_ws._platform_execution_backend = policy
     except Exception as exc:
         if sandbox_cache_key is not None:
             await _release_docker_workspace(
@@ -1182,6 +1171,13 @@ async def get_local_workspace(
                 reason="host LocalWorkspace initialization failure",
             )
         logger.warning("[workspace] Failed to initialize %s workspace workdir=%s: %s", policy, workdir, exc)
+        if policy == SANDBOX_POLICY_DOCKER:
+            if isinstance(exc, DockerSandboxUnavailableError):
+                raise
+            raise DockerSandboxUnavailableError(
+                str(exc),
+                reason_code=_docker_init_reason_code(exc),
+            ) from exc
         return None
 
     pair = (sandbox_ws, local_ws)
@@ -1189,6 +1185,202 @@ async def get_local_workspace(
     if sandbox_cache_key is not None:
         _workspace_sandbox_refs[cache_key] = sandbox_cache_key
     return pair
+
+
+async def ensure_docker_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> Any:
+    """Ensure the current user's Docker workspace container is running.
+
+    This is a lifecycle-only operation: it initializes or reuses the same
+    process-local workspace used by the chat runner and never executes a tool
+    command inside the container.
+    """
+    if not str(conversation_id or "").strip():
+        raise DockerSandboxUnavailableError(
+            "conversation_id is required",
+            reason_code="docker_workspace_start_failed",
+            user_message="缺少会话 ID，无法启动当前用户的 Docker 沙箱。",
+        )
+
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
+
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
+    if policy != SANDBOX_POLICY_DOCKER:
+        raise DockerSandboxUnavailableError(
+            f"Docker workspace requested while effective policy is {policy!r}",
+            reason_code="docker_policy_not_effective",
+            user_message="当前不是 Docker 沙箱模式，无需启动用户 Docker 容器。",
+        )
+
+    sandbox_user_key = _resolve_sandbox_user_key(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not sandbox_user_key:
+        raise DockerSandboxUnavailableError(
+            "Docker sandbox requires an authenticated user identity",
+            reason_code="docker_workspace_identity_required",
+            user_message="缺少当前用户身份，无法启动用户 Docker 沙箱。",
+        )
+
+    workspace_pair = await get_local_workspace(
+        user_id=user_id,
+        conversation_id=str(conversation_id).strip(),
+        user_name=user_name,
+        user_info=user_info,
+    )
+    sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
+    if (
+        sandbox_ws is None
+        or getattr(sandbox_ws, "_platform_sandbox_policy", None)
+        != SANDBOX_POLICY_DOCKER
+    ):
+        raise DockerSandboxUnavailableError(
+            "Docker workspace was not bound to the current session",
+            reason_code="docker_workspace_start_failed",
+        )
+    return sandbox_ws
+
+
+async def docker_workspace_status(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect the current user's Docker workspace without initializing it.
+
+    The UI can be remounted after the container was started by an earlier
+    request, so process-local Vue state is not authoritative.  This function
+    only performs Docker's ``GET /containers/{name}/json`` lookup; it never
+    builds an image, creates a container, or executes a command.
+    """
+    if not str(conversation_id or "").strip():
+        raise DockerSandboxUnavailableError(
+            "conversation_id is required",
+            reason_code="docker_workspace_status_failed",
+            user_message="缺少会话 ID，无法查询当前用户的 Docker 沙箱。",
+        )
+
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
+
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
+    if policy != SANDBOX_POLICY_DOCKER:
+        raise DockerSandboxUnavailableError(
+            f"Docker workspace status requested while effective policy is {policy!r}",
+            reason_code="docker_policy_not_effective",
+            user_message="当前不是 Docker 沙箱模式，无需查询用户 Docker 容器。",
+        )
+
+    sandbox_user_key = _resolve_sandbox_user_key(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not sandbox_user_key:
+        raise DockerSandboxUnavailableError(
+            "Docker sandbox requires an authenticated user identity",
+            reason_code="docker_workspace_identity_required",
+            user_message="缺少当前用户身份，无法查询用户 Docker 沙箱。",
+        )
+
+    try:
+        import aiodocker
+    except Exception as exc:  # pragma: no cover - dependency is environment-specific
+        raise DockerSandboxUnavailableError(
+            f"aiodocker is unavailable: {exc}",
+            reason_code="docker_daemon_unavailable",
+            user_message="当前后端无法连接 Docker daemon，暂时无法查询沙箱状态。",
+        ) from exc
+
+    client: Any | None = None
+    container_name = f"as_ws_{sandbox_user_key}"
+    try:
+        client = aiodocker.Docker()
+        container = await client.containers.get(container_name)
+        details = await container.show()
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "status", None) == 404:
+            return {
+                "status": "stopped",
+                "execution_backend": SANDBOX_POLICY_DOCKER,
+                "workspace_id": sandbox_user_key,
+                "container_id": None,
+            }
+        reason_code = _docker_init_reason_code(exc)
+        raise DockerSandboxUnavailableError(
+            f"Docker workspace status lookup failed for {container_name}: {exc}",
+            reason_code=reason_code,
+            user_message="当前后端无法查询 Docker 沙箱状态，请检查 Docker daemon 和权限。",
+        ) from exc
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+    state = details.get("State") if isinstance(details, dict) else None
+    running = bool(state.get("Running")) if isinstance(state, dict) else False
+    return {
+        "status": "running" if running else "stopped",
+        "execution_backend": SANDBOX_POLICY_DOCKER,
+        "workspace_id": sandbox_user_key,
+        "container_id": (
+            details.get("Id")
+            if isinstance(details, dict)
+            else getattr(container, "id", None)
+        ),
+    }
+
+
+def docker_workspace_runtime_metadata(workspace: Any) -> dict[str, Any]:
+    """Return safe, user-facing metadata for an initialized Docker workspace."""
+    container_id = getattr(workspace, "_platform_container_id", None)
+    if not container_id:
+        container = getattr(workspace, "_container", None)
+        container_id = getattr(container, "id", None)
+    return {
+        "status": "running" if getattr(workspace, "is_alive", True) else "stopped",
+        "execution_backend": getattr(
+            workspace,
+            "_platform_execution_backend",
+            SANDBOX_POLICY_DOCKER,
+        ),
+        "workspace_id": getattr(workspace, "_platform_workspace_id", None)
+        or getattr(workspace, "workspace_id", None),
+        "container_id": container_id,
+    }
+
+
+def get_workspace_execution_backend(workspace: Any) -> str | None:
+    """Return the backend actually bound to the Bash-capable workspace."""
+    sandbox_ws, _local_ws = _normalize_workspace_pair(workspace)
+    if sandbox_ws is None:
+        return None
+    backend = getattr(sandbox_ws, "_platform_execution_backend", None)
+    if backend in {SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH}:
+        return backend
+    return None
 
 
 async def get_local_workspace_offloader(
@@ -1474,7 +1666,7 @@ def _map_docker_workspace_tool_input(
 
 
 def _logicalize_docker_workspace_result(result: Any, host_root: str) -> Any:
-    """Keep real host paths because Docker now mounts the same path inside."""
+    """Keep host-tool results in the platform's canonical host namespace."""
     return result
 
 
@@ -1622,7 +1814,14 @@ async def bind_configured_tools_to_workspace(
         if sandbox_bash is None and any(
             _workspace_native_name_for_spec(spec) == "Bash" for spec in specs
         ):
-            raise RuntimeError("Docker sandbox Bash MCP is unavailable")
+            raise DockerSandboxUnavailableError(
+                "Docker sandbox Bash MCP is unavailable",
+                reason_code="docker_workspace_start_failed",
+                user_message=(
+                    "Docker 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                    "请检查容器网关和 MCP 配置。"
+                ),
+            )
 
     from app.services.ai.runtime.agentscope.tools import (
         runtime_tool_spec_from_native_agentscope_tool,
