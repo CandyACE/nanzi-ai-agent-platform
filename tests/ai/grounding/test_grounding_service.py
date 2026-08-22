@@ -109,8 +109,8 @@ def test_warning_chunk_includes_user_readable_reason_for_missing_evidence():
         required_types=frozenset({EvidenceType.INTERNAL_DATA}),
     )
 
-    assert "原因" in chunk["content"]
-    assert "没有找到与回答对应的内部数据证据" in chunk["content"]
+    assert "原因" not in chunk["content"]
+    assert "风险提示" in chunk["content"]
     assert chunk["grounding_risk"]["user_reason"] == "本轮没有找到与回答对应的内部数据证据。"
 
 
@@ -121,7 +121,8 @@ def test_warning_chunk_includes_user_readable_reason_for_stale_evidence():
         required_types=frozenset({EvidenceType.RUNTIME_STATE}),
     )
 
-    assert "证据已经过期" in chunk["content"]
+    assert "原因" not in chunk["content"]
+    assert "风险提示" in chunk["content"]
     assert chunk["grounding_risk"]["user_reason"] == (
         "本轮运行状态证据已经过期，不能证明当前状态。"
     )

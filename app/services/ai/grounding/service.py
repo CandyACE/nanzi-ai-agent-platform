@@ -140,7 +140,7 @@ class GroundingService:
                 "可能存在偏差。重要操作或正式决策前，请以原始数据源为准。"
             )
         return {
-            "content": f"\n\n{notice}\n> **原因**：{user_reason}",
+            "content": f"\n\n{notice}",
             "grounding_risk": {
                 "level": risk_level.value,
                 "reason": reason,
