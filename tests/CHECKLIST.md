@@ -2,6 +2,8 @@
 
 # 自动化测试验收清单 (Automated Test Checklist)
 
+| Docker 沙箱用户工作区端点 V1 API 白名单权限修复 (Docker Sandbox User Workspace V1 API Whitelist Fix) | `app/core/v1_api_access.py`, `tests/core/test_v1_api_access.py` | **Docker 沙箱用户工作区端点白名单放行**：修复普通用户在对话界面启动或查询自己的 Docker 工作区容器时，因 `/sandbox/docker/workspace` 遗漏在 `is_v1_api_whitelisted` 白名单之外被 `verify_v1_api_access` 拦截报 `403 Forbidden` 的问题；在白名单中放行 `/sandbox/docker/workspace` 用户私有端点（管理端点 `/admin/sandbox/...` 仍严格受 `_require_admin` 守护）；完备单元测试断言覆盖。 | ✅ 单测全量通过 | 2026-08-22 |
+
 | 前端 TypeScript 严格构建错误清理与类型安全加固 (Frontend TypeScript Strict Build & Type Safety Hardening) | `frontend/src/types/markdownTheme.ts`, `frontend/src/utils/`, `frontend/src/composables/`, `frontend/src/components/`, `frontend/src/views/`, `docs/superpowers/plans/2026-08-22-frontend-typescript-build-cleanup.md` | **前端 TypeScript 严格类型清理与构建防护**：全面清理前端在开启 `vue-tsc -b` 严格模式下的类型阻断错误；补齐数据接口（如 `BrowserSnapshot`、`CanvasPanelData` 等）与联合字面量收窄；加固数组索引、时间线和工具处理中的 Null/Undefined 越界安全防护；清理 TS6133 废弃无用引用；`vue-tsc` 严格类型检查 0 错误全部通过。 | ✅ 类型与构建全量通过 | 2026-08-22 |
 
 | README 核心能力全景图谱与能力矩阵升级 (README Core Capabilities Architecture & Matrix Overhaul) | `README.md`, `README_EN.md`, `docs/images/core.png` | **README 核心能力全景图谱与能力矩阵精炼**：整理并补齐过去两周多策略安全沙箱（Local/Docker/E2B/SSH 同绝对路径挂载）、服务端持久化浏览器会话与实时接管面板、四维上下文分项估算与两阶段智能溢出压缩、自动化任务中心与多通道推送（企微/钉钉/飞书/邮件/Webhook/站内信）等杀手级特色能力；在核心能力章节上方插入 `docs/images/core.png` 8 大模块全景架构图谱；中英文全量对齐。 | ✅ 文档齐备 | 2026-08-22 |
