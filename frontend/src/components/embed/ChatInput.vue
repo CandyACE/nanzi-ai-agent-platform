@@ -13,7 +13,7 @@ import ContextCompactionTimeline from "@/components/chat/ContextCompactionTimeli
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
-import { CloudIcon, ComputerDesktopIcon, CubeIcon, ServerIcon, XMarkIcon } from "@heroicons/vue/24/outline";
+import { ArrowPathIcon, ClockIcon, CloudIcon, ComputerDesktopIcon, CubeIcon, ServerIcon, XMarkIcon } from "@heroicons/vue/24/outline";
 
 type ApprovalMode = "ask" | "allow" | "deny";
 
@@ -100,6 +100,10 @@ const props = defineProps<{
   dockerWorkspaceStatus?: "idle" | "starting" | "running" | "error";
   /** 当前用户分配的 Docker 容器 ID */
   dockerWorkspaceContainerId?: string | null;
+  /** Docker 沙箱容器启动时间 (ISO 8601) */
+  dockerWorkspaceStartedAt?: string | null;
+  /** Docker 沙箱容器运行时长秒数 */
+  dockerWorkspaceUptimeSeconds?: number | null;
   /** Docker 沙箱错误信息 */
   dockerWorkspaceError?: string;
 }>();
@@ -270,12 +274,47 @@ const emit = defineEmits<{
   (e: 'dismiss-ltm'): void;
   (e: 'refresh-context-compactions'): void;
   (e: 'start-docker-workspace'): void;
-  (e: 'refresh-docker-workspace'): void;
+  (e: 'refresh-docker-workspace', manualFeedback?: boolean): void;
 }>();
 
 const isDockerSandboxPolicy = computed(() => {
   const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
   return policy === "docker";
+});
+
+const dockerUptimeNow = ref(Date.now());
+let dockerUptimeTimer: ReturnType<typeof setInterval> | null = null;
+
+const dockerUptimeSeconds = computed(() => {
+  if (props.dockerWorkspaceStatus !== 'running') return 0;
+  if (props.dockerWorkspaceStartedAt) {
+    try {
+      const started = new Date(props.dockerWorkspaceStartedAt).getTime();
+      if (!Number.isNaN(started) && started > 0) {
+        return Math.max(0, Math.floor((dockerUptimeNow.value - started) / 1000));
+      }
+    } catch {}
+  }
+  if (typeof props.dockerWorkspaceUptimeSeconds === 'number') {
+    return Math.max(0, props.dockerWorkspaceUptimeSeconds);
+  }
+  return 0;
+});
+
+const dockerUptimeFormatted = computed(() => {
+  if (props.dockerWorkspaceStatus !== 'running') return '';
+  const seconds = dockerUptimeSeconds.value;
+  if (seconds < 60) {
+    return `${Math.max(1, seconds)}秒`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSecs = seconds % 60;
+  if (minutes < 60) {
+    return remainingSecs > 0 ? `${minutes}分${remainingSecs}秒` : `${minutes}分钟`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  return remainingMins > 0 ? `${hours}小时${remainingMins}分` : `${hours}小时`;
 });
 
 const formatLtmText = (pref: any): string => {
@@ -895,6 +934,9 @@ const toggleContextUsageDetails = async () => {
   closeContextCompactionDetails();
   showContextUsageDetails.value = !showContextUsageDetails.value;
   if (showContextUsageDetails.value) {
+    if (isDockerSandboxPolicy.value) {
+      emit('refresh-docker-workspace', false);
+    }
     await nextTick();
     updateContextUsageDetailsPlacement();
   }
@@ -1089,9 +1131,18 @@ onMounted(() => {
   document.addEventListener('keydown', handleGlobalKeydown);
   window.addEventListener('resize', handleApprovalMenuLayout);
   window.addEventListener('scroll', handleApprovalMenuLayout, true);
+  dockerUptimeTimer = setInterval(() => {
+    if (showContextUsageDetails.value && props.dockerWorkspaceStatus === 'running') {
+      dockerUptimeNow.value = Date.now();
+    }
+  }, 1000);
 });
 
 onUnmounted(() => {
+  if (dockerUptimeTimer) {
+    clearInterval(dockerUptimeTimer);
+    dockerUptimeTimer = null;
+  }
   closeContextUsageDetails();
   closeContextCompactionDetails();
   document.removeEventListener('click', handleGlobalClick);
@@ -1793,54 +1844,71 @@ defineExpose({
                         <!-- Docker 容器运行状态与控制明细 -->
                         <div
                           v-if="isDockerSandboxPolicy"
-                          class="flex items-center justify-between gap-2 rounded-lg bg-gray-50/90 dark:bg-gray-800/70 px-2 py-1.5 text-[10px] font-mono border border-gray-100/90 dark:border-gray-700/70"
+                          class="flex flex-col gap-1.5 rounded-lg bg-gray-50/90 dark:bg-gray-800/70 p-2 text-[10px] font-mono border border-gray-100/90 dark:border-gray-700/70"
                         >
-                          <div class="flex items-center gap-1.5 min-w-0">
-                            <span
-                              class="inline-block h-2 w-2 shrink-0 rounded-full"
-                              :class="{
-                                'bg-emerald-500 shadow-sm shadow-emerald-500/50': (dockerWorkspaceStatus || 'idle') === 'running',
-                                'bg-amber-400 animate-pulse': (dockerWorkspaceStatus || 'idle') === 'starting',
-                                'bg-rose-500 shadow-sm shadow-rose-500/50': (dockerWorkspaceStatus || 'idle') === 'error',
-                                'bg-gray-300 dark:bg-gray-600': (dockerWorkspaceStatus || 'idle') === 'idle'
-                              }"
-                            ></span>
-                            <span class="font-medium text-gray-700 dark:text-gray-200">
-                              {{
-                                (dockerWorkspaceStatus || 'idle') === 'running' ? '容器已运行' :
-                                (dockerWorkspaceStatus || 'idle') === 'starting' ? '容器启动中...' :
-                                (dockerWorkspaceStatus || 'idle') === 'error' ? '容器启动失败' : '容器未启动'
-                              }}
-                            </span>
-                            <span
-                              v-if="dockerWorkspaceContainerId"
-                              class="truncate text-[9px] text-gray-400 dark:text-gray-500 max-w-[130px]"
-                              :title="`当前容器 ID: ${dockerWorkspaceContainerId}`"
-                            >
-                              {{ dockerWorkspaceContainerId.slice(0, 12) }}
-                            </span>
+                          <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-1.5 min-w-0">
+                              <span
+                                class="inline-block h-2 w-2 shrink-0 rounded-full"
+                                :class="{
+                                  'bg-emerald-500 shadow-sm shadow-emerald-500/50': (dockerWorkspaceStatus || 'idle') === 'running',
+                                  'bg-amber-400 animate-pulse': (dockerWorkspaceStatus || 'idle') === 'starting',
+                                  'bg-rose-500 shadow-sm shadow-rose-500/50': (dockerWorkspaceStatus || 'idle') === 'error',
+                                  'bg-gray-300 dark:bg-gray-600': (dockerWorkspaceStatus || 'idle') === 'idle'
+                                }"
+                              ></span>
+                              <span class="font-medium text-gray-700 dark:text-gray-200">
+                                {{
+                                  (dockerWorkspaceStatus || 'idle') === 'running' ? '容器已运行' :
+                                  (dockerWorkspaceStatus || 'idle') === 'starting' ? '容器启动中...' :
+                                  (dockerWorkspaceStatus || 'idle') === 'error' ? '容器启动失败' : '容器未启动'
+                                }}
+                              </span>
+                              <span
+                                v-if="dockerWorkspaceContainerId"
+                                class="truncate text-[9px] text-gray-400 dark:text-gray-500 max-w-[110px]"
+                                :title="`当前容器 ID: ${dockerWorkspaceContainerId}`"
+                              >
+                                {{ dockerWorkspaceContainerId.slice(0, 12) }}
+                              </span>
+                            </div>
+
+                            <div class="shrink-0 flex items-center gap-1">
+                              <button
+                                v-if="(dockerWorkspaceStatus || 'idle') === 'idle' || (dockerWorkspaceStatus || 'idle') === 'error'"
+                                type="button"
+                                class="rounded bg-indigo-600 px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition-all disabled:opacity-50"
+                                :disabled="isProcessing"
+                                :title="(dockerWorkspaceStatus || 'idle') === 'error' ? (dockerWorkspaceError || '重试启动 Docker 沙箱') : '启动当前用户的 Docker 沙箱容器'"
+                                @click.stop="emit('start-docker-workspace')"
+                              >
+                                {{ (dockerWorkspaceStatus || 'idle') === 'error' ? '重试启动' : '启动容器' }}
+                              </button>
+                              <button
+                                type="button"
+                                class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                                title="手动检测刷新 Docker 沙箱状态"
+                                :disabled="(dockerWorkspaceStatus || 'idle') === 'starting'"
+                                @click.stop="emit('refresh-docker-workspace', true)"
+                              >
+                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (dockerWorkspaceStatus || 'idle') === 'starting' }" aria-hidden="true" />
+                                <span>刷新</span>
+                              </button>
+                            </div>
                           </div>
 
-                          <div class="shrink-0 flex items-center gap-1.5">
-                            <button
-                              v-if="(dockerWorkspaceStatus || 'idle') === 'idle' || (dockerWorkspaceStatus || 'idle') === 'error'"
-                              type="button"
-                              class="rounded bg-indigo-600 px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition-all disabled:opacity-50"
-                              :disabled="isProcessing"
-                              :title="(dockerWorkspaceStatus || 'idle') === 'error' ? (dockerWorkspaceError || '重试启动 Docker 沙箱') : '启动当前用户的 Docker 沙箱容器'"
-                              @click.stop="emit('start-docker-workspace')"
-                            >
-                              {{ (dockerWorkspaceStatus || 'idle') === 'error' ? '重试启动' : '启动容器' }}
-                            </button>
-                            <button
-                              v-else-if="(dockerWorkspaceStatus || 'idle') === 'running'"
-                              type="button"
-                              class="rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors"
-                              title="刷新容器运行状态"
-                              @click.stop="emit('refresh-docker-workspace')"
-                            >
-                              刷新
-                            </button>
+                          <!-- 运行时长与自动回收说明（仅在运行中展示） -->
+                          <div
+                            v-if="(dockerWorkspaceStatus || 'idle') === 'running' && dockerUptimeFormatted"
+                            class="flex items-center justify-between text-[9px] text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200/50 dark:border-gray-700/50"
+                          >
+                            <span class="flex items-center gap-1">
+                              <ClockIcon class="h-3 w-3 text-emerald-500/80 shrink-0" aria-hidden="true" />
+                              <span>运行时长：<strong class="text-gray-600 dark:text-gray-300 font-medium">{{ dockerUptimeFormatted }}</strong></span>
+                            </span>
+                            <span class="text-[8.5px] text-gray-400/80 dark:text-gray-500/80" title="容器连续空闲 30 分钟后将自动销毁释放资源">
+                              空闲 30m 自动回收
+                            </span>
                           </div>
                         </div>
                     </div>

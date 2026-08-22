@@ -110,6 +110,8 @@ async def test_ensure_docker_workspace_returns_running_metadata(monkeypatch):
         "execution_backend": "docker",
         "workspace_id": "alice__1",
         "container_id": "container-1",
+        "started_at": None,
+        "uptime_seconds": None,
     }
     assert captured["user_id"] == 1
     assert captured["user_name"] == "alice"

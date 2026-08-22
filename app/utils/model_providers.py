@@ -15,6 +15,8 @@ MODEL_PROVIDER_DEFAULT_BASE_URLS: Mapping[str, str] = {
     "zhipu": "https://open.bigmodel.cn/api/paas/v4",
     "siliconflow": "https://api.siliconflow.cn/v1",
     "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
+    "volces": "https://ark.cn-beijing.volces.com/api/v3",
     "ollama": "http://localhost:11434/v1",
 }
 

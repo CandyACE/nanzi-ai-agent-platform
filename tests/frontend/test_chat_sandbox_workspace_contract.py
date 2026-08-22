@@ -69,9 +69,21 @@ def test_chat_input_context_modal_renders_docker_workspace_status_and_actions():
     assert "启动容器" in chat_input_source
     assert "重试启动" in chat_input_source
 
+    # 验证在展开详情面板时静默触发 Docker 沙箱状态刷新
+    assert "if (isDockerSandboxPolicy.value) {" in chat_input_source
+    assert "emit('refresh-docker-workspace', false);" in chat_input_source
+
+    assert "dockerWorkspaceStartedAt" in chat_input_source
+    assert "dockerWorkspaceUptimeSeconds" in chat_input_source
+    assert "dockerUptimeFormatted" in chat_input_source
+    assert "运行时长：" in chat_input_source
+    assert "空闲 30m 自动回收" in chat_input_source
+
     embed_source = EMBED.read_text(encoding="utf-8")
     assert ':docker-workspace-status="dockerWorkspaceStatus"' in embed_source
     assert ':docker-workspace-container-id="dockerWorkspaceContainerId"' in embed_source
+    assert ':docker-workspace-started-at="dockerWorkspaceStartedAt"' in embed_source
+    assert ':docker-workspace-uptime-seconds="dockerWorkspaceUptimeSeconds"' in embed_source
     assert '@start-docker-workspace="ensureDockerWorkspace"' in embed_source
     assert '@refresh-docker-workspace="refreshDockerWorkspaceStatus"' in embed_source
 

@@ -755,3 +755,52 @@ async def test_workspace_browser_prefs_user_isolation(
         )
         assert user_resp.json()["data"]["type_filter"] == "code"
         assert admin_resp.json()["data"]["type_filter"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_preview_and_write_docker_workspace_logical_path(
+    db_session, valid_api_key
+):
+    """测试 /workspace/... 容器沙箱逻辑路径自动转义映射至宿主机对应用户工作区文件。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        me_resp = await client.get(
+            "/api/portal/auth/me",
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert me_resp.status_code == 200
+        workspace_root_path = get_user_private_workspace_root(me_resp.json()["data"])
+        assert workspace_root_path
+        os.makedirs(workspace_root_path, exist_ok=True)
+
+        session_id = "test-session-logical-path-123"
+        session_file = os.path.join(workspace_root_path, "sessions", session_id, "output.txt")
+        os.makedirs(os.path.dirname(session_file), exist_ok=True)
+        with open(session_file, "w", encoding="utf-8") as handle:
+            handle.write("hello from docker workspace container")
+
+        # 1. 预览测试：传入容器内绝对路径 /workspace/sessions/...
+        preview_resp = await client.get(
+            "/api/v1/chat/fs/preview",
+            params={
+                "path": f"/workspace/sessions/{session_id}/output.txt",
+                "conversation_id": session_id,
+            },
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert preview_resp.status_code == 200
+        assert preview_resp.text == "hello from docker workspace container"
+
+        # 2. 写入测试：传入容器内绝对路径 /workspace/sessions/...
+        write_resp = await client.put(
+            "/api/v1/chat/fs/write",
+            json={
+                "path": f"/workspace/sessions/{session_id}/output.txt",
+                "content": "updated via docker logical path",
+                "conversation_id": session_id,
+            },
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert write_resp.status_code == 200
+        with open(session_file, "r", encoding="utf-8") as handle:
+            assert handle.read() == "updated via docker logical path"
+

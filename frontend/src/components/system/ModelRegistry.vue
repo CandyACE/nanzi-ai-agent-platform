@@ -80,6 +80,7 @@ const providerDefaultBaseUrls: Record<string, string> = {
     zhipu: 'https://open.bigmodel.cn/api/paas/v4',
     siliconflow: 'https://api.siliconflow.cn/v1',
     dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
     ollama: 'http://localhost:11434/v1',
 }
 const providerLabels: Record<string, string> = {
@@ -90,6 +91,7 @@ const providerLabels: Record<string, string> = {
     zhipu: '智谱 AI (GLM)',
     siliconflow: '硅基流动',
     dashscope: '阿里云百炼 (DashScope)',
+    volcengine: '火山引擎 (Ark/豆包)',
     ollama: 'Ollama (Local)',
     other: '其他 OpenAI 兼容服务',
 }
@@ -101,6 +103,7 @@ const providerCatalog = [
     { value: 'zhipu', label: '智谱 AI (GLM)', icon: 'GLM', color: '#0f766e' },
     { value: 'siliconflow', label: '硅基流动', icon: 'SF', color: '#ea580c' },
     { value: 'dashscope', label: '阿里云百炼', icon: 'Q', color: '#0891b2' },
+    { value: 'volcengine', label: '火山引擎 (Ark/豆包)', icon: 'ARK', color: '#f95738' },
     { value: 'ollama', label: 'Ollama (Local)', icon: 'OL', color: '#374151' },
     { value: 'other', label: '其他 OpenAI 兼容服务', icon: 'API', color: '#64748b' },
 ]

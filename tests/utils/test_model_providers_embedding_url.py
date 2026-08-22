@@ -30,3 +30,12 @@ from app.utils.model_providers import normalize_embedding_endpoint
 )
 def test_normalize_embedding_endpoint(input_url, expected_url):
     assert normalize_embedding_endpoint(input_url) == expected_url
+
+
+def test_volcengine_provider_default_url():
+    from app.utils.model_providers import default_model_api_base_url, resolve_model_api_base_url
+
+    assert default_model_api_base_url("volcengine") == "https://ark.cn-beijing.volces.com/api/v3"
+    assert default_model_api_base_url("volces") == "https://ark.cn-beijing.volces.com/api/v3"
+    assert resolve_model_api_base_url("volcengine", None) == "https://ark.cn-beijing.volces.com/api/v3"
+
