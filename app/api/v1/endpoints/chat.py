@@ -253,6 +253,24 @@ class ChatCompletionRequest(BaseModel):
     )
 
 
+def validate_chat_completion_messages(
+    messages: List[ChatMessage],
+    conversation_id: Optional[str] = None,
+) -> None:
+    """校验完成请求的当前轮边界，避免把历史 assistant 消息当成本轮问题。"""
+    if not messages:
+        raise HTTPException(status_code=400, detail="Messages list cannot be empty")
+
+    latest = messages[-1]
+    if latest.role != "user":
+        raise HTTPException(
+            status_code=400,
+            detail="最后一条消息必须是当前用户消息",
+        )
+    if not latest.content.strip():
+        raise HTTPException(status_code=400, detail="当前用户消息不能为空")
+
+
 class ConversationResourceScopeRequest(BaseModel):
     project_name: str = ""
     datasets: List[Dict[str, Any]] = Field(default_factory=list)
@@ -1046,8 +1064,10 @@ async def create_chat_completion(
     else:
         set_debug_context({}) # Clear/Default
 
-    if not completion_request.messages:
-        raise HTTPException(status_code=400, detail="Messages list cannot be empty")
+    validate_chat_completion_messages(
+        completion_request.messages,
+        completion_request.conversation_id,
+    )
 
     # 会话资源范围以服务端 Redis 为准，客户端只用于立即刷新 UI，不能伪造范围。
     conversation_scope = {

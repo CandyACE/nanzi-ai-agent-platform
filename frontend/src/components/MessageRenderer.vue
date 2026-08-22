@@ -692,7 +692,28 @@ const segments = computed<ContentSegment[]>(() => {
 .markdown-body :deep(ol) { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 1em; }
 .markdown-body :deep(ul) { list-style-type: disc; padding-left: 1.5em; margin-bottom: 1em; }
 .markdown-body :deep(li) { margin-bottom: 0.35em; }
-.markdown-body :deep(pre), .markdown-body :deep(code) { white-space: pre-wrap; overflow-x: auto; }
+
+.markdown-body :deep(pre) {
+  white-space: pre-wrap;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  color: #0f172a !important;
+  background-color: #f8fafc;
+  line-height: 1.6 !important;
+}
+.dark .markdown-body :deep(pre) {
+  color: #f1f5f9 !important;
+  background-color: #0f172a;
+}
+.markdown-body :deep(pre code) {
+  white-space: pre-wrap;
+  overflow-x: auto;
+  font-family: inherit !important;
+  color: inherit !important;
+  background-color: transparent !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
 
 /* Analysis Block Styling - Refined for clarity and "thinking" vibe */
 .analysis-block {
@@ -887,15 +908,30 @@ const segments = computed<ContentSegment[]>(() => {
 .theme-minimal :deep(.markdown-body pre) {
   margin-top: 0.75em !important;
   margin-bottom: 0.75em !important;
-  padding: 0.75em !important;
+  padding: 0.75em 1em !important;
   background-color: #f8fafc !important; /* 浅淡灰蓝背景 */
-  border: none !important;              /* 去除代码边框 */
+  border: 1px solid #e2e8f0 !important;  /* 柔和边框 */
   border-radius: 6px !important;
   box-shadow: none !important;
+  color: #0f172a !important;
+}
+.dark .theme-minimal :deep(.markdown-body pre) {
+  background-color: #0f172a !important;
+  border-color: #1e293b !important;
+  color: #f1f5f9 !important;
 }
 .theme-minimal :deep(.markdown-body code) {
   background-color: rgba(15, 23, 42, 0.06) !important;
   color: #334155 !important;
+}
+.dark .theme-minimal :deep(.markdown-body code) {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #e2e8f0 !important;
+}
+.theme-minimal :deep(.markdown-body pre code) {
+  background-color: transparent !important;
+  color: inherit !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
 }
 .theme-minimal :deep(.markdown-body p) {
   margin-bottom: 0.75em !important;

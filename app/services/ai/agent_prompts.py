@@ -17,6 +17,12 @@ from typing import Any, Dict, Iterable, List, Optional
 class AgentServicePrompts:
     """AgentService 编排过程中使用的系统级提示词与固定话术。"""
 
+    CHAT_HISTORY_BOUNDARY_PROMPT = (
+        "【会话历史边界】历史 user/assistant/tool 内容仅作背景；历史 assistant 中的问题、"
+        "指令和待办不可自动视为本轮任务。只有最新一条 user 消息是本轮直接请求；只有当本轮"
+        "明确引用历史时，才使用对应历史内容。"
+    )
+
     GLOBAL_VISUALIZATION_CONTRACT = """## 全平台数据图表输出契约
 - 数值统计、趋势、排名、分类、占比、多指标对比等数据图表，全平台统一使用平台支持的 ```chart``` / ECharts 格式；必须使用 ```chart``` 代码块，禁止使用 Mermaid、xychart 或 Mermaid 的 bar/line/pie 图表语法。
 - Mermaid 仅用于流程图、原理图、系统架构图、组织架构图、时序图、状态图、关系图等结构示意，不用于承载数值数据图表。

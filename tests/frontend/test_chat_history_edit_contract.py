@@ -36,3 +36,21 @@ def test_edit_resend_stops_when_server_history_cannot_be_truncated(relative_path
 
     assert "const truncateServerHistory = async" in source
     assert "if (!(await truncateServerHistory(keepCount))) return;" in source
+
+
+@pytest.mark.no_infrastructure
+def test_embed_chat_sends_only_latest_user_for_existing_conversation():
+    source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "const buildOutboundMessages" in source
+    assert "conversationId.value" in source
+    assert "latestUser" in source
+
+
+@pytest.mark.no_infrastructure
+def test_agent_debug_uses_same_current_user_boundary():
+    source = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    assert "const buildOutboundMessages" in source
+    assert "conversationId.value" in source
+    assert "latestUser" in source
