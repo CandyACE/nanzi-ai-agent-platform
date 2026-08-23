@@ -1215,6 +1215,8 @@ const connect = async () => {
       reason?: string | null;
       captcha?: boolean;
       detected?: boolean;
+      action?: string;
+      detail?: string;
     };
     try {
       payload = JSON.parse(event.data) as {
@@ -1227,6 +1229,8 @@ const connect = async () => {
         reason?: string | null;
         captcha?: boolean;
         detected?: boolean;
+        action?: string;
+        detail?: string;
       };
     } catch {
       errorMessage.value = '浏览器返回了无法识别的消息';

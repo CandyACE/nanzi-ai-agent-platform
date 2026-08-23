@@ -39,6 +39,9 @@ from app.services.ai.runtime.agentscope.workspace import (
     docker_workspace_status as docker_workspace_status_runtime,
     docker_workspace_runtime_metadata,
     ensure_docker_workspace as ensure_docker_workspace_runtime,
+    stop_docker_workspace as stop_docker_workspace_runtime,
+    restart_docker_workspace as restart_docker_workspace_runtime,
+    exec_docker_workspace_command as exec_docker_workspace_command_runtime,
 )
 
 router = APIRouter()
@@ -111,6 +114,14 @@ class DockerWorkspaceEnsureRequest(BaseModel):
     conversation_id: str
 
 
+class DockerWorkspaceExecRequest(BaseModel):
+    """当前用户在 Docker 容器内执行命令请求。"""
+
+    conversation_id: str
+    command: str
+    workdir: str | None = None
+
+
 @router.post(
     "/sandbox/docker/workspace/ensure",
     response_model=StandardResponse[Dict[str, Any]],
@@ -149,6 +160,119 @@ async def ensure_docker_workspace_endpoint(
     return StandardResponse(
         data=docker_workspace_runtime_metadata(workspace),
         message="Docker 沙箱容器已运行。",
+    )
+
+
+@router.post(
+    "/sandbox/docker/workspace/stop",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="停止当前用户的 Docker 沙箱容器",
+)
+async def stop_docker_workspace_endpoint(
+    body: DockerWorkspaceEnsureRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """停止当前用户的 Docker 沙箱容器并清理缓存。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await stop_docker_workspace_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except DockerSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "docker_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="Docker 沙箱容器已停止。",
+    )
+
+
+@router.post(
+    "/sandbox/docker/workspace/restart",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="重启当前用户的 Docker 沙箱容器（删除旧容器并拉起新容器）",
+)
+async def restart_docker_workspace_endpoint(
+    body: DockerWorkspaceEnsureRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """删除旧 Docker 容器并重新拉起全新的容器。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await restart_docker_workspace_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except DockerSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "docker_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="Docker 沙箱容器已重启完成。",
+    )
+
+
+@router.post(
+    "/sandbox/docker/workspace/exec",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="在当前用户的 Docker 沙箱容器中执行终端命令",
+)
+async def exec_docker_workspace_endpoint(
+    body: DockerWorkspaceExecRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """执行交互终端命令并返回输出。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await exec_docker_workspace_command_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+            command=body.command,
+            workdir=body.workdir,
+        )
+    except DockerSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code in ("docker_policy_not_effective", "docker_container_not_running") else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="命令执行完成。",
     )
 
 

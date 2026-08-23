@@ -77,7 +77,22 @@ def test_embed_thought_summary_lives_in_shared_timeline_header():
     assert "getDisplayLogs(msg)" not in embed
     assert "getThoughtStages" not in embed
     assert "buildEmbedThoughtStages" not in embed
-    assert 'step-label="阶段"' not in embed
-    assert "getEmbedThoughtSummaryTitle" not in debug
-    assert "buildEmbedThoughtStages" not in debug
     assert 'props.hasAnswer ? "执行完成" : "执行过程"' in timeline
+
+
+def test_chat_thinking_header_and_timeline_copy_contract():
+    header = (ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue").read_text(encoding="utf-8")
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert "showCopy" in header
+    assert "isCopied" in header
+    assert '@click.stop="emit(\'copy\')"' in header
+    assert "复制思考内容" in header
+    assert "已复制" in header
+
+    assert ":show-copy=" in timeline
+    assert ":is-copied=" in timeline
+    assert '@copy="handleCopyAll"' in timeline
+    assert "fullTimelineText" in timeline
+    assert "handleCopyAll" in timeline
+

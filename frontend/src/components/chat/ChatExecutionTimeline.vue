@@ -13,6 +13,9 @@
       :duration="duration"
       :bordered="bordered"
       :dark-mode="darkMode"
+      :show-copy="Boolean(fullTimelineText)"
+      :is-copied="copiedKey === 'full-timeline'"
+      @copy="handleCopyAll"
     />
 
     <transition
@@ -465,6 +468,40 @@ function formatDuration(duration?: number | null): string {
 
 const copiedKey = ref<string | null>(null);
 let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+const fullTimelineText = computed(() => {
+  const parts: string[] = [];
+  for (const item of items.value) {
+    if (item.kind === "text") {
+      if (item.content?.trim()) {
+        parts.push(item.content.trim());
+      }
+    } else if (item.kind === "log") {
+      const logParts: string[] = [];
+      const title = item.title || item.tool_name || "执行步骤";
+      const statusText = item.status === "error" ? " (失败)" : item.status === "pending" ? " (执行中)" : "";
+      logParts.push(`[${iconFor(item)} ${title}${statusText}]`);
+      if (item.details?.trim()) {
+        logParts.push(`详情: ${item.details.trim()}`);
+      }
+      if (logParts.length) {
+        parts.push(logParts.join("\n"));
+      }
+    }
+  }
+  if (!parts.length && props.reasoningContent?.trim()) {
+    parts.push(props.reasoningContent.trim());
+  }
+  if (!parts.length && props.thinkingText?.trim()) {
+    parts.push(props.thinkingText.trim());
+  }
+  return parts.join("\n\n").trim();
+});
+
+const handleCopyAll = () => {
+  if (!fullTimelineText.value) return;
+  void handleCopy("full-timeline", fullTimelineText.value);
+};
 
 async function handleCopy(key: string, text?: string | null) {
   if (!text) return;

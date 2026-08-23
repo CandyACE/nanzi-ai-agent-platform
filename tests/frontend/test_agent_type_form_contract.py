@@ -327,3 +327,5 @@ def test_browser_automation_tools_are_available_in_a_dedicated_group():
     ):
         assert tool_name in management
     assert "groups.browser.tools.push(tool)" in management
+    assert "name.startsWith('browser_') || name.includes('browser')" in management
+

@@ -1215,6 +1215,9 @@
         :docker-workspace-error="dockerWorkspaceError"
         @start-docker-workspace="ensureDockerWorkspace"
         @refresh-docker-workspace="refreshDockerWorkspaceStatus"
+        @stop-docker-workspace="stopDockerWorkspace"
+        @restart-docker-workspace="restartDockerWorkspace"
+        @open-docker-terminal="openDockerTerminal"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
         @update:selected-model="handleEmbedModelSelection"
         @update:thinking-enable-override="thinkingEnableOverride = $event"
@@ -1606,6 +1609,14 @@
       type="primary"
       @confirm="handleConfirmClearSession"
       @cancel="showConfirmModal = false"
+    />
+    <!-- Docker Workspace Terminal Modal -->
+    <DockerTerminalModal
+      :show="showDockerTerminal"
+      :container-id="dockerWorkspaceContainerId"
+      :conversation-id="conversationId"
+      :auth-token="config.token"
+      @close="showDockerTerminal = false"
     />
     <!-- Settings Modal -->
     <ChatSettings
@@ -2160,6 +2171,7 @@ import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue";
+import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -4035,6 +4047,73 @@ const ensureDockerWorkspace = async () => {
     dockerWorkspaceError.value = typeof detail === "string"
       ? detail
       : String(detail?.message || error?.message || "Docker 沙箱容器启动失败");
+    dockerWorkspaceStatus.value = "error";
+    showToast(dockerWorkspaceError.value, "error");
+  }
+};
+
+const showDockerTerminal = ref(false);
+
+const openDockerTerminal = () => {
+  if (dockerWorkspaceStatus.value !== "running") {
+    showToast("Docker 容器未在运行中，请先启动容器", "warning");
+    return;
+  }
+  showDockerTerminal.value = true;
+};
+
+const stopDockerWorkspace = async () => {
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
+  const requestedConversationId = conversationId.value;
+  try {
+    await axios.post(
+      "/api/v1/sandbox/docker/workspace/stop",
+      { conversation_id: requestedConversationId },
+      { headers: embedAuthHeaders() },
+    );
+    if (conversationId.value !== requestedConversationId) return;
+    dockerWorkspaceStatus.value = "idle";
+    dockerWorkspaceContainerId.value = null;
+    dockerWorkspaceStartedAt.value = null;
+    dockerWorkspaceUptimeSeconds.value = null;
+    dockerWorkspaceError.value = "";
+    showToast("Docker 沙箱容器已关机停止", "info");
+  } catch (error: any) {
+    if (conversationId.value !== requestedConversationId) return;
+    const detail = error?.response?.data?.detail;
+    const msg = typeof detail === "string"
+      ? detail
+      : String(detail?.message || error?.message || "停止 Docker 容器失败");
+    showToast(msg, "error");
+  }
+};
+
+const restartDockerWorkspace = async () => {
+  if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
+  if (dockerWorkspaceStatus.value === "starting") return;
+  const requestedConversationId = conversationId.value;
+  dockerWorkspaceStatus.value = "starting";
+  dockerWorkspaceError.value = "";
+  try {
+    const response = await axios.post(
+      "/api/v1/sandbox/docker/workspace/restart",
+      { conversation_id: requestedConversationId },
+      { headers: embedAuthHeaders() },
+    );
+    if (conversationId.value !== requestedConversationId) return;
+    const data = response.data?.data ?? response.data;
+    dockerWorkspaceStatus.value = "running";
+    dockerWorkspaceContainerId.value = data.container_id || null;
+    dockerWorkspaceStartedAt.value = data.started_at || null;
+    dockerWorkspaceUptimeSeconds.value = typeof data.uptime_seconds === "number" ? data.uptime_seconds : 0;
+    const shortId = (dockerWorkspaceContainerId.value || "").slice(0, 12);
+    showToast(shortId ? `Docker 沙箱已重启 (${shortId})` : "Docker 沙箱已重启", "success");
+  } catch (error: any) {
+    if (conversationId.value !== requestedConversationId) return;
+    const detail = error?.response?.data?.detail;
+    dockerWorkspaceError.value = typeof detail === "string"
+      ? detail
+      : String(detail?.message || error?.message || "Docker 沙箱重启失败");
     dockerWorkspaceStatus.value = "error";
     showToast(dockerWorkspaceError.value, "error");
   }

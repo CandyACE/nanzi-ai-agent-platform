@@ -13,7 +13,18 @@ import ContextCompactionTimeline from "@/components/chat/ContextCompactionTimeli
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
-import { ArrowPathIcon, ClockIcon, CloudIcon, ComputerDesktopIcon, CubeIcon, ServerIcon, XMarkIcon } from "@heroicons/vue/24/outline";
+import {
+  ArrowPathIcon,
+  ChevronDownIcon,
+  ClockIcon,
+  CloudIcon,
+  CommandLineIcon,
+  ComputerDesktopIcon,
+  CubeIcon,
+  PowerIcon,
+  ServerIcon,
+  XMarkIcon,
+} from "@heroicons/vue/24/outline";
 
 type ApprovalMode = "ask" | "allow" | "deny";
 
@@ -275,12 +286,18 @@ const emit = defineEmits<{
   (e: 'refresh-context-compactions'): void;
   (e: 'start-docker-workspace'): void;
   (e: 'refresh-docker-workspace', manualFeedback?: boolean): void;
+  (e: 'stop-docker-workspace'): void;
+  (e: 'restart-docker-workspace'): void;
+  (e: 'open-docker-terminal'): void;
 }>();
 
 const isDockerSandboxPolicy = computed(() => {
   const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
   return policy === "docker";
 });
+
+const showDockerActionsMenu = ref(false);
+const dockerActionsDropdownRef = ref<HTMLElement | null>(null);
 
 const dockerUptimeNow = ref(Date.now());
 let dockerUptimeTimer: ReturnType<typeof setInterval> | null = null;
@@ -1042,6 +1059,9 @@ const handleGlobalClick = (event: MouseEvent) => {
   }
   if (showContextCompactionDetails.value && contextUsageContainerRef.value && !contextUsageContainerRef.value.contains(event.target as Node)) {
     closeContextCompactionDetails();
+  }
+  if (showDockerActionsMenu.value && dockerActionsDropdownRef.value && !dockerActionsDropdownRef.value.contains(event.target as Node)) {
+    showDockerActionsMenu.value = false;
   }
   if (showApprovalMenu.value) {
     const target = event.target as Node;
@@ -1906,6 +1926,55 @@ defineExpose({
                                 <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (dockerWorkspaceStatus || 'idle') === 'starting' }" aria-hidden="true" />
                                 <span>刷新</span>
                               </button>
+
+                              <!-- Docker 容器运行时的操作下拉菜单 (进入 | 重启 | 关机) -->
+                              <div
+                                v-if="(dockerWorkspaceStatus || 'idle') === 'running'"
+                                ref="dockerActionsDropdownRef"
+                                class="relative inline-block text-left"
+                              >
+                                <button
+                                  type="button"
+                                  class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors" :class="{ 'text-indigo-600 bg-indigo-50 dark:text-indigo-300 dark:bg-gray-700': showDockerActionsMenu }"
+                                  title="Docker 容器管理操作"
+                                  @click.stop="showDockerActionsMenu = !showDockerActionsMenu"
+                                >
+                                  <span>操作</span>
+                                  <ChevronDownIcon class="h-2.5 w-2.5 transition-transform duration-200" :class="{ 'rotate-180': showDockerActionsMenu }" />
+                                </button>
+
+                                <div
+                                  v-if="showDockerActionsMenu"
+                                  class="absolute right-0 bottom-full mb-1.5 z-50 w-28 rounded-lg bg-white dark:bg-gray-800 py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 border border-gray-100 dark:border-gray-700 text-[10px] font-sans"
+                                  @click.stop
+                                >
+                                  <button
+                                    type="button"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                    @click="showDockerActionsMenu = false; emit('open-docker-terminal')"
+                                  >
+                                    <CommandLineIcon class="h-3.5 w-3.5 text-emerald-500" />
+                                    <span>进入终端</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                    @click="showDockerActionsMenu = false; emit('restart-docker-workspace')"
+                                  >
+                                    <ArrowPathIcon class="h-3.5 w-3.5 text-indigo-500" />
+                                    <span>重启容器</span>
+                                  </button>
+                                  <div class="my-0.5 border-t border-gray-100 dark:border-gray-700/60"></div>
+                                  <button
+                                    type="button"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                                    @click="showDockerActionsMenu = false; emit('stop-docker-workspace')"
+                                  >
+                                    <PowerIcon class="h-3.5 w-3.5 text-rose-500" />
+                                    <span>停止关机</span>
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           </div>
 

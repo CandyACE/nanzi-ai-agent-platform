@@ -78,6 +78,12 @@ def test_chat_input_context_modal_renders_docker_workspace_status_and_actions():
     assert "dockerUptimeFormatted" in chat_input_source
     assert "运行时长：" in chat_input_source
     assert "空闲 30m 自动回收" in chat_input_source
+    assert "进入终端" in chat_input_source
+    assert "重启容器" in chat_input_source
+    assert "停止关机" in chat_input_source
+    assert "open-docker-terminal" in chat_input_source
+    assert "restart-docker-workspace" in chat_input_source
+    assert "stop-docker-workspace" in chat_input_source
 
     embed_source = EMBED.read_text(encoding="utf-8")
     assert ':docker-workspace-status="dockerWorkspaceStatus"' in embed_source
@@ -86,5 +92,21 @@ def test_chat_input_context_modal_renders_docker_workspace_status_and_actions():
     assert ':docker-workspace-uptime-seconds="dockerWorkspaceUptimeSeconds"' in embed_source
     assert '@start-docker-workspace="ensureDockerWorkspace"' in embed_source
     assert '@refresh-docker-workspace="refreshDockerWorkspaceStatus"' in embed_source
+    assert '@stop-docker-workspace="stopDockerWorkspace"' in embed_source
+    assert '@restart-docker-workspace="restartDockerWorkspace"' in embed_source
+    assert '@open-docker-terminal="openDockerTerminal"' in embed_source
+    assert 'import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue"' in embed_source
+    assert '<DockerTerminalModal' in embed_source
+
+
+def test_docker_terminal_modal_component_contract():
+    terminal_modal = ROOT / "frontend/src/components/chat/DockerTerminalModal.vue"
+    assert terminal_modal.exists()
+    source = terminal_modal.read_text(encoding="utf-8")
+    assert "/api/v1/sandbox/docker/workspace/exec" in source
+    assert "Docker 容器终端" in source
+    assert "root@nanzi-sandbox" in source
+    assert "常用命令:" in source
+
 
 

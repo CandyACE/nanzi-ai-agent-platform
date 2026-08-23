@@ -1,12 +1,15 @@
 <template>
-  <button
-    type="button"
-    class="flex w-full select-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-gray-100 sm:gap-2 sm:px-3 sm:py-2"
+  <div
+    role="button"
+    tabindex="0"
+    class="group/header flex w-full select-none cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-gray-100 sm:gap-2 sm:px-3 sm:py-2"
     :class="{
       'border border-transparent hover:border-gray-200': bordered,
       'dark:hover:bg-gray-700/50': darkMode,
     }"
     @click="expanded = !expanded"
+    @keydown.enter.prevent="expanded = !expanded"
+    @keydown.space.prevent="expanded = !expanded"
   >
     <div class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-gray-100 text-gray-500" :class="{ 'dark:bg-gray-700': darkMode }">
       <span v-if="isThinking" class="thought-status-dot" aria-label="进行中" title="进行中" />
@@ -46,9 +49,24 @@
     </div>
 
     <div
-      class="flex shrink-0 items-center gap-1 text-gray-400"
-      :class="expanded ? 'ml-auto sm:gap-1.5' : 'gap-1'"
+      class="flex shrink-0 items-center gap-1.5 text-gray-400"
+      :class="expanded ? 'ml-auto sm:gap-2' : 'gap-1.5'"
     >
+      <button
+        v-if="showCopy"
+        type="button"
+        class="flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-70 transition-all hover:bg-gray-200/80 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/60 dark:hover:text-gray-200"
+        :class="{ '!text-emerald-500 !opacity-100 dark:!text-emerald-400': isCopied }"
+        :title="isCopied ? '已复制' : '复制思考内容'"
+        @click.stop="emit('copy')"
+      >
+        <svg v-if="isCopied" class="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+        </svg>
+        <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+        </svg>
+      </button>
       <span v-if="duration" class="font-mono text-[10px]">{{ `${duration}s` }}</span>
       <svg
         class="h-4 w-4 shrink-0 transform transition-transform duration-200"
@@ -60,7 +78,7 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
       </svg>
     </div>
-  </button>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -76,6 +94,8 @@ const props = withDefaults(defineProps<{
   duration?: string;
   bordered?: boolean;
   darkMode?: boolean;
+  showCopy?: boolean;
+  isCopied?: boolean;
 }>(), {
   isThinking: false,
   stepCount: 0,
@@ -85,7 +105,13 @@ const props = withDefaults(defineProps<{
   duration: "",
   bordered: false,
   darkMode: false,
+  showCopy: false,
+  isCopied: false,
 });
+
+const emit = defineEmits<{
+  (e: "copy"): void;
+}>();
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 

@@ -324,10 +324,10 @@ const openPersonalNotificationSettings = () => {
 }
 const promptExamples = [
   {
-    title: 'GitHub Stars 巡检',
+    title: '天气与环境巡检',
     tip: '适合工具查询 + 下方勾选站内消息（不必在指令里写 send_portal_notification）',
-    text: `1. 使用 search_github_repos 工具查询用户 RandyChen1985 的全部开源项目（按 stars 排序），获取最新 Stars 与 Forks。
-2. 整理成简洁 Markdown 报告：每个项目的 Stars、Forks、语言，以及总 Stars 数。
+    text: `1. 使用 get_current_weather 工具查询指定城市（如 Shanghai、Beijing）的实时天气与温度。
+2. 整理成简洁 Markdown 报告：城市、天气概况、当前气温与风向。
 3. 将报告作为本次任务结果输出。`,
   },
   {

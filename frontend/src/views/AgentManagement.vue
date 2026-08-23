@@ -1210,16 +1210,24 @@ const groupedTools = computed(() => {
   allAvailableTools.value.forEach(tool => {
     const name = tool.name.toLowerCase();
 
-    if (name.includes('sub_agent')) {
+    if (name.startsWith('browser_') || name.includes('browser')) {
+      groups.browser.tools.push(tool);
+    } else if (name.includes('sub_agent')) {
       groups.delegation.tools.push(tool);
     } else if (name.includes('sql') || name.includes('dataset') || name.includes('bi_') || name.includes('olap')) {
       groups.chatbi.tools.push(tool);
     } else if (name.startsWith('excel_document') || name.startsWith('word_document')) {
       groups.office.tools.push(tool);
-    } else if (name.includes('knowledge') || name.includes('rag') || name.includes('kb_') || name.includes('document')) {
+    } else if (
+      name.includes('knowledge') ||
+      name.includes('_rag') ||
+      name.includes('rag_') ||
+      name.includes('ragflow') ||
+      name === 'rag' ||
+      name.includes('kb_') ||
+      name.includes('document')
+    ) {
       groups.knowledge.tools.push(tool);
-    } else if (name.startsWith('browser_')) {
-      groups.browser.tools.push(tool);
     } else if (
       name.includes('web_search') ||
       name.includes('static_web') ||

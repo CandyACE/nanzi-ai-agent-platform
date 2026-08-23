@@ -1508,6 +1508,315 @@ async def docker_workspace_status(
     }
 
 
+async def _evict_all_workspaces_for_user(sandbox_user_key: str, *, reason: str) -> None:
+    """逐出指定用户在所有 workspace_root 下的 Docker 沙箱缓存。"""
+    matching_keys = [
+        k for k in list(_docker_workspace_cache.keys())
+        if f"::{sandbox_user_key}::" in k or k.endswith(f"::{sandbox_user_key}")
+    ]
+    for key in matching_keys:
+        try:
+            await _evict_docker_workspace_cache_entry(key, reason=reason)
+        except Exception as exc:
+            logger.warning("[workspace] Failed to evict cache key %s: %s", key, exc)
+
+
+async def stop_docker_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """停止当前用户的 Docker 沙箱容器并清理运行时缓存。"""
+    if not str(conversation_id or "").strip():
+        raise DockerSandboxUnavailableError(
+            "conversation_id is required",
+            reason_code="docker_workspace_stop_failed",
+            user_message="缺少会话 ID，无法停止当前用户的 Docker 沙箱。",
+        )
+
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
+
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
+    if policy != SANDBOX_POLICY_DOCKER:
+        raise DockerSandboxUnavailableError(
+            f"Docker workspace stop requested while effective policy is {policy!r}",
+            reason_code="docker_policy_not_effective",
+            user_message="当前不是 Docker 沙箱模式，无需停止 Docker 容器。",
+        )
+
+    sandbox_user_key = _resolve_sandbox_user_key(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not sandbox_user_key:
+        raise DockerSandboxUnavailableError(
+            "Docker sandbox requires an authenticated user identity",
+            reason_code="docker_workspace_identity_required",
+            user_message="缺少当前用户身份，无法停止用户 Docker 沙箱。",
+        )
+
+    # 1. 逐出进程内缓存
+    await _evict_all_workspaces_for_user(sandbox_user_key, reason="user requested container stop")
+
+    # 2. 尝试停止 Docker 实体容器
+    try:
+        import aiodocker
+        client = aiodocker.Docker()
+        container_name = f"as_ws_{sandbox_user_key}"
+        try:
+            container = await client.containers.get(container_name)
+            details = await container.show()
+            state = details.get("State") if isinstance(details, dict) else {}
+            if state.get("Running"):
+                await container.stop()
+        except Exception as exc:
+            if getattr(exc, "status", None) != 404:
+                logger.warning("[workspace] Failed to stop container %s: %s", container_name, exc)
+        finally:
+            await client.close()
+    except Exception as exc:
+        logger.warning("[workspace] Docker client error during stop: %s", exc)
+
+    return {
+        "status": "stopped",
+        "execution_backend": SANDBOX_POLICY_DOCKER,
+        "workspace_id": sandbox_user_key,
+        "container_id": None,
+    }
+
+
+async def restart_docker_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """删除当前用户的旧 Docker 容器并重新拉起全新的沙箱容器。"""
+    if not str(conversation_id or "").strip():
+        raise DockerSandboxUnavailableError(
+            "conversation_id is required",
+            reason_code="docker_workspace_restart_failed",
+            user_message="缺少会话 ID，无法重启当前用户的 Docker 沙箱。",
+        )
+
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
+
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
+    if policy != SANDBOX_POLICY_DOCKER:
+        raise DockerSandboxUnavailableError(
+            f"Docker workspace restart requested while effective policy is {policy!r}",
+            reason_code="docker_policy_not_effective",
+            user_message="当前不是 Docker 沙箱模式，无需重启 Docker 容器。",
+        )
+
+    sandbox_user_key = _resolve_sandbox_user_key(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not sandbox_user_key:
+        raise DockerSandboxUnavailableError(
+            "Docker sandbox requires an authenticated user identity",
+            reason_code="docker_workspace_identity_required",
+            user_message="缺少当前用户身份，无法重启用户 Docker 沙箱。",
+        )
+
+    # 1. 逐出进程内缓存
+    await _evict_all_workspaces_for_user(sandbox_user_key, reason="user requested container restart")
+
+    # 2. 强制删除旧容器
+    try:
+        import aiodocker
+        client = aiodocker.Docker()
+        container_name = f"as_ws_{sandbox_user_key}"
+        try:
+            container = await client.containers.get(container_name)
+            await container.delete(force=True)
+        except Exception as exc:
+            if getattr(exc, "status", None) != 404:
+                logger.warning("[workspace] Failed to force delete container %s: %s", container_name, exc)
+        finally:
+            await client.close()
+    except Exception as exc:
+        logger.warning("[workspace] Docker client error during restart container delete: %s", exc)
+
+    # 3. 重新拉起并初始化容器
+    workspace = await ensure_docker_workspace(
+        user_id=user_id,
+        conversation_id=str(conversation_id).strip(),
+        user_name=user_name,
+        user_info=user_info,
+    )
+    return docker_workspace_runtime_metadata(workspace)
+
+
+async def exec_docker_workspace_command(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    command: str,
+    workdir: str | None = None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """在当前用户的 Docker 容器内执行命令，供命令行终端交互访问。"""
+    if not str(conversation_id or "").strip():
+        raise DockerSandboxUnavailableError(
+            "conversation_id is required",
+            reason_code="docker_workspace_exec_failed",
+            user_message="缺少会话 ID，无法在 Docker 沙箱中执行命令。",
+        )
+
+    cmd_clean = str(command or "").strip()
+    if not cmd_clean:
+        return {
+            "stdout": "",
+            "stderr": "",
+            "output": "",
+            "exit_code": 0,
+            "duration_ms": 0,
+            "workdir": workdir or DOCKER_WORKSPACE_LOGICAL_ROOT,
+        }
+
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
+
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
+    if policy != SANDBOX_POLICY_DOCKER:
+        raise DockerSandboxUnavailableError(
+            f"Docker workspace exec requested while effective policy is {policy!r}",
+            reason_code="docker_policy_not_effective",
+            user_message="当前不是 Docker 沙箱模式，无法使用 Docker 终端。",
+        )
+
+    sandbox_user_key = _resolve_sandbox_user_key(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not sandbox_user_key:
+        raise DockerSandboxUnavailableError(
+            "Docker sandbox requires an authenticated user identity",
+            reason_code="docker_workspace_identity_required",
+            user_message="缺少当前用户身份，无法访问 Docker 沙箱。",
+        )
+
+    try:
+        import aiodocker
+    except Exception as exc:
+        raise DockerSandboxUnavailableError(
+            f"aiodocker is unavailable: {exc}",
+            reason_code="docker_daemon_unavailable",
+            user_message="当前后端无法连接 Docker daemon，暂时无法执行命令。",
+        ) from exc
+
+    client: Any | None = None
+    container_name = f"as_ws_{sandbox_user_key}"
+    start_time = time.monotonic()
+    try:
+        client = aiodocker.Docker()
+        container = await client.containers.get(container_name)
+        details = await container.show()
+        state = details.get("State") if isinstance(details, dict) else {}
+        if not state.get("Running"):
+            raise DockerSandboxUnavailableError(
+                "Docker sandbox container is not running",
+                reason_code="docker_container_not_running",
+                user_message="Docker 容器未在运行中，请先启动容器后再进入终端。",
+            )
+
+        effective_workdir = (workdir or "").strip() or DOCKER_WORKSPACE_LOGICAL_ROOT
+        exec_obj = await container.exec(
+            cmd=["/bin/bash", "-c", cmd_clean],
+            workdir=effective_workdir,
+            stdout=True,
+            stderr=True,
+            stdin=False,
+            tty=False,
+        )
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        all_chunks: list[str] = []
+
+        async with exec_obj.start(detach=False) as stream:
+            while True:
+                msg = await stream.read_out()
+                if msg is None:
+                    break
+                stream_type = getattr(msg, "stream", 1)
+                raw_data = getattr(msg, "data", msg)
+                if isinstance(raw_data, (bytes, bytearray)):
+                    text = raw_data.decode("utf-8", errors="replace")
+                else:
+                    text = str(raw_data or "")
+                all_chunks.append(text)
+                if stream_type == 2:
+                    stderr_chunks.append(text)
+                else:
+                    stdout_chunks.append(text)
+
+        inspect_info = await exec_obj.inspect()
+        exit_code = inspect_info.get("ExitCode", 0)
+        duration_ms = max(0, int((time.monotonic() - start_time) * 1000))
+
+        # 刷新活跃时间
+        for k in list(_docker_workspace_cache.keys()):
+            if f"::{sandbox_user_key}::" in k or k.endswith(f"::{sandbox_user_key}"):
+                _touch_docker_workspace(k)
+
+        return {
+            "stdout": "".join(stdout_chunks),
+            "stderr": "".join(stderr_chunks),
+            "output": "".join(all_chunks),
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+            "workdir": effective_workdir,
+            "container_id": details.get("Id") if isinstance(details, dict) else getattr(container, "id", None),
+        }
+    except DockerSandboxUnavailableError:
+        raise
+    except Exception as exc:
+        if getattr(exc, "status", None) == 404:
+            raise DockerSandboxUnavailableError(
+                "Docker sandbox container not found",
+                reason_code="docker_container_not_running",
+                user_message="Docker 容器不存在或已销毁，请先启动容器。",
+            ) from exc
+        reason_code = _docker_init_reason_code(exc)
+        raise DockerSandboxUnavailableError(
+            f"Docker exec failed for {container_name}: {exc}",
+            reason_code=reason_code,
+            user_message=f"命令执行失败：{exc}",
+        ) from exc
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
 def docker_workspace_runtime_metadata(workspace: Any) -> dict[str, Any]:
     """Return safe, user-facing metadata for an initialized Docker workspace."""
     container_id = getattr(workspace, "_platform_container_id", None)
