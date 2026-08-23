@@ -9,6 +9,7 @@ import ast
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from typing import Optional, Dict, List, Any, Tuple
+from app.core.context import get_current_agent_context
 from app.services.ai.tools.tool_compat import tool
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,8 @@ def sqlite_scratchpad(sql: str, session_id: str, import_data: str = None) -> str
 def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None) -> str:
     """
     分层或递归检索目标目录下的结构，支持按文件后缀和文件名关键字过滤。
-    只允许导航项目根目录或服务容器 /app 内的路径；该工具只返回目录元数据，不读取文件内容。
+    只允许导航项目根目录或服务容器 /app 内的路径；普通用户在 agent_workspaces 下只能导航自己的工作区。
+    该工具只返回目录元数据，不读取文件内容。
     已知目标目录只需要查看树结构时使用；如果不确定可访问范围、权限或 Docker/宿主机路径映射，应先使用 list_accessible_directories。
     
     Args:
@@ -98,6 +100,51 @@ def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None)
         keyword: 可选的文件名关键字模糊检索。
     """
     try:
+        ctx = get_current_agent_context()
+        is_admin = bool(getattr(ctx, "is_admin", False))
+        user_info = None
+        if ctx is not None and getattr(ctx, "user_id", None) is not None:
+            dimensions = getattr(ctx, "user_dimensions", None) or {}
+            user_name = None
+            if isinstance(dimensions, dict):
+                raw_name = dimensions.get("user_name") or dimensions.get("username")
+                user_name = str(raw_name).strip() if raw_name is not None else None
+                user_name = user_name or None
+            user_info = {
+                "user_id": ctx.user_id,
+                "id": ctx.user_id,
+                "user_name": user_name,
+                "username": user_name,
+                "role": "admin" if is_admin else "user",
+            }
+
+        from app.services.ai.runtime.agentscope.workspace import default_workspace_root
+        from app.utils.fs_access import (
+            get_user_private_workspace_root,
+            is_other_user_workspace_path,
+        )
+
+        workspace_root = os.path.realpath(default_workspace_root())
+        private_workspace_root = get_user_private_workspace_root(user_info)
+        if private_workspace_root:
+            private_workspace_root = os.path.realpath(private_workspace_root)
+
+        def is_hidden_workspace_path(candidate: str) -> bool:
+            """避免从上层目录递归时泄露其他用户工作区。"""
+            if is_admin:
+                return False
+            normalized = os.path.realpath(candidate)
+            if normalized == workspace_root:
+                return False
+            if not normalized.startswith(workspace_root + os.sep):
+                return False
+            if private_workspace_root and (
+                normalized == private_workspace_root
+                or normalized.startswith(private_workspace_root + os.sep)
+            ):
+                return False
+            return True
+
         project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))))
         abs_path = os.path.realpath(os.path.abspath(path))
         allowed_roots = [os.path.realpath(project_root), os.path.realpath("/app")]
@@ -106,6 +153,15 @@ def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None)
             for root in allowed_roots
         ):
             return f"安全拦截：禁止导航项目根目录或 /app 之外的路径 {path}！"
+
+        if not is_admin and (
+            is_hidden_workspace_path(abs_path)
+            or (
+                abs_path != workspace_root
+                and is_other_user_workspace_path(abs_path, user_info)
+            )
+        ):
+            return "安全拦截：普通用户只能导航公共目录和自己的私有工作区，禁止访问其他用户目录。"
             
         if not os.path.exists(abs_path):
             return f"错误：路径 {path} 不存在。"
@@ -114,10 +170,18 @@ def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None)
             return f"错误：{path} 不是一个目录。"
 
         result_lines = []
-        for root, dirs, files in os.walk(abs_path):
+        for root, dirs, files in os.walk(abs_path, topdown=True):
             depth = root.replace(abs_path, '').count(os.sep)
             if depth > 4:
+                dirs[:] = []
                 continue
+
+            if not is_admin:
+                dirs[:] = [
+                    directory
+                    for directory in dirs
+                    if not is_hidden_workspace_path(os.path.join(root, directory))
+                ]
                 
             indent = "  " * depth
             rel_dir = os.path.basename(root) or root
