@@ -130,7 +130,7 @@ class AgentServicePrompts:
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
-        "list_accessible_directories": "列出当前可访问的文件目录清单、读写权限与用途说明",
+        "list_accessible_directories": "列出当前可访问的文件目录清单、读写权限（只读/可写）与推荐用途说明（不确定路径时优先调用）",
         "list_accessible_datasets": "列出当前用户有权限且已启用的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "list_available_agents": "列出当前用户有权限且可运行的智能体/专家目录",
@@ -147,11 +147,11 @@ class AgentServicePrompts:
         "list_available_skills": "列出可用技能摘要",
         "get_dataset_schema": "获取数据集/表/字段元数据",
         "execute_sql_query": "执行 SQL 查数",
-        "Read": "读取 workspace 内文件",
-        "Write": "写入 workspace 内文件",
-        "Edit": "精确编辑文件",
-        "Grep": "搜索文件文本内容",
-        "Glob": "按模式查找文件",
+        "Read": "读取文件内容（不清楚公共手册或个人目录映射时先调用 list_accessible_directories）",
+        "Write": "写入/创建文件（持久文件放 docs/，临时脚本放 sessions/，严禁写入公共只读目录）",
+        "Edit": "精确编辑文件内容",
+        "Grep": "按关键字/正则表达式搜索文件文本内容",
+        "Glob": "按文件名模式查找匹配文件",
         "Bash": "执行 Shell 命令",
         "list_process": "列出系统进程",
         "manage_process": "管理进程（启动/停止等）",
@@ -423,6 +423,12 @@ class AgentServicePrompts:
             
             tool_str = "、".join(mentioned)
             sensitive_rules.append(f"- 文件路径、文本搜索、Shell、进程类能力（如 {tool_str}）仅在该工具已绑定时使用，并严格遵守工具说明中的路径沙箱与安全限制。")
+            if has_file_tools:
+                sensitive_rules.append(
+                    "- **文件读写与路径防盲猜规范**：\n"
+                    "  1. 读/搜文件（Read/Glob/Grep）时，若不清楚确切路径、不明确公共文档（如平台官方手册 data/docs/）与个人工作区映射、或遇到找不到文件报错，**严禁盲目臆造不同前缀路径反复试错**；若绑定了 list_accessible_directories，必须优先调用它获取完整目录清单与路径映射。\n"
+                    "  2. 写入文件（Write/Edit）时，**平台公共目录（data/docs/、skills/、branding/）为只读（read_only），严禁尝试写入或覆盖**；AI 生成的持久化报告/导出文件统一写入用户专属 docs/ 目录，会话临时脚本与中间缓存写入 sessions/{conversation_id}/ 目录。"
+                )
             
         if "Grep" in tool_names or "Glob" in tool_names or "Bash" in tool_names:
             parts = []
@@ -464,7 +470,7 @@ class AgentServicePrompts:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
 
         if "list_accessible_directories" in tool_names:
-            table_rows.append("| 「我能访问哪些目录」「文件存在哪」「工作区目录结构」「查看可写目录」 | 调用 **list_accessible_directories**（获取 docs/、sessions/、uploads/、skills/ 等目录清单、权限及推荐用途） |")
+            table_rows.append("| 「我能访问哪些目录」「文件存在哪」「工作区目录结构」「查看可写目录」「查找公共手册/FAQ/文档路径」「文件读写报错排查可用目录与权限」 | 调用 **list_accessible_directories**（获取 docs/、sessions/、uploads/、公共 data/docs/、skills/ 等完整目录清单、权限及推荐用途） |")
 
         if "list_accessible_datasets" in tool_names:
             table_rows.append("| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |")
@@ -754,6 +760,7 @@ class AgentServicePrompts:
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
             "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"
+            "- 不清楚文件在当前环境中的实际路径结构、公共文档（如 data/docs/ 手册）与个人空间映射，或遇到找不到文件/写入被拒时，可调用 list_accessible_directories 获取全量目录清单与读写权限。\n"
             "- 有 Grep/Glob 时优先于 Bash 做文本/文件搜索；Bash 用于 Grep/Glob 无法完成的管道、系统诊断或通用命令行操作。\n"
             "- **容器常见基础命令与工具心智**：运行环境通常预装 `bash`, `curl`, `wget`, `gnupg`, `node`, `npm`, `telnet`, `netstat`, `ping`, `dig`, `nslookup`, `ps`, `git`, `jq`, `unzip`, `nc` 等命令。智能体没有针对 `git`、`curl` 等独立绑定的专用工具；当用户要求进行版本控制（如 `git pull`、`git status`）或拉取网络数据等通用 CLI 操作时，应当直接调用 `Bash`（即 `exec_command`）工具去执行对应的 shell 命令，绝不能因为没有名为 `git` 的独立工具而拒绝任务。\n"
             "- 若回答依赖某命令是否存在，先用 `command -v <cmd>` 或 `which <cmd>` 快速确认，不要凭记忆断言未安装。\n"

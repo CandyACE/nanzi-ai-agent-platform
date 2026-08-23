@@ -158,7 +158,8 @@ async def list_accessible_directories() -> str:
 
     使用规则：
     - 当 AI 需要了解自身当前可访问哪些目录、需要确定文件落盘位置（如生成报告、导出 Excel/PDF、写入临时代码）、或查看公共与个人空间区别时调用此工具。
-    - 清楚区分「用户专属持久化文档库 (docs/)」、「当前会话临时工作区 (sessions/{cid}/)」、「用户上传附件 (uploads/)」和「系统公共技能库 (skills/)」。
+    - 读写或搜索文件前若不确定目标文件路径，或遇到文件找不到/写入被拒时，必须优先调用本工具查看全景映射，严禁盲猜路径。
+    - 清楚区分「平台公共文档与手册 (data/docs/)，只读」、「系统公共技能库 (skills/)，只读」、「用户专属持久化文档库 (docs/)，可写」、「当前会话临时工作区 (sessions/{cid}/)，可写」和「用户上传附件 (uploads/)，可读写」。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:

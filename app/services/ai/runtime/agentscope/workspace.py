@@ -1718,8 +1718,39 @@ def _map_docker_workspace_tool_input(
     return mapped
 
 
+WORKSPACE_ERROR_HEALING_HINT = (
+    "\n\n[系统建议] 目标路径不存在、无法访问或权限受限。若您不确定当前环境具体目录结构、平台公共文档（如 data/docs/ 官方手册）与用户工作区（docs/、sessions/）的路径映射或读写权限，"
+    "建议优先调用 list_accessible_directories 工具查看当前环境完整目录清单与推荐用途。"
+)
+
+_WORKSPACE_ERROR_MARKERS = (
+    "filenotfounderror",
+    "no such file or directory",
+    "file not found",
+    "permission denied",
+    "permissiondenied",
+    "is a directory",
+    "not a directory",
+    "path escapes",
+    "escapes docker workspace",
+)
+
+
+def enhance_workspace_error_message(text_or_exc: Any) -> str:
+    """如果工具报错涉及找不到文件、权限受限或越界，自动追加 list_accessible_directories 自愈建议。"""
+    raw = str(text_or_exc)
+    lower = raw.lower()
+    if "list_accessible_directories" in raw:
+        return raw
+    if any(marker in lower for marker in _WORKSPACE_ERROR_MARKERS):
+        return f"{raw}{WORKSPACE_ERROR_HEALING_HINT}"
+    return raw
+
+
 def _logicalize_docker_workspace_result(result: Any, host_root: str) -> Any:
     """Keep host-tool results in the platform's canonical host namespace."""
+    if isinstance(result, str):
+        return enhance_workspace_error_message(result)
     return result
 
 
@@ -1738,9 +1769,20 @@ class _DockerLogicalWorkspaceNativeTool:
         return _map_docker_workspace_tool_input(self.name, tool_input, self._host_root)
 
     async def __call__(self, **kwargs: Any) -> Any:
-        result = self._native_tool(**self._map(kwargs))
-        if inspect.isawaitable(result):
-            result = await result
+        try:
+            mapped_input = self._map(kwargs)
+        except Exception as exc:
+            msg = enhance_workspace_error_message(exc)
+            raise type(exc)(msg) from exc
+
+        try:
+            result = self._native_tool(**mapped_input)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            msg = enhance_workspace_error_message(exc)
+            raise type(exc)(msg) from exc
+
         return _logicalize_docker_workspace_result(result, self._host_root)
 
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:

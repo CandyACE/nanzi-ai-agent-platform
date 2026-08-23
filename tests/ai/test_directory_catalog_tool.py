@@ -144,3 +144,50 @@ def test_public_docs_directory_fs_access_read_only(tmp_path):
         # 普通用户不可写
         assert is_path_writable(str(sample_file), user_info) is False
 
+
+def test_enhance_workspace_error_message():
+    from app.services.ai.runtime.agentscope.workspace import enhance_workspace_error_message
+
+    # 1. 找不到文件异常
+    err1 = FileNotFoundError("No such file or directory: '/workspace/data/docs/FAQ.md'")
+    msg1 = enhance_workspace_error_message(err1)
+    assert "list_accessible_directories" in msg1
+    assert "目标路径不存在、无法访问或权限受限" in msg1
+
+    # 2. 权限受限异常
+    err2 = PermissionError("Permission denied: cannot write to '/data/docs/FAQ.md'")
+    msg2 = enhance_workspace_error_message(err2)
+    assert "list_accessible_directories" in msg2
+
+    # 3. 越界异常
+    err3 = ValueError("path escapes Docker workspace: ../../etc/passwd")
+    msg3 = enhance_workspace_error_message(err3)
+    assert "list_accessible_directories" in msg3
+
+    # 4. 已经包含 list_accessible_directories 的文本不会重复追加
+    msg4 = enhance_workspace_error_message("FileNotFoundError: please call list_accessible_directories")
+    assert msg4.count("list_accessible_directories") == 1
+
+    # 5. 普通无关异常不追加
+    err5 = ZeroDivisionError("division by zero")
+    msg5 = enhance_workspace_error_message(err5)
+    assert "list_accessible_directories" not in msg5
+
+
+def test_agent_prompts_file_anti_guessing_guidelines():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    # 包含文件工具与 list_accessible_directories 时的 prompt 构建
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        "你是一个专业助手。",
+        runtime_tool_names=["Read", "Write", "list_accessible_directories", "Bash"],
+    )
+
+    # 验证包含防盲猜规则
+    assert "文件读写与路径防盲猜规范" in prompt
+    assert "严禁盲目臆造不同前缀路径反复试错" in prompt
+    assert "list_accessible_directories" in prompt
+    assert "平台公共目录（data/docs/、skills/、branding/）为只读（read_only）" in prompt
+    assert "查找公共手册/FAQ/文档路径" in prompt
+
+

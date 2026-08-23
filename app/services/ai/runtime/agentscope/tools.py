@@ -651,9 +651,25 @@ class AgentScopeNativeApprovalTool:
 
     async def __call__(self, **kwargs: Any) -> Any:
         self._check_tool_loop(kwargs)
-        result = self.native_tool(**kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        from app.services.ai.runtime.agentscope.workspace import (
+            WORKSPACE_BUILTIN_TOOL_NAMES,
+            enhance_workspace_error_message,
+        )
+
+        is_file_tool = self.name in (WORKSPACE_BUILTIN_TOOL_NAMES | {"read_file", "write_file", "edit_file", "glob_files", "search_text"})
+        try:
+            result = self.native_tool(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            if is_file_tool:
+                msg = enhance_workspace_error_message(exc)
+                raise type(exc)(msg) from exc
+            raise
+
+        if is_file_tool and isinstance(result, str):
+            result = enhance_workspace_error_message(result)
+
         _record_evidence_result(
             tool_name=self.name,
             evidence_types=self.evidence_types,
