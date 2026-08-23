@@ -316,16 +316,21 @@ async def list_accessible_directories() -> str:
             {
                 "directory_name": "docs",
                 "container_sandbox_path": (
-                    None if is_docker_sandbox else global_docs_service_path
+                    "/workspace/public/docs" if is_docker_sandbox else global_docs_service_path
                 ),
                 "backend_service_path": global_docs_service_path,
                 "host_physical_path": _to_host_path(global_docs_service_path),
-                "access_via": ["Read", "Glob", "Grep"],
+                "access_via": (
+                    ["Bash", "Read", "Glob", "Grep"]
+                    if is_docker_sandbox
+                    else ["Read", "Glob", "Grep"]
+                ),
                 "permission": "read_only",
                 "category": "platform_global_docs",
                 "description": (
                     "平台全局公共文档与模板库（data/docs）。"
-                    "Docker 沙箱 Bash 不直接挂载此目录，请通过宿主文件工具只读查阅。"
+                    "Docker 模式下以只读方式挂载到 /workspace/public/docs；"
+                    "其他模式通过宿主文件工具只读查阅。"
                 ),
                 "recommended_for": ["查阅公共产品手册", "参考公共标准模板与制度文档"],
             },
@@ -409,7 +414,7 @@ async def list_accessible_directories() -> str:
                 "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
                 "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
                 "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",
-                "5. 公共 docs 未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md；禁止 Bash 或递归扫描 /app；",
+                "5. 公共 docs 在 Docker 中通过 /workspace/public/docs 只读访问；未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
             ],
         }

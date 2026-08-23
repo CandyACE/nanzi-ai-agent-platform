@@ -111,8 +111,8 @@ async def test_list_accessible_directories_docker_sandbox_mode():
             item["directory_name"]: item
             for item in data["public_directories"]["directories"]
         }
-        assert public_dirs["docs"]["container_sandbox_path"] is None
-        assert public_dirs["docs"]["access_via"] == ["Read", "Glob", "Grep"]
+        assert public_dirs["docs"]["container_sandbox_path"] == "/workspace/public/docs"
+        assert public_dirs["docs"]["access_via"] == ["Bash", "Read", "Glob", "Grep"]
         assert data["platform_help_files"]
         assert all(item["container_sandbox_path"] is None for item in data["platform_help_files"])
         assert all(item["backend_service_path"].startswith("/app/") for item in data["platform_help_files"])
@@ -240,8 +240,8 @@ def test_agent_prompts_route_platform_docs_through_host_file_tools():
     assert "公共文档目录下的 `data/docs/*.md`" in prompt
     assert "优先通过宿主侧" in prompt
     assert "Grep`/`Glob`/`Read`" in prompt
-    assert "Docker 沙箱 Bash 不挂载公共 docs" in prompt
-    assert "禁止通过 Bash 访问公共 docs" in prompt
+    assert "Docker 沙箱内也可通过只读路径 `/workspace/public/docs`" in prompt
+    assert "不要因为“是什么意思”等词语改走企业知识库" in prompt
     assert "platform_help_files" in prompt
     assert "不得递归扫描 `/app`" in prompt
 

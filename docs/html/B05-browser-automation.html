@@ -1,0 +1,404 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 B05 篇（工业级深度架构与干货版）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#27272a;line-height:1.85;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  
+  <!-- 头部 Banner 区域 -->
+  <section style="margin:0 0 26px 0;padding:32px 22px;background:linear-gradient(135deg,#064e3b 0%,#047857 45%,#0f172a 100%);border-radius:14px;text-align:center;box-shadow:0 8px 32px rgba(6,78,59,0.35);">
+    <p style="margin:0 0 8px 0;font-size:13px;color:#6ee7b7;letter-spacing:2px;font-weight:700;text-transform:uppercase;">NanZi 开源智能体平台实战连载 · B05</p>
+    <p style="margin:0 0 12px 0;font-size:23px;font-weight:800;color:#ffffff;line-height:1.45;">浏览器自动化与人机协同：从拟人仿生驱动到全双工实时接管</p>
+    <p style="margin:0;font-size:14px;color:#a7f3d0;line-height:1.6;">会话沙箱 · 贝塞尔拟人算法 · 接口抓包降维打击 · 空间命中检视 · 毫秒级控制权交接</p>
+  </section>
+
+  <!-- 开源项目声明 -->
+  <section style="margin:0 0 24px 0;padding:16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #10b981;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;">📌 开源项目声明</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">本项目为<strong>个人开源项目</strong>（MIT License）。完整覆盖多智能体编排、企业级 ChatBI、知识库、MCP 协议、Skills 插件以及云端远程浏览器自动化平台。GitHub 仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;font-weight:600;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+
+  <!-- 导读：读者能学到什么 -->
+  <section style="margin:0 0 20px 0;padding:16px 18px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1e40af;">🎯 本文核心价值：读完你能学到什么？</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#1e3a8a;line-height:1.8;"><strong>1. 架构设计：</strong>如何设计基于多租户沙箱隔离（0700 权限）、异步互斥锁与 WebSocket 全双工串流的云端浏览器系统；</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#1e3a8a;line-height:1.8;"><strong>2. 拟人仿生体验：</strong>为什么机器人容易被封？AI 如何像真人一样平滑滑鼠标、逐字打字、惯性滚动与过滑块验证码；</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#1e3a8a;line-height:1.8;"><strong>3. 接口抓包降维打击：</strong>为什么抓 DOM 表格会失败？如何利用 CDP 异步监听直接提取后端原始 JSON 数据；</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#1e3a8a;line-height:1.8;"><strong>4. 前端空间空间检视与流控：</strong>Point-in-Rect 空间命中测试算法、自适应 JPEG 压缩（体积降 85%）与毫秒级人机协同状态机；</p>
+    <p style="margin:0;font-size:14px;color:#1e3a8a;line-height:1.8;"><strong>5. 避坑指南：</strong>SSRF 防护、Stale 元素自愈、长连接内存泄漏与 30 分钟无活动自动 GC 的工程落地细节。</p>
+  </section>
+
+  <!-- 痛点与背景剖析 -->
+  <section style="margin:0 0 18px 0;">
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.9;">在智能体（AI Agent）落地企业真实业务的过程中，很多高价值数据并没有开放的标准 REST API。它们深藏在内网 OA、ERP、私有数据报表、工单系统或第三方 SaaS 平台中。</p>
+    <p style="margin:12px 0 0 0;font-size:15px;color:#334155;line-height:1.9;">当试图让大模型驱动浏览器去处理这些任务时，传统自动化工具（如 Selenium、原生 Playwright）往往会遭遇三大致命瓶颈：</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#991b1b;line-height:1.8;"><strong>❌ 1. 机械化特征被反爬秒封：</strong>0ms 瞬间填入长文本、鼠标瞬移直击正中心，瞬间触发 WAF、极验、Cloudflare 等安全风控；</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#991b1b;line-height:1.8;"><strong>❌ 2. 现代 SPA 虚拟滚动黑洞：</strong>DOM 仅渲染可视区 5 条数据，大模型盲目翻页导致表格拼凑错乱或数据丢失；</p>
+    <p style="margin:0;font-size:14px;color:#991b1b;line-height:1.8;"><strong>❌ 3. 黑盒运行与失控风险：</strong>AI 遇到复杂验证码或死循环时，人类无法观察、无法介入，只能任由任务超时崩溃。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ==================== 01 架构设计 ==================== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:19px;font-weight:bold;color:#0f172a;border-left:5px solid #059669;padding-left:12px;line-height:1.4;">01｜架构设计：会话物理沙箱与全双工编排</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.85;">为了同时满足<strong>并发隔离、执行安全性与人机协同毫秒级响应</strong>，NanZi 浏览器子系统采用了分层解耦的工业级设计：</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#166534;">🏛️ 四层解耦架构体系</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;"><strong>1. 底层驱动层（BrowserWorker）：</strong>封装 Playwright Chromium 实例生命周期。提供持久化 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">user_data_dir</code>、抹除 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">navigator.webdriver</code> 的 Stealth 脚本注入与 DOM 语义空间解析；</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;"><strong>2. 运行时编排层（BrowserRuntime）：</strong>会话状态机中枢。维护基于会话 ID 的异步互斥锁（<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">_session_locks</code>）、人机控制权事件分发、快照缓存淘汰与 30 分钟无活动自动析构机制；</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;"><strong>3. 实时协议层（FastAPI WebSocket）：</strong>提供带时效的 Viewer Token 鉴权、自适应 JPEG 图像流式广播、人工输入事件双向转发及 SSRF 白名单校验；</p>
+    <p style="margin:0;font-size:14px;color:#1e293b;line-height:1.85;"><strong>4. 交互前端（Vue 3 + Tailwind CSS）：</strong>自适应等比画面投影、空间命中高亮检测、Chrome 风格多 Tab 与右键菜单、局部框选裁剪与多模态提问联动。</p>
+  </section>
+
+  <!-- 详细执行时序流程 -->
+  <section style="margin:16px 0 14px 0;">
+    <p style="margin:0;font-size:16px;font-weight:bold;color:#0f172a;">🔄 端到端执行流程与时序编排（全生命周期拆解）</p>
+  </section>
+
+  <!-- 文字时序图卡片（等宽代码流） -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background:#0f172a;border-radius:10px;box-shadow:inset 0 2px 8px rgba(0,0,0,0.5);overflow-x:auto;">
+    <pre style="margin:0;font-family:Consolas,Monaco,'Courier New',Courier,monospace;font-size:12px;color:#cbd5e1;line-height:1.45;white-space:pre;"><span style="color:#6ee7b7;font-weight:bold;">[ 端到端执行时序全景 · 5方交互泳道 ]</span>
+
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  前端协同面板  │     │ WebSocket网关│     │ 运行时状态机  │     │ Playwright沙箱│     │ LLM 智能体大脑 │
+│(BrowserPanel)│     │ (/viewer WS) │     │(BrowserRuntime)│    │(BrowserWorker)│   │ (AgentScope) │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │                    │                    │
+  <span style="color:#38bdf8;font-weight:bold;">[1] 打开浏览器 / 发起任务</span> │                    │                    │                    │
+       ├──────────────────────────────────────────────────────────────────────────────────>│ 收到任务指令
+       │                    │                    │                    │                    │
+  <span style="color:#38bdf8;font-weight:bold;">[2] 鉴权与沙箱初始化</span>       │                    │                    │                    │
+       │── 申请 Viewer Token ───────────────────>│ 校验用户与权限     │                    │
+       │<── 返回 Viewer Token ───────────────────│ 绑定 profile 目录──>│ 启动 Chromium 容器 │
+       │                    │                    │                    │ (注入 Stealth 补丁)│
+  <span style="color:#38bdf8;font-weight:bold;">[3] 建立全双工实时流</span>       │                    │                    │                    │
+       │── ws:// 握手 (Token)─>│ 订阅事件队列     │                    │                    │
+       │                    │<── 初次快照广播 ────│ 截取首帧 JPEG ─────│                    │
+       │<── 渲染首帧 JPEG ────│                    │                    │                    │
+       │                    │                    │                    │                    │
+  <span style="color:#38bdf8;font-weight:bold;">[4] AI 工具决策与互斥执行</span>  │                    │                    │                    │
+       │                    │                    │                    │<── tool_call 调用 ──│ (browser_click)
+       │                    │                    │<── 竞争获取 SessionLock ────────────────│
+       │                    │<── 广播 AI 动作 ────│ (状态: 👆 AI正在点击)                     │
+       │<── 点亮呼吸光圈 ─────│                    │                    │                    │
+       │                    │                    │── 贝塞尔平滑移动 ──>│ 拟人点击落点       │
+       │                    │                    │── 视线沉降等待 ────>│ DOM 稳定沉降       │
+       │                    │<── 广播最新快照 ────│ 抓取压缩 JPEG ─────│                    │
+       │<── 刷新投屏画面 ─────│                    │── 释放 SessionLock ────────────────────>│ 返回执行成功
+       │                    │                    │                    │                    │
+  <span style="color:#38bdf8;font-weight:bold;">[5] 人工毫秒级接管 (可选)</span>  │                    │                    │                    │
+       │── 用户手动点击画面 ─>│ 转发 input 事件 ──>│ 抢占控制权 (状态: 👆 人工操作)              │
+       │                    │                    │── 原生执行点击 ────>│ 立即物理点击       │
+       │<── 收到人工操作快照 ─│<── 广播最新画面 ────│                    │                    │
+       │    (启动 2.5s 倒计时)│                    │                    │                    │
+       │<── 自动交还 AI 控制权 │<── 倒计时结束 ──────│ 归还状态机控制权   │                    │
+       │                    │                    │                    │                    │
+  <span style="color:#38bdf8;font-weight:bold;">[6] 空闲回收与生命周期终结</span> │                    │                    │                    │
+       │                    │                    │ (30分钟无活动轮询)  │                    │
+       │                    │                    │── 优雅关闭 ───────>│ 释放内存/显存 Context│
+       │                    │                    │                    │ (Profile 持久化落盘)│</pre>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>① 会话鉴权与沙箱初始化（Session Provisioning）：</strong><br/>
+      前端触发打开浏览器或对话中大模型首发 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">browser_open</code> $\to$ 后端校验用户权限并派发带时效的 Viewer Token $\to$ 绑定物理目录 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">data/browser-profiles/{user_id}/</code> 启动独立持久化 Chromium Context，注入防检测 Stealth 补丁。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>② 全双工握手与帧流广播（Handshake & Stream）：</strong><br/>
+      前端凭 Viewer Token 建立 WebSocket 长连接 $\to$ 订阅 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">browser_runtime.subscribe_events</code> 队列 $\to$ 后端推送初次 DOM 语义快照、Tab 列表与自适应高质量 JPEG 画面帧 $\to$ 前端完成等比投影与空间坐标映射。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>③ AI 工具互斥调用链路（AI Tool Execution & Locking）：</strong><br/>
+      大模型发起 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">browser_click</code> / <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">browser_fill</code> $\to$ 竞争并获取当前会话异步锁（<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">asyncio.Lock</code>）$\to$ 广播「AI 正在执行」状态并在前端点亮呼吸光圈 $\to$ 拟人引擎执行贝塞尔轨迹移动与自然敲击 $\to$ 动作完成触发 DOM 沉降等待 $\to$ 截取最新 JPEG 帧并广播更新快照 $\to$ 释放锁返回结果给 Agent。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>④ 人工即时抢占与平滑回交（Human Takeover & Return）：</strong><br/>
+      用户在画面上触发点击/按键/滚动 $\to$ 前端发送 input 事件 $\to$ 后端毫秒级中断 AI 锁定并标记为「人工操作」$\to$ 原生执行物理操作并返回最新画面 $\to$ 启动 2.5 秒防抖计时器 $\to$ 倒计时结束平滑归还 AI 控制权并派发通知。
+    </p>
+    <p style="margin:0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>⑤ 空闲回收与数据安全擦除（Idle GC & Wipe）：</strong><br/>
+      后台守护协程每隔 5 分钟轮询 $\to$ 若会话无活动超过 30 分钟，自动优雅关闭 Playwright 实例释放显存/内存 $\to$ 登录态 Profile 安全保留在磁盘；用户亦可在个人中心点击「一键清除」，物理抹除底层数据。
+    </p>
+  </section>
+
+  <!-- 图片占位符 1 -->
+  <section style="margin:18px 0;padding:24px 16px;background:#ffffff;border:2px dashed #cbd5e1;border-radius:12px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:8px;">🖼️</div>
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;">【图片占位符 1 · 系统分层架构与端到端执行时序图】</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;"><strong>建议配图：</strong>左侧展示 BrowserWorker、Runtime、WebSocket 与 Vue 前端架构分层，右侧展示会话鉴权、AI 工具执行、人工抢占与空闲 GC 的完整 UML 时序泳道图。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>🔒 物理沙箱隔离安全原则：</strong>每个用户的登录态（Cookie、LocalStorage、Cache）物理持久化隔离在 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">data/browser-profiles/{user_id}/</code> 目录中，目录权限硬性锁定为 0700，平台支持个人中心一键物理擦除，彻底规避多租户数据穿透风险。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+<!-- ==================== 02 拟人化引擎大白话解析 ==================== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:19px;font-weight:bold;color:#0f172a;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜拟人仿生：AI 怎么像真人一样操作网页？</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.85;">很多网站都有风控系统，机器人一操作就会被立刻识别封禁。<strong>因为机器人的动作太“假”了：</strong>鼠标瞬间瞬移、永远点在按钮最中心的绝对坐标、0毫秒瞬间填完几百个字……</p>
+    <p style="margin:8px 0 0 0;font-size:15px;color:#334155;line-height:1.85;">NanZi 在底层给 AI 装上了一套<strong>「拟人仿生引擎」</strong>，让 AI 的每一个动作都和真人坐在电脑前用鼠标键盘操作一模一样：</p>
+  </section>
+
+  <!-- 拟人四项卡片（大白话版） -->
+  <section style="margin:0 0 12px 0;padding:16px;background:#fdf4ff;border:1px solid #f0abfc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#86198f;">🖱️ 1. 鼠标滑过去，而不是“瞬间瞬移”</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>平滑滑行与自然手抖：</strong>真人移动鼠标是从起点划一道带弧度的轨迹滑向目标，中途手还会轻微晃动。AI 点击前会分 5~12 步平滑滑过屏幕，每一步都带有微小的人手抖动，彻底告别机器瞬移；
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>随机点在按钮内部，不点死板正中心：</strong>真人点按钮绝不可能每次都精准戳在几何绝对正中心。AI 会在按钮内部的偏左、偏右、偏上等安全范围内随机落点；
+    </p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>真实物理按压：</strong>鼠标移到位置后会自然停顿一下，鼠标按下和抬起之间维持几十毫秒，还原手指真实按压手感。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#fff7ed;border:1px solid #fdba74;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#c2410c;">⌨️ 2. 一个字一个字敲键盘，而不是“直接塞文字”</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>逐字敲击有快有慢：</strong>普通脚本是把文字瞬间灌进输入框（耗时 0 毫秒）。AI 则是模拟人手逐字敲击键盘，每个字之间有 30~65 毫秒的正态随机间隔，有快有慢；
+    </p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>长文章打一会儿歇一下：</strong>遇到很长的段落时，AI 会打完一截停顿 0.1 秒“想想”，再继续打下一截，兼顾打字速度与极高的拟人真实度。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#15803d;">📜 3. 滚轮一截一截滑，滑完还要“用眼睛看一眼”</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>带惯性的滚轮滚动：</strong>长页面滚动被拆解为 4~7 次小步长滚轮滑行，带有阻尼感；
+    </p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">
+      • <strong>视觉停顿确认：</strong>每次点击或滚动完成后，AI 都会自然停顿 0.1~0.2 秒，就像人眼在看网页是否加载出来一样，绝不进行高频无脑连击。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1d4ed8;">🧩 4. 专破安全滑块验证码（加速 $\to$ 匀速 $\to$ 减速 $\to$ 抖动回弹）</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">
+      针对各类拼图滑块，AI 彻底抛弃了被风控秒抓的“匀速直线拖拽”，完美还原真人拉滑块的习惯：<strong>起步用力加速 $\to$ 中途快速滑动 $\to$ 靠近缺口时减速慢推 $\to$ 到达终点时不小心拉过头了再往回退 1~2 个像素</strong>，滑块通过率大幅飙升！
+    </p>
+  </section>
+
+  <!-- 图片占位符 2 -->
+  <section style="margin:18px 0;padding:24px 16px;background:#ffffff;border:2px dashed #cbd5e1;border-radius:12px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:8px;">🖼️</div>
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;">【图片占位符 2 · 滑块拟人拖拽与微抖动曲线示意图】</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;"><strong>建议配图：</strong>展示安全验证滑块界面，以及 AI 拖拽滑块时的拟人轨迹点、Y 轴微抖动与终点回弹效果图。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ==================== 03 网络抓包降维打击 ==================== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:19px;font-weight:bold;color:#0f172a;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜数据抓取降维打击：DOM 解析 vs 网络层抓包</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.85;">传统自动化最大的误区是<strong>把所有注意力放在 DOM 树解析上</strong>。但在面对现代复杂单页应用（SPA）时，DOM 往往是失真的：</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#6b21a8;">📡 为什么网络层抓包能实现“降维打击”？</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>1. 攻克虚拟滚动（Virtual List）：</strong>现代企业报表为优化性能，10,000 行数据在 DOM 中仅保留当前可视的 10 个 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">&lt;tr&gt;</code> 节点，AI 拼命滚动翻页极易丢失数据。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>2. CDP 异步响应监听原理：</strong>NanZi 通过在页面初始化时注册异步响应监听通道：
+      <br/><code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">page.on("response", lambda res: handle.network_logs.append(...))</code>
+      自动捕获后台发生的 Fetch/XHR 请求及原始 JSON 响应。大模型只需调用 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">browser_get_network_logs</code>，即可一次性直接读取全量结构化数据，<strong>速度提升 20 倍，且绝对完整无遗漏</strong>。
+    </p>
+    <p style="margin:0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>3. Cookie 批量注入与免密直登：</strong>调用 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">browser_set_cookies</code> 直接将 Session/Token 注入浏览器上下文，彻底跳过验证码、短信二次认证等繁琐登录链。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ==================== 04 28 项工具矩阵与决策 ==================== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:19px;font-weight:bold;color:#0f172a;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜28 项全功能工具矩阵与大模型决策优化</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.85;">拥有工具还不够，大模型如何聪明地选择工具才是关键。NanZi 构建了功能完备的 28 项工具池，并在智能体配置中心完整开放自由勾选：</p>
+  </section>
+
+  <!-- 28 项工具全景分类 -->
+  <section style="margin:0 0 14px 0;padding:16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:15px;font-weight:bold;color:#6b21a8;">🛠️ 28 项全功能原子工具矩阵（6 大核心分类完整清单）</p>
+
+    <!-- 分类 1 -->
+    <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed #d8b4fe;">
+      <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#7e22ce;">1. 基础导航与视口管理（6 项）</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_open(url)</code>：打开目标 URL 网页并等待 DOM 加载完毕；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_snapshot()</code>：提取当前页面的 DOM 语义空间快照（自动标记 #ref 编号）并抓取最新 JPEG 画面；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_back()</code>：浏览器历史记录后退一步；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_forward()</code>：浏览器历史记录前进一步；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_reload()</code>：强制重新加载当前网页；</p>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_wait_for(text/selector/timeout)</code>：显式条件等待，直到特定文本出现或元素渲染就绪。</p>
+    </div>
+
+    <!-- 分类 2 -->
+    <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed #d8b4fe;">
+      <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#7e22ce;">2. 拟人交互与键盘鼠标（8 项）</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_click(target_ref)</code>：按缓动贝塞尔曲线平滑移动并拟人点击目标元素；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_fill(target_ref, text)</code>：逐字拟人敲击输入文本（30~65ms/字延时 + 长文分段停顿）；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_scroll(direction/delta_y)</code>：阻尼阶梯式平滑滚轮滚动页面；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_hover(target_ref)</code>：平滑悬停在元素上方（触发悬浮二级菜单或 Tips）；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_press(key)</code>：模拟物理按键（Enter、Tab、Esc、Backspace、方向键等）；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_select_option(target_ref, value)</code>：下拉选框智能选择单项或多项；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_drag(source_ref, target_ref)</code>：元素间拟人化按压拖拽至目标区域；</p>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_slider_drag(slider_ref, distance)</code>：三阶贝塞尔加速度拖拽滑块验证码（专克反爬风控）。</p>
+    </div>
+
+    <!-- 分类 3 -->
+    <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed #d8b4fe;">
+      <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#7e22ce;">3. DOM 抽取与结构化解析（2 项）</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_read_visible()</code>：清洗提取当前视口内真实可见的无噪音正文文本；</p>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_extract_table(target_ref)</code>：智能解析网页表格或 Grid 网格，一键输出 Markdown 表格与 JSON 列表。</p>
+    </div>
+
+    <!-- 分类 4 -->
+    <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed #d8b4fe;">
+      <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#7e22ce;">4. 多标签页生命周期管理（3 项）</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_tabs()</code>：列出当前会话所有打开的标签页列表（含 tab_id、title、url）；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_switch_tab(tab_id)</code>：切换并激活指定的标签页；</p>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_close_tab(tab_id)</code>：关闭指定的标签页。</p>
+    </div>
+
+    <!-- 分类 5 -->
+    <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed #d8b4fe;">
+      <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#7e22ce;">5. 网络层抓包与凭证管理（3 项）</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_get_network_logs(url_pattern)</code>：抓取后台 Fetch/XHR 请求与原始 JSON 响应（直接攻克虚拟滚动列表）；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_get_cookies(domain)</code>：导出当前或指定域名的完整 Cookie 列表；</p>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_set_cookies(cookies)</code>：向浏览器批量注入 Cookie 凭证，免密直登私有系统。</p>
+    </div>
+
+    <!-- 分类 6 -->
+    <div>
+      <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#7e22ce;">6. 高级执行与文件交互（6 项）</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_export_pdf()</code>：将网页渲染导出为矢量 A4 PDF 并发布下载链接；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_upload(target_ref, file_path)</code>：选择并上传本地会话文件到网页上传控件；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_download(url/target_ref)</code>：拦截并下载网页文件到会话目录；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_execute_js(script)</code>：在页面沙箱中执行受控 JavaScript（清理遮罩层/展开折叠区）；</p>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_handle_dialog(action, prompt_text)</code>：预设原生 alert/confirm/prompt 弹窗自动应答策略；</p>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;">• <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:12px;">browser_check_auth()</code>：智能探测当前页面登录凭证与 Token 有效性。</p>
+    </div>
+  </section>
+
+  <!-- 提示词决策引导 -->
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;">
+    <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#15803d;">🧠 编排层 System Prompt 决策引导链（Prompt Nudge）</p>
+    <p style="margin:0;font-size:14px;color:#166534;line-height:1.85;">平台在编排层强制规定：遇到报表优先调用 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">extract_table</code>，遇到接口抓包优先调用 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">get_network_logs</code>，遇到留存文档优先调用 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">export_pdf</code>。从规则层面杜绝了模型瞎逛、盲点、乱翻页的算力浪费。</p>
+  </section>
+
+  <!-- 图片占位符 3 -->
+  <section style="margin:18px 0;padding:24px 16px;background:#ffffff;border:2px dashed #cbd5e1;border-radius:12px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:8px;">🖼️</div>
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;">【图片占位符 3 · 智能体管理中心工具配置界面】</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;"><strong>建议配图：</strong>展示 AgentManagement.vue 中「浏览器自动化」分类下的工具列表与勾选配置弹窗，体现 28 项工具的完整生态。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ==================== 05 协同与前端交互 ==================== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:19px;font-weight:bold;color:#0f172a;border-left:5px solid #0284c7;padding-left:12px;line-height:1.4;">05｜极致协同：空间检视、自适应压缩与毫秒接管</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.85;">真正的企业级自动化必须将<strong>人类控制权置于最高优先级</strong>。NanZi 面板提供了多模态感知与交互设计：</p>
+  </section>
+
+  <!-- 协同卡片 -->
+  <section style="margin:0 0 12px 0;padding:16px;background:#fefce8;border:1px solid #fef08a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#854d0e;">🎯 1. 空间命中测试与元素悬停检视（Hover Inspector）</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">用户鼠标在画面上移动时，前端进行毫秒级 Point-in-Rect 空间碰撞测试，自动在目标元素上方渲染<strong>青色半透明虚线框</strong>与<strong>语义徽标（<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">#ref=12 · button · "立即查询"</code>）</strong>，底部胶囊实时同步坐标，彻底解决“不知道 AI 到底读没读懂当前页面”的信息黑盒。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#166534;">⚡ 2. 自适应 JPEG 压缩（体积降低 85%，帧率飙升）</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">底层截图抛弃了庞大无损的 PNG 方案，升级为自适应高质量 JPEG（quality=75）压缩引擎，单帧体积从 <strong>1.2MB 骤降至 40KB ~ 80KB</strong>。即便在弱网环境下也能保证毫秒级低延迟画面投屏与零卡顿交互。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#334155;">🔄 3. 细化动作多态展示与无缝交接</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.85;">• <strong>AI 状态细化：</strong>精确区分「AI 正在点击 / 输入 / 读屏 / 导出 PDF / 提取表格 / 脚本执行」；</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.85;">• <strong>人工动作感知：</strong>用户触发点击、打字或滚动时，系统毫秒级挂起 AI 任务并展示「人工点击 · 坐标 / 键位」；</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">• <strong>平滑自动归位：</strong>人工操作完毕后，倒计时 2.5 秒自动平滑交还 AI 控制权并刷新最新快照。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1e40af;">📑 4. Chrome 风格多 Tab 栏与磨砂右键菜单</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.85;">支持多标签页实时显示、点击切换与关闭；右键支持「➕ 新建标签页 / 🔄 重新加载 / ❌ 关闭当前 / 🚫 关闭其他 / ➡️ 关闭右侧 / 🧹 关闭所有标签页并重置」，完美还原原生桌面浏览器习惯。</p>
+  </section>
+
+  <!-- 图片占位符 4 -->
+  <section style="margin:18px 0;padding:24px 16px;background:#ffffff;border:2px dashed #cbd5e1;border-radius:12px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:8px;">🖼️</div>
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;">【图片占位符 4 · 浏览器面板人机交互与元素悬停高亮实机图】</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;"><strong>建议配图：</strong>展示右侧交互面板、多标签页栏、青色虚线元素悬停徽标、动作状态栏与底部快捷键栏的完整实机截屏。</p>
+  </section>
+
+  <!-- 图片占位符 5 -->
+  <section style="margin:18px 0;padding:24px 16px;background:#ffffff;border:2px dashed #cbd5e1;border-radius:12px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:8px;">🖼️</div>
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;">【图片占位符 5 · 区域拖拽框选与多模态「问 AI」联动】</p>
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.6;"><strong>建议配图：</strong>展示在浏览器画面上通过 Canvas 拖拽框选图表区域，点击浮动「问 AI」按钮后，图片自动挂载到主输入框的联动效果。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ==================== 06 避坑指南 ==================== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:19px;font-weight:bold;color:#0f172a;border-left:5px solid #e11d48;padding-left:12px;line-height:1.4;">06｜工程避坑指南：生产环境落地的 5 大硬核经验</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:16px;background:#fff1f2;border:1px solid #fecdd3;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>⚠️ 1. SSRF 严格防护与私网隔离：</strong>AI 具有自主导航能力，必须在底层拦截 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">127.0.0.1</code>、<code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">169.254.169.254</code>（云元数据）等私有 IP 与危险端口，避免内网探测风险；
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>⚠️ 2. Stale Element 引用自愈：</strong>现代前端路由切换后旧 DOM 会被销毁，底层必须实现自动捕获并抛出 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">BrowserTargetStale</code>，引导 Agent 自动重新获取最新快照，杜绝死锁；
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>⚠️ 3. 内存与显存防泄漏（30min 自动 GC）：</strong>长时间运行无头浏览器会导致内存膨胀，后台必须维护全局活动时间戳，超时无调用自动执行 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">context.close()</code>；
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>⚠️ 4. 点击防连击锁（Flight Lock）：</strong>在前端发送操作到下一帧快照回传的 250ms 内，界面光标强制置为 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">cursor-wait</code>，防止用户连击引发并发紊乱；
+    </p>
+    <p style="margin:0;font-size:14px;color:#1e293b;line-height:1.85;">
+      <strong>⚠️ 5. Playwright Crash 守护恢复：</strong>当 Chromium 进程偶发被操作系统 OOM-Killer 终结时，运行时通过包装器自动捕获并完成冷启动恢复，对上层 Agent 透明。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ==================== 结语 ==================== -->
+  <section style="margin:0 0 20px 0;padding:20px 18px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:12px;">
+    <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#064e3b;">🎯 结语：让智能体拥有安全、机巧与受控的「双手」</p>
+    <p style="margin:0;font-size:14px;color:#334155;line-height:1.9;">将 LLM 大脑与真实业务世界连接的关键，在于构建一个<strong>高可靠、防风控、可观测且能随时人工接管</strong>的执行环境。NanZi 平台通过对 Playwright 的深度二次改造，融合拟人仿生算法、28 项精细工具与全双工协同前端，为工业级 Agent 探索出了一条兼顾自动化与安全可控的成熟落地路径。</p>
+  </section>
+
+  <!-- 尾部标牌 -->
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f8fafc;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#64748b;font-weight:600;">NanZi 开源智能体平台实战连载 · B05</p>
+    <p style="margin:0;font-size:13px;color:#94a3b8;">如果本文对您的 Agent 架构设计有所启发，欢迎前往 GitHub 点亮 Star 支持！⭐</p>
+  </section>
+
+</section>

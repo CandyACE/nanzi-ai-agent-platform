@@ -103,6 +103,10 @@ def _docker_init_is_retryable(exc: BaseException) -> bool:
 WORKSPACE_USER_KEY_SEP = "__"
 USER_DOCS_DIR_NAME = "docs"
 USER_SESSIONS_DIR_NAME = "sessions"
+DOCKER_SANDBOX_DIR_NAME = "sandbox"
+DOCKER_PUBLIC_DIR_NAME = "public"
+DOCKER_WORKSPACE_SKILLS_PATH = "/workspace/skills"
+DOCKER_WORKSPACE_PUBLIC_DOCS_PATH = "/workspace/public/docs"
 
 
 def _clean_key_part(value: str | None, fallback_prefix: str) -> str:
@@ -587,6 +591,87 @@ def _resolve_docker_sandbox_host_workdir(
     return os.path.join(abs_root, sandbox_user_key)
 
 
+def _personal_skills_dir(host_workdir: str) -> str:
+    """Return the canonical personal skills source under a user workspace."""
+    return os.path.join(os.path.abspath(host_workdir), "skills")
+
+
+def _docker_sandbox_skills_dir(host_workdir: str) -> str:
+    """Return the Docker-only materialized skills directory.
+
+    This directory intentionally contains the merged public + personal skill
+    snapshot used by the sandbox. It must never be used as the personal-skill
+    API source.
+    """
+    return os.path.join(
+        os.path.abspath(host_workdir),
+        DOCKER_SANDBOX_DIR_NAME,
+        "skills",
+    )
+
+
+def _build_docker_workspace_mounts(
+    host_workdir: str,
+    public_docs_source: str | None = None,
+) -> list[tuple[str, str, str]]:
+    """Build the Docker bind mounts while keeping source roots separate."""
+    mounts = [
+        (os.path.abspath(host_workdir), DOCKER_WORKSPACE_LOGICAL_ROOT, "rw"),
+        (
+            _docker_sandbox_skills_dir(host_workdir),
+            DOCKER_WORKSPACE_SKILLS_PATH,
+            "rw",
+        ),
+    ]
+    if public_docs_source:
+        mounts.append(
+            (
+                os.path.abspath(public_docs_source),
+                DOCKER_WORKSPACE_PUBLIC_DOCS_PATH,
+                "ro",
+            ),
+        )
+    return mounts
+
+
+def _resolve_docker_host_data_path(service_path: str) -> str:
+    """Map a platform-container data path to the Docker daemon's host path."""
+    abs_path = os.path.abspath(service_path)
+    host_data_dir = (
+        os.getenv("HOST_DATA_DIR", "").strip()
+        or os.getenv("AGENTSCOPE_WORKSPACE_HOST_ROOT", "").strip()
+    )
+    if not host_data_dir:
+        return abs_path
+
+    data_root = "/app/data"
+    if abs_path == data_root or abs_path.startswith(f"{data_root}{os.sep}"):
+        relative = os.path.relpath(abs_path, data_root)
+        return os.path.join(
+            os.path.abspath(host_data_dir),
+            relative if relative != "." else "",
+        )
+    return abs_path
+
+
+def _resolve_docker_public_docs_source() -> str | None:
+    """Return the public docs source path for a Docker bind mount."""
+    try:
+        from app.utils.fs_paths import get_data_base_dir
+
+        service_path = os.path.join(get_data_base_dir(), "docs")
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        logger.warning("[workspace] Failed to resolve public docs path: %s", exc)
+        return None
+
+    # The service-side path is the existence check. In DooD deployments the
+    # mapped host path may intentionally be invisible inside the platform
+    # container, while still being visible to the Docker daemon.
+    if not os.path.isdir(service_path):
+        return None
+    return _resolve_docker_host_data_path(service_path)
+
+
 async def _policy_docker_workspace(
     skill_paths: list[str] | None,
     *,
@@ -598,16 +683,18 @@ async def _policy_docker_workspace(
 
     Runs in a container built from ``base_image`` (or the AgentScope default).
     Bash/file tools are exposed through the container's inline FastMCP stdio
-    server seeded via ``default_mcps`` (see workspace_container_mcp). A user
-    sandbox mounts exactly ``<workspace_root>/<sandbox_user_key>`` at the
-    AgentScope logical path ``/workspace``; the old configurable host directory
-    is intentionally ignored.
+    server seeded via ``default_mcps`` (see workspace_container_mcp). The user
+    workspace is mounted at ``/workspace`` and receives isolated child mounts
+    for the merged runtime skills and read-only public docs.
     """
     from app.services.config_service import ConfigService
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
         build_container_tool_mcp,
     )
     from agentscope.workspace import DockerWorkspace
+    from app.services.ai.runtime.agentscope.docker_workspace import (
+        build_docker_workspace_with_extra_binds,
+    )
 
     DEFAULT_DOCKER_BASE_IMAGE = "python:3.11-slim"
     base_image = (
@@ -617,6 +704,18 @@ async def _policy_docker_workspace(
         workspace_root=workspace_root,
         sandbox_user_key=sandbox_user_key,
     )
+
+    extra_bind_mounts: list[tuple[str, str, str]] = []
+    if host_workdir:
+        os.makedirs(_docker_sandbox_skills_dir(host_workdir), exist_ok=True)
+        os.makedirs(
+            os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
+            exist_ok=True,
+        )
+        extra_bind_mounts = _build_docker_workspace_mounts(
+            host_workdir,
+            _resolve_docker_public_docs_source(),
+        )[1:]
 
     default_mcp = build_container_tool_mcp()
 
@@ -630,7 +729,11 @@ async def _policy_docker_workspace(
         kwargs["workspace_id"] = workspace_id
 
     for attempt in range(2):
-        workspace = DockerWorkspace(**kwargs)
+        workspace = build_docker_workspace_with_extra_binds(
+            DockerWorkspace,
+            extra_bind_mounts=extra_bind_mounts,
+            **kwargs,
+        )
         try:
             await workspace.initialize()
         except Exception as exc:  # noqa: BLE001
@@ -1078,8 +1181,9 @@ async def get_local_workspace(
 ) -> tuple[Any, Any] | None:
     """Return ``(sandbox_ws, local_ws)`` for the conversation.
 
-    Responsibility split (定稿): the sandbox (docker/e2b/ssh) only executes
-    Bash; no host directory is bound into it. Read/Write/Edit/Glob/Grep are
+    Responsibility split (定稿): the sandbox (docker/e2b/ssh) executes Bash;
+    Docker additionally receives the user workspace bind plus isolated child
+    mounts for runtime skills and public docs. Read/Write/Edit/Glob/Grep are
     served by the host ``local_ws`` (a LocalWorkspace over the session workdir
     in the user's host directory).
 

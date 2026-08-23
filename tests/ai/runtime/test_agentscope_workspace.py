@@ -1170,11 +1170,107 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
         workspace_root=str(tmp_path),
     )
 
-    kwargs = FakeDockerWorkspace.instances[0].kwargs
-    assert result.__class__ is FakeDockerWorkspace
+    kwargs = result.kwargs
+    assert isinstance(result, FakeDockerWorkspace)
     assert kwargs["workspace_id"] == "alice__1"
     assert kwargs["host_workdir"] == str(tmp_path / "alice__1")
+    assert result._nanzi_extra_bind_mounts[0] == (
+        str(tmp_path / "alice__1" / "sandbox" / "skills"),
+        "/workspace/skills",
+        "rw",
+    )
     assert mcp_kwargs == {}
+
+
+def test_docker_workspace_mount_layout_keeps_personal_skills_out_of_runtime_mount(
+    tmp_path,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_workdir = tmp_path / "alice__1"
+    public_docs_source = tmp_path / "host-data" / "docs"
+
+    mounts = workspace_module._build_docker_workspace_mounts(
+        str(host_workdir),
+        str(public_docs_source),
+    )
+
+    assert workspace_module._docker_sandbox_skills_dir(str(host_workdir)) == str(
+        host_workdir / "sandbox" / "skills"
+    )
+    assert workspace_module._personal_skills_dir(str(host_workdir)) == str(
+        host_workdir / "skills"
+    )
+    assert mounts == [
+        (str(host_workdir), "/workspace", "rw"),
+        (
+            str(host_workdir / "sandbox" / "skills"),
+            "/workspace/skills",
+            "rw",
+        ),
+        (str(public_docs_source), "/workspace/public/docs", "ro"),
+    ]
+
+
+def test_docker_public_docs_source_maps_to_host_data_dir_in_dood(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    monkeypatch.setenv("HOST_DATA_DIR", "/srv/nanzi-data")
+
+    assert workspace_module._resolve_docker_host_data_path(
+        "/app/data/docs",
+    ) == "/srv/nanzi-data/docs"
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_adapter_adds_child_bind_mounts(tmp_path):
+    from app.services.ai.runtime.agentscope.docker_workspace import (
+        build_docker_workspace_with_extra_binds,
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeContainer:
+        async def start(self):
+            return None
+
+    class FakeContainers:
+        async def create_or_replace(self, *, name, config):
+            captured["name"] = name
+            captured["config"] = config
+            return FakeContainer()
+
+    class FakeClient:
+        containers = FakeContainers()
+
+    class FakeDockerWorkspace:
+        def __init__(self, **kwargs):
+            self._client = FakeClient()
+            self._image_tag = "python:3.11-slim"
+            self.workspace_id = kwargs["workspace_id"]
+            self.host_workdir = kwargs["host_workdir"]
+            self.env = {}
+
+    source = tmp_path / "sandbox" / "skills"
+    source.mkdir(parents=True)
+    workspace = build_docker_workspace_with_extra_binds(
+        FakeDockerWorkspace,
+        workspace_id="alice__1",
+        host_workdir=str(tmp_path / "alice__1"),
+        extra_bind_mounts=[
+            (str(source), "/workspace/skills", "rw"),
+            (str(tmp_path / "docs"), "/workspace/public/docs", "ro"),
+        ],
+    )
+
+    await workspace._create_and_start_container()
+
+    assert captured["name"] == "as_ws_alice__1"
+    assert captured["config"]["HostConfig"]["Binds"] == [
+        f"{tmp_path / 'alice__1'}:/workspace:rw",
+        f"{source}:/workspace/skills:rw",
+        f"{tmp_path / 'docs'}:/workspace/public/docs:ro",
+    ]
 
 
 def test_container_tool_mcp_uses_logical_workspace_path():
