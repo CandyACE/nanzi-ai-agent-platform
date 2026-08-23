@@ -45,6 +45,40 @@ class BrowserRuntime:
         self._snapshots: dict[str, BrowserSnapshot] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._human_controls: dict[str, _HumanControl] = {}
+        self._ai_action_status: dict[str, dict[str, Any]] = {}
+        self._event_subscribers: dict[str, set[asyncio.Queue]] = {}
+
+    def subscribe_events(self, session_id: str) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._event_subscribers.setdefault(session_id, set()).add(queue)
+        return queue
+
+    def unsubscribe_events(self, session_id: str, queue: asyncio.Queue) -> None:
+        subscribers = self._event_subscribers.get(session_id)
+        if subscribers:
+            subscribers.discard(queue)
+            if not subscribers:
+                self._event_subscribers.pop(session_id, None)
+
+    async def broadcast_event(self, session_id: str, event_data: dict[str, Any]) -> None:
+        subscribers = list(self._event_subscribers.get(session_id, []))
+        for q in subscribers:
+            try:
+                q.put_nowait(event_data)
+            except Exception:
+                pass
+
+    def get_ai_action(self, session_id: str) -> dict[str, Any] | None:
+        return self._ai_action_status.get(session_id)
+
+    async def set_ai_action(self, session_id: str, action: str, detail: str) -> None:
+        data = {"action": action, "detail": detail}
+        self._ai_action_status[session_id] = data
+        await self.broadcast_event(session_id, {"type": "ai_action", **data})
+
+    async def clear_ai_action(self, session_id: str) -> None:
+        self._ai_action_status.pop(session_id, None)
+        await self.broadcast_event(session_id, {"type": "ai_action", "action": "", "detail": ""})
 
     async def clean_idle_sessions(self, max_idle_seconds: float = 1800) -> list[str]:
         """按空闲时间自动释放过期的 Chromium 实例与内存快照。"""
@@ -244,17 +278,21 @@ class BrowserRuntime:
 
     async def scroll(self, session_id: str, *, direction: str, amount: int) -> BrowserSnapshot:
         """执行低风险滚动并返回滚动后的新快照，供 Agent 继续使用最新 target_ref。"""
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                snapshot = await self.worker.scroll(
-                    session_id,
-                    direction=direction,
-                    amount=amount,
-                )
-                return self._remember_snapshot_locked(session_id, snapshot)
+        await self.set_ai_action(session_id, "scrolling", f"正在{'向下' if direction == 'down' else '向上'}滚动页面")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    snapshot = await self.worker.scroll(
+                        session_id,
+                        direction=direction,
+                        amount=amount,
+                    )
+                    return self._remember_snapshot_locked(session_id, snapshot)
+        finally:
+            await self.clear_ai_action(session_id)
 
     def cached_snapshot(self, session_id: str, snapshot_id: str) -> BrowserSnapshot:
         snapshots = self._snapshots.get(session_id)
@@ -280,6 +318,127 @@ class BrowserRuntime:
         async with self._session_lock(session_id):
             self._snapshots.pop(session_id, None)
             return await self.worker.navigate(session_id, url)
+
+    async def go_back(
+        self,
+        session_id: str,
+        *,
+        owner_id: str | None = None,
+    ) -> BrowserToolResult:
+        await self.acquire_human_control(session_id, reason="navigate", owner_id=owner_id)
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.go_back(session_id)
+
+    async def go_forward(
+        self,
+        session_id: str,
+        *,
+        owner_id: str | None = None,
+    ) -> BrowserToolResult:
+        await self.acquire_human_control(session_id, reason="navigate", owner_id=owner_id)
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.go_forward(session_id)
+
+    async def reload(
+        self,
+        session_id: str,
+        *,
+        owner_id: str | None = None,
+    ) -> BrowserToolResult:
+        await self.acquire_human_control(session_id, reason="navigate", owner_id=owner_id)
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.reload(session_id)
+
+    async def list_tabs(self, session_id: str) -> list[BrowserTab]:
+        async with self._session_lock(session_id):
+            return await self.worker.list_tabs(session_id)
+
+    async def switch_tab(self, session_id: str, tab_id: str, *, owner_id: str | None = None) -> BrowserPageInfo:
+        if owner_id is not None:
+            await self.acquire_human_control(session_id, reason="switch_tab", owner_id=owner_id)
+        else:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    break
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.switch_tab(session_id, tab_id)
+
+    async def close_tab(self, session_id: str, tab_id: str, *, owner_id: str | None = None) -> BrowserPageInfo:
+        if owner_id is not None:
+            await self.acquire_human_control(session_id, reason="close_tab", owner_id=owner_id)
+        else:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    break
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.close_tab(session_id, tab_id)
+
+    async def close_other_tabs(self, session_id: str, tab_id: str, *, owner_id: str | None = None) -> BrowserPageInfo:
+        if owner_id is not None:
+            await self.acquire_human_control(session_id, reason="close_other_tabs", owner_id=owner_id)
+        else:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    break
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.close_other_tabs(session_id, tab_id)
+
+    async def close_tabs_to_right(self, session_id: str, tab_id: str, *, owner_id: str | None = None) -> BrowserPageInfo:
+        if owner_id is not None:
+            await self.acquire_human_control(session_id, reason="close_tabs_to_right", owner_id=owner_id)
+        else:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    break
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.close_tabs_to_right(session_id, tab_id)
+
+    async def close_all_tabs(self, session_id: str, *, owner_id: str | None = None) -> BrowserPageInfo:
+        if owner_id is not None:
+            await self.acquire_human_control(session_id, reason="close_all_tabs", owner_id=owner_id)
+        else:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    break
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.close_all_tabs(session_id)
+
+    async def new_tab(self, session_id: str, url: str = "https://www.baidu.com", *, owner_id: str | None = None) -> BrowserPageInfo:
+        if owner_id is not None:
+            await self.acquire_human_control(session_id, reason="new_tab", owner_id=owner_id)
+        else:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    break
+        async with self._session_lock(session_id):
+            self._snapshots.pop(session_id, None)
+            return await self.worker.new_tab(session_id, url)
 
     async def manual_input(
         self,
@@ -312,21 +471,25 @@ class BrowserRuntime:
         approval_mode: str,
         confirmed: bool,
     ) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                snapshot = self.cached_snapshot(session_id, snapshot_id)
-                result = await self.worker.click(
-                    session_id,
-                    target_ref=target_ref,
-                    snapshot=snapshot,
-                    approval_mode=approval_mode,
-                    confirmed=confirmed,
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        await self.set_ai_action(session_id, "clicking", f"正在点击元素 {target_ref}")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    snapshot = self.cached_snapshot(session_id, snapshot_id)
+                    result = await self.worker.click(
+                        session_id,
+                        target_ref=target_ref,
+                        snapshot=snapshot,
+                        approval_mode=approval_mode,
+                        confirmed=confirmed,
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def fill(
         self,
@@ -337,21 +500,26 @@ class BrowserRuntime:
         value: str,
         sensitive: bool | None,
     ) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                snapshot = self.cached_snapshot(session_id, snapshot_id)
-                result = await self.worker.fill(
-                    session_id,
-                    target_ref=target_ref,
-                    value=value,
-                    snapshot=snapshot,
-                    sensitive=sensitive,
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        detail = "正在输入内容…" if sensitive else f"正在输入「{value[:20]}」"
+        await self.set_ai_action(session_id, "filling", detail)
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    snapshot = self.cached_snapshot(session_id, snapshot_id)
+                    result = await self.worker.fill(
+                        session_id,
+                        target_ref=target_ref,
+                        value=value,
+                        snapshot=snapshot,
+                        sensitive=sensitive,
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def press(
         self,
@@ -361,20 +529,24 @@ class BrowserRuntime:
         snapshot_id: str | None,
         key: str,
     ) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                snapshot = self.cached_snapshot(session_id, snapshot_id) if target_ref and snapshot_id else None
-                result = await self.worker.press(
-                    session_id,
-                    target_ref=target_ref,
-                    key=key,
-                    snapshot=snapshot,
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        await self.set_ai_action(session_id, "pressing", f"正在发送按键 {key}")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    snapshot = self.cached_snapshot(session_id, snapshot_id) if target_ref and snapshot_id else None
+                    result = await self.worker.press(
+                        session_id,
+                        target_ref=target_ref,
+                        key=key,
+                        snapshot=snapshot,
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def select_option(
         self,
@@ -385,34 +557,42 @@ class BrowserRuntime:
         value: str | None,
         label: str | None,
     ) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                result = await self.worker.select_option(
-                    session_id,
-                    target_ref=target_ref,
-                    value=value,
-                    label=label,
-                    snapshot=self.cached_snapshot(session_id, snapshot_id),
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        await self.set_ai_action(session_id, "selecting", f"正在选择选项 {label or value}")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    result = await self.worker.select_option(
+                        session_id,
+                        target_ref=target_ref,
+                        value=value,
+                        label=label,
+                        snapshot=self.cached_snapshot(session_id, snapshot_id),
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def hover(self, session_id: str, *, target_ref: str, snapshot_id: str) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                result = await self.worker.hover(
-                    session_id,
-                    target_ref=target_ref,
-                    snapshot=self.cached_snapshot(session_id, snapshot_id),
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        await self.set_ai_action(session_id, "hovering", f"正在悬停元素 {target_ref}")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    result = await self.worker.hover(
+                        session_id,
+                        target_ref=target_ref,
+                        snapshot=self.cached_snapshot(session_id, snapshot_id),
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def drag(
         self,
@@ -422,19 +602,23 @@ class BrowserRuntime:
         target_ref: str,
         snapshot_id: str,
     ) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                result = await self.worker.drag(
-                    session_id,
-                    source_ref=source_ref,
-                    target_ref=target_ref,
-                    snapshot=self.cached_snapshot(session_id, snapshot_id),
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        await self.set_ai_action(session_id, "dragging", f"正在拖拽元素 {source_ref} -> {target_ref}")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    result = await self.worker.drag(
+                        session_id,
+                        source_ref=source_ref,
+                        target_ref=target_ref,
+                        snapshot=self.cached_snapshot(session_id, snapshot_id),
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def slider_drag(
         self,
@@ -445,79 +629,62 @@ class BrowserRuntime:
         distance_px: int | None = None,
         gap_target_ref: str | None = None,
     ) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                result = await self.worker.slider_drag(
-                    session_id,
-                    source_ref=source_ref,
-                    snapshot=self.cached_snapshot(session_id, snapshot_id),
-                    distance_px=distance_px,
-                    gap_target_ref=gap_target_ref,
-                )
-                self._snapshots.pop(session_id, None)
-                return result
+        await self.set_ai_action(session_id, "dragging", f"正在拖拽滑块验证码 {source_ref}")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    result = await self.worker.slider_drag(
+                        session_id,
+                        source_ref=source_ref,
+                        snapshot=self.cached_snapshot(session_id, snapshot_id),
+                        distance_px=distance_px,
+                        gap_target_ref=gap_target_ref,
+                    )
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def wait_for(
         self,
         session_id: str,
         *,
-        condition: str,
-        value: str,
-        timeout_ms: int,
+        condition: str = "ready",
+        value: str = "",
+        target_ref: str | None = None,
+        snapshot_id: str | None = None,
+        timeout_ms: int = 5000,
     ) -> BrowserSnapshot:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                snapshot = await self.worker.wait_for(
-                    session_id,
-                    condition=condition,
-                    value=value,
-                    timeout_ms=timeout_ms,
-                )
-                return self._remember_snapshot_locked(session_id, snapshot)
+        await self.set_ai_action(session_id, "waiting", "正在等待页面加载完成…")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id, timeout_ms=timeout_ms)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    snapshot = (
+                        self.cached_snapshot(session_id, snapshot_id)
+                        if target_ref and snapshot_id
+                        else None
+                    )
+                    result_snapshot = await self.worker.wait_for(
+                        session_id,
+                        condition=condition,
+                        value=value,
+                        target_ref=target_ref,
+                        snapshot=snapshot,
+                        timeout_ms=timeout_ms,
+                    )
+                    return self._remember_snapshot_locked(session_id, result_snapshot)
+        finally:
+            await self.clear_ai_action(session_id)
 
     async def read_visible(self, session_id: str) -> dict[str, Any]:
         async with self._session_lock(session_id):
             return await self.worker.read_visible(session_id)
-
-    async def tabs(self, session_id: str) -> list[BrowserTab]:
-        async with self._session_lock(session_id):
-            return await self.worker.list_tabs(session_id)
-
-    async def switch_tab(self, session_id: str, tab_id: str) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                info = await self.worker.switch_tab(session_id, tab_id)
-                self._snapshots.pop(session_id, None)
-                return BrowserToolResult(
-                    session_id=session_id,
-                    action="switch_tab",
-                    url=info.url,
-                    title=info.title,
-                )
-
-    async def close_tab(self, session_id: str, tab_id: str) -> BrowserToolResult:
-        while True:
-            await self._wait_for_ai_control(session_id)
-            async with self._session_lock(session_id):
-                if session_id in self._human_controls:
-                    continue
-                info = await self.worker.close_tab(session_id, tab_id)
-                self._snapshots.pop(session_id, None)
-                return BrowserToolResult(
-                    session_id=session_id,
-                    action="close_tab",
-                    url=info.url,
-                    title=info.title,
-                )
 
     async def navigate_history(self, session_id: str, *, action: str) -> BrowserToolResult:
         if action not in {"back", "forward", "reload"}:
@@ -575,6 +742,119 @@ class BrowserRuntime:
                 )
                 self._snapshots.pop(session_id, None)
                 return result
+
+    async def export_pdf(
+        self,
+        session_id: str,
+        *,
+        filename: str | None = None,
+        print_background: bool = True,
+    ) -> BrowserToolResult:
+        await self.set_ai_action(session_id, "exporting_pdf", "AI 正在导出网页 PDF 文件")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    return await self.worker.export_pdf(
+                        session_id,
+                        filename=filename,
+                        print_background=print_background,
+                    )
+        finally:
+            await self.clear_ai_action(session_id)
+
+    async def extract_table(
+        self,
+        session_id: str,
+        *,
+        selector: str | None = None,
+        max_rows: int = 50,
+    ) -> BrowserToolResult:
+        await self.set_ai_action(session_id, "extracting_table", "AI 正在提取结构化表格数据")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    return await self.worker.extract_table(
+                        session_id,
+                        selector=selector,
+                        max_rows=max_rows,
+                    )
+        finally:
+            await self.clear_ai_action(session_id)
+
+    async def handle_dialog(
+        self,
+        session_id: str,
+        *,
+        action: str = "accept",
+        prompt_text: str | None = None,
+    ) -> BrowserToolResult:
+        async with self._session_lock(session_id):
+            return await self.worker.handle_dialog(
+                session_id,
+                action=action,
+                prompt_text=prompt_text,
+            )
+
+    async def execute_js(
+        self,
+        session_id: str,
+        *,
+        script: str,
+    ) -> BrowserToolResult:
+        await self.set_ai_action(session_id, "executing_js", "AI 正在执行页面脚本")
+        try:
+            while True:
+                await self._wait_for_ai_control(session_id)
+                async with self._session_lock(session_id):
+                    if session_id in self._human_controls:
+                        continue
+                    result = await self.worker.execute_js(session_id, script=script)
+                    self._snapshots.pop(session_id, None)
+                    return result
+        finally:
+            await self.clear_ai_action(session_id)
+
+    async def check_auth(self, session_id: str) -> BrowserToolResult:
+        async with self._session_lock(session_id):
+            return await self.worker.check_auth(session_id)
+
+    async def get_network_logs(
+        self,
+        session_id: str,
+        *,
+        filter_url: str | None = None,
+        limit: int = 20,
+    ) -> BrowserToolResult:
+        async with self._session_lock(session_id):
+            return await self.worker.get_network_logs(
+                session_id,
+                filter_url=filter_url,
+                limit=limit,
+            )
+
+    async def get_cookies(
+        self,
+        session_id: str,
+        *,
+        urls: list[str] | None = None,
+    ) -> BrowserToolResult:
+        async with self._session_lock(session_id):
+            return await self.worker.get_cookies(session_id, urls=urls)
+
+    async def set_cookies(
+        self,
+        session_id: str,
+        *,
+        cookies: list[dict[str, Any]],
+    ) -> BrowserToolResult:
+        async with self._session_lock(session_id):
+            return await self.worker.set_cookies(session_id, cookies=cookies)
 
     async def close(self, session_id: str) -> None:
         async with self._session_lock(session_id):

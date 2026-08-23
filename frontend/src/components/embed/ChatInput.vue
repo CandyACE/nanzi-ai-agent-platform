@@ -1455,6 +1455,17 @@ const handleDropFile = async (e: DragEvent) => {
   }
 };
 
+const addBase64Image = async (dataUrl: string, filename = 'crop_image.png') => {
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const file = new File([blob], filename, { type: blob.type || 'image/png' });
+    await uploadSingleFile(file);
+  } catch (err) {
+    console.error('Failed to convert and upload base64 image', err);
+  }
+};
+
 // 暴露属性给父组件
 const focus = () => {
   inputRef.value?.focus();
@@ -1462,6 +1473,8 @@ const focus = () => {
 
 defineExpose({
   uploadedFiles,
+  uploadSingleFile,
+  addBase64Image,
   focus,
   openCommandDrawer,
   closeCommandDrawer,

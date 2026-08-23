@@ -307,6 +307,7 @@ def test_browser_automation_tools_are_available_in_a_dedicated_group():
         "browser_read_visible",
         "browser_hover",
         "browser_drag",
+        "browser_slider_drag",
         "browser_back",
         "browser_forward",
         "browser_reload",
@@ -315,6 +316,14 @@ def test_browser_automation_tools_are_available_in_a_dedicated_group():
         "browser_close_tab",
         "browser_upload",
         "browser_download",
+        "browser_export_pdf",
+        "browser_extract_table",
+        "browser_handle_dialog",
+        "browser_execute_js",
+        "browser_check_auth",
+        "browser_get_network_logs",
+        "browser_get_cookies",
+        "browser_set_cookies",
     ):
         assert tool_name in management
     assert "groups.browser.tools.push(tool)" in management

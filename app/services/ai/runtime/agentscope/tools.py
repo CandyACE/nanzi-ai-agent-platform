@@ -162,6 +162,7 @@ async def _browser_permission_decision(
         "browser_press",
         "browser_select_option",
         "browser_drag",
+        "browser_slider_drag",
         "browser_upload",
         "browser_download",
     }:
@@ -185,7 +186,7 @@ async def _browser_permission_decision(
 
     snapshot_id = str(tool_input.get("snapshot_id", ""))
     target_ref = str(tool_input.get("target_ref", ""))
-    if tool_name == "browser_drag" and not target_ref:
+    if tool_name in {"browser_drag", "browser_slider_drag"} and not target_ref:
         target_ref = str(tool_input.get("source_ref", ""))
     element = None
     try:
@@ -208,6 +209,7 @@ async def _browser_permission_decision(
         "browser_fill",
         "browser_select_option",
         "browser_drag",
+        "browser_slider_drag",
         "browser_upload",
         "browser_download",
     } and element is None:
@@ -461,6 +463,7 @@ class AgentScopeRuntimeTool:
             "browser_press",
             "browser_select_option",
             "browser_drag",
+            "browser_slider_drag",
             "browser_upload",
             "browser_download",
         }:

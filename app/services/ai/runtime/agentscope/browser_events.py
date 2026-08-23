@@ -46,6 +46,7 @@ def build_browser_refresh_event(tool_name: str, output: Any) -> dict[str, Any] |
         "browser_select_option",
         "browser_hover",
         "browser_drag",
+        "browser_slider_drag",
         "browser_back",
         "browser_forward",
         "browser_reload",
@@ -53,6 +54,9 @@ def build_browser_refresh_event(tool_name: str, output: Any) -> dict[str, Any] |
         "browser_close_tab",
         "browser_upload",
         "browser_download",
+        "browser_execute_js",
+        "browser_handle_dialog",
+        "browser_set_cookies",
     }:
         return None
     payload = _browser_result_payload(output)

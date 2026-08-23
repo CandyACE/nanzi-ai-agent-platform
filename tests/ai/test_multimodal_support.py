@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.multimodal_support import (
     format_execution_error,
     format_vision_sidecar_block,
@@ -98,6 +99,14 @@ def test_format_execution_error_generic():
     msg = format_execution_error("connection reset")
     assert "[系统错误]" in msg
     assert "connection reset" in msg
+
+
+def test_multimodal_sidecar_notice_starts_as_standalone_markdown_blockquote():
+    notice = AgentServicePrompts.multimodal_sidecar_notice("text-model", "qwen-vl")
+
+    combined = "整理今日热搜汇总报告" + notice
+
+    assert "整理今日热搜汇总报告\n\n> ℹ️" in combined
 
 
 def test_inject_vision_sidecar_is_idempotent():

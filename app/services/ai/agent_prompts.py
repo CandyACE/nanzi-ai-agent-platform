@@ -247,7 +247,7 @@ class AgentServicePrompts:
     def multimodal_sidecar_notice(session_model: str, vision_model: str) -> str:
         """旁路看图成功后插入回复开头的用户告知。"""
         return (
-            f"> ℹ️ 当前模型 **{session_model}** 不支持图片理解，"
+            f"\n\n> ℹ️ 当前模型 **{session_model}** 不支持图片理解，"
             f"已自动使用系统默认多模态模型 **{vision_model}** 解析图片。\n\n"
         )
 
@@ -535,6 +535,19 @@ class AgentServicePrompts:
 |----------|----------|
 """ + "\n".join(table_rows)
             prompt_parts.append(table_str)
+
+        # 4. 浏览器自动化与数据采集最佳实践（动态）
+        has_browser_tools = any(str(name).startswith("browser_") for name in tool_names)
+        if has_browser_tools:
+            browser_best_practices = [
+                "## 浏览器自动化与数据采集最佳实践（工具已绑定时必须遵守）",
+                "- **结构化表格与网格数据抓取**：当页面存在数据报表、商品列表、行情网格或排行时，**必须优先调用 `browser_extract_table`** 直接输出 Markdown/JSON，严禁通过繁琐的逐个元素 click/read_visible 低效拼凑。",
+                "- **复杂单页应用与动态接口抓包**：对于采用 Ajax/Fetch 动态加载、前后端分离或虚拟滚动的复杂页面，**优先调用 `browser_get_network_logs`** 抓取后端原始 JSON 接口响应数据，绕过 DOM 渲染限制直接获取全量干净数据。",
+                "- **长页面/报告文档留存与交付**：用户需要导出、保存或下载网页报告、凭证、长文章时，**优先调用 `browser_export_pdf`** 导出 A4 矢量 PDF 附件。",
+                "- **滑块拼图与验证码应对**：遇到滑动验证码时，**优先调用 `browser_slider_drag`**（支持拟人化三阶贝塞尔曲线与物理微抖动）；若识别困难，主动引导用户在右侧面板直接人工接管完成。",
+                "- **弹窗与会话登录态**：在执行多步流程前可调用 `browser_handle_dialog` 预设自动确定/取消原生弹窗；涉及私有系统免密直登时调用 `browser_set_cookies` 注入凭证，或调用 `browser_check_auth` 校验当前是否处于有效登录态。",
+            ]
+            prompt_parts.append("\n".join(browser_best_practices))
 
         if "read_skill_instruction" in tool_names or "list_available_skills" in tool_names:
             prompt_parts.append(AgentServicePrompts._PLATFORM_SKILLS_USAGE_SECTION)

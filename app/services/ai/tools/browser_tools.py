@@ -200,11 +200,13 @@ async def browser_slider_drag(
     distance_px: int | None = None,
     gap_target_ref: str | None = None,
 ) -> str:
-    """对滑块做拟人轨迹的坐标级拖拽，可配合缺口间距测量。
+    """对滑块验证码（如百度安全验证、曲线/缺口匹配、极验滑块等）执行拟人轨迹拖拽。
 
-    - 提供 ``distance_px``：直接横向拖动指定的像素距离；
-    - 或提供 ``gap_target_ref``：自动测量滑块与缺口元素的间距后拖动到缺口；
-    - 两者至少提供其一。用于处理滑块验证图片等场景。
+    内置三阶贝塞尔曲线与物理加速度/减速/回弹防风控算法。
+    - ``source_ref``：滑块按钮元素在快照中的语义引用标识（如 'e12'）；
+    - ``distance_px``：要向右拖动的目标像素距离（可根据视觉图像测量或估算）；
+    - ``gap_target_ref``：或者传入目标缺口/曲线落点元素的引用标识，系统会自动计算两者的像素间距；
+    - 两者至少提供其一。执行后会自动返回拖动后的新页面状态。
     """
     context = _context_or_error()
     session = await _owned_session(context)
@@ -248,7 +250,7 @@ async def browser_tabs() -> str:
     """列出当前浏览器会话的标签页，不返回令牌或 Playwright 对象。"""
     context = _context_or_error()
     session = await _owned_session(context)
-    tabs = await browser_runtime.tabs(session.id)
+    tabs = await browser_runtime.list_tabs(session.id)
     return json.dumps([tab.model_dump(mode="json") for tab in tabs], ensure_ascii=False)
 
 
@@ -257,7 +259,13 @@ async def browser_switch_tab(tab_id: str) -> str:
     """切换到当前浏览器会话中的指定标签页。"""
     context = _context_or_error()
     session = await _owned_session(context)
-    result = await browser_runtime.switch_tab(session.id, tab_id)
+    info = await browser_runtime.switch_tab(session.id, tab_id)
+    result = BrowserToolResult(
+        session_id=session.id,
+        action="switch_tab",
+        url=info.url,
+        title=info.title,
+    )
     return await _browser_result_json(context, result)
 
 
@@ -266,7 +274,13 @@ async def browser_close_tab(tab_id: str) -> str:
     """关闭当前浏览器会话中的指定标签页，至少保留一个标签页。"""
     context = _context_or_error()
     session = await _owned_session(context)
-    result = await browser_runtime.close_tab(session.id, tab_id)
+    info = await browser_runtime.close_tab(session.id, tab_id)
+    result = BrowserToolResult(
+        session_id=session.id,
+        action="close_tab",
+        url=info.url,
+        title=info.title,
+    )
     return await _browser_result_json(context, result)
 
 
@@ -381,3 +395,128 @@ async def browser_fill(
         sensitive=None,
     )
     return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+
+@tool
+async def browser_export_pdf(
+    filename: str | None = None,
+    print_background: bool = True,
+) -> str:
+    """将当前浏览器网页渲染导出为 A4 格式矢量 PDF 文件，并发布为会话可下载附件。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.export_pdf(
+        session.id,
+        filename=filename,
+        print_background=print_background,
+    )
+    await _persist_browser_result(context, result)
+    pdf_path = str(result.data.get("pdf_path") or "")
+    pdf_name = str(result.data.get("filename") or "page.pdf")
+    if not pdf_path:
+        raise RuntimeError("浏览器 PDF 导出失败")
+    from app.services.ai.tools.generated_file_service import publish
+
+    artifact = publish(pdf_path, pdf_name)
+    payload = result.model_dump(mode="json")
+    payload["data"] = artifact.to_tool_payload()
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@tool
+async def browser_extract_table(
+    selector: str | None = None,
+    max_rows: int = 50,
+) -> str:
+    """结构化解析提取网页中的 table 表格或网格数据，输出规整的 Markdown 表格与 JSON 列表。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.extract_table(
+        session.id,
+        selector=selector,
+        max_rows=max_rows,
+    )
+    return await _browser_result_json(context, result)
+
+
+@tool
+async def browser_handle_dialog(
+    action: str = "accept",
+    prompt_text: str | None = None,
+) -> str:
+    """预设原生 JavaScript 弹窗（alert/confirm/prompt）的自动应答策略（accept 确认或 dismiss 取消）。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.handle_dialog(
+        session.id,
+        action=action,
+        prompt_text=prompt_text,
+    )
+    return await _browser_result_json(context, result)
+
+
+@tool
+async def browser_execute_js(
+    script: str,
+) -> str:
+    """在当前浏览器页面沙箱中执行轻量 JavaScript 脚本并获取返回结果（可用于清理遮罩弹窗或展开折叠区域）。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.execute_js(
+        session.id,
+        script=script,
+    )
+    return await _browser_result_json(context, result)
+
+
+@tool
+async def browser_check_auth() -> str:
+    """智能探测当前网页的登录与认证状态（检查 Cookie、LocalStorage 与页面注销/登录标志）。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.check_auth(session.id)
+    return await _browser_result_json(context, result)
+
+
+@tool
+async def browser_get_network_logs(
+    filter_url: str | None = None,
+    limit: int = 20,
+) -> str:
+    """获取当前浏览器会话捕获的网络请求与 API 接口日志列表（支持 URL 关键词过滤，可直接提取后端 Ajax/Fetch 接口响应）。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.get_network_logs(
+        session.id,
+        filter_url=filter_url,
+        limit=limit,
+    )
+    return await _browser_result_json(context, result)
+
+
+@tool
+async def browser_get_cookies(
+    urls: list[str] | None = None,
+) -> str:
+    """获取当前浏览器会话指定 URL 或当前域名的所有 Cookie 列表。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.get_cookies(
+        session.id,
+        urls=urls,
+    )
+    return await _browser_result_json(context, result)
+
+
+@tool
+async def browser_set_cookies(
+    cookies: list[dict[str, Any]],
+) -> str:
+    """向当前浏览器会话注入一组 Cookie（支持 name、value、domain、path 等字段），实现免密直登目标系统。"""
+    context = _context_or_error()
+    session = await _owned_session(context)
+    result = await browser_runtime.set_cookies(
+        session.id,
+        cookies=cookies,
+    )
+    return await _browser_result_json(context, result)

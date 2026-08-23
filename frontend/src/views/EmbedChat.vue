@@ -2070,6 +2070,7 @@
       @close="closeBrowserPanel"
       @close-session="closeBrowserSession"
       @update:approval-mode="updateBrowserApprovalMode"
+      @ask-ai-crop="handleBrowserCropAskAi"
     />
     </div>
 </template>
@@ -2947,6 +2948,17 @@ const openBrowserPanel = async () => {
   } finally {
     if (generation === browserOpenGeneration) browserPanelOpening.value = false;
   }
+};
+
+const handleBrowserCropAskAi = async ({ image, question }: { image: string; question: string }) => {
+  userInput.value = question;
+  if (image && chatInputRef.value?.addBase64Image) {
+    await chatInputRef.value.addBase64Image(image, `browser_crop_${Date.now()}.png`);
+  }
+  showToast("已自动将截图附加至提问框并填入问题，可直接发送", "success");
+  nextTick(() => {
+    chatInputRef.value?.focus?.();
+  });
 };
 
 const closeBrowserPanel = () => {

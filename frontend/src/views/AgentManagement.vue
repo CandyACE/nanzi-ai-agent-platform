@@ -697,6 +697,11 @@ const availableTools = [
     isSystem: true,
   },
   {
+    name: "browser_slider_drag",
+    description: "滑块验证码拟人化拖拽与缺口对齐（支持贝塞尔曲线与防风控）",
+    isSystem: true,
+  },
+  {
     name: "browser_back",
     description: "返回浏览器历史页面",
     isSystem: true,
@@ -734,6 +739,46 @@ const availableTools = [
   {
     name: "browser_download",
     description: "下载浏览器页面指定文件",
+    isSystem: true,
+  },
+  {
+    name: "browser_export_pdf",
+    description: "将当前网页渲染并导出为 A4 矢量 PDF 文件附件",
+    isSystem: true,
+  },
+  {
+    name: "browser_extract_table",
+    description: "结构化解析提取网页中的 table 表格或网格数据（输出 Markdown 与 JSON）",
+    isSystem: true,
+  },
+  {
+    name: "browser_handle_dialog",
+    description: "预设原生 JavaScript 弹窗（alert/confirm/prompt）自动应答策略",
+    isSystem: true,
+  },
+  {
+    name: "browser_execute_js",
+    description: "在当前页面沙箱中执行轻量 JavaScript 脚本（如清理遮罩或展开折叠）",
+    isSystem: true,
+  },
+  {
+    name: "browser_check_auth",
+    description: "智能探测当前网页的登录与认证状态（检查 Cookie、Storage 与登录标识）",
+    isSystem: true,
+  },
+  {
+    name: "browser_get_network_logs",
+    description: "抓包并获取网页最近的 Ajax/Fetch 网络请求与 API 接口响应数据",
+    isSystem: true,
+  },
+  {
+    name: "browser_get_cookies",
+    description: "导出并获取当前浏览器会话的 Cookie 列表",
+    isSystem: true,
+  },
+  {
+    name: "browser_set_cookies",
+    description: "向当前浏览器注入 Cookie 列表（实现系统免密直登或会话恢复）",
     isSystem: true,
   },
 ];

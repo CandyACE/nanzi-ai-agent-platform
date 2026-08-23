@@ -152,6 +152,117 @@
             </div>
           </header>
 
+          <!-- Chrome 风格多标签页栏 (Tab Bar) -->
+          <div
+            v-if="tabs.length > 0"
+            class="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-gray-200 bg-slate-100 px-2 pt-1.5 scrollbar-none dark:border-gray-800 dark:bg-slate-900/80"
+            @contextmenu.prevent="openTabContextMenu($event, null)"
+          >
+            <div
+              v-for="tab in tabs"
+              :key="tab.tab_id"
+              class="group relative flex max-w-44 min-w-24 items-center gap-1.5 rounded-t-lg px-2.5 py-1 text-xs transition-all cursor-pointer select-none"
+              :class="tab.active
+                ? 'bg-white font-semibold text-gray-800 shadow-2xs dark:bg-gray-900 dark:text-gray-100'
+                : 'bg-transparent text-gray-500 hover:bg-slate-200/70 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-slate-800/70 dark:hover:text-gray-200'"
+              :title="`${tab.title || '新标签页'}\n${tab.url || 'about:blank'}\n(右键可管理标签页)`"
+              @click="switchTab(tab.tab_id)"
+              @contextmenu.prevent="openTabContextMenu($event, tab)"
+            >
+              <span class="shrink-0 text-[10px] text-gray-400">🌐</span>
+              <span class="min-w-0 flex-1 truncate text-[11px]">
+                {{ tab.title || tab.url || '新标签页' }}
+              </span>
+              <button
+                v-if="tabs.length > 1"
+                type="button"
+                class="shrink-0 rounded p-0.5 text-gray-400 opacity-60 hover:bg-gray-200 hover:text-red-600 hover:opacity-100 dark:hover:bg-gray-700 dark:hover:text-red-400"
+                :title="`关闭标签页: ${tab.title}`"
+                @click.stop="closeTab(tab.tab_id)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <!-- 新建标签页按钮 -->
+            <button
+              type="button"
+              class="shrink-0 rounded-md p-1 text-gray-500 hover:bg-slate-200 hover:text-gray-800 active:scale-95 dark:text-gray-400 dark:hover:bg-slate-800 dark:hover:text-gray-200"
+              title="新建标签页"
+              @click="newTab"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Chrome 风格标签页右键菜单 (Context Menu) -->
+          <div
+            v-if="tabContextMenu.visible"
+            class="fixed z-50 min-w-44 rounded-lg border border-gray-200 bg-white/95 p-1 text-xs text-gray-700 shadow-xl backdrop-blur-md dark:border-gray-700 dark:bg-gray-900/95 dark:text-gray-200"
+            :style="{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }"
+            @click.stop
+          >
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              @click="newTab(); closeTabContextMenu();"
+            >
+              <span>➕</span>
+              <span>新建标签页</span>
+            </button>
+            <button
+              v-if="tabContextMenu.tab"
+              type="button"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              @click="reloadPage(); closeTabContextMenu();"
+            >
+              <span>🔄</span>
+              <span>重新加载</span>
+            </button>
+
+            <div class="my-1 border-t border-gray-100 dark:border-gray-800"></div>
+
+            <button
+              v-if="tabContextMenu.tab && tabs.length > 1"
+              type="button"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+              @click="closeTab(tabContextMenu.tab.tab_id); closeTabContextMenu();"
+            >
+              <span>❌</span>
+              <span>关闭当前标签页</span>
+            </button>
+            <button
+              v-if="tabContextMenu.tab && tabs.length > 1"
+              type="button"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              @click="closeOtherTabs(tabContextMenu.tab.tab_id)"
+            >
+              <span>🚫</span>
+              <span>关闭其他标签页</span>
+            </button>
+            <button
+              v-if="tabContextMenu.tab && isTabNotLast(tabContextMenu.tab.tab_id)"
+              type="button"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+              @click="closeTabsToRight(tabContextMenu.tab.tab_id)"
+            >
+              <span>➡️</span>
+              <span>关闭右侧标签页</span>
+            </button>
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+              @click="closeAllTabs"
+            >
+              <span>🧹</span>
+              <span>关闭所有标签页</span>
+            </button>
+          </div>
+
           <div
             v-if="approvalMode === 'guarded' && showSafetyNotice"
             role="status"
@@ -173,28 +284,44 @@
             </button>
           </div>
 
-          <div
-            v-if="showAutoNotice"
-            role="status"
-            class="flex items-start gap-2 border-b border-sky-100 bg-sky-50 px-3 py-2 dark:border-sky-900/60 dark:bg-sky-950/40"
-          >
-            <span class="mt-px text-[11px]" aria-hidden="true">🖥️</span>
-            <div class="min-w-0 flex-1 text-[10px] leading-relaxed text-sky-800 dark:text-sky-200">
-              <span class="font-bold">关闭此面板不会影响浏览器自动化。</span>
-              <span class="mt-0.5 block text-sky-700 dark:text-sky-300">自动化在服务端浏览器中继续执行，你可以随时重新打开本面板查看画面。</span>
+          <div class="flex shrink-0 items-center gap-1.5 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+            <!-- 浏览器标准导航按钮：后退、前进、刷新 -->
+            <div class="flex shrink-0 items-center gap-0.5">
+              <button
+                type="button"
+                class="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                :disabled="!snapshot || !snapshot.can_go_back || isSyncing"
+                title="后退"
+                @click="goBack"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                :disabled="!snapshot || !snapshot.can_go_forward || isSyncing"
+                title="前进"
+                @click="goForward"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-30 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                :disabled="!snapshot || isSyncing"
+                title="刷新页面"
+                @click="reloadPage"
+              >
+                <svg class="h-3.5 w-3.5" :class="{ 'animate-spin': isSyncing }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
             </div>
-            <button
-              type="button"
-              class="rounded p-0.5 text-sky-600 hover:bg-sky-100 hover:text-sky-900 dark:text-sky-300 dark:hover:bg-sky-900/60 dark:hover:text-white"
-              aria-label="关闭提示"
-              title="关闭提示"
-              @click="showAutoNotice = false"
-            >
-              ×
-            </button>
-          </div>
 
-          <div class="flex shrink-0 items-center gap-2 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
             <input
               v-model="address"
               class="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-700 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
@@ -202,25 +329,145 @@
               @keyup.enter="navigate"
             />
             <button class="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700" @click="navigate">打开</button>
+            <button
+              v-if="snapshot"
+              type="button"
+              class="shrink-0 rounded-md border px-2 py-1.5 text-[10px] font-medium transition-colors"
+              :class="cropMode ? 'border-purple-400 bg-purple-50 text-purple-700 dark:border-purple-600 dark:bg-purple-950/60 dark:text-purple-200' : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 hover:text-purple-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'"
+              :title="cropMode ? '点击退出框选' : '框选画面区域进行 AI 视觉分析或截取复制'"
+              @click="toggleCropMode"
+            >
+              {{ cropMode ? '✂️ 正在框选' : '✂️ 区域分析' }}
+            </button>
+            <button
+              v-if="snapshot"
+              type="button"
+              class="shrink-0 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[10px] font-medium text-gray-700 hover:bg-gray-100 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              :title="viewMode === 'fit' ? '当前为自适应缩放，点击切换 1:1 原图尺寸' : '当前为 1:1 原图，点击切换自适应窗口'"
+              @click="viewMode = viewMode === 'fit' ? 'original' : 'fit'"
+            >
+              {{ viewMode === 'fit' ? '🔍 适合窗口' : '🔎 1:1 原图' }}
+            </button>
           </div>
 
-          <div class="flex shrink-0 items-center justify-between gap-3 border-b border-sky-100 bg-sky-50 px-3 py-1.5 text-[10px] text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-100">
-            <div class="flex min-w-0 items-center gap-1.5">
-              <span aria-hidden="true">▧</span>
-              <strong class="shrink-0 font-bold">远程页面截图</strong>
-              <span class="truncate text-sky-700 dark:text-sky-200">不是网页本体；点击、滚轮、键盘会转发到远程浏览器</span>
+          <!-- 1. 常驻信息与状态卡片栏 (高度固定 h-7.5) -->
+          <div
+            class="flex h-[30px] shrink-0 items-center justify-between gap-3 border-b px-3 text-[10px] transition-colors"
+            :class="[
+              errorMessage ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' :
+              cropMode ? 'border-purple-200 bg-purple-50 text-purple-900 dark:border-purple-900/60 dark:bg-purple-950/50 dark:text-purple-200' :
+              'border-sky-100 bg-sky-50/80 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-100'
+            ]"
+          >
+            <!-- 左侧：声明 / 框选提示 / 错误信息 -->
+            <div class="flex min-w-0 items-center gap-1.5 truncate">
+              <template v-if="errorMessage">
+                <span class="shrink-0 text-red-500">⚠️</span>
+                <strong class="shrink-0 font-bold">提示：</strong>
+                <span class="truncate font-semibold">{{ errorMessage }}</span>
+              </template>
+              <template v-else-if="cropMode">
+                <span class="shrink-0 text-purple-600">✂️</span>
+                <span class="truncate font-bold text-purple-800 dark:text-purple-200">请在画面上按住左键拖拽框选区域</span>
+              </template>
+              <template v-else>
+                <span aria-hidden="true">▧</span>
+                <strong class="shrink-0 font-bold">远程页面截图</strong>
+                <span class="truncate text-sky-700 dark:text-sky-300">非实时网页本体；点击、滚轮、键盘会转发至远程</span>
+              </template>
             </div>
-            <div class="flex shrink-0 items-center gap-1.5">
-              <span class="text-sky-600 dark:text-sky-300">
-                {{ controlOwner === 'human' ? '当前由人工操作，自动刷新已暂停' : captchaDetected ? '验证码处理中，自动刷新已暂停' : interactionInProgress ? '操作中，完成后刷新一次' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
+
+            <!-- 右侧：框选退出 / 自动刷新控制 -->
+            <div class="flex shrink-0 items-center gap-2">
+              <button
+                v-if="cropMode"
+                type="button"
+                class="rounded border border-purple-300 bg-white/90 px-2 py-0.5 font-bold text-purple-700 hover:bg-purple-50 dark:border-purple-700 dark:bg-purple-950/60 dark:text-purple-200"
+                @click="toggleCropMode"
+              >
+                取消框选 (Esc)
+              </button>
+              <template v-else>
+                <span class="text-sky-600 dark:text-sky-300">
+                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? '验证码中，刷新已暂停' : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5s 自动刷新' }}
+                </span>
+                <button
+                  v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
+                  type="button"
+                  class="rounded border border-sky-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-white dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200"
+                  @click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"
+                >
+                  {{ autoRefreshPaused ? '恢复' : '暂停' }}
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- 2. 常驻 AI 人机交互控制栏 (高度固定 h-8，永远专职负责交互与控制权) -->
+          <div
+            class="flex h-8 shrink-0 items-center justify-between gap-2 border-b px-3 text-[10px] transition-colors"
+            :class="[
+              controlOwner === 'human' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200' :
+              'border-gray-200/80 bg-white text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300'
+            ]"
+          >
+            <!-- 左侧：人机接管状态与焦点提示 -->
+            <div class="flex min-w-0 items-center gap-1.5 truncate font-medium">
+              <template v-if="controlOwner === 'human'">
+                <!-- 人工当前动作实时展示 -->
+                <template v-if="currentHumanAction">
+                  <span class="relative flex h-2 w-2 shrink-0">
+                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-600"></span>
+                  </span>
+                  <span class="shrink-0 font-bold" :class="humanActionInfo.color">
+                    {{ humanActionInfo.icon }} {{ humanActionInfo.label }}
+                  </span>
+                  <span v-if="captchaDetected" class="text-amber-600 dark:text-amber-400">（请完成安全验证）</span>
+                  <span class="truncate text-emerald-800 dark:text-emerald-200">· {{ currentHumanAction.detail }}</span>
+                </template>
+                <!-- 人工待命/默认态 -->
+                <template v-else>
+                  <span class="shrink-0 text-emerald-600">🎯</span>
+                  <span class="shrink-0 font-bold">当前由人工操作</span>
+                  <span v-if="captchaDetected" class="text-amber-600 dark:text-amber-400">（请完成安全验证）</span>
+                  <span class="truncate text-emerald-700 dark:text-emerald-300">· {{ remoteFocusMessage || '直接点击/输入操作网页' }}</span>
+                </template>
+              </template>
+              <template v-else>
+                <!-- AI 细化具体动作正在执行中 -->
+                <template v-if="currentAiAction">
+                  <span class="relative flex h-2 w-2 shrink-0">
+                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
+                    <span class="relative inline-flex h-2 w-2 rounded-full bg-blue-600"></span>
+                  </span>
+                  <span class="shrink-0 font-bold" :class="aiActionInfo.color">
+                    {{ aiActionInfo.icon }} {{ aiActionInfo.label }}
+                  </span>
+                  <span class="truncate text-gray-600 dark:text-gray-300">· {{ currentAiAction.detail || '处理中…' }}</span>
+                </template>
+                <!-- AI 待命中 / 空闲就绪 -->
+                <template v-else>
+                  <span class="shrink-0 text-blue-500">🎯</span>
+                  <span class="shrink-0 font-bold">当前 AI 接管中</span>
+                  <span class="truncate text-gray-500 dark:text-gray-400">· {{ remoteFocusMessage || 'AI 待命中，点击截图任意位置即可人工接管' }}</span>
+                </template>
+              </template>
+            </div>
+
+            <!-- 右侧：同步状态与交还 AI 按钮 -->
+            <div class="flex shrink-0 items-center gap-2">
+              <span v-if="isSyncing" class="inline-flex items-center gap-1 font-bold text-amber-600 dark:text-amber-400">
+                <span class="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-amber-500"></span>
+                <span>同步操作中…</span>
               </span>
               <button
-                v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
+                v-if="controlOwner === 'human'"
                 type="button"
-                class="rounded border border-sky-200 bg-white/70 px-1.5 py-0.5 font-semibold text-sky-700 hover:bg-white dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60"
-                @click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"
+                class="rounded border border-emerald-300 bg-white/90 px-2 py-0.5 font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-200"
+                @click="releaseControl"
               >
-                {{ autoRefreshPaused ? '恢复自动刷新' : '暂停刷新' }}
+                交还 AI
               </button>
             </div>
           </div>
@@ -232,52 +479,87 @@
             @keydown="handleKeydown"
             @wheel.prevent="handleWheel"
           >
-            <div v-if="errorMessage" class="mb-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
-              {{ errorMessage }}
-            </div>
-            <div v-if="remoteFocusMessage" class="mb-2 flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-[10px] text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200" role="status">
-              <span aria-hidden="true">🎯</span>
-              <span>{{ remoteFocusMessage }}</span>
-            </div>
-            <div
-              v-if="controlOwner === 'human'"
-              class="mb-2 flex items-center justify-between gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200"
-              role="status"
-            >
-              <span
-                class="min-w-0 truncate"
-                :title="controlReason ? `人工接管：${controlReason}` : '当前由人工操作'"
-              >
-                <strong>当前由人工操作</strong>
-                <span v-if="captchaDetected">，请完成安全验证</span>
-              </span>
-              <button
-                type="button"
-                class="shrink-0 rounded border border-emerald-300 bg-white/70 px-2 py-0.5 font-semibold text-emerald-700 hover:bg-white dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
-                @click="releaseControl"
-              >
-                交还 AI
-              </button>
-            </div>
             <div v-if="screenshotUrl" class="pointer-events-none absolute bottom-3 left-3 z-10" role="note">
               <span class="rounded-md border border-red-300 bg-white/90 px-2.5 py-1 text-[11px] font-bold text-red-600 shadow-sm dark:border-red-700 dark:bg-red-950/90 dark:text-red-300">
-                这是页面截图，非 HTML 页面
+                当前为远程静态截图，非实时网页（操作存在延迟）· 严禁用于任何违法违规行为
               </span>
             </div>
             <div v-if="screenshotUrl" class="relative">
               <img
+                ref="imageRef"
                 v-if="snapshot"
                 :key="snapshot.snapshot_id"
                 :src="screenshotUrl"
                 alt="远程浏览器画面"
                 draggable="false"
-                class="block w-full cursor-crosshair select-none touch-none rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700"
+                :class="[
+                  cropMode ? 'cursor-crosshair select-none touch-none rounded border border-purple-400 bg-white shadow-md ring-2 ring-purple-400/40 dark:border-purple-600' :
+                  isSyncing ? 'cursor-wait select-none touch-none rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700' :
+                  'cursor-crosshair select-none touch-none rounded border border-gray-200 bg-white shadow-sm dark:border-gray-700',
+                  viewMode === 'fit' ? 'block w-full' : 'block w-[1280px] max-w-none'
+                ]"
                 @click="handleImageClick"
                 @pointerdown="handleImagePointerDown"
                 @pointermove="handleImagePointerMove"
+                @pointerleave="handleImagePointerLeave"
                 @pointerup="handleImagePointerUp"
                 @pointercancel="handleImagePointerCancel"
               />
+              <!-- 框选模式选区矩形与尺寸浮标 -->
+              <div
+                v-if="activeCropRect"
+                class="pointer-events-none absolute border-2 border-dashed border-purple-500 bg-purple-500/20 shadow-md"
+                :style="{
+                  left: `${activeCropRect.left}%`,
+                  top: `${activeCropRect.top}%`,
+                  width: `${activeCropRect.width}%`,
+                  height: `${activeCropRect.height}%`,
+                }"
+              >
+                <span class="absolute -top-5 left-0 rounded bg-purple-700 px-1 py-0.5 font-mono text-[9px] font-bold text-white shadow-xs">
+                  {{ Math.round(activeCropRect.pixelW) }} × {{ Math.round(activeCropRect.pixelH) }} px
+                </span>
+              </div>
+              <!-- 点击触点涟漪动效 -->
+              <span
+                v-if="!cropMode"
+                v-for="r in ripples"
+                :key="r.id"
+                class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-blue-500 bg-blue-400/40 shadow-sm animate-ping"
+                :style="{ left: `${r.x}%`, top: `${r.y}%`, width: '26px', height: '26px' }"
+              />
+              <!-- 智能元素悬停探测与高亮 (Element Hover Inspector) -->
+              <div
+                v-if="hoveredElement && hoveredElementStyle && !cropMode && !pointerDragging"
+                class="pointer-events-none absolute z-10 rounded border border-cyan-400 bg-cyan-400/15 shadow-xs transition-all duration-75 ease-out dark:border-cyan-300 dark:bg-cyan-300/20"
+                :style="hoveredElementStyle"
+              >
+                <!-- 顶部小徽标：语义 ref + role/tag + 文本预览 -->
+                <div class="absolute -top-5 left-0 flex items-center gap-1 rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 shadow-md backdrop-blur-xs whitespace-nowrap">
+                  <span class="font-bold text-cyan-400">#{{ hoveredElement.ref }}</span>
+                  <span class="text-slate-400">·</span>
+                  <span class="text-white">{{ hoveredElement.role || hoveredElement.tag || 'element' }}</span>
+                  <template v-if="hoveredElement.name">
+                    <span class="text-slate-400">·</span>
+                    <span class="max-w-32 truncate text-slate-300" :title="hoveredElement.name">"{{ hoveredElement.name }}"</span>
+                  </template>
+                </div>
+              </div>
+
+              <!-- 实时鼠标坐标与当前探测到的元素信息 -->
+              <div v-if="cursorCoords" class="pointer-events-none absolute bottom-3 right-3 z-20 select-none">
+                <span class="inline-flex max-w-sm items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/90 px-2.5 py-1 font-mono text-[10px] text-slate-200 shadow-lg backdrop-blur-sm">
+                  <span class="shrink-0 text-slate-400">📍 ({{ cursorCoords.x }}, {{ cursorCoords.y }})</span>
+                  <template v-if="hoveredElement">
+                    <span class="shrink-0 text-slate-500">|</span>
+                    <span class="shrink-0 font-bold text-cyan-400">[{{ hoveredElement.ref }}]</span>
+                    <span class="shrink-0 text-emerald-400">{{ hoveredElement.role || hoveredElement.tag }}</span>
+                    <span v-if="hoveredElement.name" class="max-w-44 truncate text-slate-300" :title="hoveredElement.name">
+                      "{{ hoveredElement.name }}"
+                    </span>
+                  </template>
+                </span>
+              </div>
             </div>
             <div v-else class="flex h-full min-h-56 items-center justify-center px-6 text-center text-xs text-gray-400">
               <div class="w-full max-w-sm rounded-xl border border-sky-100 bg-white/80 p-5 shadow-sm dark:border-sky-900/60 dark:bg-gray-900/70">
@@ -328,12 +610,105 @@
             </div>
           </div>
 
-          <footer class="shrink-0 border-t border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-900">
-            <div class="mb-1 flex items-center justify-between text-[10px] text-gray-400">
-              <span class="truncate">{{ snapshot?.title || '未加载页面' }}</span>
-              <button class="shrink-0 text-blue-600 hover:underline dark:text-blue-300" @click="requestSnapshot">刷新画面</button>
+          <!-- 区域截图与 AI 视觉分析操作卡片 -->
+          <div
+            v-if="showCropCard && cropDataUrl"
+            class="absolute bottom-14 left-3 right-3 z-40 sm:left-auto sm:w-96"
+            role="dialog"
+            aria-label="区域截图与AI视觉分析"
+          >
+            <div class="rounded-xl border border-purple-300 bg-white p-3.5 shadow-2xl shadow-purple-900/15 dark:border-purple-800 dark:bg-gray-900">
+              <div class="flex items-start justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-800">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-gray-800 dark:text-gray-100">
+                  <span class="text-purple-600">✂️</span>
+                  <span>区域截图与 AI 视觉分析</span>
+                </div>
+                <button
+                  type="button"
+                  class="rounded p-0.5 text-base leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  aria-label="关闭选区卡片"
+                  title="关闭选区卡片"
+                  @click="cancelCrop"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div class="mt-2.5 flex items-start gap-3">
+                <div class="relative shrink-0 overflow-hidden rounded-lg border border-purple-100 bg-slate-50 p-0.5 dark:border-purple-950 dark:bg-slate-950">
+                  <img :src="cropDataUrl" class="max-h-20 max-w-28 rounded object-contain" alt="选区截图" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="text-[10px] text-gray-500 dark:text-gray-400">已截取选区画面，可向 AI 提问、复制或下载保存。</div>
+                  <div class="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-purple-600"
+                      @click="copyCropImage"
+                    >
+                      {{ isCopied ? '✅ 已复制' : '📋 复制图片' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-purple-600"
+                      @click="downloadCropImage"
+                    >
+                      ⬇️ 保存图片
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
+                      @click="reCrop"
+                    >
+                      🔄 重新框选
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 问 AI 提问输入框 -->
+              <div class="mt-3">
+                <div class="flex gap-1.5">
+                  <input
+                    ref="cropInputRef"
+                    v-model="cropQuestion"
+                    type="text"
+                    placeholder="向 AI 提问此画面内容，如：提取文字/分析图表"
+                    class="min-w-0 flex-1 rounded-md border border-purple-200 bg-purple-50/30 px-2.5 py-1.5 text-xs text-gray-800 outline-none focus:border-purple-400 dark:border-purple-900/60 dark:bg-purple-950/20 dark:text-gray-200"
+                    @keyup.enter="askAiWithCrop"
+                    @keydown.esc="cancelCrop"
+                  />
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 active:scale-95 disabled:opacity-50"
+                    :disabled="isAnalyzing"
+                    @click="askAiWithCrop"
+                  >
+                    {{ isAnalyzing ? '处理中…' : '✨ 问 AI' }}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div class="text-[10px] leading-relaxed text-gray-400">可直接点击、拖拽截图，滚轮、输入文字或按键；点击输入框后会弹出人工输入，验证码请由人工完成。</div>
+          </div>
+
+          <!-- 3. 底部常驻快捷键工具栏 (Bottom Quick Keys Bar) -->
+          <footer class="flex h-8 shrink-0 items-center justify-between gap-1.5 border-t border-gray-200 bg-slate-50 px-2.5 dark:border-gray-800 dark:bg-slate-900/90">
+            <div class="flex shrink-0 items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400">
+              <span class="font-bold">⌨️ 快捷键：</span>
+            </div>
+            <div class="flex flex-1 items-center gap-1 overflow-x-auto scrollbar-none py-0.5">
+              <button
+                v-for="item in quickKeys"
+                :key="item.key"
+                type="button"
+                class="shrink-0 rounded border border-gray-200/90 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-700 shadow-2xs hover:border-blue-300 hover:bg-blue-50/80 hover:text-blue-600 active:scale-95 active:bg-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-blue-500 dark:hover:bg-blue-950/50 dark:hover:text-blue-300"
+                :title="item.tip"
+                :disabled="!snapshot || isSyncing"
+                @click="sendQuickKey(item.key, item.label)"
+              >
+                {{ item.label }}
+              </button>
+            </div>
           </footer>
         </section>
       </aside>
@@ -348,11 +723,19 @@ type ApprovalMode = 'guarded' | 'autopilot';
 type ControlOwner = 'ai' | 'human';
 type BrowserElement = {
   ref: string;
+  tag?: string | null;
   role?: string | null;
   name?: string | null;
   value?: string | null;
   disabled?: boolean;
   sensitive?: boolean;
+  bbox?: { x: number; y: number; width: number; height: number } | null;
+};
+type BrowserTab = {
+  tab_id: string;
+  url: string;
+  title: string;
+  active: boolean;
 };
 type BrowserSnapshot = {
   session_id: string;
@@ -364,6 +747,8 @@ type BrowserSnapshot = {
   elements: BrowserElement[];
   scroll_x?: number;
   scroll_y?: number;
+  can_go_back?: boolean;
+  can_go_forward?: boolean;
   viewport_width?: number | null;
   viewport_height?: number | null;
   document_width?: number | null;
@@ -391,21 +776,116 @@ const emit = defineEmits<{
   (event: 'close'): void;
   (event: 'close-session', destroyProfile?: boolean): void;
   (event: 'update:approval-mode', mode: ApprovalMode): void;
+  (event: 'ask-ai-crop', payload: { image: string; question: string }): void;
 }>();
 
 const showSafetyNotice = ref(props.approvalMode === 'guarded');
-const showAutoNotice = ref(true);
 const showCloseSessionConfirm = ref(false);
 
 const socket = ref<WebSocket | null>(null);
 const connected = ref(false);
 const snapshot = ref<BrowserSnapshot | null>(null);
+const tabs = ref<BrowserTab[]>([]);
 const errorMessage = ref('');
 const address = ref('');
 const manualText = ref('');
+type AiAction = { action: string; detail: string };
+const currentAiAction = ref<AiAction | null>(null);
+
+const AI_ACTION_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
+  opening: { icon: '🌐', label: 'AI 正在打开页面', color: 'text-blue-600 dark:text-blue-400' },
+  reading: { icon: '👁️', label: 'AI 正在读取屏幕', color: 'text-indigo-600 dark:text-indigo-400' },
+  clicking: { icon: '👆', label: 'AI 正在点击', color: 'text-amber-600 dark:text-amber-400' },
+  filling: { icon: '✍️', label: 'AI 正在输入内容', color: 'text-emerald-600 dark:text-emerald-400' },
+  pressing: { icon: '⌨️', label: 'AI 正在发送按键', color: 'text-purple-600 dark:text-purple-400' },
+  selecting: { icon: '📋', label: 'AI 正在选择选项', color: 'text-sky-600 dark:text-sky-400' },
+  scrolling: { icon: '📜', label: 'AI 正在滚动页面', color: 'text-cyan-600 dark:text-cyan-400' },
+  hovering: { icon: '🎯', label: 'AI 正在悬停元素', color: 'text-teal-600 dark:text-teal-400' },
+  dragging: { icon: '🖐️', label: 'AI 正在拖拽元素', color: 'text-orange-600 dark:text-orange-400' },
+  waiting: { icon: '⏳', label: 'AI 正在等待加载', color: 'text-amber-600 dark:text-amber-400' },
+  navigating: { icon: '🧭', label: 'AI 正在导航页面', color: 'text-blue-600 dark:text-blue-400' },
+  exporting_pdf: { icon: '📄', label: 'AI 正在导出网页 PDF', color: 'text-rose-600 dark:text-rose-400' },
+  extracting_table: { icon: '📊', label: 'AI 正在提取表格数据', color: 'text-emerald-600 dark:text-emerald-400' },
+  executing_js: { icon: '⚡', label: 'AI 正在执行页面脚本', color: 'text-purple-600 dark:text-purple-400' },
+};
+
+const aiActionInfo = computed(() => {
+  const action = currentAiAction.value?.action || '';
+  return AI_ACTION_CONFIG[action] || {
+    icon: '⚡',
+    label: 'AI 正在操作中',
+    color: 'text-blue-600 dark:text-blue-400',
+  };
+});
+
+type HumanAction = { action: string; detail: string };
+const currentHumanAction = ref<HumanAction | null>(null);
+
+const HUMAN_ACTION_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
+  click: { icon: '👆', label: '人工点击', color: 'text-emerald-700 dark:text-emerald-300' },
+  scroll: { icon: '📜', label: '人工滚动', color: 'text-emerald-700 dark:text-emerald-300' },
+  key: { icon: '⌨️', label: '人工按键', color: 'text-emerald-700 dark:text-emerald-300' },
+  text: { icon: '✍️', label: '人工输入', color: 'text-emerald-700 dark:text-emerald-300' },
+  navigate: { icon: '🧭', label: '人工导航', color: 'text-emerald-700 dark:text-emerald-300' },
+  tab: { icon: '📑', label: '人工切换标签', color: 'text-emerald-700 dark:text-emerald-300' },
+  drag: { icon: '🖐️', label: '人工拖拽', color: 'text-emerald-700 dark:text-emerald-300' },
+};
+
+const humanActionInfo = computed(() => {
+  const action = currentHumanAction.value?.action || '';
+  return HUMAN_ACTION_CONFIG[action] || {
+    icon: '👆',
+    label: '人工正在操作',
+    color: 'text-emerald-700 dark:text-emerald-300',
+  };
+});
+
+let humanActionTimer: ReturnType<typeof setTimeout> | null = null;
+const setHumanAction = (action: string, detail: string, keepDuration = 2500) => {
+  currentHumanAction.value = { action, detail };
+  if (humanActionTimer) clearTimeout(humanActionTimer);
+  if (keepDuration > 0) {
+    humanActionTimer = setTimeout(() => {
+      currentHumanAction.value = null;
+    }, keepDuration);
+  }
+};
+
+const tabContextMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  tab: BrowserTab | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  tab: null,
+});
+
+const openTabContextMenu = (event: MouseEvent, tab: BrowserTab | null) => {
+  event.preventDefault();
+  event.stopPropagation();
+  tabContextMenu.value = {
+    visible: true,
+    x: typeof window !== 'undefined' ? Math.min(event.clientX, window.innerWidth - 180) : event.clientX,
+    y: typeof window !== 'undefined' ? Math.min(event.clientY, window.innerHeight - 220) : event.clientY,
+    tab,
+  };
+};
+
+const closeTabContextMenu = () => {
+  tabContextMenu.value.visible = false;
+};
+
+const isTabNotLast = (tabId: string) => {
+  const index = tabs.value.findIndex((t) => t.tab_id === tabId);
+  return index >= 0 && index < tabs.value.length - 1;
+};
+
 const showManualInput = ref(false);
 const manualInputRef = ref<HTMLInputElement | null>(null);
-const remoteFocusMessage = ref('请先点击截图中的输入框，再使用下方人工输入');
+const remoteFocusMessage = ref('');
 const controlOwner = ref<ControlOwner>('ai');
 const controlReason = ref<string | null>(null);
 const captchaDetected = ref(false);
@@ -418,6 +898,160 @@ const suppressNextClick = ref(false);
 let lastPointerMoveAt = 0;
 const autoRefreshPaused = ref(false);
 const viewportRef = ref<HTMLElement | null>(null);
+
+// 增强交互状态
+const viewMode = ref<'fit' | 'original'>('fit');
+const isSyncing = ref(false);
+let syncingTimer: ReturnType<typeof setTimeout> | null = null;
+const triggerSyncing = () => {
+  isSyncing.value = true;
+  if (syncingTimer) clearTimeout(syncingTimer);
+  syncingTimer = setTimeout(() => {
+    isSyncing.value = false;
+  }, 4000);
+};
+
+const cursorCoords = ref<{ x: number; y: number } | null>(null);
+
+const hoveredElement = computed<BrowserElement | null>(() => {
+  if (!snapshot.value?.elements || !cursorCoords.value || cropMode.value) return null;
+  const { x, y } = cursorCoords.value;
+  let bestMatch: BrowserElement | null = null;
+  let minArea = Infinity;
+  for (const el of snapshot.value.elements) {
+    if (!el.bbox) continue;
+    const { x: bx, y: by, width: bw, height: bh } = el.bbox;
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+      const area = bw * bh;
+      if (area < minArea && area > 0) {
+        minArea = area;
+        bestMatch = el;
+      }
+    }
+  }
+  return bestMatch;
+});
+
+const hoveredElementStyle = computed(() => {
+  if (!hoveredElement.value?.bbox || !snapshot.value) return null;
+  const naturalW = snapshot.value.viewport_width || (imageRef.value?.naturalWidth || 1280);
+  const naturalH = snapshot.value.viewport_height || (imageRef.value?.naturalHeight || 800);
+  if (!naturalW || !naturalH) return null;
+  const { x, y, width, height } = hoveredElement.value.bbox;
+  return {
+    left: `${(x / naturalW) * 100}%`,
+    top: `${(y / naturalH) * 100}%`,
+    width: `${(width / naturalW) * 100}%`,
+    height: `${(height / naturalH) * 100}%`,
+  };
+});
+
+const ripples = ref<Array<{ id: number; x: number; y: number }>>([]);
+let rippleCounter = 0;
+const addRipple = (event: MouseEvent | PointerEvent) => {
+  const image = event.currentTarget as HTMLImageElement;
+  const rect = image?.getBoundingClientRect?.();
+  if (!rect || !rect.width || !rect.height) return;
+  const id = ++rippleCounter;
+  const x = ((event.clientX - rect.left) / rect.width) * 100;
+  const y = ((event.clientY - rect.top) / rect.height) * 100;
+  ripples.value.push({ id, x, y });
+  setTimeout(() => {
+    ripples.value = ripples.value.filter((r) => r.id !== id);
+  }, 600);
+};
+
+const handleImagePointerLeave = () => {
+  cursorCoords.value = null;
+};
+
+// 区域框选与 AI 视觉分析状态
+const imageRef = ref<HTMLImageElement | null>(null);
+const cropMode = ref(false);
+const isCropping = ref(false);
+const cropStartPoint = ref<{ x: number; y: number } | null>(null);
+const activeCropRect = ref<{
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  pixelW: number;
+  pixelH: number;
+  rectX: number;
+  rectY: number;
+  rectW: number;
+  rectH: number;
+} | null>(null);
+const showCropCard = ref(false);
+const cropDataUrl = ref('');
+const cropQuestion = ref('');
+const isCopied = ref(false);
+const isAnalyzing = ref(false);
+const cropInputRef = ref<HTMLInputElement | null>(null);
+
+const toggleCropMode = () => {
+  cropMode.value = !cropMode.value;
+  if (cropMode.value) {
+    showCropCard.value = false;
+    activeCropRect.value = null;
+    remoteFocusMessage.value = '已进入区域框选模式，请在画面上按住并拖拽鼠标框选区域';
+  } else {
+    activeCropRect.value = null;
+    remoteFocusMessage.value = '已退出框选模式';
+  }
+};
+
+const cancelCrop = () => {
+  cropMode.value = false;
+  showCropCard.value = false;
+  activeCropRect.value = null;
+  cropDataUrl.value = '';
+};
+
+const reCrop = () => {
+  showCropCard.value = false;
+  activeCropRect.value = null;
+  cropDataUrl.value = '';
+  cropMode.value = true;
+};
+
+const copyCropImage = async () => {
+  if (!cropDataUrl.value || typeof window === 'undefined') return;
+  try {
+    const res = await fetch(cropDataUrl.value);
+    const blob = await res.blob();
+    if (navigator.clipboard?.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+      isCopied.value = true;
+      setTimeout(() => { isCopied.value = false; }, 2000);
+      remoteFocusMessage.value = '选区截图已复制到剪贴板，可直接粘贴使用';
+    }
+  } catch (err) {
+    console.error('Failed to copy image', err);
+  }
+};
+
+const downloadCropImage = () => {
+  if (!cropDataUrl.value) return;
+  const link = document.createElement('a');
+  link.href = cropDataUrl.value;
+  link.download = `browser_crop_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+  link.click();
+};
+
+const askAiWithCrop = () => {
+  if (!cropDataUrl.value) return;
+  const question = (cropQuestion.value || '').trim() || '请详细分析并提取这部分截屏画面的文字、图表和关键信息。';
+  emit('ask-ai-crop', {
+    image: cropDataUrl.value,
+    question,
+  });
+  showCropCard.value = false;
+  activeCropRect.value = null;
+  remoteFocusMessage.value = '已将选区截图发送至 AI 对话';
+};
 const isMobile = ref(
   typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
 );
@@ -503,6 +1137,17 @@ const loadingStage = computed(() => {
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let interactionFinishTimer: ReturnType<typeof setTimeout> | null = null;
+let messageResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+const setTemporaryMessage = (msg: string, durationMs = 2500) => {
+  remoteFocusMessage.value = msg;
+  if (messageResetTimer) clearTimeout(messageResetTimer);
+  messageResetTimer = setTimeout(() => {
+    if (remoteFocusMessage.value === msg) {
+      remoteFocusMessage.value = '';
+    }
+  }, durationMs);
+};
 
 const stopPolling = () => {
   if (!pollTimer) return;
@@ -521,6 +1166,10 @@ const closeSocket = () => {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
+  }
+  if (messageResetTimer) {
+    clearTimeout(messageResetTimer);
+    messageResetTimer = null;
   }
   stopPolling();
   stopInteractionFinishTimer();
@@ -559,6 +1208,7 @@ const connect = async () => {
     let payload: {
       type?: string;
       snapshot?: BrowserSnapshot;
+      tabs?: BrowserTab[];
       message?: string;
       focused_input?: boolean;
       owner?: ControlOwner;
@@ -570,6 +1220,7 @@ const connect = async () => {
       payload = JSON.parse(event.data) as {
         type?: string;
         snapshot?: BrowserSnapshot;
+        tabs?: BrowserTab[];
         message?: string;
         focused_input?: boolean;
         owner?: ControlOwner;
@@ -581,16 +1232,24 @@ const connect = async () => {
       errorMessage.value = '浏览器返回了无法识别的消息';
       return;
     }
-    if (payload.type === 'control_state') {
+    if (payload.type === 'tabs' && Array.isArray(payload.tabs)) {
+      tabs.value = payload.tabs;
+    } else if (payload.type === 'control_state') {
+      const prevOwner = controlOwner.value;
       controlOwner.value = payload.owner === 'human' ? 'human' : 'ai';
       controlReason.value = payload.reason || null;
       if (controlOwner.value === 'human') {
         stopPolling();
-      } else if (payload.captcha) {
-        captchaDetected.value = true;
-        stopPolling();
-      } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
-        startPolling();
+      } else {
+        if (prevOwner === 'human' || remoteFocusMessage.value.includes('交还')) {
+          setTemporaryMessage('✅ 已交还 AI 接管控制');
+        }
+        if (payload.captcha) {
+          captchaDetected.value = true;
+          stopPolling();
+        } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+          startPolling();
+        }
       }
     } else if (payload.type === 'captcha') {
       captchaDetected.value = Boolean(payload.detected);
@@ -611,8 +1270,20 @@ const connect = async () => {
         manualText.value = '';
         remoteFocusMessage.value = '当前点击的不是输入框';
       }
+    } else if (payload.type === 'ai_action') {
+      if (payload.action) {
+        currentAiAction.value = { action: payload.action, detail: payload.detail || '' };
+      } else {
+        currentAiAction.value = null;
+      }
     } else if (payload.type === 'snapshot' && payload.snapshot) {
+      currentAiAction.value = null;
       snapshotRequestInFlight.value = false;
+      isSyncing.value = false;
+      if (syncingTimer) {
+        clearTimeout(syncingTimer);
+        syncingTimer = null;
+      }
       const previousUrl = snapshot.value?.url;
       snapshot.value = payload.snapshot;
       address.value = payload.snapshot.url || address.value;
@@ -620,13 +1291,27 @@ const connect = async () => {
         captchaDetected.value = true;
         stopPolling();
       }
+      if (currentHumanAction.value) {
+        currentHumanAction.value.detail = '✅ 操作已生效';
+        if (humanActionTimer) clearTimeout(humanActionTimer);
+        humanActionTimer = setTimeout(() => {
+          currentHumanAction.value = null;
+        }, 1200);
+      }
       if (previousUrl && previousUrl !== payload.snapshot.url) {
         showManualInput.value = false;
         manualText.value = '';
-        remoteFocusMessage.value = '页面已变化，请重新点击要输入的区域';
+        setTemporaryMessage('✅ 页面已更新');
+      } else if (remoteFocusMessage.value.startsWith('正在')) {
+        setTemporaryMessage('✅ 操作已完成');
       }
     } else if (payload.type === 'error') {
       snapshotRequestInFlight.value = false;
+      isSyncing.value = false;
+      if (syncingTimer) {
+        clearTimeout(syncingTimer);
+        syncingTimer = null;
+      }
       errorMessage.value = payload.message || '浏览器操作失败';
     }
   };
@@ -698,9 +1383,9 @@ const scheduleInteractionFinish = () => {
 };
 
 const releaseControl = () => {
+  triggerSyncing();
   send({ type: 'release_control' });
-  remoteFocusMessage.value = '正在交还 AI 控制权';
-  if (!captchaDetected.value && !autoRefreshPaused.value && controlOwner.value === 'ai') startPolling();
+  remoteFocusMessage.value = '正在交还 AI 控制权…';
 };
 
 const confirmCloseSession = (destroyProfile: boolean = false) => {
@@ -720,10 +1405,23 @@ const remotePointFromEvent = (event: MouseEvent): RemotePoint | null => {
   };
 };
 
+let lastClickActionAt = 0;
+
 const sendRemoteClick = (event: MouseEvent) => {
+  if (isSyncing.value) {
+    setTemporaryMessage('⚡ 页面响应中，请稍候…', 1200);
+    return;
+  }
+  const now = Date.now();
+  if (now - lastClickActionAt < 250) return;
+  lastClickActionAt = now;
+
   const point = remotePointFromEvent(event);
   if (!point) return;
+  addRipple(event);
+  triggerSyncing();
   viewportRef.value?.focus({ preventScroll: true });
+  setHumanAction('click', `点击坐标 (${Math.round(point.x)}, ${Math.round(point.y)})`);
   if (!send({
     type: 'mouse_click',
     ...point,
@@ -739,6 +1437,7 @@ const handleImageClick = (event: MouseEvent) => {
     suppressNextClick.value = false;
     return;
   }
+  if (isSyncing.value) return;
   pauseForInteraction();
   sendRemoteClick(event);
   finishInteraction();
@@ -761,9 +1460,29 @@ const releasePointerCapture = (event: PointerEvent) => {
 };
 
 const handleImagePointerDown = (event: PointerEvent) => {
+  if (cropMode.value) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    const image = event.currentTarget as HTMLImageElement;
+    image.setPointerCapture?.(event.pointerId);
+    isCropping.value = true;
+    cropStartPoint.value = { x: event.clientX, y: event.clientY };
+    activeCropRect.value = null;
+    return;
+  }
+
   if (event.pointerType === 'mouse' && event.button !== 0) return;
+  if (isSyncing.value) {
+    setTemporaryMessage('⚡ 页面响应中，请稍候…', 1200);
+    return;
+  }
+  const now = Date.now();
+  if (now - lastClickActionAt < 250) return;
+  lastClickActionAt = now;
+
   const point = remotePointFromEvent(event);
   if (!point) return;
+  addRipple(event);
   event.preventDefault();
   pauseForInteraction();
   const image = event.currentTarget as HTMLImageElement;
@@ -775,8 +1494,43 @@ const handleImagePointerDown = (event: PointerEvent) => {
 };
 
 const handleImagePointerMove = (event: PointerEvent) => {
-  const start = pointerDownPoint.value;
   const point = remotePointFromEvent(event);
+  if (point) {
+    cursorCoords.value = { x: Math.round(point.x), y: Math.round(point.y) };
+  }
+
+  if (cropMode.value) {
+    if (!isCropping.value || !cropStartPoint.value) return;
+    event.preventDefault();
+    const image = event.currentTarget as HTMLImageElement;
+    const rect = image.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x1 = Math.min(cropStartPoint.value.x, event.clientX) - rect.left;
+    const y1 = Math.min(cropStartPoint.value.y, event.clientY) - rect.top;
+    const x2 = Math.max(cropStartPoint.value.x, event.clientX) - rect.left;
+    const y2 = Math.max(cropStartPoint.value.y, event.clientY) - rect.top;
+    const boundedX1 = Math.max(0, Math.min(rect.width, x1));
+    const boundedY1 = Math.max(0, Math.min(rect.height, y1));
+    const boundedX2 = Math.max(0, Math.min(rect.width, x2));
+    const boundedY2 = Math.max(0, Math.min(rect.height, y2));
+    const naturalW = image.naturalWidth || 1280;
+    const naturalH = image.naturalHeight || 800;
+    activeCropRect.value = {
+      left: (boundedX1 / rect.width) * 100,
+      top: (boundedY1 / rect.height) * 100,
+      width: ((boundedX2 - boundedX1) / rect.width) * 100,
+      height: ((boundedY2 - boundedY1) / rect.height) * 100,
+      pixelW: ((boundedX2 - boundedX1) / rect.width) * naturalW,
+      pixelH: ((boundedY2 - boundedY1) / rect.height) * naturalH,
+      rectX: boundedX1,
+      rectY: boundedY1,
+      rectW: boundedX2 - boundedX1,
+      rectH: boundedY2 - boundedY1,
+    };
+    return;
+  }
+
+  const start = pointerDownPoint.value;
   if (!start || !point) return;
   lastPointerPoint.value = point;
   const distance = Math.hypot(point.x - start.x, point.y - start.y);
@@ -794,12 +1548,48 @@ const handleImagePointerMove = (event: PointerEvent) => {
 };
 
 const handleImagePointerUp = (event: PointerEvent) => {
+  if (cropMode.value) {
+    if (!isCropping.value) return;
+    isCropping.value = false;
+    releasePointerCapture(event);
+    const image = event.currentTarget as HTMLImageElement;
+    const rect = image.getBoundingClientRect();
+    if (!activeCropRect.value || activeCropRect.value.rectW < 10 || activeCropRect.value.rectH < 10) {
+      activeCropRect.value = null;
+      return;
+    }
+    const naturalW = image.naturalWidth || 1280;
+    const naturalH = image.naturalHeight || 800;
+    const scaleX = naturalW / rect.width;
+    const scaleY = naturalH / rect.height;
+    const sx = activeCropRect.value.rectX * scaleX;
+    const sy = activeCropRect.value.rectY * scaleY;
+    const sw = activeCropRect.value.rectW * scaleX;
+    const sh = activeCropRect.value.rectH * scaleY;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(image, sx, sy, sw, sh, 0, 0, sw, sh);
+      cropDataUrl.value = canvas.toDataURL('image/png');
+      showCropCard.value = true;
+      cropMode.value = false;
+      cropQuestion.value = '';
+      void nextTick(() => cropInputRef.value?.focus());
+    }
+    return;
+  }
+
   const start = pointerDownPoint.value;
   const point = remotePointFromEvent(event) || lastPointerPoint.value;
   if (!start || !point) return;
   event.preventDefault();
   suppressNativeClick();
   if (pointerDragging.value) {
+    triggerSyncing();
+    setHumanAction('drag', `拖拽至 (${Math.round(point.x)}, ${Math.round(point.y)})`);
     send({ type: 'mouse_move', ...point });
     send({ type: 'mouse_up', ...point });
     remoteFocusMessage.value = '人工拖拽已发送到远程页面';
@@ -814,6 +1604,13 @@ const handleImagePointerUp = (event: PointerEvent) => {
 };
 
 const handleImagePointerCancel = (event: PointerEvent) => {
+  if (cropMode.value) {
+    isCropping.value = false;
+    releasePointerCapture(event);
+    activeCropRect.value = null;
+    return;
+  }
+
   if (!pointerDownPoint.value) return;
   event.preventDefault();
   suppressNativeClick();
@@ -829,32 +1626,70 @@ const handleImagePointerCancel = (event: PointerEvent) => {
 };
 
 const handleKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    if (cropMode.value || showCropCard.value) {
+      cancelCrop();
+      return;
+    }
+  }
+
   if (event.isComposing) return;
   event.preventDefault();
   pauseForInteraction();
+  triggerSyncing();
   const modifiers = [
     event.ctrlKey ? 'Control' : '',
     event.altKey ? 'Alt' : '',
     event.shiftKey ? 'Shift' : '',
     event.metaKey ? 'Meta' : '',
   ].filter(Boolean);
-  send({ type: 'key', key: [...modifiers, event.key].join('+') });
+  const keyCombo = [...modifiers, event.key].join('+');
+  setHumanAction('key', `发送按键 [${keyCombo}]`);
+  send({ type: 'key', key: keyCombo });
   scheduleInteractionFinish();
 };
 
-const handleWheel = (event: WheelEvent) => {
+const quickKeys = [
+  { key: 'Enter', label: '↵ Enter', tip: '回车确认' },
+  { key: 'Tab', label: '⇥ Tab', tip: '切换焦点' },
+  { key: 'Escape', label: '⎋ Esc', tip: '取消/退出' },
+  { key: 'Backspace', label: '⌫ 退格', tip: '退格删除' },
+  { key: 'Space', label: '␣ 空格', tip: '空格' },
+  { key: 'ArrowUp', label: '↑ 上', tip: '向上滚动/选择' },
+  { key: 'ArrowDown', label: '↓ 下', tip: '向下滚动/选择' },
+  { key: 'PageUp', label: '⇞ PgUp', tip: '向上翻页' },
+  { key: 'PageDown', label: '⇟ PgDn', tip: '向下翻页' },
+];
+
+const sendQuickKey = (key: string, label: string) => {
+  if (isSyncing.value) return;
   pauseForInteraction();
+  triggerSyncing();
+  setHumanAction('key', `发送按键 [${label}]`);
+  send({ type: 'key', key });
+  scheduleInteractionFinish();
+  setTemporaryMessage(`已发送按键：${label}`, 1500);
+};
+
+const handleWheel = (event: WheelEvent) => {
+  if (isSyncing.value) return;
+  pauseForInteraction();
+  triggerSyncing();
+  setHumanAction('scroll', `${event.deltaY > 0 ? '向下' : '向上'}滚动页面`);
   send({ type: 'scroll', delta_y: event.deltaY });
   scheduleInteractionFinish();
 };
 
 const sendText = () => {
   if (!manualText.value) return;
+  if (isSyncing.value) return;
   if (!showManualInput.value) {
     remoteFocusMessage.value = '尚未点击远程输入区域，请先点击截图中的搜索框';
     return;
   }
   pauseForInteraction();
+  triggerSyncing();
+  setHumanAction('text', `发送文字「${manualText.value.slice(0, 12)}${manualText.value.length > 12 ? '…' : ''}」`);
   send({ type: 'text', text: manualText.value });
   remoteFocusMessage.value = '文字已发送到远程页面';
   manualText.value = '';
@@ -871,14 +1706,128 @@ const normalizeNavigationUrl = (raw: string) => {
 };
 
 const navigate = () => {
+  if (isSyncing.value) return;
   const value = normalizeNavigationUrl(address.value);
   if (!value) return;
   address.value = value;
   pauseForInteraction();
+  triggerSyncing();
   showManualInput.value = false;
   manualText.value = '';
+  setHumanAction('navigate', `访问 ${value.slice(0, 25)}…`);
   remoteFocusMessage.value = '页面导航中，请等待加载后重新点击输入区域';
   send({ type: 'navigate', url: value });
+  finishInteraction();
+};
+
+const goBack = () => {
+  if (isSyncing.value || !snapshot.value?.can_go_back) return;
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('navigate', '后退至上一页');
+  remoteFocusMessage.value = '正在后退至上一页…';
+  send({ type: 'go_back' });
+  finishInteraction();
+};
+
+const goForward = () => {
+  if (isSyncing.value || !snapshot.value?.can_go_forward) return;
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('navigate', '前进至下一页');
+  remoteFocusMessage.value = '正在前进至下一页…';
+  send({ type: 'go_forward' });
+  finishInteraction();
+};
+
+const reloadPage = () => {
+  if (isSyncing.value) return;
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('navigate', '重新加载页面');
+  remoteFocusMessage.value = '正在重新加载页面…';
+  send({ type: 'reload' });
+  finishInteraction();
+};
+
+const switchTab = (tabId: string) => {
+  if (isSyncing.value) return;
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('tab', '切换标签页');
+  remoteFocusMessage.value = '正在切换标签页…';
+  send({ type: 'switch_tab', tab_id: tabId });
+  finishInteraction();
+};
+
+const closeTab = (tabId: string) => {
+  if (isSyncing.value) return;
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('tab', '关闭标签页');
+  remoteFocusMessage.value = '正在关闭标签页…';
+  send({ type: 'close_tab', tab_id: tabId });
+  finishInteraction();
+};
+
+const newTab = () => {
+  if (isSyncing.value) return;
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('tab', '新建标签页');
+  remoteFocusMessage.value = '正在新建标签页…';
+  send({ type: 'new_tab', url: 'https://www.baidu.com' });
+  finishInteraction();
+};
+
+const closeOtherTabs = (tabId: string) => {
+  if (isSyncing.value) return;
+  closeTabContextMenu();
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('tab', '关闭其他标签页');
+  remoteFocusMessage.value = '正在关闭其他标签页…';
+  send({ type: 'close_other_tabs', tab_id: tabId });
+  finishInteraction();
+};
+
+const closeTabsToRight = (tabId: string) => {
+  if (isSyncing.value) return;
+  closeTabContextMenu();
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('tab', '关闭右侧标签页');
+  remoteFocusMessage.value = '正在关闭右侧标签页…';
+  send({ type: 'close_tabs_to_right', tab_id: tabId });
+  finishInteraction();
+};
+
+const closeAllTabs = () => {
+  if (isSyncing.value) return;
+  closeTabContextMenu();
+  pauseForInteraction();
+  triggerSyncing();
+  showManualInput.value = false;
+  manualText.value = '';
+  setHumanAction('tab', '关闭所有标签页');
+  remoteFocusMessage.value = '正在关闭所有标签页并重置…';
+  send({ type: 'close_all_tabs' });
   finishInteraction();
 };
 
@@ -894,6 +1843,7 @@ watch(
     showCloseSessionConfirm.value = false;
     showManualInput.value = false;
     manualText.value = '';
+    closeTabContextMenu();
     controlOwner.value = 'ai';
     controlReason.value = null;
     captchaDetected.value = false;
@@ -923,6 +1873,7 @@ onMounted(() => {
   syncMobile();
   mobileMq.addEventListener?.('change', syncMobile);
   window.addEventListener('resize', syncMobile);
+  window.addEventListener('click', closeTabContextMenu);
 });
 
 onUnmounted(() => {
@@ -930,5 +1881,6 @@ onUnmounted(() => {
   closeSocket();
   mobileMq?.removeEventListener?.('change', syncMobile);
   window.removeEventListener('resize', syncMobile);
+  window.removeEventListener('click', closeTabContextMenu);
 });
 </script>

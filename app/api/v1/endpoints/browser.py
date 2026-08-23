@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -276,7 +277,10 @@ async def get_browser_screenshot(
     screenshot_ref = snapshot.screenshot_ref
     if not screenshot_ref or not Path(screenshot_ref).is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图不存在")
-    return FileResponse(screenshot_ref, media_type="image/png", filename=f"{session_id}.png")
+    is_jpeg = screenshot_ref.endswith(".jpeg") or screenshot_ref.endswith(".jpg")
+    media_type = "image/jpeg" if is_jpeg else "image/png"
+    filename = f"{session_id}.jpeg" if is_jpeg else f"{session_id}.png"
+    return FileResponse(screenshot_ref, media_type=media_type, filename=filename)
 
 
 def _viewer_snapshot_payload(session_id: str, snapshot) -> dict[str, Any]:
@@ -311,6 +315,40 @@ async def _send_viewer_control_state(
             }
         )
 
+async def _send_viewer_tabs(websocket: WebSocket, session_id: str) -> None:
+    try:
+        tabs = await browser_runtime.list_tabs(session_id)
+        await websocket.send_json(
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "tab_id": tab.tab_id,
+                        "url": tab.url,
+                        "title": tab.title,
+                        "active": tab.active,
+                    }
+                    for tab in tabs
+                ],
+            }
+        )
+    except Exception:
+        pass
+
+
+async def _forward_runtime_events(
+    websocket: WebSocket,
+    event_queue: asyncio.Queue,
+) -> None:
+    while True:
+        try:
+            event_data = await event_queue.get()
+            await websocket.send_json(event_data)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            break
+
 
 @viewer_router.websocket("/sessions/{session_id}/viewer")
 async def browser_viewer(websocket: WebSocket, session_id: str):
@@ -320,6 +358,8 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
         return
     async with AsyncSessionLocal() as db:
         should_release_control = False
+        forward_task: asyncio.Task | None = None
+        event_queue: asyncio.Queue | None = None
         try:
             session = await BrowserSessionService(db).resolve_viewer_token(token)
             if session.id != session_id:
@@ -327,12 +367,18 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
             viewer_connection_id = uuid.uuid4().hex
             await websocket.accept(subprotocol=selected_protocol)
             should_release_control = True
+            event_queue = browser_runtime.subscribe_events(session.id)
+            forward_task = asyncio.create_task(_forward_runtime_events(websocket, event_queue))
             if not browser_runtime.has_session(session.id):
                 await browser_runtime.open_session(db, session)
             snapshot = await browser_runtime.snapshot(session.id)
             await db.commit()
             await websocket.send_json({"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)})
             await _send_viewer_control_state(websocket, session.id, snapshot)
+            await _send_viewer_tabs(websocket, session.id)
+            current_action = browser_runtime.get_ai_action(session.id)
+            if current_action:
+                await websocket.send_json({"type": "ai_action", **current_action})
 
             while True:
                 message = await websocket.receive_json()
@@ -375,6 +421,65 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.last_seen_at = datetime.now()
                         await db.commit()
                         snapshot = await browser_runtime.snapshot(session.id)
+                    elif event in {"go_back", "go_forward", "reload"}:
+                        if event == "go_back":
+                            result = await browser_runtime.go_back(session.id, owner_id=viewer_connection_id)
+                        elif event == "go_forward":
+                            result = await browser_runtime.go_forward(session.id, owner_id=viewer_connection_id)
+                        else:
+                            result = await browser_runtime.reload(session.id, owner_id=viewer_connection_id)
+                        session.current_url = result.url
+                        session.page_title = result.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "switch_tab":
+                        tab_id = str(message.get("tab_id", ""))
+                        info = await browser_runtime.switch_tab(session.id, tab_id, owner_id=viewer_connection_id)
+                        session.current_url = info.url
+                        session.page_title = info.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "close_tab":
+                        tab_id = str(message.get("tab_id", ""))
+                        info = await browser_runtime.close_tab(session.id, tab_id, owner_id=viewer_connection_id)
+                        session.current_url = info.url
+                        session.page_title = info.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "close_other_tabs":
+                        tab_id = str(message.get("tab_id", ""))
+                        info = await browser_runtime.close_other_tabs(session.id, tab_id, owner_id=viewer_connection_id)
+                        session.current_url = info.url
+                        session.page_title = info.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "close_tabs_to_right":
+                        tab_id = str(message.get("tab_id", ""))
+                        info = await browser_runtime.close_tabs_to_right(session.id, tab_id, owner_id=viewer_connection_id)
+                        session.current_url = info.url
+                        session.page_title = info.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "close_all_tabs":
+                        info = await browser_runtime.close_all_tabs(session.id, owner_id=viewer_connection_id)
+                        session.current_url = info.url
+                        session.page_title = info.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
+                    elif event == "new_tab":
+                        target_url = str(message.get("url", "https://www.baidu.com"))
+                        info = await browser_runtime.new_tab(session.id, target_url, owner_id=viewer_connection_id)
+                        session.current_url = info.url
+                        session.page_title = info.title
+                        session.last_seen_at = datetime.now()
+                        await db.commit()
+                        snapshot = await browser_runtime.snapshot(session.id)
                     elif event == "semantic_click":
                         result = await browser_runtime.click(
                             session.id,
@@ -404,6 +509,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         continue
                     await _send_viewer_control_state(websocket, session.id, snapshot)
                     await websocket.send_json({"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)})
+                    await _send_viewer_tabs(websocket, session.id)
                 except Exception as op_exc:
                     logger.exception("Browser viewer operation failed")
                     await websocket.send_json({"type": "error", "message": "浏览器操作失败，请刷新后重试"})
@@ -415,6 +521,10 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
             logger.exception("Browser viewer operation failed")
             await websocket.send_json({"type": "error", "message": "浏览器操作失败，请刷新后重试"})
         finally:
+            if forward_task is not None:
+                forward_task.cancel()
+            if event_queue is not None:
+                browser_runtime.unsubscribe_events(session_id, event_queue)
             if should_release_control:
                 await browser_runtime.release_human_control(
                     session_id,

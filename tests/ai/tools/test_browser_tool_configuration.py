@@ -18,6 +18,7 @@ BROWSER_AUTOMATION_TOOL_NAMES = [
     "browser_read_visible",
     "browser_hover",
     "browser_drag",
+    "browser_slider_drag",
     "browser_back",
     "browser_forward",
     "browser_reload",
@@ -26,6 +27,14 @@ BROWSER_AUTOMATION_TOOL_NAMES = [
     "browser_close_tab",
     "browser_upload",
     "browser_download",
+    "browser_export_pdf",
+    "browser_extract_table",
+    "browser_handle_dialog",
+    "browser_execute_js",
+    "browser_check_auth",
+    "browser_get_network_logs",
+    "browser_get_cookies",
+    "browser_set_cookies",
 ]
 
 

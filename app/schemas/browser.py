@@ -62,11 +62,13 @@ class BrowserViewerTokenResponse(BaseModel):
 
 class BrowserElement(BaseModel):
     ref: str
+    tag: Optional[str] = None
     role: Optional[str] = None
     name: Optional[str] = None
     value: Optional[str] = None
     disabled: bool = False
     sensitive: bool = False
+    bbox: Optional[dict[str, Any]] = None
 
 
 class BrowserSnapshot(BaseModel):
@@ -81,6 +83,8 @@ class BrowserSnapshot(BaseModel):
     page_status: str = "ready"
     scroll_x: float = 0
     scroll_y: float = 0
+    can_go_back: bool = False
+    can_go_forward: bool = False
     viewport_width: Optional[int] = None
     viewport_height: Optional[int] = None
     document_width: Optional[int] = None

@@ -121,8 +121,10 @@ SNAPSHOT_JS = r"""
     if (tagName === 'div' || tagName === 'section' || tagName === 'article') {
       if (!resolvedNativeRole && !roleAttribute && rawName.length > 150) continue;
     }
+    const rect = node.getBoundingClientRect();
     candidates.push({
       role,
+      tag: tagName,
       _role_source: roleAttribute ? 'explicit' : resolvedNativeRole ? 'native' : 'inferred',
       _node_index: nodeIndex,
       _in_shadow: (node.getRootNode && node.getRootNode() !== document),
@@ -130,6 +132,12 @@ SNAPSHOT_JS = r"""
       name: rawName,
       value: sensitive ? '' : cleanText(node.value || ''),
       disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true',
+      bbox: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      },
     });
   }
   return candidates;
@@ -349,6 +357,7 @@ class _BrowserHandle:
     page_last_status: dict[int, int] = field(default_factory=dict)
     next_tab_number: int = 1
     last_active_at: float = field(default_factory=asyncio.get_event_loop().time if False else lambda: 0.0)
+    network_logs: list[dict[str, Any]] = field(default_factory=list)
 
     def touch(self) -> None:
         try:
@@ -492,6 +501,30 @@ class BrowserWorker:
         if not callable(on_event):
             return
         try:
+            async def _record_network_log(response: Any) -> None:
+                try:
+                    req = getattr(response, "request", None)
+                    url = str(getattr(response, "url", "") or "")
+                    method = str(getattr(req, "method", "GET") or "GET") if req else "GET"
+                    status = int(getattr(response, "status", lambda: 0)() or 0)
+                    headers = getattr(response, "headers", {}) or {}
+                    content_type = headers.get("content-type", "")
+                    resource_type = str(getattr(req, "resource_type", lambda: "")() or "") if req else ""
+                    if resource_type in {"fetch", "xhr", "document"} or "json" in content_type or "text" in content_type:
+                        log_item = {
+                            "url": url,
+                            "method": method,
+                            "status": status,
+                            "resource_type": resource_type,
+                            "content_type": content_type,
+                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        }
+                        handle.network_logs.append(log_item)
+                        if len(handle.network_logs) > 100:
+                            handle.network_logs.pop(0)
+                except Exception:
+                    pass
+
             def _on_response(response: Any) -> None:
                 try:
                     status = int(getattr(response, "status", lambda: 0)() or 0)
@@ -502,6 +535,10 @@ class BrowserWorker:
                     handle.page_status[key] = "error"
                 else:
                     handle.page_status[key] = "ready"
+                try:
+                    asyncio.create_task(_record_network_log(response))
+                except Exception:
+                    pass
 
             def _on_request_failed(_request: Any) -> None:
                 handle.page_status[key] = "error"
@@ -586,6 +623,77 @@ class BrowserWorker:
             handle.page = remaining[-1]
         self._snapshots.pop(session_id, None)
         return await self._page_info(handle.page)
+
+    async def close_other_tabs(self, session_id: str, tab_id: str) -> BrowserPageInfo:
+        handle = self._handle(session_id)
+        pages = self._pages(handle)
+        target_page = next(
+            (candidate for candidate in pages if self._tab_id(handle, candidate) == tab_id),
+            None,
+        )
+        if target_page is None:
+            raise BrowserTargetStale("浏览器标签页不存在，请先获取标签页列表")
+        for page in pages:
+            if page is not target_page:
+                try:
+                    await _maybe_await(page.close())
+                except Exception:
+                    pass
+                handle.tab_ids.pop(id(page), None)
+        handle.page = target_page
+        self._snapshots.pop(session_id, None)
+        return await self._page_info(target_page)
+
+    async def close_tabs_to_right(self, session_id: str, tab_id: str) -> BrowserPageInfo:
+        handle = self._handle(session_id)
+        pages = self._pages(handle)
+        target_idx = next(
+            (idx for idx, candidate in enumerate(pages) if self._tab_id(handle, candidate) == tab_id),
+            -1,
+        )
+        if target_idx < 0:
+            raise BrowserTargetStale("浏览器标签页不存在，请先获取标签页列表")
+        pages_to_close = pages[target_idx + 1 :]
+        for page in pages_to_close:
+            try:
+                await _maybe_await(page.close())
+            except Exception:
+                pass
+            handle.tab_ids.pop(id(page), None)
+        remaining = [p for p in pages if p not in pages_to_close]
+        if handle.page in pages_to_close:
+            handle.page = remaining[-1] if remaining else pages[target_idx]
+        self._snapshots.pop(session_id, None)
+        return await self._page_info(handle.page)
+
+    async def close_all_tabs(self, session_id: str, default_url: str = "https://www.baidu.com") -> BrowserPageInfo:
+        handle = self._handle(session_id)
+        old_pages = self._pages(handle)
+        new_page = await _maybe_await(handle.context.new_page())
+        handle.page = new_page
+        self._tab_id(handle, new_page)
+        target_url = str(default_url or "").strip() or "https://www.baidu.com"
+        self._url_validator(target_url)
+        await _maybe_await(new_page.goto(target_url, wait_until="domcontentloaded", timeout=25000))
+        for page in old_pages:
+            try:
+                await _maybe_await(page.close())
+            except Exception:
+                pass
+            handle.tab_ids.pop(id(page), None)
+        self._snapshots.pop(session_id, None)
+        return await self._page_info(new_page)
+
+    async def new_tab(self, session_id: str, url: str = "https://www.baidu.com") -> BrowserPageInfo:
+        handle = self._handle(session_id)
+        page = await _maybe_await(handle.context.new_page())
+        handle.page = page
+        self._tab_id(handle, page)
+        target_url = str(url or "").strip() or "https://www.baidu.com"
+        self._url_validator(target_url)
+        await _maybe_await(page.goto(target_url, wait_until="domcontentloaded", timeout=25000))
+        self._snapshots.pop(session_id, None)
+        return await self._page_info(page)
 
     async def _has_focused_input(self, page: Any, *, x: float, y: float) -> bool:
         evaluate = getattr(page, "evaluate", None)
@@ -806,11 +914,13 @@ class BrowserWorker:
                     name = None
                 element = BrowserElement(
                     ref=ref,
+                    tag=item.get("tag"),
                     role=item.get("role"),
                     name=name,
                     value=None if sensitive else item.get("value"),
                     disabled=bool(item.get("disabled", False)),
                     sensitive=sensitive,
+                    bbox=item.get("bbox"),
                 )
                 elements.append(element)
                 target_map[ref] = item
@@ -834,6 +944,8 @@ class BrowserWorker:
             page_status=self._page_status(handle, handle.page),
             scroll_x=page_context.get("scroll_x", 0),
             scroll_y=page_context.get("scroll_y", 0),
+            can_go_back=bool(page_context.get("can_go_back", False)),
+            can_go_forward=bool(page_context.get("can_go_forward", False)),
             viewport_width=page_context.get("viewport_width"),
             viewport_height=page_context.get("viewport_height"),
             document_width=page_context.get("document_width"),
@@ -876,9 +988,21 @@ class BrowserWorker:
                         }
                         return Array.from(new Set(lines)).join('\n').slice(0, %d);
                       };
+                      let canGoBack = false;
+                      let canGoForward = false;
+                      try {
+                        if (window.navigation) {
+                          canGoBack = Boolean(window.navigation.canGoBack);
+                          canGoForward = Boolean(window.navigation.canGoForward);
+                        } else if (window.history) {
+                          canGoBack = (window.history.length || 0) > 1;
+                        }
+                      } catch (e) {}
                       return {
                         scroll_x: Math.round(window.scrollX || 0),
                         scroll_y: Math.round(window.scrollY || 0),
+                        can_go_back: canGoBack,
+                        can_go_forward: canGoForward,
                         viewport_width: Math.round(window.innerWidth || 0),
                         viewport_height: Math.round(window.innerHeight || 0),
                         document_width: Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0),
@@ -901,6 +1025,8 @@ class BrowserWorker:
                 context[key] = float(result.get(key) or 0)
             except (TypeError, ValueError):
                 context[key] = 0
+        context["can_go_back"] = bool(result.get("can_go_back", False))
+        context["can_go_forward"] = bool(result.get("can_go_forward", False))
         for key in ("viewport_width", "viewport_height", "document_width", "document_height"):
             try:
                 value = result.get(key)
@@ -952,7 +1078,16 @@ class BrowserWorker:
             )
         else:
             delta_y = normalized_amount if normalized_direction == "down" else -normalized_amount
-            await _maybe_await(handle.page.mouse.wheel(0, delta_y))
+            mouse = getattr(handle.page, "mouse", None)
+            if mouse and hasattr(mouse, "wheel"):
+                steps = random.randint(4, 7)
+                base_step = delta_y / float(steps)
+                for _ in range(steps):
+                    step_val = base_step * random.uniform(0.85, 1.15)
+                    await _maybe_await(mouse.wheel(0, step_val))
+                    await asyncio.sleep(random.uniform(0.015, 0.035))
+            else:
+                await _maybe_await(handle.page.evaluate(f"() => window.scrollBy(0, {delta_y})"))
 
         wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
         if callable(wait_for_timeout):
@@ -1106,7 +1241,18 @@ class BrowserWorker:
         target = self._target(session_id, snapshot, target_ref)
         locator = self._locator_for(handle.page, target)
         await self._validate_inferred_target(locator, target)
-        await _maybe_await(locator.hover())
+        try:
+            bounding_box = getattr(locator, "bounding_box", None)
+            box = await _maybe_await(bounding_box()) if callable(bounding_box) else None
+            if box and isinstance(box, dict) and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+                target_x = box["x"] + box["width"] * random.uniform(0.3, 0.7)
+                target_y = box["y"] + box["height"] * random.uniform(0.3, 0.7)
+                await self._human_smooth_mouse_move(handle.page, target_x, target_y, steps=random.randint(6, 12))
+                await asyncio.sleep(random.uniform(0.04, 0.08))
+            else:
+                await _maybe_await(locator.hover())
+        except Exception:
+            await _maybe_await(locator.hover())
         info = await self._page_info(handle.page)
         self._snapshots.pop(session_id, None)
         return BrowserToolResult(session_id=session_id, action="hover", url=info.url, title=info.title)
@@ -1307,7 +1453,8 @@ class BrowserWorker:
             raise RuntimeError(f"浏览器不支持{action}操作")
         await _maybe_await(method(wait_until="domcontentloaded", timeout=25000))
         info = await self._page_info(handle.page)
-        self._url_validator(info.url)
+        if info.url and not info.url.startswith("about:"):
+            self._url_validator(info.url)
         self._snapshots.pop(session_id, None)
         return BrowserToolResult(session_id=session_id, action=action, url=info.url, title=info.title)
 
@@ -1319,6 +1466,296 @@ class BrowserWorker:
 
     async def reload(self, session_id: str) -> BrowserToolResult:
         return await self._history_action(session_id, "reload")
+
+    async def export_pdf(
+        self,
+        session_id: str,
+        *,
+        filename: str | None = None,
+        print_background: bool = True,
+    ) -> BrowserToolResult:
+        """将当前浏览器页面渲染并导出为 A4 格式矢量 PDF 文件。"""
+        handle = self._handle(session_id)
+        page_pdf = getattr(handle.page, "pdf", None)
+        if not callable(page_pdf):
+            raise RuntimeError("当前浏览器环境不支持 PDF 导出（需要 Chromium 内核）")
+        session_dir = Path("data/generated") / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        pdf_name = str(filename or f"page_{uuid.uuid4().hex[:8]}.pdf").strip()
+        if not pdf_name.endswith(".pdf"):
+            pdf_name = f"{pdf_name}.pdf"
+        target_path = session_dir / pdf_name
+        pdf_bytes = await _maybe_await(
+            page_pdf(
+                format="A4",
+                print_background=print_background,
+                margin={"top": "20px", "bottom": "20px", "left": "20px", "right": "20px"},
+            )
+        )
+        if not pdf_bytes:
+            raise RuntimeError("PDF 生成失败，返回内容为空")
+        target_path.write_bytes(pdf_bytes)
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="export_pdf",
+            url=info.url,
+            title=info.title,
+            data={
+                "pdf_path": str(target_path.resolve()),
+                "filename": pdf_name,
+                "size_bytes": len(pdf_bytes),
+            },
+        )
+
+    async def extract_table(
+        self,
+        session_id: str,
+        *,
+        selector: str | None = None,
+        max_rows: int = 50,
+    ) -> BrowserToolResult:
+        """结构化解析网页中的 table 或数据表格元素，输出 JSON 结构与 Markdown。"""
+        handle = self._handle(session_id)
+        extract_script = """
+        ({ selector, maxRows }) => {
+            const tableEl = selector ? document.querySelector(selector) : document.querySelector('table, [role="table"], [role="grid"]');
+            if (!tableEl) return { found: false, message: "未在当前页面找到匹配的数据表格" };
+            
+            const headers = [];
+            const headerCells = tableEl.querySelectorAll('thead th, thead td, th, [role="columnheader"]');
+            if (headerCells.length > 0) {
+                headerCells.forEach(th => headers.push(th.innerText.trim().replace(/\\s+/g, ' ')));
+            }
+            
+            const rows = [];
+            const bodyRows = tableEl.querySelectorAll('tbody tr, tr, [role="row"]');
+            let count = 0;
+            bodyRows.forEach(tr => {
+                if (count >= maxRows) return;
+                const cells = tr.querySelectorAll('td, th, [role="cell"], [role="gridcell"]');
+                if (cells.length > 0) {
+                    const rowData = Array.from(cells).map(c => c.innerText.trim().replace(/\\s+/g, ' '));
+                    // 排除全空的表头重复行
+                    if (rowData.some(v => v !== '')) {
+                        rows.push(rowData);
+                        count++;
+                    }
+                }
+            });
+            
+            // 自动推导表头
+            const finalHeaders = headers.length > 0 ? headers : (rows.length > 0 ? rows[0].map((_, i) => `Col_${i+1}`) : []);
+            const dataRows = (headers.length === 0 && rows.length > 0) ? rows.slice(1) : rows;
+            
+            // 构建 Markdown 表格
+            let markdown = '';
+            if (finalHeaders.length > 0) {
+                markdown += '| ' + finalHeaders.join(' | ') + ' |\\n';
+                markdown += '| ' + finalHeaders.map(() => '---').join(' | ') + ' |\\n';
+                dataRows.forEach(r => {
+                    markdown += '| ' + finalHeaders.map((_, i) => (r[i] || '')).join(' | ') + ' |\\n';
+                });
+            }
+            
+            return {
+                found: true,
+                headers: finalHeaders,
+                row_count: dataRows.length,
+                rows: dataRows,
+                markdown: markdown
+            };
+        }
+        """
+        result = await _maybe_await(
+            handle.page.evaluate(extract_script, {"selector": selector, "maxRows": max(1, min(max_rows, 200))})
+        )
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="extract_table",
+            url=info.url,
+            title=info.title,
+            data=dict(result or {}),
+        )
+
+    async def handle_dialog(
+        self,
+        session_id: str,
+        *,
+        action: str = "accept",
+        prompt_text: str | None = None,
+    ) -> BrowserToolResult:
+        """为当前会话设置原生 alert/confirm/prompt 对话框的自动应答监听器。"""
+        handle = self._handle(session_id)
+        action_type = "accept" if str(action).lower() in {"accept", "ok", "yes", "confirm"} else "dismiss"
+
+        async def _dialog_handler(dialog: Any) -> None:
+            try:
+                if action_type == "accept":
+                    await _maybe_await(dialog.accept(prompt_text or ""))
+                else:
+                    await _maybe_await(dialog.dismiss())
+            except Exception:
+                pass
+
+        handle.page.on("dialog", lambda d: asyncio.create_task(_dialog_handler(d)))
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="handle_dialog",
+            url=info.url,
+            title=info.title,
+            data={"configured_action": action_type, "prompt_text": prompt_text},
+        )
+
+    async def execute_js(
+        self,
+        session_id: str,
+        *,
+        script: str,
+    ) -> BrowserToolResult:
+        """在当前页面上下文沙箱中执行轻量 JavaScript 脚本并捕获返回值。"""
+        handle = self._handle(session_id)
+        raw_script = str(script or "").strip()
+        if not raw_script:
+            raise ValueError("待执行的 JavaScript 脚本不能为空")
+        try:
+            eval_result = await _maybe_await(handle.page.evaluate(raw_script))
+        except Exception as e:
+            raise RuntimeError(f"页面 JavaScript 执行报错: {str(e)}") from e
+        info = await self._page_info(handle.page)
+        self._snapshots.pop(session_id, None)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="execute_js",
+            url=info.url,
+            title=info.title,
+            data={"result": eval_result},
+        )
+
+    async def check_auth(self, session_id: str) -> BrowserToolResult:
+        """智能探测当前网页的登录与认证状态（检查 Cookie、LocalStorage 与页面登录标识）。"""
+        handle = self._handle(session_id)
+        cookies = await _maybe_await(handle.context.cookies())
+        auth_detect_script = """
+        () => {
+            const hasLocalStorageTokens = Object.keys(localStorage).some(k => 
+                /token|auth|session|jwt|user|login/i.test(k) && localStorage.getItem(k)
+            );
+            const hasSessionStorageTokens = Object.keys(sessionStorage).some(k => 
+                /token|auth|session|jwt|user|login/i.test(k) && sessionStorage.getItem(k)
+            );
+            const bodyText = document.body ? document.body.innerText : '';
+            const hasLogoutIndicator = /退出登录|退出|注销|个人中心|我的账号|Log out|Sign out/i.test(bodyText);
+            const hasLoginIndicator = /立即登录|请先登录|Sign in|Log in|注册/i.test(bodyText) && !hasLogoutIndicator;
+            
+            return {
+                has_local_storage_tokens: hasLocalStorageTokens,
+                has_session_storage_tokens: hasSessionStorageTokens,
+                has_logout_indicator: hasLogoutIndicator,
+                has_login_indicator: hasLoginIndicator,
+                page_url: window.location.href,
+            };
+        }
+        """
+        detect_res = await _maybe_await(handle.page.evaluate(auth_detect_script))
+        is_logged_in = False
+        if bool(detect_res.get("has_logout_indicator")) or bool(detect_res.get("has_local_storage_tokens")):
+            is_logged_in = True
+        elif len(cookies) > 0 and not bool(detect_res.get("has_login_indicator")):
+            is_logged_in = True
+
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="check_auth",
+            url=info.url,
+            title=info.title,
+            data={
+                "is_authenticated": is_logged_in,
+                "cookie_count": len(cookies),
+                "indicators": detect_res,
+            },
+        )
+
+    async def get_network_logs(
+        self,
+        session_id: str,
+        *,
+        filter_url: str | None = None,
+        limit: int = 20,
+    ) -> BrowserToolResult:
+        """获取当前浏览器会话最近捕获的网络请求与 API 接口日志列表。"""
+        handle = self._handle(session_id)
+        logs = list(handle.network_logs)
+        if filter_url:
+            filter_lower = filter_url.lower()
+            logs = [item for item in logs if filter_lower in item.get("url", "").lower()]
+        max_limit = max(1, min(limit, 50))
+        selected_logs = logs[-max_limit:]
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="get_network_logs",
+            url=info.url,
+            title=info.title,
+            data={
+                "total_captured": len(handle.network_logs),
+                "matched_count": len(selected_logs),
+                "logs": selected_logs,
+            },
+        )
+
+    async def get_cookies(
+        self,
+        session_id: str,
+        *,
+        urls: list[str] | None = None,
+    ) -> BrowserToolResult:
+        """获取当前浏览器会话指定 URL 或当前域名的所有 Cookie 列表。"""
+        handle = self._handle(session_id)
+        if urls:
+            cookies = await _maybe_await(handle.context.cookies(urls))
+        else:
+            cookies = await _maybe_await(handle.context.cookies())
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="get_cookies",
+            url=info.url,
+            title=info.title,
+            data={
+                "count": len(cookies),
+                "cookies": cookies,
+            },
+        )
+
+    async def set_cookies(
+        self,
+        session_id: str,
+        *,
+        cookies: list[dict[str, Any]],
+    ) -> BrowserToolResult:
+        """向当前浏览器上下文注入一组 Cookie，用于免密直登或会话恢复。"""
+        handle = self._handle(session_id)
+        if not isinstance(cookies, list) or len(cookies) == 0:
+            raise ValueError("待注入的 cookies 列表不能为空")
+        add_cookies = getattr(handle.context, "add_cookies", None)
+        if not callable(add_cookies):
+            raise RuntimeError("当前浏览器环境不支持 Cookie 注入")
+        await _maybe_await(add_cookies(cookies))
+        info = await self._page_info(handle.page)
+        return BrowserToolResult(
+            session_id=session_id,
+            action="set_cookies",
+            url=info.url,
+            title=info.title,
+            data={
+                "injected_count": len(cookies),
+                "status": "success",
+            },
+        )
 
     async def manual_input(self, session_id: str, *, event: str, payload: dict[str, Any]) -> BrowserPageInfo:
         """转发面板的人工接管输入；不接受任意 JS，只转发有限的浏览器输入事件。"""
@@ -1401,8 +1838,14 @@ class BrowserWorker:
         directory = Path(self._screenshot_dir)
         directory.mkdir(parents=True, exist_ok=True)
         safe_session_id = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:80] or "session"
-        path = directory / f"{safe_session_id}_{snapshot_id}.png"
-        await page.screenshot(path=str(path), full_page=False)
+        path = directory / f"{safe_session_id}_{snapshot_id}.jpeg"
+        try:
+            await page.screenshot(path=str(path), type="jpeg", quality=75, full_page=False)
+        except Exception:
+            try:
+                await page.screenshot(path=str(path), full_page=False)
+            except Exception:
+                return None
         return str(path)
 
     def _target(self, session_id: str, snapshot: BrowserSnapshot, target_ref: str) -> dict[str, Any]:
@@ -1559,16 +2002,78 @@ class BrowserWorker:
         ) from error
 
     async def _post_action_settle(self, page: Any) -> None:
-        """动作后稳定等待：等待剪影页面在触发副作用后平稳下来。
-
-        仅在底层页面实现了 ``wait_for_timeout`` 时才真正等待（Playwright 的 Page
-        有该方法；测试用 fake 页面没有时静默跳过）。作用于动画、重排、后端更新
-        落地等场景，避免紧接着采集的验证快照落在中间态上。
-        """
+        """动作后拟人化视线与 DOM 稳定等待（随机等待 120ms ~ 260ms）。"""
+        settle_ms = random.randint(120, 260)
         wait_for_timeout = getattr(page, "wait_for_timeout", None)
         if not callable(wait_for_timeout):
-            return await asyncio.sleep(POST_ACTION_SETTLE_MS / 1000.0)
-        await _maybe_await(wait_for_timeout(POST_ACTION_SETTLE_MS))
+            return await asyncio.sleep(settle_ms / 1000.0)
+        await _maybe_await(wait_for_timeout(settle_ms))
+
+    async def _human_smooth_mouse_move(self, page: Any, target_x: float, target_y: float, steps: int = 8) -> None:
+        """模拟真实人类鼠标从当前点平滑移动到目标坐标，带有微小随机抖动。"""
+        mouse = getattr(page, "mouse", None)
+        if not mouse or not hasattr(mouse, "move"):
+            return
+        try:
+            start_x = getattr(page, "_last_mouse_x", None)
+            start_y = getattr(page, "_last_mouse_y", None)
+            if start_x is None or start_y is None:
+                start_x = random.uniform(100, 500)
+                start_y = random.uniform(100, 400)
+            step_count = max(4, steps)
+            for i in range(1, step_count + 1):
+                t = i / float(step_count)
+                ease_t = 2 * t * t if t < 0.5 else 1 - ((-2 * t + 2) ** 2) / 2
+                curr_x = start_x + (target_x - start_x) * ease_t + (random.uniform(-1.2, 1.2) if i < step_count else 0)
+                curr_y = start_y + (target_y - start_y) * ease_t + (random.uniform(-1.2, 1.2) if i < step_count else 0)
+                await _maybe_await(mouse.move(curr_x, curr_y))
+                await asyncio.sleep(random.uniform(0.005, 0.015))
+            page._last_mouse_x = target_x
+            page._last_mouse_y = target_y
+        except Exception:
+            pass
+
+    async def _human_click_locator(self, locator: Any, page: Any) -> None:
+        """模拟真实人类对指定元素先平滑移动鼠标再进行自然按压点击。"""
+        try:
+            bounding_box = getattr(locator, "bounding_box", None)
+            box = await _maybe_await(bounding_box()) if callable(bounding_box) else None
+            if box and isinstance(box, dict) and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+                target_x = box["x"] + box["width"] * random.uniform(0.25, 0.75)
+                target_y = box["y"] + box["height"] * random.uniform(0.25, 0.75)
+                await self._human_smooth_mouse_move(page, target_x, target_y, steps=random.randint(5, 10))
+                await asyncio.sleep(random.uniform(0.03, 0.07))
+                mouse = getattr(page, "mouse", None)
+                if mouse and hasattr(mouse, "down") and hasattr(mouse, "up"):
+                    await _maybe_await(mouse.down())
+                    await asyncio.sleep(random.uniform(0.04, 0.08))
+                    await _maybe_await(mouse.up())
+                    return
+        except Exception:
+            pass
+        await locator.click()
+
+    async def _human_type_into_locator(self, locator: Any, value: str, page: Any) -> None:
+        """模拟真实人类逐字敲击键盘输入，带拟人按键延迟与段间停顿。"""
+        try:
+            await self._human_click_locator(locator, page)
+            await asyncio.sleep(random.uniform(0.04, 0.09))
+            press_seq = getattr(locator, "press_sequentially", None)
+            if callable(press_seq):
+                if len(value) <= 60:
+                    await press_seq(value, delay=random.randint(30, 65))
+                    return
+                else:
+                    chunk_size = 25
+                    for idx in range(0, len(value), chunk_size):
+                        chunk = value[idx:idx + chunk_size]
+                        await press_seq(chunk, delay=random.randint(15, 35))
+                        if idx + chunk_size < len(value):
+                            await asyncio.sleep(random.uniform(0.06, 0.15))
+                    return
+        except Exception:
+            pass
+        await locator.fill(value)
 
     async def click(
         self,
@@ -1603,7 +2108,22 @@ class BrowserWorker:
             locator = self._locator_for(handle.page, target)
             await self._validate_inferred_target(locator, target)
             await self._ensure_actionable(locator, what="目标元素")
-            await locator.click()
+            pages_before = {
+                id(page)
+                for page in list(getattr(handle.context, "pages", []) or [])
+            }
+            await self._human_click_locator(locator, handle.page)
+            pages_after = list(getattr(handle.context, "pages", []) or [])
+            new_pages = [page for page in pages_after if id(page) not in pages_before]
+            if not new_pages:
+                for _ in range(4):
+                    await asyncio.sleep(0.05)
+                    pages_after = list(getattr(handle.context, "pages", []) or [])
+                    new_pages = [page for page in pages_after if id(page) not in pages_before]
+                    if new_pages:
+                        break
+            if new_pages:
+                handle.page = new_pages[-1]
             await self._post_action_settle(handle.page)
             info = await self._page_info(handle.page)
             self._snapshots.pop(session_id, None)
@@ -1642,7 +2162,7 @@ class BrowserWorker:
             locator = self._locator_for(handle.page, target)
             await self._validate_inferred_target(locator, target)
             await self._ensure_actionable(locator, what="目标元素")
-            await locator.fill(value)
+            await self._human_type_into_locator(locator, value, handle.page)
             await self._post_action_settle(handle.page)
             info = await self._page_info(handle.page)
             # 页面快照推断的敏感性是下限，调用方只能追加标记，不能用 False 覆盖密码字段。
