@@ -329,6 +329,7 @@ async def _skill_publication_reviewer_ids(session: AsyncSession) -> list[int]:
         ResourcePermission.resource_id == "element:skills:admin",
         ResourcePermission.enabled.is_(True),
         ResourcePermission.user_id.is_not(None),
+        ResourcePermission.user_id > 0,
     )
     role_reviewer_ids = (
         select(UserRoleRelation.user_id)
@@ -337,6 +338,8 @@ async def _skill_publication_reviewer_ids(session: AsyncSession) -> list[int]:
             ResourcePermission.resource_type == "element",
             ResourcePermission.resource_id == "element:skills:admin",
             ResourcePermission.enabled.is_(True),
+            ResourcePermission.role_id.is_not(None),
+            ResourcePermission.role_id > 0,
         )
     )
     result = await session.execute(
