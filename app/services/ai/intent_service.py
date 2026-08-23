@@ -177,10 +177,18 @@ _KNOWLEDGE_SIGNALS = [
 _PLATFORM_SELF_SERVICE_SUBJECTS = (
     "技能", "skill", "agent", "智能体", "工具", "tool", "模型", "model",
     "插件", "plugin", "mcp", "提示词", "prompt", "上下文", "配置",
+    "多智能体", "智能体协同", "并行调度", "并行执行", "沙箱", "工作区",
+    "公共文档", "平台文档", "faq",
 )
 _PLATFORM_SELF_SERVICE_ACTIONS = (
     "安装", "挂载", "加载", "启用", "配置", "设置", "创建", "管理", "使用",
     "触发", "执行", "怎么", "如何", "哪里", "在哪", "用法", "说明",
+    "开关", "开启", "关闭", "打开", "关掉", "开了", "不开", "区别",
+    "作用", "影响", "原理", "是什么", "什么意思", "解释", "介绍",
+)
+_EXPLICIT_INTERNAL_DOC_MARKERS = (
+    "内部知识库", "企业知识库", "知识库中", "知识库里的", "知识库内",
+    "公司手册", "企业手册", "内部手册",
 )
 _CURRENT_MODEL_IDENTITY_PATTERNS = (
     re.compile(
@@ -301,6 +309,8 @@ def looks_like_platform_self_service_query(user_question: str) -> bool:
     """Whether the user is asking about the platform/agent system itself."""
     q = (user_question or "").strip().lower()
     if not q:
+        return False
+    if any(marker in q for marker in _EXPLICIT_INTERNAL_DOC_MARKERS):
         return False
     if looks_like_current_model_query(q):
         return True

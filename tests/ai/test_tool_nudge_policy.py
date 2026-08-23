@@ -82,6 +82,34 @@ def test_plain_chat_does_not_nudge():
     assert nudge is None
 
 
+def test_platform_self_help_prefers_public_docs_host_file_tool_over_sub_agent():
+    query = "那多智能体并行是什么意思啊，开了和不开有什么区别啊"
+    decision = resolve_request_decision(
+        query,
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.95,
+    )
+    tools = [
+        _tool("sub_agent_call", "委派知识库助手查询内部手册"),
+        _tool("Grep", "宿主机侧按关键字搜索公共 docs Markdown 文档"),
+        _tool("Read", "宿主机侧读取公共 docs Markdown 文档"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        query,
+        tools,
+        request_decision=decision,
+        available_sub_agent_names={"knowledge-base"},
+        sub_agent_candidates_by_capability={"knowledge_base": ["knowledge-base"]},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "Grep"
+    assert nudge.should_force_first_call is True
+    assert "公共 docs" in nudge.message
+    assert "Bash" in nudge.message
+
+
 @pytest.mark.parametrize(
     "query",
     [
@@ -1004,4 +1032,3 @@ def test_todo_and_task_list_does_not_nudge_data_sub_agent():
         )
 
         assert nudge is None
-

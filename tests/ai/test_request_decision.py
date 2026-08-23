@@ -58,6 +58,20 @@ def test_platform_self_help_overrides_knowledge_binding_and_semantic_knowledge()
     assert decision.allows_data_route is False
 
 
+def test_multi_agent_feature_explanation_is_platform_self_help_not_knowledge_search():
+    decision = resolve_request_decision(
+        "那多智能体并行是什么意思啊，开了和不开有什么区别啊",
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.95,
+        has_knowledge_binding=True,
+    )
+
+    assert decision.source == RequestSource.PLATFORM_SELF_HELP
+    assert decision.capability == RequestCapability.ANSWER
+    assert decision.should_delegate is False
+    assert decision.requires_knowledge_search is False
+
+
 def test_knowledge_binding_alone_does_not_preempt_an_unrelated_turn():
     decision = resolve_request_decision(
         "今天几号",
@@ -441,4 +455,3 @@ def test_todo_or_task_list_query_stays_general():
         assert decision.should_delegate is False
         assert decision.delegate_capability is None
         assert decision.allows_data_route is False
-

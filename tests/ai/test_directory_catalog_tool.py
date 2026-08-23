@@ -212,6 +212,21 @@ def test_agent_prompts_file_anti_guessing_guidelines():
     assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
 
 
+def test_agent_prompts_route_platform_docs_through_host_file_tools():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        "你是一个专业助手。",
+        runtime_tool_names=["Read", "Glob", "Grep", "Bash"],
+    )
+
+    assert "公共文档目录下的 `data/docs/*.md`" in prompt
+    assert "优先通过宿主侧" in prompt
+    assert "Grep`/`Glob`/`Read`" in prompt
+    assert "Docker 沙箱 Bash 不挂载公共 docs" in prompt
+    assert "禁止通过 Bash 访问公共 docs" in prompt
+
+
 def test_agent_prompts_directory_navigator_does_not_require_unbound_catalog_tool():
     from app.services.ai.agent_prompts import AgentServicePrompts
 
