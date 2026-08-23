@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
 PUBLIC_DATA_SUBDIRS: tuple[str, ...] = ("branding", "skills", "docs")
+PUBLIC_RUNTIME_FILE_NAMES: tuple[str, ...] = ("FAQ.md", "README.md")
 USER_WORKSPACE_RESERVED_DIR_NAMES = frozenset({"docs", "uploads", "sandbox", ".trash", "skills", "sessions"})
 SESSION_DIR_NAME_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -56,6 +57,12 @@ def get_public_fs_roots(base: str | None = None) -> list[str]:
     if skills_root and skills_root not in roots:
         roots.append(skills_root)
     return sorted(set(roots))
+
+
+def get_public_runtime_file_targets() -> list[str]:
+    """Return exact application-root files exposed through public read links."""
+    project_root = os.path.realpath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    return [os.path.join(project_root, name) for name in PUBLIC_RUNTIME_FILE_NAMES]
 
 
 def get_user_private_workspace_root(user_info: dict[str, Any] | None) -> str | None:
@@ -139,6 +146,56 @@ def get_allowed_fs_roots(user_info: dict[str, Any] | None) -> list[str]:
     if private_root:
         roots.append(private_root)
     return sorted(set(roots))
+
+
+def _canonical_runtime_path(path: str, base: str | None = None) -> str:
+    """Resolve runtime paths without applying legacy workspace-prefix aliases."""
+    raw_path = str(path or "")
+    data_base = os.path.normpath(base or get_data_base_dir())
+    if raw_path == "/app/data":
+        raw_path = data_base
+    elif raw_path.startswith("/app/data/"):
+        raw_path = os.path.join(data_base, raw_path.removeprefix("/app/data/"))
+    return os.path.normpath(os.path.realpath(os.path.abspath(raw_path)))
+
+
+def _is_path_within_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
+
+
+def is_runtime_path_allowed(
+    path: str,
+    user_info: dict[str, Any] | None,
+) -> bool:
+    """Strictly authorize a path already destined for a native runtime tool.
+
+    Unlike the browser/API compatibility resolver, this function never
+    rewrites arbitrary absolute paths containing ``agent_workspaces/``.
+    Authorization is evaluated against the same canonical path passed to the
+    native file tool.
+    """
+    normalized = _canonical_runtime_path(path)
+    if normalized in get_public_runtime_file_targets():
+        return True
+    return any(
+        _is_path_within_root(normalized, os.path.realpath(root))
+        for root in get_allowed_fs_roots(user_info)
+    )
+
+
+def is_runtime_path_writable(
+    path: str,
+    user_info: dict[str, Any] | None,
+) -> bool:
+    """Strictly allow native runtime writes only inside the user's root."""
+    private_root = get_user_private_workspace_root(user_info)
+    if not private_root:
+        return False
+    normalized = _canonical_runtime_path(path)
+    return _is_path_within_root(normalized, os.path.realpath(private_root))
 
 
 def is_fs_virtual_root(path: str | None, base: str | None = None) -> bool:

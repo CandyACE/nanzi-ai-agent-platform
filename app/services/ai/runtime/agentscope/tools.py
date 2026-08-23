@@ -591,6 +591,20 @@ class AgentScopeNativeApprovalTool:
         if deletion_decision:
             return deletion_decision
 
+        path_checker = getattr(self.native_tool, "check_path_access", None)
+        if path_checker:
+            try:
+                path_result = path_checker(tool_input)
+                if inspect.isawaitable(path_result):
+                    await path_result
+            except (PermissionError, ValueError) as exc:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY,
+                    message=str(exc),
+                    decision_reason="workspace_path_access_denied",
+                    bypass_immune=True,
+                )
+
         if self.permission_scope == "read":
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,

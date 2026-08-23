@@ -98,6 +98,18 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         assert subdirs["uploads"]["container_sandbox_path"] == "/workspace/uploads"
         assert "/data/host_nanzi" in subdirs["docs"]["host_physical_path"]
 
+        public_dirs = {
+            item["directory_name"]: item
+            for item in data["public_directories"]["directories"]
+        }
+        assert public_dirs["docs"]["container_sandbox_path"] is None
+        assert public_dirs["docs"]["access_via"] == ["Read", "Glob", "Grep"]
+        assert public_dirs["branding"]["container_sandbox_path"] is None
+        assert public_dirs["branding"]["access_via"] == ["Read", "Glob", "Grep"]
+        assert public_dirs["skills"]["container_sandbox_path"] == "/workspace/skills"
+        assert public_dirs["skills"]["path_semantics"] == "per_user_seeded_copy"
+        assert "若该字段为空，则按 access_via 使用宿主文件工具" in data["usage_guidelines"][0]
+
 
 @pytest.mark.asyncio
 async def test_list_accessible_directories_admin_user():
@@ -180,7 +192,13 @@ def test_agent_prompts_file_anti_guessing_guidelines():
     # 包含文件工具与 list_accessible_directories 时的 prompt 构建
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         "你是一个专业助手。",
-        runtime_tool_names=["Read", "Write", "list_accessible_directories", "Bash"],
+        runtime_tool_names=[
+            "Read",
+            "Write",
+            "list_accessible_directories",
+            "directory_tree_navigator",
+            "Bash",
+        ],
     )
 
     # 验证包含防盲猜规则
@@ -189,5 +207,33 @@ def test_agent_prompts_file_anti_guessing_guidelines():
     assert "list_accessible_directories" in prompt
     assert "平台公共目录（data/docs/、skills/、branding/）为只读（read_only）" in prompt
     assert "查找公共手册/FAQ/文档路径" in prompt
+    assert "目录发现与树形导航分工" in prompt
+    assert "路径、权限或 Docker/宿主机映射不确定时，优先调用 list_accessible_directories" in prompt
+    assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
 
 
+def test_agent_prompts_route_platform_docs_through_host_file_tools():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        "你是一个专业助手。",
+        runtime_tool_names=["Read", "Glob", "Grep", "Bash"],
+    )
+
+    assert "公共文档目录下的 `data/docs/*.md`" in prompt
+    assert "优先通过宿主侧" in prompt
+    assert "Grep`/`Glob`/`Read`" in prompt
+    assert "Docker 沙箱 Bash 不挂载公共 docs" in prompt
+    assert "禁止通过 Bash 访问公共 docs" in prompt
+
+
+def test_agent_prompts_directory_navigator_does_not_require_unbound_catalog_tool():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        "你是一个专业助手。",
+        runtime_tool_names=["directory_tree_navigator"],
+    )
+
+    assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
+    assert "优先调用 list_accessible_directories" not in prompt

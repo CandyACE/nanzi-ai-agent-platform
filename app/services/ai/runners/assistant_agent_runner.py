@@ -1407,7 +1407,11 @@ class AssistantAgentRunner(BaseExecutor):
             allowed_global_skills=list(getattr(self.config, "skills", None) or []),
         )
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
-        tools = await bind_configured_tools_to_workspace(workspace, tools)
+        tools = await bind_configured_tools_to_workspace(
+            workspace,
+            tools,
+            user_info=self.user_info,
+        )
         self._execution_backend = get_workspace_execution_backend(workspace)
         toolkit = AgentScopeToolConsumer(builder=build_toolkit).consume_specs(
             tools,

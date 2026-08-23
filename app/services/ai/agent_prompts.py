@@ -47,8 +47,8 @@ class AgentServicePrompts:
 6. **本轮任务边界**：最后一条用户消息决定本轮唯一可执行任务。历史消息、上下文压缩摘要、旧工具计划和旧搜索目标默认只是背景，不得重新执行；只有当前用户明确引用或恢复历史任务时，才允许继续处理。
 
 ## 语言与表达
-- 默认使用**简体中文**回答，除非用户明确要求其他语言。
-- **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，如需核实具体配置或排查细节，可优先使用 `Grep`/`search_text` 或 `Read`/`read_file` 工具直接检索公共文档目录下的 `data/docs/FAQ.md` 与 `data/docs/README.md` 获取权威解答；并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节与排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
+    - 默认使用**简体中文**回答，除非用户明确要求其他语言。
+    - **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，应优先通过宿主侧 `Grep`/`Glob`/`Read`（或其 `search_text`/`glob_files`/`read_file` 别名）检索公共文档目录下的 `data/docs/*.md`，获取权威解答；Docker 沙箱 Bash 不挂载公共 docs，禁止通过 Bash 访问公共 docs，也不要因为“是什么意思”等词语改走企业知识库。并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节和排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
 
 
 ## 图示与可视化表达规范
@@ -131,6 +131,7 @@ class AgentServicePrompts:
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
         "list_accessible_directories": "列出当前可访问的文件目录清单、读写权限（只读/可写）与推荐用途说明（不确定路径时优先调用）",
+        "directory_tree_navigator": "已知目录后列出目录树、文件名和大小（不用于查询权限或路径映射）",
         "list_accessible_datasets": "列出当前用户有权限且已启用的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "list_available_agents": "列出当前用户有权限且可运行的智能体/专家目录",
@@ -407,10 +408,12 @@ class AgentServicePrompts:
         # 2. 高敏感工具规范（动态）
         sensitive_rules = []
         has_file_tools = bool({"Read", "Write", "Edit", "Grep", "Glob"} & tool_names)
+        has_directory_catalog = "list_accessible_directories" in tool_names
+        has_directory_navigator = "directory_tree_navigator" in tool_names
         has_cmd_tools = "Bash" in tool_names
         has_proc_tools = "list_process" in tool_names or "manage_process" in tool_names
         
-        if has_file_tools or has_cmd_tools or has_proc_tools:
+        if has_file_tools or has_directory_catalog or has_directory_navigator or has_cmd_tools or has_proc_tools:
             mentioned = []
             if "Read" in tool_names: mentioned.append("Read")
             if "Write" in tool_names: mentioned.append("Write")
@@ -420,6 +423,8 @@ class AgentServicePrompts:
             if "Bash" in tool_names: mentioned.append("Bash")
             if "list_process" in tool_names: mentioned.append("list_process")
             if "manage_process" in tool_names: mentioned.append("manage_process")
+            if has_directory_catalog: mentioned.append("list_accessible_directories")
+            if has_directory_navigator: mentioned.append("directory_tree_navigator")
             
             tool_str = "、".join(mentioned)
             sensitive_rules.append(f"- 文件路径、文本搜索、Shell、进程类能力（如 {tool_str}）仅在该工具已绑定时使用，并严格遵守工具说明中的路径沙箱与安全限制。")
@@ -428,6 +433,20 @@ class AgentServicePrompts:
                     "- **文件读写与路径防盲猜规范**：\n"
                     "  1. 读/搜文件（Read/Glob/Grep）时，若不清楚确切路径、不明确公共文档（如平台官方手册 data/docs/）与个人工作区映射、或遇到找不到文件报错，**严禁盲目臆造不同前缀路径反复试错**；若绑定了 list_accessible_directories，必须优先调用它获取完整目录清单与路径映射。\n"
                     "  2. 写入文件（Write/Edit）时，**平台公共目录（data/docs/、skills/、branding/）为只读（read_only），严禁尝试写入或覆盖**；AI 生成的持久化报告/导出文件统一写入用户专属 docs/ 目录，会话临时脚本与中间缓存写入 sessions/{conversation_id}/ 目录。"
+                )
+
+            directory_rules = []
+            if has_directory_catalog:
+                directory_rules.append(
+                    "  - 路径、权限或 Docker/宿主机映射不确定时，优先调用 list_accessible_directories 获取可访问目录和路径映射。"
+                )
+            if has_directory_navigator:
+                directory_rules.append(
+                    "  - 目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator；它不负责判断权限或发现目录映射。"
+                )
+            if directory_rules:
+                sensitive_rules.append(
+                    "- **目录发现与树形导航分工**：\n" + "\n".join(directory_rules)
                 )
             
         if "Grep" in tool_names or "Glob" in tool_names or "Bash" in tool_names:
@@ -471,6 +490,9 @@ class AgentServicePrompts:
 
         if "list_accessible_directories" in tool_names:
             table_rows.append("| 「我能访问哪些目录」「文件存在哪」「工作区目录结构」「查看可写目录」「查找公共手册/FAQ/文档路径」「文件读写报错排查可用目录与权限」 | 调用 **list_accessible_directories**（获取 docs/、sessions/、uploads/、公共 data/docs/、skills/ 等完整目录清单、权限及推荐用途） |")
+
+        if "directory_tree_navigator" in tool_names:
+            table_rows.append("| 「列出这个已知目录的文件树」「查看目录下有哪些文件」「按后缀或文件名筛选目录内容」 | 调用 **directory_tree_navigator**（只查看已知目录的树形元数据；不用于查询权限、目录映射或文件内容） |")
 
         if "list_accessible_datasets" in tool_names:
             table_rows.append("| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |")
@@ -755,7 +777,7 @@ class AgentServicePrompts:
             + f"- **会话工作目录**：`{visible_session_workdir}`（本会话自动创建；Read/Write/Edit/Grep/Glob/Bash 的相对路径默认相对此目录，会话过程临时文件、工具落盘优先放这里）\n"
             + f"- **默认文档目录**：`{visible_docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{visible_docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
-            "- **平台共享目录仍在 `/app/data` 沙箱内、可访问**：用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件在 `/app/data/skills/...`。"
+            "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区；平台公共 docs/branding 不挂载到沙箱，禁止通过 Docker 沙箱 Bash 访问公共 docs，公共平台文档只能通过宿主侧 Read/Glob/Grep 读取。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的 `/workspace/skills/...` 副本读取。"
             " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"

@@ -159,6 +159,7 @@ async def list_accessible_directories() -> str:
     使用规则：
     - 当 AI 需要了解自身当前可访问哪些目录、需要确定文件落盘位置（如生成报告、导出 Excel/PDF、写入临时代码）、或查看公共与个人空间区别时调用此工具。
     - 读写或搜索文件前若不确定目标文件路径，或遇到文件找不到/写入被拒时，必须优先调用本工具查看全景映射，严禁盲猜路径。
+    - 本工具只负责可访问目录、权限和路径映射；目标目录已经明确且只需要查看目录树时，使用 directory_tree_navigator。
     - 清楚区分「平台公共文档与手册 (data/docs/)，只读」、「系统公共技能库 (skills/)，只读」、「用户专属持久化文档库 (docs/)，可写」、「当前会话临时工作区 (sessions/{cid}/)，可写」和「用户上传附件 (uploads/)，可读写」。
     """
     ctx = get_current_agent_context()
@@ -312,12 +313,18 @@ async def list_accessible_directories() -> str:
         public_directories: list[dict[str, Any]] = [
             {
                 "directory_name": "docs",
-                "container_sandbox_path": global_docs_service_path,
+                "container_sandbox_path": (
+                    None if is_docker_sandbox else global_docs_service_path
+                ),
                 "backend_service_path": global_docs_service_path,
                 "host_physical_path": _to_host_path(global_docs_service_path),
+                "access_via": ["Read", "Glob", "Grep"],
                 "permission": "read_only",
                 "category": "platform_global_docs",
-                "description": "平台全局公共文档与模板库（data/docs）。存放全员共享的产品手册、规范文档、公司模板等资料，供所有用户只读查阅，不可随意写入覆盖。",
+                "description": (
+                    "平台全局公共文档与模板库（data/docs）。"
+                    "Docker 沙箱 Bash 不直接挂载此目录，请通过宿主文件工具只读查阅。"
+                ),
                 "recommended_for": ["查阅公共产品手册", "参考公共标准模板与制度文档"],
             },
             {
@@ -325,19 +332,32 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_path": "/workspace/skills" if is_docker_sandbox else global_skills_service_path,
                 "backend_service_path": global_skills_service_path,
                 "host_physical_path": _to_host_path(global_skills_service_path),
+                "path_semantics": (
+                    "per_user_seeded_copy" if is_docker_sandbox else "platform_directory"
+                ),
                 "permission": "read_only",
                 "category": "platform_global_skills",
-                "description": "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，仅允许只读访问，不可直接覆盖。",
+                "description": (
+                    "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，"
+                    "Docker 模式下通过当前用户工作区内的 /workspace/skills 预置副本访问，"
+                    "不是直接挂载 /app/data/skills。"
+                ),
                 "recommended_for": ["读取系统公共技能指令", "查看内置工作流"],
             },
             {
                 "directory_name": "branding",
-                "container_sandbox_path": branding_service_path,
+                "container_sandbox_path": (
+                    None if is_docker_sandbox else branding_service_path
+                ),
                 "backend_service_path": branding_service_path,
                 "host_physical_path": _to_host_path(branding_service_path),
+                "access_via": ["Read", "Glob", "Grep"],
                 "permission": "read_only",
                 "category": "platform_branding_assets",
-                "description": "平台公共品牌与静态资产目录。包含 Logo、图标等公共资源，仅允许只读访问。",
+                "description": (
+                    "平台公共品牌与静态资产目录。包含 Logo、图标等公共资源，"
+                    "Docker 沙箱 Bash 不直接挂载此目录，请通过宿主文件工具只读查阅。"
+                ),
                 "recommended_for": ["读取公共静态资源"],
             }
         ]
@@ -363,7 +383,7 @@ async def list_accessible_directories() -> str:
                 "directories": public_directories,
             },
             "usage_guidelines": [
-                "1. 在 Docker 沙箱环境（Docker Sandbox）下执行 Bash 命令或 Python 脚本时，请使用 container_sandbox_path（以 /workspace 开头）；",
+                "1. 在 Docker 沙箱环境（Docker Sandbox）下执行 Bash 命令或 Python 脚本时，请使用非空的 container_sandbox_path（以 /workspace 开头）；若该字段为空，则按 access_via 使用宿主文件工具；",
                 "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
                 "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
                 "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",

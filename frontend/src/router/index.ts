@@ -23,12 +23,14 @@ const router = createRouter({
     {
       path: '/login',
       name: 'Login',
-      component: Login
+      component: Login,
+      meta: { title: '登录' }
     },
     {
       path: '/no-permission',
       name: 'NoPermission',
-      component: NoPermission
+      component: NoPermission,
+      meta: { title: '无权限' }
     },
     {
       path: '/embed',
@@ -38,7 +40,7 @@ const router = createRouter({
           path: 'chat',
           name: 'EmbedChat',
           component: () => import('../views/EmbedChat.vue'),
-          meta: { public: true } 
+          meta: { public: true, title: '嵌入式对话' } 
         }
       ]
     },
@@ -56,55 +58,55 @@ const router = createRouter({
           path: 'users',
           name: 'Users',
           component: Users,
-          meta: { perm: 'menu:system:users' }
+          meta: { perm: 'menu:system:users', title: '用户管理' }
         },
         {
           path: 'roles',
           name: 'Roles',
           component: () => import('../views/Roles.vue'),
-          meta: { perm: 'menu:system:roles' }
+          meta: { perm: 'menu:system:roles', title: '角色管理' }
         },
         {
           path: 'system',
           name: 'System',
           component: SystemConfig,
-          meta: { perm: 'menu:system:config' }
+          meta: { perm: 'menu:system:config', title: '系统配置' }
         },
         {
           path: 'audit',
           name: 'Audit',
           component: AuditLogs,
-          meta: { perm: 'menu:system:audit' }
+          meta: { perm: 'menu:system:audit', title: '审计日志' }
         },
         {
           path: 'token-stats',
           name: 'TokenStats',
           component: () => import('../views/TokenStats.vue'),
-          meta: { perm: 'menu:system:audit' }
+          meta: { perm: 'menu:system:audit', title: 'Token 统计' }
         },
         {
           path: 'chat-logs',
           name: 'ChatLogs',
           component: ChatLogs,
-          meta: { perm: 'menu:chat_logs' }
+          meta: { perm: 'menu:chat_logs', title: '聊天日志' }
         },
         {
           path: 'playground',
           name: 'Playground',
           component: Playground,
-          meta: { perm: 'menu:playground' }
+          meta: { perm: 'menu:playground', title: '接口调试台' }
         },
         {
           path: 'agent-debug',
           name: 'AgentDebug',
           component: AgentDebug,
-          meta: { perm: 'menu:agent_debug' }
+          meta: { perm: 'menu:agent_debug', title: '智能体调试' }
         },
         {
           path: 'widget-debug',
           name: 'WidgetDebugger',
           component: () => import('../views/WidgetDebugger.vue'),
-          meta: { perm: 'menu:widget_debug' }
+          meta: { perm: 'menu:widget_debug', title: '组件调试台' }
         },
         {
           path: 'workbench',
@@ -115,31 +117,32 @@ const router = createRouter({
         {
           path: 'personal',
           name: 'PersonalCenter',
-          component: PersonalCenter
+          component: PersonalCenter,
+          meta: { title: '个人中心' }
         },
         {
           path: 'metadata',
           name: 'Metadata',
           component: MetadataDatasets,
-          meta: { perm: 'menu:metadata' }
+          meta: { perm: 'menu:metadata', title: '元数据管理' }
         },
         {
           path: 'metadata/:id',
           name: 'MetadataTables',
           component: MetadataTables,
-          meta: { perm: 'menu:metadata' }
+          meta: { perm: 'menu:metadata', title: '表详情' }
         },
         {
           path: 'data-sources',
           name: 'DataSourceManagement',
           component: () => import('../views/DataSourceManagement.vue'),
-          meta: { perm: 'menu:data_sources' }
+          meta: { perm: 'menu:data_sources', title: '数据源管理' }
         },
         {
           path: 'agent-management',
           name: 'AgentManagement',
           component: AgentManagement,
-          meta: { perm: 'menu:agent_management' }
+          meta: { perm: 'menu:agent_management', title: '智能体中心' }
         },
         {
           path: 'scenario-templates',
@@ -163,7 +166,7 @@ const router = createRouter({
           path: 'examples',
           name: 'ExampleManagement',
           component: () => import('../views/ExampleManagement.vue'),
-          meta: { perm: 'menu:chatbi_examples' }
+          meta: { perm: 'menu:chatbi_examples', title: '案例集管理' }
         },
         {
           path: 'knowledge-bases',
@@ -187,7 +190,7 @@ const router = createRouter({
           path: 'prompts',
           name: 'PromptStudio',
           component: PromptStudio,
-          meta: { perm: 'menu:prompts' }
+          meta: { perm: 'menu:prompts', title: '提示词工坊' }
         },
         {
           path: 'skills',
@@ -212,13 +215,13 @@ const router = createRouter({
           path: 'tasks',
           name: 'TaskCenter',
           component: () => import('../views/TaskCenter.vue'),
-          meta: { perm: 'menu:task_center' }
+          meta: { perm: 'menu:task_center', title: '任务调度台' }
         },
         {
           path: 'chat',
           name: 'AIChat',
           component: () => import('../views/Chat.vue'),
-          meta: { perm: 'menu:ai_chat' }
+          meta: { perm: 'menu:ai_chat', title: '智能助手' }
         }
       ]
     },

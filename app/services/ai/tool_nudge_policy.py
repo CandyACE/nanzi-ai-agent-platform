@@ -344,6 +344,46 @@ def _build_message(tool_name: str, capability: str) -> str:
     )
 
 
+_PLATFORM_DOC_TOOL_ALIASES = (
+    ("Grep", "search_text"),
+    ("Glob", "glob_files"),
+    ("Read", "read_file"),
+)
+
+
+def _find_platform_doc_tool(tools: List[Any]) -> Any:
+    available = {
+        str(getattr(tool, "name", "") or "").strip(): tool
+        for tool in (tools or [])
+    }
+    for names in _PLATFORM_DOC_TOOL_ALIASES:
+        for name in names:
+            if name in available:
+                return available[name]
+    return None
+
+
+def _resolve_platform_docs_nudge(tools: List[Any]) -> Optional[ToolNudge]:
+    tool = _find_platform_doc_tool(tools)
+    if tool is None:
+        return None
+
+    tool_name = str(getattr(tool, "name", "") or "").strip()
+    return ToolNudge(
+        tool_name=tool_name,
+        score=0.95,
+        message=(
+            "【平台公共文档优先】本轮问题涉及智能体平台自身的功能、配置或开关说明。"
+            "请优先通过宿主侧文件工具检索公共 docs/*.md（先用 Grep/Glob 定位，"
+            "再用 Read 读取命中文档）后回答；Docker 沙箱 Bash 不挂载公共 docs，"
+            "禁止通过 Bash 访问或臆造 /workspace/docs、/app/data/docs 路径。"
+            "公共文档没有命中时，不要改为调用 sub_agent_call 搜索企业知识库。"
+        ),
+        force_first_call=True,
+        metadata=resolve_tool_metadata(tool),
+    )
+
+
 _NOTIFICATION_ACTION_TERMS = (
     "发送", "推送", "通知", "发到", "发给", "发一下", "send", "push", "notify",
 )
@@ -752,6 +792,16 @@ def resolve_tool_nudge(
     current_user_profile_nudge = _resolve_current_user_profile_nudge(query, tools)
     if current_user_profile_nudge is not None:
         return _attach_tool_metadata(current_user_profile_nudge, tools, tool_metadata)
+
+    from app.services.ai.intent_service import looks_like_current_model_query
+
+    if (
+        request_decision.source == RequestSource.PLATFORM_SELF_HELP
+        and not looks_like_current_model_query(query)
+    ):
+        platform_docs_nudge = _resolve_platform_docs_nudge(tools)
+        if platform_docs_nudge is not None:
+            return _attach_tool_metadata(platform_docs_nudge, tools, tool_metadata)
 
     # 目录未给出高置信匹配时，允许主助手做一次低成本直接检索兜底；
     # 该路径必须先于知识库 sub_agent nudge，避免候选信号升级为委派。
