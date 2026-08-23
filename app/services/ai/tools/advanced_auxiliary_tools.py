@@ -89,7 +89,8 @@ def sqlite_scratchpad(sql: str, session_id: str, import_data: str = None) -> str
 def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None) -> str:
     """
     分层或递归检索目标目录下的结构，支持按文件后缀和文件名关键字过滤。
-    只允许导航 data 目录及项目内部的安全路径。
+    只允许导航项目根目录或服务容器 /app 内的路径；该工具只返回目录元数据，不读取文件内容。
+    已知目标目录只需要查看树结构时使用；如果不确定可访问范围、权限或 Docker/宿主机路径映射，应先使用 list_accessible_directories。
     
     Args:
         path: 检索目标目录路径 (如 app/services)。
@@ -97,11 +98,14 @@ def directory_tree_navigator(path: str, suffix: str = None, keyword: str = None)
         keyword: 可选的文件名关键字模糊检索。
     """
     try:
-        abs_path = os.path.abspath(path)
         project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))))
-        
-        if not abs_path.startswith(project_root) and not abs_path.startswith("/app"):
-            return f"安全拦截：禁止越权检索系统级路径 {path}！"
+        abs_path = os.path.realpath(os.path.abspath(path))
+        allowed_roots = [os.path.realpath(project_root), os.path.realpath("/app")]
+        if not any(
+            os.path.commonpath((abs_path, root)) == root
+            for root in allowed_roots
+        ):
+            return f"安全拦截：禁止导航项目根目录或 /app 之外的路径 {path}！"
             
         if not os.path.exists(abs_path):
             return f"错误：路径 {path} 不存在。"

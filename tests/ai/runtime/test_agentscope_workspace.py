@@ -310,9 +310,19 @@ def test_docker_workspace_results_keep_real_user_workspace_paths():
 
 
 @pytest.mark.asyncio
-async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_root():
+async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_root(
+    monkeypatch,
+):
     from app.services.ai.runtime.agentscope import workspace as workspace_module
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: "/srv")
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: "/srv")
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: "/srv/agent_workspaces",
+    )
 
     calls = []
 
@@ -352,6 +362,7 @@ async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_roo
     bound = await workspace_module.bind_configured_tools_to_workspace(
         (FakeDockerSandbox(), FakeLocalWorkspace()),
         [spec],
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
     )
 
     assert await bound[0].callable(
@@ -364,6 +375,360 @@ async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_roo
             ),
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_host_file_tools_enforce_public_and_private_read_boundary(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    base = tmp_path / "data"
+    public_root = base / "docs"
+    own_root = base / "agent_workspaces" / "alice__1"
+    other_root = base / "agent_workspaces" / "bob__2"
+    private_root = base / "private"
+    external_workspace_root = tmp_path / "legacy" / "agent_workspaces" / "alice__1"
+    for directory in (
+        public_root,
+        own_root,
+        other_root,
+        private_root,
+        external_workspace_root,
+    ):
+        directory.mkdir(parents=True)
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    for name in ("FAQ.md", "README.md"):
+        os.symlink(os.path.join(project_root, name), public_root / name)
+    os.symlink(
+        os.path.join(project_root, "docker", "README.md"),
+        public_root / "docker-readme.md",
+    )
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class FakeFileTool:
+        is_read_only = True
+
+        def __init__(self, name: str):
+            self.name = name
+            self.description = name
+            self.input_schema = {"type": "object", "properties": {}}
+
+        async def __call__(self, **kwargs):
+            calls.append((self.name, kwargs))
+            return "ok"
+
+    class FakeLocalWorkspace:
+        workdir = str(own_root / "sessions" / "conversation-1")
+        workspace_user_root = str(own_root)
+
+        async def list_tools(self):
+            return [FakeFileTool(name) for name in ("Read", "Glob", "Grep")]
+
+    specs = [
+        RuntimeToolSpec(
+            name=name,
+            description=name,
+            parameters_schema={"type": "object", "properties": {}},
+            source_type="system",
+            callable=lambda **kwargs: kwargs,
+            permission_scope="read",
+            native_tool=FakeFileTool(name),
+        )
+        for name in ("Read", "Glob", "Grep")
+    ]
+
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (None, FakeLocalWorkspace()),
+        specs,
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+    )
+    by_name = {spec.name: spec for spec in bound}
+
+    await by_name["Read"].callable(file_path=str(own_root / "own.txt"))
+    await by_name["Read"].callable(file_path=str(public_root / "manual.md"))
+    await by_name["Read"].callable(file_path=str(public_root / "FAQ.md"))
+    await by_name["Glob"].callable(pattern="**/*", path=str(own_root))
+    await by_name["Grep"].callable(pattern="secret", path=str(public_root))
+    await by_name["Glob"].callable(pattern="**/*")
+    await by_name["Grep"].callable(pattern="secret")
+
+    for name, kwargs in (
+        ("Read", {"file_path": str(other_root / "secret.txt")}),
+        ("Glob", {"pattern": "**/*", "path": str(other_root)}),
+        ("Grep", {"pattern": "secret", "path": str(private_root)}),
+        ("Grep", {"pattern": "secret", "path": str(external_workspace_root)}),
+        ("Read", {"file_path": str(public_root / "docker-readme.md")}),
+    ):
+        with pytest.raises(PermissionError, match="文件访问被拒绝"):
+            await by_name[name].callable(**kwargs)
+
+    assert [name for name, _kwargs in calls] == [
+        "Read",
+        "Read",
+        "Read",
+        "Glob",
+        "Grep",
+        "Glob",
+        "Grep",
+    ]
+    assert calls[-2][1]["path"] == str(own_root)
+    assert calls[-1][1]["path"] == str(own_root)
+
+
+@pytest.mark.asyncio
+async def test_host_file_tools_allow_writes_only_in_private_workspace(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    base = tmp_path / "data"
+    public_root = base / "docs"
+    own_root = base / "agent_workspaces" / "alice__1"
+    other_root = base / "agent_workspaces" / "bob__2"
+    for directory in (public_root, own_root, other_root):
+        directory.mkdir(parents=True)
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class FakeFileTool:
+        is_read_only = False
+
+        def __init__(self, name: str):
+            self.name = name
+            self.description = name
+            self.input_schema = {"type": "object", "properties": {}}
+
+        async def __call__(self, **kwargs):
+            calls.append((self.name, kwargs))
+            return "ok"
+
+    class FakeLocalWorkspace:
+        workdir = str(own_root / "sessions" / "conversation-1")
+        workspace_user_root = str(own_root)
+
+        async def list_tools(self):
+            return [FakeFileTool(name) for name in ("Write", "Edit")]
+
+    specs = [
+        RuntimeToolSpec(
+            name=name,
+            description=name,
+            parameters_schema={"type": "object", "properties": {}},
+            source_type="system",
+            callable=lambda **kwargs: kwargs,
+            permission_scope="write",
+            native_tool=FakeFileTool(name),
+        )
+        for name in ("Write", "Edit")
+    ]
+    user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (None, FakeLocalWorkspace()),
+        specs,
+        user_info=user_info,
+    )
+    by_name = {spec.name: spec for spec in bound}
+
+    await by_name["Write"].callable(file_path=str(own_root / "new.txt"), content="ok")
+    await by_name["Edit"].callable(
+        file_path=str(own_root / "existing.txt"),
+        old_string="old",
+        new_string="new",
+    )
+
+    for name, kwargs in (
+        (
+            "Write",
+            {"file_path": str(public_root / "manual.md"), "content": "bad"},
+        ),
+        (
+            "Edit",
+            {
+                "file_path": str(other_root / "secret.txt"),
+                "old_string": "old",
+                "new_string": "new",
+            },
+        ),
+    ):
+        with pytest.raises(PermissionError, match="文件访问被拒绝"):
+            await by_name[name].callable(**kwargs)
+
+    assert [name for name, _kwargs in calls] == ["Write", "Edit"]
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_file_tools_authorize_after_logical_path_mapping(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    base = tmp_path / "data"
+    public_root = base / "docs"
+    own_root = base / "agent_workspaces" / "alice__1"
+    other_root = base / "agent_workspaces" / "bob__2"
+    public_root.mkdir(parents=True)
+    own_root.mkdir(parents=True)
+    other_root.mkdir(parents=True)
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    calls: list[dict[str, str]] = []
+
+    class FakeRead:
+        name = "Read"
+        description = "Read"
+        input_schema = {"type": "object", "properties": {}}
+        is_read_only = True
+
+        async def __call__(self, **kwargs):
+            calls.append(kwargs)
+            return "ok"
+
+    class FakeLocalWorkspace:
+        workdir = str(own_root / "sessions" / "conversation-1")
+        workspace_user_root = str(own_root)
+
+        async def list_tools(self):
+            return [FakeRead()]
+
+    class FakeDockerSandbox:
+        _platform_sandbox_policy = "docker"
+
+    spec = RuntimeToolSpec(
+        name="Read",
+        description="Read",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=lambda **kwargs: kwargs,
+        permission_scope="read",
+        native_tool=FakeRead(),
+    )
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (FakeDockerSandbox(), FakeLocalWorkspace()),
+        [spec],
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+    )
+
+    await bound[0].callable(file_path="/workspace/sessions/conversation-1/report.md")
+    await bound[0].callable(file_path=str(public_root / "manual.md"))
+    with pytest.raises(PermissionError, match="文件访问被拒绝"):
+        await bound[0].callable(
+            file_path=str(other_root / "secret.txt"),
+        )
+
+    assert calls == [
+        {
+            "file_path": str(own_root / "sessions" / "conversation-1" / "report.md"),
+        },
+        {"file_path": str(public_root / "manual.md")},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bind_file_tools_fails_closed_without_host_workspace():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    spec = RuntimeToolSpec(
+        name="Read",
+        description="Read",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=lambda **kwargs: kwargs,
+        permission_scope="read",
+        native_tool=type("FakeNativeRead", (), {"name": "Read"})(),
+    )
+
+    with pytest.raises(PermissionError, match="文件访问被拒绝"):
+        await workspace_module.bind_configured_tools_to_workspace(
+            (None, None),
+            [spec],
+            user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_native_approval_cannot_override_public_write_denial(tmp_path, monkeypatch):
+    from agentscope.permission import PermissionBehavior
+
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+
+    base = tmp_path / "data"
+    public_root = base / "docs"
+    own_root = base / "agent_workspaces" / "alice__1"
+    public_root.mkdir(parents=True)
+    own_root.mkdir(parents=True)
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    class FakeWrite:
+        name = "Write"
+        description = "Write"
+        input_schema = {"type": "object", "properties": {}}
+        is_read_only = False
+
+        def __init__(self):
+            self.calls = 0
+
+        async def __call__(self, **kwargs):
+            self.calls += 1
+            return "written"
+
+    native = FakeWrite()
+    wrapped = workspace_module._WorkspaceFileAccessNativeTool(
+        native,
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(own_root),
+    )
+    tool = AgentScopeNativeApprovalTool(
+        wrapped,
+        approval_mode="allow",
+        permission_scope="write",
+    )
+    public_input = {
+        "file_path": str(public_root / "manual.md"),
+        "content": "must-not-write",
+    }
+
+    decision = await tool.check_permissions(public_input, None)
+    assert decision.behavior == PermissionBehavior.DENY
+    assert decision.bypass_immune is True
+
+    with pytest.raises(PermissionError, match="文件访问被拒绝"):
+        await tool(**public_input)
+    assert native.calls == 0
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,8 @@ from app.utils.fs_access import (
     is_fs_virtual_root,
     is_path_allowed,
     is_path_writable,
+    is_runtime_path_allowed,
+    is_runtime_path_writable,
     is_public_fs_path,
     is_session_dir_name,
     is_session_workdir_path,
@@ -100,6 +102,60 @@ def test_regular_user_cannot_access_other_workspace(tmp_path, monkeypatch):
 
     user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
     assert not is_path_allowed(other, user_info)
+
+
+def test_runtime_path_authorization_does_not_rewrite_external_workspace_prefix(
+    tmp_path,
+    monkeypatch,
+):
+    base = tmp_path / "data"
+    own_root = base / "agent_workspaces" / "alice__1"
+    external_root = tmp_path / "legacy" / "agent_workspaces" / "alice__1"
+    public_docs = base / "docs"
+    for directory in (own_root, external_root, public_docs):
+        directory.mkdir(parents=True)
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
+    assert is_runtime_path_allowed(str(own_root / "note.txt"), user_info)
+    assert is_runtime_path_allowed("/app/data/docs/manual.md", user_info)
+    assert not is_runtime_path_allowed(str(external_root / "secret.txt"), user_info)
+    assert not is_runtime_path_writable(str(external_root / "secret.txt"), user_info)
+
+
+def test_runtime_path_allows_only_explicit_public_document_symlink_targets(
+    tmp_path,
+    monkeypatch,
+):
+    base = tmp_path / "data"
+    public_docs = base / "docs"
+    public_docs.mkdir(parents=True)
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    for name in ("FAQ.md", "README.md"):
+        os.symlink(os.path.join(project_root, name), public_docs / name)
+    os.symlink(os.path.join(project_root, "docker", "README.md"), public_docs / "docker-readme.md")
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
+    assert is_runtime_path_allowed(str(public_docs / "FAQ.md"), user_info)
+    assert is_runtime_path_allowed(str(public_docs / "README.md"), user_info)
+    assert not is_runtime_path_allowed(str(public_docs / "docker-readme.md"), user_info)
+    assert not is_runtime_path_writable(str(public_docs / "FAQ.md"), user_info)
 
 
 def test_regular_user_cannot_escape_workspace_through_symlink(tmp_path, monkeypatch):
@@ -265,4 +321,3 @@ def test_is_public_fs_path(tmp_path, monkeypatch):
     assert is_public_fs_path(user_ws) is False
     assert is_public_fs_path(os.path.join(user_ws, "docs", "note.md")) is False
     assert is_public_fs_path(None) is False
-

@@ -83,6 +83,7 @@ async def test_build_workspace_toolkit_uses_workspace_builtins_and_keeps_platfor
     toolkit = await build_workspace_toolkit(
         local_ws,
         [builtin_spec, platform_spec, skill_spec],
+        user_info={"user_id": "u1", "user_name": "alice", "role": "user"},
     )
 
     schemas = await toolkit.get_tool_schemas()

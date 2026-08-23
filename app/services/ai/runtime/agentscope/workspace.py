@@ -1817,6 +1817,159 @@ class _DockerLogicalWorkspaceNativeTool:
         return suggestions
 
 
+def _normalize_workspace_file_tool_input(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+    workspace_root: str,
+) -> dict[str, Any]:
+    """Normalize host file-tool paths before applying tenant authorization."""
+    mapped = dict(tool_input)
+    root = os.path.abspath(workspace_root)
+
+    if tool_name in {"Read", "Write", "Edit"}:
+        raw_path = mapped.get("file_path")
+        if raw_path:
+            raw = str(raw_path)
+            if raw == DOCKER_WORKSPACE_LOGICAL_ROOT or raw.startswith(
+                f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"
+            ):
+                raw = _map_docker_workspace_path(raw, root)
+            elif not os.path.isabs(raw):
+                raw = os.path.join(root, raw)
+            mapped["file_path"] = os.path.realpath(raw)
+        return mapped
+
+    if tool_name in {"Glob", "Grep"}:
+        raw_path = mapped.get("path")
+        raw = str(raw_path) if raw_path else root
+        if raw == DOCKER_WORKSPACE_LOGICAL_ROOT or raw.startswith(
+            f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"
+        ):
+            raw = _map_docker_workspace_path(raw, root)
+        elif not os.path.isabs(raw):
+            raw = os.path.join(root, raw)
+        mapped["path"] = os.path.realpath(raw)
+    return mapped
+
+
+def _assert_workspace_file_access(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+    *,
+    user_info: dict[str, Any] | None,
+    workspace_root: str,
+) -> dict[str, Any]:
+    """Authorize a host file-tool input and return its canonicalized form."""
+    from app.utils.fs_access import (
+        is_runtime_path_allowed,
+        is_runtime_path_writable,
+    )
+
+    mapped = _normalize_workspace_file_tool_input(
+        tool_name,
+        tool_input,
+        workspace_root,
+    )
+    path_key = "file_path" if tool_name in {"Read", "Write", "Edit"} else "path"
+    target_path = mapped.get(path_key)
+    if not target_path:
+        raise PermissionError("文件访问被拒绝：缺少目标路径")
+
+    if tool_name in {"Write", "Edit"}:
+        allowed = is_runtime_path_writable(str(target_path), user_info)
+        operation = "写入"
+    else:
+        allowed = is_runtime_path_allowed(str(target_path), user_info)
+        operation = "读取"
+    if not allowed:
+        raise PermissionError(
+            f"文件访问被拒绝：当前用户无权{operation}该路径 {target_path}"
+        )
+    return mapped
+
+
+class _WorkspaceFileAccessNativeTool:
+    """Enforce public/private file boundaries around native workspace tools."""
+
+    def __init__(
+        self,
+        native_tool: Any,
+        *,
+        user_info: dict[str, Any] | None,
+        workspace_root: str,
+    ) -> None:
+        self._native_tool = native_tool
+        self._user_info = user_info
+        self._workspace_root = os.path.abspath(workspace_root)
+        self.name = getattr(native_tool, "name", "")
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._native_tool, attribute)
+
+    def _map(self, tool_input: Mapping[str, Any]) -> dict[str, Any]:
+        return _assert_workspace_file_access(
+            self.name,
+            tool_input,
+            user_info=self._user_info,
+            workspace_root=self._workspace_root,
+        )
+
+    def check_path_access(self, tool_input: dict[str, Any]) -> None:
+        """Expose the hard path guard to AgentScope's permission phase."""
+        self._map(tool_input)
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        mapped_input = self._map(kwargs)
+        result = self._native_tool(**mapped_input)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
+        try:
+            mapped_input = self._map(tool_input)
+        except PermissionError as exc:
+            try:
+                from agentscope.permission import PermissionBehavior, PermissionDecision
+            except Exception:
+                raise
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message=str(exc),
+                decision_reason="workspace_path_access_denied",
+                bypass_immune=True,
+            )
+        checker = getattr(self._native_tool, "check_permissions", None)
+        if checker is None:
+            return None
+        result = checker(mapped_input, context)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        mapped_input = self._map(tool_input)
+        checker = getattr(self._native_tool, "check_read_only", None)
+        if checker is None:
+            return bool(getattr(self._native_tool, "is_read_only", False))
+        result = checker(mapped_input)
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
+
+    def match_rule(self, rule_content: str | None, tool_input: dict[str, Any]) -> bool:
+        matcher = getattr(self._native_tool, "match_rule", None)
+        if matcher is None:
+            return rule_content is None
+        return bool(matcher(rule_content, self._map(tool_input)))
+
+    def generate_suggestions(self, tool_input: dict[str, Any]) -> list[Any]:
+        generator = getattr(self._native_tool, "generate_suggestions", None)
+        if generator is None:
+            return []
+        return generator(self._map(tool_input))
+
+
 class _DockerSessionBashNativeTool:
     """Keep Docker Bash's default cwd aligned with the current session."""
 
@@ -1868,20 +2021,32 @@ class _CanonicalWorkspaceNativeTool:
 async def bind_configured_tools_to_workspace(
     workspace: Any,
     tool_specs: list[Any] | None,
+    *,
+    user_info: dict[str, Any] | None = None,
 ) -> list[Any]:
     """Bind configured Bash/Read/Write/Edit/Glob/Grep to the session workspace.
 
     Responsibility split (定稿): Bash binds to the sandbox (docker/e2b/ssh).
     For Docker, host-backed file tools translate the same logical ``/workspace``
-    path into the per-user host root before execution. Other policies retain
-    their existing host ``local_ws`` behavior.
+    path into the per-user host root before execution. All host-backed file
+    tools then enforce the public/private path policy before native execution.
 
     ``workspace`` may be ``(sandbox_ws, local_ws)`` (modern) or a single
     workspace (legacy local-only). Falls back to returning ``specs`` unchanged
     when no matching workspace / tool is available.
     """
     specs = list(tool_specs or [])
-    if workspace is None or not specs:
+    if workspace is None:
+        if any(
+            _workspace_native_name_for_spec(spec)
+            in DOCKER_WORKSPACE_FILE_TOOL_NAMES
+            for spec in specs
+        ):
+            raise PermissionError(
+                "文件访问被拒绝：宿主工作区不可用，文件工具未执行"
+            )
+        return specs
+    if not specs:
         return specs
 
     sandbox_ws, local_ws = _normalize_workspace_pair(workspace)
@@ -1893,6 +2058,16 @@ async def bind_configured_tools_to_workspace(
         and local_ws is not None
     ):
         docker_host_root = getattr(local_ws, "workspace_user_root", None)
+
+    file_access_root = docker_host_root
+    if file_access_root is None and local_ws is not None:
+        file_access_root = getattr(local_ws, "workspace_user_root", None)
+    if file_access_root is None and user_info is not None:
+        from app.utils.fs_access import get_user_private_workspace_root
+
+        file_access_root = get_user_private_workspace_root(user_info)
+    if file_access_root is None and local_ws is not None:
+        file_access_root = getattr(local_ws, "workdir", None)
 
     # Collect file tools from the host local workspace (Read/Write/Edit/Glob/Grep).
     local_tools: dict[str, Any] = {}
@@ -1935,6 +2110,10 @@ async def bind_configured_tools_to_workspace(
         else:
             workspace_tool = local_tools.get(native_name or "")
         if workspace_tool is None:
+            if native_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES:
+                raise PermissionError(
+                    "文件访问被拒绝：宿主文件工具不可用，文件工具未执行"
+                )
             bound.append(spec)
             continue
         if native_name == "Bash" and sandbox_ws is None:
@@ -1953,6 +2132,16 @@ async def bind_configured_tools_to_workspace(
             workspace_tool = _DockerLogicalWorkspaceNativeTool(
                 workspace_tool,
                 docker_host_root,
+            )
+        if native_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES:
+            if not file_access_root:
+                raise PermissionError(
+                    "文件访问被拒绝：无法解析当前用户工作区根目录"
+                )
+            workspace_tool = _WorkspaceFileAccessNativeTool(
+                workspace_tool,
+                user_info=user_info,
+                workspace_root=file_access_root,
             )
         if (
             docker_host_root
@@ -2032,6 +2221,7 @@ async def build_workspace_toolkit(
     tool_specs: list[Any],
     *,
     approval_mode: str | None = None,
+    user_info: dict[str, Any] | None = None,
 ):
     """显式合并 LocalWorkspace 内置文件工具与平台工具（Runner 默认不再调用）。
 
@@ -2054,10 +2244,30 @@ async def build_workspace_toolkit(
             sorted(workspace_names),
         )
 
-    runtime_workspace_tools = [
-        runtime_tool_from_native(tool, approval_mode=approval_mode)
-        for tool in workspace_tools
-    ]
+    workspace_root = getattr(workspace, "workspace_user_root", None)
+    if workspace_root is None and user_info is not None:
+        from app.utils.fs_access import get_user_private_workspace_root
+
+        workspace_root = get_user_private_workspace_root(user_info)
+    if workspace_root is None:
+        workspace_root = getattr(workspace, "workdir", None)
+
+    runtime_workspace_tools = []
+    for tool in workspace_tools:
+        tool_name = getattr(tool, "name", "")
+        if tool_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES:
+            if not workspace_root:
+                raise PermissionError(
+                    "文件访问被拒绝：无法解析当前用户工作区根目录"
+                )
+            tool = _WorkspaceFileAccessNativeTool(
+                tool,
+                user_info=user_info,
+                workspace_root=workspace_root,
+            )
+        runtime_workspace_tools.append(
+            runtime_tool_from_native(tool, approval_mode=approval_mode)
+        )
     platform_tools = [
         runtime_tool_from_spec(
             spec,

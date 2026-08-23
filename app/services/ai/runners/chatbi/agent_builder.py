@@ -62,7 +62,11 @@ async def build_native_agent(
         get_workspace_offloader,
     )
 
-    tools = await bind_configured_tools_to_workspace(workspace, tools)
+    tools = await bind_configured_tools_to_workspace(
+        workspace,
+        tools,
+        user_info=runner.user_info,
+    )
     runner._execution_backend = get_workspace_execution_backend(workspace)
     toolkit = AgentScopeToolConsumer(builder=dar.build_toolkit).consume_specs(
         tools,
