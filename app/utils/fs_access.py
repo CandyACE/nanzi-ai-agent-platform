@@ -179,32 +179,77 @@ def normalize_fs_path(path: str, base: str | None = None) -> str | None:
     return None
 
 
-def is_path_allowed(path: str, user_info: dict[str, Any] | None) -> bool:
-    normalized = normalize_fs_path(path)
+def is_public_fs_path(path: str | None, base: str | None = None) -> bool:
+    """判断路径是否属于公共目录（branding, skills, docs 等平台公共资源）。"""
+    if not path:
+        return False
+    data_base = base or get_data_base_dir()
+    under_base = normalize_under_base(path, data_base)
+    if under_base:
+        for root in get_public_fs_roots(data_base):
+            norm_root = os.path.normpath(root)
+            if under_base == norm_root or under_base.startswith(norm_root + os.sep):
+                return True
+
+    normalized = normalize_fs_path(path, base)
     if not normalized:
         return False
-    if is_fs_admin(user_info):
-        return True
-
-    for root in get_allowed_fs_roots(user_info):
-        if normalized == root or normalized.startswith(root + os.sep):
+    for root in get_public_fs_roots(base):
+        norm_root = os.path.normpath(root)
+        if normalized == norm_root or normalized.startswith(norm_root + os.sep):
             return True
     return False
 
 
-def assert_path_allowed(path: str, user_info: dict[str, Any] | None) -> str:
+def is_path_allowed(path: str, user_info: dict[str, Any] | None) -> bool:
+    data_base = get_data_base_dir()
+    under_base = normalize_under_base(path, data_base)
+    if is_fs_admin(user_info):
+        if under_base:
+            return True
+        normalized = normalize_fs_path(path)
+        return bool(normalized)
+
+    # 1. 检查物理规范化路径
     normalized = normalize_fs_path(path)
-    if not normalized:
-        raise HTTPException(
-            status_code=403,
-            detail="安全越权拦截：禁止访问安全根目录以外的文件系统空间。",
-        )
-    if not is_path_allowed(normalized, user_info):
+    if normalized:
+        for root in get_allowed_fs_roots(user_info):
+            if normalized == root or normalized.startswith(root + os.sep):
+                return True
+
+    # 2. 检查逻辑挂载路径（支持公共目录如 data/docs 下软链接至平台根目录官方文档）
+    if under_base:
+        if is_other_user_workspace_path(under_base, user_info):
+            return False
+        for root in get_allowed_fs_roots(user_info):
+            if under_base == root or under_base.startswith(root + os.sep):
+                return True
+
+    return False
+
+
+def assert_path_allowed(path: str, user_info: dict[str, Any] | None) -> str:
+    if not is_path_allowed(path, user_info):
+        data_base = get_data_base_dir()
+        if not normalize_under_base(path, data_base) and not normalize_fs_path(path):
+            raise HTTPException(
+                status_code=403,
+                detail="安全越权拦截：禁止访问安全根目录以外的文件系统空间。",
+            )
         raise HTTPException(
             status_code=403,
             detail="安全越权拦截：无权访问其他用户的私有目录或非授权路径。",
         )
-    return normalized
+    normalized = normalize_fs_path(path)
+    if normalized and (
+        is_fs_admin(user_info)
+        or any(normalized == r or normalized.startswith(r + os.sep) for r in get_allowed_fs_roots(user_info))
+    ):
+        return normalized
+    under_base = normalize_under_base(path, get_data_base_dir())
+    if under_base:
+        return under_base
+    return normalized or path
 
 
 def is_path_writable(path: str, user_info: dict[str, Any] | None) -> bool:

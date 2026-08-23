@@ -108,13 +108,13 @@ async def test_list_nonexistent_directory(db_session, valid_api_key):
     测试获取不存在的子目录，应当返回 404
     """
     base = get_data_base_dir()
-    uploads = os.path.join(base, "uploads")
-    os.makedirs(uploads, exist_ok=True)
+    docs = os.path.join(base, "docs")
+    os.makedirs(docs, exist_ok=True)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
             "/api/v1/chat/fs/list",
-            params={"path": os.path.join(uploads, "nonexistent_folder_abc")},
+            params={"path": os.path.join(docs, "nonexistent_folder_abc")},
             headers={"X-API-Key": valid_api_key}
         )
         assert resp.status_code == 404
@@ -238,13 +238,17 @@ async def test_create_file_in_workspace_root(db_session, valid_api_key):
         workspace_root = get_user_private_workspace_root(me_resp.json()["data"])
         os.makedirs(workspace_root, exist_ok=True)
 
+        target_file = os.path.join(workspace_root, "root-note.md")
+        if os.path.exists(target_file):
+            os.remove(target_file)
+
         resp = await client.post(
             "/api/v1/chat/fs/create-entry",
             json={"parent_path": workspace_root, "name": "root-note.md", "kind": "file", "content": "root"},
             headers={"X-API-Key": valid_api_key},
         )
         assert resp.status_code == 200
-        assert os.path.isfile(os.path.join(workspace_root, "root-note.md"))
+        assert os.path.isfile(target_file)
 
 
 @pytest.mark.asyncio
@@ -333,6 +337,9 @@ async def test_create_file_and_folder_in_own_workspace(db_session, valid_api_key
         )
         workspace_root = get_user_private_workspace_root(me_resp.json()["data"])
         parent = os.path.join(workspace_root, "ctx-menu-test")
+        if os.path.exists(parent):
+            import shutil
+            shutil.rmtree(parent, ignore_errors=True)
         os.makedirs(parent, exist_ok=True)
 
         dir_resp = await client.post(
@@ -468,16 +475,16 @@ async def test_empty_trash_and_protect_trash_root(db_session, valid_api_key):
 @pytest.mark.asyncio
 async def test_search_glob_pattern(db_session, valid_api_key):
     base = get_data_base_dir()
-    uploads = os.path.join(base, "uploads")
-    os.makedirs(uploads, exist_ok=True)
-    sample = os.path.join(uploads, "glob-test.md")
+    docs = os.path.join(base, "docs")
+    os.makedirs(docs, exist_ok=True)
+    sample = os.path.join(docs, "glob-test.md")
     with open(sample, "w", encoding="utf-8") as handle:
         handle.write("x")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
             "/api/v1/chat/fs/search",
-            params={"q": "*.md", "path": uploads},
+            params={"q": "*.md", "path": docs},
             headers={"X-API-Key": valid_api_key},
         )
         assert resp.status_code == 200
@@ -514,7 +521,7 @@ async def test_workspace_recent_files_save_and_get(db_session, valid_api_key, mo
     async def _redis():
         return fake
 
-    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.api.v1.endpoints.fs.get_redis", _redis)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         me_resp = await client.get(
@@ -573,7 +580,7 @@ async def test_workspace_recent_files_user_isolation(
     async def _redis():
         return fake
 
-    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.api.v1.endpoints.fs.get_redis", _redis)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         user_me = await client.get(
@@ -637,7 +644,7 @@ async def test_workspace_recent_files_put_filters_other_user_paths(
     async def _redis():
         return fake
 
-    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.api.v1.endpoints.fs.get_redis", _redis)
 
     base = get_data_base_dir()
     other_file = os.path.join(base, "agent_workspaces", "other_user__999", "secret.txt")
@@ -679,7 +686,7 @@ async def test_workspace_browser_prefs_save_and_get(db_session, valid_api_key, m
     async def _redis():
         return fake
 
-    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.api.v1.endpoints.fs.get_redis", _redis)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         empty_resp = await client.get(
@@ -803,4 +810,99 @@ async def test_preview_and_write_docker_workspace_logical_path(
         assert write_resp.status_code == 200
         with open(session_file, "r", encoding="utf-8") as handle:
             assert handle.read() == "updated via docker logical path"
+
+
+@pytest.mark.asyncio
+async def test_public_directory_metadata_and_readonly_protection(
+    db_session, valid_api_key
+):
+    """测试公共目录在虚拟根目录与列表中的 is_public/readonly 标记，以及严格写拦截。"""
+    base = get_data_base_dir()
+    branding_dir = os.path.join(base, "branding")
+    docs_dir = os.path.join(base, "docs")
+    os.makedirs(branding_dir, exist_ok=True)
+    os.makedirs(docs_dir, exist_ok=True)
+
+    test_doc = os.path.join(docs_dir, "guidelines.md")
+    with open(test_doc, "w", encoding="utf-8") as handle:
+        handle.write("# Public Guidelines")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1. 虚拟根目录：检查 is_public、readonly、is_user_workspace 标记
+        root_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert root_resp.status_code == 200
+        root_data = root_resp.json()["data"]
+        assert root_data["is_virtual_root"] is True
+        assert root_data["writable"] is False
+
+        items_by_name = {item["name"]: item for item in root_data["items"]}
+        if "docs" in items_by_name:
+            assert items_by_name["docs"]["is_public"] is True
+            assert items_by_name["docs"]["readonly"] is True
+            assert items_by_name["docs"]["is_user_workspace"] is False
+        if "branding" in items_by_name:
+            assert items_by_name["branding"]["is_public"] is True
+            assert items_by_name["branding"]["readonly"] is True
+            assert items_by_name["branding"]["is_user_workspace"] is False
+
+        user_item = next(
+            (item for item in root_data["items"] if item.get("is_user_workspace")),
+            None,
+        )
+        assert user_item is not None
+        assert user_item["is_public"] is False
+        assert user_item["readonly"] is False
+
+        # 2. 进入公共 docs 目录
+        docs_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"path": docs_dir},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert docs_resp.status_code == 200
+        docs_data = docs_resp.json()["data"]
+        assert docs_data["writable"] is False
+        doc_item = next((i for i in docs_data["items"] if i["name"] == "guidelines.md"), None)
+        assert doc_item is not None
+        assert doc_item["is_public"] is True
+        assert doc_item["readonly"] is True
+
+        # 3. 尝试向公共 docs 目录新建文件（应被 403 拦截）
+        create_resp = await client.post(
+            "/api/v1/chat/fs/create-entry",
+            json={
+                "parent_path": docs_dir,
+                "name": "hacked.md",
+                "kind": "file",
+                "content": "test",
+            },
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert create_resp.status_code == 403
+        assert "仅允许写入本人" in create_resp.json()["message"]
+
+        # 4. 尝试向公共文件直接写入覆盖（应被 403 拦截）
+        write_resp = await client.put(
+            "/api/v1/chat/fs/write",
+            json={
+                "path": test_doc,
+                "content": "modified public doc",
+            },
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert write_resp.status_code == 403
+        assert "仅允许写入本人" in write_resp.json()["message"]
+
+        # 5. 普通用户应能正常只读预览公共目录下的文件
+        preview_resp = await client.get(
+            "/api/v1/chat/fs/preview",
+            params={"path": test_doc},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert preview_resp.status_code == 200
+        assert preview_resp.text == "# Public Guidelines"
+
 

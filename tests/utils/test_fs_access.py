@@ -11,6 +11,7 @@ from app.utils.fs_access import (
     is_fs_virtual_root,
     is_path_allowed,
     is_path_writable,
+    is_public_fs_path,
     is_session_dir_name,
     is_session_workdir_path,
     normalize_fs_path,
@@ -159,8 +160,9 @@ def test_writable_only_within_own_workspace(tmp_path, monkeypatch):
 
     user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
     assert not is_path_allowed(legacy_uploads_file, user_info)
+    assert not is_path_writable(legacy_uploads_file, user_info)
     assert is_path_allowed(own_upload, user_info)
-    assert not is_path_writable(own_upload, user_info)
+    assert is_path_writable(own_upload, user_info)
     assert is_path_writable(own_file, user_info)
     assert is_path_writable(own_root, user_info)
     assert not is_path_writable(other_file, user_info)
@@ -236,3 +238,31 @@ def test_get_user_sandbox_dir(tmp_path, monkeypatch):
     user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
     expected = os.path.normpath(os.path.join(base, "agent_workspaces", "alice__1", "sandbox"))
     assert get_user_sandbox_dir(user_info) == expected
+
+
+def test_is_public_fs_path(tmp_path, monkeypatch):
+    base = str(tmp_path / "data")
+    branding = os.path.join(base, "branding")
+    docs = os.path.join(base, "docs")
+    skills = str(tmp_path / "platform-skills")
+    user_ws = os.path.join(base, "agent_workspaces", "alice__1")
+    os.makedirs(branding, exist_ok=True)
+    os.makedirs(docs, exist_ok=True)
+    os.makedirs(skills, exist_ok=True)
+    os.makedirs(user_ws, exist_ok=True)
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: base)
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: base)
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: skills)
+
+    assert is_public_fs_path(branding) is True
+    assert is_public_fs_path(os.path.join(branding, "logo.png")) is True
+    assert is_public_fs_path(docs) is True
+    assert is_public_fs_path(os.path.join(docs, "manual.md")) is True
+    assert is_public_fs_path(skills) is True
+    assert is_public_fs_path(os.path.join(skills, "weather", "SKILL.md")) is True
+
+    assert is_public_fs_path(user_ws) is False
+    assert is_public_fs_path(os.path.join(user_ws, "docs", "note.md")) is False
+    assert is_public_fs_path(None) is False
+

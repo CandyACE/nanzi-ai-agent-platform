@@ -27,6 +27,7 @@ from app.utils.fs_access import (
     is_fs_virtual_root,
     is_path_allowed,
     is_path_writable,
+    is_public_fs_path,
     normalize_fs_path,
     resolve_parent_path,
 )
@@ -71,6 +72,8 @@ class FileItem(BaseModel):
     size: int = Field(..., description="文件大小（字节），目录为0")
     mtime: float = Field(..., description="修改时间戳")
     is_user_workspace: bool = Field(False, description="是否为当前用户的 AI 工作目录根")
+    is_public: bool = Field(False, description="是否为公共只读目录或文件")
+    readonly: bool = Field(False, description="是否为只读项")
 
 class FileListResponse(BaseModel):
     current_path: str = Field(..., description="当前浏览的绝对路径")
@@ -106,6 +109,9 @@ def _append_fs_entry(
 ) -> None:
     try:
         stat = os.stat(entry_path)
+        is_user_ws = _is_user_workspace_path(entry_path, user_info)
+        is_pub = is_public_fs_path(entry_path)
+        is_writable = is_path_writable(entry_path, user_info)
         results.append(
             FileItem(
                 name=os.path.basename(entry_path),
@@ -113,7 +119,9 @@ def _append_fs_entry(
                 is_dir=is_dir,
                 size=0 if is_dir else stat.st_size,
                 mtime=stat.st_mtime,
-                is_user_workspace=_is_user_workspace_path(entry_path, user_info),
+                is_user_workspace=is_user_ws,
+                is_public=is_pub,
+                readonly=not is_writable,
             )
         )
     except OSError:
@@ -139,6 +147,9 @@ def _list_directory_entries(target_path: str, user_info: Dict[str, Any]) -> List
                 try:
                     stat = entry.stat()
                     is_dir = entry.is_dir()
+                    is_user_ws = _is_user_workspace_path(entry.path, user_info)
+                    is_pub = is_public_fs_path(entry.path)
+                    is_writable = is_path_writable(entry.path, user_info)
                     items.append(
                         FileItem(
                             name=entry.name,
@@ -146,6 +157,9 @@ def _list_directory_entries(target_path: str, user_info: Dict[str, Any]) -> List
                             is_dir=is_dir,
                             size=0 if is_dir else stat.st_size,
                             mtime=stat.st_mtime,
+                            is_user_workspace=is_user_ws,
+                            is_public=is_pub,
+                            readonly=not is_writable,
                         )
                     )
                 except Exception:
@@ -167,6 +181,9 @@ def _list_directory_entries(target_path: str, user_info: Dict[str, Any]) -> List
                         is_dir=True,
                         size=0,
                         mtime=stat.st_mtime,
+                        is_user_workspace=False,
+                        is_public=False,
+                        readonly=False,
                     )
                 )
             except OSError:
@@ -183,6 +200,9 @@ def _list_virtual_root_entries(user_info: Dict[str, Any]) -> List[FileItem]:
             continue
         try:
             stat = os.stat(root)
+            is_user_ws = _is_user_workspace_path(root, user_info)
+            is_pub = is_public_fs_path(root)
+            is_writable = is_path_writable(root, user_info)
             items.append(
                 FileItem(
                     name=os.path.basename(root),
@@ -190,7 +210,9 @@ def _list_virtual_root_entries(user_info: Dict[str, Any]) -> List[FileItem]:
                     is_dir=True,
                     size=0,
                     mtime=stat.st_mtime,
-                    is_user_workspace=_is_user_workspace_path(root, user_info),
+                    is_user_workspace=is_user_ws,
+                    is_public=is_pub,
+                    readonly=not is_writable,
                 )
             )
         except OSError:
@@ -481,12 +503,12 @@ def _resolve_fs_file_path(
                         break
 
     if not safe_path:
-        candidate = normalize_fs_path(raw_path)
+        candidate = normalize_under_base(raw_path) or normalize_fs_path(raw_path)
         if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
             safe_path = candidate
 
     if not safe_path:
-        candidate = normalize_fs_path(raw_path)
+        candidate = normalize_under_base(raw_path) or normalize_fs_path(raw_path)
         if candidate and not is_path_allowed(candidate, user_info):
             raise HTTPException(
                 status_code=403,

@@ -695,6 +695,14 @@ const isPathInUserWorkspace = (path: string) => {
   return norm === rootNorm || norm.startsWith(`${rootNorm}/`)
 }
 
+const isPublicItem = (item?: { path?: string; is_public?: boolean; is_user_workspace?: boolean; is_dir?: boolean } | null) => {
+  if (!item) return false
+  if (item.is_user_workspace) return false
+  if (typeof item.is_public === 'boolean') return item.is_public
+  if (!item.path) return false
+  return !isPathInUserWorkspace(item.path)
+}
+
 const canCreateInPath = (parentPath: string) => isPathInUserWorkspace(parentPath) && !isTrashPath(parentPath)
 
 const canUseCreateMenu = computed(
@@ -705,8 +713,8 @@ const closeContextMenu = () => {
   contextMenu.value = null
 }
 
-const openContextMenu = (event: MouseEvent, parentPath: string, item?: { path: string; name: string; is_dir: boolean }) => {
-  const itemAllowed = item && (canManageItem(item) || isTrashListItem(item) || isTrashRootItem(item))
+const openContextMenu = (event: MouseEvent, parentPath: string, item?: { path: string; name: string; is_dir: boolean; is_public?: boolean; is_user_workspace?: boolean }) => {
+  const itemAllowed = item && (canManageItem(item) || isTrashListItem(item) || isTrashRootItem(item) || isPublicItem(item))
   if (!canUseCreateMenu.value && !itemAllowed) return
   if (!canCreateInPath(parentPath) && !itemAllowed) return
   event.preventDefault()
@@ -1648,7 +1656,7 @@ onUnmounted(() => {
                       </svg>
                     </button>
                     <span class="text-gray-300 dark:text-gray-700 shrink-0">|</span>
-                    <div class="flex items-center space-x-1 whitespace-nowrap text-xs min-w-0">
+                    <div class="flex items-center space-x-1 whitespace-nowrap text-xs min-w-0 flex-1 overflow-x-auto no-scrollbar">
                       <template v-for="(crumb, idx) in breadcrumbs" :key="idx">
                         <span v-if="idx > 0" class="text-gray-400 dark:text-gray-600">/</span>
                         <button
@@ -1669,6 +1677,13 @@ onUnmounted(() => {
                           {{ crumb.name }}
                         </span>
                       </template>
+                      <span
+                        v-if="!currentPathWritable && !isVirtualRoot"
+                        class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200/60 dark:ring-amber-500/20 shrink-0 ml-auto"
+                        title="当前处于公共只读目录，禁止新建、修改或删除"
+                      >
+                        🔒 只读
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1873,6 +1888,14 @@ onUnmounted(() => {
                                 用户工作目录
                               </span>
                               <span
+                                v-else-if="isPublicItem(item)"
+                                class="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200/60 dark:ring-amber-500/20"
+                                title="公共只读目录或资源，禁止修改或删除"
+                              >
+                                <span>公共目录</span>
+                                <span class="text-[8px] opacity-75 font-normal">· 只读</span>
+                              </span>
+                              <span
                                 v-if="isSessionDirItem(item)"
                                 class="inline-flex sm:hidden mt-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 ring-1 ring-sky-200/60 dark:ring-sky-500/20"
                               >
@@ -1987,10 +2010,10 @@ onUnmounted(() => {
                               <button
                                 type="button"
                                 class="text-primary hover:text-primary/80 transition-colors focus:outline-none whitespace-nowrap"
-                                title="添加到 AI 会话，随下一条消息发送"
+                                :title="item.is_dir ? '挂载文件夹到 AI 会话，随下一条消息发送' : '挂载文件到 AI 会话，随下一条消息发送'"
                                 @click="mountItemToSession(item)"
                               >
-                                {{ item.is_dir ? '添加文件夹' : '添加文件' }}
+                                {{ item.is_dir ? '挂载文件夹' : '挂载文件' }}
                               </button>
                             </template>
                           </div>
@@ -2011,7 +2034,7 @@ onUnmounted(() => {
                       class="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary px-3.5 py-2 text-[11px] font-bold text-white shadow-lg shadow-primary/20 transition-all hover:brightness-105 active:scale-[0.98]"
                       @click="mountSelectedBatch"
                     >
-                      批量添加 ({{ selectedPaths.size }})
+                      批量挂载 ({{ selectedPaths.size }})
                     </button>
                     <button
                       type="button"
@@ -2184,7 +2207,7 @@ onUnmounted(() => {
       </template>
       <div v-else class="px-3 py-5 text-center text-[10px] text-gray-400 leading-relaxed">
         暂无最近文件<br>
-        <span class="text-[9px] text-gray-400/70">预览或添加文件后会出现在这里</span>
+        <span class="text-[9px] text-gray-400/70">预览或挂载文件后会出现在这里</span>
       </div>
     </div>
   </Teleport>
@@ -2210,6 +2233,50 @@ onUnmounted(() => {
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="copyItemPath(contextMenu.item!.path)">📋 复制路径</button>
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startRenameEntry(contextMenu.item!)">✏️ 重命名</button>
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmDeleteEntry(contextMenu.item!)">🗑️ 删除</button>
+      </template>
+      <template v-else-if="contextMenu.item && isPublicItem(contextMenu.item)">
+        <div class="px-3 py-1.5 text-[10px] text-amber-600 dark:text-amber-400 font-bold border-b border-gray-100 dark:border-gray-800 flex items-center gap-1 select-none">
+          <span>🔒</span>
+          <span>公共只读资源</span>
+        </div>
+        <button
+          v-if="contextMenu.item.is_dir"
+          type="button"
+          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
+          @click="fetchDirectory(contextMenu.item!.path); closeContextMenu()"
+        >
+          📂 打开目录
+        </button>
+        <button
+          v-if="!contextMenu.item.is_dir && canPreviewWorkspaceFile(contextMenu.item.name)"
+          type="button"
+          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
+          @click="previewItem(contextMenu.item!); closeContextMenu()"
+        >
+          👁️ 画布打开预览
+        </button>
+        <button
+          v-if="!contextMenu.item.is_dir"
+          type="button"
+          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
+          @click="downloadItem(contextMenu.item!); closeContextMenu()"
+        >
+          ⬇️ 下载文件
+        </button>
+        <button
+          type="button"
+          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
+          @click="mountItemToSession(contextMenu.item!); closeContextMenu()"
+        >
+          📎 {{ contextMenu.item.is_dir ? '挂载文件夹到会话' : '挂载文件到会话' }}
+        </button>
+        <button
+          type="button"
+          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
+          @click="copyItemPath(contextMenu.item!.path); closeContextMenu()"
+        >
+          📋 复制路径
+        </button>
       </template>
       <template v-if="contextMenu.item && isTrashListItem(contextMenu.item)">
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 transition-colors focus:outline-none" @click="restoreTrashItem(contextMenu.item!); closeContextMenu()">♻️ 恢复</button>
