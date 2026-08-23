@@ -108,7 +108,7 @@ const props = defineProps<{
   /** URL agent_id 深链锁定：隐藏专家切换/@，禁止切自动路由 */
   lockExpertAgent?: boolean;
   /** Docker 沙箱工作区运行状态 */
-  dockerWorkspaceStatus?: "idle" | "starting" | "running" | "error";
+  dockerWorkspaceStatus?: "idle" | "starting" | "stopping" | "running" | "error";
   /** 当前用户分配的 Docker 容器 ID */
   dockerWorkspaceContainerId?: string | null;
   /** Docker 沙箱容器启动时间 (ISO 8601) */
@@ -1884,7 +1884,7 @@ defineExpose({
                                 class="inline-block h-2 w-2 shrink-0 rounded-full"
                                 :class="{
                                   'bg-emerald-500 shadow-sm shadow-emerald-500/50': (dockerWorkspaceStatus || 'idle') === 'running',
-                                  'bg-amber-400 animate-pulse': (dockerWorkspaceStatus || 'idle') === 'starting',
+                                  'bg-amber-400 animate-pulse': (dockerWorkspaceStatus || 'idle') === 'starting' || (dockerWorkspaceStatus || 'idle') === 'stopping',
                                   'bg-rose-500 shadow-sm shadow-rose-500/50': (dockerWorkspaceStatus || 'idle') === 'error',
                                   'bg-gray-300 dark:bg-gray-600': (dockerWorkspaceStatus || 'idle') === 'idle'
                                 }"
@@ -1893,6 +1893,7 @@ defineExpose({
                                 {{
                                   (dockerWorkspaceStatus || 'idle') === 'running' ? '容器已运行' :
                                   (dockerWorkspaceStatus || 'idle') === 'starting' ? '容器启动中...' :
+                                  (dockerWorkspaceStatus || 'idle') === 'stopping' ? '容器关机中...' :
                                   (dockerWorkspaceStatus || 'idle') === 'error' ? '容器启动失败' : '容器未启动'
                                 }}
                               </span>
@@ -1920,10 +1921,10 @@ defineExpose({
                                 type="button"
                                 class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                                 title="手动检测刷新 Docker 沙箱状态"
-                                :disabled="(dockerWorkspaceStatus || 'idle') === 'starting'"
+                                :disabled="(dockerWorkspaceStatus || 'idle') === 'starting' || (dockerWorkspaceStatus || 'idle') === 'stopping'"
                                 @click.stop="emit('refresh-docker-workspace', true)"
                               >
-                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (dockerWorkspaceStatus || 'idle') === 'starting' }" aria-hidden="true" />
+                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (dockerWorkspaceStatus || 'idle') === 'starting' || (dockerWorkspaceStatus || 'idle') === 'stopping' }" aria-hidden="true" />
                                 <span>刷新</span>
                               </button>
 

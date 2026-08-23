@@ -1747,8 +1747,17 @@ async def exec_docker_workspace_command(
             )
 
         effective_workdir = (workdir or "").strip() or DOCKER_WORKSPACE_LOGICAL_ROOT
+        pwd_marker = f"__NANZI_PWD_{uuid.uuid4().hex}__"
+        wrapped_command = (
+            f"{{\n"
+            f"{cmd_clean}\n"
+            f"}}\n"
+            f"__NZ_RET=$?\n"
+            f"printf '\\n{pwd_marker}:%s\\n' \"$PWD\"\n"
+            f"exit $__NZ_RET"
+        )
         exec_obj = await container.exec(
-            cmd=["/bin/bash", "-c", cmd_clean],
+            cmd=["/bin/bash", "-c", wrapped_command],
             workdir=effective_workdir,
             stdout=True,
             stderr=True,
@@ -1757,7 +1766,6 @@ async def exec_docker_workspace_command(
         )
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
-        all_chunks: list[str] = []
 
         async with exec_obj.start(detach=False) as stream:
             while True:
@@ -1770,7 +1778,6 @@ async def exec_docker_workspace_command(
                     text = raw_data.decode("utf-8", errors="replace")
                 else:
                     text = str(raw_data or "")
-                all_chunks.append(text)
                 if stream_type == 2:
                     stderr_chunks.append(text)
                 else:
@@ -1780,18 +1787,36 @@ async def exec_docker_workspace_command(
         exit_code = inspect_info.get("ExitCode", 0)
         duration_ms = max(0, int((time.monotonic() - start_time) * 1000))
 
+        full_stdout = "".join(stdout_chunks)
+        full_stderr = "".join(stderr_chunks)
+        final_workdir = effective_workdir
+
+        # 解析并清除 marker，提取命令执行后的真实工作目录
+        if pwd_marker in full_stdout:
+            parts = full_stdout.split(f"{pwd_marker}:")
+            full_stdout = parts[0].rstrip("\r\n")
+            if len(parts) > 1:
+                tail = parts[1].splitlines()
+                if tail and tail[0].strip():
+                    final_workdir = tail[0].strip()
+
+        if full_stdout and full_stderr:
+            full_output = f"{full_stdout}\n{full_stderr}"
+        else:
+            full_output = full_stdout if full_stdout else full_stderr
+
         # 刷新活跃时间
         for k in list(_docker_workspace_cache.keys()):
             if f"::{sandbox_user_key}::" in k or k.endswith(f"::{sandbox_user_key}"):
                 _touch_docker_workspace(k)
 
         return {
-            "stdout": "".join(stdout_chunks),
-            "stderr": "".join(stderr_chunks),
-            "output": "".join(all_chunks),
+            "stdout": full_stdout,
+            "stderr": full_stderr,
+            "output": full_output,
             "exit_code": exit_code,
             "duration_ms": duration_ms,
-            "workdir": effective_workdir,
+            "workdir": final_workdir,
             "container_id": details.get("Id") if isinstance(details, dict) else getattr(container, "id", None),
         }
     except DockerSandboxUnavailableError:

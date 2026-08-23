@@ -175,20 +175,58 @@ async def test_exec_docker_workspace_command_function(monkeypatch):
         async def inspect(self):
             return {"ExitCode": 0}
 
-    class FakeContainer:
+    class FakeContainerWithMarker:
         def __init__(self):
             self.id = "cnt-123"
 
         async def show(self):
             return {"State": {"Running": True}, "Id": "cnt-123"}
 
-        async def exec(self, **kwargs):
+        async def exec(self, cmd=None, **kwargs):
+            if cmd and isinstance(cmd, list) and len(cmd) >= 3:
+                c = cmd[2]
+                if "__NANZI_PWD_" in c:
+                    import re
+                    m = re.search(r"(__NANZI_PWD_[a-f0-9]+__)", c)
+                    if m:
+                        marker = m.group(1)
+                        class StreamWithDynamicMarker:
+                            def __init__(self):
+                                self.messages = [
+                                    FakeMessage(f"进入目录\n\n{marker}:/workspace/public\n".encode("utf-8"), 1),
+                                    FakeMessage(b"", 1),
+                                ]
+                                self.idx = 0
+
+                            async def read_out(self):
+                                if self.idx < len(self.messages):
+                                    msg = self.messages[self.idx]
+                                    self.idx += 1
+                                    if not msg.data:
+                                        return None
+                                    return msg
+                                return None
+
+                            async def __aenter__(self):
+                                return self
+
+                            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                                return None
+
+                        class ExecWithDynamicMarker:
+                            def start(self, detach=False):
+                                return StreamWithDynamicMarker()
+
+                            async def inspect(self):
+                                return {"ExitCode": 0}
+
+                        return ExecWithDynamicMarker()
             return FakeExec()
 
     class FakeDocker:
         def __init__(self):
             self.containers = MagicMock()
-            self.containers.get = AsyncMock(return_value=FakeContainer())
+            self.containers.get = AsyncMock(return_value=FakeContainerWithMarker())
 
         async def close(self):
             pass
@@ -206,9 +244,12 @@ async def test_exec_docker_workspace_command_function(monkeypatch):
         user_id=1,
         user_name="alice",
         conversation_id="conv-123",
-        command="echo 'hello world'",
+        command="cd public",
+        workdir="/workspace",
     )
     assert res["exit_code"] == 0
-    assert "hello world" in res["stdout"]
-    assert res["container_id"] == "cnt-123"
+    assert res["workdir"] == "/workspace/public"
+    assert "进入目录" in res["stdout"]
+    assert "__NANZI_PWD_" not in res["stdout"]
+
 

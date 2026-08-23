@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-export type DockerWorkspaceStatus = "idle" | "starting" | "running" | "error";
+export type DockerWorkspaceStatus = "idle" | "starting" | "stopping" | "running" | "error";
 
 const props = defineProps<{
   workspaceStatus: DockerWorkspaceStatus;
@@ -24,6 +24,14 @@ const statusCopy = computed(() => {
         hint: "正在创建或复用当前用户的 Docker 容器",
         box: "border-sky-200 bg-sky-50/90 text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/40 dark:text-sky-100",
         hintTone: "text-sky-700/80 dark:text-sky-200/70",
+      };
+    case "stopping":
+      return {
+        icon: "🟡",
+        title: "Docker 沙箱容器停止中",
+        hint: "正在停止并清理当前用户的 Docker 容器",
+        box: "border-amber-200 bg-amber-50/90 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100",
+        hintTone: "text-amber-700/80 dark:text-amber-200/70",
       };
     case "running":
       return {

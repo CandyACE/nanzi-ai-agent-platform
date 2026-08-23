@@ -3922,7 +3922,7 @@ const readDockerWorkspaceBannerDismissed = (): boolean => {
 };
 
 const { contextUsage, refreshContextUsage } = useContextUsage();
-type DockerWorkspaceStatus = "idle" | "starting" | "running" | "error";
+type DockerWorkspaceStatus = "idle" | "starting" | "stopping" | "running" | "error";
 const dockerWorkspaceStatus = ref<DockerWorkspaceStatus>("idle");
 const dockerWorkspaceStatusLoaded = ref(false);
 const dockerWorkspaceError = ref("");
@@ -4064,7 +4064,10 @@ const openDockerTerminal = () => {
 
 const stopDockerWorkspace = async () => {
   if (effectiveSandboxPolicy.value !== "docker" || !conversationId.value) return;
+  if (dockerWorkspaceStatus.value === "stopping" || dockerWorkspaceStatus.value === "starting") return;
   const requestedConversationId = conversationId.value;
+  dockerWorkspaceStatus.value = "stopping";
+  dockerWorkspaceError.value = "";
   try {
     await axios.post(
       "/api/v1/sandbox/docker/workspace/stop",
@@ -4084,6 +4087,7 @@ const stopDockerWorkspace = async () => {
     const msg = typeof detail === "string"
       ? detail
       : String(detail?.message || error?.message || "停止 Docker 容器失败");
+    dockerWorkspaceStatus.value = "running";
     showToast(msg, "error");
   }
 };
