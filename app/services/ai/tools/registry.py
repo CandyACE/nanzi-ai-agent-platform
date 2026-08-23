@@ -37,6 +37,7 @@ from app.services.ai.tools.memory_ltm_tools import (
 from app.services.ai.tools.memory_search_tool import memory_search
 from app.services.ai.tools.resource_catalog_tools import (
     list_accessible_datasets,
+    list_accessible_directories,
     list_accessible_knowledge_bases,
     list_available_agents,
 )
@@ -317,6 +318,7 @@ class ToolRegistry:
         "delete_user_preference": delete_user_preference,
         "memory_search": memory_search,
         "list_accessible_datasets": list_accessible_datasets,
+        "list_accessible_directories": list_accessible_directories,
         "list_accessible_knowledge_bases": list_accessible_knowledge_bases,
         "list_available_agents": list_available_agents,
         "get_myinfo": get_myinfo,
@@ -869,6 +871,7 @@ class ToolRegistry:
             delete_user_preference,
             memory_search,
             list_accessible_datasets,
+            list_accessible_directories,
             list_accessible_knowledge_bases,
             list_available_agents,
             get_myinfo,
