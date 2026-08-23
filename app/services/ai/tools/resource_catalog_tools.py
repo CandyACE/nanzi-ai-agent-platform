@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Optional
 
 from app.core.context import get_current_agent_context
@@ -150,3 +151,229 @@ async def list_available_agents() -> str:
         logger.error("[list_available_agents] failed: %s", e, exc_info=True)
         return f"列出可用智能体失败: {e}"
 
+
+@tool
+async def list_accessible_directories() -> str:
+    """列出当前用户与会话可访问的文件目录清单、读写权限（只读/可写）及推荐用途说明。
+
+    使用规则：
+    - 当 AI 需要了解自身当前可访问哪些目录、需要确定文件落盘位置（如生成报告、导出 Excel/PDF、写入临时代码）、或查看公共与个人空间区别时调用此工具。
+    - 清楚区分「用户专属持久化文档库 (docs/)」、「当前会话临时工作区 (sessions/{cid}/)」、「用户上传附件 (uploads/)」和「系统公共技能库 (skills/)」。
+    """
+    ctx = get_current_agent_context()
+    if not ctx or not ctx.user_id:
+        return "无法识别当前用户，拒绝列出目录清单。"
+
+    try:
+        from app.services.config_service import ConfigService, resolve_effective_sandbox_policy
+        from app.services.ai.runtime.agentscope.workspace import (
+            resolve_workspace_root,
+            resolve_user_workspace_root,
+            resolve_user_docs_dir,
+            resolve_session_workdir,
+            resolve_user_sessions_dir,
+            extract_workspace_identity,
+            resolve_workspace_user_key,
+            default_workspace_root,
+            SANDBOX_POLICY_DOCKER,
+            SANDBOX_POLICY_LOCAL,
+        )
+        from app.utils.fs_access import (
+            get_platform_skills_root,
+            get_public_data_roots,
+            get_user_uploads_dir,
+            get_user_docs_dir,
+            get_user_sessions_dir,
+            get_user_sandbox_dir,
+            get_user_private_workspace_root,
+        )
+
+        user_name = _context_user_name(ctx)
+        user_info = {
+            "user_id": ctx.user_id,
+            "id": ctx.user_id,
+            "user_name": user_name,
+            "username": user_name,
+            "role": "admin" if ctx.is_admin else "user",
+        }
+        conversation_id = str(getattr(ctx, "conversation_id", "") or "").strip() or None
+
+        policy_raw = await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL)
+        effective_policy = resolve_effective_sandbox_policy(policy_raw, SANDBOX_POLICY_LOCAL)
+        is_docker_sandbox = (effective_policy == SANDBOX_POLICY_DOCKER)
+
+        workspace_root = await resolve_workspace_root(ensure_exists=False)
+        resolved_user_id, resolved_user_name = extract_workspace_identity(
+            user_id=ctx.user_id,
+            user_name=user_name,
+            user_info=user_info,
+        )
+        user_key = resolve_workspace_user_key(user_id=resolved_user_id, user_name=resolved_user_name)
+        user_host_workspace = get_user_private_workspace_root(user_info) or os.path.join(workspace_root, user_key)
+
+        from app.utils.fs_paths import get_data_base_dir
+        data_base = get_data_base_dir()
+        is_container_env = data_base.startswith("/app/data") or os.path.exists("/.dockerenv")
+
+        host_data_dir = (
+            os.getenv("HOST_DATA_DIR", "").strip()
+            or os.getenv("AGENTSCOPE_WORKSPACE_HOST_ROOT", "").strip()
+        )
+
+        def _to_host_path(service_path: str) -> str:
+            """将服务容器内部路径转换为宿主机真实绝对物理路径（若配置了 HOST_DATA_DIR）。"""
+            abs_service = os.path.abspath(service_path)
+            if host_data_dir:
+                if abs_service.startswith("/app/data"):
+                    rel = os.path.relpath(abs_service, "/app/data")
+                    return os.path.join(host_data_dir, rel) if rel != "." else host_data_dir
+                if not abs_service.startswith(host_data_dir):
+                    rel = os.path.relpath(abs_service, data_base)
+                    return os.path.join(host_data_dir, rel) if rel != "." else host_data_dir
+            return abs_service
+
+        # 用户私有目录详细路径
+        docs_service_path = os.path.join(user_host_workspace, "docs")
+        uploads_service_path = os.path.join(user_host_workspace, "uploads")
+        skills_service_path = os.path.join(user_host_workspace, "skills")
+        trash_service_path = os.path.join(user_host_workspace, ".trash")
+
+        user_directories: list[dict[str, Any]] = [
+            {
+                "directory_name": "docs",
+                "container_sandbox_path": "/workspace/docs" if is_docker_sandbox else docs_service_path,
+                "backend_service_path": docs_service_path,
+                "host_physical_path": _to_host_path(docs_service_path),
+                "permission": "read_write",
+                "category": "user_persistent_docs",
+                "description": "用户专属持久化文档库。跨会话共享，AI 生成的最终分析报告、Markdown、Excel、PDF、图表及长久保存文件请默认保存在此目录。",
+                "recommended_for": ["AI 产物落盘", "生成报告", "导出表格与文档", "跨会话复用文件"],
+            }
+        ]
+
+        if conversation_id:
+            session_phys = resolve_session_workdir(
+                root=workspace_root,
+                user_id=resolved_user_id,
+                user_name=resolved_user_name,
+                conversation_id=conversation_id,
+                user_info=user_info,
+            )
+            user_directories.append({
+                "directory_name": f"sessions/{conversation_id}",
+                "container_sandbox_path": f"/workspace/sessions/{conversation_id}" if is_docker_sandbox else session_phys,
+                "backend_service_path": session_phys,
+                "host_physical_path": _to_host_path(session_phys),
+                "permission": "read_write",
+                "category": "session_scratchpad",
+                "description": "当前会话的专属临时工作区。存放仅限本次对话使用的中间过程文件、临时脚本、计算缓存等。",
+                "recommended_for": ["当前会话临时脚本", "中间过程缓存", "单次任务草稿"],
+            })
+
+        user_directories.extend([
+            {
+                "directory_name": "uploads",
+                "container_sandbox_path": "/workspace/uploads" if is_docker_sandbox else uploads_service_path,
+                "backend_service_path": uploads_service_path,
+                "host_physical_path": _to_host_path(uploads_service_path),
+                "permission": "read_write",
+                "category": "user_uploads",
+                "description": "用户上传的会话附件目录。存放用户在聊天界面上传的文件与原始数据资料。",
+                "recommended_for": ["读取用户上传的文件", "查找会话原始输入资料"],
+            },
+            {
+                "directory_name": "skills",
+                "container_sandbox_path": "/workspace/skills" if is_docker_sandbox else skills_service_path,
+                "backend_service_path": skills_service_path,
+                "host_physical_path": _to_host_path(skills_service_path),
+                "permission": "read_write",
+                "category": "user_personal_skills",
+                "description": "用户个人专属自定义技能目录。存放当前用户专属创建或定制的 Prompt/技能包。",
+                "recommended_for": ["个人自定义技能"],
+            },
+            {
+                "directory_name": ".trash",
+                "container_sandbox_path": "/workspace/.trash" if is_docker_sandbox else trash_service_path,
+                "backend_service_path": trash_service_path,
+                "host_physical_path": _to_host_path(trash_service_path),
+                "permission": "read_write",
+                "category": "trash",
+                "description": "用户工作区回收站。存放已删除但可恢复的文件。",
+                "recommended_for": ["已删除文件归档"],
+            },
+        ])
+
+        # 构建公共目录（只读）
+        global_skills_service_path = get_platform_skills_root() or os.path.join(data_base, "skills")
+        branding_service_path = os.path.join(data_base, "branding")
+        global_docs_service_path = os.path.join(data_base, "docs")
+
+        public_directories: list[dict[str, Any]] = [
+            {
+                "directory_name": "docs",
+                "container_sandbox_path": global_docs_service_path,
+                "backend_service_path": global_docs_service_path,
+                "host_physical_path": _to_host_path(global_docs_service_path),
+                "permission": "read_only",
+                "category": "platform_global_docs",
+                "description": "平台全局公共文档与模板库（data/docs）。存放全员共享的产品手册、规范文档、公司模板等资料，供所有用户只读查阅，不可随意写入覆盖。",
+                "recommended_for": ["查阅公共产品手册", "参考公共标准模板与制度文档"],
+            },
+            {
+                "directory_name": "skills",
+                "container_sandbox_path": "/workspace/skills" if is_docker_sandbox else global_skills_service_path,
+                "backend_service_path": global_skills_service_path,
+                "host_physical_path": _to_host_path(global_skills_service_path),
+                "permission": "read_only",
+                "category": "platform_global_skills",
+                "description": "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，仅允许只读访问，不可直接覆盖。",
+                "recommended_for": ["读取系统公共技能指令", "查看内置工作流"],
+            },
+            {
+                "directory_name": "branding",
+                "container_sandbox_path": branding_service_path,
+                "backend_service_path": branding_service_path,
+                "host_physical_path": _to_host_path(branding_service_path),
+                "permission": "read_only",
+                "category": "platform_branding_assets",
+                "description": "平台公共品牌与静态资产目录。包含 Logo、图标等公共资源，仅允许只读访问。",
+                "recommended_for": ["读取公共静态资源"],
+            }
+        ]
+
+        result = {
+            "deployment_environment": "docker_container" if is_container_env else "host_machine",
+            "sandbox_execution_mode": "docker_sandbox" if is_docker_sandbox else "host_local",
+            "user_identity": {
+                "user_id": ctx.user_id,
+                "user_name": user_name,
+                "user_key": user_key,
+                "is_admin": bool(ctx.is_admin),
+            },
+            "user_workspace": {
+                "container_sandbox_root": "/workspace" if is_docker_sandbox else user_host_workspace,
+                "backend_service_root": user_host_workspace,
+                "host_physical_root": _to_host_path(user_host_workspace),
+                "access": "read_write",
+                "subdirectories": user_directories,
+            },
+            "public_directories": {
+                "access": "read_only",
+                "directories": public_directories,
+            },
+            "usage_guidelines": [
+                "1. 在 Docker 沙箱环境（Docker Sandbox）下执行 Bash 命令或 Python 脚本时，请使用 container_sandbox_path（以 /workspace 开头）；",
+                "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
+                "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
+                "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",
+                "5. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
+            ],
+        }
+
+        if ctx.is_admin:
+            result["admin_notice"] = "当前用户具有管理员权限，可通过系统管理端或全量文件浏览器查看 data/ 下所有用户的目录与系统数据。"
+
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error("[list_accessible_directories] failed: %s", e, exc_info=True)
+        return f"列出可访问目录失败: {e}"

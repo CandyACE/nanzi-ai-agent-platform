@@ -1,0 +1,315 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 疑难解答与常见问题手册 (FAQ) 正式上线通知
+  使用说明：复制最外层 <section>…</section> 的全部内容，直接粘贴到微信公众号后台富文本编辑器中（或 HTML 代码模式）。
+  图片占位：全文已预留多处【图片占位】，搜索「图片占位」即可定位替换为自己的截图或封面图。
+  文档直达地址：https://randychen1985.github.io/nanzi-agic/products/faq.html
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.85;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;background-color:#ffffff;padding:10px 4px;">
+
+  <!-- ========== Header Banner 头部横幅 ========== -->
+  <section style="margin:0 0 24px 0;padding:32px 20px;background:linear-gradient(135deg,#064e3b 0%,#065f46 45%,#0f172a 100%);border-radius:14px;text-align:center;box-shadow:0 8px 24px rgba(6,78,59,0.18);">
+    <div style="display:inline-block;padding:3px 12px;background:rgba(110,231,183,0.18);border:1px solid rgba(110,231,183,0.35);border-radius:20px;margin-bottom:12px;">
+      <span style="font-size:12px;font-weight:600;color:#6ee7b7;letter-spacing:1.5px;text-transform:uppercase;">NANZI · NEW RELEASE</span>
+    </div>
+    <h1 style="margin:0 0 12px 0;font-size:24px;font-weight:bold;color:#f8fafc;line-height:1.35;letter-spacing:0.8px;">
+      遇到问题先别慌！<br/>NanZi AI 全景 FAQ 疑难解答手册正式上线
+    </h1>
+    <p style="margin:0 0 16px 0;font-size:14px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">
+      从安装配置、运行原理，到深度开发与全栈异常排查 · 1600+ 行全干货指南开放查阅
+    </p>
+    <div style="display:inline-block;padding:6px 16px;background:#10b981;border-radius:6px;box-shadow:0 2px 8px rgba(16,185,129,0.3);">
+      <a href="https://randychen1985.github.io/nanzi-agic/products/faq.html" style="color:#ffffff;font-size:13px;font-weight:bold;text-decoration:none;letter-spacing:0.5px;">👉 立即在线查阅手册</a>
+    </div>
+  </section>
+
+  <!-- ========== 【图片占位 01：官方横幅 / 封面图】 ========== -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;border:2px dashed #10b981;background:#f0fdf4;border-radius:12px;text-align:center;">
+    <div style="font-size:24px;margin-bottom:6px;">🖼️</div>
+    <p style="margin:0 0 4px 0;font-size:15px;font-weight:bold;color:#065f46;">【图片占位 01：FAQ 官方宣传封面图 / Banner】</p>
+    <p style="margin:0;font-size:13px;color:#047857;">（建议尺寸：900 × 383 像素，展示 FAQ 核心主题卡片或机器人形象）</p>
+  </section>
+
+  <!-- ========== 项目声明与在线地址卡片 ========== -->
+  <section style="margin:0 0 24px 0;padding:16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;border-left:5px solid #10b981;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">📖 手册发布信息与直达链接</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">
+      • <strong>在线查阅地址</strong>：<a href="https://randychen1985.github.io/nanzi-agic/products/faq.html" style="color:#059669;text-decoration:none;font-weight:600;word-break:break-all;">https://randychen1985.github.io/nanzi-agic/products/faq.html</a><br/>
+      • <strong>开源项目仓库</strong>：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;font-weight:600;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>（MIT 协议开源）<br/>
+      • <strong>文档源码路径</strong>：仓库根目录 <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:13px;color:#0f766e;">FAQ.md</code>（支持本地离线阅读与共建提交 PR）
+    </p>
+  </section>
+
+  <!-- ========== 引言 / 为什么需要这份 FAQ ========== -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#334155;line-height:1.9;">
+      自 <strong>NanZi AI 开源智能体平台</strong> 正式发布以来，越来越多的开发者、架构师和企业团队开始在本地与私有云环境中部署、调试并接入业务系统。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#334155;line-height:1.9;">
+      但随着功能不断演进——从 <strong>AgentScope 多智能体编排</strong>、<strong>Docker 动态安全沙箱</strong>、<strong>ChatBI 企业级数据分析</strong>，到 <strong>Skills 技能包审核</strong> 与 <strong>多级记忆上下文压缩</strong>，技术栈的广度与运行机制的深度让不少刚接触平台的小伙伴感到疑惑：
+    </p>
+    <div style="margin:0 0 14px 0;padding:14px 16px;background:#fff1f2;border:1px solid #fecdd3;border-radius:10px;">
+      <p style="margin:0;font-size:14px;color:#9f1239;line-height:1.8;">
+        ❓ <em>“为什么必须强制使用 Python 3.11？Python 3.12 为何会编译报错？”</em><br/>
+        ❓ <em>“单智能体 vs 多智能体到底该怎么选？子代理 Subagents 是怎么被调度的？”</em><br/>
+        ❓ <em>“Docker 沙箱在平台容器内怎么配置才能避免‘套娃崩溃’？”</em><br/>
+        ❓ <em>“ChatBI 生成 SQL 不准该怎么办？元数据字典和 Few-Shot 怎么配合？”</em><br/>
+        ❓ <em>“模型调用上下文爆了，四大多级记忆机制是怎么帮我自动压缩的？”</em>
+      </p>
+    </div>
+    <p style="margin:0;font-size:15px;color:#334155;line-height:1.9;">
+      为了让大家在部署使用与二次开发过程中<strong>少走弯路、快速排障、吃透底层原理</strong>，我们正式梳理并上线了这本超过 <strong>1600+ 行、覆盖 7 大核心板块、数十个高频 Q&A 与架构拓扑图</strong> 的官方 <strong>FAQ 疑难解答手册</strong>！
+    </p>
+  </section>
+
+  <!-- 分割线 -->
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ========== 一、手册亮点与内容全景 ========== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#0f172a;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">
+      一、手册核心亮点：不只是 Q&A，更是原理透视
+    </p>
+  </section>
+
+  <section style="margin:0 0 18px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#334155;line-height:1.9;">
+      与传统「机械堆砌报错代码」的 FAQ 不同，NanZi 官方 FAQ 按照<strong>平台左侧导航菜单的功能拓扑</strong>进行编排，遵循「<strong>核心原理解析 ➔ 小白概念区分 ➔ 运维排查避坑</strong>」三位一体的结构：
+    </p>
+  </section>
+
+  <!-- 亮点网格卡片 -->
+  <section style="margin:0 0 20px 0;display:flex;flex-direction:column;gap:12px;">
+    
+    <div style="padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+      <div style="display:flex;align-items:center;margin-bottom:6px;">
+        <span style="font-size:16px;margin-right:8px;">🧩</span>
+        <span style="font-size:15px;font-weight:bold;color:#065f46;">按功能菜单立体编排，精准对齐系统模块</span>
+      </div>
+      <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">
+        直接对应平台左侧【智能助手】、【智能体开发】、【ChatBI 平台】、【知识库】、【日志与 Token】、【系统管理】等核心菜单，在系统哪个页面遇到困惑，直接对照查阅对应章节。
+      </p>
+    </div>
+
+    <div style="padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+      <div style="display:flex;align-items:center;margin-bottom:6px;">
+        <span style="font-size:16px;margin-right:8px;">📊</span>
+        <span style="font-size:15px;font-weight:bold;color:#1e40af;">通俗易懂的 ASCII 架构图与协同流程</span>
+      </div>
+      <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">
+        前后端 FastAPI + Vue3 统一托管架构、Docker 安全沙箱与宿主机套接字挂载链路、四级记忆压缩模型、Text-to-SQL 意图分发流程……均配备直观流程图。
+      </p>
+    </div>
+
+    <div style="padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+      <div style="display:flex;align-items:center;margin-bottom:6px;">
+        <span style="font-size:16px;margin-right:8px;">💡</span>
+        <span style="font-size:15px;font-weight:bold;color:#92400e;">专为初学者打造的“小白避坑与概念辨析”</span>
+      </div>
+      <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">
+        详细拆解 <em>Prompt vs Skill vs Tool vs MCP</em> 的区别与联系、<em>会话记忆 vs 长期记忆</em> 的淘汰边界、<em>单 Agent vs 多智能体</em> 的选型权衡，告别概念混淆。
+      </p>
+    </div>
+
+    <div style="padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+      <div style="display:flex;align-items:center;margin-bottom:6px;">
+        <span style="font-size:16px;margin-right:8px;">⚡</span>
+        <span style="font-size:15px;font-weight:bold;color:#6b21a8;">可直接复制的代码命令与排障 Checklist</span>
+      </div>
+      <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">
+        从 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">./dev.sh</code> 的启动选项、Docker 预构建镜像步骤，到 MySQL / PG 双数据库迁移规范、Redis 扩展排查，命令与操作一键复制即可运行。
+      </p>
+    </div>
+
+  </section>
+
+  <!-- ========== 【图片占位 02：FAQ 架构流程图 / 界面预览】 ========== -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;border:2px dashed #10b981;background:#f0fdf4;border-radius:12px;text-align:center;">
+    <div style="font-size:24px;margin-bottom:6px;">🖼️</div>
+    <p style="margin:0 0 4px 0;font-size:15px;font-weight:bold;color:#065f46;">【图片占位 02：FAQ 文档网页阅读界面与目录截图】</p>
+    <p style="margin:0;font-size:13px;color:#047857;">（展示 GitHub Pages 上的 FAQ 目录大纲与高亮代码块效果）</p>
+  </section>
+
+  <!-- 分割线 -->
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ========== 二、手册 7 大核心板块速览 ========== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#0f172a;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">
+      二、七大板块全景速览：手册里都有什么？
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#334155;line-height:1.9;">
+      以下是本次上线 FAQ 手册的章节全貌与核心知识点覆盖：
+    </p>
+  </section>
+
+  <!-- 板块 1 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">
+      🔹 1. 平台概览与基础环境 (Overview & Environment)
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      • <strong>关键依赖</strong>：Python 3.11 强约束原因、Node.js 18.18+ / 20.x 前端环境、Redis Stack (RediSearch) 必要性。<br/>
+      • <strong>快速启动</strong>：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">./dev.sh</code> 前台与 Daemon 后台启动机制及自动端口探测。<br/>
+      • <strong>前后端拓扑</strong>：FastAPI 单端口托管 Vue 3 静态编译产物 + SSE 流式事件推送完整链路。
+    </p>
+  </section>
+
+  <!-- 板块 2 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">
+      🔹 2. 智能助手与交互画布 (Assistant & Canvas)
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      • <strong>作用域隔离</strong>：用户全局会话（User Session） vs 智能体专用会话（Agent Session）的边界与存储机制。<br/>
+      • <strong>实时状态浮标</strong>：Token 水位线告警、压缩日志透明化、沙箱执行容器状态卡片。<br/>
+      • <strong>浏览器自动化</strong>：Playwright 会话启动、截图与实时投屏接管（Live Takeover）机制。
+    </p>
+  </section>
+
+  <!-- 板块 3 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">
+      🔹 3. 智能体开发平台 (Agent Platform)
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      • <strong>智能体五大要素</strong>：角色人设、提示词工厂、工具/MCP 挂载、Skills 技能包与多级记忆注入。<br/>
+      • <strong>多智能体协作</strong>：Subagents 子代理调度架构、主代理路由分发、Embed 嵌入式发布。<br/>
+      • <strong>Skills 技能生态</strong>：个人私有技能 vs 平台公共技能审核流转，大模型如何按需加载 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">SKILL.md</code>。<br/>
+      • <strong>FastMCP 网关</strong>：STDIO / SSE 协议支持与 Docker 沙箱容器内 FastMCP 隔离网关。<br/>
+      • <strong>四大多级记忆</strong>：会话记忆、溢出压缩、每日摘要、长期向量记忆的协同运作机制与控制台运维。
+    </p>
+  </section>
+
+  <!-- 板块 4 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">
+      🔹 4. ChatBI 企业问数平台 (ChatBI Platform)
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      • <strong>Text-to-SQL 核心链路</strong>：自然语言 ➔ 意图识别 ➔ 动态 Schema 裁剪 ➔ 语法修正 ➔ 安全只读执行。<br/>
+      • <strong>元数据语义治理</strong>：数据集划分、字段业务注释、枚举代码字典映射与 AI 辅助一键标注。<br/>
+      • <strong>动态 Few-Shot 案例库</strong>：如何通过向量相似度动态召回高价值 SQL 案例，实现冷启动与问答闭环。
+    </p>
+  </section>
+
+  <!-- 板块 5 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">
+      🔹 5. 知识库开发平台 (Knowledge Base & RAG)
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      • <strong>RAG 检索原理</strong>：文档多粒度切片策略、向量化与多模态解析。<br/>
+      • <strong>混合检索与重排序</strong>：向量语义检索 + 关键词 BM25 + Rerank 交叉重排调优。<br/>
+      • <strong>运营分析与聚类挖掘</strong>：无答案问题聚类与知识库盲区自动诊断。
+    </p>
+  </section>
+
+  <!-- 板块 6 & 7 -->
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">
+      🔹 6 & 7. 日志成本与系统配置运维 (Logs, Security & System)
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.8;">
+      • <strong>多维成本分摊</strong>：三级审计日志、Token 统计与企业多租户/多用户调用账单分析。<br/>
+      • <strong>安全沙箱架构选型</strong>：Local / Docker / E2B / SSH 对比，Docker 沙箱运行前提与镜像预构建指南。<br/>
+      • <strong>模型生态与兼容层</strong>：Base URL 智能识别、DeepSeek-R1 / QwQ 等推理模型工具调用兼容器。<br/>
+      • <strong>多通道通知</strong>：企业微信、钉钉、飞书、邮件与自动化定时任务（Cron）的告警绑定。
+    </p>
+  </section>
+
+  <!-- ========== 【图片占位 03：ChatBI / 智能体工作台实机功能图】 ========== -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;border:2px dashed #10b981;background:#f0fdf4;border-radius:12px;text-align:center;">
+    <div style="font-size:24px;margin-bottom:6px;">🖼️</div>
+    <p style="margin:0 0 4px 0;font-size:15px;font-weight:bold;color:#065f46;">【图片占位 03：平台三大门户 / 沙箱执行过程实机截图】</p>
+    <p style="margin:0;font-size:13px;color:#047857;">（展示智能助手交互、Docker 沙箱实时输出或 ChatBI 仪表盘）</p>
+  </section>
+
+  <!-- 分割线 -->
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ========== 三、典型问答抢先看（精选 3 条） ========== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#0f172a;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">
+      三、高频精华 Q&A 抢先看
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px 18px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#059669;line-height:1.5;">
+      💡 Q1：平台容器化部署时，为什么强烈建议安全沙箱配置为 Docker 策略？
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>解答：</strong>当 NanZi 平台自身运行在 Docker 容器内时，若配置为 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">local</code> 策略，所有 Agent 运行的 Shell 脚本和命令都会在平台主后端容器内直接执行，极易造成平台主环境被污染或资源占满崩溃。<br/>
+      通过挂载 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">-v /var/run/docker.sock:/var/run/docker.sock</code> 并选择 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">docker</code> 策略，可以让平台在宿主机上为每个用户拉起独立的沙箱子容器，实现真正的操作系统级多租户安全隔离！
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:16px 18px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#059669;line-height:1.5;">
+      💡 Q2：Skill（技能包）和 Tools（工具）到底有什么本质区别？
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>解答：</strong>打个比方，<strong>Tools/MCP 是厨房里的“灶台与锅铲”</strong>（提供具体可执行的动作能力，如查数据库、发邮件）；而 <strong>Skills 是大厨手里的“菜谱与打法说明书”</strong>（规定在什么场景下、先干什么、后干什么、禁止做什么）。同一个智能体挂载相同的工具，更换不同的 Skill 即可执行完全不同的业务 SOP！
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:16px 18px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#059669;line-height:1.5;">
+      💡 Q3：DeepSeek-R1 / QwQ 等深度思考模型调用工具时老报错怎么办？
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>解答：</strong>部分推理模型在输出思考过程（<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">&lt;think&gt;...&lt;/think&gt;</code>）时，Tool Call 的原生 JSON 协议可能与常规模型不一致。NanZi 底层内置了<strong>智能兼容层</strong>，在【模型管理】中为该模型勾选「开启深度思考/推理模型适配」，系统会自动完成 Thinking 字段剥离与工具调用协议归一化。
+    </p>
+  </section>
+
+  <!-- 分割线 -->
+  <section style="margin:28px 0;height:1px;background:#e2e8f0;"></section>
+
+  <!-- ========== 四、查阅与共建指南 ========== -->
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#0f172a;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">
+      四、如何查阅与参与共建？
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:16px 18px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:12px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">
+      🌐 两种方式随时查阅：
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>1. 手机与电脑端在线查阅（推荐）：</strong><br/>
+      直接访问官方文档站：<br/>
+      <a href="https://randychen1985.github.io/nanzi-agic/products/faq.html" style="color:#059669;text-decoration:none;font-weight:600;word-break:break-all;">https://randychen1985.github.io/nanzi-agic/products/faq.html</a><br/>
+      支持侧边栏快速跳转、全局关键词检索与移动端自适应。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>2. 本地离线查阅与 PR 贡献：</strong><br/>
+      拉取最新仓库代码后，直接打开根目录下的 <code style="background:#dcfce7;padding:1px 5px;border-radius:3px;font-size:13px;color:#065f46;">FAQ.md</code> 文件。如果在开发中遇到新的边界情况或有补充建议，非常欢迎提交 Pull Request 一同完善社区知识库！
+    </p>
+  </section>
+
+  <!-- ========== 【图片占位 04：手机端 / 微信内浏览效果】 ========== -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;border:2px dashed #10b981;background:#f0fdf4;border-radius:12px;text-align:center;">
+    <div style="font-size:24px;margin-bottom:6px;">🖼️</div>
+    <p style="margin:0 0 4px 0;font-size:15px;font-weight:bold;color:#065f46;">【图片占位 04：在线文档手机端自适应浏览展示图】</p>
+    <p style="margin:0;font-size:13px;color:#047857;">（展示用手机随时翻查 FAQ 的便捷体验）</p>
+  </section>
+
+  <!-- ========== 底部关注与互动卡片 ========== -->
+  <section style="margin:24px 0 0 0;padding:22px 18px;background:linear-gradient(135deg,#064e3b 0%,#111827 100%);border-radius:14px;text-align:center;color:#ffffff;">
+    <p style="margin:0 0 8px 0;font-size:17px;font-weight:bold;color:#6ee7b7;letter-spacing:0.5px;">NanZi AI 开源智能体平台</p>
+    <p style="margin:0 0 16px 0;font-size:13px;color:#94a3b8;line-height:1.7;">
+      多智能体协同编排 · 企业级 ChatBI · 工具/MCP/Skills · 任务调度 · 独立沙箱
+    </p>
+    <div style="display:inline-block;padding:8px 20px;background:#10b981;border-radius:24px;margin-bottom:12px;">
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">⭐ GitHub 给我们点个 Star 支持一下！</a>
+    </div>
+    <p style="margin:0;font-size:12px;color:#64748b;line-height:1.6;">
+      文档将持续跟随平台版本保持高频更新 · 欢迎关注公众号第一时间获取功能发布与实战干货
+    </p>
+  </section>
+
+</section>

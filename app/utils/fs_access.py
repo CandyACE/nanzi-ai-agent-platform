@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
-PUBLIC_DATA_SUBDIRS: tuple[str, ...] = ("branding", "skills")
+PUBLIC_DATA_SUBDIRS: tuple[str, ...] = ("branding", "skills", "docs")
 USER_WORKSPACE_RESERVED_DIR_NAMES = frozenset({"docs", "uploads", "sandbox", ".trash", "skills", "sessions"})
 SESSION_DIR_NAME_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",

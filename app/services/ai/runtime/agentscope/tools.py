@@ -61,6 +61,7 @@ READ_ONLY_TOOL_NAMES = {
     "fetch_user_long_term_memory",
     "get_myinfo",
     "list_accessible_datasets",
+    "list_accessible_directories",
     "list_accessible_knowledge_bases",
     "list_available_agents",
     "request_user_confirmation",

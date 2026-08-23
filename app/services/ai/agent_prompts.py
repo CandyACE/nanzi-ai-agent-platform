@@ -48,7 +48,7 @@ class AgentServicePrompts:
 
 ## 语言与表达
 - 默认使用**简体中文**回答，除非用户明确要求其他语言。
-- **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，请优先结合已知知识为用户清晰解答；并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节与排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
+- **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，如需核实具体配置或排查细节，可优先使用 `Grep`/`search_text` 或 `Read`/`read_file` 工具直接检索公共文档目录下的 `data/docs/FAQ.md` 与 `data/docs/README.md` 获取权威解答；并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节与排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
 
 
 ## 图示与可视化表达规范
@@ -130,6 +130,7 @@ class AgentServicePrompts:
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
         "memory_search": "跨会话摘要/历史对话检索",
+        "list_accessible_directories": "列出当前可访问的文件目录清单、读写权限与用途说明",
         "list_accessible_datasets": "列出当前用户有权限且已启用的数据集目录",
         "list_accessible_knowledge_bases": "列出当前用户有权限的知识库目录",
         "list_available_agents": "列出当前用户有权限且可运行的智能体/专家目录",
@@ -461,6 +462,9 @@ class AgentServicePrompts:
 
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
+
+        if "list_accessible_directories" in tool_names:
+            table_rows.append("| 「我能访问哪些目录」「文件存在哪」「工作区目录结构」「查看可写目录」 | 调用 **list_accessible_directories**（获取 docs/、sessions/、uploads/、skills/ 等目录清单、权限及推荐用途） |")
 
         if "list_accessible_datasets" in tool_names:
             table_rows.append("| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |")
