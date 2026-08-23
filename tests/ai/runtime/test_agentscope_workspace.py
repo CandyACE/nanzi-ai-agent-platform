@@ -271,6 +271,191 @@ async def test_bind_sandbox_mcp_bash_as_canonical_bash_tool_name():
     assert "mcp__sandbox__bash" not in visible_names
 
 
+@pytest.mark.asyncio
+async def test_host_grep_falls_back_when_ripgrep_is_unavailable(tmp_path, monkeypatch):
+    from agentscope.message import TextBlock, ToolResultState
+    from agentscope.tool import ToolChunk
+
+    from app.services.ai.runtime.agentscope.workspace import (
+        _WorkspaceFileAccessNativeTool,
+    )
+
+    base = tmp_path / "data"
+    docs_root = base / "docs"
+    own_root = base / "agent_workspaces" / "alice__1"
+    other_root = base / "agent_workspaces" / "bob__2"
+    docs_root.mkdir(parents=True)
+    own_root.mkdir(parents=True)
+    other_root.mkdir(parents=True)
+    target = own_root / "notes.txt"
+    target.write_text("first line\nneedle appears here\n", encoding="utf-8")
+
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    class MissingRipgrep:
+        name = "Grep"
+        description = "Grep"
+        input_schema = {"type": "object"}
+        is_read_only = True
+
+        async def __call__(self, **kwargs):
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="ripgrep error (code 127): [Errno 2] No such file or directory: 'rg'"
+                    )
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
+    wrapped = _WorkspaceFileAccessNativeTool(
+        MissingRipgrep(),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(own_root),
+    )
+
+    result = await wrapped(
+        pattern="needle",
+        path=str(own_root),
+        output_mode="content",
+    )
+
+    assert result.state == ToolResultState.SUCCESS
+    assert "needle appears here" in result.content[0].text
+
+    with pytest.raises(PermissionError, match="文件访问被拒绝"):
+        await wrapped(pattern="needle", path=str(other_root), output_mode="content")
+
+
+@pytest.mark.asyncio
+async def test_host_file_tools_scan_only_direct_root_help_markdown(tmp_path, monkeypatch):
+    from agentscope.message import ToolResultState
+
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.workspace import _WorkspaceFileAccessNativeTool
+
+    service_root = tmp_path / "service"
+    module_path = service_root / "app" / "utils" / "fs_access.py"
+    module_path.parent.mkdir(parents=True)
+    help_file = service_root / "README.md"
+    nested_secret = service_root / "config" / "secret.md"
+    help_file.write_text("platform help needle", encoding="utf-8")
+    nested_secret.parent.mkdir()
+    nested_secret.write_text("private nested needle", encoding="utf-8")
+
+    base = tmp_path / "data"
+    own_root = base / "agent_workspaces" / "alice__1"
+    base.mkdir()
+    own_root.mkdir(parents=True)
+    monkeypatch.setattr("app.utils.fs_access.__file__", str(module_path))
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    class NativeFileTool:
+        is_read_only = True
+        name = "Grep"
+
+        async def __call__(self, **kwargs):
+            raise AssertionError(f"native tool must not scan the service root: {kwargs}")
+
+    wrapped = _WorkspaceFileAccessNativeTool(
+        NativeFileTool(),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(own_root),
+    )
+
+    result = await wrapped(
+        pattern="needle",
+        path=str(service_root),
+        glob="*.md",
+        output_mode="content",
+    )
+    assert result.state == ToolResultState.SUCCESS
+    assert str(help_file) in result.content[0].text
+    assert str(nested_secret) not in result.content[0].text
+
+    result_without_glob = await wrapped(
+        pattern="needle",
+        path=str(service_root),
+        output_mode="content",
+    )
+    assert str(help_file) in result_without_glob.content[0].text
+    assert str(nested_secret) not in result_without_glob.content[0].text
+
+    with pytest.raises(PermissionError, match="禁止递归扫描服务目录"):
+        await wrapped(
+            pattern="needle",
+            path=str(service_root),
+            glob="**/*.md",
+            output_mode="content",
+        )
+
+    class NativeGlobTool:
+        is_read_only = True
+        name = "Glob"
+
+        async def __call__(self, **kwargs):
+            raise AssertionError(f"native tool must not scan the service root: {kwargs}")
+
+    glob_wrapped = _WorkspaceFileAccessNativeTool(
+        NativeGlobTool(),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(own_root),
+    )
+    glob_result = await glob_wrapped(pattern="*.md", path=str(service_root))
+    assert glob_result.state == ToolResultState.SUCCESS
+    assert glob_result.content[0].text == str(help_file)
+
+    with pytest.raises(PermissionError, match="禁止递归扫描服务目录"):
+        await glob_wrapped(pattern="**/*.md", path=str(service_root))
+
+    class NativeReadTool:
+        is_read_only = True
+        name = "Read"
+
+        async def __call__(self, **kwargs):
+            return help_file.read_text(encoding="utf-8")
+
+    read_wrapped = _WorkspaceFileAccessNativeTool(
+        NativeReadTool(),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(own_root),
+    )
+    read_result = await read_wrapped(file_path=str(help_file))
+    assert read_result == "platform help needle"
+
+    class NativeWriteTool:
+        is_read_only = False
+        name = "Write"
+
+        async def __call__(self, **kwargs):
+            raise AssertionError("root help files must remain read-only")
+
+    write_wrapped = _WorkspaceFileAccessNativeTool(
+        NativeWriteTool(),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(own_root),
+    )
+    with pytest.raises(PermissionError, match="文件访问被拒绝"):
+        await write_wrapped(file_path=str(help_file), content="overwrite")
+
+    assert workspace_module._is_public_runtime_help_scan(
+        "Grep", {"path": str(service_root), "glob": "*.md"}
+    )
+
+
 def test_docker_workspace_path_mapping_uses_one_logical_root_and_rejects_escape():
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 

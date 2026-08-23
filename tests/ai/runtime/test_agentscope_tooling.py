@@ -5,6 +5,30 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["Glob", "Grep"])
+async def test_native_file_tool_missing_pattern_returns_tool_error(tool_name):
+    from agentscope.message import ToolResultState
+
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+
+    class NativeFileTool:
+        name = tool_name
+        description = tool_name
+        input_schema = {"type": "object", "properties": {"pattern": {"type": "string"}}}
+        is_read_only = True
+
+        async def __call__(self, **kwargs):
+            raise AssertionError("native file tool should not run without pattern")
+
+    wrapped = AgentScopeNativeApprovalTool(NativeFileTool(), permission_scope="read")
+
+    result = await wrapped()
+
+    assert result.state == ToolResultState.ERROR
+    assert "pattern" in result.content[0].text
+
+
+@pytest.mark.asyncio
 async def test_runtime_tool_spec_executes_callable_and_records_metadata():
     from app.services.ai.runtime.agentscope.tools import RuntimeToolAuditEvent, RuntimeToolSpec
 

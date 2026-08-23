@@ -4,6 +4,7 @@ import pytest
 
 from app.utils.fs_access import (
     get_allowed_fs_roots,
+    get_public_runtime_help_files,
     get_user_docs_dir,
     get_user_sessions_dir,
     get_user_sandbox_dir,
@@ -156,6 +157,44 @@ def test_runtime_path_allows_only_explicit_public_document_symlink_targets(
     assert is_runtime_path_allowed(str(public_docs / "README.md"), user_info)
     assert not is_runtime_path_allowed(str(public_docs / "docker-readme.md"), user_info)
     assert not is_runtime_path_writable(str(public_docs / "FAQ.md"), user_info)
+
+
+def test_runtime_help_whitelist_allows_only_direct_root_markdown_files(
+    tmp_path,
+    monkeypatch,
+):
+    from app.utils import fs_access
+
+    project_root = tmp_path / "service"
+    module_path = project_root / "app" / "utils" / "fs_access.py"
+    module_path.parent.mkdir(parents=True)
+    root_help = project_root / "HELP.md"
+    nested_help = project_root / "docs" / "nested.md"
+    root_text = project_root / "notes.txt"
+    root_help.write_text("help", encoding="utf-8")
+    nested_help.parent.mkdir()
+    nested_help.write_text("nested", encoding="utf-8")
+    root_text.write_text("not help", encoding="utf-8")
+
+    base = tmp_path / "data"
+    base.mkdir()
+    monkeypatch.setattr(fs_access, "__file__", str(module_path))
+    monkeypatch.setattr(fs_access, "get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr(fs_access, "get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    user_info = {"user_id": 1, "user_name": "alice", "role": "user"}
+    assert fs_access.is_runtime_path_allowed(str(root_help), user_info)
+    assert fs_access.is_path_allowed(str(root_help), user_info)
+    assert not fs_access.is_runtime_path_writable(str(root_help), user_info)
+    assert not fs_access.is_path_allowed(str(nested_help), user_info)
+    assert not fs_access.is_runtime_path_allowed(str(root_text), user_info)
+    assert str(root_help) in get_public_runtime_help_files()
+    assert str(nested_help) not in get_public_runtime_help_files()
 
 
 def test_regular_user_cannot_escape_workspace_through_symlink(tmp_path, monkeypatch):

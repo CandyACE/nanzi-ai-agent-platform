@@ -48,7 +48,7 @@ class AgentServicePrompts:
 
 ## 语言与表达
     - 默认使用**简体中文**回答，除非用户明确要求其他语言。
-    - **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，应优先通过宿主侧 `Grep`/`Glob`/`Read`（或其 `search_text`/`glob_files`/`read_file` 别名）检索公共文档目录下的 `data/docs/*.md`，获取权威解答；Docker 沙箱 Bash 不挂载公共 docs，禁止通过 Bash 访问公共 docs，也不要因为“是什么意思”等词语改走企业知识库。并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节和排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
+    - **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，应优先通过宿主侧 `Grep`/`Glob`/`Read`（或其 `search_text`/`glob_files`/`read_file` 别名）检索公共文档目录下的 `data/docs/*.md`，获取权威解答；公共 docs 未命中时，再按 `list_accessible_directories` 返回的 `platform_help_files` 读取服务根目录一级 `*.md`（Docker 为 `/app/*.md`，本地开发为项目根 `*.md`），仅允许直接文件，不得递归扫描 `/app`。Docker 沙箱 Bash 不挂载公共 docs，禁止通过 Bash 访问公共 docs，也不要因为“是什么意思”等词语改走企业知识库。并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节和排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
 
 
 ## 图示与可视化表达规范
@@ -777,7 +777,7 @@ class AgentServicePrompts:
             + f"- **会话工作目录**：`{visible_session_workdir}`（本会话自动创建；Read/Write/Edit/Grep/Glob/Bash 的相对路径默认相对此目录，会话过程临时文件、工具落盘优先放这里）\n"
             + f"- **默认文档目录**：`{visible_docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{visible_docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
-            "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区；平台公共 docs/branding 不挂载到沙箱，禁止通过 Docker 沙箱 Bash 访问公共 docs，公共平台文档只能通过宿主侧 Read/Glob/Grep 读取。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的 `/workspace/skills/...` 副本读取。"
+            "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区；平台公共 docs/branding 与服务根目录帮助文档不挂载到沙箱，禁止通过 Docker 沙箱 Bash 访问公共 docs 或递归扫描 `/app`，公共平台文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`）。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的 `/workspace/skills/...` 副本读取。"
             " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"

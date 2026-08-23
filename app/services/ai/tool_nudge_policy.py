@@ -377,7 +377,8 @@ def _resolve_platform_docs_nudge(tools: List[Any]) -> Optional[ToolNudge]:
             "请优先通过宿主侧文件工具检索公共 docs/*.md（先用 Grep/Glob 定位，"
             "再用 Read 读取命中文档）后回答；Docker 沙箱 Bash 不挂载公共 docs，"
             "禁止通过 Bash 访问或臆造 /workspace/docs、/app/data/docs 路径。"
-            "公共文档没有命中时，不要改为调用 sub_agent_call 搜索企业知识库。"
+            "公共 docs 没有命中时，再按目录清单使用宿主工具读取服务根目录一级 /app/*.md（本地开发为项目根 *.md）帮助文档；"
+            "禁止递归扫描 /app 或改为调用 sub_agent_call 搜索企业知识库。"
         ),
         force_first_call=True,
         metadata=resolve_tool_metadata(tool),

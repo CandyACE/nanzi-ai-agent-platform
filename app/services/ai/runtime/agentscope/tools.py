@@ -670,6 +670,23 @@ class AgentScopeNativeApprovalTool:
             enhance_workspace_error_message,
         )
 
+        if self.name in {"Glob", "Grep"} and not str(kwargs.get("pattern") or "").strip():
+            from agentscope.message import TextBlock, ToolResultState
+            from agentscope.tool import ToolChunk
+
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            f"{self.name} 调用失败：缺少必填参数 pattern。"
+                            "请传入具体的文件匹配模式或搜索表达式。"
+                        )
+                    )
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         is_file_tool = self.name in (WORKSPACE_BUILTIN_TOOL_NAMES | {"read_file", "write_file", "edit_file", "glob_files", "search_text"})
         try:
             result = self.native_tool(**kwargs)

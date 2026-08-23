@@ -61,7 +61,7 @@ def get_public_fs_roots(base: str | None = None) -> list[str]:
 
 def get_public_runtime_file_targets() -> list[str]:
     """Return exact application-root files exposed through public read links."""
-    project_root = os.path.realpath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    project_root = get_public_runtime_help_root()
     return [os.path.join(project_root, name) for name in PUBLIC_RUNTIME_FILE_NAMES]
 
 
@@ -159,6 +159,39 @@ def _canonical_runtime_path(path: str, base: str | None = None) -> str:
     return os.path.normpath(os.path.realpath(os.path.abspath(raw_path)))
 
 
+def get_public_runtime_help_root() -> str:
+    """Return the service application root whose direct ``*.md`` files are help sources."""
+    return os.path.realpath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+
+def is_public_runtime_help_path(path: str) -> bool:
+    """Allow only a canonical, direct child Markdown file under the service root."""
+    normalized = _canonical_runtime_path(path)
+    root = get_public_runtime_help_root()
+    return (
+        os.path.dirname(normalized) == root
+        and os.path.basename(normalized).endswith(".md")
+    )
+
+
+def get_public_runtime_help_files() -> list[str]:
+    """List existing direct service-root Markdown files exposed as read-only help."""
+    root = get_public_runtime_help_root()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return []
+
+    files: list[str] = []
+    for name in sorted(names):
+        if not name.endswith(".md"):
+            continue
+        candidate = _canonical_runtime_path(os.path.join(root, name))
+        if is_public_runtime_help_path(candidate) and os.path.isfile(candidate):
+            files.append(candidate)
+    return sorted(set(files))
+
+
 def _is_path_within_root(path: str, root: str) -> bool:
     try:
         return os.path.commonpath((path, root)) == root
@@ -178,7 +211,10 @@ def is_runtime_path_allowed(
     native file tool.
     """
     normalized = _canonical_runtime_path(path)
-    if normalized in get_public_runtime_file_targets():
+    if (
+        normalized in get_public_runtime_file_targets()
+        or is_public_runtime_help_path(normalized)
+    ):
         return True
     return any(
         _is_path_within_root(normalized, os.path.realpath(root))
@@ -261,6 +297,8 @@ def is_public_fs_path(path: str | None, base: str | None = None) -> bool:
 def is_path_allowed(path: str, user_info: dict[str, Any] | None) -> bool:
     data_base = get_data_base_dir()
     under_base = normalize_under_base(path, data_base)
+    if is_public_runtime_help_path(path):
+        return True
     if is_fs_admin(user_info):
         if under_base:
             return True

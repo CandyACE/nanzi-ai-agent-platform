@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hashlib
 import inspect
 import json
@@ -1852,6 +1853,54 @@ def _normalize_workspace_file_tool_input(
     return mapped
 
 
+def _is_direct_root_help_pattern(pattern: str) -> bool:
+    cleaned = str(pattern or "").strip()
+    return bool(
+        cleaned
+        and "/" not in cleaned
+        and "\\" not in cleaned
+        and not cleaned.startswith("**")
+        and cleaned.endswith(".md")
+    )
+
+
+def _public_runtime_help_scan_kind(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+) -> str | None:
+    """Classify the narrowly scoped service-root help scan, if requested."""
+    if tool_name not in {"Glob", "Grep"}:
+        return None
+
+    from app.utils.fs_access import get_public_runtime_help_root
+
+    target_path = os.path.realpath(str(tool_input.get("path") or ""))
+    if target_path != os.path.realpath(get_public_runtime_help_root()):
+        return None
+
+    if tool_name == "Glob":
+        if not _is_direct_root_help_pattern(str(tool_input.get("pattern") or "")):
+            raise PermissionError(
+                "根目录帮助文档仅允许直接匹配 *.md，禁止递归扫描服务目录"
+            )
+        return "glob"
+
+    raw_glob = str(tool_input.get("glob") or "").strip()
+    patterns = [item for item in raw_glob.replace(",", " ").split() if item]
+    if any(not _is_direct_root_help_pattern(item) for item in patterns):
+        raise PermissionError(
+            "根目录帮助文档仅允许直接匹配 *.md，禁止递归扫描服务目录"
+        )
+    return "grep"
+
+
+def _is_public_runtime_help_scan(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+) -> bool:
+    return _public_runtime_help_scan_kind(tool_name, tool_input) is not None
+
+
 def _assert_workspace_file_access(
     tool_name: str,
     tool_input: Mapping[str, Any],
@@ -1875,6 +1924,11 @@ def _assert_workspace_file_access(
     if not target_path:
         raise PermissionError("文件访问被拒绝：缺少目标路径")
 
+    # /app 本身不能成为通用文件工具的授权根；仅放行受约束的根目录帮助文档扫描，
+    # 后续由本地实现直接枚举一级 *.md，避免 native Grep 递归读取整个服务目录。
+    if _public_runtime_help_scan_kind(tool_name, mapped):
+        return mapped
+
     if tool_name in {"Write", "Edit"}:
         allowed = is_runtime_path_writable(str(target_path), user_info)
         operation = "写入"
@@ -1886,6 +1940,221 @@ def _assert_workspace_file_access(
             f"文件访问被拒绝：当前用户无权{operation}该路径 {target_path}"
         )
     return mapped
+
+
+_PYTHON_GREP_EXCLUDED_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".bzr",
+    "node_modules",
+    "__pycache__",
+}
+_PYTHON_GREP_TYPE_SUFFIXES = {
+    "js": (".js", ".jsx", ".mjs", ".cjs"),
+    "ts": (".ts", ".tsx", ".mts", ".cts"),
+    "py": (".py", ".pyi"),
+    "md": (".md", ".markdown"),
+    "json": (".json",),
+    "yaml": (".yaml", ".yml"),
+    "rust": (".rs",),
+    "go": (".go",),
+    "java": (".java",),
+}
+
+
+def _tool_result_text(result: Any) -> str:
+    content = getattr(result, "content", None)
+    if isinstance(content, (list, tuple)):
+        parts = [str(getattr(block, "text", "") or "") for block in content]
+        return "\n".join(part for part in parts if part)
+    return str(result or "")
+
+
+def _is_ripgrep_unavailable(result: Any) -> bool:
+    text = _tool_result_text(result).lower()
+    return (
+        "ripgrep error (code 127)" in text
+        or "no such file or directory: 'rg'" in text
+        or 'no such file or directory: "rg"' in text
+    )
+
+
+def _python_grep_fallback(
+    tool_input: Mapping[str, Any],
+    *,
+    user_info: dict[str, Any] | None,
+    direct_files_only: bool = False,
+) -> Any:
+    """Use the host Python runtime when native Grep cannot find ripgrep."""
+    from agentscope.message import TextBlock, ToolResultState
+    from agentscope.tool import ToolChunk
+    from app.utils.fs_access import is_runtime_path_allowed
+
+    pattern = str(tool_input.get("pattern") or "").strip()
+    if not pattern:
+        return ToolChunk(
+            content=[TextBlock(text="Grep 调用失败：缺少必填参数 pattern。")],
+            state=ToolResultState.ERROR,
+            is_last=True,
+        )
+
+    output_mode = str(tool_input.get("output_mode") or "files_with_matches")
+    if output_mode not in {"content", "files_with_matches", "count"}:
+        return ToolChunk(
+            content=[TextBlock(text=f"Grep 调用失败：不支持的 output_mode {output_mode}。")],
+            state=ToolResultState.ERROR,
+            is_last=True,
+        )
+
+    flags = re.IGNORECASE if tool_input.get("i") or tool_input.get("case_insensitive") else 0
+    if tool_input.get("multiline"):
+        flags |= re.MULTILINE | re.DOTALL
+    try:
+        regex = re.compile(pattern, flags)
+    except re.error as exc:
+        return ToolChunk(
+            content=[TextBlock(text=f"Grep 正则表达式无效：{exc}")],
+            state=ToolResultState.ERROR,
+            is_last=True,
+        )
+
+    base_path = os.path.realpath(str(tool_input.get("path") or "."))
+    if os.path.isfile(base_path):
+        candidates = [base_path]
+    elif os.path.isdir(base_path):
+        if direct_files_only:
+            try:
+                candidates = [
+                    os.path.join(base_path, filename)
+                    for filename in os.listdir(base_path)
+                    if os.path.isfile(os.path.join(base_path, filename))
+                ]
+            except OSError:
+                candidates = []
+        else:
+            candidates = []
+            for root, dirs, files in os.walk(base_path, topdown=True):
+                dirs[:] = [directory for directory in dirs if directory not in _PYTHON_GREP_EXCLUDED_DIRS]
+                candidates.extend(os.path.join(root, filename) for filename in files)
+    else:
+        return ToolChunk(
+            content=[TextBlock(text=f"Directory not found: {base_path}")],
+            state=ToolResultState.ERROR,
+            is_last=True,
+        )
+
+    file_glob = str(tool_input.get("glob") or "").strip()
+    glob_patterns = [item for item in file_glob.replace(",", " ").split() if item]
+    file_type = str(tool_input.get("type") or "").strip().lower()
+    type_suffixes = _PYTHON_GREP_TYPE_SUFFIXES.get(file_type)
+    rows: list[str] = []
+
+    context = tool_input.get("context")
+    if context is None:
+        context = tool_input.get("-C")
+    try:
+        context_lines = max(0, int(context or 0))
+    except (TypeError, ValueError):
+        context_lines = 0
+
+    for candidate in sorted(candidates):
+        real_candidate = os.path.realpath(candidate)
+        if not is_runtime_path_allowed(real_candidate, user_info):
+            continue
+        relative_candidate = os.path.relpath(candidate, base_path) if os.path.isdir(base_path) else os.path.basename(candidate)
+        if glob_patterns and not any(
+            fnmatch.fnmatch(relative_candidate, item)
+            or fnmatch.fnmatch(os.path.basename(candidate), item)
+            for item in glob_patterns
+        ):
+            continue
+        if type_suffixes and not candidate.lower().endswith(type_suffixes):
+            continue
+        try:
+            with open(candidate, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except (OSError, UnicodeError):
+            continue
+        if "\x00" in text:
+            continue
+
+        lines = text.splitlines()
+        if tool_input.get("multiline"):
+            matches = list(regex.finditer(text))
+            matching_indexes = sorted(
+                {
+                    text.count("\n", 0, match.start())
+                    for match in matches
+                }
+            )
+        else:
+            matching_indexes = [
+                index for index, line in enumerate(lines) if regex.search(line)
+            ]
+        if not matching_indexes:
+            continue
+
+        if output_mode == "files_with_matches":
+            rows.append(candidate)
+        elif output_mode == "count":
+            rows.append(f"{candidate}:{len(matching_indexes)}")
+        else:
+            indexes = set()
+            for index in matching_indexes:
+                indexes.update(
+                    range(
+                        max(0, index - context_lines),
+                        min(len(lines), index + context_lines + 1),
+                    )
+                )
+            for index in sorted(indexes):
+                separator = ":" if index in matching_indexes else "-"
+                rows.append(f"{candidate}{separator}{index + 1}{separator}{lines[index]}")
+
+    try:
+        offset = max(0, int(tool_input.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    raw_limit = tool_input.get("head_limit")
+    try:
+        limit = 250 if raw_limit is None else max(0, int(raw_limit))
+    except (TypeError, ValueError):
+        limit = 250
+    truncated = len(rows) - offset > limit if limit else False
+    rows = rows[offset:] if limit == 0 else rows[offset: offset + limit]
+
+    if not rows:
+        output = f"No matches found for pattern: {pattern}"
+    else:
+        output = "\n".join(rows)
+        if truncated:
+            output += f"\n\n[Showing results with pagination = limit: {limit}]"
+    return ToolChunk(
+        content=[TextBlock(text=output)],
+        state=ToolResultState.SUCCESS,
+        is_last=True,
+    )
+
+
+def _python_root_help_glob(tool_input: Mapping[str, Any]) -> Any:
+    """Glob only the direct service-root Markdown help files."""
+    from agentscope.message import TextBlock, ToolResultState
+    from agentscope.tool import ToolChunk
+    from app.utils.fs_access import get_public_runtime_help_files
+
+    pattern = str(tool_input.get("pattern") or "").strip()
+    matches = [
+        path
+        for path in get_public_runtime_help_files()
+        if fnmatch.fnmatch(os.path.basename(path), pattern)
+    ]
+    output = "\n".join(matches) if matches else f"No files found for pattern: {pattern}"
+    return ToolChunk(
+        content=[TextBlock(text=output)],
+        state=ToolResultState.SUCCESS,
+        is_last=True,
+    )
 
 
 class _WorkspaceFileAccessNativeTool:
@@ -1920,9 +2189,25 @@ class _WorkspaceFileAccessNativeTool:
 
     async def __call__(self, **kwargs: Any) -> Any:
         mapped_input = self._map(kwargs)
+        scan_kind = _public_runtime_help_scan_kind(self.name, mapped_input)
+        if scan_kind == "glob":
+            return await asyncio.to_thread(_python_root_help_glob, mapped_input)
+        if scan_kind == "grep":
+            return await asyncio.to_thread(
+                _python_grep_fallback,
+                mapped_input,
+                user_info=self._user_info,
+                direct_files_only=True,
+            )
         result = self._native_tool(**mapped_input)
         if inspect.isawaitable(result):
             result = await result
+        if self.name == "Grep" and _is_ripgrep_unavailable(result):
+            return await asyncio.to_thread(
+                _python_grep_fallback,
+                mapped_input,
+                user_info=self._user_info,
+            )
         return result
 
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:

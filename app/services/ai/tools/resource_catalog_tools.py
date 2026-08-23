@@ -161,6 +161,7 @@ async def list_accessible_directories() -> str:
     - 读写或搜索文件前若不确定目标文件路径，或遇到文件找不到/写入被拒时，必须优先调用本工具查看全景映射，严禁盲猜路径。
     - 本工具只负责可访问目录、权限和路径映射；目标目录已经明确且只需要查看目录树时，使用 directory_tree_navigator。
     - 清楚区分「平台公共文档与手册 (data/docs/)，只读」、「系统公共技能库 (skills/)，只读」、「用户专属持久化文档库 (docs/)，可写」、「当前会话临时工作区 (sessions/{cid}/)，可写」和「用户上传附件 (uploads/)，可读写」。
+    - 当公共 docs 未命中时，可把 platform_help_files 中列出的服务根目录一级 *.md 作为平台帮助文档兜底来源；仍只能通过宿主 Read/Glob/Grep 只读访问。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
@@ -188,6 +189,7 @@ async def list_accessible_directories() -> str:
             get_user_sessions_dir,
             get_user_sandbox_dir,
             get_user_private_workspace_root,
+            get_public_runtime_help_files,
         )
 
         user_name = _context_user_name(ctx)
@@ -362,6 +364,25 @@ async def list_accessible_directories() -> str:
             }
         ]
 
+        platform_help_files = [
+            {
+                "path": path,
+                "container_sandbox_path": None,
+                "backend_service_path": path,
+                "host_physical_path": path,
+                "path_semantics": "service_root_host_file_tool_path",
+                "access_via": ["Read", "Glob", "Grep"],
+                "permission": "read_only",
+                "category": "platform_root_help",
+                "description": (
+                    "平台服务根目录帮助文档兜底来源；仅允许服务根目录一级 *.md，"
+                    "禁止通过 Docker 沙箱 Bash 访问或递归扫描 /app。"
+                ),
+                "recommended_for": ["公共 docs 未命中时查阅平台帮助与 FAQ"],
+            }
+            for path in get_public_runtime_help_files()
+        ]
+
         result = {
             "deployment_environment": "docker_container" if is_container_env else "host_machine",
             "sandbox_execution_mode": "docker_sandbox" if is_docker_sandbox else "host_local",
@@ -382,12 +403,14 @@ async def list_accessible_directories() -> str:
                 "access": "read_only",
                 "directories": public_directories,
             },
+            "platform_help_files": platform_help_files,
             "usage_guidelines": [
                 "1. 在 Docker 沙箱环境（Docker Sandbox）下执行 Bash 命令或 Python 脚本时，请使用非空的 container_sandbox_path（以 /workspace 开头）；若该字段为空，则按 access_via 使用宿主文件工具；",
                 "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
                 "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
                 "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",
-                "5. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
+                "5. 公共 docs 未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md；禁止 Bash 或递归扫描 /app；",
+                "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
             ],
         }
 

@@ -70,6 +70,14 @@ async def test_list_accessible_directories_normal_user_local_mode():
         assert "docs" in pub_dirs
         assert pub_dirs["docs"]["permission"] == "read_only"
         assert "platform_global_docs" == pub_dirs["docs"]["category"]
+        assert data["platform_help_files"]
+        assert any(item["path"].endswith("FAQ.md") for item in data["platform_help_files"])
+        assert all(item["permission"] == "read_only" for item in data["platform_help_files"])
+        assert all(
+            item["path_semantics"] == "service_root_host_file_tool_path"
+            for item in data["platform_help_files"]
+        )
+        assert all(item["access_via"] == ["Read", "Glob", "Grep"] for item in data["platform_help_files"])
 
 
 @pytest.mark.asyncio
@@ -84,6 +92,7 @@ async def test_list_accessible_directories_docker_sandbox_mode():
     with (
         patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=mock_ctx),
         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="docker")),
+        patch("app.utils.fs_access.get_public_runtime_help_files", return_value=["/app/FAQ.md"]),
         patch.dict("os.environ", {"HOST_DATA_DIR": "/data/host_nanzi"}),
     ):
         raw = await list_accessible_directories.ainvoke({})
@@ -104,6 +113,14 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         }
         assert public_dirs["docs"]["container_sandbox_path"] is None
         assert public_dirs["docs"]["access_via"] == ["Read", "Glob", "Grep"]
+        assert data["platform_help_files"]
+        assert all(item["container_sandbox_path"] is None for item in data["platform_help_files"])
+        assert all(item["backend_service_path"].startswith("/app/") for item in data["platform_help_files"])
+        assert all(
+            item["path_semantics"] == "service_root_host_file_tool_path"
+            for item in data["platform_help_files"]
+        )
+        assert all(item["access_via"] == ["Read", "Glob", "Grep"] for item in data["platform_help_files"])
         assert public_dirs["branding"]["container_sandbox_path"] is None
         assert public_dirs["branding"]["access_via"] == ["Read", "Glob", "Grep"]
         assert public_dirs["skills"]["container_sandbox_path"] == "/workspace/skills"
@@ -225,6 +242,8 @@ def test_agent_prompts_route_platform_docs_through_host_file_tools():
     assert "Grep`/`Glob`/`Read`" in prompt
     assert "Docker 沙箱 Bash 不挂载公共 docs" in prompt
     assert "禁止通过 Bash 访问公共 docs" in prompt
+    assert "platform_help_files" in prompt
+    assert "不得递归扫描 `/app`" in prompt
 
 
 def test_agent_prompts_directory_navigator_does_not_require_unbound_catalog_tool():

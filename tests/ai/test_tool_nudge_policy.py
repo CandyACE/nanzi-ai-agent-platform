@@ -108,6 +108,8 @@ def test_platform_self_help_prefers_public_docs_host_file_tool_over_sub_agent():
     assert nudge.should_force_first_call is True
     assert "公共 docs" in nudge.message
     assert "Bash" in nudge.message
+    assert "/app/*.md" in nudge.message
+    assert "禁止递归扫描 /app" in nudge.message
 
 
 @pytest.mark.parametrize(
