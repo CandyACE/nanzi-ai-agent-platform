@@ -2,21 +2,22 @@
 
 **GitHub Repository**: [RandyChen1985/nanzi-ai-agent-platform](https://github.com/RandyChen1985/nanzi-ai-agent-platform)
 
-v1.0.12 版本是一次以 **多策略安全沙箱与 Docker 预构建加速、服务端持久化浏览器会话与实时人机协同面板** 为核心领衔，并全面推进 **智能体上下文预算管控与溢出压缩、推理思考模型强制工具调用兼容层、AI 交付物工件与长效下载管理、AI 主动提问与全卡片折叠交互重构、子代理（Subagent）独立会话委派与层级时间线，以及元数据批量治理与聊天日志双 Tab 链路追踪** 的重磅里程碑版本。
+v1.0.12 版本是一次以 **多策略安全沙箱（含 Docker-out-of-Docker 与预构建加速）、服务端持久化浏览器会话与实时人机协同面板** 为核心领衔，并全面推进 **智能体上下文预算管控/分项拆解观测与溢出压缩、推理思考模型强制工具调用兼容层、AI 交付物工件与长效下载管理、AI 主动提问与全卡片折叠交互重构、子代理（Subagent）独立会话委派与层级时间线、PostgreSQL 全局强类型防御，以及全模块官方 FAQ 排查体系与元数据批量治理** 的重磅里程碑版本。
 
-在本次更新中，平台正式支持 `local`/`docker`/`e2b`/`ssh` 四大安全沙箱策略，实现 Docker 沙箱工作区宿主机同绝对路径挂载与分钟级镜像预构建加速；推出基于 Playwright 的服务端持久化浏览器会话与 WebSocket 实时画面流人机协同面板，支持拟人轨迹拖拽与 Stale 自动恢复；上线 `agent_context` 上下文预算管理、溢出压缩与输入框环形水位线浮标；构建 `tool_choice_for_model` 适配层，深度解决 DeepSeek-R1 / QwQ 等推理思考模型在强制工具调用时的死循环问题；上线 `publish_generated_file` 工件发布工具并将下载链接延长至 7 天；推出 `ask_user_question` AI 主动提问工具，并对工具权限卡、提问卡、业务确认卡与 TODO 任务清单进行全量折叠与状态自适应重构；完善子代理专属会话隔离与嵌套时间线回放；全面优化元数据批量删除与聊天日志「对话/轨迹」双 Tab 交互。
+在本次更新中，平台正式支持 `local`/`docker`/`e2b`/`ssh` 四大安全沙箱策略，实现 Docker 沙箱工作区宿主机同绝对路径挂载、DooD（Docker-out-of-Docker）容器内沙箱拉起与分钟级镜像预构建加速；推出基于 Playwright 的服务端持久化浏览器会话与 WebSocket 实时画面流人机协同面板，支持拟人轨迹拖拽与 Stale 自动恢复；上线 `agent_context` 上下文预算管理、分项拆解观测、溢出压缩与输入框环形水位线浮标，并将历史与状态 TTL 延长至 30 天；构建 `tool_choice_for_model` 适配层，深度解决 DeepSeek-R1 / QwQ 等推理思考模型在强制工具调用时的死循环问题；上线 `publish_generated_file` 工件发布工具并将下载链接延长至 7 天；推出 `ask_user_question` AI 主动提问工具，重构 TODO 任务清单收尾广播与全量卡片折叠状态自适应；建立官方全模块排查手册（FAQ.md）；全面加固 PostgreSQL 强类型兼容与 TypeScript 严格类型安全。
 
-本次变更范围自 `43c634f4a72f26de7761e8e002b06c5c2c4caad1`（不含，为 v1.0.11 末相关提交）至 `091236a11707921a6bc66601b0b5220c43144fc3`（含），共 **59 个提交**（其中非 Merge 提交 52 个），涉及 352 个文件、约 46,162 行新增代码与 4,678 行删除。
+本次变更范围自 `43c634f4a72f26de7761e8e002b06c5c2c4caad1`（不含，为 v1.0.11 末相关提交）至 `fcd7471b5525289530c48d1b147807aac6beab22`（含），共 **91 个提交**（其中非 Merge 提交 80 个），涉及 440 个文件、约 54,567 行新增代码与 5,089 行删除。
 
 ---
 
 ## 🚀 Key Features
 
-### 1. 🛡️ 安全沙箱多策略扩展与 Docker 预构建加速 (Sandbox Policies: Local/Docker/E2B/SSH & Image Prebuild)
+### 1. 🛡️ 安全沙箱多策略扩展、Docker DooD 支持与预构建加速 (Sandbox Policies: Local/Docker/E2B/SSH & DooD & Prebuild)
 *   **四大沙箱策略全面支持**：在系统配置【安全沙箱】分组中新增 `sandbox_policy` 策略体系，支持 `local`（默认，本机工作区）、`docker`（Docker 容器工作区）、`e2b`（E2B 远程安全沙箱）、`ssh`（SSH 远程主机工作区）四类策略，并针对不同策略动态展示专属配置项。
-*   **Docker 沙箱工作区同绝对路径挂载**：解决容器内 `/workspace` 逻辑路径与宿主机用户工作区物理路径不一致导致的工具生成文件下载/预览错位问题；支持将用户宿主机工作区直接挂载至容器内相同绝对路径，同时软链 `/workspace` 保持向后兼容；容器内 MCP 工作目录与系统提示词动态适配真实路径。
-*   **Docker 镜像预构建加速与自定义镜像**：针对 Docker 冷启动慢的问题，提供后台镜像预构建端点（`POST /api/v1/admin/sandbox/docker/prebuild`），将首次慢转变为分钟级预构建 + 秒级会话启动；新增 `sandbox_docker_manual_image_url` 支持配置自定义远程镜像；内置 Docker Hub、阿里云、华为云、腾讯云等同一 Python 镜像的多地域加速源预设。
-*   **Bash 执行环境探测与安全警示**：后端 `get_env()` 自动探测服务运行环境（容器/宿主机），前端在输入框上方渲染自适应 Bash 执行环境横幅（`BashEnvBanner.vue`），非隔离宿主机执行时给出明确安全风险警示，支持一键折叠与本地持久化记忆。
+*   **Docker 沙箱工作区同绝对路径挂载与路径一致性**：解决容器内 `/workspace` 逻辑路径与宿主机用户工作区物理路径不一致导致的工具生成文件下载/预览错位问题；支持将用户宿主机工作区直接挂载至容器内相同绝对路径，同时软链 `/workspace` 保持向后兼容；容器内 MCP 工作目录与系统提示词动态适配真实路径。
+*   **Docker-out-of-Docker (DooD) 与 Compose 路径对齐**：主容器默认挂载宿主机 `/var/run/docker.sock`，解除在主容器环境下运行 Docker 沙箱的策略限制；支持 Docker Compose 宿主机工作区物理绝对路径映射与路径透传对齐；白名单放行 Docker 沙箱用户工作区端点。
+*   **Docker 镜像预构建加速与自定义镜像**：针对 Docker 冷启动慢的问题，提供后台镜像预构建端点（`POST /api/v1/admin/sandbox/docker/prebuild`），将首次慢转变为分钟级预构建 + 秒级会话启动；默认优先选用阿里云 Python 沙箱基础镜像加速源；新增 `sandbox_docker_manual_image_url` 支持配置自定义远程镜像。
+*   **Bash 执行环境探测与安全警示**：后端 `get_env()` 自动探测服务运行环境（容器/宿主机），前端在输入框上方渲染自适应 Bash 执行环境横幅（`BashEnvBanner.vue`），非隔离宿主机执行时给出明确安全风险警示，支持一键折叠与本地持久化记忆关闭。
 
 ### 2. 🌐 服务端持久化浏览器会话与右侧人机协同面板 (Persistent Browser Sessions & Interactive Panel)
 *   **服务端持久化浏览器会话**：基于 Playwright 实现用户级持久化浏览器会话（`browser_open`/`browser_snapshot`/`browser_click`/`browser_fill`/`browser_slider_drag` 等套件与 `BrowserProfile`/`BrowserSession` 存储模型）。
@@ -24,8 +25,10 @@ v1.0.12 版本是一次以 **多策略安全沙箱与 Docker 预构建加速、�
 *   **拟人滑块拖拽与执行期自愈恢复**：支持拟人滑块拖拽能力（`browser_slider_drag`），自动生成贝塞尔曲线缓入缓出拟人轨迹并模拟垂直抖动；增加元素交互就绪等待（`_ensure_actionable`）、动作后稳定等待（`_post_action_settle`）以及执行期 Transient Stale 异常自动刷新快照重试（`_run_with_stale_recovery`）。
 *   **严格安全拦截与缓存抹除**：具备严格的 SSRF 防护（拦截私有网段/元数据 IP/内网主机名）、敏感输入参数脱敏与高风险提交确认拦截；个人中心与面板二次确认弹窗支持一键清除浏览器历史与缓存并物理抹除底层数据目录。
 
-### 3. 🧠 上下文预算管控、历史溢出压缩与水位线浮标 (Context Compaction & Floating Telemetry)
+### 3. 🧠 上下文预算管控、分项拆解观测与历史溢出压缩 (Context Compaction, Breakdown Telemetry & TTL Extension)
 *   **上下文预算管控与溢出压缩**：引入 `agent_context` 专属配置分组（包含预算上限 `agent_context_max_tokens` 默认 64k、历史溢出压缩 `agent_context_compaction_enabled`、压缩最大字符数限制与语义摘要开关）；当多轮历史逼近预算时，自动触发确定性摘录压缩与 LLM 语义摘要降级保障。
+*   **模型调用上下文分项拆解观测**：新增上下文观测界面与数据度量分解，清晰拆解系统提示词、对话历史、工具调用上下文与输出预留的 Token 占比分布。
+*   **会话历史与压缩状态 TTL 延长至 30 天**：服务端 Redis 会话历史、上下文压缩摘要与运行时状态存储 TTL 全面延长至 30 天，保障长期长链路协作连续性。
 *   **摘要结构化解析与多模态识别增强**：新增 `_structured_tool_block` 结构化解析，优先保留工具名与输出核心结论（`->` 后的结果），剔除冗长入参和无用计数；单工具块独立截断配额，避免单条超长工具结果挤占整段摘要；多模态图片/附件载体包含名称时保留 `[图片: 文件名]`。
 *   **输入框上下文水位线浮标**：在聊天输入框右上角增加渐变环形/徽标上下文水位线浮标，直观展示 Token 使用量、预算占比、使用状态徽标（「使用正常/接近上限/已达输入上限」）以及当前生效的沙箱策略；自适应显示「平台 Docker 容器内」或「宿主机」。
 *   **模型调用上下文动态夹紧保护**：在 `ModelCallStatsMiddleware` 中增加 `_clamp_completion_to_context` 保护拦截，当请求输入 Token 逼近物理窗口时动态将 `max_tokens` 夹紧至可用空间，防止超出模型物理极限引发 API 报错。
@@ -41,14 +44,19 @@ v1.0.12 版本是一次以 **多策略安全沙箱与 Docker 预构建加速、�
 ### 6. 💬 AI 主动提问与全卡片折叠交互重构 (AI-Initiated Questioning & Collapsible Cards)
 *   **AI 主动提问交互（`ask_user_question`）**：实现系统内置隐式工具 `ask_user_question`，支持单选/多选/补充输入；问题写入带 TTL 的 pending 状态并通过 SSE 独立出卡中断当前 ReAct，支持用户交互提交与取消硬拦截。
 *   **确认框与提问卡展开/折叠与状态自适应**：工具权限确认卡（`pendingPermission`）、外部工具执行卡（`pendingExternalExecution`）、AI 提问卡（`UserQuestionCard`）与业务数据确认卡（`BusinessConfirmationCard`）统一增加展开/折叠交互；待处理默认展开，处理完成（approved/rejected/submitted/cancelled/stale）后自动折叠为紧凑单行，彻底解决长脚本霸屏。
-*   **TODO 任务清单底部常驻与记忆关闭**：TODO 任务清单改为在输入框正上方常驻展示，任务项采用状态语义色；全部完成时自动折叠；引入基于 `localStorage` 的持久化记录，手动关闭后绝不重复弹出。
+*   **TODO 任务清单收尾广播与状态持久化**：TODO 任务清单改为在输入框正上方常驻展示；实现任务完成收尾广播机制（`emit_success_todo_summary`），全部完成时自动折叠；引入基于 `localStorage` 的持久化记录，手动关闭后绝不重复弹出；优化快照同步与挂起恢复状态保持。
 
 ### 7. 🤝 子代理独立会话委派与层级时间线 (Subagent Delegation & Hierarchical Timeline)
 *   **子代理专属会话隔离**：实现子智能体结构化元数据流式透传（run_id/depth/agent_name/display_name）；每次成功委派生成独立 `child_session_id`，子执行器使用子会话命名空间而不复用父 `conversation_id`，父子通过 `parent_conversation_id` 关联。
 *   **多层嵌套时间线展示**：主会话过程时间线实现子代理步骤嵌套收拢至「调用子代理」父级容器下，支持子代理内部分析、SQL 与工具调用多层展开折叠；防止子代理过程旁白与主对话正文重复。
 *   **可用智能体目录与委派前置发现**：新增系统隐式工具 `list_available_agents`，基于用户权限与就绪状态动态返回可用智能体轻量目录，便于智能体自主决策子任务委派。
 
-### 8. 🗃️ 元数据批量治理与聊天日志双 Tab 链路追踪 (Metadata Batch Ops & Chat Logs Dual-Tab Trace)
+### 8. 📖 全模块官方排查手册与生态集成 (Official FAQ & Ecosystem Integration)
+*   **全模块官方排查手册 (FAQ.md)**：建立规范化排查手册 [`FAQ.md`](https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/docs/manual/FAQ.md)，覆盖沙箱容器、网络代理、数据库连接、MCP、模型路由等全工具矩阵故障排查。
+*   **EmbedChat 嵌入式集成指南**：细化嵌入式聊天组件集成指引与安全通信策略，助力第三方前端快速嵌入智能体对话。
+*   **核心能力全景图谱**：在中英文 README 中系统梳理核心能力矩阵与企业级特性全景图谱。
+
+### 9. 🗃️ 元数据批量治理与聊天日志双 Tab 链路追踪 (Metadata Batch Ops & Chat Logs Dual-Tab Trace)
 *   **元数据批量删除与 N+1 消除**：元数据管理支持数据表/指标/关系批量删除，跨库关系短路优化与行级权限 N+1 查询消除。
 *   **元数据详情页紧凑布局**：容器间距与边距紧凑化，实体关系列表改源表/目标表分两行展示（物理表名加粗 + 业务中文名）。
 *   **聊天日志双 Tab 与链路时间标注**：聊天日志右侧详情区新增「对话」与「轨迹」双 Tab 切换，所有 Step 节点补充 `HH:mm:ss` 触发时间展示。
@@ -58,11 +66,24 @@ v1.0.12 版本是一次以 **多策略安全沙箱与 Docker 预构建加速、�
 
 ## 🐛 Bug Fixes
 
+### 数据库 / PostgreSQL / 存储层
+*   **PostgreSQL 强类型比较异常防御**：全局防御 PostgreSQL 强类型比较（`VARCHAR` 与 `INTEGER` 隐式转换报错），统一将 `user_id` 等关键参数转为整型，实现 MySQL 与 PostgreSQL 零差异平滑运行。
+*   **Embedding 与模型 Endpoint 智能版本号识别**：优化 Embedding 及直连客户端 Endpoint 识别逻辑，修复非 `/v1` 后缀引起的 404 异常。
+*   **火山引擎内置提供商预设支持**：新增火山引擎（Volcengine）内置提供商参数与模型预设支持。
+
 ### 沙箱 / Docker / 执行环境
-*   **沙箱路径错位修复**：修复 Docker 容器内 `/workspace` 路径与宿主机用户工作区物理路径不一致导致的文件找不到或工件无法下载问题。
-*   **Docker 预构建状态标记**：修复 Docker 预构建状态标记在不同加速源切换时未即时刷新的问题。
+*   **Docker DooD 沙箱支持与路径对齐**：主容器挂载宿主机 `docker.sock` 并解除 Docker 沙箱限制，解决 Docker Compose 模式下沙箱目录挂载与路径错位问题。
+*   **Docker 沙箱工作区 API 放行**：将 Docker 沙箱用户工作区端点加入 V1 API 白名单放行。
+*   **沙箱预构建入参修复**：修复 Docker 沙箱预构建 `aiodocker build` 入参异常，提供后台预构建代理运维脚本。
+*   **系统配置警告横条彻底清理**：彻底清理系统配置中选择 Docker 沙箱策略时残留的禁用警告横条。
 *   **Bash 环境横幅提示**：修复在本地宿主机运行时缺乏明确安全隔离风险提示的问题。
-*   **系统配置卡片下拉遮挡**：修复系统配置页卡片项较少时，自定义多行下拉框展开被外层卡片 `overflow-hidden` 截断遮挡的问题。
+
+### 事实合规性 / 流式排版 / 前端交互
+*   **事实缺证据（Grounding Missing Evidence）提醒优化**：优化刷新模式下事实缺证据的提醒策略，清理风险提示正文中的内部原因拼接。
+*   **流式 Markdown 换行净化**：流式内容净化时保留 Markdown 块边界换行，防止代码块与表格粘连。
+*   **前端 TypeScript 严格类型加固**：清理全量 TypeScript 严格构建错误，消除运行时潜藏类型异常。
+*   **意图收敛与 TODO 清单防误出**：收敛数据查询列表意图信号，拦截非查询场景下的 TODO 任务误出。
+*   **Todo 快照同步与挂起恢复**：优化 Todo 快照同步机制与挂起恢复状态保持，修复刷新后状态丢失。
 
 ### 浏览器会话 / 人机协同
 *   **长事务锁超时修复**：修复浏览器 Profile 初始化时 `get_or_create_default` 在高并发下的数据库锁争用与超时问题。
@@ -75,12 +96,6 @@ v1.0.12 版本是一次以 **多策略安全沙箱与 Docker 预构建加速、�
 *   **单次输出预留溢出**：修复长上下文下 `max_tokens` 超出模型物理上下文上限引发的 API 调用失败问题，增加动态夹紧。
 *   **模型管理上下文清空保存**：修复在模型管理弹窗中清空输入上下文或输出上限时，因空字符串未转换为 `null` 导致的 Pydantic 校验失败问题。
 *   **消息编辑重发记忆截断**：修复前端编辑历史消息重发后服务端 Redis 记忆未同步截断导致的历史污染问题。
-
-### 前端交互 / 提问卡 / 任务清单
-*   **提问与确认卡霸屏**：修复复杂流程中多张长脚本或参数卡片展开导致的界面过度拉长问题，统一支持折叠与状态自适应收起。
-*   **TODO 清单关闭重复弹出**：修复 TODO 任务清单手动关闭后在后续轮次中重复弹出的问题，引入 `localStorage` 持久化记忆。
-*   **AI 补全描述弹窗关闭**：修复元数据管理在「确认 AI 补全描述？」二次确认框中点击「开始生成」时确认框未及时关闭的问题。
-*   **生成文件私有链接 Host 补全**：修复相对路径下载链接在部分场景下缺少 Host 前缀导致无法直接点击的问题。
 
 ---
 
@@ -142,15 +157,14 @@ PostgreSQL 对应的 8 个增量升级脚本如下：
 # 1. 拉取最新代码
 git fetch origin && git checkout main && git pull origin main
 
-# 2. 更新 Python 依赖
+# 2. 更新 Python 依赖（推荐 uv 或 pip 阿里源）
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # 3. 执行数据库增量升级 (V122~V129)
 ./db-prod/apply-sql-native.sh
 
-# 4. 重新编译前端并启动服务
-cd frontend && npm install && npm run build && cd ..
+# 4. 启动/重启服务（dev.sh 支持自动感知前端依赖与动态端口）
 ./dev.sh
 ```
 
@@ -183,7 +197,7 @@ docker load -i nanzi-ai-agent_1.0.12_linux-arm64_*.tar
 # 3. 检查镜像加载状态
 docker images | grep nanzi-ai-agent
 
-# 4. 启动 / 重启容器服务
+# 4. 启动 / 重启容器服务（默认挂载宿主机 docker.sock 支持 DooD 沙箱）
 cd docker && ./start-nanzi-ai-agent.sh
 # 或使用 compose 重启：docker-compose -f docker-compose.ai-agent.yml up -d --force-recreate
 ```
@@ -228,14 +242,16 @@ cd docker
 
 升级后建议验证以下核心场景：
 
-- [ ] **安全沙箱多策略与挂载**：系统配置中切换 `local` / `docker` / `e2b` / `ssh` 策略；Docker 模式下验证工作区宿主机同绝对路径挂载及文件生成；预构建状态正常展示；本地运行时正常展示宿主机风险提示横幅。
+- [ ] **安全沙箱多策略与挂载**：系统配置中切换 `local` / `docker` / `e2b` / `ssh` 策略；Docker 模式下验证工作区宿主机同绝对路径挂载及文件生成；DooD 容器内沙箱正常启动；预构建状态正常展示；本地运行时正常展示宿主机风险提示横幅。
+- [ ] **PostgreSQL 与 MySQL 双库兼容**：在 PostgreSQL 与 MySQL 主库下分别运行，确认用户鉴权、数据查询、历史记录无类型转换报错。
 - [ ] **服务端浏览器会话与人机接管**：AI 执行浏览器工具时右侧面板画面实时推流；可手动点击/拖拽/打字接管；拟人滑块拖拽轨迹自然；个人中心可一键清除浏览器缓存并物理抹除。
-- [ ] **上下文预算管控与水位线**：聊天输入框右上角环形水位线浮标正常显示当前 Token 用量与沙箱环境；长多轮对话触发溢出压缩时，摘要保留工具核心结论与图片文件名；单次输出预留不溢出物理窗口。
+- [ ] **上下文预算管控、拆解观测与水位线**：聊天输入框右上角环形水位线浮标正常显示当前 Token 用量与沙箱环境；上下文观测面板正常拆解分项 Token；长多轮对话触发溢出压缩时，摘要保留工具核心结论与图片文件名；单次输出预留不溢出物理窗口。
 - [ ] **思考模型工具兼容**：使用 DeepSeek-R1 / QwQ 等思考模型在强约束工具调用场景下生成正常，无 `<think>` 块解析死循环。
 - [ ] **工件发布与长效下载**：智能体生成交付物文件后调用 `publish_generated_file` 发布为下载工件；工件列表与详情链接有效（默认 7 天）。
-- [ ] **AI 提问卡与全卡片折叠**：触发 `ask_user_question` 正常出卡并能交互提交/取消；权限确认卡、执行卡、业务确认卡在处理完成后自动折叠为单行；TODO 任务清单在全部完成后自动折叠且手动关闭后不重复弹出。
+- [ ] **AI 提问卡与全卡片折叠**：触发 `ask_user_question` 正常出卡并能交互提交/取消；权限确认卡、执行卡、业务确认卡在处理完成后自动折叠为单行；TODO 任务清单在全部完成后自动广播收尾且手动关闭后不重复弹出。
 - [ ] **子代理委派与层级时间线**：调用子代理时生成专属 `child_session_id`，过程时间线内部分析与工具调用支持多层展开折叠；`list_available_agents` 正常返回可用列表。
 - [ ] **元数据批量治理与日志双 Tab**：数据表/指标/关系支持批量勾选删除；聊天日志右侧详情区支持「对话」与「轨迹」双 Tab 平滑切换，步骤带有触发时间戳。
+- [ ] **官方 FAQ 排查手册**：查阅 `docs/manual/FAQ.md`，确认全模块排查方案与常见问题索引完整清晰。
 - [ ] **自动化测试回归**：运行 `PYTHONPATH=. pytest tests/`，确保测试全量通过。
 
 完整测试清单见 [tests/CHECKLIST.md](https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/tests/CHECKLIST.md)。
@@ -246,6 +262,38 @@ cd docker
 
 | Hash | 描述 |
 | :--- | :--- |
+| `fcd7471b` | Merge pull request #117 from RandyChen1985/dev-agentscope |
+| `6ae0c9a1` | fix(db): 全局防御PostgreSQL强类型比较异常&统一user_id整型转换 |
+| `61786688` | feat(intent,faq): 收敛数据查询列表信号&拦截TODO任务列表&细化EmbedChat集成指南 |
+| `060fd0bf` | feat(docker,sandbox): 支持Docker Compose宿主机工作区路径对齐与DooD沙箱目录挂载映射 |
+| `c0a960e2` | fix(grounding): 清理风险提示正文中的原因行拼接并更新单测 |
+| `4ca655ea` | feat(sandbox,docs): 新增Docker沙箱预构建代理运维脚本并补齐FAQ排查指南 |
+| `16a34162` | fix(sandbox,frontend): 彻底清理系统配置中残留的Docker沙箱禁用警告横条 |
+| `e6761049` | fix(sandbox,frontend): 移除选择Docker沙箱策略时的残留拦截与提示 |
+| `6755b873` | feat(sandbox,docker): 默认挂载宿主机docker.sock并解除容器环境下docker沙箱策略限制 |
+| `9eb665a3` | feat(sandbox,faq,prompt): 优化Docker基础镜像预构建交互、扩充全模块FAQ工具矩阵与全局提示词指引 |
+| `46be8ec8` | fix(sandbox): 修复 Docker 沙箱预构建 aiodocker build 入参并补充 FAQ 全景图 |
+| `febfabed` | docs(faq): 规范化 FAQ.md 格式排版与 HTML 字符转义 |
+| `a79998df` | feat(sandbox/docs): 默认选用阿里云沙箱镜像并建立全模块官方FAQ排查手册 |
+| `9d72b04d` | docs: 补充 pip 安装使用阿里镜像源加速说明 |
+| `dbb77033` | docs: 更新 HOW_TO_INSTALL.md 本地部署指南为 Python 3.11 uv 环境与 dev.sh 启动说明 |
+| `a71c5566` | fix: 将 Docker 沙箱用户工作区端点加入 V1 API 白名单放行 |
+| `eb87819f` | build: dev.sh 支持前端依赖自动感知安装、动态 .env 端口读取及 -d 后台启动 |
+| `f3ebd0e6` | Merge pull request #116 from RandyChen1985/dev-agentscope |
+| `9d8efe6e` | feat(grounding): 优化刷新模式下事实缺证据的提醒策略与用户可读原因 |
+| `95d07dbc` | fix(frontend): 清理 TypeScript 严格构建错误并加固类型安全 |
+| `392c6308` | fix(frontend): 流式内容净化保留Markdown块边界换行并补充单测 |
+| `0f57b7e2` | fix(ai): 优化Todo快照同步机制与挂起恢复状态保持 |
+| `37f69ff5` | feat(core): 补全核心能力全景图谱与Todo成功收尾广播机制，更新测试清单 |
+| `d7653e4f` | docs: 完善中英文README核心能力矩阵与企业级特性，完成v1.0.12发布前文档准备 |
+| `9d9098ba` | Merge pull request #115 from RandyChen1985/dev-agentscope |
+| `7bce66b0` | feat(sandbox,model): 修复Docker沙箱浮标启动控制与运行时长展示，支持/workspace逻辑路径映射及火山引擎内置提供商预设 |
+| `0760047b` | Merge pull request #114 from RandyChen1985/dev-agentscope |
+| `eaa57285` | feat(memory): 会话历史与上下文压缩及运行时状态TTL全面延长至30天，浏览器工具显式配置支持 |
+| `877f59ef` | fix(model/embedding): 优化Embedding及直连客户端Endpoint智能版本号识别，修复非v1后缀404问题 |
+| `0e1d3236` | fix(markdown/sandbox): 修复代码块前景色与非标准语言渲染，优化沙箱浮标面板控制与消除刷新闪烁 |
+| `66c4e9cc` | feat(sandbox/chat): Docker沙箱提示横条支持持久化记忆关闭与运行态自动隐藏 |
+| `54fcbb70` | feat(ai/observability): 新增模型调用上下文分项拆解观测与 1.0.12 发布全套文档 |
 | `091236a1` | feat(ai): 优化上下文溢出压缩摘要结构化解析与多模态附件识别 |
 | `18fb5c65` | feat: 增加上下文压缩观测界面 |
 | `e9d2aa9e` | Merge pull request #113 from RandyChen1985/dev-agentscope |
