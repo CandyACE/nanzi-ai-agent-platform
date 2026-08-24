@@ -3921,11 +3921,16 @@ class AgentService:
 
         async def run_executor(executor, config):
             full_text = ""
+            stream_error = None
             try:
                 # We need a clean copy of messages for each executor as they might modify it?
                 # Actually most executors just read it.
                 async for chunk in executor.execute(messages):
                     chunk_type = chunk.get("type")
+                    if chunk_type == "error":
+                        stream_error = {**chunk, "agent_name": config.agent_name}
+                        await queue.put(stream_error)
+                        break
                     full_text = _accumulate_stream_content(full_text, chunk)
                     if chunk_type in {
                         "process_narration",
@@ -3960,17 +3965,25 @@ class AgentService:
                     "status": "error"
                 })
                 full_text = f"【{config.agent_name} 执行失败】: {str(e)}"
+            if stream_error is not None:
+                return {"name": config.agent_name, "content": "", "error": stream_error}
             return {"name": config.agent_name, "content": full_text}
 
         # Start all tasks
         tasks = [asyncio.create_task(run_executor(exec, conf)) for exec, conf in zip(executors, all_configs)]
-        results_task = asyncio.gather(*tasks)
+        results_task = asyncio.gather(*tasks, return_exceptions=True)
+        stream_error = None
 
         # Stream logs while tasks are running
         while not results_task.done() or not queue.empty():
             try:
                 # Use wait_for to check done status frequently
                 chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+                if chunk.get("type") == "error" and stream_error is None:
+                    stream_error = chunk
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
                 yield chunk
                 queue.task_done()
             except (asyncio.TimeoutError, asyncio.QueueEmpty):
@@ -3978,7 +3991,13 @@ class AgentService:
                     break
                 await asyncio.sleep(0.01)
 
-        agent_outputs = await results_task
+        if stream_error is not None:
+            # 流式安全错误已经直接交给前端；取消剩余专家并跳过最终合成，
+            # 避免把半截结果再次交给主模型解释或生成新的正文。
+            await results_task
+            return
+        agent_results = await results_task
+        agent_outputs = [result for result in agent_results if isinstance(result, dict)]
 
         # 4. Final Synthesis
         yield {

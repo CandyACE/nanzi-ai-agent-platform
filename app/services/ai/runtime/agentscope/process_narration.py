@@ -37,12 +37,25 @@ def _commit_pending_as_narration(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return events
 
 
+def _get_repetition_detector(state: Dict[str, Any]):
+    detector = state.get("repetition_detector")
+    if detector is None:
+        from app.services.ai.runtime.stream_repetition_detector import StreamRepetitionDetector
+
+        detector = StreamRepetitionDetector()
+        state["repetition_detector"] = detector
+    return detector
+
+
 def on_model_call_start(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Start a model turn and flush only an unfinished prior candidate."""
     events = on_model_call_end(state)
     state["pending_reply_text"] = ""
     state["pending_reply_emitted"] = False
     state["current_reply_used_tools"] = False
+    detector = state.get("repetition_detector")
+    if detector is not None:
+        detector.reset()
     if state.get("used_tools"):
         state["reply_phase"] = "after_tool_candidate"
     return events
@@ -52,6 +65,21 @@ def on_text_delta(state: Dict[str, Any], delta: str) -> List[Dict[str, Any]]:
     text = str(delta or "")
     if not text:
         return []
+
+    detector = _get_repetition_detector(state)
+    if detector.is_fused:
+        # 已熔断，直接丢弃后续文本增量，彻底防止刷屏与内存累积
+        return []
+
+    verdict = detector.feed(text)
+    if verdict.fused:
+        state["repetition_fused"] = True
+        error_msg = (
+            f"\n\n⚠️ [流式安全拦截] {verdict.message}"
+            "建议重新发起提问或切换更稳定的旗舰模型（如 DeepSeek-Chat / Claude）。"
+        )
+        return [{"type": "error", "status": "error", "content": error_msg}]
+
     pending = _pending_text(state)
     if not _has_visible_text(text) and not pending:
         return []
@@ -65,6 +93,9 @@ def on_tool_call_start(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     state["used_tools"] = True
     state["current_reply_used_tools"] = True
     state["reply_phase"] = "tool_running"
+    detector = state.get("repetition_detector")
+    if detector is not None:
+        detector.reset()
     return _commit_pending_as_narration(state)
 
 

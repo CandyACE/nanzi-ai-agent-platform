@@ -738,6 +738,13 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                     chunk["content"] = content
                 chunks_buffer.append(chunk)
 
+            if any(chunk.get("type") == "error" for chunk in chunks_buffer):
+                # 错误事件是终止信号，不能进入知识库事实评估/反思循环，
+                # 否则会把安全拦截误判成幻觉并覆盖原始错误。
+                for chunk in chunks_buffer:
+                    yield chunk
+                return
+
             if self._knowledge_retrieval_succeeded:
                 sanitized_full_text = self._sanitize_knowledge_tool_binding_notice(
                     full_text,

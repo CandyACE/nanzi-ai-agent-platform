@@ -33,7 +33,7 @@ MAX_DELEGATION_CALLS_PER_AGENT = 2
 MAX_DELEGATION_DEPTH = 1
 MAX_BATCH_DELEGATION_CALLS = 4
 
-INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required"})
+INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required", "error"})
 
 EMPTY_DELEGATION_RESULT_MESSAGE = EMPTY_SUB_AGENT_RESULT_MESSAGE
 
@@ -55,6 +55,7 @@ DELEGATION_INTERRUPT_MESSAGES = {
     "external_execution_required": (
         "错误：子智能体需要外部执行确认，当前委派模式不支持。请直接打开对应子智能体对话。"
     ),
+    "error": "错误：子智能体流式执行失败，委派未完成。",
 }
 
 
@@ -478,6 +479,10 @@ async def _consume_sub_agent_stream(
             structured_result["value"] = chunk["structured"]
         if chunk_type in INTERRUPT_SSE_TYPES:
             interrupt_type = chunk_type
+            if chunk_type == "error":
+                # 错误事件是终止信号，保留其真实内容供上层工具结果展示；
+                # 不能继续把后续正文拼成一次成功委派的输出。
+                full_output = _extract_delegation_text(chunk)
             logger.warning(
                 "[Delegation] Sub-agent '%s' interrupted with %s during delegation",
                 sub_display_name,
@@ -969,26 +974,29 @@ async def sub_agent_call(
             metadata=subagent_metadata,
             stop_reason=interrupt_reason.value,
         )
+        if interrupt_type == "error" and full_output.strip():
+            interrupt_message = full_output.strip()
+            if not interrupt_message.startswith(("错误：", "错误:")):
+                interrupt_message = f"错误：{interrupt_message}"
+        else:
+            interrupt_message = DELEGATION_INTERRUPT_MESSAGES.get(
+                interrupt_type,
+                f"子智能体执行被中断（{interrupt_type}）。",
+            )
         _put_subagent_lifecycle_log(
             main_ctx,
             log_id=lifecycle_log_id,
             metadata=subagent_metadata,
             status="error",
-            details=DELEGATION_INTERRUPT_MESSAGES.get(
-                interrupt_type,
-                f"子智能体执行被中断（{interrupt_type}）。",
-            ),
+            details=interrupt_message,
             started_at=lifecycle_started_at,
         )
         return SubAgentResult(
             status=interrupt_status,
             target_agent_id=str(target_config.agent_id),
             target_agent_name=sub_display_name,
-            content=DELEGATION_INTERRUPT_MESSAGES.get(
-                interrupt_type,
-                f"错误：子智能体 '{sub_display_name}' 执行被中断（{interrupt_type}），委派未完成。",
-            ),
-            error_code="interrupted",
+            content=interrupt_message,
+            error_code="stream_error" if interrupt_type == "error" else "interrupted",
             interrupt_type=interrupt_type,
             capability=delegation_request.capability,
             run_id=run_id,

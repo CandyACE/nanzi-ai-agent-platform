@@ -49,6 +49,11 @@ async def stream_agentscope_events(
     state = state or DataRunState()
     stream_meta = stream_meta or {}
     runner._last_run_state = state
+    repetition_detector = getattr(state, "repetition_detector", None)
+    if repetition_detector is not None:
+        # 同一个 DataRunState 可能被初始 ReAct 流和 repair 流复用；重复检测
+        # 只应覆盖当前模型流，不能把上一段流的计数带入下一段。
+        repetition_detector.reset()
     stream_state = runner._build_stream_state(state, stream_meta)
     execution_backend = getattr(runner, "_execution_backend", None)
     if execution_backend:
@@ -382,6 +387,28 @@ async def stream_agentscope_events(
         if state.ignore_text_block:
             return
         delta = str(getattr(event, "delta", ""))
+        if not delta:
+            return
+
+        repetition_detector = getattr(state, "repetition_detector", None)
+        if repetition_detector is None:
+            from app.services.ai.runtime.stream_repetition_detector import StreamRepetitionDetector
+
+            repetition_detector = StreamRepetitionDetector()
+            setattr(state, "repetition_detector", repetition_detector)
+
+        if repetition_detector.is_fused:
+            return
+
+        verdict = repetition_detector.feed(delta)
+        if verdict.fused:
+            error_msg = (
+                f"\n\n⚠️ [流式安全拦截] {verdict.message}"
+                "建议重新发起提问或切换更稳定的旗舰模型（如 DeepSeek-Chat / Claude）。"
+            )
+            yield {"type": "error", "status": "error", "content": error_msg}
+            return
+
         track_sql_plan_delta(delta)
         if not state.ready_to_answer:
             state.blocked_content += delta
@@ -401,6 +428,10 @@ async def stream_agentscope_events(
 
     async for event in event_stream:
         event_type = str(getattr(event, "type", ""))
+        if event_type == "MODEL_CALL_START":
+            detector = getattr(state, "repetition_detector", None)
+            if detector is not None:
+                detector.reset()
         if event_type == "MODEL_CALL_END":
             runner._record_agent_scope_model_call(
                 event,
@@ -410,6 +441,9 @@ async def stream_agentscope_events(
         if event_type == "THINKING_BLOCK_DELTA":
             track_sql_plan_delta(str(getattr(event, "delta", "")))
         if event_type == "TOOL_CALL_START":
+            detector = getattr(state, "repetition_detector", None)
+            if detector is not None:
+                detector.reset()
             state.text_blocks_emitted_since_last_tool = 0
             state.ignore_text_block = False
             state.current_text_block_emitted = False

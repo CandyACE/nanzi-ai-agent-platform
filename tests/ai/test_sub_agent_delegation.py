@@ -173,6 +173,30 @@ async def test_consume_sub_agent_stream_keeps_only_final_answer():
 
 
 @pytest.mark.asyncio
+async def test_consume_sub_agent_stream_propagates_stream_error_as_interrupt():
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    async def sub_stream():
+        yield {
+            "type": "error",
+            "status": "error",
+            "content": "⚠️ [流式安全拦截] 检测到重复输出。",
+        }
+        yield {"type": "answer_delta", "content": "不应继续消费的正文"}
+
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent", event_queue=asyncio.Queue())
+    full_output, interrupt = await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="专家",
+    )
+
+    assert interrupt == "error"
+    assert "流式安全拦截" in full_output
+    assert "不应继续消费的正文" not in full_output
+
+
+@pytest.mark.asyncio
 async def test_consume_sub_agent_stream_marks_forwarded_logs_with_subagent_metadata():
     from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
 

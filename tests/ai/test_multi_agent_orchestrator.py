@@ -171,6 +171,69 @@ async def test_multi_agent_error_handling():
 
 
 @pytest.mark.asyncio
+async def test_multi_agent_stream_error_stops_synthesis_and_forwards_error():
+    service = AgentService()
+
+    primary_config = ChatConfig(
+        agent_id="primary", agent_name="PrimaryAgent", system_prompt="P", tools=[], capabilities=[],
+        model_name="test-model", temperature=0.0
+    )
+
+    async def error_execute(messages):
+        yield {
+            "type": "error",
+            "status": "error",
+            "content": "⚠️ [流式安全拦截] 检测到重复输出。",
+        }
+
+    mock_executor = MagicMock()
+    mock_executor.execute = error_execute
+
+    with patch("app.services.ai.dispatcher.AgentDispatcher.dispatch", return_value=mock_executor):
+        secondary_config = ChatConfig(
+            agent_id="secondary", agent_name="SecondaryAgent", system_prompt="S", tools=[], capabilities=[],
+            model_name="test-model", temperature=0.0
+        )
+        with patch(
+            "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+            return_value=secondary_config,
+        ):
+            synthesis_called = False
+
+            async def should_not_synthesize(config, query, outputs, trace_buffer):
+                nonlocal synthesis_called
+                synthesis_called = True
+                if False:
+                    yield {"content": "unreachable"}
+
+            with patch.object(
+                AgentService,
+                "_synthesize_multi_agent_results",
+                side_effect=should_not_synthesize,
+            ):
+                chunks = [
+                    chunk
+                    async for chunk in service._execute_multi_agent(
+                        primary_config,
+                        ["secondary-id"],
+                        "hello",
+                        [],
+                        "trace-1",
+                        [],
+                        {},
+                        None,
+                        None,
+                        None,
+                        TURN_DECISION,
+                    )
+                ]
+
+    assert any(chunk.get("type") == "error" for chunk in chunks)
+    assert not any(chunk.get("title") == "结果聚合" for chunk in chunks)
+    assert synthesis_called is False
+
+
+@pytest.mark.asyncio
 async def test_multi_agent_synthesis_strips_think_tags_from_answer_delta():
     service = AgentService()
     config = ChatConfig(

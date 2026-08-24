@@ -342,3 +342,48 @@ async def test_hallucination_guard_is_disabled_by_default(kb_config):
     evaluate.assert_not_awaited()
     assert "系统 A 支持 B。" == "".join(str(event.get("content") or "") for event in events)
     assert not any(event.get("category") == "grounding" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_error_bypasses_knowledge_grounding_reflection(kb_config):
+    runner = _kb_runner(
+        kb_config,
+        debug_options={"grounding_enabled": True, "hallucination_check": True},
+    )
+    runner._rag_empty = False
+
+    async def mock_execute_agentscope(*args, **kwargs):
+        yield {
+            "type": "error",
+            "status": "error",
+            "content": "⚠️ [流式安全拦截] 检测到重复输出。",
+        }
+
+    async def mock_auto_prefetch(*args, **kwargs):
+        yield {
+            "__knowledge_output__": json.dumps(
+                {"content": "文献提到：系统 A 支持 C。", "citations": []}
+            )
+        }
+
+    evaluate = AsyncMock(
+        return_value={"is_hallucinated": True, "reason": "不应对流式错误做事实评估"}
+    )
+    with patch.object(runner, "_execute_with_agentscope_native_agent", mock_execute_agentscope), \
+         patch.object(runner, "_resolve_knowledge_tools", AsyncMock(return_value=[_search_knowledge_tool()])), \
+         patch.object(runner, "_auto_invoke_search_knowledge_base", mock_auto_prefetch), \
+         patch("app.services.ai.hallucination_evaluator.HallucinationEvaluator.evaluate", evaluate), \
+         patch("app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled", AsyncMock(return_value=True)), \
+         patch("app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids", AsyncMock(return_value=([], None))), \
+         patch("app.services.ai.runners.knowledge_agent_runner.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=SimpleNamespace(native_model=object()))), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")):
+        events = [
+            event
+            async for event in runner._execute_raw(
+                [{"role": "user", "content": "系统 A 支持什么？"}]
+            )
+        ]
+
+    evaluate.assert_not_awaited()
+    assert any(event.get("type") == "error" for event in events)
+    assert not any(event.get("category") == "grounding" for event in events)
