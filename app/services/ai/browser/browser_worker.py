@@ -73,11 +73,22 @@ SNAPSHOT_JS = r"""
 (nodes) => {
   const interactiveRoles = new Set([
     'button', 'link', 'tab', 'option', 'menuitem', 'combobox',
-    'checkbox', 'radio', 'switch', 'listbox'
+    'checkbox', 'radio', 'switch', 'listbox', 'textbox', 'searchbox', 'spinbutton'
   ]);
   const nativeRoles = {
-    button: 'button', a: 'link', select: 'combobox', textarea: 'textbox',
-    input: (node) => (node.type === 'search' ? 'searchbox' : 'textbox')
+    button: 'button',
+    a: 'link',
+    select: 'combobox',
+    textarea: 'textbox',
+    input: (node) => {
+      const t = (node.type || 'text').toLowerCase();
+      if (t === 'search') return 'searchbox';
+      if (t === 'button' || t === 'submit' || t === 'reset' || t === 'image') return 'button';
+      if (t === 'checkbox') return 'checkbox';
+      if (t === 'radio') return 'radio';
+      if (t === 'hidden') return '';
+      return 'textbox';
+    }
   };
   const isVisible = (node) => {
     const style = window.getComputedStyle(node);
@@ -85,19 +96,79 @@ SNAPSHOT_JS = r"""
     return style.display !== 'none' && style.visibility !== 'hidden'
       && rect.width > 0 && rect.height > 0;
   };
+  const isContentEditable = (node) => {
+    try {
+      return Boolean(node.isContentEditable || node.getAttribute('contenteditable') === 'true' || node.getAttribute('contenteditable') === '');
+    } catch (_) {
+      return false;
+    }
+  };
   const cleanText = (value) => String(value || '')
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/\s*\n\s*/g, '\n')
     .trim()
     .slice(0, 240);
+
+  const resolveElementLabel = (node) => {
+    // 1. 显式 aria-label
+    const ariaLabel = node.getAttribute('aria-label');
+    if (ariaLabel && ariaLabel.trim()) return cleanText(ariaLabel);
+
+    // 2. aria-labelledby
+    const labelledBy = node.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const labelEls = labelledBy.split(/\s+/).map(id => document.getElementById(id)).filter(Boolean);
+      const combined = labelEls.map(el => el.innerText || el.textContent || '').join(' ').trim();
+      if (combined) return cleanText(combined);
+    }
+
+    // 3. 原生表单 labels (HTMLInputElement.labels)
+    if (node.labels && node.labels.length > 0) {
+      const combined = Array.from(node.labels).map(l => l.innerText || l.textContent || '').join(' ').trim();
+      if (combined) return cleanText(combined);
+    }
+
+    // 4. label[for="id"]
+    if (node.id) {
+      try {
+        const matchedLabel = document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+        if (matchedLabel && (matchedLabel.innerText || matchedLabel.textContent)) {
+          return cleanText(matchedLabel.innerText || matchedLabel.textContent);
+        }
+      } catch (_) {}
+    }
+
+    // 5. title / placeholder
+    const title = node.getAttribute('title');
+    if (title && title.trim()) return cleanText(title);
+    const placeholder = node.getAttribute('placeholder');
+    if (placeholder && placeholder.trim()) return cleanText(placeholder);
+
+    // 6. innerText / textContent（对于 button、a、contenteditable div）
+    const inner = (node.innerText || node.textContent || '').trim();
+    if (inner) return cleanText(inner);
+
+    // 7. value（如果非敏感且有值）
+    if (node.value && String(node.value).trim()) return cleanText(node.value);
+
+    // 8. 兜底提取 name / id / data-placeholder 等属性
+    const nameAttr = node.getAttribute('name') || node.getAttribute('data-placeholder') || node.getAttribute('data-testid') || '';
+    if (nameAttr && nameAttr.trim()) return cleanText(nameAttr);
+
+    return '';
+  };
+
   const candidates = [];
   for (let nodeIndex = 0; nodeIndex < nodes.length && candidates.length < %d; nodeIndex += 1) {
     const node = nodes[nodeIndex];
     const tagName = node.tagName.toLowerCase();
     const roleAttribute = (node.getAttribute('role') || '').trim().toLowerCase();
-    const nativeRole = nativeRoles[tagName];
-    const resolvedNativeRole = typeof nativeRole === 'function' ? nativeRole(node) : nativeRole;
+    let nativeRole = nativeRoles[tagName];
+    let resolvedNativeRole = typeof nativeRole === 'function' ? nativeRole(node) : nativeRole;
+    if (!resolvedNativeRole && isContentEditable(node)) {
+      resolvedNativeRole = 'textbox';
+    }
     const inferredInteractive = !roleAttribute && !resolvedNativeRole && (
       node.hasAttribute('onclick')
       || (node.hasAttribute('tabindex') && Number(node.tabIndex) >= 0)
@@ -111,13 +182,7 @@ SNAPSHOT_JS = r"""
     if (!candidate || !isVisible(node)) continue;
     const sensitive = tagName === 'input'
       && (node.type === 'password' || ['current-password', 'new-password', 'password'].includes(node.getAttribute('autocomplete')));
-    const rawName = cleanText(
-      node.getAttribute('aria-label')
-      || node.getAttribute('title')
-      || node.getAttribute('placeholder')
-      || node.innerText
-      || (node.value || '')
-    );
+    const rawName = resolveElementLabel(node);
     if (tagName === 'div' || tagName === 'section' || tagName === 'article') {
       if (!resolvedNativeRole && !roleAttribute && rawName.length > 150) continue;
     }
@@ -1080,12 +1145,7 @@ class BrowserWorker:
             delta_y = normalized_amount if normalized_direction == "down" else -normalized_amount
             mouse = getattr(handle.page, "mouse", None)
             if mouse and hasattr(mouse, "wheel"):
-                steps = random.randint(4, 7)
-                base_step = delta_y / float(steps)
-                for _ in range(steps):
-                    step_val = base_step * random.uniform(0.85, 1.15)
-                    await _maybe_await(mouse.wheel(0, step_val))
-                    await asyncio.sleep(random.uniform(0.015, 0.035))
+                await _maybe_await(mouse.wheel(0, delta_y))
             else:
                 await _maybe_await(handle.page.evaluate(f"() => window.scrollBy(0, {delta_y})"))
 
@@ -1249,10 +1309,9 @@ class BrowserWorker:
                 target_y = box["y"] + box["height"] * random.uniform(0.3, 0.7)
                 await self._human_smooth_mouse_move(handle.page, target_x, target_y, steps=random.randint(6, 12))
                 await asyncio.sleep(random.uniform(0.04, 0.08))
-            else:
-                await _maybe_await(locator.hover())
         except Exception:
-            await _maybe_await(locator.hover())
+            pass
+        await _maybe_await(locator.hover())
         info = await self._page_info(handle.page)
         self._snapshots.pop(session_id, None)
         return BrowserToolResult(session_id=session_id, action="hover", url=info.url, title=info.title)
@@ -2043,15 +2102,9 @@ class BrowserWorker:
                 target_y = box["y"] + box["height"] * random.uniform(0.25, 0.75)
                 await self._human_smooth_mouse_move(page, target_x, target_y, steps=random.randint(5, 10))
                 await asyncio.sleep(random.uniform(0.03, 0.07))
-                mouse = getattr(page, "mouse", None)
-                if mouse and hasattr(mouse, "down") and hasattr(mouse, "up"):
-                    await _maybe_await(mouse.down())
-                    await asyncio.sleep(random.uniform(0.04, 0.08))
-                    await _maybe_await(mouse.up())
-                    return
         except Exception:
             pass
-        await locator.click()
+        await _maybe_await(locator.click())
 
     async def _human_type_into_locator(self, locator: Any, value: str, page: Any) -> None:
         """模拟真实人类逐字敲击键盘输入，带拟人按键延迟与段间停顿。"""

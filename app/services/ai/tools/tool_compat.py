@@ -77,7 +77,17 @@ class FunctionTool(BaseTool):
     async def ainvoke(self, arguments: dict[str, Any] | None = None) -> Any:
         arguments = arguments or {}
         target = self.coroutine or self.func
-        result = target(**arguments)
+        try:
+            sig = inspect.signature(target)
+            has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+            if has_varkw:
+                filtered_args = arguments
+            else:
+                valid_keys = set(sig.parameters.keys())
+                filtered_args = {k: v for k, v in arguments.items() if k in valid_keys}
+        except Exception:
+            filtered_args = arguments
+        result = target(**filtered_args)
         if inspect.isawaitable(result):
             return await result
         return result

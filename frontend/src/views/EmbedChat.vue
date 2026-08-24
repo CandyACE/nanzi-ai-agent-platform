@@ -7863,6 +7863,8 @@ const sendMessageInternal = async () => {
   } catch (e: any) {
     if (e.name === "AbortError") {
       agentMsg.value.content += "\n[用户终止]";
+    } else if (document.visibilityState === "hidden") {
+      console.log("[Stream] Client disconnected in background; awaiting background producer sync on resume.");
     } else {
       agentMsg.value.content += `\n[错误: ${e.message}]`;
     }
@@ -8070,75 +8072,111 @@ onMounted(() => {
     fetchSlashCommands();
   }
 
-  // 切回前台（切回 App 或多标签页）时自动探测并拉取最新会话历史，避免切后台中断导致消息丢失
-  const onVisibilityChange = async () => {
-    if (document.visibilityState === "visible") {
-      if (!conversationId.value || !hasPermission.value) return;
-      try {
-        const headers: any = {};
-        if (config.token) {
-          headers["Authorization"] = `Bearer ${config.token}`;
-          headers["X-API-Key"] = config.token;
-        }
-        const res = await axios.get("/api/v1/chat/history", {
-          params: { conversation_id: conversationId.value, page: 1, page_size: 5 },
-          headers,
-        });
-        if (res.data?.data && Array.isArray(res.data.data.items) && res.data.data.items.length > 0) {
-          const latestServerItem = res.data.data.items[0];
-          if (latestServerItem && latestServerItem.summary) {
-            const matchedIndex = messages.value.findIndex(
-              m => m.trace_id && m.trace_id === latestServerItem.trace_id && m.role === 'agent'
-            );
-            if (matchedIndex !== -1) {
-              const currentMsg = messages.value[matchedIndex];
-              if (currentMsg && (!currentMsg.content || currentMsg.content.length < latestServerItem.summary.length || currentMsg.isThinking)) {
-                currentMsg.content = latestServerItem.summary;
-                currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
-                currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
-                currentMsg.isThinking = false;
-                if (isProcessing.value) {
-                  isProcessing.value = false;
-                }
-              }
-            } else {
-              const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
-              if (isProcessing.value || (lastMsg && lastMsg.role === 'user')) {
-                messages.value.push({
-                  id: Date.now(),
-                  trace_id: latestServerItem.trace_id,
-                  role: 'agent',
-                  content: latestServerItem.summary,
-                  reasoningContent: latestServerItem.reasoning_content ?? undefined,
-                  processTimeline: hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content),
-                  logs: [],
-                  isThinking: false,
-                  feedback: null,
-                  agentName: latestServerItem.agent_name ?? undefined,
-                  agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
-                  agentType: latestServerItem.agent_type ?? undefined,
-                  prompt_tokens: latestServerItem.prompt_tokens ?? undefined,
-                  completion_tokens: latestServerItem.completion_tokens ?? undefined,
-                  total_tokens: latestServerItem.total_tokens ?? undefined,
-                  timestamp: latestServerItem.created_at,
-                });
+  // 切回前台（切回 App 或多标签页）时自动探测并拉取最新会话历史，支持退避轮询直到后台持久化完成
+  let visibilitySyncTimer: any = null;
+  const clearVisibilitySyncTimer = () => {
+    if (visibilitySyncTimer) {
+      clearTimeout(visibilitySyncTimer);
+      visibilitySyncTimer = null;
+    }
+  };
+
+  const syncLatestSessionHistory = async (attempt = 1, maxAttempts = 15) => {
+    if (!conversationId.value || !hasPermission.value) return;
+    try {
+      const headers: any = {};
+      if (config.token) {
+        headers["Authorization"] = `Bearer ${config.token}`;
+        headers["X-API-Key"] = config.token;
+      }
+      const res = await axios.get("/api/v1/chat/history", {
+        params: { conversation_id: conversationId.value, page: 1, page_size: 5 },
+        headers,
+      });
+      if (res.data?.data && Array.isArray(res.data.data.items) && res.data.data.items.length > 0) {
+        const latestServerItem = res.data.data.items[0];
+        if (latestServerItem && latestServerItem.summary) {
+          const matchedIndex = messages.value.findIndex(
+            m => m.trace_id && m.trace_id === latestServerItem.trace_id && m.role === 'agent'
+          );
+          if (matchedIndex !== -1) {
+            const currentMsg = messages.value[matchedIndex];
+            if (currentMsg && (!currentMsg.content || currentMsg.content.length < latestServerItem.summary.length || currentMsg.isThinking)) {
+              currentMsg.content = latestServerItem.summary;
+              currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
+              currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
+              currentMsg.isThinking = false;
+              if (isProcessing.value) {
                 isProcessing.value = false;
-                await nextTick();
-                scrollToBottom();
               }
+              clearVisibilitySyncTimer();
+              await nextTick();
+              scrollToBottom();
+              return;
+            }
+          } else {
+            const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
+            if (isProcessing.value || (lastMsg && lastMsg.role === 'user')) {
+              messages.value.push({
+                id: Date.now(),
+                trace_id: latestServerItem.trace_id,
+                role: 'agent',
+                content: latestServerItem.summary,
+                reasoningContent: latestServerItem.reasoning_content ?? undefined,
+                processTimeline: hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content),
+                logs: [],
+                isThinking: false,
+                feedback: null,
+                agentName: latestServerItem.agent_name ?? undefined,
+                agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
+                agentType: latestServerItem.agent_type ?? undefined,
+                prompt_tokens: latestServerItem.prompt_tokens ?? undefined,
+                completion_tokens: latestServerItem.completion_tokens ?? undefined,
+                total_tokens: latestServerItem.total_tokens ?? undefined,
+                timestamp: latestServerItem.created_at,
+              });
+              isProcessing.value = false;
+              clearVisibilitySyncTimer();
+              await nextTick();
+              scrollToBottom();
+              return;
             }
           }
         }
-      } catch (err) {
-        console.warn("[LifeCycle] Failed to sync session on visibility change:", err);
       }
+    } catch (err) {
+      console.warn("[LifeCycle] Failed to sync session on visibility change:", err);
+    }
+
+    if (attempt < maxAttempts) {
+      const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
+      const needsSync = isProcessing.value || (lastMsg && (lastMsg.role === 'user' || (lastMsg.role === 'agent' && (lastMsg.isThinking || !lastMsg.content))));
+      if (needsSync && document.visibilityState === "visible") {
+        clearVisibilitySyncTimer();
+        visibilitySyncTimer = setTimeout(() => {
+          syncLatestSessionHistory(attempt + 1, maxAttempts);
+        }, 1500);
+      }
+    } else {
+      if (isProcessing.value) {
+        isProcessing.value = false;
+      }
+    }
+  };
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      clearVisibilitySyncTimer();
+      syncLatestSessionHistory(1, 15);
+    } else {
+      clearVisibilitySyncTimer();
     }
   };
 
   document.addEventListener("visibilitychange", onVisibilityChange);
 
   // Attach cleanup handlers to component instance scope
-  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange };
+  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange, clearVisibilitySyncTimer };
 });
 onUnmounted(() => {
   cancelPendingUrlTokenInitialization();
@@ -8149,6 +8187,7 @@ onUnmounted(() => {
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
   if (handlers?.onOffline) window.removeEventListener("offline", handlers.onOffline);
   if (handlers?.onVisibilityChange) document.removeEventListener("visibilitychange", handlers.onVisibilityChange);
+  if (handlers?.clearVisibilitySyncTimer) handlers.clearVisibilitySyncTimer();
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);

@@ -26,6 +26,10 @@ async def test_agentscope_agent_executes_runtime_tool_via_native_toolkit():
         class Parameters(BaseModel):
             pass
 
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.formatter = type("FakeFormatter", (), {"supported_input_media_types": ["image", "text"]})()
+
         async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
             if not any(msg.has_content_blocks("tool_result") for msg in messages):
                 assert tools
@@ -111,6 +115,10 @@ async def test_agentscope_agent_emits_user_confirm_for_ask_tool_without_invoking
     class FakeModel(ChatModelBase):
         class Parameters(BaseModel):
             pass
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.formatter = type("FakeFormatter", (), {"supported_input_media_types": ["image", "text"]})()
 
         async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
             return ChatResponse(

@@ -1421,3 +1421,75 @@ async def test_worker_rejects_a_snapshot_from_another_active_tab(tmp_path):
             approval_mode="autopilot",
             confirmed=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_snapshot_js_recognizes_contenteditable_and_aria_textboxes(tmp_path):
+    fake_playwright = FakePlaywright()
+    fake_page = FakePage()
+    fake_page.locator_value.elements = [
+        {
+            "role": "textbox",
+            "tag": "div",
+            "_role_source": "native",
+            "_node_index": 0,
+            "_in_shadow": False,
+            "sensitive": False,
+            "name": "富文本编辑器",
+            "value": "已有内容",
+            "disabled": False,
+            "bbox": {"x": 100, "y": 100, "width": 400, "height": 200},
+        },
+        {
+            "role": "textbox",
+            "tag": "div",
+            "_role_source": "explicit",
+            "_node_index": 1,
+            "_in_shadow": False,
+            "sensitive": False,
+            "name": "自定义文本框",
+            "value": "",
+            "disabled": False,
+            "bbox": {"x": 100, "y": 320, "width": 300, "height": 40},
+        },
+        {
+            "role": "searchbox",
+            "tag": "input",
+            "_role_source": "native",
+            "_node_index": 2,
+            "_in_shadow": False,
+            "sensitive": False,
+            "name": "站内搜索",
+            "value": "",
+            "disabled": False,
+            "bbox": {"x": 500, "y": 20, "width": 200, "height": 32},
+        },
+    ]
+    fake_playwright.chromium.context.page = fake_page
+
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=str(tmp_path),
+    )
+    await worker.open(
+        session_id="bs-textbox-test",
+        profile_path=str(tmp_path / "profile-textbox"),
+        url="https://example.com/",
+    )
+    snapshot = await worker.snapshot("bs-textbox-test")
+
+    assert len(snapshot.elements) == 3
+    rich_editor = snapshot.elements[0]
+    assert rich_editor.role == "textbox"
+    assert rich_editor.tag == "div"
+    assert rich_editor.name == "富文本编辑器"
+
+    aria_box = snapshot.elements[1]
+    assert aria_box.role == "textbox"
+    assert aria_box.name == "自定义文本框"
+
+    search_box = snapshot.elements[2]
+    assert search_box.role == "searchbox"
+    assert search_box.name == "站内搜索"
+

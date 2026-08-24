@@ -1142,7 +1142,8 @@ async def create_chat_completion(
                 conversation_id=conversation_id,
             )
 
-        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=200)
+        client_disconnected_event = asyncio.Event()
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
         async def _producer_task() -> None:
             try:
@@ -1159,8 +1160,10 @@ async def create_chat_completion(
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
                     metadata_dataset_ids=effective_metadata_dataset_ids,
                 ):
-                    await queue.put(("chunk", chunk))
-                await queue.put(("done", None))
+                    if not client_disconnected_event.is_set():
+                        await queue.put(("chunk", chunk))
+                if not client_disconnected_event.is_set():
+                    await queue.put(("done", None))
             except asyncio.CancelledError:
                 from app.core.cancellation import spawn_detached
 
@@ -1175,7 +1178,8 @@ async def create_chat_completion(
                     exc,
                     exc_info=True,
                 )
-                await queue.put(("error", exc))
+                if not client_disconnected_event.is_set():
+                    await queue.put(("error", exc))
 
         producer_task = asyncio.create_task(
             _producer_task(),
@@ -1188,6 +1192,7 @@ async def create_chat_completion(
                 while True:
                     if not client_disconnected and await request.is_disconnected():
                         client_disconnected = True
+                        client_disconnected_event.set()
                         logger.info(
                             "[ChatAPI] Client disconnected (mobile background or connection dropped) "
                             "for conversation=%s; background producer continues persistence.",
@@ -1210,12 +1215,14 @@ async def create_chat_completion(
                     elif tag == "error":
                         break
             except asyncio.CancelledError:
+                client_disconnected_event.set()
                 logger.info(
                     "[ChatAPI] SSE streaming cancelled by client for conversation=%s; "
                     "background producer task continues to finish message persistence.",
                     conversation_id,
                 )
             finally:
+                client_disconnected_event.set()
                 # 客户端断开连接时，保持 producer_task 在后台独立运行完成消息落库
                 pass
 

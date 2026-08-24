@@ -602,3 +602,42 @@ async def test_build_toolkit_integrates_with_real_agentscope_toolkit():
 
     assert schemas[0]["function"]["name"] == "noop"
     assert schemas[0]["function"]["description"] == "No-op"
+
+
+@pytest.mark.asyncio
+async def test_runtime_approval_tool_handles_tool_failure_gracefully_with_tool_chunk_error():
+    from agentscope.message import ToolResultState
+    from app.services.ai.runtime.agentscope.tools import AgentScopeRuntimeTool, RuntimeToolSpec
+
+    def broken_callable():
+        raise ConnectionError("远程知识库连接超时")
+
+    spec = RuntimeToolSpec(
+        name="search_knowledge_base",
+        description="Search KB",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="generic_api",
+        callable=broken_callable,
+        permission_scope="read",
+    )
+    tool = AgentScopeRuntimeTool(spec, approval_mode="allow")
+    result = await tool()
+
+    assert result.state == ToolResultState.ERROR
+    assert "远程知识库连接超时" in result.content[0].text
+    assert "search_knowledge_base" in result.content[0].text
+
+
+def test_unwrap_exception_message_unpacks_exception_group_and_cause():
+    from app.services.ai.multimodal_support import format_execution_error, unwrap_exception_message
+
+    sub_exc1 = ConnectionResetError("知识库服务网络中断")
+    exc_group = ExceptionGroup("One or more tool calls raised an exception", [sub_exc1])
+
+    unwrapped = unwrap_exception_message(exc_group)
+    assert "知识库服务网络中断" in unwrapped
+    assert "One or more tool calls" not in unwrapped
+
+    formatted = format_execution_error(exc_group)
+    assert "知识库服务网络中断" in formatted
+

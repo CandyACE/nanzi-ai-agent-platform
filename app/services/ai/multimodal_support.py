@@ -112,14 +112,49 @@ def _extract_model_from_error(err: str) -> Optional[str]:
     return None
 
 
-def format_execution_error(err: str, model_name: Optional[str] = None) -> str:
+def unwrap_exception_message(exc: Any) -> str:
+    """递归解包 ExceptionGroup 或异常链，提取最底层的具体错误信息。"""
+    if exc is None:
+        return ""
+    if isinstance(exc, str):
+        raw = exc.strip()
+        if "One or more tool calls raised an exception" in raw:
+            return "工具调用执行过程中发生异常"
+        return raw
+
+    exceptions = getattr(exc, "exceptions", None)
+    if exceptions and isinstance(exceptions, (list, tuple)):
+        sub_messages = [unwrap_exception_message(sub) for sub in exceptions if sub is not None]
+        non_empty = [
+            m for m in sub_messages
+            if m and "One or more tool calls raised an exception" not in m
+        ]
+        if non_empty:
+            return "；".join(non_empty)
+        if sub_messages:
+            return "；".join(sub_messages)
+
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    if cause and isinstance(cause, BaseException) and cause is not exc:
+        cause_msg = unwrap_exception_message(cause)
+        if cause_msg and cause_msg != str(exc):
+            return cause_msg
+
+    raw_msg = str(exc).strip()
+    if "One or more tool calls raised an exception" in raw_msg:
+        return "工具调用执行过程中发生异常"
+    return raw_msg
+
+
+def format_execution_error(err: Any, model_name: Optional[str] = None) -> str:
     """将底层异常转为用户可理解的提示。"""
-    if is_context_window_api_error(err):
-        return format_context_window_error(err)
-    if is_multimodal_api_error(err):
-        resolved = model_name or _extract_model_from_error(err) or "当前模型"
+    clean_err = unwrap_exception_message(err)
+    if is_context_window_api_error(clean_err):
+        return format_context_window_error(clean_err)
+    if is_multimodal_api_error(clean_err):
+        resolved = model_name or _extract_model_from_error(clean_err) or "当前模型"
         return AgentServicePrompts.multimodal_unsupported_message(resolved)
-    return AgentServicePrompts.execution_error(str(err))
+    return AgentServicePrompts.execution_error(clean_err)
 
 
 async def model_supports_multimodal(model_name: Optional[str]) -> Optional[bool]:

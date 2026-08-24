@@ -1703,6 +1703,8 @@ async def test_docker_workspace_status_inspects_existing_container_without_initi
         "execution_backend": "docker",
         "workspace_id": "alice__1",
         "container_id": "container-1",
+        "started_at": None,
+        "uptime_seconds": None,
     }
     assert captured["name"] == "as_ws_alice__1"
 

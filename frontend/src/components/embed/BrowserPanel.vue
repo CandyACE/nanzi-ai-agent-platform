@@ -477,8 +477,59 @@
             class="relative min-h-0 flex-1 overflow-auto bg-slate-100 p-2 dark:bg-slate-950"
             tabindex="0"
             @keydown="handleKeydown"
-            @wheel.prevent="handleWheel"
           >
+            <!-- 悬浮滚动控制器 (Floating Scroll Control Bar: 鼠标未悬停时浅色半透明，悬停时高亮) -->
+            <div
+              v-if="screenshotUrl"
+              class="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1 opacity-25 hover:opacity-100 transition-opacity duration-200 select-none bg-white/60 dark:bg-slate-900/60 hover:bg-white/95 dark:hover:bg-slate-900/95 p-1 rounded-xl backdrop-blur-md border border-gray-200/60 dark:border-gray-700/60 shadow-md"
+            >
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-gray-600 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-300 dark:hover:bg-blue-900/40 dark:hover:text-blue-300 transition-all"
+                title="一键直达顶部"
+                aria-label="一键直达顶部"
+                @click.stop="manualScroll('top')"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="18 15 12 9 6 15" /><line x1="6" y1="5" x2="18" y2="5" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-gray-600 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-300 dark:hover:bg-blue-900/40 dark:hover:text-blue-300 transition-all"
+                title="向上翻页"
+                aria-label="向上翻页"
+                @click.stop="manualScroll('up')"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="18 15 12 9 6 15" />
+                </svg>
+              </button>
+              <div class="h-px w-4 bg-gray-200 dark:bg-gray-700"></div>
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-gray-600 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-300 dark:hover:bg-blue-900/40 dark:hover:text-blue-300 transition-all"
+                title="向下翻页"
+                aria-label="向下翻页"
+                @click.stop="manualScroll('down')"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-gray-600 hover:bg-blue-50 hover:text-blue-600 active:scale-90 dark:text-gray-300 dark:hover:bg-blue-900/40 dark:hover:text-blue-300 transition-all"
+                title="一键直达底部"
+                aria-label="一键直达底部"
+                @click.stop="manualScroll('bottom')"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9" /><line x1="6" y1="19" x2="18" y2="19" />
+                </svg>
+              </button>
+            </div>
+
             <div v-if="screenshotUrl" class="pointer-events-none absolute bottom-3 left-3 z-10" role="note">
               <span class="rounded-md border border-red-300 bg-white/90 px-2.5 py-1 text-[11px] font-bold text-red-600 shadow-sm dark:border-red-700 dark:bg-red-950/90 dark:text-red-300">
                 当前为远程静态截图，非实时网页（操作存在延迟）· 严禁用于任何违法违规行为
@@ -1676,13 +1727,29 @@ const sendQuickKey = (key: string, label: string) => {
   setTemporaryMessage(`已发送按键：${label}`, 1500);
 };
 
-const handleWheel = (event: WheelEvent) => {
+const manualScroll = (direction: 'up' | 'down' | 'top' | 'bottom') => {
   if (isSyncing.value) return;
   pauseForInteraction();
   triggerSyncing();
-  setHumanAction('scroll', `${event.deltaY > 0 ? '向下' : '向上'}滚动页面`);
-  send({ type: 'scroll', delta_y: event.deltaY });
+  let deltaY = 0;
+  let label = '';
+  if (direction === 'top') {
+    deltaY = -2000;
+    label = '滚动到页面顶部';
+  } else if (direction === 'bottom') {
+    deltaY = 2000;
+    label = '滚动到页面底部';
+  } else if (direction === 'up') {
+    deltaY = -480;
+    label = '向上滚动页面';
+  } else {
+    deltaY = 480;
+    label = '向下滚动页面';
+  }
+  setHumanAction('scroll', label);
+  send({ type: 'scroll', delta_y: deltaY });
   scheduleInteractionFinish();
+  setTemporaryMessage(`✅ 已${label}`, 1200);
 };
 
 const sendText = () => {

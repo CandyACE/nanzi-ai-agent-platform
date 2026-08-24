@@ -523,10 +523,35 @@ class AgentScopeRuntimeTool:
         from agentscope.tool import ToolChunk
 
         self._check_tool_loop(kwargs)
-        return ToolChunk(
-            content=[TextBlock(text=str(await self.spec.invoke(kwargs)))],
-            state=ToolResultState.SUCCESS,
-        )
+        try:
+            res = await self.spec.invoke(kwargs)
+            return ToolChunk(
+                content=[TextBlock(text=str(res))],
+                state=ToolResultState.SUCCESS,
+            )
+        except Exception as exc:
+            if isinstance(exc, PermissionError):
+                raise
+            from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
+
+            try:
+                from agentscope.exception import DeveloperOrientedException
+
+                if isinstance(exc, DeveloperOrientedException):
+                    raise
+            except ImportError:
+                pass
+            if isinstance(exc, (ToolLoopFuseError, asyncio.CancelledError)):
+                raise
+            logger.warning(
+                "[RuntimeTool] Tool '%s' execution failed gracefully: %s",
+                self.spec.name,
+                exc,
+            )
+            return ToolChunk(
+                content=[TextBlock(text=f"工具 [{self.spec.name}] 调用发生异常: {exc}")],
+                state=ToolResultState.ERROR,
+            )
 
 
 class AgentScopeNativeApprovalTool:
@@ -696,10 +721,32 @@ class AgentScopeNativeApprovalTool:
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
-            if is_file_tool:
-                msg = enhance_workspace_error_message(exc)
-                raise type(exc)(msg) from exc
-            raise
+            if isinstance(exc, PermissionError):
+                raise
+            from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
+
+            try:
+                from agentscope.exception import DeveloperOrientedException
+
+                if isinstance(exc, DeveloperOrientedException):
+                    raise
+            except ImportError:
+                pass
+            if isinstance(exc, (ToolLoopFuseError, asyncio.CancelledError)):
+                raise
+            from agentscope.message import TextBlock, ToolResultState
+            from agentscope.tool import ToolChunk
+
+            msg = enhance_workspace_error_message(exc) if is_file_tool else str(exc)
+            logger.warning(
+                "[NativeTool] Tool '%s' execution failed gracefully: %s",
+                self.name,
+                msg,
+            )
+            return ToolChunk(
+                content=[TextBlock(text=f"工具 [{self.name}] 调用发生异常: {msg}")],
+                state=ToolResultState.ERROR,
+            )
 
         if is_file_tool and isinstance(result, str):
             result = enhance_workspace_error_message(result)

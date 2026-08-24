@@ -71,7 +71,7 @@ def _format_execution_error_for_user(
         return exc.user_message
     from app.services.ai.multimodal_support import format_execution_error
 
-    return format_execution_error(str(exc), model_name=model_name)
+    return format_execution_error(exc, model_name=model_name)
 
 
 async def _persist_assistant_message_and_summary(
