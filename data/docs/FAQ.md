@@ -119,6 +119,9 @@
 - **安全沙箱环境 (Docker)**：
   - 推荐主机安装 **Docker 20.10+**；
   - **核心建议**：**当平台自身部署在 Docker 容器内运行时，强烈建议安全沙箱配置走 `docker` 策略**（通过在平台容器启动时挂载 `-v /var/run/docker.sock:/var/run/docker.sock`）。若在平台主容器内使用 `local` 策略，所有 Agent 执行的 Shell 脚本和命令都会在平台后端主服务容器内裸奔执行，可能导致平台主环境被污染或崩溃；而配置为 `docker` 沙箱策略，可以为每个用户在宿主机 Docker 引擎上独立拉起纯净隔离的沙箱子容器，实现真正的操作系统级多租户安全隔离！
+- **自动化浏览器依赖 (Playwright Chromium)**：
+  - **Docker 部署**：平台镜像已内置 `playwright install --with-deps chromium`，开箱即用，无需额外配置；
+  - **源码部署**：首次部署需在后端虚拟环境执行 `playwright install chromium`（Linux 服务器需执行 `playwright install --with-deps chromium` 安装底层图形/音频动态库）。
 
 ---
 
@@ -504,9 +507,21 @@ mindmap
    - 勾选挂载 **`browser_*` (服务端浏览器工具集)** 或将该智能体绑定具有浏览器操作权限的角色；
    - 未挂载该工具集的智能体，在对话中无法唤起远程浏览器。
 
+#### 4. 企业级典型合规应用场景矩阵
+
+浏览器自动化（AI + RPA + 实时投屏）在企业内部运营、系统集成与质量保障等领域具有极高的生产力价值。以下为平台推荐的 **5 大核心合规落地场景**：
+
+| 场景分类 | 典型业务诉求 | 智能体落地方式 | 核心价值与收益 |
+| :--- | :--- | :--- | :--- |
+| **🏢 无 API 老旧系统 RPA 填报** | 企业内部老旧 ERP/OA/CRM 无开放 OpenAPI，员工日常需大量重复搬运数据。 | 智能体读取对话上下文或工单需求，自动登录内网系统、定位表单输入框并规范化填报与提交。 | 替代机械重复劳动，提效 80%+；消除跨系统人工二次录入失误。 |
+| **📊 跨平台报表定时导出与对账** | 每周/每月需从云厂商、微信商户号、物流服务商等外部平台下载明细账单。 | 配合「任务调度台 (Task Center)」配置 Cron 定时任务，自动登录授权账号导出 Excel/CSV，联动 ChatBI 数据分析并推送到企微/钉钉/飞书。 | 全程无人值守，实现定期自动汇总与财务对账自动化。 |
+| **📰 行业公开资讯与招投标巡检** | 销售与合规团队需每日盯防政企招投标网站、行业协会公开政策与标准。 | 定时访问公开招投标与政企公告门户（遵守公开频次与 `robots.txt`），检索关键词生成结构化日报。 | 抢先捕捉商机与政策风向，降低人工盯盘时间成本。 |
+| **🧪 线上业务巡检与自动化冒烟测试** | 研发/运维需 7×24 小时保障官网首页、登录页、核心下单链路稳定可用。 | 智能体按计划模拟真实用户访问核心链路，验证 DOM 渲染、首屏时间及按钮可用性，异常时自动截图告警。 | 零脚本编写成本，实时感知白屏与服务故障。 |
+| **📚 公开长文档与复杂网页归档** | 将外部排版复杂的白皮书、行业标准或动态数据表格沉淀至企业内部知识库。 | 智能体自动完整滚动渲染页面，调用 `browser_export_pdf` 导出矢量 PDF 或调用 `browser_extract_table` 提取表格入库。 | 完整保留复杂网页视觉排版与结构化数据。 |
+
 ---
 
-#### 4. 浏览器进阶：拟人化轨迹拖拽、Stale 元素自适应等待与多标签页管理
+#### 5. 浏览器进阶：拟人化轨迹拖拽、Stale 元素自适应等待与多标签页管理
 
 在复杂现代 Web 应用与企业级 SaaS 系统的自动化交互中，平台实现了三项关键技术突破：
 1. **贝塞尔拟人化轨迹拖拽 (`browser_drag`)**：
@@ -518,7 +533,29 @@ mindmap
 
 ---
 
-#### 5. ⚠️ 安全合规与法律风险红线警示
+#### 6. 依赖组件安装与启动排查（源码部署 vs Docker 部署）
+
+- **🐳 Docker 容器化部署（开箱即用，无需任何操作）**：
+  - 平台官方 Docker 镜像（[`docker/Dockerfile`](file:///Users/chenxiaolong/workspace/nanzi-ai-agent-platform/docker/Dockerfile)）在构建阶段已全量执行了 `playwright install --with-deps chromium`，镜像内已预置 Chromium 二进制与所有 Linux 动态库依赖，启动容器即可直接使用浏览器自动化功能。
+
+- **💻 本地/物理机源码直接部署（常见漏装排查）**：
+  - **报错现象**：调用 `browser_*` 工具或点击浏览器面板时，后端日志抛出 `Executable doesn't exist at .../chrome-linux/chrome` 或 `Host system is missing dependencies to run browsers`；
+  - **根本原因**：通过 `pip install -r requirements.txt` 只安装了 Playwright 的 Python 接口库，**并没有自动下载 Chromium 浏览器内核及其底层运行依赖**；
+  - **一键修复与安装命令**：
+    - **macOS / Windows 本地环境**：
+      ```bash
+      # 激活后端虚拟环境后执行
+      playwright install chromium
+      ```
+    - **Linux 服务器（Ubuntu / Debian / CentOS 等）**：
+      ```bash
+      # 安装 Chromium 内核及 Linux 底层图形/音频动态链接库 (需要 sudo 权限)
+      playwright install --with-deps chromium
+      ```
+
+---
+
+#### 7. ⚠️ 安全合规与法律风险红线警示
 
 > [!CAUTION]
 > **平台严禁将浏览器自动化能力用于任何违法、违规或高危场景！**
@@ -571,6 +608,14 @@ mindmap
 
 - **解答**：**立即彻底终止**。
   - 平台已建立下行信号硬取消机制。当用户点击停止按钮时，前端会向后端发送中断信号，服务端会即刻断开 LLM 连接池流式会话并强行终止下游正在排队或执行的工具协程，彻底避免后台静默消耗 Token 与计算资源。
+
+##### Q8: 源码部署后调用浏览器自动化提示“浏览器无法启动”或找不到组件怎么办？
+
+- **解答**：
+  - **排查原因**：Docker 镜像已自带所有浏览器依赖，但如果是从源码 `pip install` 部署，Playwright 默认不会自带数十兆的浏览器内核；
+  - **解决方法**：在后端 Python 虚拟环境中运行以下命令一键初始化：
+    - macOS / Windows：`playwright install chromium`
+    - Linux 服务器：`playwright install --with-deps chromium`（自动补齐缺失的系统动态库）。
 
 ---
 
