@@ -8070,8 +8070,75 @@ onMounted(() => {
     fetchSlashCommands();
   }
 
+  // 切回前台（切回 App 或多标签页）时自动探测并拉取最新会话历史，避免切后台中断导致消息丢失
+  const onVisibilityChange = async () => {
+    if (document.visibilityState === "visible") {
+      if (!conversationId.value || !hasPermission.value) return;
+      try {
+        const headers: any = {};
+        if (config.token) {
+          headers["Authorization"] = `Bearer ${config.token}`;
+          headers["X-API-Key"] = config.token;
+        }
+        const res = await axios.get("/api/v1/chat/history", {
+          params: { conversation_id: conversationId.value, page: 1, page_size: 5 },
+          headers,
+        });
+        if (res.data?.data && Array.isArray(res.data.data.items) && res.data.data.items.length > 0) {
+          const latestServerItem = res.data.data.items[0];
+          if (latestServerItem && latestServerItem.summary) {
+            const matchedIndex = messages.value.findIndex(
+              m => m.trace_id && m.trace_id === latestServerItem.trace_id && m.role === 'agent'
+            );
+            if (matchedIndex !== -1) {
+              const currentMsg = messages.value[matchedIndex];
+              if (currentMsg && (!currentMsg.content || currentMsg.content.length < latestServerItem.summary.length || currentMsg.isThinking)) {
+                currentMsg.content = latestServerItem.summary;
+                currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
+                currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
+                currentMsg.isThinking = false;
+                if (isProcessing.value) {
+                  isProcessing.value = false;
+                }
+              }
+            } else {
+              const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
+              if (isProcessing.value || (lastMsg && lastMsg.role === 'user')) {
+                messages.value.push({
+                  id: Date.now(),
+                  trace_id: latestServerItem.trace_id,
+                  role: 'agent',
+                  content: latestServerItem.summary,
+                  reasoningContent: latestServerItem.reasoning_content ?? undefined,
+                  processTimeline: hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content),
+                  logs: [],
+                  isThinking: false,
+                  feedback: null,
+                  agentName: latestServerItem.agent_name ?? undefined,
+                  agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
+                  agentType: latestServerItem.agent_type ?? undefined,
+                  prompt_tokens: latestServerItem.prompt_tokens ?? undefined,
+                  completion_tokens: latestServerItem.completion_tokens ?? undefined,
+                  total_tokens: latestServerItem.total_tokens ?? undefined,
+                  timestamp: latestServerItem.created_at,
+                });
+                isProcessing.value = false;
+                await nextTick();
+                scrollToBottom();
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[LifeCycle] Failed to sync session on visibility change:", err);
+      }
+    }
+  };
+
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
   // Attach cleanup handlers to component instance scope
-  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline };
+  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange };
 });
 onUnmounted(() => {
   cancelPendingUrlTokenInitialization();
@@ -8081,6 +8148,7 @@ onUnmounted(() => {
   if (handlers?.onMessage) window.removeEventListener("message", handlers.onMessage);
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
   if (handlers?.onOffline) window.removeEventListener("offline", handlers.onOffline);
+  if (handlers?.onVisibilityChange) document.removeEventListener("visibilitychange", handlers.onVisibilityChange);
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);

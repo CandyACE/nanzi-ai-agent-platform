@@ -807,6 +807,7 @@ const AI_ACTION_CONFIG: Record<string, { icon: string; label: string; color: str
   exporting_pdf: { icon: '📄', label: 'AI 正在导出网页 PDF', color: 'text-rose-600 dark:text-rose-400' },
   extracting_table: { icon: '📊', label: 'AI 正在提取表格数据', color: 'text-emerald-600 dark:text-emerald-400' },
   executing_js: { icon: '⚡', label: 'AI 正在执行页面脚本', color: 'text-purple-600 dark:text-purple-400' },
+  solving_captcha: { icon: '🛡️', label: 'AI 正在尝试自动识别验证码', color: 'text-indigo-600 dark:text-indigo-400' },
 };
 
 const aiActionInfo = computed(() => {
