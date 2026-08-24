@@ -143,6 +143,22 @@ def _redact_runtime_tool_arguments(
         if "file_path" in payload:
             payload["file_path"] = "<redacted>"
         return payload
+    if tool_name == "browser_set_cookies":
+        from app.services.ai.browser.browser_policy import redact_browser_cookies
+
+        payload = dict(arguments)
+        payload["cookies"] = redact_browser_cookies(payload.get("cookies"))
+        return payload
+    if tool_name == "browser_execute_js":
+        payload = dict(arguments)
+        if "script" in payload:
+            payload["script"] = f"<redacted script length={len(str(payload['script']))}>"
+        return payload
+    if tool_name == "browser_handle_dialog":
+        payload = dict(arguments)
+        if "prompt_text" in payload:
+            payload["prompt_text"] = "<redacted>"
+        return payload
     if tool_name != "browser_fill":
         return dict(arguments)
     from app.services.ai.browser.browser_policy import redact_browser_arguments
@@ -165,6 +181,9 @@ async def _browser_permission_decision(
         "browser_slider_drag",
         "browser_upload",
         "browser_download",
+        "browser_execute_js",
+        "browser_set_cookies",
+        "browser_handle_dialog",
     }:
         return None
 
@@ -236,6 +255,14 @@ async def _browser_permission_decision(
 
     if tool_name == "browser_upload":
         action_class = "commit"
+    elif tool_name in {"browser_execute_js", "browser_set_cookies"}:
+        action_class = "commit"
+    elif tool_name == "browser_handle_dialog":
+        action_class = (
+            "interact"
+            if str(tool_input.get("action") or "accept").casefold() == "dismiss"
+            else "commit"
+        )
     elif tool_name == "browser_press":
         key = str(tool_input.get("key") or "").strip().casefold()
         if element is None:
@@ -243,7 +270,12 @@ async def _browser_permission_decision(
         elif key in {"enter", "numpadenter", "ctrl+enter", "meta+enter"}:
             target_class = classify_browser_action(role=element.role, name=element.name)
             role = str(element.role or "").casefold()
-            action_class = "interact" if role in {"textbox", "searchbox", "combobox"} and target_class != "commit" else target_class
+            if role == "searchbox" and target_class != "commit":
+                action_class = "interact"
+            elif role in {"textbox", "combobox"} and target_class != "commit":
+                action_class = "commit"
+            else:
+                action_class = target_class
         else:
             action_class = "interact"
     else:
@@ -262,10 +294,15 @@ async def _browser_permission_decision(
             )
 
     if action_class == "commit" and session.approval_mode != "autopilot":
+        decision_reason = (
+            "guarded_browser_sensitive_tool"
+            if tool_name in {"browser_execute_js", "browser_set_cookies"}
+            else "guarded_browser_commit"
+        )
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message="该浏览器动作可能提交、删除或产生外部副作用，需要用户确认。",
-            decision_reason="guarded_browser_commit",
+            decision_reason=decision_reason,
         )
     return PermissionDecision(
         behavior=PermissionBehavior.ALLOW,
@@ -466,6 +503,9 @@ class AgentScopeRuntimeTool:
             "browser_slider_drag",
             "browser_upload",
             "browser_download",
+            "browser_execute_js",
+            "browser_set_cookies",
+            "browser_handle_dialog",
         }:
             if self.approval_mode == "deny":
                 return PermissionDecision(

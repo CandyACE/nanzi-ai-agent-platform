@@ -7,6 +7,7 @@ import pytest
 
 from app.schemas.browser import BrowserSnapshot
 from app.services.ai.browser.browser_worker import BrowserTargetStale, BrowserWorker
+from app.services.ai.browser.browser_worker import _BrowserHandle
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -123,6 +124,7 @@ class FakePage:
         self.reload = AsyncMock(return_value=object())
         self.close = AsyncMock()
         self.download_context = FakeDownloadContext()
+        self.dialog_listeners = []
         self.locator_value = FakeLocator(
             self,
             [
@@ -155,6 +157,14 @@ class FakePage:
 
     async def title(self):
         return "百度一下"
+
+    def on(self, event, listener):
+        if event == "dialog":
+            self.dialog_listeners.append(listener)
+
+    def remove_listener(self, event, listener):
+        if event == "dialog" and listener in self.dialog_listeners:
+            self.dialog_listeners.remove(listener)
 
     async def evaluate(self, script):
         self.evaluate_scripts.append(script)
@@ -221,6 +231,102 @@ async def test_worker_open_snapshot_and_semantic_click(tmp_path):
     assert result.action == "click"
     assert fake_playwright.chromium.launch_persistent_context.await_count == 1
     assert fake_context_page(fake_playwright).role_calls == [("button", "百度一下", True)]
+
+
+@pytest.mark.asyncio
+async def test_execute_js_rejects_oversized_scripts():
+    worker = BrowserWorker(url_validator=lambda url: url)
+
+    worker._handles["js-1"] = _BrowserHandle(context=Mock(), page=FakePage())
+
+    with pytest.raises(ValueError, match="脚本长度超过限制"):
+        await worker.execute_js("js-1", script="x" * 50001)
+
+
+@pytest.mark.asyncio
+async def test_execute_js_allows_page_automation_primitives():
+    page = FakePage()
+    page.evaluate = AsyncMock(return_value={"ok": True})
+    worker = BrowserWorker(url_validator=lambda url: url)
+    worker._handles["js-automation"] = _BrowserHandle(context=Mock(), page=page)
+
+    result = await worker.execute_js(
+        "js-automation",
+        script="document.querySelector('form').submit(); fetch('/api/orders')",
+    )
+
+    page.evaluate.assert_awaited_once_with(
+        "document.querySelector('form').submit(); fetch('/api/orders')"
+    )
+    assert result.data["result"] == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_execute_js_truncates_oversized_results():
+    page = FakePage()
+    page.evaluate = AsyncMock(return_value="x" * 20001)
+    worker = BrowserWorker(url_validator=lambda url: url)
+    worker._handles["js-3"] = _BrowserHandle(context=Mock(), page=page)
+
+    result = await worker.execute_js("js-3", script="document.body.innerText")
+
+    assert result.data["result"]["truncated"] is True
+    assert result.data["result"]["size_chars"] > 20000
+    assert len(result.data["result"]["preview"]) == 20000
+
+
+@pytest.mark.asyncio
+async def test_get_cookies_redacts_cookie_values():
+    page = FakePage()
+    context = Mock()
+    context.cookies = AsyncMock(
+        return_value=[{"name": "sid", "value": "secret", "domain": "example.com"}]
+    )
+    worker = BrowserWorker(url_validator=lambda url: url)
+    worker._handles["cookie-1"] = _BrowserHandle(context=context, page=page)
+
+    result = await worker.get_cookies("cookie-1")
+
+    assert result.data["cookies"] == [
+        {"name": "sid", "value": "<redacted>", "domain": "example.com"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_check_auth_does_not_treat_an_arbitrary_cookie_as_authenticated():
+    page = FakePage()
+    page.evaluate = AsyncMock(
+        return_value={
+            "has_local_storage_tokens": False,
+            "has_session_storage_tokens": False,
+            "has_logout_indicator": False,
+            "has_login_indicator": False,
+            "page_url": "https://example.com/",
+        }
+    )
+    context = Mock()
+    context.cookies = AsyncMock(
+        return_value=[{"name": "analytics_id", "value": "opaque-id"}]
+    )
+    worker = BrowserWorker(url_validator=lambda url: url)
+    worker._handles["auth-1"] = _BrowserHandle(context=context, page=page)
+
+    result = await worker.check_auth("auth-1")
+
+    assert result.data["is_authenticated"] is None
+    assert result.data["auth_confidence"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_handle_dialog_replaces_previous_listener():
+    page = FakePage()
+    worker = BrowserWorker(url_validator=lambda url: url)
+    worker._handles["dialog-1"] = _BrowserHandle(context=Mock(), page=page)
+
+    await worker.handle_dialog("dialog-1", action="accept")
+    await worker.handle_dialog("dialog-1", action="dismiss")
+
+    assert len(page.dialog_listeners) == 1
 
 
 def _page_with_subframe(subframe_elements):
@@ -1492,4 +1598,3 @@ async def test_snapshot_js_recognizes_contenteditable_and_aria_textboxes(tmp_pat
     search_box = snapshot.elements[2]
     assert search_box.role == "searchbox"
     assert search_box.name == "站内搜索"
-

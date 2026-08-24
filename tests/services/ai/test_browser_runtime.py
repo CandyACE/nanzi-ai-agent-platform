@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.schemas.browser import BrowserSnapshot, BrowserToolResult
+from app.services.ai.browser.browser_runtime import BrowserControlConflict
 from app.services.ai.browser.browser_runtime import BrowserRuntime
 from app.services.ai.browser.browser_worker import BrowserPageInfo
 
@@ -215,7 +216,33 @@ async def test_browser_runtime_forwards_slider_drag_payload():
 
 
 @pytest.mark.asyncio
-async def test_browser_runtime_ignores_release_from_stale_viewer_owner():
+async def test_browser_runtime_invalidates_snapshot_after_cookie_injection():
+    worker = ControlProbeWorker()
+    worker.set_cookies = AsyncMock(
+        return_value=BrowserToolResult(
+            session_id="session-1",
+            action="set_cookies",
+            url="https://example.com/",
+            title="Example",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+    runtime._snapshots["session-1"] = {
+        "snapshot-1": BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="snapshot-1",
+            url="https://example.com/",
+            title="Example",
+        )
+    }
+
+    await runtime.set_cookies("session-1", cookies=[{"name": "sid", "value": "secret"}])
+
+    assert "session-1" not in runtime._snapshots
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_rejects_input_from_stale_viewer_owner():
     worker = ControlProbeWorker()
     runtime = BrowserRuntime(worker=worker)
 
@@ -225,15 +252,24 @@ async def test_browser_runtime_ignores_release_from_stale_viewer_owner():
         payload={"x": 10, "y": 10},
         owner_id="viewer-old",
     )
+    with pytest.raises(BrowserControlConflict):
+        await runtime.manual_input(
+            "session-1",
+            event="mouse_click",
+            payload={"x": 20, "y": 20},
+            owner_id="viewer-new",
+        )
+
+    await runtime.release_human_control("session-1", owner_id="viewer-old")
+
+    assert runtime.control_state("session-1")["owner"] == "ai"
+
     await runtime.manual_input(
         "session-1",
         event="mouse_click",
         payload={"x": 20, "y": 20},
         owner_id="viewer-new",
     )
-
-    await runtime.release_human_control("session-1", owner_id="viewer-old")
-
     assert runtime.control_state("session-1")["owner"] == "human"
 
     await runtime.release_human_control("session-1", owner_id="viewer-new")

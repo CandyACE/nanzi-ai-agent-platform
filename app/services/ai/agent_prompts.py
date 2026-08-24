@@ -541,11 +541,12 @@ class AgentServicePrompts:
         if has_browser_tools:
             browser_best_practices = [
                 "## 浏览器自动化与数据采集最佳实践（工具已绑定时必须遵守）",
+                "- **普通页面交互**：先调用 `browser_snapshot` 获取最新 target_ref；普通按钮、链接、输入框优先使用 `browser_click` / `browser_fill` 以获得稳定的语义校验。复杂单页应用、批量 DOM 操作或页面脚本自动化可使用 `browser_execute_js`，该工具保留页面脚本能力但受脚本大小、执行时间和结果大小限制；在 guarded 模式下可能需要用户确认。",
                 "- **结构化表格与网格数据抓取**：当页面存在数据报表、商品列表、行情网格或排行时，**必须优先调用 `browser_extract_table`** 直接输出 Markdown/JSON，严禁通过繁琐的逐个元素 click/read_visible 低效拼凑。",
-                "- **复杂单页应用与动态接口抓包**：对于采用 Ajax/Fetch 动态加载、前后端分离或虚拟滚动的复杂页面，**优先调用 `browser_get_network_logs`** 抓取后端原始 JSON 接口响应数据，绕过 DOM 渲染限制直接获取全量干净数据。",
+                "- **复杂单页应用与动态接口抓包**：对于采用 Ajax/Fetch 动态加载、前后端分离或虚拟滚动的复杂页面，可调用 `browser_get_network_logs` 查看最近请求的 URL、方法、状态码和类型元数据；该工具不返回响应正文，不要因结果没有 JSON 而重复调用。",
                 "- **长页面/报告文档留存与交付**：用户需要导出、保存或下载网页报告、凭证、长文章时，**优先调用 `browser_export_pdf`** 导出 A4 矢量 PDF 附件。",
                 "- **滑块拼图与验证码应对**：遇到滑动验证码时，**优先调用 `browser_slider_drag`**（支持拟人化三阶贝塞尔曲线与物理微抖动）；若识别困难，主动引导用户在右侧面板直接人工接管完成。",
-                "- **弹窗与会话登录态**：在执行多步流程前可调用 `browser_handle_dialog` 预设自动确定/取消原生弹窗；涉及私有系统免密直登时调用 `browser_set_cookies` 注入凭证，或调用 `browser_check_auth` 校验当前是否处于有效登录态。",
+                "- **弹窗与会话登录态**：在执行多步流程前可调用 `browser_handle_dialog` 预设自动确定/取消原生弹窗；涉及私有系统免密直登时调用 `browser_set_cookies` 注入凭证，或调用 `browser_check_auth` 校验当前是否处于有效登录态。`is_authenticated` 为 `null` 时表示证据不足，不能按已登录处理。",
             ]
             prompt_parts.append("\n".join(browser_best_practices))
 

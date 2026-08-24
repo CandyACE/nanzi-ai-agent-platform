@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import time
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse
@@ -20,6 +25,7 @@ from app.schemas.browser import (
     BrowserSessionResponse,
 )
 from app.services.ai.browser.browser_policy import BrowserUrlBlocked
+from app.services.ai.browser.browser_runtime import BrowserControlConflict
 from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.browser.browser_profile_service import (
     BrowserProfileAccessDenied,
@@ -298,6 +304,68 @@ def _viewer_token_from_websocket(websocket: WebSocket) -> tuple[str | None, str 
     return websocket.query_params.get("token"), None
 
 
+def _viewer_origin_allowed(websocket: WebSocket) -> bool:
+    """限制浏览器端 WebSocket 只能来自当前站点或显式配置的前端站点。"""
+    origin = str(websocket.headers.get("origin") or "").strip().rstrip("/")
+    if not origin:
+        # 非浏览器客户端通常没有 Origin，仍由 viewer token 负责认证。
+        return True
+    configured_origins = {
+        item.strip().rstrip("/")
+        for item in os.environ.get("BROWSER_VIEWER_ALLOWED_ORIGINS", "").split(",")
+        if item.strip()
+    }
+    if "*" in configured_origins or origin in configured_origins:
+        return True
+    parsed = urlsplit(origin)
+    host = str(websocket.headers.get("host") or "")
+    return parsed.scheme in {"http", "https"} and bool(host) and parsed.netloc == host
+
+
+_VIEWER_MAX_MESSAGE_BYTES = 64 * 1024
+_VIEWER_RATE_WINDOW_SECONDS = 10.0
+_VIEWER_MAX_MESSAGES_PER_WINDOW = 120
+_VIEWER_MAX_MOUSE_MOVES_PER_WINDOW = 900
+
+
+def _accept_viewer_message(
+    message: Any,
+    timestamps: deque[float],
+    *,
+    mouse_move_timestamps: deque[float] | None = None,
+    now: float | None = None,
+) -> tuple[bool, str | None]:
+    """校验单条查看器输入，限制消息体大小和单连接事件速率。"""
+    if not isinstance(message, dict):
+        return False, "浏览器输入消息格式无效"
+    try:
+        message_size = len(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError, OverflowError):
+        return False, "浏览器输入消息格式无效"
+    if message_size > _VIEWER_MAX_MESSAGE_BYTES:
+        return False, "浏览器输入消息过大"
+
+    current_time = time.monotonic() if now is None else now
+    cutoff = current_time - _VIEWER_RATE_WINDOW_SECONDS
+    event_type = str(message.get("type") or "")
+    rate_timestamps = (
+        mouse_move_timestamps
+        if event_type == "mouse_move" and mouse_move_timestamps is not None
+        else timestamps
+    )
+    max_messages = (
+        _VIEWER_MAX_MOUSE_MOVES_PER_WINDOW
+        if event_type == "mouse_move" and mouse_move_timestamps is not None
+        else _VIEWER_MAX_MESSAGES_PER_WINDOW
+    )
+    while rate_timestamps and rate_timestamps[0] <= cutoff:
+        rate_timestamps.popleft()
+    if len(rate_timestamps) >= max_messages:
+        return False, "浏览器输入过于频繁"
+    rate_timestamps.append(current_time)
+    return True, None
+
+
 async def _send_viewer_control_state(
     websocket: WebSocket,
     session_id: str,
@@ -352,6 +420,9 @@ async def _forward_runtime_events(
 
 @viewer_router.websocket("/sessions/{session_id}/viewer")
 async def browser_viewer(websocket: WebSocket, session_id: str):
+    if not _viewer_origin_allowed(websocket):
+        await websocket.close(code=4403)
+        return
     token, selected_protocol = _viewer_token_from_websocket(websocket)
     if not token:
         await websocket.close(code=4403)
@@ -360,6 +431,8 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
         should_release_control = False
         forward_task: asyncio.Task | None = None
         event_queue: asyncio.Queue | None = None
+        message_timestamps: deque[float] = deque()
+        mouse_move_timestamps: deque[float] = deque()
         try:
             session = await BrowserSessionService(db).resolve_viewer_token(token)
             if session.id != session_id:
@@ -382,6 +455,17 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
 
             while True:
                 message = await websocket.receive_json()
+                accepted, input_error = _accept_viewer_message(
+                    message,
+                    message_timestamps,
+                    mouse_move_timestamps=mouse_move_timestamps,
+                )
+                if not accepted:
+                    await websocket.send_json({"type": "error", "message": input_error})
+                    if input_error in {"浏览器输入消息过大", "浏览器输入过于频繁"}:
+                        await websocket.close(code=1009 if input_error.endswith("过大") else 4429)
+                        break
+                    continue
                 event = str(message.get("type", ""))
                 try:
                     if event == "snapshot":
@@ -510,7 +594,14 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                     await _send_viewer_control_state(websocket, session.id, snapshot)
                     await websocket.send_json({"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)})
                     await _send_viewer_tabs(websocket, session.id)
-                except Exception as op_exc:
+                except BrowserControlConflict:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": "浏览器正在由另一个连接控制，请先等待其他浏览器面板释放控制权",
+                        }
+                    )
+                except Exception:
                     logger.exception("Browser viewer operation failed")
                     await websocket.send_json({"type": "error", "message": "浏览器操作失败，请刷新后重试"})
         except BrowserAccessDenied:

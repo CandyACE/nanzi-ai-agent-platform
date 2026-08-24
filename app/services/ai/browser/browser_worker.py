@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import math
 import os
 import random
@@ -19,8 +20,10 @@ from app.services.ai.browser.browser_policy import (
     classify_browser_action,
     decide_browser_action,
     redact_browser_arguments,
+    redact_browser_cookies,
     validate_browser_navigation,
     validate_browser_request,
+    validate_browser_script,
 )
 
 
@@ -423,6 +426,7 @@ class _BrowserHandle:
     next_tab_number: int = 1
     last_active_at: float = field(default_factory=asyncio.get_event_loop().time if False else lambda: 0.0)
     network_logs: list[dict[str, Any]] = field(default_factory=list)
+    dialog_listener: Any = None
 
     def touch(self) -> None:
         try:
@@ -1649,6 +1653,11 @@ class BrowserWorker:
         handle = self._handle(session_id)
         action_type = "accept" if str(action).lower() in {"accept", "ok", "yes", "confirm"} else "dismiss"
 
+        old_listener = handle.dialog_listener
+        remove_listener = getattr(handle.page, "remove_listener", None)
+        if old_listener is not None and callable(remove_listener):
+            await _maybe_await(remove_listener("dialog", old_listener))
+
         async def _dialog_handler(dialog: Any) -> None:
             try:
                 if action_type == "accept":
@@ -1658,7 +1667,11 @@ class BrowserWorker:
             except Exception:
                 pass
 
-        handle.page.on("dialog", lambda d: asyncio.create_task(_dialog_handler(d)))
+        def _dialog_listener(dialog: Any) -> None:
+            asyncio.create_task(_dialog_handler(dialog))
+
+        handle.dialog_listener = _dialog_listener
+        handle.page.on("dialog", _dialog_listener)
         info = await self._page_info(handle.page)
         return BrowserToolResult(
             session_id=session_id,
@@ -1674,15 +1687,25 @@ class BrowserWorker:
         *,
         script: str,
     ) -> BrowserToolResult:
-        """在当前页面上下文沙箱中执行轻量 JavaScript 脚本并捕获返回值。"""
+        """在当前页面上下文执行受限 DOM JavaScript 脚本并捕获返回值。"""
         handle = self._handle(session_id)
-        raw_script = str(script or "").strip()
-        if not raw_script:
-            raise ValueError("待执行的 JavaScript 脚本不能为空")
+        raw_script = validate_browser_script(script)
         try:
-            eval_result = await _maybe_await(handle.page.evaluate(raw_script))
+            eval_result = await asyncio.wait_for(
+                _maybe_await(handle.page.evaluate(raw_script)),
+                timeout=15,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("页面 JavaScript 执行超时") from exc
         except Exception as e:
             raise RuntimeError(f"页面 JavaScript 执行报错: {str(e)}") from e
+        serialized_result = json.dumps(eval_result, ensure_ascii=False, default=str)
+        if len(serialized_result) > 20000:
+            eval_result = {
+                "truncated": True,
+                "size_chars": len(serialized_result),
+                "preview": serialized_result[:20000],
+            }
         info = await self._page_info(handle.page)
         self._snapshots.pop(session_id, None)
         return BrowserToolResult(
@@ -1719,11 +1742,32 @@ class BrowserWorker:
         }
         """
         detect_res = await _maybe_await(handle.page.evaluate(auth_detect_script))
-        is_logged_in = False
-        if bool(detect_res.get("has_logout_indicator")) or bool(detect_res.get("has_local_storage_tokens")):
+        has_logout_indicator = bool(detect_res.get("has_logout_indicator"))
+        has_login_indicator = bool(detect_res.get("has_login_indicator"))
+        has_storage_tokens = bool(
+            detect_res.get("has_local_storage_tokens")
+            or detect_res.get("has_session_storage_tokens")
+        )
+        if has_logout_indicator:
             is_logged_in = True
-        elif len(cookies) > 0 and not bool(detect_res.get("has_login_indicator")):
-            is_logged_in = True
+            auth_confidence = "high"
+            auth_reason = "页面存在退出登录标识"
+        elif has_login_indicator:
+            is_logged_in = False
+            auth_confidence = "high"
+            auth_reason = "页面存在登录提示且未发现退出登录标识"
+        elif has_storage_tokens:
+            is_logged_in = None
+            auth_confidence = "unknown"
+            auth_reason = "检测到存储中的认证字段，但缺少明确的页面登录状态标识"
+        elif cookies:
+            is_logged_in = None
+            auth_confidence = "unknown"
+            auth_reason = "检测到 Cookie，但 Cookie 本身不足以证明登录有效"
+        else:
+            is_logged_in = None
+            auth_confidence = "unknown"
+            auth_reason = "未检测到明确的登录或未登录状态证据"
 
         info = await self._page_info(handle.page)
         return BrowserToolResult(
@@ -1733,6 +1777,8 @@ class BrowserWorker:
             title=info.title,
             data={
                 "is_authenticated": is_logged_in,
+                "auth_confidence": auth_confidence,
+                "auth_reason": auth_reason,
                 "cookie_count": len(cookies),
                 "indicators": detect_res,
             },
@@ -1786,7 +1832,7 @@ class BrowserWorker:
             title=info.title,
             data={
                 "count": len(cookies),
-                "cookies": cookies,
+                "cookies": redact_browser_cookies(cookies),
             },
         )
 
@@ -1804,6 +1850,7 @@ class BrowserWorker:
         if not callable(add_cookies):
             raise RuntimeError("当前浏览器环境不支持 Cookie 注入")
         await _maybe_await(add_cookies(cookies))
+        self._snapshots.pop(session_id, None)
         info = await self._page_info(handle.page)
         return BrowserToolResult(
             session_id=session_id,

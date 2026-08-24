@@ -28,6 +28,10 @@ class BrowserHumanControlRequired(RuntimeError):
     """页面需要人工接管（如验证码）但限时内无人持续操作，AI 应终止并上报。"""
 
 
+class BrowserControlConflict(RuntimeError):
+    """当前浏览器会话已被另一个人工连接控制。"""
+
+
 @dataclass
 class _HumanControl:
     reason: str
@@ -111,6 +115,12 @@ class BrowserRuntime:
     ) -> _HumanControl:
         now = time.monotonic()
         state = self._human_controls.get(session_id)
+        if (
+            state is not None
+            and owner_id is not None
+            and state.owner_id not in {None, owner_id}
+        ):
+            raise BrowserControlConflict("当前浏览器会话已被另一个人工连接控制")
         if state is None:
             state = _HumanControl(
                 reason=reason,
@@ -846,12 +856,16 @@ class BrowserRuntime:
         action: str = "accept",
         prompt_text: str | None = None,
     ) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            return await self.worker.handle_dialog(
-                session_id,
-                action=action,
-                prompt_text=prompt_text,
-            )
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                return await self.worker.handle_dialog(
+                    session_id,
+                    action=action,
+                    prompt_text=prompt_text,
+                )
 
     async def execute_js(
         self,
@@ -873,8 +887,12 @@ class BrowserRuntime:
             await self.clear_ai_action(session_id)
 
     async def check_auth(self, session_id: str) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            return await self.worker.check_auth(session_id)
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                return await self.worker.check_auth(session_id)
 
     async def get_network_logs(
         self,
@@ -883,12 +901,16 @@ class BrowserRuntime:
         filter_url: str | None = None,
         limit: int = 20,
     ) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            return await self.worker.get_network_logs(
-                session_id,
-                filter_url=filter_url,
-                limit=limit,
-            )
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                return await self.worker.get_network_logs(
+                    session_id,
+                    filter_url=filter_url,
+                    limit=limit,
+                )
 
     async def get_cookies(
         self,
@@ -896,8 +918,12 @@ class BrowserRuntime:
         *,
         urls: list[str] | None = None,
     ) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            return await self.worker.get_cookies(session_id, urls=urls)
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                return await self.worker.get_cookies(session_id, urls=urls)
 
     async def set_cookies(
         self,
@@ -905,8 +931,14 @@ class BrowserRuntime:
         *,
         cookies: list[dict[str, Any]],
     ) -> BrowserToolResult:
-        async with self._session_lock(session_id):
-            return await self.worker.set_cookies(session_id, cookies=cookies)
+        while True:
+            await self._wait_for_ai_control(session_id)
+            async with self._session_lock(session_id):
+                if session_id in self._human_controls:
+                    continue
+                result = await self.worker.set_cookies(session_id, cookies=cookies)
+                self._snapshots.pop(session_id, None)
+                return result
 
     async def close(self, session_id: str) -> None:
         async with self._session_lock(session_id):

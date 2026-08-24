@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import uuid
+import asyncio
 import hashlib
 import secrets
+import uuid
 from datetime import datetime
 from datetime import timedelta
-from typing import Callable
+from typing import Callable, ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,8 @@ class BrowserAccessDenied(PermissionError):
 
 
 class BrowserSessionService:
+    _open_locks: ClassVar[dict[tuple[int, str], asyncio.Lock]] = {}
+
     def __init__(
         self,
         db: AsyncSession,
@@ -43,49 +46,54 @@ class BrowserSessionService:
         profile_id: str | None,
     ) -> BrowserSession:
         self.url_validator(url)
-        profile = (
-            await self.profile_service.get_owned(user_id=user_id, profile_id=profile_id)
-            if profile_id
-            else await self.profile_service.get_or_create_default(user_id=user_id)
-        )
+        # 先按用户串行解析 Profile，再检查活动 Session，避免“默认 Profile”和显式
+        # Profile ID 两条请求路径在同一进程内交叉创建两个 Chromium 会话。
+        lock_key = (user_id, "__browser_open__")
+        lock = self._open_locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
+            profile = (
+                await self.profile_service.get_owned(user_id=user_id, profile_id=profile_id)
+                if profile_id
+                else await self.profile_service.get_or_create_default(user_id=user_id)
+            )
 
-        conditions = [
-            BrowserSession.user_id == user_id,
-            BrowserSession.profile_id == profile.id,
-            BrowserSession.status.in_(("active", "waiting_user")),
-        ]
-        # 一个持久化 Profile 同时只挂载一个活动 Session，避免两个 Chromium
-        # Context 并发打开同一 user_data_dir；新对话接管时复用该 Session。
-        result = await self.db.execute(
-            select(BrowserSession)
-            .where(*conditions)
-            .order_by(BrowserSession.updated_at.desc())
-        )
-        session = result.scalars().first()
-        if session is not None:
-            if conversation_id:
-                session.attached_conversation_id = conversation_id
-            session.current_url = url
-            session.updated_at = datetime.now()
+            conditions = [
+                BrowserSession.user_id == user_id,
+                BrowserSession.profile_id == profile.id,
+                BrowserSession.status.in_(("active", "waiting_user")),
+            ]
+            # 一个持久化 Profile 同时只挂载一个活动 Session，避免两个 Chromium
+            # Context 并发打开同一 user_data_dir；新对话接管时复用该 Session。
+            result = await self.db.execute(
+                select(BrowserSession)
+                .where(*conditions)
+                .order_by(BrowserSession.updated_at.desc())
+            )
+            session = result.scalars().first()
+            if session is not None:
+                if conversation_id:
+                    session.attached_conversation_id = conversation_id
+                session.current_url = url
+                session.updated_at = datetime.now()
+                await self.db.flush()
+                return session
+
+            now = datetime.now()
+            session = BrowserSession(
+                id=str(uuid.uuid4()),
+                profile_id=profile.id,
+                user_id=user_id,
+                attached_conversation_id=conversation_id,
+                current_url=url,
+                approval_mode=BrowserApprovalMode.AUTOPILOT.value,
+                status="active",
+                created_at=now,
+                updated_at=now,
+                last_seen_at=now,
+            )
+            self.db.add(session)
             await self.db.flush()
             return session
-
-        now = datetime.now()
-        session = BrowserSession(
-            id=str(uuid.uuid4()),
-            profile_id=profile.id,
-            user_id=user_id,
-            attached_conversation_id=conversation_id,
-            current_url=url,
-            approval_mode=BrowserApprovalMode.AUTOPILOT.value,
-            status="active",
-            created_at=now,
-            updated_at=now,
-            last_seen_at=now,
-        )
-        self.db.add(session)
-        await self.db.flush()
-        return session
 
     async def get_owned_session(self, *, user_id: int, session_id: str) -> BrowserSession:
         result = await self.db.execute(

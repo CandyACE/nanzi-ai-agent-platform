@@ -44,6 +44,9 @@ _BROWSER_ACTION_TOOLS = frozenset({
     "browser_back",
     "browser_forward",
     "browser_reload",
+    "browser_execute_js",
+    "browser_set_cookies",
+    "browser_handle_dialog",
 })
 
 # 工作区/文件观察类只读工具
@@ -250,5 +253,4 @@ class ToolLoopDetector:
         self.fuse_reason_code = reason_code
         self.fuse_count = count
         return ToolLoopVerdict(fused=True, count=count, message=message, reason_code=reason_code)
-
 

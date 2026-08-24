@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional
 
 from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
+from app.schemas.browser import BrowserToolResult
 from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.tools.tool_compat import tool
 
@@ -459,7 +460,7 @@ async def browser_handle_dialog(
 async def browser_execute_js(
     script: str,
 ) -> str:
-    """在当前浏览器页面沙箱中执行轻量 JavaScript 脚本并获取返回结果（可用于清理遮罩弹窗或展开折叠区域）。"""
+    """在当前浏览器页面执行 JavaScript 脚本并获取返回结果（支持复杂页面自动化，带资源上限但不是隔离沙箱）。"""
     context = _context_or_error()
     session = await _owned_session(context)
     result = await browser_runtime.execute_js(
@@ -483,7 +484,7 @@ async def browser_get_network_logs(
     filter_url: str | None = None,
     limit: int = 20,
 ) -> str:
-    """获取当前浏览器会话捕获的网络请求与 API 接口日志列表（支持 URL 关键词过滤，可直接提取后端 Ajax/Fetch 接口响应）。"""
+    """获取当前浏览器会话捕获的网络请求元数据（支持 URL 关键词过滤，不返回接口响应正文）。"""
     context = _context_or_error()
     session = await _owned_session(context)
     result = await browser_runtime.get_network_logs(
@@ -498,7 +499,7 @@ async def browser_get_network_logs(
 async def browser_get_cookies(
     urls: list[str] | None = None,
 ) -> str:
-    """获取当前浏览器会话指定 URL 或当前域名的所有 Cookie 列表。"""
+    """获取当前浏览器会话指定 URL 或当前域名的 Cookie 元数据（Cookie 值会脱敏）。"""
     context = _context_or_error()
     session = await _owned_session(context)
     result = await browser_runtime.get_cookies(

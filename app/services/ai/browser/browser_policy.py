@@ -14,6 +14,10 @@ class BrowserUrlBlocked(ValueError):
     """浏览器导航目标未通过 SSRF 与地址范围校验。"""
 
 
+class BrowserScriptBlocked(ValueError):
+    """浏览器页面脚本违反资源限制。"""
+
+
 @dataclass(frozen=True)
 class BrowserDecision:
     allowed: bool
@@ -61,6 +65,7 @@ _BLOCKED_HOSTNAMES = {
 
 
 _FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+_BROWSER_SCRIPT_MAX_LENGTH = 50000
 
 
 def _is_blocked_ip(value: str) -> bool:
@@ -162,3 +167,31 @@ def redact_browser_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
             if key in payload:
                 payload[key] = "<redacted>"
     return payload
+
+
+def redact_browser_cookies(cookies: Any) -> Any:
+    """保留 Cookie 元数据，但永不把 Cookie 值带入审计或工具结果。"""
+    if not isinstance(cookies, list):
+        return cookies
+    redacted: list[Any] = []
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            redacted.append("<redacted>")
+            continue
+        payload = dict(cookie)
+        if "value" in payload:
+            payload["value"] = "<redacted>"
+        redacted.append(payload)
+    return redacted
+
+
+def validate_browser_script(script: str) -> str:
+    """保留页面脚本的自动化能力，仅限制空脚本和过大的脚本输入。"""
+    raw_script = str(script or "").strip()
+    if not raw_script:
+        raise BrowserScriptBlocked("待执行的 JavaScript 脚本不能为空")
+    if len(raw_script) > _BROWSER_SCRIPT_MAX_LENGTH:
+        raise BrowserScriptBlocked(
+            f"浏览器脚本长度超过限制（最多 {_BROWSER_SCRIPT_MAX_LENGTH} 个字符）"
+        )
+    return raw_script

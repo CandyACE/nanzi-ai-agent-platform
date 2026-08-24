@@ -145,6 +145,125 @@ def test_browser_upload_audit_redacts_local_file_path():
     assert payload == {"file_path": "<redacted>", "target_ref": "e1"}
 
 
+def test_browser_set_cookies_audit_redacts_cookie_values():
+    payload = _redact_runtime_tool_arguments(
+        "browser_set_cookies",
+        {
+            "cookies": [
+                {"name": "session", "value": "secret-token", "domain": "example.com"},
+            ],
+        },
+    )
+
+    assert payload["cookies"] == [
+        {"name": "session", "value": "<redacted>", "domain": "example.com"},
+    ]
+
+
+def test_browser_dialog_audit_redacts_prompt_text():
+    payload = _redact_runtime_tool_arguments(
+        "browser_handle_dialog",
+        {"action": "accept", "prompt_text": "secret-answer"},
+    )
+
+    assert payload == {"action": "accept", "prompt_text": "<redacted>"}
+
+
+@pytest.mark.asyncio
+async def test_browser_tab_tools_return_page_info(monkeypatch):
+    class FakeContext:
+        user_id = 1
+        browser_session_id = "bs-1"
+
+    session = SimpleNamespace(id="bs-1")
+    info = SimpleNamespace(url="https://example.com/next", title="Next")
+    monkeypatch.setattr(browser_tools_module, "get_current_agent_context", lambda: FakeContext())
+    monkeypatch.setattr(browser_tools_module, "_owned_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        browser_tools_module,
+        "_browser_result_json",
+        AsyncMock(side_effect=lambda _context, result: json.dumps(result.model_dump(mode="json"))),
+    )
+    monkeypatch.setattr(browser_runtime, "switch_tab", AsyncMock(return_value=info))
+    monkeypatch.setattr(browser_runtime, "close_tab", AsyncMock(return_value=info))
+
+    switched = json.loads(await browser_switch_tab.ainvoke({"tab_id": "tab-2"}))
+    closed = json.loads(await browser_close_tab.ainvoke({"tab_id": "tab-1"}))
+
+    assert switched["action"] == "switch_tab"
+    assert closed["action"] == "close_tab"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["browser_execute_js", "browser_set_cookies"])
+async def test_guarded_browser_sensitive_tools_require_session_confirmation(monkeypatch, tool_name):
+    class FakeContext:
+        browser_session_id = "bs-1"
+        user_id = 1
+
+    class DbContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    service = SimpleNamespace(
+        get_owned_session=AsyncMock(return_value=SimpleNamespace(approval_mode="guarded"))
+    )
+    monkeypatch.setattr(core_context, "get_current_agent_context", lambda: FakeContext())
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: DbContext())
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_session_service.BrowserSessionService",
+        lambda _db: service,
+    )
+
+    decision = await _browser_permission_decision(tool_name, {})
+
+    assert decision.behavior == PermissionBehavior.ASK
+    assert decision.decision_reason == "guarded_browser_sensitive_tool"
+
+
+@pytest.mark.asyncio
+async def test_guarded_enter_from_textbox_requires_confirmation(monkeypatch):
+    class FakeContext:
+        browser_session_id = "bs-1"
+        user_id = 1
+
+    class DbContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    snapshot = BrowserSnapshot(
+        session_id="bs-1",
+        snapshot_id="snap-1",
+        url="https://example.com/",
+        title="Example",
+        elements=[BrowserElement(ref="e1", role="textbox", name="关键词")],
+    )
+    service = SimpleNamespace(
+        get_owned_session=AsyncMock(return_value=SimpleNamespace(approval_mode="guarded"))
+    )
+    monkeypatch.setattr(core_context, "get_current_agent_context", lambda: FakeContext())
+    monkeypatch.setattr(browser_runtime, "cached_snapshot", lambda *_args: snapshot)
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: DbContext())
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_session_service.BrowserSessionService",
+        lambda _db: service,
+    )
+
+    decision = await _browser_permission_decision(
+        "browser_press",
+        {"snapshot_id": "snap-1", "target_ref": "e1", "key": "Enter"},
+    )
+
+    assert decision.behavior == PermissionBehavior.ASK
+    assert decision.decision_reason == "guarded_browser_commit"
+
+
 @pytest.mark.asyncio
 async def test_browser_scroll_tool_returns_the_fresh_snapshot(monkeypatch):
     class FakeContext:

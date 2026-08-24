@@ -117,6 +117,16 @@ def test_browser_action_resets_observation_repeat_counter():
     assert detector.fused is False
 
 
+@pytest.mark.parametrize("action", ["browser_execute_js", "browser_set_cookies"])
+def test_browser_state_mutations_reset_observation_repeat_counter(action):
+    detector = ToolLoopDetector(threshold=3, global_limit=30)
+
+    assert detector.record("browser_snapshot", {}).fused is False
+    assert detector.record("browser_snapshot", {}).fused is False
+    assert detector.record(action, {"value": "different"}).fused is False
+    assert detector.record("browser_snapshot", {}).fused is False
+
+
 def test_browser_consecutive_snapshot_still_fuses():
     """测试连续纯调用 snapshot（无动作穿插）达到阈值时依然能正确熔断。"""
     detector = ToolLoopDetector(threshold=3, global_limit=30)
@@ -179,5 +189,4 @@ def test_workspace_action_observation_cycle_exempt_from_ping_pong():
     verdict = detector.record("read_file", {"file_path": "a.py"})
     assert verdict.fused is False
     assert verdict.reason_code != "ping_pong"
-
 

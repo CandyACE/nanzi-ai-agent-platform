@@ -1,11 +1,14 @@
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from collections import deque
 
 import pytest
 from starlette.requests import Request
 
 from app.api.v1.api import v1_router, v1_secured
+from app.api.v1.endpoints.browser import _accept_viewer_message
+from app.api.v1.endpoints.browser import _viewer_origin_allowed
 from app.api.v1.endpoints.browser import get_browser_screenshot
 from app.schemas.browser import BrowserProfileResponse, BrowserSessionResponse, BrowserSnapshot
 
@@ -58,6 +61,59 @@ def test_browser_viewer_releases_human_control_for_all_disconnect_paths():
     assert "if should_release_control:" in source
     assert "finally:" in source
     assert "await browser_runtime.release_human_control(" in source
+
+
+def test_browser_viewer_allows_same_origin_and_rejects_unconfigured_origin():
+    same_origin = SimpleNamespace(
+        headers={"origin": "https://example.com", "host": "example.com"}
+    )
+    cross_origin = SimpleNamespace(
+        headers={"origin": "https://evil.example", "host": "example.com"}
+    )
+
+    assert _viewer_origin_allowed(same_origin) is True
+    assert _viewer_origin_allowed(cross_origin) is False
+
+
+def test_browser_viewer_rejects_oversized_and_flooded_messages():
+    timestamps = deque()
+
+    accepted, reason = _accept_viewer_message({"type": "snapshot"}, timestamps, now=100.0)
+    assert accepted is True
+    assert reason is None
+
+    oversized, oversized_reason = _accept_viewer_message(
+        {"type": "text", "value": "x" * 70000}, timestamps, now=100.1
+    )
+    assert oversized is False
+    assert "消息过大" in oversized_reason
+
+    for index in range(119):
+        accepted, _ = _accept_viewer_message({"type": "snapshot"}, timestamps, now=101.0 + index / 100)
+        assert accepted is True
+    flooded, flooded_reason = _accept_viewer_message(
+        {"type": "snapshot"}, timestamps, now=102.5
+    )
+    assert flooded is False
+    assert "频繁" in flooded_reason
+
+
+def test_browser_viewer_allows_high_frequency_mouse_move_stream():
+    timestamps = deque()
+    mouse_move_timestamps = deque()
+
+    for index in range(200):
+        accepted, reason = _accept_viewer_message(
+            {"type": "mouse_move", "x": index, "y": index},
+            timestamps,
+            mouse_move_timestamps=mouse_move_timestamps,
+            now=100.0 + index / 60,
+        )
+        assert accepted is True
+        assert reason is None
+
+    assert len(timestamps) == 0
+    assert len(mouse_move_timestamps) == 200
 
 
 @pytest.mark.asyncio

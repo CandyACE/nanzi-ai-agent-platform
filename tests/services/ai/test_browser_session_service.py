@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.models.browser import BrowserProfile, BrowserSession
@@ -52,6 +54,27 @@ class InMemorySession:
         return None
 
 
+class RacingSession(InMemorySession):
+    def __init__(self):
+        super().__init__()
+        self._browser_query_count = 0
+        self._second_browser_query = asyncio.Event()
+
+    async def execute(self, statement):
+        entity = statement.column_descriptions[0]["entity"]
+        result = await super().execute(statement)
+        if entity is BrowserSession:
+            self._browser_query_count += 1
+            if self._browser_query_count == 1:
+                try:
+                    await asyncio.wait_for(self._second_browser_query.wait(), timeout=0.05)
+                except asyncio.TimeoutError:
+                    pass
+            elif self._browser_query_count == 2:
+                self._second_browser_query.set()
+        return result
+
+
 @pytest.mark.asyncio
 async def test_user_cannot_read_another_users_session():
     db = InMemorySession()
@@ -100,6 +123,42 @@ async def test_open_new_session_defaults_to_autopilot_and_reuse_preserves_mode()
     assert second.id == first.id
     assert second.attached_conversation_id == "conv-b"
     assert second.approval_mode == "guarded"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_open_reuses_one_active_session_for_a_profile():
+    db = RacingSession()
+    profile = BrowserProfile(
+        id="profile-1",
+        user_id=1001,
+        display_name="默认浏览器",
+        encrypted_storage_ref="browser://profiles/profile-1",
+        status="active",
+    )
+    db.add(profile)
+    service = BrowserSessionService(
+        db,
+        profile_root="/tmp/nanzi-browser-test",
+        url_validator=lambda url: url,
+    )
+
+    sessions = await asyncio.gather(
+        service.open_or_resume(
+            user_id=1001,
+            conversation_id="conv-a",
+            url="https://www.baidu.com/",
+            profile_id="profile-1",
+        ),
+        service.open_or_resume(
+            user_id=1001,
+            conversation_id="conv-b",
+            url="https://www.baidu.com/",
+            profile_id="profile-1",
+        ),
+    )
+
+    assert sessions[0].id == sessions[1].id
+    assert len([row for row in db.rows if isinstance(row, BrowserSession)]) == 1
 
 
 @pytest.mark.asyncio

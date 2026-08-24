@@ -373,7 +373,7 @@
               <template v-else>
                 <span aria-hidden="true">▧</span>
                 <strong class="shrink-0 font-bold">远程页面截图</strong>
-                <span class="truncate text-sky-700 dark:text-sky-300">非实时网页本体；点击、滚轮、键盘会转发至远程</span>
+                <span class="truncate text-sky-700 dark:text-sky-300">非实时截图，不是网页本体；点击、滚轮、键盘会转发到远程浏览器</span>
               </template>
             </div>
 
@@ -389,7 +389,7 @@
               </button>
               <template v-else>
                 <span class="text-sky-600 dark:text-sky-300">
-                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? '验证码中，刷新已暂停' : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5s 自动刷新' }}
+                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? '验证码中，刷新已暂停' : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
                 </span>
                 <button
                   v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
