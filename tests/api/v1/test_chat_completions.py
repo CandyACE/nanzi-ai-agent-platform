@@ -197,3 +197,62 @@ async def test_chat_validation_error(db_session):
         payload = {"stream": False} # Missing messages
         resp = await client.post("/api/v1/chat/completions", json=payload, headers={"X-API-Key": user_key})
         assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stream_client_disconnect_resilience(mocker):
+    """
+    测试当客户端提前断开连接（如 iPhone 切后台），后台生产者任务继续平稳执行完成并落库。
+    """
+    import asyncio
+    from app.core.orm import get_db_session
+    from app.api.v1.endpoints import chat as chat_endpoint
+
+    producer_finished = asyncio.Event()
+
+    async def _mock_stream(*args, **kwargs):
+        yield {"content": "Hello"}
+        await asyncio.sleep(0.05)
+        yield {"content": " World"}
+        producer_finished.set()
+
+    mocker.patch(
+        "app.services.ai.agent_service.agent_service.chat_completion_stream",
+        side_effect=_mock_stream,
+    )
+
+    async def _override_get_db_session():
+        yield MagicMock()
+
+    app.dependency_overrides[chat_endpoint.require_api_key] = lambda: {
+        "user_id": 1,
+        "role": "admin",
+        "username": "admin",
+    }
+    app.dependency_overrides[get_db_session] = _override_get_db_session
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            payload = {
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+                "conversation_id": "conv-disconnect-test",
+            }
+            async with client.stream(
+                "POST",
+                "/api/v1/chat/completions",
+                json=payload,
+                headers={"X-API-Key": "test-key"},
+            ) as resp:
+                assert resp.status_code == 200
+                # 读取第一条数据后立即主动退出连接模拟切后台
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        break
+        # 等待后台任务完成
+        await asyncio.wait_for(producer_finished.wait(), timeout=2.0)
+        assert producer_finished.is_set() is True
+    finally:
+        app.dependency_overrides.pop(chat_endpoint.require_api_key, None)
+        app.dependency_overrides.pop(get_db_session, None)
+

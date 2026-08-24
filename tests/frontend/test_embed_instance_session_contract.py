@@ -48,7 +48,7 @@ def test_embedchat_resolves_instance_before_restoring_a_conversation():
 
 def test_embedchat_uses_server_active_conversation_when_authenticated():
     source = _source(EMBED_CHAT)
-    active_update = source[source.index("const updateActiveConversationOnServer"):source.index("watch(conversationId")]
+    active_update = source[source.index("const updateActiveConversationOnServer"):source.index("const generateNewConversation")]
     init_chat = source[source.index("const initChat = async"):source.index("// History State")]
 
     assert "if (!shouldUseServerActiveConversation()) return;" in active_update
@@ -58,7 +58,7 @@ def test_embedchat_uses_server_active_conversation_when_authenticated():
 
 def test_embedchat_scopes_server_active_conversation_by_instance_id():
     source = _source(EMBED_CHAT)
-    active_update = source[source.index("const updateActiveConversationOnServer"):source.index("watch(conversationId")]
+    active_update = source[source.index("const updateActiveConversationOnServer"):source.index("const generateNewConversation")]
     init_chat = source[source.index("const initChat = async"):source.index("// History State")]
 
     assert "const activeConversationRequestParams = () =>" in source

@@ -15,6 +15,7 @@ from app.schemas.browser import BrowserSnapshot, BrowserTab, BrowserToolResult
 from app.services.ai.browser.browser_profile_service import BrowserProfileService
 from app.services.ai.browser.browser_session_service import BrowserSessionService
 from app.services.ai.browser.browser_worker import BrowserPageInfo, BrowserWorker
+from app.services.ai.browser.captcha_solver import BrowserCaptchaSolver
 
 # 人工接管超时：当验证码 / 人工接管触发而无人持续操作时，AI 等待超过该阈值即抛错
 # 终止并上报，避免全自动运行在无人值守下永久死锁。可通过环境变量覆盖。
@@ -40,8 +41,14 @@ class _HumanControl:
 class BrowserRuntime:
     """当前应用进程内的浏览器 Worker 注册表。生产部署需保证会话粘滞到同一 Worker。"""
 
-    def __init__(self, worker: BrowserWorker | None = None) -> None:
+    def __init__(
+        self,
+        worker: BrowserWorker | None = None,
+        captcha_solver: BrowserCaptchaSolver | None = None,
+    ) -> None:
         self.worker = worker or BrowserWorker()
+        self.captcha_solver = captcha_solver or BrowserCaptchaSolver(self.worker)
+        self._captcha_attempts: dict[str, int] = {}
         self._snapshots: dict[str, BrowserSnapshot] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._human_controls: dict[str, _HumanControl] = {}
@@ -257,24 +264,69 @@ class BrowserRuntime:
         if len(current_map) > 5:
             oldest_key = next(iter(current_map))
             current_map.pop(oldest_key, None)
-        if snapshot.page_state == "captcha":
-            self._set_human_control_locked(
-                session_id,
-                reason="captcha",
-                captcha=True,
-            )
-        else:
+        if snapshot.page_state != "captcha":
+            self._captcha_attempts.pop(session_id, None)
             state = self._human_controls.get(session_id)
             if state is not None:
                 state.captcha = False
         return snapshot
 
+    async def try_auto_solve_captcha(
+        self, session_id: str, snapshot: BrowserSnapshot
+    ) -> BrowserSnapshot:
+        """若快照处于验证码状态且在重试限额内，优先尝试 Vision LLM 自动解算；失败则切入人工接管。"""
+        if snapshot.page_state != "captcha":
+            return snapshot
+
+        state = self._human_controls.get(session_id)
+        # 若已被用户显式接管操作，则不干扰用户
+        if state is not None and state.owner_id is not None:
+            return snapshot
+
+        attempts = self._captcha_attempts.get(session_id, 0)
+        if attempts < 2:
+            self._captcha_attempts[session_id] = attempts + 1
+            await self.set_ai_action(
+                session_id,
+                "solving_captcha",
+                f"检测到验证码，AI 正在尝试使用多模态模型自动识别（第 {attempts + 1} 次）...",
+            )
+            try:
+                solved = await self.captcha_solver.solve_captcha(session_id, snapshot)
+                if solved:
+                    self._captcha_attempts.pop(session_id, None)
+                    new_snapshot = await self.worker.snapshot(session_id)
+                    async with self._session_lock(session_id):
+                        return self._remember_snapshot_locked(session_id, new_snapshot)
+            except Exception:
+                pass
+            finally:
+                await self.clear_ai_action(session_id)
+
+        # 自动解算失败或达到重试上限，平滑降级为人机协同接管
+        async with self._session_lock(session_id):
+            self._set_human_control_locked(
+                session_id,
+                reason="captcha",
+                captcha=True,
+            )
+            await self.broadcast_event(
+                session_id,
+                {
+                    "type": "captcha",
+                    "detected": True,
+                    "reason": "自动识别未通过，请人工完成验证",
+                },
+            )
+        return snapshot
+
     async def snapshot(self, session_id: str) -> BrowserSnapshot:
         async with self._session_lock(session_id):
-            return self._remember_snapshot_locked(
+            raw_snapshot = self._remember_snapshot_locked(
                 session_id,
                 await self.worker.snapshot(session_id),
             )
+        return await self.try_auto_solve_captcha(session_id, raw_snapshot)
 
     async def scroll(self, session_id: str, *, direction: str, amount: int) -> BrowserSnapshot:
         """执行低风险滚动并返回滚动后的新快照，供 Agent 继续使用最新 target_ref。"""

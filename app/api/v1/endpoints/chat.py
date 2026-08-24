@@ -1119,6 +1119,16 @@ async def create_chat_completion(
     # DEPRECATED here: Moved to AgentService/ContextManager for better trace and CoT logging.
     # We now let agent_service handle the routing if agent_id is missing.
     
+    # Extract API Key for Context Propagation (Tool Authorization)
+    api_key_str = request.headers.get("X-API-Key")
+    if not api_key_str:
+        auth = request.headers.get("Authorization")
+        if auth:
+            if auth.startswith("Bearer "):
+                api_key_str = auth.split(" ")[1]
+            else:
+                api_key_str = auth
+
     # Convert Pydantic models to dicts for the service
     if completion_request.stream:
         lane_user_id = user_info.get("user_id") or user_info.get("id")
@@ -1132,24 +1142,12 @@ async def create_chat_completion(
                 conversation_id=conversation_id,
             )
 
-        async def sse_generator() -> AsyncGenerator[str, None]:
-            # Extract user info from request state (set by require_api_key dependency)
-            # FASTAPI Middleware attaches state to the raw request object
-            # user_info already extracted above
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=200)
 
-            # Extract API Key for Context Propagation (Tool Authorization)
-            api_key_str = request.headers.get("X-API-Key")
-            if not api_key_str:
-                auth = request.headers.get("Authorization")
-                if auth:
-                    if auth.startswith("Bearer "):
-                        api_key_str = auth.split(" ")[1]
-                    else:
-                        api_key_str = auth
-            
+        async def _producer_task() -> None:
             try:
                 async for chunk in agent_service.chat_completion_stream(
-                    history, 
+                    history,
                     agent_id=completion_request.agent_id,
                     version_id=completion_request.version_id,
                     conversation_id=completion_request.conversation_id,
@@ -1161,21 +1159,65 @@ async def create_chat_completion(
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
                     metadata_dataset_ids=effective_metadata_dataset_ids,
                 ):
-                    if await request.is_disconnected():
-                        await _release_locks_on_client_abort()
-                        break
-                    # Format each chunk as an SSE data event
-                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                else:
-                    yield "data: [DONE]\n\n"
+                    await queue.put(("chunk", chunk))
+                await queue.put(("done", None))
             except asyncio.CancelledError:
                 from app.core.cancellation import spawn_detached
 
                 spawn_detached(
                     _release_locks_on_client_abort(),
-                    name=f"release-locks-{conversation_id or 'unknown'}",
+                    name=f"release-locks-producer-{conversation_id or 'unknown'}",
                 )
                 raise
+            except Exception as exc:
+                logger.error(
+                    "[ChatAPI] Background producer task encountered error: %s",
+                    exc,
+                    exc_info=True,
+                )
+                await queue.put(("error", exc))
+
+        producer_task = asyncio.create_task(
+            _producer_task(),
+            name=f"chat-producer-{conversation_id or 'unknown'}",
+        )
+
+        async def sse_generator() -> AsyncGenerator[str, None]:
+            client_disconnected = False
+            try:
+                while True:
+                    if not client_disconnected and await request.is_disconnected():
+                        client_disconnected = True
+                        logger.info(
+                            "[ChatAPI] Client disconnected (mobile background or connection dropped) "
+                            "for conversation=%s; background producer continues persistence.",
+                            conversation_id,
+                        )
+                        break
+
+                    try:
+                        tag, payload = await asyncio.wait_for(queue.get(), timeout=0.25)
+                    except asyncio.TimeoutError:
+                        if producer_task.done() and queue.empty():
+                            break
+                        continue
+
+                    if tag == "chunk":
+                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    elif tag == "done":
+                        yield "data: [DONE]\n\n"
+                        break
+                    elif tag == "error":
+                        break
+            except asyncio.CancelledError:
+                logger.info(
+                    "[ChatAPI] SSE streaming cancelled by client for conversation=%s; "
+                    "background producer task continues to finish message persistence.",
+                    conversation_id,
+                )
+            finally:
+                # 客户端断开连接时，保持 producer_task 在后台独立运行完成消息落库
+                pass
 
         return StreamingResponse(
             sse_generator(),

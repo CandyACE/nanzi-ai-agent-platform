@@ -4,9 +4,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-DEFAULT_FUSE_THRESHOLD = 3
+# 同参重复调用熔断阈值放宽至 5 次，为通用工具重试提供更充裕的容错空间。
+DEFAULT_FUSE_THRESHOLD = 5
 # 全局熔断：单轮内所有工具调用总次数上限，防止"无限换参数"绕过同参重复检测。
 DEFAULT_GLOBAL_LIMIT = 30
+# 浏览器会话可能包含大量分步表单与快照操作，适度放宽全局上限。
+DEFAULT_BROWSER_GLOBAL_LIMIT = 50
 # ping-pong：两个工具交替调用（A→B→A→B…）达到该长度即熔断。
 DEFAULT_PING_PONG_THRESHOLD = 6
 # 仅保留最近若干次调用用于序列模式识别，避免内存无界增长。
@@ -14,6 +17,61 @@ _MAX_SEQUENCE_LEN = 64
 # 取时/相对日期解析：参数差异通常无意义，按工具名聚合并在更低阈值熔断。
 _TIME_ANCHOR_TOOL_NAMES = frozenset({"get_current_time", "resolve_relative_dates"})
 _TIME_ANCHOR_REPEAT_THRESHOLD = 2
+
+# 浏览器观察类只读工具：每次动作后重新观察是合法标准范式
+_BROWSER_OBSERVATION_TOOLS = frozenset({
+    "browser_snapshot",
+    "browser_read_visible",
+    "browser_tabs",
+})
+
+# 浏览器动作类工具：触发动作后，应重置浏览器观察类工具的连续重复计数
+_BROWSER_ACTION_TOOLS = frozenset({
+    "browser_open",
+    "browser_click",
+    "browser_fill",
+    "browser_press",
+    "browser_scroll",
+    "browser_hover",
+    "browser_drag",
+    "browser_slider_drag",
+    "browser_select_option",
+    "browser_wait_for",
+    "browser_switch_tab",
+    "browser_close_tab",
+    "browser_upload",
+    "browser_download",
+    "browser_back",
+    "browser_forward",
+    "browser_reload",
+})
+
+# 工作区/文件观察类只读工具
+_WORKSPACE_OBSERVATION_TOOLS = frozenset({
+    "read_file",
+    "read",
+    "Read",
+    "search_text",
+    "grep",
+    "Grep",
+    "directory_tree_navigator",
+    "list_process",
+})
+
+# 工作区状态变更与执行类动作工具：修改代码或执行命令后，应重置文件观察类工具的重复计数
+_WORKSPACE_ACTION_TOOLS = frozenset({
+    "write_file",
+    "write",
+    "Write",
+    "exec_command",
+    "bash",
+    "Bash",
+    "manage_process",
+    "sqlite_scratchpad",
+    "publish_generated_file",
+    "excel_document_write",
+    "word_document_write",
+})
 
 
 @dataclass
@@ -31,9 +89,12 @@ class ToolLoopDetector:
 
     支持三类检测（任一触发即熔断，后续 record 直接返回已熔断结果）：
 
-    - ``repeat``：同一工具 + 相同归一化参数重复调用达到 ``threshold`` 次。
+    - ``repeat``：同一工具 + 相同归一化参数重复调用达到 ``threshold``（默认 5 次）次。
+      (针对浏览器观察类工具如 ``browser_snapshot`` 或文件读取工具如 ``read_file``，发生对应的动作类操作后
+      会自动重置其同参计数，避免多步正常开发与操作中因每步观察而误判熔断；仅连续纯调用无动作时熔断)。
     - ``ping_pong``：两个工具严格交替调用（A→B→A→B…）达到 ``ping_pong_threshold`` 次，
       用于捕捉"取 schema → 执行 SQL → 又取 schema → 又执行"这类来回拉锯。
+      (标准 ``Action ↔ Observation`` 观察与自测范式予以豁免)。
     - ``circuit_breaker``：单轮内工具调用总次数达到 ``global_limit``，作为最后兜底，
       防止模型不断变换参数绕过同参重复检测而空转。
     """
@@ -49,6 +110,7 @@ class ToolLoopDetector:
     fuse_reason: str = ""
     fuse_reason_code: str = ""
     fuse_count: int = 0
+    _has_browser_tools: bool = False
 
     @staticmethod
     def normalize_arg_value(value: Any) -> Any:
@@ -89,7 +151,13 @@ class ToolLoopDetector:
                 break
             length += 1
         # 必须恰好由两个不同工具构成，纯重复（同名）不算 ping-pong
-        if len({seq[n - length:][j] for j in range(length)}) != 2:
+        pair_set = {seq[n - length:][j] for j in range(length)}
+        if len(pair_set) != 2:
+            return 0
+        # 若交替对中包含观察类工具（如 动作 ↔ 观察），属于合法的多步操作观察/自测范式，豁免 ping-pong
+        has_browser_pair = any(item in _BROWSER_OBSERVATION_TOOLS for item in pair_set) and any(item in _BROWSER_ACTION_TOOLS for item in pair_set)
+        has_workspace_pair = any(item in _WORKSPACE_OBSERVATION_TOOLS for item in pair_set) and any(item in _WORKSPACE_ACTION_TOOLS for item in pair_set)
+        if has_browser_pair or has_workspace_pair:
             return 0
         return length
 
@@ -103,6 +171,23 @@ class ToolLoopDetector:
                 message=self.fuse_reason,
                 reason_code=self.fuse_reason_code,
             )
+
+        if tool_name.startswith("browser_"):
+            self._has_browser_tools = True
+
+        # 若发生了浏览器动作类操作，重置所有浏览器观察类工具的累积计数（允许下一步重新正常观察页面）
+        if tool_name in _BROWSER_ACTION_TOOLS:
+            for obs_tool in _BROWSER_OBSERVATION_TOOLS:
+                keys_to_remove = [k for k in self._signatures if k.startswith(f"{obs_tool}:")]
+                for k in keys_to_remove:
+                    self._signatures.pop(k, None)
+
+        # 若发生了工作区写文件或执行命令动作，重置文件观察类工具的累积计数（允许修改后重新检查代码）
+        if tool_name in _WORKSPACE_ACTION_TOOLS:
+            for obs_tool in _WORKSPACE_OBSERVATION_TOOLS:
+                keys_to_remove = [k for k in self._signatures if k.startswith(f"{obs_tool}:")]
+                for k in keys_to_remove:
+                    self._signatures.pop(k, None)
 
         self.total_calls += 1
         self._sequence.append(tool_name)
@@ -129,12 +214,16 @@ class ToolLoopDetector:
             )
 
         # 2) 全局熔断（最后兜底，优先于 ping-pong 给出更明确的"总量超限"信号）
-        if self.global_limit > 0 and self.total_calls >= self.global_limit:
+        effective_global_limit = self.global_limit
+        if self._has_browser_tools and self.global_limit > 0:
+            effective_global_limit = max(self.global_limit, DEFAULT_BROWSER_GLOBAL_LIMIT)
+
+        if effective_global_limit > 0 and self.total_calls >= effective_global_limit:
             return self._fuse(
                 "circuit_breaker",
                 self.total_calls,
                 (
-                    f"本轮工具调用总数已达 {self.total_calls} 次（全局熔断阈值 {self.global_limit}），"
+                    f"本轮工具调用总数已达 {self.total_calls} 次（全局熔断阈值 {effective_global_limit}），"
                     "系统中止以避免无意义空转。"
                 ),
             )
@@ -161,3 +250,5 @@ class ToolLoopDetector:
         self.fuse_reason_code = reason_code
         self.fuse_count = count
         return ToolLoopVerdict(fused=True, count=count, message=message, reason_code=reason_code)
+
+
