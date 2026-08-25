@@ -610,6 +610,76 @@ export function mergeTimelineLogs(
   return items;
 }
 
+const ROUTE_TIMELINE_ROOT_ID = "route:target_config";
+const ROUTE_TIMELINE_CHILD_IDS = new Set([
+  "route:target_selection",
+  "route:candidate_catalog",
+  "route:knowledge_catalog",
+  "route:router_model",
+  "route:target_permission",
+]);
+
+function isLegacyRouterLog(item: ProcessTimelineItem): boolean {
+  if (item.kind !== "log") return false;
+  const id = String(item.id || "");
+  return id.startsWith("router_") || item.title === "智能路由决策";
+}
+
+/** 将自动路由的重叠计时步骤归并到目标专家解析父步骤下。 */
+export function groupRouteTimelineItems(
+  items: ProcessTimelineItem[],
+  routeGroupExpanded?: boolean,
+): ProcessTimelineItem[] {
+  const rootIndex = items.findIndex(
+    (item) => item.kind === "log" && item.id === ROUTE_TIMELINE_ROOT_ID,
+  );
+  if (rootIndex < 0) return items;
+
+  const root = items[rootIndex];
+  if (!root || root.kind !== "log") return items;
+
+  const routeChildren = items.filter(
+    (item) => item.kind === "log" && ROUTE_TIMELINE_CHILD_IDS.has(String(item.id)),
+  ) as ProcessTimelineLogItem[];
+  if (!routeChildren.length) return items;
+
+  // 旧版本把最终 router_log 另存成 router_<timestamp>，历史恢复时会和
+  // route:target_selection 同时出现。已有稳定目标选择步骤时，丢弃这个
+  // 仅用于调试的重复项，避免父级归并后仍显示一条独立“智能路由决策”。
+  const hasTargetSelection = routeChildren.some((item) => item.id === "route:target_selection");
+  const legacyRouterLogs = hasTargetSelection
+    ? new Set(items.filter(isLegacyRouterLog).map((item) => item.id))
+    : new Set<string | number>();
+
+  const existingChildIds = new Set((root.children || []).map((child) => String(child.id)));
+  const children = [
+    ...(root.children || []),
+    ...routeChildren.filter((child) => !existingChildIds.has(String(child.id))),
+  ];
+  const groupedRoot: ProcessTimelineLogItem = {
+    ...root,
+    children,
+    childrenExpanded: routeGroupExpanded ?? root.childrenExpanded ?? true,
+  };
+
+  return items.flatMap((item, index) => {
+    if (index === rootIndex) return [groupedRoot];
+    if (item.kind === "log" && ROUTE_TIMELINE_CHILD_IDS.has(String(item.id))) return [];
+    if (legacyRouterLogs.has(item.id)) return [];
+    return [item];
+  });
+}
+
+/** 统计时间线中的逻辑步骤，路由父级下的子步骤仍计入总数。 */
+export function countTimelineSteps(items: ProcessTimelineItem[]): number {
+  return items.reduce((count, item) => {
+    if (item.kind === "log" && item.id === ROUTE_TIMELINE_ROOT_ID) {
+      return count + 1 + (item.children?.length || 0);
+    }
+    return count + 1;
+  }, 0);
+}
+
 export function buildLegacyProcessTimeline(input: {
   logs?: Array<{
     id: string | number;

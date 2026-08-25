@@ -20,6 +20,21 @@
 
     <div class="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2" :class="{ 'flex-1': expanded }">
       <span class="truncate text-xs font-semibold text-gray-700" :class="{ 'dark:text-gray-300': darkMode }">{{ title }}</span>
+      <button
+        v-if="showCopy"
+        type="button"
+        class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-400 opacity-70 transition-all hover:bg-gray-200/80 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/60 dark:hover:text-gray-200"
+        :class="{ '!text-emerald-500 !opacity-100 dark:!text-emerald-400': isCopied }"
+        :title="isCopied ? '已复制' : '复制思考内容'"
+        @click.stop="emit('copy')"
+      >
+        <svg v-if="isCopied" class="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+        </svg>
+        <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+        </svg>
+      </button>
       <span
         v-if="stepCount > 0"
         class="flex-shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500"
@@ -52,21 +67,6 @@
       class="flex shrink-0 items-center gap-1.5 text-gray-400"
       :class="expanded ? 'ml-auto sm:gap-2' : 'gap-1.5'"
     >
-      <button
-        v-if="showCopy"
-        type="button"
-        class="flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-70 transition-all hover:bg-gray-200/80 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/60 dark:hover:text-gray-200"
-        :class="{ '!text-emerald-500 !opacity-100 dark:!text-emerald-400': isCopied }"
-        :title="isCopied ? '已复制' : '复制思考内容'"
-        @click.stop="emit('copy')"
-      >
-        <svg v-if="isCopied" class="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
-        </svg>
-        <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-        </svg>
-      </button>
       <span v-if="duration" class="font-mono text-[10px]">{{ `${duration}s` }}</span>
       <svg
         class="h-4 w-4 shrink-0 transform transition-transform duration-200"

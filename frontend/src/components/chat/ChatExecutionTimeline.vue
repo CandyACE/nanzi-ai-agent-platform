@@ -7,7 +7,7 @@
       v-model:expanded="expanded"
       :is-thinking="!hasAnswer && (isThinking || hasPending)"
       :title="headerTitle"
-      :step-count="items.length"
+      :step-count="countTimelineSteps(items)"
       :skill-summary="headerSkillSummary"
       :current-step="currentStep"
       :duration="duration"
@@ -149,7 +149,7 @@
                       {{ subagentStatusLabel(child.status) }}
                     </span>
                     <span v-if="child.status === 'error' && !child.subagent" class="shrink-0 text-[10px]">失败</span>
-                    <span v-if="formatDuration(child.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(child.execution_time_ms) }}</span>
+                    <span v-if="formatTimelineDuration(child)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(child)">{{ formatTimelineDuration(child) }}</span>
                     <svg v-if="child.details || child.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': child.children?.length ? (child.childrenExpanded !== false) : child.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
@@ -194,7 +194,7 @@
                         <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
                         <span class="min-w-0 flex-1 truncate" :title="subStep.title">{{ subStep.title }}</span>
                         <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
-                        <span v-if="formatDuration(subStep.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(subStep.execution_time_ms) }}</span>
+                        <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
                         <svg v-if="subStep.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                         </svg>
@@ -235,8 +235,8 @@
             <button
               type="button"
               class="flex w-full items-center gap-2 text-left"
-              :aria-expanded="item.children?.length ? item.childrenExpanded !== false : item.isExpanded === true"
-              @click="item.children?.length ? (item.childrenExpanded = item.childrenExpanded === false) : (item.details ? item.isExpanded = !item.isExpanded : undefined)"
+              :aria-expanded="item.children?.length ? isTimelineItemExpanded(item) : item.isExpanded === true"
+              @click="item.children?.length ? toggleTimelineItem(item) : (item.details ? item.isExpanded = !item.isExpanded : undefined)"
             >
               <span v-if="item.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
               <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(item) }}</span>
@@ -255,13 +255,13 @@
                 {{ subagentStatusLabel(item.status) }}
               </span>
               <span v-if="item.status === 'error' && !item.subagent" class="shrink-0 text-[10px]">失败</span>
-              <span v-if="formatDuration(item.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">
-                {{ formatDuration(item.execution_time_ms) }}
+              <span v-if="formatTimelineDuration(item)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(item)">
+                {{ formatTimelineDuration(item) }}
               </span>
               <svg
                 v-if="item.details || item.children?.length"
                 class="h-3 w-3 shrink-0 text-gray-400 transition-transform"
-                :class="{ 'rotate-180': item.children?.length ? (item.childrenExpanded !== false) : item.isExpanded }"
+                :class="{ 'rotate-180': item.children?.length ? isTimelineItemExpanded(item) : item.isExpanded }"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -309,7 +309,7 @@
                   <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
                   <span class="min-w-0 flex-1 truncate" :title="subStep.title">{{ subStep.title }}</span>
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
-                  <span v-if="formatDuration(subStep.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(subStep.execution_time_ms) }}</span>
+                  <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
                   <svg v-if="subStep.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                   </svg>
@@ -355,6 +355,8 @@ import {
 } from "@/utils/skillFlowBadges";
 import {
   buildLegacyProcessTimeline,
+  countTimelineSteps,
+  groupRouteTimelineItems,
   isReasoningContentExpanded,
   mergeTimelineLogs,
   resolveTimelineCurrentStep,
@@ -407,10 +409,12 @@ const props = withDefaults(defineProps<{
 });
 
 const expanded = defineModel<boolean>("expanded", { default: false });
+const routeGroupExpanded = ref(true);
 
-const items = computed(() => (props.timeline.length
+const timelineItems = computed(() => (props.timeline.length
   ? mergeTimelineLogs(props.timeline, props.logs)
   : buildLegacyProcessTimeline(props)).filter((item) => item.kind !== "todo"));
+const items = computed(() => groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value));
 
 const hasPending = computed(() => timelineHasPending(items.value));
 
@@ -438,9 +442,35 @@ function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
   return isReasoningContentExpanded(item);
 }
 
+function isRouteGroup(item: ProcessTimelineLogItem): boolean {
+  return String(item.id) === "route:target_config";
+}
+
+function isTimelineItemExpanded(item: ProcessTimelineLogItem): boolean {
+  if (isRouteGroup(item)) return routeGroupExpanded.value;
+  return item.children?.length ? item.childrenExpanded !== false : item.isExpanded === true;
+}
+
+function toggleTimelineItem(item: ProcessTimelineLogItem): void {
+  if (isRouteGroup(item)) {
+    routeGroupExpanded.value = !routeGroupExpanded.value;
+    return;
+  }
+  if (item.children?.length) {
+    item.childrenExpanded = item.childrenExpanded === false;
+    return;
+  }
+  if (item.details) item.isExpanded = !item.isExpanded;
+}
+
 function iconFor(item: ProcessTimelineLogItem): string {
   if (item.category === "tool_resolution") return item.status === "error" ? "⚠️" : "🧭";
   if (item.status === "error") return "⚠️";
+  if (item.title.includes("获取可用专家")) return "📚";
+  if (item.title.includes("准备知识资源范围")) return "📋";
+  if (item.title.includes("加载目标专家配置")) return "⚙️";
+  if (item.title.includes("校验目标专家权限")) return "🔒";
+  if (item.title.includes("判断并匹配目标专家") || item.title.includes("匹配目标专家")) return "🧠";
   if (item.category === "context_summarized" || item.title.includes("平台摘录")) return "📋";
   if (item.subagent || item.category === "agent") return "🤖";
   if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return "🔧";
@@ -464,6 +494,17 @@ function subagentStatusLabel(status: ProcessTimelineLogItem["status"]): string {
 function formatDuration(duration?: number | null): string {
   if (duration === undefined || duration === null || Number.isNaN(duration) || duration <= 0) return "";
   return duration < 1000 ? `${Math.max(1, Math.round(duration))}ms` : `${(duration / 1000).toFixed(1)}s`;
+}
+
+function formatTimelineDuration(item: ProcessTimelineLogItem): string {
+  const duration = formatDuration(item.execution_time_ms);
+  return isRouteGroup(item) && duration ? `总计 ${duration}` : duration;
+}
+
+function timelineDurationTitle(item: ProcessTimelineLogItem): string | undefined {
+  return isRouteGroup(item)
+    ? "父级总耗时，已包含下面的路由子步骤；子步骤耗时可能与父级重叠，不应直接相加"
+    : undefined;
 }
 
 const copiedKey = ref<string | null>(null);

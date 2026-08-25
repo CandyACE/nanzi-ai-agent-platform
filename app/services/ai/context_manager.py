@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Optional, List, Dict, Any
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
@@ -12,6 +13,7 @@ from app.core.context import (
 from app.schemas.agent import ChatConfig
 from app.services.ai.agent_prompts import ContextManagerPrompts
 from app.services.ai.turn_decision import TurnDecision
+from app.services.ai.route_progress import RouteProgressCallback, emit_route_stage
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,7 @@ class AgentContextManager:
         user_info: Optional[Dict[str, Any]] = None,
         force_data_query: bool = False,
         conversation_id: Optional[str] = None,
+        on_progress: Optional[RouteProgressCallback] = None,
     ):
         """
         Resolve the appropriate AgentConfig based on inputs or routing.
@@ -143,15 +146,42 @@ class AgentContextManager:
                         )
 
                 if agent_config is None:
-                    route_result = await router_service.route_query(
-                        last_user_msg,
-                        history=history,
-                        enable_multi_agent=enable_multi_agent,
-                        user_id=route_user_id,
-                        is_admin=route_is_admin,
-                        last_agent_name=last_agent_name,
-                        user_name=route_user_name,
-                        early_context=early_context,
+                    selection_started = time.perf_counter()
+                    await emit_route_stage(
+                        on_progress,
+                        "target_selection",
+                        "判断并匹配目标专家",
+                        status="pending",
+                    )
+                    try:
+                        route_result = await router_service.route_query(
+                            last_user_msg,
+                            history=history,
+                            enable_multi_agent=enable_multi_agent,
+                            user_id=route_user_id,
+                            is_admin=route_is_admin,
+                            last_agent_name=last_agent_name,
+                            user_name=route_user_name,
+                            early_context=early_context,
+                            on_progress=on_progress,
+                        )
+                    except Exception:
+                        await emit_route_stage(
+                            on_progress,
+                            "target_selection",
+                            "判断并匹配目标专家",
+                            status="error",
+                            details="目标专家判断失败",
+                            execution_time_ms=(time.perf_counter() - selection_started) * 1000,
+                        )
+                        raise
+                    await emit_route_stage(
+                        on_progress,
+                        "target_selection",
+                        "判断并匹配目标专家",
+                        status="success",
+                        details="已完成目标专家判断",
+                        execution_time_ms=(time.perf_counter() - selection_started) * 1000,
                     )
                     route_details = route_result
 

@@ -7189,14 +7189,25 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     const currentLog = msg.logs[existingIdx];
     if (!currentLog) return;
     const nextStatus = (data.status as LogEntry["status"]) || currentLog.status || "success";
+    // router_log 是路由结果摘要，携带的 execution_time_ms 是外层目标配置解析总耗时；
+    // 路由阶段已经记录过 route:target_selection 时，不能用这个总耗时覆盖子阶段耗时。
+    const preserveRouteSelectionDuration =
+      logId === "route:target_selection"
+      && category === "router"
+      && currentLog.execution_time_ms !== undefined
+      && currentLog.execution_time_ms !== null;
+    const preserveRouteSelectionTitle =
+      logId === "route:target_selection"
+      && category === "router"
+      && Boolean(currentLog.title);
     const execution_time_ms =
-      data.execution_time_ms ??
+      (preserveRouteSelectionDuration ? currentLog.execution_time_ms : data.execution_time_ms) ??
       (nextStatus !== "pending"
         ? resolveStreamLogDurationMs(currentLog, data.execution_time_ms)
         : currentLog.execution_time_ms);
     msg.logs[existingIdx] = {
       ...currentLog,
-      title: data.title || currentLog.title,
+      title: preserveRouteSelectionTitle ? currentLog.title : (data.title || currentLog.title),
       details: data.details ?? currentLog.details,
       status: nextStatus,
       category: category !== "default" ? category : currentLog.category,
@@ -7275,13 +7286,13 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
   } else if (mergeStreamCitations(msg, data)) {
     // Citations are merged and de-duplicated by the shared stream normalizer.
   } else if (data.type === "router_log") {
-    const thoughtText = data.thought || "No reasoning provided.";
     const agentName = data.selected_agent || "Unknown";
     const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
+    const routerId = data.id || "route:target_selection";
     addEmbedLogFromStream(msg, {
-      id: "router_" + Date.now(),
-      title: "智能路由决策",
-      details: `思考过程:\n${thoughtText}\n\n最终选择: ${agentName} ${conf}`,
+      id: routerId,
+      title: "目标专家匹配完成",
+      details: `已完成目标专家匹配。\n目标专家: ${agentName} ${conf}`.trim(),
       status: "success",
       isRouter: true,
       category: "router",
@@ -7737,31 +7748,19 @@ const sendMessageInternal = async () => {
           } else if (mergeStreamCitations(agentMsg.value, data)) {
             // Citations are merged and de-duplicated by the shared stream normalizer.
           } else if (data.type === "router_log") {
-            if (agentMsg.value.logs) {
-              const thoughtText = data.thought || "No reasoning provided.";
-              const agentName = data.selected_agent || "Unknown";
-              const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
-              const routerId = "router_" + Date.now();
-              const routerDetails = `思考过程:\n${thoughtText}\n\n最终选择: ${agentName} ${conf}`;
-              agentMsg.value.logs.push({
-                id: routerId,
-                title: "智能路由决策",
-                details: routerDetails,
-                status: "success",
-                isExpanded: false,
-                isRouter: true,
-                category: 'router',
-                execution_time_ms: data.execution_time_ms ?? null,
-              });
-              syncProcessTimelineLog(agentMsg.value, {
-                id: routerId,
-                title: "智能路由决策",
-                details: routerDetails,
-                status: "success",
-                category: "router",
-                execution_time_ms: data.execution_time_ms ?? null,
-              }, "router");
-            }
+            const agentName = data.selected_agent || "Unknown";
+            const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
+            const routerId = data.id || "route:target_selection";
+            const routerDetails = `已完成目标专家匹配。\n目标专家: ${agentName} ${conf}`.trim();
+            addEmbedLogFromStream(agentMsg.value, {
+              id: routerId,
+              title: "目标专家匹配完成",
+              details: routerDetails,
+              status: "success",
+              isRouter: true,
+              category: "router",
+              execution_time_ms: data.execution_time_ms ?? null,
+            });
           } else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
             // Additive ChatBI evidence event; answer content stays unchanged.
           } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {

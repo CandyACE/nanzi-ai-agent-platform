@@ -96,3 +96,49 @@ def test_chat_thinking_header_and_timeline_copy_contract():
     assert "fullTimelineText" in timeline
     assert "handleCopyAll" in timeline
 
+
+def test_chat_thinking_header_places_copy_after_title_before_step_badge():
+    header = (ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue").read_text(encoding="utf-8")
+
+    title_at = header.index("{{ title }}")
+    copy_at = header.index('v-if="showCopy"')
+    steps_at = header.index('v-if="stepCount > 0"')
+
+    assert title_at < copy_at < steps_at
+
+
+def test_route_progress_contract_uses_router_category_and_stable_ids():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert 'data.id || Date.now() + Math.random()' in embed
+    assert 'existingIdx = msg.logs.findIndex((l) => l.id === logId)' in embed
+    assert 'category: "router"' in embed or 'category === "router"' in embed
+    assert 'item.title.includes("获取可用专家")' in timeline
+    assert 'item.status === "pending"' in timeline
+
+
+def test_embed_router_completion_reuses_target_selection_log():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert 'const routerId = data.id || "route:target_selection";' in embed
+    assert 'id: "router_" + Date.now()' not in embed
+    assert 'preserveRouteSelectionDuration' in embed
+    assert '外层目标配置解析总耗时' in embed
+    assert 'preserveRouteSelectionTitle' in embed
+
+
+def test_embed_router_completion_does_not_render_internal_router_thought():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "已完成目标专家匹配" in embed
+    assert "思考过程:\\n${thoughtText}" not in embed
+
+
+def test_embed_resume_router_completion_uses_deduplicating_log_upsert():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    router_branch = embed.split('} else if (data.type === "router_log") {', 2)[2]
+    router_branch = router_branch.split('} else if (applyChatBIInsightEvent', 1)[0]
+    assert "addEmbedLogFromStream(agentMsg.value" in router_branch
+    assert "agentMsg.value.logs.push" not in router_branch

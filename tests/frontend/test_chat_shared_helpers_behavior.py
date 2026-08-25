@@ -649,6 +649,81 @@ return merged;
     assert [item["id"] for item in result] == ["n1", "tool-1", "model-2"]
 
 
+def test_process_timeline_groups_route_stages_under_resolution_parent():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const items = [
+  { kind: 'log', id: 'route:target_config', title: '加载目标专家配置', status: 'success', execution_time_ms: 5900 },
+  { kind: 'log', id: 'route:target_selection', title: '判断并匹配目标专家', status: 'success', execution_time_ms: 5900 },
+  { kind: 'log', id: 'route:candidate_catalog', title: '获取可用专家', status: 'success', execution_time_ms: 1 },
+  { kind: 'log', id: 'route:knowledge_catalog', title: '准备知识资源范围', status: 'success', execution_time_ms: 12 },
+  { kind: 'log', id: 'route:router_model', title: '匹配目标专家', status: 'success', execution_time_ms: 5900 },
+  { kind: 'log', id: 'route:target_permission', title: '校验目标专家权限', status: 'success', execution_time_ms: 1 },
+  { kind: 'log', id: 'agent_reply_1', title: 'Agent 回复开始', status: 'success' },
+];
+return api.groupRouteTimelineItems(items);
+""",
+    )
+
+    assert [item["id"] for item in result] == ["route:target_config", "agent_reply_1"]
+    assert [child["id"] for child in result[0]["children"]] == [
+        "route:target_selection",
+        "route:candidate_catalog",
+        "route:knowledge_catalog",
+        "route:router_model",
+        "route:target_permission",
+    ]
+
+
+def test_process_timeline_preserves_route_group_collapsed_state():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const items = [
+  { kind: 'log', id: 'route:target_config', title: '加载目标专家配置', status: 'success' },
+  { kind: 'log', id: 'route:target_selection', title: '判断并匹配目标专家', status: 'success' },
+];
+return api.groupRouteTimelineItems(items, false)[0].childrenExpanded;
+""",
+    )
+
+    assert result is False
+
+
+def test_process_timeline_drops_legacy_router_duplicate_when_target_selection_exists():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const items = [
+  { kind: 'log', id: 'route:target_config', title: '加载目标专家配置', status: 'success' },
+  { kind: 'log', id: 'route:target_selection', title: '判断并匹配目标专家', status: 'success' },
+  { kind: 'log', id: 'router_7', title: '智能路由决策', status: 'success' },
+];
+return api.groupRouteTimelineItems(items).map((item) => item.id);
+""",
+    )
+
+    assert result == ["route:target_config"]
+
+
+def test_process_timeline_step_count_excludes_hidden_legacy_router_duplicate():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const items = [
+  { kind: 'log', id: 'route:target_config', title: '加载目标专家配置', status: 'success' },
+  { kind: 'log', id: 'route:target_selection', title: '判断并匹配目标专家', status: 'success' },
+  { kind: 'log', id: 'router_7', title: '智能路由决策', status: 'success' },
+];
+const grouped = api.groupRouteTimelineItems(items);
+return api.countTimelineSteps(grouped);
+""",
+    )
+
+    assert result == 2
+
+
 def test_process_timeline_finishes_reasoning_even_when_narration_is_the_last_item():
     result = _run_typescript(
         "frontend/src/utils/processTimeline.ts",

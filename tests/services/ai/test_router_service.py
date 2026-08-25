@@ -1285,3 +1285,79 @@ async def test_route_query_greeting_compound_still_calls_llm(mock_agents_metadat
 
     assert result.agent_id == "agent-chatbi"
     mock_chat.generate_text.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_route_query_uses_bounded_output_and_compact_router_prompt(mock_agents_metadata):
+    """普通路由保留关键边界，但使用精简提示词和受限输出长度。"""
+    service = RouterService()
+    mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = {
+        "agent_name": "general-chat",
+        "confidence": 0.91,
+        "secondary_agents": [],
+        "intent": "GENERAL",
+        "domain": "general",
+        "operation": "explain",
+    }
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.build_accessible_resource_catalog", new_callable=AsyncMock, return_value=""), \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle", return_value=mock_chat):
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+
+        result = await service.route_query("请解释自动路由和指定专家的执行差异")
+
+    assert result is not None
+    mock_get_llm.assert_awaited_once_with(
+        temperature=0.0,
+        max_output_tokens=512,
+        ignore_session_reasoning_overrides=True,
+    )
+    prompt = mock_chat.generate_structured_dict.call_args.args[0][0].content[0].text
+    assert len(prompt) < len(RouterService.DEFAULT_SYSTEM_PROMPT)
+    assert "当前系统/本机/这台机器/服务器运行状态" in prompt
+    assert "不要因为出现\"负载/利用率/CPU/内存\"等词就直接判为数据查询" in prompt
+    assert "内部 SOP/流程/规范/手册" in prompt
+    assert '"agent_name"' in prompt
+
+
+@pytest.mark.asyncio
+async def test_route_query_does_not_add_text_call_when_structured_output_fails(
+    mock_agents_metadata,
+):
+    """原生结构化能力已存在但失败时，不再追加一次普通文本模型调用。"""
+    service = RouterService()
+
+    class StructuredFailureClient:
+        last_structured_output_status = "error"
+
+        def __init__(self):
+            self.structured_calls = 0
+            self.text_calls = 0
+
+        async def generate_structured_dict(self, messages, structured_model):
+            self.structured_calls += 1
+            return None
+
+        async def generate_text(self, messages):
+            self.text_calls += 1
+            raise AssertionError("structured output failure must not trigger text fallback")
+
+    client = StructuredFailureClient()
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.build_accessible_resource_catalog", new_callable=AsyncMock, return_value=""), \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle", return_value=client):
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+
+        result = await service.route_query("请解释自动路由的执行逻辑")
+
+    assert result is not None
+    assert client.text_calls == 0
+    assert client.structured_calls == 2
+    assert mock_get_llm.await_count == 2

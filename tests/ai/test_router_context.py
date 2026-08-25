@@ -110,6 +110,77 @@ async def test_router_injects_authorized_resource_catalog_before_semantic_routin
 
 
 @pytest.mark.asyncio
+async def test_router_emits_safe_progress_stages_without_raw_reasoning():
+    router = RouterService()
+    events = []
+    agents = [
+        {
+            "id": "general-agent",
+            "name": "general-chat",
+            "description": "通用问答",
+            "capabilities": ["chat"],
+        },
+        {
+            "id": "data-agent",
+            "name": "chat-bi",
+            "description": "业务数据查询",
+            "capabilities": ["data_query"],
+        },
+    ]
+
+    mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.return_value = {
+        "agent_name": "general-chat",
+        "confidence": 0.9,
+        "secondary_agents": [],
+        "intent": "GENERAL",
+        "domain": "general",
+        "thought": "内部路由理由不应进入进度事件",
+    }
+
+    async def on_progress(event):
+        events.append(event)
+
+    with patch.object(router, "_fetch_agents_from_db", new_callable=AsyncMock, return_value=agents), \
+        patch.object(router, "_filter_agents_for_user", new_callable=AsyncMock, return_value=agents), \
+        patch(
+            "app.services.ai.router_service.build_accessible_resource_catalog",
+            new_callable=AsyncMock,
+            return_value="",
+        ), \
+        patch(
+            "app.services.ai.router_service.load_authorized_knowledge_catalog",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), \
+        patch(
+            "app.services.ai.router_service.get_llm_async",
+            new_callable=AsyncMock,
+            return_value=object(),
+        ), \
+        patch("app.services.ai.router_service.chat_client_from_handle", return_value=mock_chat):
+        result = await router.route_query("帮我写一段说明", on_progress=on_progress)
+
+    assert result is not None
+    assert [event["id"] for event in events] == [
+        "route:candidate_catalog",
+        "route:candidate_catalog",
+        "route:knowledge_catalog",
+        "route:knowledge_catalog",
+        "route:router_model",
+        "route:router_model",
+    ]
+    assert events[0]["status"] == "pending"
+    assert events[1]["status"] == "success"
+    assert events[2]["status"] == "pending"
+    assert events[3]["status"] == "success"
+    assert events[4]["status"] == "pending"
+    assert events[5]["status"] == "success"
+    assert all("thought" not in event for event in events)
+    assert "thought" not in events[3].get("details", "")
+
+
+@pytest.mark.asyncio
 async def test_router_does_not_select_knowledge_agent_when_catalog_has_no_match():
     router = RouterService()
     agents = [
