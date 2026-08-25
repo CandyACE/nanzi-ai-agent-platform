@@ -401,6 +401,36 @@ async def test_publish_version_logic(mock_session, mock_user_admin):
 
 
 @pytest.mark.asyncio
+async def test_publish_version_accepts_legacy_general_agent_without_primary_capability(
+    mock_session, mock_user_admin
+):
+    agent = AIAgent(
+        id="legacy-general-1",
+        created_by="admin",
+        agent_type="GENERAL",
+        capabilities=["metadata_parsing", "ddl_analysis", "schema_governance"],
+        engine_config={},
+    )
+    version = AIAgentVersion(id="legacy-draft-1", agent_id="legacy-general-1", tools=[])
+    mock_session.get.side_effect = [agent, version]
+
+    with patch(
+        "app.services.ai.tools.registry.ToolRegistry.clear_db_tool_cache"
+    ) as mock_clear_tool_cache:
+        success = await AgentManagerService.publish_version(
+            mock_session,
+            "legacy-general-1",
+            "legacy-draft-1",
+            mock_user_admin,
+        )
+
+    assert success is True
+    assert mock_session.execute.call_count == 2
+    mock_session.commit.assert_called_once()
+    mock_clear_tool_cache.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_publish_version_rejects_chatbi_without_query_tool_before_archiving(mock_session, mock_user_admin):
     from app.services.ai.agent_manager import AgentNotReadyError
 

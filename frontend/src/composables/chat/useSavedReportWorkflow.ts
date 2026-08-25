@@ -145,7 +145,7 @@ const heuristicTermForColumn = (name: string): string | null => {
   return looksChinese(term) ? term : null;
 };
 
-/** 从 ChatBI 成功查数消息提取 column_meta，供保存黄金报表时固化语义 */
+/** 从 ChatBI 成功查数消息提取 column_meta，供保存固化报表时固化语义 */
 export const extractColumnMetaFromAgentMessage = (msg: any): Record<string, any> | null => {
   const logs = Array.isArray(msg?.logs) ? msg.logs : [];
   for (let i = logs.length - 1; i >= 0; i -= 1) {
@@ -239,7 +239,7 @@ export const composeSavedReportExecuteMarkdown = (
   const analysisMarkdown = String(execResult?.analysis_markdown || "").trim();
   const analysisStatus = String(execResult?.analysis_status || "");
   const parts = [
-    `### 📊 黄金报表「${reportTitle}」执行结果：`,
+    `### 📊 固化报表「${reportTitle}」执行结果：`,
     resultMarkdown,
   ];
   if (analysisMarkdown) {

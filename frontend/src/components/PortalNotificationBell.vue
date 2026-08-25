@@ -49,7 +49,7 @@ const isSavedReportNotification = (item: any) => {
 };
 
 const notificationKindLabel = (item: any) => {
-  if (isSavedReportNotification(item)) return "黄金报表";
+  if (isSavedReportNotification(item)) return "固化报表";
   if (item?.category === "agent") return "智能体";
   if (item?.category === "saved_report") return "报表";
   if (item?.category === "task_center") return "任务中心";
@@ -209,7 +209,7 @@ const openNotification = async (item: any) => {
     closeNotifications();
     closeDetail();
     if (isModalVariant.value) {
-      // Embed 内不跳转父路由，交给宿主打开黄金报表
+      // Embed 内不跳转父路由，交给宿主打开固化报表
       emit("open-saved-report", savedReportOpenRequest);
       publishSavedReportOpenRequest(savedReportOpenRequest);
       return;
@@ -219,7 +219,7 @@ const openNotification = async (item: any) => {
     return;
   }
 
-  // 智能体/系统站内消息：打开详情弹窗并自动关闭列表；黄金报表消息保持原样
+  // 智能体/系统站内消息：打开详情弹窗并自动关闭列表；固化报表消息保持原样
   if (!isSavedReportNotification(item)) {
     closeNotifications();
   }
@@ -346,7 +346,7 @@ defineExpose({ open: openFromExternal, toggle });
                   <span
                     class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black"
                     :class="isSavedReportNotification(item) ? 'bg-amber-50 text-amber-700 border border-amber-100' : 'bg-slate-100 text-slate-600 border border-slate-200'"
-                  >{{ isSavedReportNotification(item) ? '⭐ 黄金报表' : notificationKindLabel(item) }}</span>
+                  >{{ isSavedReportNotification(item) ? '⭐ 固化报表' : notificationKindLabel(item) }}</span>
                   <span
                     v-if="!item.read_at"
                     class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-black text-blue-600"
@@ -406,7 +406,7 @@ defineExpose({ open: openFromExternal, toggle });
                       <span
                         class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black"
                         :class="isSavedReportNotification(item) ? 'border border-amber-100 bg-amber-50 text-amber-700' : 'border border-slate-200 bg-slate-100 text-slate-600'"
-                      >{{ isSavedReportNotification(item) ? '⭐ 黄金报表' : notificationKindLabel(item) }}</span>
+                      >{{ isSavedReportNotification(item) ? '⭐ 固化报表' : notificationKindLabel(item) }}</span>
                       <span
                         v-if="!item.read_at"
                         class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-black text-blue-600"

@@ -77,6 +77,17 @@ def test_knowledge_base_binding_accepts_tool_config_item():
     ) is True
 
 
+def test_legacy_knowledge_base_binding_infers_missing_primary_capability():
+    from app.services.ai.agent_readiness import has_knowledge_binding
+
+    assert has_knowledge_binding(
+        capabilities=["legacy_retrieval"],
+        engine_config={"dataset_ids": ["kb-1"]},
+        tools=["search_knowledge_base"],
+        agent_type="KNOWLEDGE_BASE",
+    ) is True
+
+
 def test_general_requires_a_published_version():
     result = evaluate_agent_readiness(
         agent_type="GENERAL",
@@ -88,3 +99,16 @@ def test_general_requires_a_published_version():
 
     assert result.ready is False
     assert result.missing == ("published_version",)
+
+
+def test_legacy_general_agent_without_primary_capability_is_ready():
+    result = evaluate_agent_readiness(
+        agent_type="GENERAL",
+        capabilities=["metadata_parsing", "ddl_analysis", "schema_governance"],
+        engine_config={},
+        tools=[],
+        has_published_version=True,
+    )
+
+    assert result.ready is True
+    assert result.missing == ()

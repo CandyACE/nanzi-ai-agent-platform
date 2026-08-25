@@ -207,7 +207,7 @@ const shareTargetLabel = computed(() => {
 
 const detailTitle = computed(() => {
   if (props.report.is_owner && props.report.share_summary) {
-    return `${props.report.title || "黄金报表"}\n${shareTargetLabel.value}\n点击打开详情`;
+    return `${props.report.title || "固化报表"}\n${shareTargetLabel.value}\n点击打开详情`;
   }
   return props.report.title ? `${props.report.title}\n点击打开详情` : "打开报表详情";
 });
@@ -216,7 +216,7 @@ const executeTitle = computed(() => {
   if (props.report.run_permission_status === "denied") {
     return props.report.run_permission_message || "暂无该报表所需数据权限，无法运行。";
   }
-  return "运行黄金报表";
+  return "运行固化报表";
 });
 
 const copyTitle = computed(() => {

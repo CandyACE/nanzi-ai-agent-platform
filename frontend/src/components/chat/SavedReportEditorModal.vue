@@ -36,7 +36,7 @@ const emit = defineEmits<{
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V5zM12 9v12m-3-3l3 3 3-3" />
               </svg>
             </div>
-            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">{{ editing ? '编辑黄金 SQL 报表' : '沉淀为黄金报表' }}</h3>
+            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">{{ editing ? '编辑固化 SQL 报表' : '沉淀为固化报表' }}</h3>
           </div>
           <button @click="emit('close')" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>

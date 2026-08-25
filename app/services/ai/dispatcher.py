@@ -69,6 +69,7 @@ class AgentDispatcher:
             capabilities=agent_config.capabilities,
             engine_config=agent_config.engine_config,
             tools=agent_config.tools,
+            agent_type=agent_config.agent_type,
         )
 
         if turn_decision.turn_kind == "knowledge":

@@ -92,7 +92,7 @@ export function deriveSavedReportDescription(
   originalQuery: string,
 ): string {
   if (intent?.goal) return intent.goal;
-  if (originalQuery) return `基于「${originalQuery.slice(0, 40)}」沉淀的黄金报表`;
+  if (originalQuery) return `基于「${originalQuery.slice(0, 40)}」沉淀的固化报表`;
   return "";
 }
 
