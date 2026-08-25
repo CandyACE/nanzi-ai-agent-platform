@@ -174,7 +174,7 @@ const handleDismiss = () => {
       <div
         v-for="(item, idx) in steps"
         :key="item.step"
-        class="group relative flex flex-col justify-between rounded-xl border border-white/80 bg-white/75 p-3.5 shadow-2xs backdrop-blur-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:bg-white hover:shadow-md"
+        class="group relative flex flex-col justify-between rounded-xl border border-white/80 bg-white/75 p-3 shadow-2xs backdrop-blur-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:bg-white hover:shadow-md"
       >
         <!-- 连接箭头（仅在桌面端第 1~3 步显示） -->
         <div
@@ -188,18 +188,18 @@ const handleDismiss = () => {
 
         <div>
           <!-- 卡片头部：序号与标签 -->
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
+          <div class="flex items-start justify-between gap-1.5">
+            <div class="flex items-center gap-1.5 min-w-0">
               <span
-                class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold shadow-xs"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold shadow-2xs"
                 :class="item.iconBg"
               >
                 {{ item.step }}
               </span>
-              <span class="text-xs font-semibold text-gray-900">{{ item.title }}</span>
+              <span class="text-xs font-bold text-gray-900 leading-tight truncate" :title="item.title">{{ item.title }}</span>
             </div>
             <span
-              class="rounded-md border px-1.5 py-0.5 text-[10px] font-medium"
+              class="rounded-md border px-1.5 py-0.5 text-[10px] font-semibold shrink-0 whitespace-nowrap leading-none"
               :class="item.tagClass"
             >
               {{ item.tag }}
@@ -209,7 +209,7 @@ const handleDismiss = () => {
           <!-- 副标题与说明文案 -->
           <div class="mt-2.5">
             <p class="text-[11px] font-medium text-blue-900/80">{{ item.subtitle }}</p>
-            <p class="mt-1 text-xs leading-relaxed text-gray-500">{{ item.desc }}</p>
+            <p class="mt-1 text-[11px] leading-relaxed text-gray-500">{{ item.desc }}</p>
           </div>
         </div>
 

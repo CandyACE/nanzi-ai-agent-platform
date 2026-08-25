@@ -26,6 +26,8 @@ const deleteTarget = ref<DbConnectionConfig | null>(null)
 const testPassed = ref(false)
 const connError = ref('')
 const keyword = ref('')
+const showSpecsModal = ref(false)
+const activeSpecsTab = ref<'concept' | 'security' | 'practice'>('concept')
 
 // SQL 在线调试状态
 const debugTarget = ref<DbConnectionConfig | null>(null)
@@ -555,8 +557,18 @@ onUnmounted(() => {
   <div class="space-y-6">
     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">数据源管理</h1>
-        <p class="text-sm text-gray-500 mt-1">统一维护 ChatBI 元数据导入使用的数据库连接。</p>
+        <div class="flex items-center gap-2.5">
+          <h1 class="text-2xl font-bold text-gray-900">数据源管理</h1>
+          <button
+            type="button"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 cursor-pointer"
+            title="数据源连接与表画像摸排规范"
+            @click="showSpecsModal = true"
+          >
+            <span class="text-sm font-bold">?</span>
+          </button>
+        </div>
+        <p class="text-sm text-gray-500 mt-1">统一维护 ChatBI 元数据导入使用的数据库连接与表结构画像摸排。</p>
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <button
@@ -1043,4 +1055,127 @@ onUnmounted(() => {
       @cancel="cancelProfiling"
     />
   </div>
+    <!-- 数据源管理规范与表画像摸排指南 Modal -->
+    <div v-if="showSpecsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+        <!-- Header -->
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+          <div class="flex items-center gap-3">
+             <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+             </div>
+             <div>
+               <h2 class="text-xl font-bold text-gray-900">数据源管理设计规范与表画像摸排指南</h2>
+               <p class="text-xs text-gray-500 font-medium mt-0.5">外部多引擎数据库连接维护、安全只读隔离、异步表结构画像摸排与元数据中心打通。</p>
+             </div>
+          </div>
+          <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200 bg-white px-6">
+           <button 
+             v-for="tab in ['concept', 'security', 'practice']" 
+             :key="tab"
+             @click="activeSpecsTab = tab as any"
+             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+             :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+           >
+             {{ tab === 'concept' ? '核心架构与表画像流程 (Architecture & Profiling)' :
+                tab === 'security' ? '连接配置与安全隔离规范 (Security & Connections)' : '故障排查与最佳实践 (Best Practice)' }}
+           </button>
+        </div>
+
+        <!-- Content -->
+        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+           <!-- Tab 1: Architecture & Profiling -->
+           <div v-if="activeSpecsTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
+              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
+                 <h3 class="font-bold text-blue-900 mb-1">物理连接与元数据中心解耦设计</h3>
+                 <p class="text-xs text-blue-700 leading-relaxed">
+                    数据源管理是平台的底层物理连接层。在此配置好 MySQL、PostgreSQL、ClickHouse、Oracle、SQL Server 连接后，业务人员在「元数据中心」即可直接按库表一键导入语义，无需重复输入账号密码。
+                 </p>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                       <span class="w-2 h-2 rounded-full bg-blue-500"></span> 1. 多类型数据库统一接入
+                    </h4>
+                    <p class="text-gray-500 leading-relaxed">
+                       支持 MySQL 5.7/8.0、PostgreSQL、ClickHouse、Oracle 11g/19c 与 Microsoft SQL Server，提供一键连通性测试与参数校验。
+                    </p>
+                 </div>
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                       <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 2. 异步表结构画像摸排 (Profiling)
+                    </h4>
+                    <p class="text-gray-500 leading-relaxed">
+                       后台智能摸排引擎自动扫描库内全部表的总行数、字段注释、主外键关系及枚举值基数（Cardinality），无需人工介入即可生成高清数据库拓扑。
+                    </p>
+                 </div>
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                       <span class="w-2 h-2 rounded-full bg-indigo-500"></span> 3. 在线 SQL 调试沙箱
+                    </h4>
+                    <p class="text-gray-500 leading-relaxed">
+                       内置 SQL 执行沙箱，支持对数据源进行即时采样查询（默认限制 Limit 100 条并统计执行毫秒），方便排查网络延迟与表结构可用性。
+                    </p>
+                 </div>
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                       <span class="w-2 h-2 rounded-full bg-amber-500"></span> 4. 增量与全量摸排策略
+                    </h4>
+                    <p class="text-gray-500 leading-relaxed">
+                       支持只针对新增/修改表进行「增量摸排」，或针对整个数据库执行「全量重新摸排」，保障元数据语义始终与线上业务库同步。
+                    </p>
+                 </div>
+              </div>
+           </div>
+
+           <!-- Tab 2: Security & Connections -->
+           <div v-else-if="activeSpecsTab === 'security'" class="space-y-4 max-w-4xl mx-auto text-xs">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                 <h4 class="font-bold text-gray-900 text-base">安全配置与最小权限原则</h4>
+                 <div class="p-4 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+                    <span class="font-bold text-amber-900 text-sm">🔒 推荐配置：只读账号（Read-Only User）</span>
+                    <p class="text-gray-600">为防止误操作或 SQL 注入风险，强烈建议为平台分配仅包含 <code>SELECT</code>、<code>SHOW</code>、<code>DESCRIBE</code> 权限的数据库只读账号，严禁配置 <code>DROP</code>、<code>DELETE</code>、<code>ALTER</code> 权限。</p>
+                 </div>
+                 <div class="space-y-2">
+                    <h5 class="font-bold text-gray-800 text-sm">网络与端口安全建议：</h5>
+                    <ul class="list-disc list-inside text-gray-600 space-y-1">
+                       <li>若数据库部署在私有 VPC 或内网，请确保平台宿主机或 Docker 容器网络能够解析 Host 并路由至指定端口；</li>
+                       <li>建议配置数据库白名单，仅允许平台服务器 IP 地址发起连接；</li>
+                       <li>ClickHouse 请注意区分原生 TCP 端口（如 9000）与 HTTP 协议端口（如 8123）。</li>
+                    </ul>
+                 </div>
+              </div>
+           </div>
+
+           <!-- Tab 3: Best Practice -->
+           <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                 <h4 class="font-bold text-gray-900 text-base">常见连通性问题排查与最佳实践</h4>
+                 <div class="space-y-3">
+                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                       <span class="font-bold text-gray-900">1. 连接超时 (Connection Timeout)</span>
+                       <p class="text-gray-600 leading-relaxed">请检查数据库宿主机防火墙（iptables/Security Group）是否放行对应端口，以及数据库是否开启了远程登录授权（如 MySQL 的 <code>'user'@'%'</code>）。</p>
+                    </div>
+                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                       <span class="font-bold text-gray-900">2. 字符集与中文乱码</span>
+                       <p class="text-gray-600 leading-relaxed">建议数据库统一采用 <code>utf8mb4</code> 字符集，避免表注释或字段内容在画像摸排与大模型理解时产生乱码。</p>
+                    </div>
+                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                       <span class="font-bold text-gray-900">3. 大库表摸排优化</span>
+                       <p class="text-gray-600 leading-relaxed">若数据库表数量超过 500 张，表结构画像摸排将在后台异步队列执行，可在卡片中实时查看摸排进度条，无需停留在当前页面等待。</p>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        </div>
+      </div>
+    </div>
+
 </template>
