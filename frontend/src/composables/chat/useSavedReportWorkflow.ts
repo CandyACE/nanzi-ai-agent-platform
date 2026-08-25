@@ -1,5 +1,12 @@
 export interface SavedReportRunTarget {
-  params_schema?: Array<{ type?: string; name?: string }>;
+  params_schema?: Array<{
+    type?: string;
+    name?: string;
+    label?: string;
+    default?: unknown;
+    required?: boolean;
+    options?: unknown[];
+  }>;
 }
 
 export interface SavedReportRunFormValue {
@@ -9,6 +16,7 @@ export interface SavedReportRunFormValue {
   monthRange: string;
   startMonth: string;
   endMonth: string;
+  customParams: Record<string, any>;
 }
 
 export const detectSavedReportDateTemplate = (sql: string) => {
@@ -269,18 +277,28 @@ export const buildSavedReportRunParams = (
   form: SavedReportRunFormValue,
 ) => {
   const usesMonthRange = Boolean(report?.params_schema?.some((item) => item?.type === "month_range" || item?.name === "month_range"));
+  const usesDateRange = Boolean(report?.params_schema?.some((item) => item?.type === "date_range" || item?.name === "date_range"));
+  const params: Record<string, any> = {};
   if (usesMonthRange) {
-    const params: Record<string, any> = { month_range: form.monthRange };
+    params.month_range = form.monthRange;
     if (form.monthRange === "custom_month_range") {
       params.start_month = form.startMonth;
       params.end_month = form.endMonth;
     }
-    return params;
+  } else if (usesDateRange) {
+    params.date_range = form.dateRange;
+    if (form.dateRange === "custom_range") {
+      params.start_date = form.startDate;
+      params.end_date = form.endDate;
+    }
   }
-  const params: Record<string, any> = { date_range: form.dateRange };
-  if (form.dateRange === "custom_range") {
-    params.start_date = form.startDate;
-    params.end_date = form.endDate;
+  for (const item of report?.params_schema || []) {
+    const type = String(item?.type || "");
+    const name = String(item?.name || "");
+    if (!name || type === "date_range" || type === "month_range" || name === "date_range" || name === "month_range") continue;
+    if (Object.prototype.hasOwnProperty.call(form.customParams || {}, name)) {
+      params[name] = form.customParams[name];
+    }
   }
   return params;
 };

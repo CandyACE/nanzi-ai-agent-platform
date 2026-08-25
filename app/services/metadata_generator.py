@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import json
 from pydantic import BaseModel, Field
@@ -226,12 +226,18 @@ class MetadataGeneratorService:
             raise HTTPException(status_code=500, detail=f"智能解析失败，请检查日志。Trace ID: {trace_id}. Error: {str(e)}")
 
     @staticmethod
-    async def recommend_metrics(dataset_id: int, schema_context: str) -> Dict[str, Any]:
+    async def recommend_metrics(
+        dataset_id: int,
+        schema_context: str,
+        user_prompt: Optional[str] = None,
+        existing_metrics: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
         """
-        根据数据集 Schema 推荐业务指标
+        根据数据集 Schema 推荐业务指标，支持用户自定义需求与10分钟内防重复推荐
         """
         import uuid
         import time
+        from app.core.redis import get_redis
         from app.services.config_service import ConfigService
         from app.services.ai.agent_manager import AgentManagerService
         from app.schemas.agent import ChatConfig
@@ -241,9 +247,39 @@ class MetadataGeneratorService:
         
         try:
             # 1. Log Start
-            await MetadataGeneratorService._save_trace_log(trace_id, 1, "start_recommendation", {"dataset_id": dataset_id, "schema_len": len(schema_context)})
+            await MetadataGeneratorService._save_trace_log(
+                trace_id, 1, "start_recommendation",
+                {"dataset_id": dataset_id, "schema_len": len(schema_context), "has_user_prompt": bool(user_prompt)}
+            )
 
-            # 2. Get Agent Config (Reusable logic, could be extracted)
+            # 2. 读取 10 分钟内近期已推荐指标 (Redis) 和数据库已有指标
+            redis_client = await get_redis()
+            recent_key = f"metadata:metric_rec:recent:{dataset_id}"
+            recent_names: set[str] = set()
+            if redis_client:
+                try:
+                    cached_items = await redis_client.smembers(recent_key)
+                    if cached_items:
+                        for item in cached_items:
+                            val = item.decode("utf-8") if isinstance(item, bytes) else str(item)
+                            if val.strip():
+                                recent_names.add(val.strip())
+                except Exception as ex:
+                    logger.warning(f"Failed to read recent recommended metrics from Redis: {ex}")
+
+            db_existing_names: set[str] = set()
+            if existing_metrics:
+                for m in existing_metrics:
+                    name = getattr(m, "name", None) or (m.get("name") if isinstance(m, dict) else "")
+                    display_name = getattr(m, "display_name", None) or (m.get("display_name") if isinstance(m, dict) else "")
+                    if name and str(name).strip():
+                        db_existing_names.add(str(name).strip())
+                    if display_name and str(display_name).strip():
+                        db_existing_names.add(str(display_name).strip())
+
+            all_excluded_names = db_existing_names.union(recent_names)
+
+            # 3. Get Agent Config
             async with AsyncSessionLocal() as session:
                 agent_config = await AgentManagerService.get_active_agent_config(
                     session, agent_name='metadata-specialist'
@@ -253,25 +289,38 @@ class MetadataGeneratorService:
             if not chat_config:
                  logger.warning("Metadata Specialist config not found, using default.")
 
-            # Get configured LLM (automatically handles ai_models lookup or system default)
+            # Get configured LLM
             llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
 
-            # 3. Prompt
-            system_prompt = (
-                "你是一个精通数据分析的 BI 专家。\n"
-                "请分析给定的数据库 Schema（包含表结构、字段含义），推荐 5-10 个**最有业务价值**的分析指标。\n"
-                "指标类型可以是：\n"
-                "1. **聚合型 (KPI)**: 如总数、平均值、比率 (e.g., 'PUE均值', '机房总数')。\n"
-                "2. **维度分布 (Dimension)**: 如按类别分组统计 (e.g., '各区域机房分布', '设备类型占比')。\n"
-                "3. **常用视图 (Data View)**: 常用查询字段组合 (e.g., '机房详细列表: 名称, 编码, 地址')。\n\n"
-                "对于 SQL (calculation_logic 字段)：\n"
-                "- 必须是合法的 ClickHouse SQL 表达式或完整 Query。\n"
-                "- 对于分布/视图类，请写出完整的 `SELECT ... FROM ... [GROUP BY ...]` 语句。\n"
-                "- 禁止使用中文别名。\n"
-                "{format_instructions}"
-            )
+            # 4. 组装 Prompt
+            prompt_segments = [
+                "你是一个精通数据分析的 BI 专家。",
+                "请分析给定的数据库 Schema（包含表结构、字段含义），推荐 5-10 个**最有业务价值**的分析指标。",
+                "指标类型可以是：",
+                "1. **聚合型 (KPI)**: 如总数、平均值、比率 (e.g., 'PUE均值', '机房总数')。",
+                "2. **维度分布 (Dimension)**: 如按类别分组统计 (e.g., '各区域机房分布', '设备类型占比')。",
+                "3. **常用视图 (Data View)**: 常用查询字段组合 (e.g., '机房详细列表: 名称, 编码, 地址')。\n",
+                "对于 SQL (calculation_logic 字段)：",
+                "- 必须是合法的 ClickHouse SQL 表达式或完整 Query。",
+                "- 对于分布/视图类，请写出完整的 `SELECT ... FROM ... [GROUP BY ...]` 语句。",
+                "- 禁止使用中文别名。"
+            ]
+
+            if user_prompt and user_prompt.strip():
+                prompt_segments.append(
+                    f"\n【用户特定业务需求与偏好】：\n{user_prompt.strip()}\n请务必重点贴合上述用户需求来设计和发掘指标。"
+                )
+
+            if all_excluded_names:
+                excluded_list_str = "、".join(sorted(list(all_excluded_names))[:40])
+                prompt_segments.append(
+                    f"\n【去重与排除约束（严禁重复推荐）】：\n以下指标已在系统中存在或近期10分钟内刚刚推荐过，请务必不要推荐名称或业务含义与下列重复/雷同的指标：\n{excluded_list_str}\n请发掘其他未被覆盖的高价值业务分析维度或指标。"
+                )
+
+            prompt_segments.append("{format_instructions}")
+            system_prompt = "\n".join(prompt_segments)
             
-            # 4. Invoke
+            # 5. Invoke LLM
             start_llm = time.time()
             result = await MetadataGeneratorService._invoke_json(
                 llm,
@@ -280,12 +329,43 @@ class MetadataGeneratorService:
                 f"Schema 定义如下：\n\n{schema_context}",
             )
             duration_llm = (time.time() - start_llm) * 1000
-            
-            # 5. Log Success
-            await MetadataGeneratorService._save_trace_log(trace_id, 4, "llm_success", result, execution_time=duration_llm)
-            
+
+            # 6. 后置去重过滤与写入 Redis 10分钟缓存
+            raw_metrics = result.get("metrics", []) if isinstance(result, dict) else (getattr(result, "metrics", []) if hasattr(result, "metrics") else [])
+            filtered_metrics = []
+            new_metric_names = []
+
+            for m in raw_metrics:
+                m_dict = m if isinstance(m, dict) else (m.model_dump() if hasattr(m, "model_dump") else dict(m))
+                name = (m_dict.get("name") or "").strip()
+                display_name = (m_dict.get("display_name") or "").strip()
+
+                # 后置过滤与已有名称完全冲突的项
+                if name in all_excluded_names or display_name in all_excluded_names:
+                    logger.info(f"Filtered out duplicate recommended metric: {name} / {display_name}")
+                    continue
+
+                filtered_metrics.append(m_dict)
+                if name:
+                    new_metric_names.append(name)
+                if display_name:
+                    new_metric_names.append(display_name)
+
+            # 更新结果列表（若全被过滤则保留原始结果，避免返回空）
             if isinstance(result, dict):
+                result["metrics"] = filtered_metrics if filtered_metrics else raw_metrics
                 result["_trace_id"] = trace_id
+
+            # 写入 Redis 缓存，TTL 600 秒
+            if redis_client and new_metric_names:
+                try:
+                    await redis_client.sadd(recent_key, *new_metric_names)
+                    await redis_client.expire(recent_key, 600)
+                except Exception as ex:
+                    logger.warning(f"Failed to save recommended metrics to Redis: {ex}")
+            
+            # 7. Log Success
+            await MetadataGeneratorService._save_trace_log(trace_id, 4, "llm_success", result, execution_time=duration_llm)
                 
             return result
 
@@ -296,23 +376,62 @@ class MetadataGeneratorService:
             raise HTTPException(status_code=500, detail=f"指标推荐失败: {str(e)}")
 
     @staticmethod
-    async def recommend_relationships(dataset_id: int, schema_context: str) -> Dict[str, Any]:
+    async def recommend_relationships(
+        dataset_id: int,
+        schema_context: str,
+        user_prompt: Optional[str] = None,
+        existing_relationships: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         根据数据集 Schema 智能推荐实体（表）之间的关联关系。
+        支持 10 分钟内 Redis 历史去重、DB 已有关系排除以及用户自定义 Prompt 偏好注入。
         仅输出建议，不自动入库，供用户人工判断确认。
         """
         import uuid
         import time
+        import json
+        from app.core.redis import get_redis
         from app.services.ai.agent_manager import AgentManagerService
 
         trace_id = f"rel-rec-{str(uuid.uuid4())}"
         start_total = time.time()
 
+        # 1. 查询近 10 分钟已推荐的关联关系缓存（避免短期内频繁推荐相同关联）
+        recent_recommended_keys = set()
+        redis_client = None
+        redis_key = f"metadata:rel_rec:recent:{dataset_id}"
+        try:
+            redis_client = await get_redis()
+            cached_data = await redis_client.get(redis_key)
+            if cached_data:
+                recent_list = json.loads(cached_data)
+                for item in recent_list:
+                    src = item.get("source_table", "").strip().lower()
+                    tgt = item.get("target_table", "").strip().lower()
+                    cond = item.get("condition", "").strip().lower()
+                    if src and tgt:
+                        pair_key = tuple(sorted([src, tgt])) + (cond,)
+                        recent_recommended_keys.add(pair_key)
+        except Exception as e:
+            logger.warning(f"Failed to read recent relationship recommendations from Redis: {e}")
+
+        # 整理负向排除清单（既有关系 + 近期推荐关系）
+        exclude_descriptions = []
+        if existing_relationships:
+            for r in existing_relationships:
+                exclude_descriptions.append(f"- 已存在关系: {r}")
+
         try:
             # 1. Log Start
             await MetadataGeneratorService._save_trace_log(
                 trace_id, 1, "start_recommendation",
-                {"dataset_id": dataset_id, "schema_len": len(schema_context)},
+                {
+                    "dataset_id": dataset_id,
+                    "schema_len": len(schema_context),
+                    "user_prompt": user_prompt,
+                    "recent_cached_count": len(recent_recommended_keys),
+                    "existing_rels_count": len(existing_relationships or [])
+                },
             )
 
             # 2. Get Agent Config
@@ -328,17 +447,33 @@ class MetadataGeneratorService:
             # Get configured LLM
             llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
 
-            # 3. Prompt
+            # 3. Prompt Construction
             system_prompt = (
                 "你是一个精通数据建模的 DBA/数据架构师。\n"
                 "请分析给定的数据库 Schema（包含每张表的字段、业务术语、字段描述），推断表与表之间可能存在的高质量关联关系。\n\n"
                 "推断规则：\n"
                 "1. **字段语义匹配**：优先基于字段的业务术语/描述、命名相似性（如某表的 'id'/'code' 对应另一表的 'xxx_id'/'xxx_code'、主外键命名模式）推断关联。\n"
                 "2. **业务逻辑关联**：结合表名与字段描述判断它们是否描述同一业务实体（如订单与订单明细、用户与用户日志）。\n"
-                "3. **避免重复**：**不要推荐 Schema 中已经存在（既有 relationships）的关联关系**，只输出新的潜在关联。\n"
+                "3. **避免重复与负向约束**：**严禁推荐数据库中已存在或近期已推荐过的关联关系**，只输出新的潜在关联。\n"
                 "4. **只推荐当前 Schema 内真实存在的表**：source_table/target_table 必须使用 Schema 中的物理表名。\n\n"
+            )
+
+            if exclude_descriptions:
+                system_prompt += (
+                    "【必须严格排除的已有关系列表】（请勿再次推荐以下关系）：\n"
+                    + "\n".join(exclude_descriptions[:20])
+                    + "\n\n"
+                )
+
+            if user_prompt:
+                system_prompt += (
+                    "【用户自定义业务偏好与重点关注方向】（必须优先结合此偏好发掘关联）：\n"
+                    f"{user_prompt}\n\n"
+                )
+
+            system_prompt += (
                 "输出要求：\n"
-                "- 推荐 5-10 条高置信度的关联关系。\n"
+                "- 根据给定的 Schema 规模，尽可能全面、详尽地发掘所有合理且有实际业务价值的关联关系（不设固定数量上限，优先输出高置信度的关系）。\n"
                 "- condition 使用 '物理表别名1.字段 = 物理表别名2.字段' 形式，例如 't1.order_id = t2.id'。\n"
                 "- relation_type 取值：one_to_one / one_to_many / many_to_one。\n"
                 "- confidence 是 0~1 之间的小数，表示你对该关联关系成立的自信心（优先输出高置信度的关系）。\n"
@@ -356,13 +491,48 @@ class MetadataGeneratorService:
             )
             duration_llm = (time.time() - start_llm) * 1000
 
-            # 5. Log Success
+            # 5. 代码级后置去重与 Redis 写入 (TTL 10 分钟 = 600s)
+            raw_relationships = result.get("relationships", []) if isinstance(result, dict) else []
+            filtered_relationships = []
+            new_cache_items = []
+
+            for rel in raw_relationships:
+                src = (rel.get("source_table") or "").strip().lower()
+                tgt = (rel.get("target_table") or "").strip().lower()
+                cond = (rel.get("condition") or "").strip().lower()
+                if not src or not tgt:
+                    continue
+
+                pair_key = tuple(sorted([src, tgt])) + (cond,)
+                if pair_key in recent_recommended_keys:
+                    continue
+
+                filtered_relationships.append(rel)
+                new_cache_items.append({
+                    "source_table": rel.get("source_table"),
+                    "target_table": rel.get("target_table"),
+                    "condition": rel.get("condition"),
+                    "ts": time.time()
+                })
+
+            if isinstance(result, dict):
+                result["relationships"] = filtered_relationships
+                result["_trace_id"] = trace_id
+
+            if redis_client and new_cache_items:
+                try:
+                    await redis_client.setex(
+                        redis_key,
+                        600,
+                        json.dumps(new_cache_items, ensure_ascii=False)
+                    )
+                except Exception as ex:
+                    logger.warning(f"Failed to cache recent relationship recommendations to Redis: {ex}")
+
+            # 6. Log Success
             await MetadataGeneratorService._save_trace_log(
                 trace_id, 4, "llm_success", result, execution_time=duration_llm
             )
-
-            if isinstance(result, dict):
-                result["_trace_id"] = trace_id
 
             return result
 

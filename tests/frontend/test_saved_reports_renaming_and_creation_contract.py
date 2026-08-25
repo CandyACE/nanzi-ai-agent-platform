@@ -34,7 +34,7 @@ def test_data_portal_saved_reports_tab_and_create_modal_contract():
 
     # 4. 验证新建手工开发 Modal 功能完备性
     assert "新建固化报表" in create_modal
-    assert "sql-preview" in create_modal
+    assert "/api/portal/saved-reports/preview-sql" in create_modal
     assert "试跑测试" in create_modal
     assert "/api/portal/saved-reports" in create_modal
 

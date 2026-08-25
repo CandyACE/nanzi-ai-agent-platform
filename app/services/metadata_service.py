@@ -1321,8 +1321,12 @@ class MetadataService:
     # --- YAML Export Logic ---
 
     @staticmethod
-    async def build_dataset_schema_chunk_contents(db: AsyncSession, dataset_id: int) -> List[str]:
-        """按单表/指标块生成与向量索引一致的 YAML 正文列表。"""
+    async def build_dataset_schema_chunk_contents(
+        db: AsyncSession,
+        dataset_id: int,
+        table_names: Optional[List[str]] = None,
+    ) -> List[str]:
+        """按单表/指标块生成与向量索引一致的 YAML 正文列表。支持按 table_names 过滤。"""
         from app.services.config_service import ConfigService
         from app.services.metadata_rag_service import MetadataRagService
 
@@ -1335,15 +1339,28 @@ class MetadataService:
             ds_source = await ConfigService.get("external_sql_data_source", default="default_clickhouse")
 
         relationships = await MetadataService.get_relationships_by_dataset(db, dataset_id)
+        selected_table_set = set(table_names) if table_names else None
+
         chunks: List[str] = []
         for table in dataset.tables:
             if hasattr(table, "status") and table.status != 1:
                 continue
+            if selected_table_set is not None and table.physical_name not in selected_table_set:
+                continue
+
+            filtered_relationships = relationships
+            if selected_table_set is not None:
+                filtered_relationships = [
+                    r for r in relationships
+                    if getattr(r, "source_table", None) in selected_table_set
+                    and getattr(r, "target_table", None) in selected_table_set
+                ]
+
             chunks.append(
                 MetadataRagService.render_table_schema_yaml(
                     dataset,
                     table,
-                    relationships,
+                    filtered_relationships,
                     data_source=ds_source,
                 )
             )
@@ -1354,16 +1371,23 @@ class MetadataService:
         return chunks
 
     @staticmethod
-    async def export_dataset_yaml(db: AsyncSession, dataset_id: int) -> str:
+    async def export_dataset_yaml(
+        db: AsyncSession,
+        dataset_id: int,
+        table_names: Optional[List[str]] = None,
+    ) -> str:
         """
-        Export the entire dataset as formatted schema chunks for LLM/RAG (canonical table YAML).
+        Export the entire dataset or selected tables as formatted schema chunks for LLM/RAG (canonical table YAML).
         """
         from app.services.schema_chunk_format import format_schema_chunk
 
-        raw_chunks = await MetadataService.build_dataset_schema_chunk_contents(db, dataset_id)
+        raw_chunks = await MetadataService.build_dataset_schema_chunk_contents(
+            db, dataset_id, table_names=table_names
+        )
         formatted: List[str] = []
         for index, content in enumerate(raw_chunks, start=1):
             piece = format_schema_chunk(index, content)
             if piece:
                 formatted.append(piece)
         return "\n\n".join(formatted)
+

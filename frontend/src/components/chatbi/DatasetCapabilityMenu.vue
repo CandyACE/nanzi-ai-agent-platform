@@ -171,6 +171,8 @@
       </div>
     </transition>
 
+  </div>
+
 <!-- 固化报表 Tab 专属面板 -->
     <div
       v-if="menuActiveTab === 'reports'"
@@ -421,8 +423,7 @@
                     <pre class="max-h-40 overflow-auto rounded-lg bg-gray-950 text-green-100 p-2 text-[10px] whitespace-pre-wrap">{{ selectedSavedReportRunDetail.executed_sql }}</pre>
                   </div>
                   <div v-if="selectedSavedReportRunDetail.result_snapshot">
-                    <p class="text-[11px] font-bold text-gray-500 mb-1">结果快照（前 {{ selectedSavedReportRunDetail.snapshot_row_count || 0 }} 行）</p>
-                    <pre class="max-h-64 overflow-auto rounded-lg bg-white dark:bg-gray-950 p-2 text-[10px] text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{{ JSON.stringify(selectedSavedReportRunDetail.result_snapshot, null, 2) }}</pre>
+                    <SavedReportResultTable :snapshot="selectedSavedReportRunDetail.result_snapshot" />
                   </div>
                   <div v-if="selectedSavedReportRunDetail.deliveries?.length" class="space-y-2">
                     <p class="text-[11px] font-bold text-gray-500">推送内容</p>
@@ -458,6 +459,17 @@
             <label v-if="savedReportSubscriptionForm.schedule_type === 'weekly'" class="block"><span class="text-xs font-bold text-gray-600">星期</span><select v-model.number="savedReportSubscriptionForm.weekday" class="mt-1 w-full rounded-lg border-gray-200 text-sm"><option v-for="day in 7" :key="day" :value="day - 1">星期{{ ['日','一','二','三','四','五','六'][day - 1] }}</option></select></label>
             <label v-if="savedReportSubscriptionForm.schedule_type === 'monthly'" class="block"><span class="text-xs font-bold text-gray-600">每月日期</span><input v-model.number="savedReportSubscriptionForm.monthday" type="number" min="1" max="31" class="mt-1 w-full rounded-lg border-gray-200 text-sm" /></label>
             <label v-if="savedReportSubscriptionForm.schedule_type === 'cron'" class="block"><span class="text-xs font-bold text-gray-600">Cron 表达式</span><input v-model="savedReportSubscriptionForm.cron_expr" class="mt-1 w-full rounded-lg border-gray-200 text-sm font-mono" placeholder="0 9 * * *" /></label>
+            <div v-if="savedReportCustomParameterSchema.length" class="space-y-2 rounded-xl border border-violet-100 bg-violet-50/50 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
+              <p class="text-xs font-bold text-violet-800 dark:text-violet-200">定时运行参数</p>
+              <p class="text-[10px] text-violet-700/80 dark:text-violet-300/80">这里的值会覆盖报表默认参数，并在每次订阅运行时复用。</p>
+              <div v-for="item in savedReportCustomParameterSchema" :key="item.name">
+                <label class="mb-1 block text-[11px] font-bold text-gray-600 dark:text-gray-300">{{ item.label || item.name }}<span v-if="item.required" class="text-red-500"> *</span></label>
+                <select v-if="item.type === 'select'" v-model="savedReportSubscriptionForm.params[item.name]" class="w-full rounded-lg border-gray-200 text-xs dark:border-gray-700 dark:bg-gray-900">
+                  <option v-for="option in (item.options || [])" :key="String(option)" :value="option">{{ option }}</option>
+                </select>
+                <input v-else v-model="savedReportSubscriptionForm.params[item.name]" :type="item.type === 'number' ? 'number' : 'text'" class="w-full rounded-lg border-gray-200 text-xs dark:border-gray-700 dark:bg-gray-900" :placeholder="`请输入${item.label || item.name}`" />
+              </div>
+            </div>
             <div class="space-y-2 rounded-xl border border-gray-100 dark:border-gray-800 p-3">
               <p class="text-[10px] text-gray-400">定时运行失败始终写入站内通知。</p>
               <label class="flex items-center justify-between text-xs text-gray-600"><span>失败时同时发送外部通知</span><input v-model="savedReportSubscriptionForm.notify_on_failure" type="checkbox" /></label>
@@ -624,6 +636,7 @@
     </div>
     </teleport>
 
+    <div v-show="menuActiveTab === 'datasets'" class="space-y-4 animate-fade-in">
     <!-- 我常问 -->
     <div
       v-if="showFrequentSection"
@@ -1386,7 +1399,9 @@ import { renderSafeMarkdownPreview } from "@/utils/safeMarkdown";
 import { focusSavedReportTarget } from "@/utils/savedReportFocus";
 import type { SavedReportOpenRequest } from "@/utils/savedReportOpenProtocol";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
+import SavedReportResultTable from "@/components/chatbi/SavedReportResultTable.vue";
 import SavedReportBrowseModal from "@/components/chatbi/SavedReportBrowseModal.vue";
+import DataPortalReportCreateModal from "@/components/data-portal/DataPortalReportCreateModal.vue";
 
 const { showToast } = useToast();
 
@@ -1892,6 +1907,7 @@ const savedReportSubscriptionDeleting = ref(false);
 const showDeleteSubscriptionConfirm = ref(false);
 const activeSubscriptionHelp = ref<"ai" | "instruction" | null>(null);
 const savedReportSubscriptionForm = ref({ schedule_type: "daily", time_value: "09:00", weekday: 1, monthday: 1, cron_expr: "0 9 * * *", params: {} as Record<string, any>, ai_analysis_enabled: true, analysis_instruction: "", notify_on_success: false, notify_on_failure: true, external_channels: [] as string[], alert_condition: { version: 1, type: "always", field: "", operator: ">=", value: 0, consecutive_hits: 1 } });
+const savedReportCustomParameterSchema = computed(() => (selectedSavedReportDetail.value?.params_schema || []).filter((item: any) => !["date_range", "month_range"].includes(String(item?.type || "")) && !["date_range", "month_range"].includes(String(item?.name || ""))));
 const openSubscriptionHelp = (topic: "ai" | "instruction") => { activeSubscriptionHelp.value = topic; };
 const closeSubscriptionHelp = () => { activeSubscriptionHelp.value = null; };
 const toggleSubscriptionHelp = (topic: "ai" | "instruction") => { activeSubscriptionHelp.value = activeSubscriptionHelp.value === topic ? null : topic; };
@@ -2139,6 +2155,13 @@ const fetchSavedReportSubscription = async () => {
     if (savedReportSubscription.value) Object.assign(savedReportSubscriptionForm.value, savedReportSubscription.value);
     if (!savedReportSubscriptionForm.value.alert_condition) savedReportSubscriptionForm.value.alert_condition = { version: 1, type: "always", field: "", operator: ">=", value: 0, consecutive_hits: 1 };
     savedReportSubscriptionForm.value.analysis_instruction = String(savedReportSubscriptionForm.value.analysis_instruction || "");
+    const params = { ...(savedReportSubscriptionForm.value.params || {}) };
+    for (const item of savedReportCustomParameterSchema.value) {
+      const name = String(item.name || "");
+      if (!name || params[name] !== undefined) continue;
+      params[name] = selectedSavedReportDetail.value?.default_params?.[name] ?? item.default ?? (item.type === "select" ? item.options?.[0] ?? "" : "");
+    }
+    savedReportSubscriptionForm.value.params = params;
   } finally { savedReportSubscriptionLoading.value = false; }
 };
 
@@ -2297,16 +2320,23 @@ watch(
     if (!request || !requestId || requestId === lastHandledSavedReportFocusRequestId) return;
     lastHandledSavedReportFocusRequestId = requestId;
     showSavedReportsCollapse.value = false; menuActiveTab.value = 'reports';
+    let focusedReport: any | null = null;
     try {
-      await focusSavedReportTarget(request, {
+      const focused = await focusSavedReportTarget(request, {
         getReports: () => savedReports.value,
         loadReports: fetchSavedReports,
-        openReport: openSavedReportDetail,
+        openReport: async (report) => {
+          focusedReport = report;
+          return openSavedReportDetail(report);
+        },
         openRunsTab: () => selectSavedReportDetailTab("runs"),
         openDetailTab: (tab) => selectSavedReportDetailTab(tab),
         getRuns: () => savedReportRuns.value,
         openRun: toggleSavedReportRunDetail,
       });
+      if (focused && request.run_now && focusedReport) {
+        handleExecuteSavedReportClick(focusedReport);
+      }
     } catch (error) {
       console.warn("Failed to focus saved report notification target", error);
     }

@@ -197,15 +197,19 @@ export const metadataApi = {
   analyzeDDL: (ddl: string) =>
     axios.post(`${API_BASE}/tables/import`, { ddl }, { timeout: 300000 }),
   
-  recommendMetrics: (datasetId: number) =>
-    axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, {}, { timeout: 300000 }),
+  recommendMetrics: (datasetId: number, params?: { table_names?: string[]; user_prompt?: string }, signal?: AbortSignal) =>
+    axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, params || {}, { timeout: 300000, signal }),
 
-  recommendRelationships: (datasetId: number) =>
+  recommendRelationships: (
+    datasetId: number,
+    params?: { table_names?: string[]; user_prompt?: string },
+    signal?: AbortSignal
+  ) =>
     axios.post<{
       code: number;
       message?: string;
       data: RelationshipRecommendationResult;
-    }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, {}, { timeout: 300000 }),
+    }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, params || {}, { timeout: 300000, signal }),
 
   enhanceDatasetMetadata: (datasetId: number) =>
     axios.post<{ code: number; message?: string; data: { description: string; tags: string[] } }>(

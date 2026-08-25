@@ -183,6 +183,9 @@ def test_saved_report_parameterized_execution_contract():
     assert "start_month" in source
     assert "end_month" in source
     assert "last_6_completed_months" in source
+    assert "customParams" in workflow
+    assert "usesDateRange" in run_modal
+    assert "参数配置" in run_modal
     assert "type=\"month\"" in run_modal
     assert "extractSavedReportExecuteErrorMessage" in source
     assert "responseData?.message" in workflow
@@ -192,7 +195,7 @@ def test_saved_report_parameterized_execution_contract():
     assert "/preview" in source
     assert "reportRunPreview" in source
     assert "实际执行 SQL" in run_modal
-    assert "沉淀为黄金报表" in source
+    assert "沉淀为固化报表" in source
     assert "savedReportNeedsRunOptions" in source
     assert "scheduleSavedReportPreview" in source
     assert "请等待运行预览完成后再执行" in source
@@ -244,6 +247,17 @@ def test_saved_report_modal_avoids_pinned_dataset_portal_drawer():
     run_modal_source = _source("frontend/src/components/chat/SavedReportRunModal.vue")
     assert "inset-y-0 left-0" in run_modal_source
     assert ':class="overlayClass"' in run_modal_source
+
+
+def test_saved_report_run_detail_renders_result_table_and_csv_export():
+    menu_source = _source("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
+    result_component = _source("frontend/src/components/chatbi/SavedReportResultTable.vue")
+
+    assert "SavedReportResultTable" in menu_source
+    assert "result_snapshot" in menu_source
+    assert "导出 CSV" in result_component
+    assert "URL.createObjectURL" in result_component
+    assert "column_labels" in result_component
 
 
 def test_saved_report_edit_contract():

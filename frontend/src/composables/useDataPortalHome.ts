@@ -8,6 +8,7 @@ export function useDataPortalHome() {
   const allReports = ref<DataPortalReportItem[]>([]);
   const homeLoading = ref(false);
   const sceneLoading = ref(false);
+  const reportsLoading = ref(false);
   const homeError = ref("");
   const sceneError = ref("");
   const reportsError = ref("");
@@ -32,22 +33,43 @@ export function useDataPortalHome() {
   const load = async (refresh = false) => {
     homeLoading.value = true;
     sceneLoading.value = true;
+    reportsLoading.value = true;
     homeError.value = "";
     sceneError.value = "";
     reportsError.value = "";
-    const [homeResult, sceneResult, reportsResult] = await Promise.allSettled([
-      requestHome(),
-      requestScenes(refresh),
-      requestReports(),
-    ]);
-    if (homeResult.status === "fulfilled") homePayload.value = homeResult.value;
-    else homeError.value = "首页运行数据暂时无法获取";
-    if (sceneResult.status === "fulfilled") scenePayload.value = sceneResult.value;
-    else sceneError.value = "推荐场景暂时无法获取";
-    if (reportsResult.status === "fulfilled") allReports.value = reportsResult.value;
-    else reportsError.value = "完整报表列表暂时无法获取";
-    homeLoading.value = false;
-    sceneLoading.value = false;
+
+    const homeTask = requestHome()
+      .then((payload) => {
+        homePayload.value = payload;
+      })
+      .catch(() => {
+        homeError.value = "首页运行数据暂时无法获取";
+      })
+      .finally(() => {
+        homeLoading.value = false;
+      });
+    const sceneTask = requestScenes(refresh)
+      .then((payload) => {
+        scenePayload.value = payload;
+      })
+      .catch(() => {
+        sceneError.value = "推荐场景暂时无法获取";
+      })
+      .finally(() => {
+        sceneLoading.value = false;
+      });
+    const reportsTask = requestReports()
+      .then((reports) => {
+        allReports.value = reports;
+      })
+      .catch(() => {
+        reportsError.value = "完整报表列表暂时无法获取";
+      })
+      .finally(() => {
+        reportsLoading.value = false;
+      });
+
+    await Promise.all([homeTask, sceneTask, reportsTask]);
   };
 
   const refresh = () => load(true);
@@ -58,6 +80,7 @@ export function useDataPortalHome() {
     allReports,
     homeLoading,
     sceneLoading,
+    reportsLoading,
     homeError,
     sceneError,
     reportsError,

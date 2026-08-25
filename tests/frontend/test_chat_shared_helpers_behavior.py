@@ -1082,6 +1082,24 @@ return {
     assert "A\\|B" in result["markdown"]
 
 
+def test_saved_report_shared_helpers_keep_custom_runtime_parameters():
+    result = _run_typescript(
+        "frontend/src/composables/chat/useSavedReportWorkflow.ts",
+        """
+return api.buildSavedReportRunParams(
+  { params_schema: [
+    { name: 'department', type: 'text' },
+    { name: 'min_amount', type: 'number' },
+    { name: 'region', type: 'select', options: ['华东', '华南'] }
+  ] },
+  { dateRange: '', startDate: '', endDate: '', monthRange: '', startMonth: '', endMonth: '', customParams: { department: '研发部', min_amount: 100, region: '华东' } }
+);
+""",
+    )
+
+    assert result == {"department": "研发部", "min_amount": 100, "region": "华东"}
+
+
 def test_history_date_grouping_keeps_existing_boundaries_and_order():
     result = _run_typescript(
         "frontend/src/composables/chat/useChatHistoryGroups.ts",

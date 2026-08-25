@@ -5,7 +5,8 @@ import re
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -29,6 +30,9 @@ from app.models.saved_report import (
 from app.models.user import User
 from app.schemas.response import StandardResponse
 from app.services.ai.chatbi_sql_user_messages import map_sql_tool_error_for_user
+from app.services.db_connection_service import DbConnectionService
+from app.services.metadata_service import MetadataService
+from app.services.permission_service import PermissionService
 from app.services.sql_query_execution_service import (
     attach_permission_notice_to_payload,
     execute_sql_query_core,
@@ -53,6 +57,14 @@ class SaveReportRequest(BaseModel):
     column_meta: Optional[Dict[str, Any]] = Field(None, description="结果列业务语义快照")
     analysis_mode: str = Field("manual", description="执行后分析模式：manual 或 auto")
     tags: List[str] = Field(default_factory=list, description="报表标签")
+
+
+class SavedReportSqlPreviewRequest(BaseModel):
+    sql: str = Field(..., min_length=1, description="只读 SELECT 语句")
+    source_type: Literal["connection", "dataset"] = Field("connection", description="预览来源类型")
+    connection_id: Optional[int] = Field(None, description="物理数据源配置 ID")
+    dataset_id: Optional[int] = Field(None, description="元数据数据集 ID")
+    limit: int = Field(50, ge=1, le=1000, description="最多返回行数")
 
 
 class ExecuteReportRequest(BaseModel):
@@ -200,6 +212,13 @@ class ReportParameterError(ValueError):
 _SQL_GATE_ERROR_PREFIXES = ("[Validation Failed]", "[Permission Denied]", "[Security Error]")
 _DATE_LITERAL_PATTERN = r"'(\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?'"
 _MONTH_LITERAL_PATTERN = r"'(\d{4}-\d{2})'"
+_SAVED_REPORT_DATE_PARAMETER_NAMES = {"start_date", "end_date", "start_datetime", "end_datetime"}
+_SAVED_REPORT_MONTH_PARAMETER_NAMES = {"start_month", "end_month"}
+_SAVED_REPORT_TEMPLATE_PARAMETER_NAMES = (
+    _SAVED_REPORT_DATE_PARAMETER_NAMES | _SAVED_REPORT_MONTH_PARAMETER_NAMES
+)
+_SAVED_REPORT_CUSTOM_PARAMETER_TYPES = {"text", "number", "select"}
+_SAVED_REPORT_PARAMETER_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 
 
 def _saved_report_sql_error_detail(raw_error: Any) -> str:
@@ -383,6 +402,127 @@ async def _dataset_name_from_id(db: AsyncSession, dataset_id: Optional[int]) -> 
     return str(dataset_name).strip() if dataset_name else None
 
 
+def _normalize_saved_report_preview_payload(raw_payload: Any) -> Dict[str, Any]:
+    """将本地 Adapter、远程 SQL API 的不同结果包装成统一的预览结构。"""
+    payload = raw_payload
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=payload)
+
+    if isinstance(payload, dict) and isinstance(payload.get("data"), (dict, list)):
+        payload = payload["data"]
+    if isinstance(payload, list):
+        payload = {"rows": payload}
+    if not isinstance(payload, dict):
+        payload = {"rows": []}
+
+    rows = payload.get("rows")
+    if rows is None:
+        for key in ("items", "records", "result", "list"):
+            if isinstance(payload.get(key), list):
+                rows = payload[key]
+                break
+    if not isinstance(rows, list):
+        rows = []
+
+    columns = payload.get("columns") or payload.get("fields") or []
+    if rows and isinstance(rows[0], dict):
+        if not columns:
+            columns = [{"name": str(key)} for key in rows[0].keys()]
+        column_names = [item if isinstance(item, str) else item.get("name") for item in columns]
+        rows = [[row.get(name) for name in column_names] for row in rows]
+
+    normalized = dict(payload)
+    normalized["columns"] = columns
+    normalized["rows"] = rows
+    return normalized
+
+
+async def _has_metadata_import_permission(db: AsyncSession, user_info: Dict[str, Any]) -> bool:
+    if user_info.get("role") == "admin":
+        return True
+    try:
+        user_id = int(user_info.get("user_id"))
+    except (TypeError, ValueError):
+        return False
+    return await PermissionService(db).check_permission(user_id, "element", "element:metadata:import")
+
+
+async def _ensure_saved_report_dataset_access(
+    db: AsyncSession,
+    *,
+    dataset_id: Optional[int],
+    user_info: Dict[str, Any],
+    user_id: int,
+) -> None:
+    if not dataset_id:
+        return
+    datasets = await MetadataService.list_accessible_dataset_options(
+        db,
+        user_id=user_id,
+        is_admin=user_info.get("role") == "admin",
+        status=1,
+    )
+    if not any(int(dataset.id) == int(dataset_id) for dataset in datasets):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="数据集不存在或无权访问")
+
+
+async def _precheck_saved_report_sql_access(
+    db: AsyncSession,
+    *,
+    sql: str,
+    data_source: str,
+    dataset_id: Optional[int],
+    user_info: Dict[str, Any],
+    user_id: int,
+) -> None:
+    try:
+        dataset_name = await _dataset_name_from_id(db, dataset_id)
+        result_str = await execute_sql_query_core(
+            db,
+            sql=sql,
+            data_source=data_source,
+            dataset_name=dataset_name,
+            user_id=user_id,
+            user_dimensions=_chatbi_user_dimensions(user_info, user_id),
+            trace_logs=None,
+            api_key=None,
+            agent_context=None,
+            dry_run=False,
+            auth_check_only=True,
+            is_admin=user_info.get("role") == "admin",
+            bypass_table_auth=False,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to precheck saved report SQL permissions: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"报表 SQL 权限校验失败: {e}",
+        ) from e
+
+    raw_res = str(result_str or "").strip()
+    if raw_res.startswith(_SQL_GATE_ERROR_PREFIXES):
+        raise HTTPException(
+            status_code=_saved_report_sql_error_status(raw_res),
+            detail=_saved_report_sql_error_detail(raw_res),
+        )
+
+    try:
+        parsed = json.loads(raw_res)
+    except json.JSONDecodeError:
+        return
+
+    if isinstance(parsed, dict) and parsed.get("allowed") is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_saved_report_sql_error_detail(parsed),
+        )
+
+
 def _attach_permission_notice(payload: Dict[str, Any], permission_notice: Dict[str, Any]) -> Dict[str, Any]:
     return attach_permission_notice_to_payload(payload, permission_notice)
 
@@ -425,6 +565,95 @@ def _detect_default_date_range_template(sql: str) -> Tuple[Optional[str], List[D
     return template, params_schema, {"month_range": "last_6_completed_months"}
 
 
+def _validate_saved_report_template(
+    sql_template: Optional[str],
+    params_schema: List[Dict[str, Any]],
+) -> None:
+    """在保存边界拒绝运行时必然无法解析的报表模板。"""
+    if not sql_template:
+        return
+
+    placeholders = set(re.findall(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}", sql_template))
+    if not placeholders:
+        return
+
+    declared_items = [item for item in params_schema if isinstance(item, dict)]
+    declared_names = {
+        str(item.get("name") or "").strip()
+        for item in declared_items
+        if str(item.get("name") or "").strip()
+    }
+    declared_types = {
+        str(item.get("type") or "").strip()
+        for item in declared_items
+        if str(item.get("type") or "").strip()
+    }
+
+    seen_names: set[str] = set()
+    for item in declared_items:
+        name = str(item.get("name") or "").strip()
+        param_type = str(item.get("type") or "").strip()
+        if not name and param_type in {"date_range", "month_range"}:
+            name = param_type
+        if not name or not _SAVED_REPORT_PARAMETER_NAME_PATTERN.fullmatch(name):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="动态参数名称只能使用字母、数字和下划线，且不能以数字开头。")
+        if name in seen_names:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"动态参数重复定义: {name}")
+        seen_names.add(name)
+        if param_type not in {"date_range", "month_range", *_SAVED_REPORT_CUSTOM_PARAMETER_TYPES}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"不支持的动态参数类型: {param_type or '未填写'}")
+        if name in _SAVED_REPORT_DATE_PARAMETER_NAMES | _SAVED_REPORT_MONTH_PARAMETER_NAMES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"动态参数名称不可直接声明为内置边界参数: {name}")
+        if name == "date_range" and param_type != "date_range":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="date_range 必须使用 date_range 类型")
+        if name == "month_range" and param_type != "month_range":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month_range 必须使用 month_range 类型")
+        if param_type == "select":
+            options = item.get("options")
+            if not isinstance(options, list) or not options:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"下拉参数 {name} 至少需要一个候选值")
+            if "default" in item and item.get("default") not in options:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"下拉参数 {name} 的默认值不在候选值中")
+
+    unknown = placeholders - _SAVED_REPORT_TEMPLATE_PARAMETER_NAMES - declared_names
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"参数定义缺失: {', '.join(sorted(unknown))}。请先为每个自定义参数配置类型和默认值。",
+        )
+
+    has_date_parameters = bool(placeholders & _SAVED_REPORT_DATE_PARAMETER_NAMES)
+    has_month_parameters = bool(placeholders & _SAVED_REPORT_MONTH_PARAMETER_NAMES)
+    if has_date_parameters and has_month_parameters:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="当前一张固化报表不能同时使用日期范围和月份范围参数。",
+        )
+
+    if has_date_parameters:
+        date_allowed = (
+            "date_range" in declared_names
+            or "date_range" in declared_types
+            or bool(placeholders & declared_names)
+        )
+        if not date_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="日期动态参数缺少 date_range 参数定义。",
+            )
+    if has_month_parameters:
+        month_allowed = (
+            "month_range" in declared_names
+            or "month_range" in declared_types
+            or bool(placeholders & declared_names)
+        )
+        if not month_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="月份动态参数缺少 month_range 参数定义。",
+            )
+
+
 def _build_saved_report_item(
     *,
     report_id: str,
@@ -460,6 +689,8 @@ def _build_saved_report_item(
             sql_template = detected_template
             params_schema = detected_schema
             default_params = detected_defaults
+
+    _validate_saved_report_template(sql_template, params_schema)
 
     if sql_template or params_schema:
         mode = "param_sql"
@@ -563,7 +794,7 @@ def _report_row_to_item(report: PortalSavedReport, *, current_user_id: int) -> S
         sql_template=report.sql_template,
         params_schema=_normalize_json_list(report.params_schema),
         default_params=_normalize_json_dict(report.default_params),
-        column_meta=_normalize_json_dict(report.column_meta) or None,
+        column_meta=_normalize_json_dict(getattr(report, "column_meta", None)) or None,
         analysis_mode=report.analysis_mode or "manual",
         tags=_clean_tags(report.tags if isinstance(report.tags, list) else []),
         owner_user_id=int(report.owner_user_id) if report.owner_user_id is not None else None,
@@ -687,6 +918,43 @@ def _allowed_template_params(report: SavedReportItem) -> set[str]:
     return allowed
 
 
+def _custom_parameter_schema(report: SavedReportItem) -> Dict[str, Dict[str, Any]]:
+    return {
+        str(item.get("name") or "").strip(): item
+        for item in report.params_schema
+        if isinstance(item, dict)
+        and str(item.get("name") or "").strip()
+        and str(item.get("type") or "").strip() in _SAVED_REPORT_CUSTOM_PARAMETER_TYPES
+    }
+
+
+def _render_custom_parameter_literal(name: str, value: Any, schema: Dict[str, Any]) -> str:
+    param_type = str(schema.get("type") or "text").strip()
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if schema.get("required"):
+            raise ReportParameterError(f"参数 {name} 不能为空")
+        return "NULL"
+    if param_type == "number":
+        if isinstance(value, bool):
+            raise ReportParameterError(f"参数 {name} 必须是数字")
+        try:
+            numeric = Decimal(str(value).strip())
+        except (InvalidOperation, ValueError) as exc:
+            raise ReportParameterError(f"参数 {name} 必须是数字") from exc
+        if not numeric.is_finite():
+            raise ReportParameterError(f"参数 {name} 必须是有限数字")
+        return format(numeric, "f")
+
+    text_value = str(value)
+    if len(text_value) > 10000:
+        raise ReportParameterError(f"参数 {name} 长度不能超过 10000 个字符")
+    if param_type == "select":
+        options = schema.get("options")
+        if isinstance(options, list) and value not in options and text_value not in {str(option) for option in options}:
+            raise ReportParameterError(f"参数 {name} 不在允许的候选值中")
+    return "'" + text_value.replace("'", "''") + "'"
+
+
 def _resolve_report_sql(
     report: SavedReportItem,
     *,
@@ -704,6 +972,9 @@ def _resolve_report_sql(
         raise ReportParameterError(f"不允许的报表参数: {', '.join(sorted(unknown))}")
 
     merged_params = dict(report.default_params or {})
+    for name, schema in _custom_parameter_schema(report).items():
+        if name not in merged_params and "default" in schema:
+            merged_params[name] = schema.get("default")
     merged_params.update(body.params or {})
 
     resolved_params: Dict[str, Any] = {}
@@ -723,7 +994,13 @@ def _resolve_report_sql(
             return f"'{resolved_params[name]}'"
         if name in {"start_month", "end_month"}:
             return f"'{resolved_params[name]}'"
-        raise ReportParameterError(f"参数 {name} 暂不支持直接写入 SQL 模板")
+        schema = _custom_parameter_schema(report).get(name)
+        if not schema:
+            raise ReportParameterError(f"参数 {name} 暂不支持直接写入 SQL 模板")
+        value = resolved_params.get(name)
+        rendered = _render_custom_parameter_literal(name, value, schema)
+        resolved_params[name] = value
+        return rendered
 
     rendered_sql = re.sub(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}", replace_placeholder, template)
     used_date_placeholders = placeholders & date_placeholder_names
@@ -759,49 +1036,14 @@ async def _precheck_saved_report_sql_permissions(
     except ReportParameterError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
-    try:
-        dataset_name = await _dataset_name_from_id(db, report.dataset_id)
-        result_str = await execute_sql_query_core(
-            db,
-            sql=sql_to_check,
-            data_source=report.data_source,
-            dataset_name=dataset_name,
-            user_id=user_id,
-            user_dimensions=_chatbi_user_dimensions(user_info, user_id),
-            trace_logs=None,
-            api_key=None,
-            agent_context=None,
-            dry_run=False,
-            auth_check_only=True,
-            is_admin=user_info.get("role") == "admin",
-            bypass_table_auth=False,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to precheck saved report SQL permissions: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"报表 SQL 权限校验失败: {e}",
-        ) from e
-
-    raw_res = str(result_str or "").strip()
-    if raw_res.startswith(_SQL_GATE_ERROR_PREFIXES):
-        raise HTTPException(
-            status_code=_saved_report_sql_error_status(raw_res),
-            detail=_saved_report_sql_error_detail(raw_res),
-        )
-
-    try:
-        parsed = json.loads(raw_res)
-    except json.JSONDecodeError:
-        return
-
-    if isinstance(parsed, dict) and parsed.get("allowed") is False:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=_saved_report_sql_error_detail(parsed),
-        )
+    await _precheck_saved_report_sql_access(
+        db,
+        sql=sql_to_check,
+        data_source=report.data_source,
+        dataset_id=report.dataset_id,
+        user_info=user_info,
+        user_id=user_id,
+    )
 
 
 async def _enrich_saved_report_share_targets(db: AsyncSession, reports: List[SavedReportItem]) -> None:
@@ -1142,6 +1384,12 @@ async def save_report(
         dataset_id=body.dataset_id,
         data_source=body.data_source,
     )
+    await _ensure_saved_report_dataset_access(
+        db,
+        dataset_id=dataset_id,
+        user_info=user_info,
+        user_id=user_id,
+    )
     report_id = f"rpt_{uuid.uuid4().hex[:12]}"
     now_str = datetime.now(timezone.utc).isoformat()
 
@@ -1177,6 +1425,126 @@ async def save_report(
     await db.flush()
 
     return StandardResponse(data=report_item)
+
+
+@router.get(
+    "/source-options",
+    summary="获取固化报表可用的数据源选项",
+)
+async def list_saved_report_source_options(
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只返回数据源标识和展示信息，禁止把连接密码带入数据门户页面。"""
+    if not await _has_metadata_import_permission(db, user_info):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要数据源读取权限")
+    configs = await DbConnectionService.list_configs(db)
+    return StandardResponse(
+        data=[
+            {
+                "id": config.id,
+                "name": config.name,
+                "source_key": config.name,
+                "db_type": config.db_type,
+                "database_name": config.database_name,
+            }
+            for config in configs
+        ]
+    )
+
+
+@router.post(
+    "/preview-sql",
+    summary="试跑新建固化报表 SQL",
+)
+async def preview_new_saved_report_sql(
+    body: SavedReportSqlPreviewRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = int(user_info["user_id"])
+    is_admin = user_info.get("role") == "admin"
+
+    if body.source_type == "connection":
+        if not body.connection_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择数据源连接")
+        if not await _has_metadata_import_permission(db, user_info):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要数据源读取权限")
+        config = await DbConnectionService.get_config(db, body.connection_id)
+        if not config:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据库配置不存在")
+        await _precheck_saved_report_sql_access(
+            db,
+            sql=body.sql.strip(),
+            data_source=config.name,
+            dataset_id=None,
+            user_info=user_info,
+            user_id=user_id,
+        )
+        try:
+            from app.services.data_adapter.factory import get_adapter
+
+            adapter = await get_adapter(config.name)
+            result = await adapter.preview(
+                body.sql.strip(),
+                limit=min(max(body.limit, 1), 1000),
+                include_total=False,
+            )
+        except Exception as exc:
+            logger.exception("Failed to preview new saved report SQL on connection %s", body.connection_id)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"执行 SQL 失败: {exc}") from exc
+    else:
+        if not body.dataset_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择所属数据集")
+        datasets = await MetadataService.list_accessible_dataset_options(
+            db,
+            user_id=user_id,
+            is_admin=is_admin,
+            status=1,
+        )
+        dataset = next((item for item in datasets if int(item.id) == int(body.dataset_id)), None)
+        if not dataset:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在或无权访问")
+        await _ensure_saved_report_dataset_access(
+            db,
+            dataset_id=body.dataset_id,
+            user_info=user_info,
+            user_id=user_id,
+        )
+        await _precheck_saved_report_sql_access(
+            db,
+            sql=body.sql.strip(),
+            data_source=str(dataset.data_source or "default_clickhouse"),
+            dataset_id=body.dataset_id,
+            user_info=user_info,
+            user_id=user_id,
+        )
+        result = await execute_sql_query_core(
+            db,
+            sql=body.sql.strip(),
+            data_source=str(dataset.data_source or "default_clickhouse"),
+            dataset_name=str(dataset.name),
+            user_id=user_id,
+            user_dimensions=_chatbi_user_dimensions(user_info, user_id),
+            trace_logs=None,
+            api_key=None,
+            agent_context=None,
+            dry_run=False,
+            is_admin=is_admin,
+            auth_check_only=False,
+            bypass_table_auth=False,
+            include_total=False,
+        )
+        raw_result = str(result or "").strip()
+        if raw_result.startswith(_SQL_GATE_ERROR_PREFIXES):
+            raise HTTPException(
+                status_code=_saved_report_sql_error_status(raw_result),
+                detail=_saved_report_sql_error_detail(raw_result),
+            )
+        result = raw_result
+
+    return StandardResponse(data=_normalize_saved_report_preview_payload(result))
+
 
 @router.get(
     "",
@@ -1403,6 +1771,12 @@ async def update_saved_report(
             dataset_id=dataset_id,
             data_source=data_source,
         )
+    await _ensure_saved_report_dataset_access(
+        db,
+        dataset_id=dataset_id,
+        user_info=user_info,
+        user_id=user_id,
+    )
 
     mode = body.mode if "mode" in fields_set and body.mode is not None else existing.mode
     sql_template = body.sql_template if "sql_template" in fields_set else existing.sql_template
@@ -1799,7 +2173,7 @@ async def analyze_saved_report(
 
     parsed: Any = None
     column_labels: Dict[str, Any] = {}
-    column_meta = report_row.column_meta
+    column_meta = getattr(report_row, "column_meta", None)
     resolved_params: Dict[str, Any] = {}
     run_row: Optional[PortalSavedReportRun] = None
 
@@ -2031,7 +2405,7 @@ async def _execute_saved_report_impl(
                 db,
                 parsed_result=parsed,
                 dataset_names=dataset_names,
-                snapshot_meta=report_row.column_meta,
+                snapshot_meta=getattr(report_row, "column_meta", None),
                 sql=sql_to_execute,
             )
             if column_meta:

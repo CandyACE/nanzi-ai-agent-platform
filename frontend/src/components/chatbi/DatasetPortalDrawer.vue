@@ -230,6 +230,7 @@ withDefaults(defineProps<{
     report_id: string;
     run_id: string;
     request_id: string;
+    run_now?: boolean;
   } | null;
 }>(), {
   mountableDatasets: () => [],

@@ -1673,6 +1673,7 @@
       :previewing="isPreviewingSavedReport"
       :preview="reportRunPreview"
       :uses-month-range="savedReportUsesMonthRange"
+      :uses-date-range="savedReportUsesDateRange"
       :overlay-class="saveReportModalOverlayClass"
       :overlay-style="saveReportModalOverlayStyle"
       @close="showReportRunModal = false"
@@ -2298,7 +2299,7 @@ interface SavedReportPayload {
   sql_content: string;
   mode?: string;
   sql_template?: string;
-  params_schema?: any[];
+  params_schema?: Array<{ type?: string; name?: string; label?: string; default?: any; required?: boolean; options?: any[] }>;
   default_params?: Record<string, any>;
   analysis_mode?: string;
   description?: string;
@@ -3071,6 +3072,7 @@ const handlePersonalResourceOpenReport = (payload: any) => {
     report_id: payload?.report_id,
     run_id: payload?.run_id,
     detail_tab: payload?.detail_tab,
+    run_now: payload?.run_now,
   });
 };
 
@@ -5137,6 +5139,7 @@ const reportRunForm = ref({
   monthRange: 'last_6_completed_months',
   startMonth: '',
   endMonth: '',
+  customParams: {} as Record<string, any>,
   autoAnalyze: true,
 });
 
@@ -5265,11 +5268,22 @@ const savedReportUsesMonthRange = (report?: SavedReportPayload | null) => {
   return Boolean(report?.params_schema?.some((item: any) => item?.type === 'month_range' || item?.name === 'month_range'));
 };
 
+const savedReportUsesDateRange = (report?: SavedReportPayload | null) => {
+  return Boolean(report?.params_schema?.some((item: any) => item?.type === 'date_range' || item?.name === 'date_range'));
+};
+
 let suppressSavedReportRunPreviewWatch = false;
 
 const prepareSavedReportRunForm = (report: SavedReportPayload) => {
   suppressSavedReportRunPreviewWatch = true;
   const defaults = report.default_params || {};
+  const customParams: Record<string, any> = {};
+  for (const item of report.params_schema || []) {
+    const type = String(item?.type || '');
+    const name = String(item?.name || '');
+    if (!name || type === 'date_range' || type === 'month_range' || name === 'date_range' || name === 'month_range') continue;
+    customParams[name] = defaults[name] ?? item.default ?? (type === 'select' ? item.options?.[0] ?? '' : '');
+  }
   reportRunForm.value = {
     dateRange: String(defaults.date_range || 'month_start_to_today'),
     startDate: String(defaults.start_date || todayDateString()),
@@ -5277,6 +5291,7 @@ const prepareSavedReportRunForm = (report: SavedReportPayload) => {
     monthRange: String(defaults.month_range || 'last_6_completed_months'),
     startMonth: String(defaults.start_month || todayMonthString()),
     endMonth: String(defaults.end_month || todayMonthString()),
+    customParams,
     autoAnalyze: true,
   };
   nextTick(() => {
@@ -5340,6 +5355,7 @@ watch(
     reportRunForm.value.monthRange,
     reportRunForm.value.startMonth,
     reportRunForm.value.endMonth,
+    JSON.stringify(reportRunForm.value.customParams),
   ],
   () => scheduleSavedReportPreview(false),
   { flush: 'post' }
@@ -5744,6 +5760,7 @@ const savedReportFocusRequest = ref<{
   run_id: string;
   request_id: string;
   detail_tab?: "info" | "runs" | "subscription";
+  run_now?: boolean;
 } | null>(null);
 let savedReportFocusSequence = 0;
 const openSavedReportFromHost = (target: any) => {
@@ -5757,6 +5774,7 @@ const openSavedReportFromHost = (target: any) => {
     run_id: String(target.run_id || ""),
     request_id: requestId,
     ...(target.detail_tab ? { detail_tab: target.detail_tab } : {}),
+    ...(target.run_now ? { run_now: true } : {}),
   };
   setTimeout(() => openPortalDrawer(), 0);
 };
