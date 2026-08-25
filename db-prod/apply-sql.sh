@@ -54,6 +54,30 @@ if [ -z "$MYSQL_USER_INPUT" ] || [ -z "$MYSQL_DATABASE_INPUT" ]; then
     exit 1
 fi
 
+COMMON_ARGS=(
+    --host "$MYSQL_HOST_INPUT"
+    --port "$MYSQL_PORT_INPUT"
+    --user "$MYSQL_USER_INPUT"
+    --password "$MYSQL_PASSWORD_INPUT"
+    --database "$MYSQL_DATABASE_INPUT"
+    --yes
+)
+
+echo "🔍 正在检查目标数据库字符集..."
+CHARSET_CHECK_OUTPUT=$(python3 db-prod/apply_sql.py \
+    --check-charset \
+    --host "$MYSQL_HOST_INPUT" \
+    --port "$MYSQL_PORT_INPUT" \
+    --user "$MYSQL_USER_INPUT" \
+    --password "$MYSQL_PASSWORD_INPUT" \
+    --database "$MYSQL_DATABASE_INPUT" 2>&1)
+CHARSET_CHECK_STATUS=$?
+printf '%s\n' "$CHARSET_CHECK_OUTPUT"
+if [ "$CHARSET_CHECK_STATUS" -ne 0 ] && [ "$CHARSET_CHECK_STATUS" -ne 2 ]; then
+    echo "❌ 字符集检查失败，未执行 SQL。"
+    exit 1
+fi
+
 echo "---------------------------------------------------"
 echo "请确认本次 SQL 执行目标："
 echo "  Host     : $MYSQL_HOST_INPUT"
@@ -66,21 +90,16 @@ if [ $# -eq 0 ]; then
 else
     echo "  SQL file : ${SQL_FILES[*]}"
 fi
-read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
+if [ "$CHARSET_CHECK_STATUS" -eq 2 ]; then
+    read -r -p "目标库字符集存在风险；确认目标并接受风险请输入 YES 继续执行：" CONFIRM_INPUT
+else
+    read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
+fi
 CONFIRM_UPPER=$(echo "$CONFIRM_INPUT" | tr '[:lower:]' '[:upper:]')
 if [ "$CONFIRM_UPPER" != "YES" ]; then
     echo "❌ 已取消，未执行 SQL。"
     exit 1
 fi
-
-COMMON_ARGS=(
-    --host "$MYSQL_HOST_INPUT"
-    --port "$MYSQL_PORT_INPUT"
-    --user "$MYSQL_USER_INPUT"
-    --password "$MYSQL_PASSWORD_INPUT"
-    --database "$MYSQL_DATABASE_INPUT"
-    --yes
-)
 
 if [ $# -eq 0 ]; then
     echo "No arguments provided. Running all SQL files from db-prod/..."

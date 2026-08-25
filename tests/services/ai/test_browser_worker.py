@@ -1598,3 +1598,78 @@ async def test_snapshot_js_recognizes_contenteditable_and_aria_textboxes(tmp_pat
     search_box = snapshot.elements[2]
     assert search_box.role == "searchbox"
     assert search_box.name == "站内搜索"
+
+
+@pytest.mark.asyncio
+async def test_worker_raises_browser_environment_error_when_playwright_missing(tmp_path):
+    from app.services.ai.browser.browser_worker import BrowserEnvironmentError, BrowserWorker
+
+    def failing_factory():
+        raise ModuleNotFoundError("No module named 'playwright'")
+
+    worker = BrowserWorker(
+        playwright_factory=failing_factory,
+        url_validator=lambda url: url,
+        screenshot_dir=str(tmp_path),
+    )
+
+    with pytest.raises(BrowserEnvironmentError) as exc_info:
+        await worker.open(
+            session_id="bs-missing-pw",
+            profile_path=str(tmp_path / "profile-missing-pw"),
+            url="https://example.com/",
+        )
+
+    assert "pip install playwright" in str(exc_info.value)
+    assert "playwright install chromium" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_worker_raises_browser_environment_error_when_chromium_not_installed(tmp_path):
+    from app.services.ai.browser.browser_worker import BrowserEnvironmentError, BrowserWorker
+
+    class FakeChromiumMissing:
+        async def launch_persistent_context(self, *args, **kwargs):
+            raise Exception("Executable doesn't exist at /root/.cache/ms-playwright/chromium-1112/chrome-linux/chrome. Please run \"playwright install\"")
+
+    class FakePlaywrightObj:
+        chromium = FakeChromiumMissing()
+
+    worker = BrowserWorker(
+        playwright_factory=lambda: FakePlaywrightObj(),
+        url_validator=lambda url: url,
+        screenshot_dir=str(tmp_path),
+    )
+
+    with pytest.raises(BrowserEnvironmentError) as exc_info:
+        await worker.open(
+            session_id="bs-missing-chromium",
+            profile_path=str(tmp_path / "profile-missing-chromium"),
+            url="https://example.com/",
+        )
+
+    assert "playwright install chromium" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_worker_check_environment():
+    from app.services.ai.browser.browser_worker import BrowserWorker
+
+    class FakeChromiumReady:
+        def executable_path(self):
+            return "/dummy/path/to/chrome"
+
+    class FakePlaywrightReady:
+        chromium = FakeChromiumReady()
+
+    worker = BrowserWorker(
+        playwright_factory=lambda: FakePlaywrightReady(),
+    )
+    # mock os.path.exists
+    import unittest.mock as mock
+    with mock.patch("os.path.exists", return_value=True):
+        env = await worker.check_environment()
+        assert env["status"] == "ready"
+        assert env["playwright_installed"] is True
+        assert env["chromium_installed"] is True
+        assert env["chromium_executable"] == "/dummy/path/to/chrome"

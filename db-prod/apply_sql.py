@@ -25,7 +25,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Apply a SQL migration to an explicitly selected MySQL database."
     )
-    parser.add_argument("file_path", help="SQL file to execute")
+    parser.add_argument("file_path", nargs="?", help="SQL file to execute")
     parser.add_argument("--host", help="MySQL host")
     parser.add_argument("--port", type=int, default=3306, help="MySQL port")
     parser.add_argument("--user", help="MySQL user")
@@ -41,7 +41,15 @@ def parse_args(argv=None):
         action="store_true",
         help="Skip the per-file confirmation. Use only after an outer wrapper has already confirmed.",
     )
+    parser.add_argument(
+        "--check-charset",
+        action="store_true",
+        help="Check the target database default charset and exit without executing SQL",
+    )
     args = parser.parse_args(argv)
+
+    if not args.check_charset and not args.file_path:
+        parser.error("the following arguments are required: file_path")
 
     missing = [name for name in ("host", "user", "database") if not getattr(args, name)]
     if missing and not args.interactive:
@@ -154,6 +162,50 @@ def confirm_execution(config, file_path):
         raise SystemExit(1)
 
 
+async def inspect_database_charset(config):
+    """Return the target database default charset/collation, or None if it is absent."""
+    conn = await aiomysql.connect(
+        host=config.host,
+        port=config.port,
+        user=config.user,
+        password=config.password,
+        autocommit=True,
+    )
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME "
+                "FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = %s",
+                (config.database,),
+            )
+            return await cur.fetchone()
+    finally:
+        conn.close()
+        await conn.ensure_closed()
+
+
+async def check_database_charset(config):
+    """Print a preflight result and return 0, 1, or 2 for missing/error/mismatch."""
+    try:
+        charset_info = await inspect_database_charset(config)
+    except Exception as exc:
+        print(f"❌ 目标数据库字符集检查失败，未执行 SQL：{exc}")
+        return 1
+
+    if charset_info is None:
+        print("ℹ️ 目标数据库不存在；确认后将以 utf8mb4 创建。")
+        return 0
+
+    charset_name, collation_name = charset_info
+    print(f"ℹ️ 目标数据库默认字符集: {charset_name}，排序规则: {collation_name}")
+    if str(charset_name).lower() != "utf8mb4":
+        print("⚠️ 目标数据库默认字符集不是 utf8mb4，导入包含中文的 SQL 时可能出现乱码。")
+        print("⚠️ 如仍要继续，请在上一步确认提示中明确输入 YES。")
+        return 2
+
+    return 0
+
+
 async def apply_sql(file_path, config):
     print(f"🔌 Connecting to MySQL server to ensure database '{config.database}' exists...")
 
@@ -228,6 +280,8 @@ async def apply_sql(file_path, config):
 def main(argv=None):
     args = parse_args(argv)
     config = build_config(args)
+    if args.check_charset:
+        raise SystemExit(asyncio.run(check_database_charset(config)))
     if not args.yes:
         confirm_execution(config, args.file_path)
     asyncio.run(apply_sql(args.file_path, config))

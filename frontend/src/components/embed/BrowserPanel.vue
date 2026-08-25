@@ -569,10 +569,44 @@
             </div>
 
             <div v-if="screenshotUrl" class="pointer-events-none absolute bottom-3 left-3 z-10" role="note">
-              <span class="select-none rounded bg-black/5 px-2 py-0.5 text-[10px] font-medium text-red-600/50 backdrop-blur-[1px] dark:bg-white/5 dark:text-red-400/50">
+              <span class="select-none rounded-md bg-slate-200/50 px-2 py-0.5 text-[9px] font-normal text-slate-400 backdrop-blur-[2px] dark:bg-slate-800/40 dark:text-slate-500">
                 当前为远程静态截图，非实时网页（操作存在延迟）· 严禁用于任何违法违规行为
               </span>
             </div>
+
+            <!-- 右侧：服务端浏览器环境状态徽标与一键刷新检测 (固定在视口右下角，与左侧水印同一水平线) -->
+            <div class="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 select-none" role="status">
+              <div
+                class="inline-flex items-center gap-1 rounded-md border border-slate-200/80 bg-white/90 px-2 py-0.5 text-[10px] text-slate-700 shadow-xs backdrop-blur-xs transition-all hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/90 dark:text-slate-200"
+                :title="envInfoTip"
+              >
+                <span
+                  class="h-1.5 w-1.5 rounded-full shrink-0"
+                  :class="[
+                    envLoading ? 'bg-amber-400 animate-pulse' :
+                    envInfo?.status === 'ready' ? 'bg-emerald-500 shadow-xs shadow-emerald-500/50' :
+                    'bg-red-500'
+                  ]"
+                />
+                <span class="font-mono text-[9px] font-medium tracking-tight">
+                  {{ envDisplayText }}
+                </span>
+                <button
+                  type="button"
+                  class="rounded p-0.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 active:scale-90 transition-all"
+                  :class="{ 'animate-spin': envLoading }"
+                  title="手动重新检测服务端浏览器环境与版本"
+                  aria-label="刷新环境检测"
+                  @click.stop="fetchEnvironmentInfo(true)"
+                >
+                  <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
             <div v-if="screenshotUrl" class="relative">
               <img
                 ref="imageRef"
@@ -642,19 +676,84 @@
                 </div>
               </div>
 
-              <!-- 实时鼠标坐标与当前探测到的元素信息 -->
-              <div v-if="cursorCoords" class="pointer-events-none absolute bottom-3 right-3 z-20 select-none">
-                <span class="inline-flex max-w-sm items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/90 px-2.5 py-1 font-mono text-[10px] text-slate-200 shadow-lg backdrop-blur-sm">
+              <!-- 画面右下角：实时鼠标坐标与元素标签 (仅悬停元素时展示) -->
+              <div v-if="cursorCoords && hoveredElement" class="pointer-events-none absolute bottom-3 right-3 z-20 select-none">
+                <span class="inline-flex max-w-xs items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/90 px-2 py-0.5 font-mono text-[9px] text-slate-200 shadow-md backdrop-blur-xs">
                   <span class="shrink-0 text-slate-400">📍 ({{ cursorCoords.x }}, {{ cursorCoords.y }})</span>
-                  <template v-if="hoveredElement">
-                    <span class="shrink-0 text-slate-500">|</span>
-                    <span class="shrink-0 font-bold text-cyan-400">[{{ hoveredElement.ref }}]</span>
-                    <span class="shrink-0 text-emerald-400">{{ hoveredElement.role || hoveredElement.tag }}</span>
-                    <span v-if="hoveredElement.name" class="max-w-44 truncate text-slate-300" :title="hoveredElement.name">
-                      "{{ hoveredElement.name }}"
-                    </span>
-                  </template>
+                  <span class="shrink-0 text-slate-500">|</span>
+                  <span class="shrink-0 font-bold text-cyan-400">[{{ hoveredElement.ref }}]</span>
+                  <span class="shrink-0 text-emerald-400">{{ hoveredElement.role || hoveredElement.tag }}</span>
                 </span>
+              </div>
+            </div>
+            <!-- 环境未安装向导卡片 -->
+            <div v-else-if="isEnvMissingError" class="flex h-full min-h-[360px] items-center justify-center p-6 text-xs select-none">
+              <div class="w-full max-w-md rounded-2xl border border-amber-200/90 bg-white/95 p-5 shadow-xl shadow-amber-900/10 backdrop-blur-md dark:border-amber-700/80 dark:bg-gray-900/95">
+                <div class="flex items-center gap-2.5 border-b border-amber-100 pb-3 dark:border-gray-800">
+                  <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-lg dark:bg-amber-950/80">
+                    🛠️
+                  </div>
+                  <div>
+                    <h3 class="text-xs font-bold text-gray-900 dark:text-gray-100">服务端浏览器环境未就绪</h3>
+                    <p class="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">开启远程浏览器与网页自动化需在服务器安装相关组件</p>
+                  </div>
+                </div>
+
+                <div class="mt-3.5 space-y-2.5">
+                  <div class="rounded-xl border border-gray-100 bg-slate-50 p-2.5 dark:border-gray-800 dark:bg-slate-950/60">
+                    <div class="flex items-center justify-between text-[11px] font-medium text-gray-700 dark:text-gray-300">
+                      <span>1. 安装 Python Playwright 依赖</span>
+                      <button
+                        type="button"
+                        class="rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                        @click="copyInstallCmd('pip install playwright')"
+                      >
+                        {{ copiedCmd === 'pip install playwright' ? '✓ 已复制' : '复制命令' }}
+                      </button>
+                    </div>
+                    <code class="mt-1 block font-mono text-[11px] font-semibold text-slate-800 dark:text-slate-200">
+                      pip install playwright
+                    </code>
+                  </div>
+
+                  <div class="rounded-xl border border-gray-100 bg-slate-50 p-2.5 dark:border-gray-800 dark:bg-slate-950/60">
+                    <div class="flex items-center justify-between text-[11px] font-medium text-gray-700 dark:text-gray-300">
+                      <span>2. 下载 Chromium 浏览器内核</span>
+                      <button
+                        type="button"
+                        class="rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                        @click="copyInstallCmd('playwright install chromium')"
+                      >
+                        {{ copiedCmd === 'playwright install chromium' ? '✓ 已复制' : '复制命令' }}
+                      </button>
+                    </div>
+                    <code class="mt-1 block font-mono text-[11px] font-semibold text-slate-800 dark:text-slate-200">
+                      playwright install chromium
+                    </code>
+                  </div>
+
+                  <div class="rounded-lg bg-amber-50/70 px-2.5 py-1.5 text-[10px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                    💡 Linux 生产环境若缺少系统底层依赖库，可补充执行：
+                    <code class="font-mono font-bold">playwright install-deps chromium</code>
+                  </div>
+                </div>
+
+                <div class="mt-4 flex justify-end gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
+                  <button
+                    type="button"
+                    class="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                    @click="emit('close-session')"
+                  >
+                    关闭面板
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                    @click="reloadPage"
+                  >
+                    已安装，重试连接
+                  </button>
+                </div>
               </div>
             </div>
             <div v-else class="flex h-full min-h-56 items-center justify-center px-6 text-center text-xs text-gray-400">
@@ -998,6 +1097,109 @@ const showManualInput = ref(false);
 const manualInputRef = ref<HTMLInputElement | null>(null);
 const remoteFocusMessage = ref('');
 const controlOwner = ref<ControlOwner>('ai');
+
+const copiedCmd = ref<string | null>(null);
+const copyInstallCmd = async (cmd: string) => {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      await navigator.clipboard.writeText(cmd);
+      copiedCmd.value = cmd;
+      setTimeout(() => {
+        if (copiedCmd.value === cmd) copiedCmd.value = null;
+      }, 2000);
+    }
+  } catch {
+    // 剪贴板异常静默忽略
+  }
+};
+
+const isEnvMissingError = computed(() => {
+  const msg = (errorMessage.value || '').toLowerCase();
+  return (
+    msg.includes('playwright') ||
+    msg.includes('运行环境未就绪') ||
+    msg.includes('chromium') ||
+    msg.includes('install-deps')
+  );
+});
+
+interface BrowserEnvironmentInfo {
+  status: 'ready' | 'missing_package' | 'missing_driver' | 'error';
+  playwright_installed: boolean;
+  playwright_version: string | null;
+  chromium_installed: boolean;
+  chromium_executable: string | null;
+  chromium_version?: string | null;
+  error_detail?: string | null;
+  install_guide?: string | null;
+}
+
+const envInfo = ref<BrowserEnvironmentInfo | null>(null);
+const envLoading = ref(false);
+
+const fetchEnvironmentInfo = async (manual = false) => {
+  envLoading.value = true;
+  try {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : '';
+    const res = await fetch('/api/v1/chat/browser/environment', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.ok) {
+      const data = await res.json() as BrowserEnvironmentInfo;
+      envInfo.value = data;
+      if (manual) {
+        if (data.status === 'ready') {
+          const vMsg = data.chromium_version ? `Chromium v${data.chromium_version}` : 'Chromium 已就绪';
+          const pMsg = data.playwright_version ? ` (Playwright ${data.playwright_version})` : '';
+          setHumanAction('click', `环境就绪: ${vMsg}${pMsg}`);
+          remoteFocusMessage.value = `✅ 服务端浏览器环境就绪：${vMsg}${pMsg}`;
+          setTimeout(() => {
+            if (remoteFocusMessage.value.includes('就绪')) remoteFocusMessage.value = '';
+          }, 3000);
+        } else {
+          setHumanAction('click', `环境未就绪: ${data.error_detail || '缺少依赖'}`);
+          remoteFocusMessage.value = `⚠️ 服务端浏览器环境未就绪：${data.error_detail || '缺少依赖'}`;
+        }
+      }
+    }
+  } catch {
+    if (manual) {
+      remoteFocusMessage.value = '❌ 检测网络异常，请重试';
+      setTimeout(() => {
+        if (remoteFocusMessage.value.includes('异常')) remoteFocusMessage.value = '';
+      }, 2500);
+    }
+  } finally {
+    envLoading.value = false;
+  }
+};
+
+const envDisplayText = computed(() => {
+  if (envLoading.value && !envInfo.value) return '检测环境中…';
+  if (!envInfo.value) return 'Chromium';
+  if (envInfo.value.status === 'ready') {
+    const cVer = envInfo.value.chromium_version ? `v${envInfo.value.chromium_version.split('.')[0]}` : '';
+    const pVer = envInfo.value.playwright_version ? `PW ${envInfo.value.playwright_version}` : '';
+    const tag = [cVer, pVer].filter(Boolean).join(' · ');
+    return tag ? `Chromium ${tag}` : `Chromium (Playwright ${envInfo.value.playwright_version || '就绪'})`;
+  }
+  if (envInfo.value.status === 'missing_driver') {
+    return '⚠️ 缺少 Chromium 内核';
+  }
+  if (envInfo.value.status === 'missing_package') {
+    return '⚠️ 缺少 Playwright 库';
+  }
+  return '⚠️ 运行环境异常';
+});
+
+const envInfoTip = computed(() => {
+  if (!envInfo.value) return '点击手动重新检测服务端浏览器环境与版本';
+  if (envInfo.value.status === 'ready') {
+    return `服务端浏览器环境就绪\nChromium 版本: ${envInfo.value.chromium_version || '已安装'}\nPlaywright 版本: ${envInfo.value.playwright_version || '未知'}\nChromium 路径: ${envInfo.value.chromium_executable || '默认'}\n点击重新检测`;
+  }
+  return `环境未就绪: ${envInfo.value.error_detail || '请安装相关依赖'}\n点击重新检测`;
+});
+
 const controlReason = ref<string | null>(null);
 const captchaDetected = ref(false);
 const interactionInProgress = ref(false);
@@ -2083,6 +2285,7 @@ watch(() => props.refreshSignal, () => {
 
 onMounted(() => {
   loadCustomWidth();
+  void fetchEnvironmentInfo();
   mobileMq = window.matchMedia('(max-width: 639px)');
   syncMobile();
   mobileMq.addEventListener?.('change', syncMobile);
