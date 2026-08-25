@@ -2289,7 +2289,11 @@ async def execute_saved_report(
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await _execute_saved_report_impl(report_id, body, conversation_id, user_info, db)
+    response = await _execute_saved_report_impl(report_id, body, conversation_id, user_info, db)
+    # 前端会在收到执行结果后立即调用 /analyze；必须先提交运行记录，
+    # 否则第二个请求可能暂时查不到本次刚生成的 run_id。
+    await db.commit()
+    return response
 
 
 async def _execute_saved_report_impl(

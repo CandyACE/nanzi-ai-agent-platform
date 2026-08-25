@@ -588,13 +588,27 @@ const loadDataSourcesAndDatasets = async () => {
       dbConnections.value = []
     }
     if (form.value.sourceType === 'connection') {
+      let sourceResolutionMessage = ''
       if (pendingSourceName.value) {
-        const matched = dbConnections.value.find((item) => (item.source_key || item.name) === pendingSourceName.value)
+        const normalizedPendingSource = pendingSourceName.value.trim().toLowerCase()
+        const matched = dbConnections.value.find((item) =>
+          [item.source_key, item.name]
+            .filter(Boolean)
+            .some((value) => String(value).trim().toLowerCase() === normalizedPendingSource),
+        )
         form.value.connectionId = matched?.id ?? null
+        if (!matched) {
+          sourceResolutionMessage = `原查询数据源不可用（${pendingSourceName.value}），请手动确认关联数据源。`
+        }
       }
-      if (dbConnections.value.length > 0 && !form.value.connectionId) {
+      const isAiDraft = Boolean(activeReport.value?.original_query)
+      if (!pendingSourceName.value && !isAiDraft && dbConnections.value.length > 0 && !form.value.connectionId) {
         form.value.connectionId = dbConnections.value[0]?.id ?? null
       }
+      if (isAiDraft && !pendingSourceName.value) {
+        sourceResolutionMessage = '未能从本次 AI 查询识别数据源，请手动确认关联数据源。'
+      }
+      if (sourceResolutionMessage) sourceError.value = sourceResolutionMessage
     }
 
     if (dsResult.status === 'fulfilled') {
