@@ -11,8 +11,11 @@ import {
   ArrowsPointingInIcon,
 } from "@heroicons/vue/24/outline";
 
+type WelcomeRecordKind = "command" | "welcome";
+
 interface CommandRecord {
   id: string;
+  kind?: WelcomeRecordKind;
   command: string;
   workdir: string;
   stdout: string;
@@ -35,7 +38,7 @@ const emit = defineEmits<{
   (event: "close"): void;
 }>();
 
-const isMaximized = ref(false);
+const isMaximized = ref(true);
 const inputCommand = ref("");
 const isExecuting = ref(false);
 const commandHistory = ref<string[]>([]);
@@ -52,12 +55,29 @@ const QUICK_COMMANDS = [
   { label: "Python 环境", cmd: "python3 --version || python --version" },
   { label: "系统信息", cmd: "cat /etc/os-release" },
   { label: "磁盘占用 (df -h)", cmd: "df -h /workspace" },
-  { label: "内存查看 (free -m)", cmd: "free -m" },
+  { label: "内存概览 (/proc/meminfo)", cmd: "cat /proc/meminfo" },
 ];
 
 const shortContainerId = computed(() => {
   return props.containerId ? props.containerId.slice(0, 12) : "container";
 });
+
+const createWelcomeRecord = (): CommandRecord => {
+  const workdir = currentWorkdir.value || "/workspace";
+  const output = `Docker 沙箱终端\n已连接 容器：${props.containerId || "default"}\n工作目录：${workdir}`;
+  return {
+    id: `welcome_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    kind: "welcome",
+    command: "nanzi-welcome",
+    workdir,
+    stdout: "",
+    stderr: "",
+    output,
+    exitCode: 0,
+    durationMs: 0,
+    timestamp: new Date().toLocaleTimeString(),
+  };
+};
 
 const scrollToBottom = async () => {
   await nextTick();
@@ -200,24 +220,12 @@ watch(
   () => props.show,
   (val) => {
     if (val) {
-      if (records.value.length === 0) {
-        // 首次打开自动显示欢迎提示
-        records.value.push({
-          id: `welcome_${Date.now()}`,
-          command: "echo 'Welcome to Docker Sandbox CLI'",
-          workdir: "/workspace",
-          stdout: `Connected to Docker Sandbox container [${props.containerId || 'default'}]\nWorking Directory: /workspace\nType any bash command to execute inside the sandbox.`,
-          stderr: "",
-          output: `Connected to Docker Sandbox container [${props.containerId || 'default'}]\nWorking Directory: /workspace\nType any bash command to execute inside the sandbox.`,
-          exitCode: 0,
-          durationMs: 0,
-          timestamp: new Date().toLocaleTimeString(),
-        });
-      }
+      records.value.push(createWelcomeRecord());
       focusInput();
       void scrollToBottom();
     }
-  }
+  },
+  { immediate: true },
 );
 
 onMounted(() => {
@@ -334,51 +342,87 @@ onUnmounted(() => {
         @click="focusInput"
       >
         <div v-for="(rec, idx) in records" :key="rec.id" class="space-y-1.5 group">
-          <!-- 命令行头部 -->
-          <div class="flex items-center justify-between text-gray-400 text-[11px] pt-1">
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-400 font-semibold">root@nanzi-sandbox</span>
-              <span class="text-gray-500">:</span>
-              <span class="text-sky-400 font-medium">{{ rec.workdir }}</span>
-              <span class="text-gray-400">$</span>
-              <span class="text-gray-100 font-mono font-medium">{{ rec.command }}</span>
-            </div>
-            <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <span v-if="rec.durationMs" class="text-[10px] text-gray-500">
-                {{ rec.durationMs }}ms
-              </span>
-              <span
-                v-if="!rec.loading && rec.exitCode !== 0"
-                class="px-1 py-0.2 rounded bg-rose-950 border border-rose-800 text-rose-400 text-[9px]"
-              >
-                code {{ rec.exitCode }}
-              </span>
-              <button
-                v-if="rec.output"
-                type="button"
-                class="p-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700/60"
-                :title="copiedIndex === idx ? '已复制' : '复制命令输出'"
-                @click.stop="copyOutput(rec.output, idx)"
-              >
-                <ClipboardDocumentIcon class="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <!-- 执行中 Spinner -->
-          <div v-if="rec.loading" class="flex items-center gap-2 text-indigo-400 py-1 text-xs">
-            <ArrowPathIcon class="w-3.5 h-3.5 animate-spin" />
-            <span>执行中...</span>
-          </div>
-
-          <!-- 命令输出 Output -->
           <div
-            v-else-if="rec.output"
-            class="pl-3 border-l-2 text-gray-300 whitespace-pre-wrap break-all font-mono py-0.5"
-            :class="rec.exitCode !== 0 ? 'border-rose-500/70 text-rose-300/90' : 'border-gray-700 text-gray-300'"
+            v-if="rec.kind === 'welcome'"
+            class="rounded-lg border border-slate-700/80 bg-slate-900/70 p-3 text-[11px] leading-relaxed"
           >
-            {{ rec.output }}
+            <div class="mb-2 flex items-center gap-2 text-emerald-300">
+              <CommandLineIcon class="h-4 w-4" />
+              <span class="font-semibold">Docker 沙箱终端</span>
+              <span class="text-slate-500">· 环境说明</span>
+            </div>
+            <div class="grid gap-1 sm:grid-cols-2">
+              <div><span class="text-emerald-300">● 已连接</span><span class="text-slate-400"> 容器：</span><span class="text-slate-100">{{ shortContainerId }}</span></div>
+              <div><span class="text-sky-300">工作目录</span><span class="text-slate-400">：</span><span class="text-sky-200">{{ rec.workdir || '/workspace' }}</span></div>
+            </div>
+            <div class="mt-3 border-t border-slate-700/70 pt-2">
+              <div class="mb-1 font-semibold text-slate-200">文件与同步</div>
+              <div><span class="text-emerald-300">✓ 可写 / 会保留</span><span class="text-slate-400">　/workspace</span></div>
+              <div class="pl-4 text-slate-400">这里的代码和文件会同步到宿主机用户工作区</div>
+              <div class="mt-1"><span class="text-violet-300">◆ 运行资源</span><span class="text-slate-400">　/workspace/skills</span></div>
+              <div class="pl-4 text-slate-400">平台技能运行快照，不建议手动修改</div>
+              <div class="mt-1"><span class="text-slate-300">🔒 只读</span><span class="text-slate-400">　/workspace/public/docs</span></div>
+              <div class="pl-4 text-slate-400">平台公共文档，只能读取</div>
+              <div class="mt-1"><span class="text-rose-300">× 临时内容</span><span class="text-slate-400">　/tmp、运行中的进程、非挂载路径文件</span></div>
+              <div class="pl-4 text-slate-400">容器停止、回收或重建后不保证保留</div>
+            </div>
+            <div class="mt-3 border-t border-slate-700/70 pt-2 text-amber-200">
+              <div class="font-semibold">生命周期</div>
+              <div class="text-slate-300">停止 / 空闲回收：释放容器资源，<span class="text-emerald-300">/workspace 文件保留</span></div>
+              <div class="text-slate-300">重启 / 销毁：删除旧容器，<span class="text-emerald-300">/workspace 文件保留</span>；临时进程和容器内临时数据消失</div>
+            </div>
+            <div class="mt-3 rounded-md border border-rose-500/30 bg-rose-950/20 p-2 text-rose-200">
+              <div class="font-semibold">⚠ 安全提示</div>
+              <div class="text-rose-200/80">能力越大，责任越大。删除文件、安装依赖、联网或启动后台进程前，请先确认路径和影响范围。</div>
+            </div>
           </div>
+          <template v-else>
+            <!-- 命令行头部 -->
+            <div class="flex items-center justify-between text-gray-400 text-[11px] pt-1">
+              <div class="flex items-center gap-2">
+                <span class="text-emerald-400 font-semibold">root@nanzi-sandbox</span>
+                <span class="text-gray-500">:</span>
+                <span class="text-sky-400 font-medium">{{ rec.workdir }}</span>
+                <span class="text-gray-400">$</span>
+                <span class="text-gray-100 font-mono font-medium">{{ rec.command }}</span>
+              </div>
+              <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <span v-if="rec.durationMs" class="text-[10px] text-gray-500">
+                  {{ rec.durationMs }}ms
+                </span>
+                <span
+                  v-if="!rec.loading && rec.exitCode !== 0"
+                  class="px-1 py-0.2 rounded bg-rose-950 border border-rose-800 text-rose-400 text-[9px]"
+                >
+                  code {{ rec.exitCode }}
+                </span>
+                <button
+                  v-if="rec.output"
+                  type="button"
+                  class="p-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700/60"
+                  :title="copiedIndex === idx ? '已复制' : '复制命令输出'"
+                  @click.stop="copyOutput(rec.output, idx)"
+                >
+                  <ClipboardDocumentIcon class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <!-- 执行中 Spinner -->
+            <div v-if="rec.loading" class="flex items-center gap-2 text-indigo-400 py-1 text-xs">
+              <ArrowPathIcon class="w-3.5 h-3.5 animate-spin" />
+              <span>执行中...</span>
+            </div>
+
+            <!-- 命令输出 Output -->
+            <div
+              v-else-if="rec.output"
+              class="pl-3 border-l-2 text-gray-300 whitespace-pre-wrap break-all font-mono py-0.5"
+              :class="rec.exitCode !== 0 ? 'border-rose-500/70 text-rose-300/90' : 'border-gray-700 text-gray-300'"
+            >
+              {{ rec.output }}
+            </div>
+          </template>
         </div>
 
         <!-- 当前输入行 Current Input Prompt -->
