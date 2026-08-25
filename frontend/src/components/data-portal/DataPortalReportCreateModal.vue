@@ -15,6 +15,10 @@ import {
 const props = defineProps<{
   visible: boolean
   report?: any | null
+  initialDraft?: any | null
+  overlayClass?: string
+  overlayStyle?: Record<string, string>
+  scrollbarVariant?: 'embed' | 'debug'
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +27,8 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
+
+const activeReport = computed(() => props.report || props.initialDraft || null)
 
 type ReportSourceType = 'connection' | 'dataset'
 
@@ -186,41 +192,191 @@ const formatMonthValue = (value: Date) => (
   `${value.getFullYear()}-${padNumber(value.getMonth() + 1)}`
 )
 
-const buildPreviewSql = (sql: string) => {
-  const validationError = validateSqlParameters(sql)
-  if (validationError) {
-    return { sql: '', error: validationError }
-  }
-  const customValidationError = validateCustomParameterConfigs()
-  if (customValidationError) return { sql: '', error: customValidationError }
-
+const buildDefaultTestParameterForm = (): TestParameterForm => {
   const today = new Date()
   const tomorrow = new Date(today)
   tomorrow.setDate(today.getDate() + 1)
   const previousMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1)
   const sixMonthsBeforePrevious = new Date(today.getFullYear(), today.getMonth() - 6, 1)
-  const values: Record<string, string> = {
-    start_date: formatDateValue(new Date(today.getFullYear(), today.getMonth(), 1)),
-    end_date: formatDateValue(tomorrow),
-    start_datetime: `${formatDateValue(new Date(today.getFullYear(), today.getMonth(), 1))} 00:00:00`,
-    end_datetime: `${formatDateValue(today)} 23:59:59`,
-    start_month: formatMonthValue(sixMonthsBeforePrevious),
-    end_month: formatMonthValue(previousMonth),
+  const customParams: Record<string, any> = {}
+  for (const config of customParameterConfigs.value) {
+    const existingValue = testParameterForm.value.customParams?.[config.name]
+    customParams[config.name] = existingValue !== undefined
+      ? existingValue
+      : config.defaultValue.trim()
+  }
+  return {
+    dateRange: testParameterForm.value.dateRange || 'month_start_to_today',
+    startDate: testParameterForm.value.startDate || formatDateValue(new Date(today.getFullYear(), today.getMonth(), 1)),
+    endDate: testParameterForm.value.endDate || formatDateValue(tomorrow),
+    monthRange: testParameterForm.value.monthRange || 'last_6_completed_months',
+    startMonth: testParameterForm.value.startMonth || formatMonthValue(sixMonthsBeforePrevious),
+    endMonth: testParameterForm.value.endMonth || formatMonthValue(previousMonth),
+    customParams,
+  }
+}
+
+const openTestParameterModal = () => {
+  syncCustomParameterConfigs(form.value.sqlContent)
+  testParameterForm.value = buildDefaultTestParameterForm()
+  testParameterError.value = ''
+  showTestParameterModal.value = true
+}
+
+const closeTestParameterModal = () => {
+  showTestParameterModal.value = false
+  testParameterError.value = ''
+}
+
+const parseDateInput = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) return null
+  const parsed = new Date(year, month - 1, day)
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
+    ? parsed
+    : null
+}
+
+const parseMonthInput = (value: string) => {
+  const [year, month] = value.split('-').map(Number)
+  if (!year || !month || month < 1 || month > 12) return null
+  return new Date(year, month - 1, 1)
+}
+
+const resolveTestDateRange = (parameterForm = testParameterForm.value) => {
+  const today = new Date()
+  const dateRange = parameterForm.dateRange || 'month_start_to_today'
+  let start: Date
+  let end: Date
+  let endInclusive: Date
+  if (dateRange === 'today') {
+    start = today
+    end = new Date(today)
+    end.setDate(today.getDate() + 1)
+    endInclusive = today
+  } else if (dateRange === 'yesterday') {
+    start = new Date(today)
+    start.setDate(today.getDate() - 1)
+    end = today
+    endInclusive = start
+  } else if (dateRange === 'last_7_days') {
+    start = new Date(today)
+    start.setDate(today.getDate() - 6)
+    end = new Date(today)
+    end.setDate(today.getDate() + 1)
+    endInclusive = today
+  } else if (dateRange === 'month_start_to_today') {
+    start = new Date(today.getFullYear(), today.getMonth(), 1)
+    end = new Date(today)
+    end.setDate(today.getDate() + 1)
+    endInclusive = today
+  } else if (dateRange === 'year_start_to_today') {
+    start = new Date(today.getFullYear(), 0, 1)
+    end = new Date(today)
+    end.setDate(today.getDate() + 1)
+    endInclusive = today
+  } else if (dateRange === 'custom_range') {
+    const customStart = parseDateInput(parameterForm.startDate)
+    const customEnd = parseDateInput(parameterForm.endDate)
+    if (!customStart || !customEnd) return { values: {}, error: '请选择有效的开始日期和结束日期' }
+    if (customEnd <= customStart) return { values: {}, error: '结束日期必须晚于开始日期' }
+    start = customStart
+    end = customEnd
+    endInclusive = customEnd
+  } else {
+    return { values: {}, error: '不支持的日期范围' }
+  }
+  return {
+    values: {
+      start_date: formatDateValue(start),
+      end_date: formatDateValue(end),
+      start_datetime: `${formatDateValue(start)} 00:00:00`,
+      end_datetime: `${formatDateValue(endInclusive)} 23:59:59`,
+    },
+    error: '',
+  }
+}
+
+const resolveTestMonthRange = (parameterForm = testParameterForm.value) => {
+  const today = new Date()
+  const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+  let start: Date
+  let end: Date
+  const monthRange = parameterForm.monthRange || 'last_6_completed_months'
+  if (monthRange === 'last_6_completed_months') {
+    end = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
+    start = new Date(end.getFullYear(), end.getMonth() - 5, 1)
+  } else if (monthRange === 'year_start_to_current_month') {
+    start = new Date(today.getFullYear(), 0, 1)
+    end = currentMonth
+  } else if (monthRange === 'custom_month_range') {
+    const customStart = parseMonthInput(parameterForm.startMonth)
+    const customEnd = parseMonthInput(parameterForm.endMonth)
+    if (!customStart || !customEnd) return { values: {}, error: '请选择有效的开始月份和结束月份' }
+    if (customEnd < customStart) return { values: {}, error: '结束月份不能早于开始月份' }
+    start = customStart
+    end = customEnd
+  } else {
+    return { values: {}, error: '不支持的月份范围' }
+  }
+  return {
+    values: {
+      start_month: formatMonthValue(start),
+      end_month: formatMonthValue(end),
+    },
+    error: '',
+  }
+}
+
+const renderTestCustomParameter = (config: CustomParameterConfig, parameterForm = testParameterForm.value) => {
+  const rawValue = parameterForm.customParams?.[config.name]
+  const value = rawValue == null ? '' : String(rawValue).trim()
+  if (!value) {
+    if (config.required) return { value: '', error: `请填写参数「${config.label || config.name}」` }
+    return { value: 'NULL', error: '' }
+  }
+  if (config.type === 'number') {
+    if (!Number.isFinite(Number(value))) return { value: '', error: `参数「${config.label || config.name}」必须是数字` }
+    return { value, error: '' }
+  }
+  if (config.type === 'select') {
+    const options = customParameterOptions(config)
+    if (!options.includes(value)) return { value: '', error: `参数「${config.label || config.name}」不在候选值中` }
+  }
+  return { value: `'${value.replace(/'/g, "''")}'`, error: '' }
+}
+
+const buildPreviewSql = (sql: string, parameterForm = testParameterForm.value) => {
+  const validationError = validateSqlParameters(sql)
+  if (validationError) return { sql: '', error: validationError }
+  const customValidationError = validateCustomParameterConfigs()
+  if (customValidationError) return { sql: '', error: customValidationError }
+
+  const values: Record<string, string> = {}
+  if (hasTestDateParameters.value) {
+    const dateResult = resolveTestDateRange(parameterForm)
+    if (dateResult.error) return { sql: '', error: dateResult.error }
+    Object.assign(values, dateResult.values)
+  }
+  if (hasTestMonthParameters.value) {
+    const monthResult = resolveTestMonthRange(parameterForm)
+    if (monthResult.error) return { sql: '', error: monthResult.error }
+    Object.assign(values, monthResult.values)
   }
 
   const customValues = new Map(customParameterConfigs.value.map((config) => [config.name, config]))
-
+  let customParameterError = ''
   const renderedSql = sql.replace(sqlParameterPattern, (_match, name: string) => {
     const normalizedName = name.trim()
     const value = values[normalizedName]
     if (value != null) return `'${value}'`
     const config = customValues.get(normalizedName)
     if (!config) return _match
-    const customValue = config.defaultValue.trim()
-    if (!customValue) return 'NULL'
-    if (config.type === 'number') return customValue
-    return `'${customValue.replace(/'/g, "''")}'`
+    const rendered = renderTestCustomParameter(config, parameterForm)
+    if (rendered.error) customParameterError = rendered.error
+    return rendered.value
   })
+  if (customParameterError) return { sql: '', error: customParameterError }
   return { sql: renderedSql, error: '' }
 }
 
@@ -271,6 +427,33 @@ const testResult = ref<{
   rows: any[][]
   execution_time_ms?: number
 } | null>(null)
+
+type TestParameterForm = {
+  dateRange: string
+  startDate: string
+  endDate: string
+  monthRange: string
+  startMonth: string
+  endMonth: string
+  customParams: Record<string, any>
+}
+
+const showTestParameterModal = ref(false)
+const testParameterError = ref('')
+const testParameterForm = ref<TestParameterForm>({
+  dateRange: 'month_start_to_today',
+  startDate: '',
+  endDate: '',
+  monthRange: 'last_6_completed_months',
+  startMonth: '',
+  endMonth: '',
+  customParams: {},
+})
+
+const testSqlParameterNames = computed(() => extractSqlParameterNames(form.value.sqlContent))
+const hasTestDateParameters = computed(() => testSqlParameterNames.value.some((name) => dateParameterNames.has(name)))
+const hasTestMonthParameters = computed(() => testSqlParameterNames.value.some((name) => monthParameterNames.has(name)))
+const hasTestParameters = computed(() => testSqlParameterNames.value.length > 0)
 
 // 保存状态
 const saving = ref(false)
@@ -336,12 +519,11 @@ const loadDataSourcesAndDatasets = async () => {
 }
 
 const resetForm = (report?: any | null) => {
-  const isEditing = Boolean(report?.id)
-  pendingSourceName.value = isEditing && !report?.dataset_id ? String(report?.data_source || '') : ''
+  pendingSourceName.value = report?.dataset_id ? '' : String(report?.data_source || '')
   form.value = {
     title: report?.title || '',
     description: report?.description || '',
-    tags: Array.isArray(report?.tags) ? report.tags.join(', ') : '',
+    tags: Array.isArray(report?.tags) ? report.tags.join(', ') : String(report?.tags_input || ''),
     sourceType: report?.dataset_id ? 'dataset' : 'connection',
     connectionId: null,
     datasetId: report?.dataset_id ?? null,
@@ -365,31 +547,47 @@ const resetForm = (report?: any | null) => {
   testResult.value = null
   sourceError.value = ''
   showSqlHelp.value = false
+  showTestParameterModal.value = false
+  testParameterError.value = ''
+  testParameterForm.value = {
+    dateRange: 'month_start_to_today',
+    startDate: '',
+    endDate: '',
+    monthRange: 'last_6_completed_months',
+    startMonth: '',
+    endMonth: '',
+    customParams: {},
+  }
 }
 
 // 试跑 SQL
-const runTestSql = async () => {
-  if (!form.value.sqlContent.trim()) {
-    showToast('请输入 SELECT SQL 语句', 'warning')
-    return
-  }
-
+const executeTestSql = async () => {
   const previewSql = buildPreviewSql(form.value.sqlContent.trim())
   if (previewSql.error) {
     testError.value = previewSql.error
-    showToast(previewSql.error, 'warning')
+    if (showTestParameterModal.value) {
+      testParameterError.value = previewSql.error
+    } else {
+      showToast(previewSql.error, 'warning')
+    }
     return
   }
 
   if (form.value.sourceType === 'connection' && !form.value.connectionId) {
-    showToast('请选择数据源连接', 'warning')
+    const message = '请选择数据源连接'
+    if (showTestParameterModal.value) testParameterError.value = message
+    else showToast(message, 'warning')
     return
   }
   if (form.value.sourceType === 'dataset' && !form.value.datasetId) {
-    showToast('请选择所属数据集', 'warning')
+    const message = '请选择所属数据集'
+    if (showTestParameterModal.value) testParameterError.value = message
+    else showToast(message, 'warning')
     return
   }
 
+  showTestParameterModal.value = false
+  testParameterError.value = ''
   testing.value = true
   testError.value = ''
   testResult.value = null
@@ -417,6 +615,18 @@ const runTestSql = async () => {
   } finally {
     testing.value = false
   }
+}
+
+const runTestSql = async () => {
+  if (!form.value.sqlContent.trim()) {
+    showToast('请输入 SELECT SQL 语句', 'warning')
+    return
+  }
+  if (hasTestParameters.value) {
+    openTestParameterModal()
+    return
+  }
+  await executeTestSql()
 }
 
 // 提交保存固化报表
@@ -456,19 +666,19 @@ const handleSubmit = async () => {
       .map((t) => t.trim())
       .filter(Boolean)
     const currentParameterNames = extractSqlParameterNames(sqlContent).sort().join(',')
-    const existingParameterNames = extractSqlParameterNames(String(props.report?.sql_template || '')).sort().join(',')
+    const existingParameterNames = extractSqlParameterNames(String(activeReport.value?.sql_template || '')).sort().join(',')
     const preserveExistingParameterConfig = Boolean(
-      props.report?.id
-      && props.report?.sql_template
-      && Array.isArray(props.report?.params_schema)
-      && props.report.params_schema.length
+      activeReport.value?.id
+      && activeReport.value?.sql_template
+      && Array.isArray(activeReport.value?.params_schema)
+      && activeReport.value.params_schema.length
       && currentParameterNames === existingParameterNames,
     )
     const parameterSchema = preserveExistingParameterConfig
-      ? props.report.params_schema
+      ? activeReport.value.params_schema
       : buildParameterSchema(sqlContent)
     const defaultParams = preserveExistingParameterConfig
-      ? (props.report?.default_params || {})
+      ? (activeReport.value?.default_params || {})
       : buildDefaultParams(parameterSchema)
 
     const payload: any = {
@@ -482,13 +692,16 @@ const handleSubmit = async () => {
       sql_template: parameterSchema.length ? sqlContent : undefined,
       params_schema: parameterSchema,
       default_params: defaultParams,
+      original_query: activeReport.value?.original_query || undefined,
+      column_meta: activeReport.value?.column_meta || undefined,
+      analysis_mode: activeReport.value?.analysis_mode || undefined,
     }
 
-    const res = props.report?.id
-      ? await axios.put(`/api/portal/saved-reports/${props.report.id}`, payload)
+    const res = activeReport.value?.id
+      ? await axios.put(`/api/portal/saved-reports/${activeReport.value.id}`, payload)
       : await axios.post('/api/portal/saved-reports', payload)
     if (res.data?.status === 'success' || res.data?.data) {
-      showToast(props.report?.id ? '固化报表已更新' : '固化报表创建成功！已录入报表库', 'success')
+      showToast(activeReport.value?.id ? '固化报表已更新' : '固化报表创建成功！已录入报表库', 'success')
       emit('created', res.data.data || res.data)
       emit('close')
     } else {
@@ -520,14 +733,14 @@ watch(
   () => props.visible,
   (visible) => {
     if (!visible) return
-    resetForm(props.report)
+    resetForm(activeReport.value)
     loadDataSourcesAndDatasets()
   },
 )
 
 onMounted(() => {
   if (props.visible) {
-    resetForm(props.report)
+    resetForm(activeReport.value)
     loadDataSourcesAndDatasets()
   }
 })
@@ -536,7 +749,9 @@ onMounted(() => {
 <template>
   <div
     v-if="visible"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
+    class="fixed inset-0 z-[250] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
+    :class="overlayClass"
+    :style="overlayStyle"
     @click.self="emit('close')"
   >
     <div
@@ -550,7 +765,7 @@ onMounted(() => {
           </div>
           <div>
             <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">
-              {{ props.report?.id ? '编辑固化报表' : '新建固化报表' }}
+              {{ activeReport?.id ? '编辑固化报表' : '新建固化报表' }}
             </h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               手写或粘贴自定义 SELECT SQL，在线试跑验证后保存为标准化固化报表
@@ -567,7 +782,10 @@ onMounted(() => {
       </div>
 
       <!-- Modal Body -->
-      <div class="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
+      <div
+        class="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar"
+        :class="{ 'custom-scrollbar-embed': scrollbarVariant === 'embed' }"
+      >
         <!-- 基础信息行 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -658,6 +876,16 @@ onMounted(() => {
           <p v-if="sourceError" class="text-[11px] text-amber-600 dark:text-amber-300">
             {{ sourceError }}
           </p>
+        </div>
+
+        <!-- AI 来源上下文：只读展示，不参与 SQL 执行 -->
+        <div v-if="activeReport?.original_query">
+          <label class="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+            来源提问
+          </label>
+          <div class="w-full px-3.5 py-2 text-sm border border-blue-100 dark:border-blue-900/40 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 text-gray-600 dark:text-gray-300 break-words leading-relaxed">
+            {{ activeReport.original_query }}
+          </div>
         </div>
 
         <!-- 报表描述 -->
@@ -873,10 +1101,142 @@ onMounted(() => {
             @click="handleSubmit"
           >
             <ArrowPathIcon v-if="saving" class="w-3.5 h-3.5 animate-spin" />
-            <span>{{ saving ? '正在保存...' : props.report?.id ? '保存报表修改' : '固化保存此报表' }}</span>
+            <span>{{ saving ? '正在保存...' : activeReport?.id ? '保存报表修改' : '固化保存此报表' }}</span>
           </button>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- 动态参数试跑选择器：只影响本次预览，不修改保存后的默认运行参数 -->
+  <div
+    v-if="visible && showTestParameterModal"
+    class="fixed inset-0 z-[270] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+    :class="overlayClass"
+    :style="overlayStyle"
+    @click.self="closeTestParameterModal"
+  >
+    <div class="w-full max-w-md overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50/60 px-6 py-4 dark:border-gray-700 dark:bg-gray-800/60">
+        <div>
+          <h3 class="text-base font-black text-gray-800 dark:text-gray-100">选择试跑参数</h3>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">仅用于本次 SQL 试跑，不会修改报表默认运行参数</p>
+        </div>
+        <button
+          type="button"
+          class="rounded-full p-2 text-gray-400 transition-colors hover:bg-gray-200 dark:hover:bg-gray-700"
+          @click="closeTestParameterModal"
+        >
+          <XMarkIcon class="h-5 w-5" />
+        </button>
+      </div>
+
+      <div class="space-y-4 p-6">
+        <div v-if="hasTestDateParameters">
+          <label class="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">日期范围</label>
+          <select
+            v-model="testParameterForm.dateRange"
+            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+          >
+            <option value="today">今天</option>
+            <option value="yesterday">昨天</option>
+            <option value="last_7_days">最近 7 天</option>
+            <option value="month_start_to_today">本月截至今天</option>
+            <option value="year_start_to_today">今年（年初至今天）</option>
+            <option value="custom_range">自定义日期</option>
+          </select>
+        </div>
+        <div v-if="hasTestDateParameters && testParameterForm.dateRange === 'custom_range'" class="grid grid-cols-2 gap-3">
+          <label class="text-xs text-gray-500 dark:text-gray-400">
+            开始日期
+            <input v-model="testParameterForm.startDate" type="date" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+          </label>
+          <label class="text-xs text-gray-500 dark:text-gray-400">
+            结束日期
+            <input v-model="testParameterForm.endDate" type="date" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+          </label>
+        </div>
+
+        <div v-if="hasTestMonthParameters">
+          <label class="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">月份范围</label>
+          <select
+            v-model="testParameterForm.monthRange"
+            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+          >
+            <option value="last_6_completed_months">最近 6 个完整月</option>
+            <option value="year_start_to_current_month">本年截至本月</option>
+            <option value="custom_month_range">自定义月份</option>
+          </select>
+        </div>
+        <div v-if="hasTestMonthParameters && testParameterForm.monthRange === 'custom_month_range'" class="grid grid-cols-2 gap-3">
+          <label class="text-xs text-gray-500 dark:text-gray-400">
+            开始月份
+            <input v-model="testParameterForm.startMonth" type="month" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+          </label>
+          <label class="text-xs text-gray-500 dark:text-gray-400">
+            结束月份
+            <input v-model="testParameterForm.endMonth" type="month" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+          </label>
+        </div>
+
+        <div
+          v-for="config in customParameterConfigs"
+          :key="config.name"
+          class="space-y-1.5"
+        >
+          <label class="block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            {{ config.label || config.name }}
+            <span v-if="config.required" class="text-red-500">*</span>
+          </label>
+          <select
+            v-if="config.type === 'select'"
+            v-model="testParameterForm.customParams[config.name]"
+            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+          >
+            <option v-for="option in customParameterOptions(config)" :key="option" :value="option">{{ option }}</option>
+          </select>
+          <input
+            v-else
+            v-model="testParameterForm.customParams[config.name]"
+            :type="config.type === 'number' ? 'number' : 'text'"
+            :placeholder="config.type === 'number' ? '请输入数字' : `请输入${config.label || config.name}`"
+            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+          />
+        </div>
+
+        <p v-if="testParameterError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/30 dark:text-red-300">
+          {{ testParameterError }}
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-3 border-t border-gray-100 bg-gray-50/50 px-6 py-4 dark:border-gray-700 dark:bg-gray-800/50">
+        <button
+          type="button"
+          class="rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-700"
+          @click="closeTestParameterModal"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          class="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+          :disabled="testing"
+          @click="executeTestSql"
+        >
+          {{ testing ? '正在试跑...' : '确认试跑' }}
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.custom-scrollbar-embed::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar-embed::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.5);
+  border-radius: 2px;
+}
+</style>

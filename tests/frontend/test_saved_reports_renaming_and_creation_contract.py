@@ -43,7 +43,7 @@ def test_saved_reports_full_frontend_renaming_contract():
     embed_chat = _source("frontend/src/views/EmbedChat.vue")
     agent_debug = _source("frontend/src/views/AgentDebug.vue")
     capability_menu = _source("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
-    editor_modal = _source("frontend/src/components/chat/SavedReportEditorModal.vue")
+    editor_modal = _source("frontend/src/components/data-portal/DataPortalReportCreateModal.vue")
     bell = _source("frontend/src/components/PortalNotificationBell.vue")
 
     # 验证全部不再包含「黄金报表」且已切换为「固化报表」

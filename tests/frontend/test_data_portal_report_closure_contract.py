@@ -70,7 +70,7 @@ def test_report_creation_supports_dynamic_parameter_shortcuts_and_parameterized_
     assert "default_params: defaultParams" in modal
     assert "report?.sql_template || report?.sql_content" in modal
     assert "preserveExistingParameterConfig" in modal
-    assert "props.report?.default_params" in modal
+    assert "activeReport.value?.default_params" in modal
 
 
 def test_report_creation_supports_configuring_custom_parameters():

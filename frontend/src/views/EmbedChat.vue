@@ -1654,16 +1654,14 @@
       :listen-global-event="false"
       @open-saved-report="handleInboxOpenSavedReport"
     />
-    <SavedReportEditorModal
+    <DataPortalReportCreateModal
       :visible="showSaveReportModal"
-      :form="saveReportForm"
-      :editing="isEditingReport"
-      :saving="isSavingReport"
+      :report="saveReportForm"
       :overlay-class="saveReportModalOverlayClass"
       :overlay-style="saveReportModalOverlayStyle"
       scrollbar-variant="embed"
-      @close="showSaveReportModal = false"
-      @submit="submitSaveReport"
+      @close="closeSavedReportEditor"
+      @created="handleSavedReportEditorCreated"
     />
 
     <SavedReportRunModal
@@ -2201,7 +2199,7 @@ import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
-import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
+import DataPortalReportCreateModal from "@/components/data-portal/DataPortalReportCreateModal.vue";
 import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
 import {
   sanitizeStreamContent,
@@ -5113,6 +5111,7 @@ const isSavingReport = ref(false);
 const isEditingReport = ref(false);
 const editingReportId = ref<string | null>(null);
 const saveReportForm = ref({
+  id: null as number | string | null,
   title: '',
   description: '',
   sql_content: '',
@@ -5181,6 +5180,7 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
   const requirementIntent = parseRequirementAnalysisFromMessage(agentMessage);
 
   saveReportForm.value = {
+    id: null,
     title: deriveSavedReportTitle(requirementIntent, originalQuery),
     description: deriveSavedReportDescription(requirementIntent, originalQuery),
     sql_content: cleanSql,
@@ -5202,6 +5202,7 @@ const openEditReportModal = (report: any) => {
   isEditingReport.value = true;
   editingReportId.value = report.id;
   saveReportForm.value = {
+    id: report.id,
     title: report.title || '',
     description: report.description || '',
     sql_content: report.sql_content || '',
@@ -5217,6 +5218,17 @@ const openEditReportModal = (report: any) => {
     tags_input: Array.isArray(report.tags) ? report.tags.join(', ') : '',
   };
   showSaveReportModal.value = true;
+};
+
+const closeSavedReportEditor = () => {
+  showSaveReportModal.value = false;
+  isSavingReport.value = false;
+  isEditingReport.value = false;
+  editingReportId.value = null;
+};
+
+const handleSavedReportEditorCreated = () => {
+  closeSavedReportEditor();
 };
 
 const submitSaveReport = async () => {
