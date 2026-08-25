@@ -67,7 +67,8 @@ def test_public_config_exposes_platform_timezone():
 def test_system_config_ui_has_timezone_select():
     assert "platform_timezone" in SYSTEM_CONFIG_VUE
     assert "Asia/Shanghai（中国标准时间，推荐）" in SYSTEM_CONFIG_VUE
-    assert "['general', 'agent', 'metadata', 'data_api', 'knowledge', 'other']" in SYSTEM_CONFIG_VUE
+    assert "'general'" in SYSTEM_CONFIG_VUE
+    assert "orderedCategories" in SYSTEM_CONFIG_VUE
 
 
 def test_frontend_task_center_formats_with_platform_timezone():

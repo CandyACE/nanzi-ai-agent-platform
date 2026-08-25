@@ -8,6 +8,7 @@ import axios from '@/utils/axios'
 import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
 import RowFilterOptionSelect from '../components/metadata/RowFilterOptionSelect.vue'
 import PermissionVariableMenu from '../components/metadata/PermissionVariableMenu.vue'
+import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBanner.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
@@ -28,6 +29,55 @@ const showEditDatasetModal = ref(false)
 const showPermConfigModal = ref(false)
 const showPermHelpModal = ref(false)
 const showUserSelectorModal = ref(false)
+
+// 流程引导横幅控制
+const FLOW_GUIDE_STORAGE_KEY = 'nanzi_metadata_flow_guide_dismissed'
+const showFlowGuide = ref(true)
+try {
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(FLOW_GUIDE_STORAGE_KEY) === '1') {
+    showFlowGuide.value = false
+  }
+} catch {
+  // ignore storage error
+}
+
+const handleFlowGuideClose = () => {
+  showFlowGuide.value = false
+}
+
+const handleFlowGuideDismiss = () => {
+  showFlowGuide.value = false
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(FLOW_GUIDE_STORAGE_KEY, '1')
+    }
+    showToast('已忽略流程指引，后续进入不再主动提示。可随时点击问号查看。', 'info')
+  } catch {
+    // ignore
+  }
+}
+
+const restoreFlowGuide = () => {
+  showFlowGuide.value = true
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(FLOW_GUIDE_STORAGE_KEY)
+    }
+    showToast('已恢复顶部流程指引', 'success')
+  } catch {
+    // ignore
+  }
+}
+
+const handleFlowGuideAction = (type: 'datasource' | 'import' | 'create') => {
+  if (type === 'datasource') {
+    router.push('/dashboard/data-sources')
+  } else if (type === 'import') {
+    showImportModal.value = true
+  } else if (type === 'create') {
+    showCreateModal.value = true
+  }
+}
 const showRoleSelectorModal = ref(false)
 const userSearchQuery = ref('')
 const roleSearchQuery = ref('')
@@ -976,6 +1026,14 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5" @click="showCreateMenu = false">
+    <!-- 顶部全流程指引横幅（支持关闭与忽略提示） -->
+    <MetadataFlowGuideBanner
+      v-if="showFlowGuide"
+      @close="handleFlowGuideClose"
+      @dismiss="handleFlowGuideDismiss"
+      @action="handleFlowGuideAction"
+    />
+
     <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="min-w-0">
@@ -983,11 +1041,23 @@ onMounted(async () => {
           <h1 class="text-2xl font-bold tracking-normal text-gray-900">元数据管理</h1>
           <button
             type="button"
-            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
-            title="元数据规范"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 cursor-pointer"
+            title="元数据流程与设计规范"
             @click="showSpecModal = true"
           >
             <span class="text-sm font-bold">?</span>
+          </button>
+          <button
+            v-if="!showFlowGuide"
+            type="button"
+            class="hidden sm:inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50/70 px-2.5 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-100 hover:text-blue-800 transition-colors cursor-pointer"
+            title="重新在页面顶部显示流程引导"
+            @click="restoreFlowGuide"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>显示流程指引</span>
           </button>
         </div>
         <p class="mt-0.5 truncate text-sm text-gray-500">管理业务数据集及其表结构语义</p>
@@ -1794,25 +1864,37 @@ onMounted(async () => {
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
              </div>
              <div>
-               <h2 class="text-xl font-bold text-gray-900">元数据设计规范 (Semantic Layer Spec)</h2>
+               <h2 class="text-xl font-bold text-gray-900">元数据设计规范与全流程指引</h2>
                <p class="text-xs text-gray-500 font-medium">构建 AI 可理解的业务语义层，提升 Text-to-SQL 准确率。</p>
              </div>
           </div>
-          <button @click="showSpecModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
+          <div class="flex items-center gap-3">
+            <button
+              v-if="!showFlowGuide"
+              type="button"
+              @click="restoreFlowGuide"
+              class="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-100/70 hover:bg-purple-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              <span>恢复顶部流程提示</span>
+            </button>
+            <button @click="showSpecModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
         </div>
 
         <!-- Tabs -->
         <div class="flex border-b border-gray-200 bg-white px-6">
            <button 
-             v-for="tab in ['concept', 'structure', 'fields', 'practice']" 
+             v-for="tab in ['flow', 'concept', 'structure', 'fields', 'practice']" 
              :key="tab"
              @click="activeSpecTab = tab"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors capitalize"
+             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors capitalize cursor-pointer"
              :class="activeSpecTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
            >
-             {{ tab === 'concept' ? '核心理念 (Concepts)' : 
+             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                tab === 'concept' ? '核心理念 (Concepts)' : 
                 tab === 'structure' ? 'YAML 结构 (Schema)' : 
                 tab === 'fields' ? '字段规范 (Fields)' : '最佳实践 (Best Practice)' }}
            </button>
@@ -1821,6 +1903,90 @@ onMounted(async () => {
         <!-- Content -->
         <div class="flex-1 overflow-y-auto p-8 bg-gray-50/50">
            
+           <!-- Tab 0: Workflow Flow -->
+           <div v-if="activeSpecTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-lg shadow-2xs">
+                 <h3 class="font-bold text-blue-900 mb-1">从数据源到 AI 智能体的端到端流程</h3>
+                 <p class="text-xs text-blue-700 leading-relaxed">
+                    遵循标准 4 步流程：先连接摸排数据源，再通过 AI 智能解析表结构与枚举，继而完善指标与跨库实体关系，最后同步至向量库供 ChatBI 与 Agent 消费。
+                 </p>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                          <h4 class="font-bold text-gray-900 text-sm">连接与摸排数据源</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          配置外部关系型/分析型数据库连接（MySQL/PG/ClickHouse/Oracle/SQL Server 等），支持连通性测试与一键异步智能摸排，提取表画像、字段分布与样本。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                       <button
+                          type="button"
+                          @click="showSpecModal = false; router.push('/dashboard/data-sources')"
+                          class="text-xs text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                       >
+                          前往数据源管理 &rarr;
+                       </button>
+                    </div>
+                 </div>
+
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                          <h4 class="font-bold text-gray-900 text-sm">智能导入与 AI 语义解析</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          支持摸排画像免推理导入、库表直读或 DDL 粘贴。大模型自动提取中文业务名、字段语义、枚举字典与主键标记，并在前端提供向导式审查与保存。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                       <button
+                          type="button"
+                          @click="showSpecModal = false; showImportModal = true"
+                          class="text-xs text-indigo-600 hover:text-indigo-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                       >
+                          向导新建数据集 &rarr;
+                       </button>
+                    </div>
+                 </div>
+
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                          <h4 class="font-bold text-gray-900 text-sm">建模指标与实体关联</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          在数据集中维护业务指标（Metrics）与计算公式，配置 1:1、1:N 实体关联条件与跨库 Join 拓扑图谱，支持 AI 智能推荐指标与关系。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                       <span class="text-xs text-gray-400">点击下方数据集卡片进入配置</span>
+                    </div>
+                 </div>
+
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                          <h4 class="font-bold text-gray-900 text-sm">向量同步与智能体挂载</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          一键将数据集导出为高压缩比 YAML 并同步至向量知识库（RAGFlow / Redis），供 ChatBI 与 Agent 智能体精准召回表结构并生成 SQL。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                       <span class="text-xs text-gray-400">在智能体工作台挂载使用</span>
+                    </div>
+                 </div>
+              </div>
+           </div>
+
            <!-- Tab 1: Concepts -->
            <div v-if="activeSpecTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
               <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">

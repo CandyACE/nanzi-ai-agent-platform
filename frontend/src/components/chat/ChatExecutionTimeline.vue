@@ -224,7 +224,7 @@
           </div>
 
           <div
-            v-else
+            v-else-if="item.kind === 'log'"
             class="rounded-lg px-1 py-0.5 text-[11px] leading-5 transition-colors"
             :class="{
               'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': item.status === 'error',
