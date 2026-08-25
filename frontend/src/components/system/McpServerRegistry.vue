@@ -321,6 +321,17 @@ const closeWizard = () => {
   resetWizard()
 }
 
+const openAddModal = (initialTab: 'manual' | 'json' = 'manual') => {
+  resetWizard()
+  connectionInputTab.value = initialTab
+  showAddModal.value = true
+}
+
+defineExpose({
+  openAddModal,
+  resetWizard,
+})
+
 const openEditModal = (server: any) => {
   isEditing.value = true
   editingId.value = server.id

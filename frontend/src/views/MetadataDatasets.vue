@@ -1026,14 +1026,6 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5" @click="showCreateMenu = false">
-    <!-- 顶部全流程指引横幅（支持关闭与忽略提示） -->
-    <MetadataFlowGuideBanner
-      v-if="showFlowGuide"
-      @close="handleFlowGuideClose"
-      @dismiss="handleFlowGuideDismiss"
-      @action="handleFlowGuideAction"
-    />
-
     <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="min-w-0">
@@ -1239,6 +1231,15 @@ onMounted(async () => {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 元数据管理全流程指引横幅（支持关闭与忽略提示） -->
+    <div v-if="showFlowGuide" class="flex-shrink-0">
+      <MetadataFlowGuideBanner
+        @close="handleFlowGuideClose"
+        @dismiss="handleFlowGuideDismiss"
+        @action="handleFlowGuideAction"
+      />
     </div>
 
     <!-- Error Banner -->

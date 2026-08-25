@@ -18,7 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const isCollapsed = ref(false)
+const isCollapsed = ref(true)
 
 const steps = [
   {
@@ -100,9 +100,12 @@ const handleDismiss = () => {
     <!-- 顶部标题与控制区域 -->
     <div class="relative z-10 flex flex-wrap items-center justify-between gap-3 border-b border-blue-100/60 pb-3">
       <div class="flex items-center gap-2.5">
-        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm shadow-blue-500/30">
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        <div
+          class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm shadow-blue-500/30"
+          style="background-color: #2563eb; color: #ffffff;"
+        >
+          <svg class="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
         </div>
         <div>

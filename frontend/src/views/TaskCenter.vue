@@ -14,6 +14,7 @@ import {
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
+import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskPromptComposer, {
   type TaskApprovalMode,
   type TaskResourceScope,
@@ -405,6 +406,32 @@ const logsTotal = ref(0)
 const logsHasMore = computed(() => logs.value.length < logsTotal.value)
 const runningTaskIds = ref(new Set<number>())
 const showSpecsModal = ref(false)
+const TASK_FLOW_GUIDE_KEY = 'nanzi_task_flow_guide_dismissed'
+const showTaskFlowGuide = ref(localStorage.getItem(TASK_FLOW_GUIDE_KEY) !== 'true')
+
+const handleCloseTaskFlowGuide = () => {
+  showTaskFlowGuide.value = false
+}
+
+const handleDismissTaskFlowGuide = () => {
+  showTaskFlowGuide.value = false
+  localStorage.setItem(TASK_FLOW_GUIDE_KEY, 'true')
+}
+
+const restoreTaskFlowGuide = () => {
+  localStorage.removeItem(TASK_FLOW_GUIDE_KEY)
+  showTaskFlowGuide.value = true
+}
+
+const activeSpecsTab = ref<'flow' | 'context' | 'approval'>('flow')
+
+const handleTaskBannerAction = (type: 'create' | 'history') => {
+  if (type === 'create') {
+    openCreateModal()
+  } else if (type === 'history') {
+    mainViewTab.value = 'history'
+  }
+}
 
 // Mobile State
 const windowWidth = ref(window.innerWidth)
@@ -1002,13 +1029,24 @@ onMounted(async () => {
         <button
           v-if="!personalOnly"
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
-          title="设计规范"
+          class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-orange-600 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 cursor-pointer"
+          title="任务调度设计规范与全流程指引"
           @click="showSpecsModal = true"
         >
+          <span class="text-sm font-bold">?</span>
+        </button>
+
+        <button
+          v-if="!showTaskFlowGuide && !personalOnly"
+          type="button"
+          class="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50/80 px-2.5 py-1 text-xs font-medium text-orange-700 shadow-2xs transition-colors hover:bg-orange-100 cursor-pointer"
+          title="重新展开任务调度全流程指引"
+          @click="restoreTaskFlowGuide"
+        >
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
+          <span>显示流程指引</span>
         </button>
       </div>
 
@@ -1088,6 +1126,15 @@ onMounted(async () => {
           <span class="sm:hidden">新建</span>
         </button>
       </div>
+    </div>
+
+    <!-- 任务调度 5 步全生命周期指引横幅 -->
+    <div v-if="showTaskFlowGuide && !personalOnly" class="flex-shrink-0">
+      <TaskFlowGuideBanner
+        @action="handleTaskBannerAction"
+        @close="handleCloseTaskFlowGuide"
+        @dismiss="handleDismissTaskFlowGuide"
+      />
     </div>
 
     <!-- 主 Tab：管理员为「任务列表 | 执行记录」；否则直接显示类型筛选 -->
@@ -1557,124 +1604,207 @@ onMounted(async () => {
     </div>
     </template>
 
-    <!-- Design Specs Modal -->
-    <Modal 
-      v-if="showSpecsModal" 
-      title="任务交互设计规范" 
-      @close="showSpecsModal = false" 
-      size="max-w-2xl"
-    >
-      <div class="space-y-6">
-        <section>
-          <h3 class="text-sm font-bold text-gray-900 flex items-center mb-3">
-            <span class="w-1.5 h-4 bg-primary rounded-full mr-2"></span>
-            1. 执行触发机制
-          </h3>
-          <p class="text-xs text-gray-600 leading-relaxed pl-3.5">
-            任务中心基于分布式调度引擎 <strong>APScheduler</strong>，支持秒级精度的 Cron 表达式。系统会根据配置的周期自动唤醒并调用智能体。
-          </p>
-        </section>
-
-        <section>
-          <h3 class="text-sm font-bold text-gray-900 flex items-center mb-3">
-            <span class="w-1.5 h-4 bg-primary rounded-full mr-2"></span>
-            2. 上下文注入 (Context Injection)
-          </h3>
-          <p class="text-xs text-gray-600 leading-relaxed mb-3 pl-3.5">
-            每次任务执行时，系统会在 <code>user_info</code> 中自动注入以下元数据，智能体可通过这些标识识别自动化场景：
-          </p>
-          <div class="bg-gray-50 rounded-xl p-4 border border-gray-100 font-mono text-[10px] space-y-2">
-            <div class="flex">
-              <span class="text-blue-600 w-32">is_scheduled_task:</span>
-              <span class="text-green-600">true</span>
-              <span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span>
-            </div>
-            <div class="flex">
-              <span class="text-blue-600 w-32">task_name:</span>
-              <span class="text-green-600">"PUE日报巡检"</span>
-              <span class="text-gray-400 ml-auto">// 当前执行的任务名称</span>
-            </div>
-            <div class="flex">
-              <span class="text-blue-600 w-32">user_id / role:</span>
-              <span class="text-green-600">"admin" / "1"</span>
-              <span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span>
-            </div>
+    <!-- 任务调度设计规范与全流程指引 Modal -->
+    <div v-if="showSpecsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+        <!-- Header -->
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-orange-50/30">
+          <div class="flex items-center gap-3">
+             <div class="w-10 h-10 rounded-xl bg-orange-600 text-white flex items-center justify-center shadow-md shadow-orange-500/20" style="background-color: #ea580c; color: #ffffff;">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+             </div>
+             <div>
+               <h2 class="text-xl font-bold text-gray-900">任务调度设计规范与全流程指引</h2>
+               <p class="text-xs text-gray-500 font-medium mt-0.5">从 Cron 定时周期编排、资源限定与安全审批，到渠道触达、时序观测与健康监控。</p>
+             </div>
           </div>
-        </section>
-
-        <section>
-          <h3 class="text-sm font-bold text-gray-900 flex items-center mb-3">
-            <span class="w-1.5 h-4 bg-primary rounded-full mr-2"></span>
-            3. 智能体处理规范 (Agent Best Practices)
-          </h3>
-          <ul class="space-y-3 pl-3.5">
-            <li class="flex items-start">
-              <span class="text-primary mr-2 mt-1">●</span>
-              <div class="flex-1">
-                <p class="text-xs font-bold text-gray-700">结果导向输出</p>
-                <p class="text-[11px] text-gray-500 mt-0.5">识别到自动化上下文后，应跳过“您好”、“请稍等”等交互式用语，直接输出结构化的报表、数据结论或 Markdown 表格。</p>
-              </div>
-            </li>
-            <li class="flex items-start">
-              <span class="text-primary mr-2 mt-1">●</span>
-              <div class="flex-1">
-                <p class="text-xs font-bold text-gray-700">鲁棒性异常反馈</p>
-                <p class="text-[11px] text-gray-500 mt-0.5">若执行过程中遇到工具调用失败或数据缺失，应在最终回复中明确标注错误原因，以便系统审计和通知告警。</p>
-              </div>
-            </li>
-            <li class="flex items-start">
-              <span class="text-primary mr-2 mt-1">●</span>
-              <div class="flex-1">
-                <p class="text-xs font-bold text-gray-700">自动摘要生成</p>
-                <p class="text-[11px] text-gray-500 mt-0.5">系统会利用返回的 <code>summary</code> 或结果首段内容作为任务历史的“摘要预览”。</p>
-              </div>
-            </li>
-          </ul>
-        </section>
-
-        <section>
-          <h3 class="text-sm font-bold text-gray-900 flex items-center mb-3">
-            <span class="w-1.5 h-4 bg-primary rounded-full mr-2"></span>
-            4. 智能体管理工具 (Built-in Tools)
-          </h3>
-          <p class="text-xs text-gray-600 leading-relaxed mb-3 pl-3.5">
-            所有智能体均内置了任务管理能力，用户可通过对话直接要求 Agent 维护其定时任务：
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pl-3.5">
-            <div class="p-3 bg-blue-50/50 rounded-xl border border-blue-100/50">
-              <p class="text-[10px] font-bold text-blue-700 uppercase mb-1">create_recurring_task</p>
-              <p class="text-[9px] text-blue-600 italic">创建新任务。参数：name, cron, prompt, notification_channels?(portal/dingtalk/wechat_work/email)</p>
-            </div>
-            <div class="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100/50">
-              <p class="text-[10px] font-bold text-indigo-700 uppercase mb-1">get_my_tasks</p>
-              <p class="text-[9px] text-indigo-600 italic">查看我当前运行中的所有定时任务列表</p>
-            </div>
-            <div class="p-3 bg-purple-50/50 rounded-xl border border-purple-100/50">
-              <p class="text-[10px] font-bold text-purple-700 uppercase mb-1">cancel_task</p>
-              <p class="text-[9px] text-purple-600 italic">彻底删除指定 ID 的任务。参数：task_id</p>
-            </div>
-            <div class="p-3 bg-green-50/50 rounded-xl border border-green-100/50">
-              <p class="text-[10px] font-bold text-green-700 uppercase mb-1">start_task</p>
-              <p class="text-[9px] text-green-600 italic">启动或恢复暂停的任务。参数：task_id</p>
-            </div>
-            <div class="p-3 bg-amber-50/50 rounded-xl border border-amber-100/50">
-              <p class="text-[10px] font-bold text-amber-700 uppercase mb-1">pause_task</p>
-              <p class="text-[9px] text-amber-600 italic">暂停运行中的任务。参数：task_id</p>
-            </div>
-            <div class="p-3 bg-blue-50/50 rounded-xl border border-blue-100/50">
-              <p class="text-[10px] font-bold text-blue-700 uppercase mb-1">send_dingtalk_message</p>
-              <p class="text-[9px] text-blue-600 italic">发送钉钉通知。参数：title, content</p>
-            </div>
+          <div class="flex items-center gap-3">
+            <button
+              v-if="!showTaskFlowGuide"
+              type="button"
+              @click="restoreTaskFlowGuide"
+              class="inline-flex items-center gap-1 text-xs font-medium text-orange-700 bg-orange-100/70 hover:bg-orange-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              <span>恢复顶部流程提示</span>
+            </button>
+            <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-        </section>
+        </div>
 
-        <div class="pt-4 border-t border-gray-50 flex justify-end">
-          <button @click="showSpecsModal = false" class="px-6 py-2 bg-gray-900 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-black transition-all">
-            已知晓
-          </button>
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200 bg-white px-6">
+           <button 
+             v-for="tab in ['flow', 'context', 'approval']" 
+             :key="tab"
+             @click="activeSpecsTab = tab as any"
+             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+             :class="activeSpecsTab === tab ? 'border-orange-600 text-orange-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+           >
+             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                tab === 'context' ? '上下文注入与智能体规范 (Context & Specs)' : '安全审批与资源限定 (Approval & Scope)' }}
+           </button>
+        </div>
+
+        <!-- Content -->
+        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+           <!-- Tab 1: Workflow Flow -->
+           <div v-if="activeSpecsTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+              <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-2xs">
+                 <h3 class="font-bold text-orange-900 mb-1">任务调度 5 步全生命周期自动化体系</h3>
+                 <p class="text-xs text-orange-700 leading-relaxed">
+                    基于分布式调度引擎。定义目标智能体与 Cron 周期，限定资源沙箱与审批模式，配置钉钉/企微/邮件触达，支持时序 Trace 全景观测。
+                 </p>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <!-- Step 1 -->
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                          <h4 class="font-bold text-gray-900 text-sm">任务创建与周期编排</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          指定负责执行的目标智能体与模型参数；配置每天/每周/每月定时周期与提示词，支持 AI 智能扩写优化 Prompt。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                       <button
+                          type="button"
+                          @click="showSpecsModal = false; router.push('/dashboard/agent-management')"
+                          class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                       >
+                          智能体中心 &rarr;
+                       </button>
+                       <button
+                          type="button"
+                          @click="showSpecsModal = false; openCreateModal()"
+                          class="text-xs text-orange-600 hover:text-orange-800 font-bold cursor-pointer"
+                       >
+                          新建任务 &rarr;
+                       </button>
+                    </div>
+                 </div>
+
+                 <!-- Step 2 -->
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                          <h4 class="font-bold text-gray-900 text-sm">资源限定与安全审批</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          限定任务可访问的数据集、知识库、Skills 与 MCP 工具；设置 Allow 放行、Ask 人工确认或 Deny 拦截高危操作。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                       任务编辑中设置安全与资源范围
+                    </div>
+                 </div>
+
+                 <!-- Step 3 -->
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                          <h4 class="font-bold text-gray-900 text-sm">渠道分发与触达订阅</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          配置站内通知、钉钉群机器人、企业微信 Webhook 或邮件，任务完成后自动沉淀 Markdown 报告并向相关人推送。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                       在通知配置中勾选推送渠道
+                    </div>
+                 </div>
+
+                 <!-- Step 4 -->
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                          <h4 class="font-bold text-gray-900 text-sm">手动试跑与时序观测</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          在任务卡片上点击「立即执行」即刻试跑；点击「Trace」展开时序链路，全景观测思考耗时与工具调用入参返回。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                       卡片点击「立即执行」或「Trace」
+                    </div>
+                 </div>
+
+                 <!-- Step 5 -->
+                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                    <div>
+                       <div class="flex items-center gap-2 mb-2">
+                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                          <h4 class="font-bold text-gray-900 text-sm">健康监控与异常处置</h4>
+                       </div>
+                       <p class="text-xs text-gray-500 leading-relaxed">
+                          切换「执行记录」查看历史执行日志、状态统计（成功/待确认/失败）与平均耗时，支持异常审计告警与一键重试。
+                       </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                       <button
+                          type="button"
+                          @click="showSpecsModal = false; mainViewTab = 'history'"
+                          class="text-xs text-emerald-600 hover:text-emerald-800 font-medium cursor-pointer"
+                       >
+                          前往执行记录 &rarr;
+                       </button>
+                    </div>
+                 </div>
+              </div>
+           </div>
+
+           <!-- Tab 2: Context & Specs -->
+           <div v-else-if="activeSpecsTab === 'context'" class="space-y-4 max-w-4xl mx-auto">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                 <h4 class="font-bold text-gray-900 text-base">自动化上下文注入与处理规范</h4>
+                 <div class="space-y-3">
+                    <p class="text-xs text-gray-600">
+                       每次调度执行时，系统在 <code>user_info</code> 中自动注入以下上下文元数据，智能体可通过这些标识识别定时自动化场景：
+                    </p>
+                    <div class="bg-gray-50 rounded-xl p-4 border border-gray-150 font-mono text-[11px] space-y-1.5">
+                       <div class="flex"><span class="text-blue-600 w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
+                       <div class="flex"><span class="text-blue-600 w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
+                       <div class="flex"><span class="text-blue-600 w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
+                    </div>
+                    <div class="p-3.5 bg-amber-50/70 rounded-xl border border-amber-100 space-y-1 text-xs">
+                       <span class="font-bold text-amber-900">结果导向输出原则</span>
+                       <p class="text-gray-600 leading-relaxed">识别到 <code>is_scheduled_task</code> 上下文后，智能体应跳过“您好”、“请稍等”等交互用语，直接输出结构化 Markdown 报表或数据结论。</p>
+                    </div>
+                 </div>
+              </div>
+           </div>
+
+           <!-- Tab 3: Approval & Scope -->
+           <div v-else-if="activeSpecsTab === 'approval'" class="space-y-4 max-w-4xl mx-auto">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                 <h4 class="font-bold text-gray-900 text-base">安全审批策略与资源沙箱限定</h4>
+                 <div class="space-y-3 text-xs">
+                    <div class="p-3.5 bg-green-50/60 rounded-xl border border-green-100 space-y-1">
+                       <span class="font-bold text-green-900 text-sm">Allow 模式（自动放行）</span>
+                       <p class="text-gray-600 leading-relaxed">智能体调用只读类或常规工具时全自动执行，无需人工干预，适合日常数据巡检与日报推送。</p>
+                    </div>
+                    <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">
+                       <span class="font-bold text-amber-900 text-sm">Ask 模式（待人工授权）</span>
+                       <p class="text-gray-600 leading-relaxed">触发涉及数据写操作或外部高危 API 时，任务将挂起并向管理员发送审批通知，人工点击确认后继续。</p>
+                    </div>
+                    <div class="p-3.5 bg-red-50/60 rounded-xl border border-red-100 space-y-1">
+                       <span class="font-bold text-red-900 text-sm">Deny 模式（严格拦截）</span>
+                       <p class="text-gray-600 leading-relaxed">禁止所有需要二次确认的操作，一旦大模型尝试发起高危调用将直接拦截并记录异常审计日志。</p>
+                    </div>
+                 </div>
+              </div>
+           </div>
         </div>
       </div>
-    </Modal>
+    </div>
 
     <!-- Edit Modal -->
     <Modal 
