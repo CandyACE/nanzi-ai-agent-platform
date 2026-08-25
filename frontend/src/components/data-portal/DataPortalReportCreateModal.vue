@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, shallowRef, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
+import { basicSetup } from 'codemirror'
+import { sql } from '@codemirror/lang-sql'
+import { EditorState } from '@codemirror/state'
+import { EditorView, placeholder } from '@codemirror/view'
 import {
   XMarkIcon,
   PlayIcon,
@@ -57,7 +61,9 @@ type CustomParameterConfig = {
 
 const customParameterConfigs = ref<CustomParameterConfig[]>([])
 
-const sqlEditor = ref<HTMLTextAreaElement | null>(null)
+const sqlEditorHost = ref<HTMLDivElement | null>(null)
+const sqlEditorView = shallowRef<EditorView | null>(null)
+const sqlEditorSyncing = ref(false)
 const showSqlHelp = ref(false)
 
 const sqlParameterShortcuts = [
@@ -380,11 +386,102 @@ const buildPreviewSql = (sql: string, parameterForm = testParameterForm.value) =
   return { sql: renderedSql, error: '' }
 }
 
+const sqlEditorTheme = EditorView.theme({
+  '&': {
+    backgroundColor: '#020617',
+    color: '#34d399',
+    border: '1px solid rgb(51 65 85)',
+    borderRadius: '0.75rem',
+    fontSize: '0.75rem',
+  },
+  '&.cm-focused': {
+    outline: '2px solid rgb(59 130 246 / 0.35)',
+    outlineOffset: '1px',
+    borderColor: 'rgb(59 130 246)',
+  },
+  '.cm-scroller': {
+    minHeight: '9rem',
+    maxHeight: '18rem',
+    overflow: 'auto',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    lineHeight: '1.625',
+  },
+  '.cm-content': {
+    minHeight: '9rem',
+    padding: '0.625rem 0.875rem',
+    caretColor: '#60a5fa',
+  },
+  '.cm-line': {
+    padding: '0',
+  },
+  '.cm-gutters': {
+    backgroundColor: '#020617',
+    color: '#64748b',
+    borderRight: '1px solid rgb(30 41 59)',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'rgb(15 23 42 / 0.75)',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'rgb(15 23 42)',
+    color: '#cbd5e1',
+  },
+  '.cm-selectionBackground, ::selection': {
+    backgroundColor: 'rgb(37 99 235 / 0.35) !important',
+  },
+})
+
+const destroySqlEditor = () => {
+  sqlEditorView.value?.destroy()
+  sqlEditorView.value = null
+}
+
+const createSqlEditor = () => {
+  const host = sqlEditorHost.value
+  if (!host) return
+  destroySqlEditor()
+
+  const updateListener = EditorView.updateListener.of((update) => {
+    if (!update.docChanged || sqlEditorSyncing.value) return
+    const nextSql = update.state.doc.toString()
+    if (form.value.sqlContent !== nextSql) form.value.sqlContent = nextSql
+  })
+  const state = EditorState.create({
+    doc: form.value.sqlContent,
+    extensions: [
+      basicSetup,
+      sql(),
+      placeholder('SELECT id, department_name, sum(amount) AS total_sales FROM sales_table GROUP BY id, department_name LIMIT 50;'),
+      sqlEditorTheme,
+      updateListener,
+    ],
+  })
+  sqlEditorView.value = new EditorView({ state, parent: host })
+}
+
+const syncSqlEditorDocument = (sqlContent: string) => {
+  const view = sqlEditorView.value
+  if (!view || view.state.doc.toString() === sqlContent) return
+  sqlEditorSyncing.value = true
+  try {
+    view.dispatch({
+      changes: {
+        from: 0,
+        to: view.state.doc.length,
+        insert: sqlContent,
+      },
+    })
+  } finally {
+    sqlEditorSyncing.value = false
+  }
+}
+
 const insertSqlFragment = (fragment: string) => {
   const currentSql = form.value.sqlContent
-  const textarea = sqlEditor.value
-  const start = textarea?.selectionStart ?? currentSql.length
-  const end = textarea?.selectionEnd ?? start
+  const view = sqlEditorView.value
+  const selection = view?.state.selection.main
+  const start = selection?.from ?? currentSql.length
+  const end = selection?.to ?? start
   const nextSql = `${currentSql.slice(0, start)}${fragment}${currentSql.slice(end)}`
   const validationError = validateSqlParameters(nextSql)
   if (validationError) {
@@ -392,14 +489,17 @@ const insertSqlFragment = (fragment: string) => {
     return
   }
 
-  form.value.sqlContent = nextSql
-  void nextTick(() => {
-    const nextTextarea = sqlEditor.value
-    if (!nextTextarea) return
+  if (view) {
     const nextCursor = start + fragment.length
-    nextTextarea.focus()
-    nextTextarea.setSelectionRange(nextCursor, nextCursor)
-  })
+    view.dispatch({
+      changes: { from: start, to: end, insert: fragment },
+      selection: { anchor: nextCursor },
+    })
+    view.focus()
+    return
+  }
+
+  form.value.sqlContent = nextSql
 }
 
 const formatDatasetLabel = (dataset: { id: number; name: string; display_name?: string }) => {
@@ -726,15 +826,22 @@ watch(
 
 watch(
   () => form.value.sqlContent,
-  (sql) => syncCustomParameterConfigs(sql),
+  (sql) => {
+    syncCustomParameterConfigs(sql)
+    syncSqlEditorDocument(sql)
+  },
 )
 
 watch(
   () => props.visible,
   (visible) => {
-    if (!visible) return
+    if (!visible) {
+      destroySqlEditor()
+      return
+    }
     resetForm(activeReport.value)
     loadDataSourcesAndDatasets()
+    void nextTick(createSqlEditor)
   },
 )
 
@@ -742,8 +849,11 @@ onMounted(() => {
   if (props.visible) {
     resetForm(activeReport.value)
     loadDataSourcesAndDatasets()
+    void nextTick(createSqlEditor)
   }
 })
+
+onBeforeUnmount(destroySqlEditor)
 </script>
 
 <template>
@@ -959,12 +1069,17 @@ onMounted(() => {
             </button>
           </div>
 
+          <div
+            ref="sqlEditorHost"
+            class="sql-editor-host w-full overflow-hidden rounded-xl"
+            aria-label="SQL 编辑器"
+          ></div>
           <textarea
-            ref="sqlEditor"
             v-model="form.sqlContent"
-            rows="6"
-            placeholder="SELECT id, department_name, sum(amount) as total_sales FROM sales_table GROUP BY id, department_name LIMIT 50;"
-            class="w-full font-mono text-xs px-3.5 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl bg-slate-950 text-emerald-400 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all leading-relaxed custom-scrollbar"
+            class="sr-only"
+            aria-hidden="true"
+            tabindex="-1"
+            aria-label="SQL 内容同步字段"
           ></textarea>
 
           <div

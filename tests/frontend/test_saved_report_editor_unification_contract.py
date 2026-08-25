@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -42,3 +43,18 @@ def test_dynamic_sql_trial_asks_for_parameters_before_querying():
     assert "custom_range" in source
     assert "custom_month_range" in source
     assert "确认试跑" in source
+
+
+def test_shared_report_editor_uses_codemirror_for_sql_editing():
+    source = _read("frontend/src/components/data-portal/DataPortalReportCreateModal.vue")
+    package = json.loads(_read("frontend/package.json"))
+
+    assert "@codemirror/lang-sql" in package["dependencies"]
+    assert "EditorState" in source
+    assert "EditorView" in source
+    assert "basicSetup" in source
+    assert "sql(" in source
+    assert "sqlEditorHost" in source
+    assert "EditorView.updateListener" in source
+    assert "destroySqlEditor" in source
+    assert ".dispatch" in source

@@ -378,7 +378,12 @@
             <div v-if="selectedSavedReportDetail.tags?.length" class="flex flex-wrap gap-1">
               <span v-for="tag in selectedSavedReportDetail.tags" :key="tag" class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-[10px] text-blue-600 dark:text-blue-300">{{ tag }}</span>
             </div>
-            <pre class="max-h-72 overflow-auto rounded-lg bg-gray-950 text-green-100 p-3 text-[11px] leading-relaxed whitespace-pre-wrap">{{ selectedSavedReportDetail.sql_template || selectedSavedReportDetail.sql_content }}</pre>
+            <SqlCodeViewer
+              :code="selectedSavedReportDetail.sql_template || selectedSavedReportDetail.sql_content || ''"
+              min-height="9rem"
+              max-height="18rem"
+              aria-label="报表 SQL（只读）"
+            />
           </section>
           <div class="flex flex-wrap gap-2 pt-2">
             <button type="button" class="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white disabled:opacity-50" :title="getSavedReportButtonTitle(selectedSavedReportDetail)" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行</button>
@@ -420,7 +425,12 @@
                   <div v-if="selectedSavedReportRunDetail.permission_notice?.row_filter_applied" class="rounded-lg bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">本次结果已应用行级数据权限</div>
                   <div v-if="selectedSavedReportRunDetail.executed_sql">
                     <p class="text-[11px] font-bold text-gray-500 mb-1">执行 SQL</p>
-                    <pre class="max-h-40 overflow-auto rounded-lg bg-gray-950 text-green-100 p-2 text-[10px] whitespace-pre-wrap">{{ selectedSavedReportRunDetail.executed_sql }}</pre>
+                    <SqlCodeViewer
+                      :code="selectedSavedReportRunDetail.executed_sql"
+                      min-height="5rem"
+                      max-height="10rem"
+                      aria-label="执行 SQL（只读）"
+                    />
                   </div>
                   <div v-if="selectedSavedReportRunDetail.result_snapshot">
                     <SavedReportResultTable :snapshot="selectedSavedReportRunDetail.result_snapshot" />
@@ -1402,6 +1412,7 @@ import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
 import SavedReportResultTable from "@/components/chatbi/SavedReportResultTable.vue";
 import SavedReportBrowseModal from "@/components/chatbi/SavedReportBrowseModal.vue";
 import DataPortalReportCreateModal from "@/components/data-portal/DataPortalReportCreateModal.vue";
+import SqlCodeViewer from "@/components/data-portal/SqlCodeViewer.vue";
 
 const { showToast } = useToast();
 

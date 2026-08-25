@@ -49,6 +49,12 @@
       <span class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 select-none font-mono">
         {{ formattedDate }}
       </span>
+      <span class="mt-1 flex items-center justify-between gap-2 text-[9px] text-gray-400 dark:text-gray-500">
+        <span class="truncate" :title="recentRunAt ? `最近运行：${recentRunLabel}` : '最近运行：暂无'">
+          最近运行：{{ recentRunLabel }}
+        </span>
+        <span class="shrink-0">运行次数：{{ userRunCount }}</span>
+      </span>
     </button>
     <div class="flex items-center justify-end px-2.5 py-1 bg-gray-50/50 dark:bg-gray-900/10 border-t border-blue-50/30 dark:border-blue-950/20 text-gray-400 gap-1.5">
       <button
@@ -227,6 +233,9 @@ const copyTitle = computed(() => {
 });
 
 const formattedDate = computed(() => props.formatDate(props.report.created_at));
+const recentRunAt = computed(() => props.report.last_success_at || props.report.user_last_run_at || null);
+const recentRunLabel = computed(() => recentRunAt.value ? props.formatDate(recentRunAt.value) : "暂无");
+const userRunCount = computed(() => Number(props.report.user_run_count || 0));
 
 const subscriptionLabel = computed(() => {
   if (props.report.subscription_status === "active") return "已订阅";

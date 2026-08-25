@@ -2233,7 +2233,6 @@ import {
   extractColumnMetaFromAgentMessage,
   extractSavedReportExecuteErrorMessage,
   mergeSavedReportAnalysisIntoResult,
-  parseSavedReportTags,
   todayDateString,
   todayMonthString,
 } from "@/composables/chat/useSavedReportWorkflow";
@@ -5107,7 +5106,6 @@ const showHelpModal = ref(false);
 
 // 固化报表暂存状态
 const showSaveReportModal = ref(false);
-const isSavingReport = ref(false);
 const isEditingReport = ref(false);
 const editingReportId = ref<string | null>(null);
 const saveReportForm = ref({
@@ -5222,54 +5220,12 @@ const openEditReportModal = (report: any) => {
 
 const closeSavedReportEditor = () => {
   showSaveReportModal.value = false;
-  isSavingReport.value = false;
   isEditingReport.value = false;
   editingReportId.value = null;
 };
 
 const handleSavedReportEditorCreated = () => {
   closeSavedReportEditor();
-};
-
-const submitSaveReport = async () => {
-  if (!saveReportForm.value.title.trim()) {
-    showToast("请输入报表标题", "error");
-    return;
-  }
-  isSavingReport.value = true;
-  try {
-    const payload = {
-      title: saveReportForm.value.title.trim(),
-      description: saveReportForm.value.description?.trim() || undefined,
-      sql_content: saveReportForm.value.sql_content,
-      dataset_id: saveReportForm.value.dataset_id,
-      data_source: saveReportForm.value.data_source,
-      original_query: saveReportForm.value.original_query,
-      mode: saveReportForm.value.mode,
-      sql_template: saveReportForm.value.sql_template || undefined,
-      params_schema: saveReportForm.value.params_schema,
-      default_params: saveReportForm.value.default_params,
-      column_meta: saveReportForm.value.column_meta || undefined,
-      analysis_mode: saveReportForm.value.analysis_mode,
-      tags: parseSavedReportTags(saveReportForm.value.tags_input),
-    };
-    if (isEditingReport.value && editingReportId.value) {
-      await axios.put(`/api/portal/saved-reports/${editingReportId.value}`, payload);
-      showToast("报表修改成功", "success");
-    } else {
-      await axios.post("/api/portal/saved-reports", payload);
-      showToast("报表暂存成功！您可以在我的数据门户中查看。", "success");
-    }
-    showSaveReportModal.value = false;
-    isEditingReport.value = false;
-    editingReportId.value = null;
-  } catch (error: any) {
-    console.error("Failed to save report:", error);
-    const detail = error.response?.data?.detail || "暂存失败，请重试";
-    showToast(typeof detail === 'object' ? JSON.stringify(detail) : detail, "error");
-  } finally {
-    isSavingReport.value = false;
-  }
 };
 
 const savedReportNeedsRunOptions = (report: SavedReportPayload) => {
