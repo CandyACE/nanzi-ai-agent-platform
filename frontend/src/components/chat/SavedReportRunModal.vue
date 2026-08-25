@@ -29,7 +29,7 @@ const emit = defineEmits<{
       <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-700">
         <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
           <div>
-            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">运行黄金报表</h3>
+            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">运行固化报表</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-[18rem]">{{ pendingReport?.title }}</p>
           </div>
           <button @click="emit('close')" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">

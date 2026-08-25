@@ -5,7 +5,7 @@
       <div class="relative w-full max-w-3xl h-[min(92vh,880px)] flex flex-col rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl overflow-hidden">
         <div class="shrink-0 px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3 bg-gray-50/80 dark:bg-gray-900/80">
           <div class="min-w-0">
-            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">浏览黄金报表</h3>
+            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">浏览固化报表</h3>
             <p class="text-[11px] text-gray-400 mt-0.5">
               共 {{ reports.length }} 个 · 当前显示 {{ displayedReports.length }} 个
             </p>

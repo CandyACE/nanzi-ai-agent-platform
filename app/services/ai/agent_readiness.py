@@ -3,7 +3,11 @@
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-from app.services.ai.agent_types import AgentType, LOCKED_CAPABILITY_BY_TYPE
+from app.services.ai.agent_types import (
+    AgentType,
+    LOCKED_CAPABILITY_BY_TYPE,
+    normalize_agent_capabilities,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,7 @@ def has_knowledge_binding(
     capabilities: Iterable[str] | None,
     engine_config: Mapping[str, Any] | None,
     tools: Iterable[Any] | None,
+    agent_type: AgentType | str | None = None,
 ) -> bool:
     """Return whether an agent is actually authorized and equipped for KB retrieval.
 
@@ -46,7 +51,15 @@ def has_knowledge_binding(
     agent knowledge-search authority. The capability, explicitly configured
     search tool, and at least one bound dataset must all be present.
     """
+    # Older rows may predate the locked primary capability backfill. Keep the
+    # compatibility in memory so routing works before the migration is applied.
     capability_set = {str(value).strip() for value in capabilities or []}
+    if agent_type is not None:
+        # Do not remove an explicitly stored legacy capability here. Some
+        # callers do not persist agent_type alongside the capability list.
+        capability_set.add(
+            LOCKED_CAPABILITY_BY_TYPE[AgentType(agent_type)]
+        )
     config = engine_config or {}
     dataset_ids = [value for value in config.get("dataset_ids", []) or [] if value]
     return (
@@ -65,7 +78,10 @@ def evaluate_agent_readiness(
     has_published_version: bool,
 ) -> AgentReadiness:
     normalized_type = AgentType(agent_type)
-    capability_set = {str(value).strip() for value in capabilities or []}
+    # Creation/update paths already normalize capabilities, but legacy rows
+    # can still be missing their type's locked capability. Do not mutate the
+    # ORM object here; normalize only for the current readiness evaluation.
+    capability_set = set(normalize_agent_capabilities(normalized_type, capabilities))
     config = engine_config or {}
     dataset_ids = [value for value in config.get("dataset_ids", []) or [] if value]
     tool_names = _enabled_tool_names(tools)

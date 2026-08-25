@@ -1110,12 +1110,12 @@
                   @click="handleSaveReportFromMessage(msg)"
                   class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                   :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
-                  title="将本轮成功查数的 SQL 沉淀为黄金报表"
+                  title="将本轮成功查数的 SQL 沉淀为固化报表"
                 >
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
                   </svg>
-                  <span class="hidden sm:inline">添加黄金报表</span>
+                  <span class="hidden sm:inline">添加固化报表</span>
                 </button>
               </div>
             </div>
@@ -5105,7 +5105,7 @@ const showSettings = ref(false);
 const showHelpModal = ref(false);
 
 
-// 黄金报表暂存状态
+// 固化报表暂存状态
 const showSaveReportModal = ref(false);
 const isSavingReport = ref(false);
 const isEditingReport = ref(false);
@@ -5393,7 +5393,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   messages.value.push({
     id: Date.now(),
     role: "user",
-    content: `📌 执行黄金 SQL 报表: ${report.title}`,
+    content: `📌 执行固化 SQL 报表: ${report.title}`,
     timestamp: new Date().toISOString(),
   });
 
@@ -5405,7 +5405,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
     isSavedReportResult: true,
     content: "",
     isThinking: true,
-    thinkingText: "正在执行黄金报表，请稍候...",
+    thinkingText: "正在执行固化报表，请稍候...",
     logs: [],
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
@@ -6831,7 +6831,7 @@ const chatbiMonitorDialogOpen = ref(false);
 const chatbiMonitorResultId = ref<string>();
 const handleChatBIMonitorCreated = (payload: { created: boolean }) => {
   chatbiMonitorDialogOpen.value = false;
-  showToast(payload.created === false ? "该结果的订阅已存在" : "查询订阅已创建，可在黄金报表中管理", "success");
+  showToast(payload.created === false ? "该结果的订阅已存在" : "查询订阅已创建，可在固化报表中管理", "success");
 };
 
 const handleChatBIResultAction = async (

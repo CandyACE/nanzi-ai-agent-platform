@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
@@ -814,6 +814,53 @@ const saveConfigs = async () => {
   }
 }
 
+// 检测未保存的配置修改
+const changedConfigsList = computed(() => {
+  const list: { key: string; label?: string; oldValue: any; newValue: any }[] = []
+  for (const cat in configGroups.value) {
+    const items = configGroups.value[cat]
+    if (items) {
+      items.forEach(item => {
+        if (originalConfigs.value && item.value !== originalConfigs.value[item.key]) {
+          list.push({
+            key: item.key,
+            label: item.description || item.key,
+            oldValue: originalConfigs.value[item.key],
+            newValue: item.value
+          })
+        }
+      })
+    }
+  }
+  return list
+})
+
+const hasUnsavedConfigChanges = computed(() => changedConfigsList.value.length > 0)
+const unsavedConfigCount = computed(() => changedConfigsList.value.length)
+
+const resetUnsavedConfigs = () => {
+  for (const cat in configGroups.value) {
+    const items = configGroups.value[cat]
+    if (items) {
+      items.forEach(item => {
+        if (originalConfigs.value && item.key in originalConfigs.value) {
+          item.value = originalConfigs.value[item.key] ?? ''
+        }
+      })
+    }
+  }
+  showToast('已放弃未保存的配置修改', 'info')
+}
+
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+    if (activeTab.value === 'configs' && canSave) {
+      e.preventDefault()
+      saveConfigs()
+    }
+  }
+}
+
 const toggleSecret = (key: string) => {
   showSecrets.value[key] = !showSecrets.value[key]
 }
@@ -1538,6 +1585,7 @@ const executeDeleteKey = async () => {
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleGlobalKeydown)
   if (route.query.tab === 'mcp') {
     router.replace('/dashboard/mcp')
     return
@@ -1550,6 +1598,10 @@ onMounted(async () => {
     fetchPartitions()
     refreshDockerPrebuildStatus(true)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 </script>
 
@@ -2124,23 +2176,68 @@ onMounted(async () => {
              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
          </div>
          <div v-else class="space-y-8 max-w-4xl">
-             <div v-if="orderedCategories.length" class="flex justify-end gap-2 -mb-4">
-               <button
-                 type="button"
-                 @click="expandAllConfigGroups"
-                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-               >
-                 <span aria-hidden="true">▾</span>
-                 全部展开
-               </button>
-               <button
-                 type="button"
-                 @click="collapseAllConfigGroups"
-                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-               >
-                 <span aria-hidden="true">▸</span>
-                 全部折叠
-               </button>
+             <div v-if="orderedCategories.length" class="flex flex-wrap items-center justify-between gap-3 -mb-4">
+               <!-- 左侧：未保存状态指示 -->
+               <div class="flex items-center gap-2">
+                 <div
+                   v-if="hasUnsavedConfigChanges"
+                   class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-xs font-semibold text-amber-700 shadow-2xs animate-pulse"
+                 >
+                   <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                   <span>已修改 {{ unsavedConfigCount }} 项参数（未保存）</span>
+                 </div>
+                 <div v-else class="text-xs text-gray-400">
+                   参数修改后请及时保存生效
+                 </div>
+               </div>
+
+               <!-- 右侧：展开/折叠与顶部常驻操作 -->
+               <div class="flex items-center gap-2">
+                 <button
+                   type="button"
+                   @click="expandAllConfigGroups"
+                   class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary cursor-pointer"
+                 >
+                   <span aria-hidden="true">▾</span>
+                   全部展开
+                 </button>
+                 <button
+                   type="button"
+                   @click="collapseAllConfigGroups"
+                   class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary cursor-pointer"
+                 >
+                   <span aria-hidden="true">▸</span>
+                   全部折叠
+                 </button>
+
+                 <template v-if="canSave">
+                   <button
+                     v-if="hasUnsavedConfigChanges"
+                     type="button"
+                     @click="resetUnsavedConfigs"
+                     class="inline-flex items-center rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+                     title="放弃未保存修改并恢复原值"
+                   >
+                     重置
+                   </button>
+                   <button
+                     type="button"
+                     :disabled="saving"
+                     @click="saveConfigs"
+                     class="inline-flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-bold shadow-sm transition-all cursor-pointer"
+                     :class="hasUnsavedConfigChanges
+                       ? 'bg-primary text-white hover:bg-primary/90 shadow-primary/20 ring-2 ring-primary/20'
+                       : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                     title="保存所有已修改的参数 (快捷键: ⌘S 或 Ctrl+S)"
+                   >
+                     <svg v-if="saving" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                     </svg>
+                     <span>{{ saving ? '保存中...' : '保存变更 (⌘S)' }}</span>
+                   </button>
+                 </template>
+               </div>
              </div>
              <div v-for="category in orderedCategories" :key="category" class="bg-white shadow rounded-lg">
                 <button
@@ -2915,14 +3012,65 @@ onMounted(async () => {
                    </div>
                 </div>
              </div>
-             <div v-if="canSave" class="flex justify-end pt-4 pb-12">
-                <button @click="fetchConfigs" class="mr-4 bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700">重置</button>
-                <button @click="saveConfigs" :disabled="saving" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary disabled:opacity-50">
-                  {{ saving ? '保存中...' : '保存变更' }}
-                </button>
+              <div v-if="canSave" class="flex justify-end pt-4 pb-12">
+                 <button @click="resetUnsavedConfigs" class="mr-4 bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer">重置修改</button>
+                 <button @click="saveConfigs" :disabled="saving" class="inline-flex items-center gap-1.5 justify-center py-2 px-5 border border-transparent shadow-sm text-sm font-bold rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50 transition-all cursor-pointer">
+                   <svg v-if="saving" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                   </svg>
+                   <span>{{ saving ? '保存中...' : '保存变更 (⌘S)' }}</span>
+                 </button>
+              </div>
+          </div>
+       </div>
+
+       <!-- 底部浮动吸底保存提示条 (Sticky Save Bar) -->
+       <transition
+         enter-active-class="transition duration-300 ease-out"
+         enter-from-class="transform translate-y-12 opacity-0"
+         enter-to-class="transform translate-y-0 opacity-100"
+         leave-active-class="transition duration-200 ease-in"
+         leave-from-class="transform translate-y-0 opacity-100"
+         leave-to-class="transform translate-y-12 opacity-0"
+       >
+         <div
+           v-if="activeTab === 'configs' && hasUnsavedConfigChanges && canSave"
+           class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-4 rounded-2xl border border-amber-200/90 bg-white/95 px-5 py-3 shadow-2xl backdrop-blur-md"
+         >
+           <div class="flex items-center gap-2.5">
+             <span class="relative flex h-3 w-3">
+               <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+               <span class="relative inline-flex h-3 w-3 rounded-full bg-amber-500"></span>
+             </span>
+             <div class="text-xs font-semibold text-gray-800">
+               您有 <span class="font-bold text-amber-600">{{ unsavedConfigCount }}</span> 项未保存的配置修改
              </div>
+           </div>
+
+           <div class="flex items-center gap-2 border-l border-gray-200 pl-4">
+             <button
+               type="button"
+               class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-2xs hover:bg-gray-50 hover:text-gray-900 transition-colors cursor-pointer"
+               @click="resetUnsavedConfigs"
+             >
+               放弃修改
+             </button>
+             <button
+               type="button"
+               :disabled="saving"
+               class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-primary/20 hover:bg-primary/90 transition-all disabled:opacity-50 cursor-pointer"
+               @click="saveConfigs"
+             >
+               <svg v-if="saving" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+               </svg>
+               <span>{{ saving ? '保存中...' : '保存变更 (⌘S)' }}</span>
+             </button>
+           </div>
          </div>
-      </div>
+       </transition>
     </div>
 
     <RagFlowResourceSelector

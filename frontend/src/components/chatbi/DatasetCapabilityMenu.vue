@@ -14,7 +14,39 @@
       <span>{{ statusBannerText }}</span>
     </div>
 
-    <!-- Header -->
+        <!-- 顶部顶层主 Tab 切换条（数据集与场景 / 固化报表） -->
+    <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-gray-150/80 dark:bg-gray-800/60 border border-gray-200/50 dark:border-gray-800 select-none">
+      <button
+        type="button"
+        class="py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+        :class="menuActiveTab === 'datasets'
+          ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-300 shadow-sm font-black'
+          : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
+        @click="menuActiveTab = 'datasets'"
+      >
+        <span>⌂ 数据集与场景</span>
+      </button>
+      <button
+        type="button"
+        class="py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+        :class="menuActiveTab === 'reports'
+          ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-300 shadow-sm font-black'
+          : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
+        @click="menuActiveTab = 'reports'; fetchSavedReports();"
+      >
+        <span>▤ 固化报表</span>
+        <span
+          v-if="savedReports.length > 0"
+          class="rounded-full px-1.5 py-0.2 text-[10px]"
+          :class="menuActiveTab === 'reports' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200 font-bold' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'"
+        >
+          {{ savedReports.length }}
+        </span>
+      </button>
+    </div>
+
+<div v-show="menuActiveTab === 'datasets'" class="space-y-4 animate-fade-in">
+<!-- Header -->
     <div class="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2.5 flex flex-row items-center justify-between gap-2">
       <div class="flex items-center gap-2.5 min-w-0">
         <div class="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex-shrink-0">
@@ -138,30 +170,31 @@
         </div>
       </div>
     </transition>
-    <!-- 黄金报表（次要区块，默认收起） -->
+
+<!-- 固化报表 Tab 专属面板 -->
     <div
-      v-if="!initialLoading"
-      class="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/40 px-3 py-2.5 space-y-2"
+      v-if="menuActiveTab === 'reports'"
+      class="space-y-3"
     >
-      <div
-        class="flex items-center justify-between w-full text-[11px] font-semibold text-gray-600 dark:text-gray-400 transition-colors select-none cursor-pointer"
-        @click="showSavedReportsCollapse = !showSavedReportsCollapse; if (!showSavedReportsCollapse) fetchSavedReports();"
-      >
-        <span class="flex items-center gap-1.5">
-          黄金报表
-          <span
-            v-if="savedReports.length > 0"
-            class="rounded px-1.5 py-0.5 text-[9px] font-semibold bg-gray-200/80 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
-          >
-            {{ savedReports.length }}
-          </span>
-        </span>
-        <div class="flex items-center space-x-1">
+      <!-- 固化报表工具栏：统计、新建按钮与刷新 -->
+      <div class="flex items-center justify-between px-1">
+        <div class="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+          <span>固化报表库</span>
+          <span class="text-[10px] text-gray-400 font-normal">({{ filteredSavedReports.length }} 份)</span>
+        </div>
+        <div class="flex items-center gap-1.5">
           <button
             type="button"
-            class="p-1 rounded hover:bg-gray-200/80 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
+            class="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs shadow-blue-500/20 transition-all cursor-pointer"
+            @click="showCreateReportModal = true"
+          >
+            <span>➕ 新建报表</span>
+          </button>
+          <button
+            type="button"
+            class="p-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 hover:text-blue-600 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
             title="放大浏览"
-            @click.stop="openSavedReportBrowser"
+            @click="openSavedReportBrowser"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
@@ -169,128 +202,118 @@
           </button>
           <button
             type="button"
-            class="p-1 rounded hover:bg-gray-200/80 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
-            title="刷新黄金报表"
-            @click.stop="fetchSavedReports"
+            class="p-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-500 hover:text-blue-600 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
+            title="刷新固化报表"
+            @click="fetchSavedReports"
           >
             <svg
               class="w-3.5 h-3.5"
-              :class="{ 'animate-spin': loadingReports }"
+              :class="{ 'animate-spin': loadingReports || refreshingReports }"
               fill="none" stroke="currentColor" viewBox="0 0 24 24"
             >
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
-          <svg
-            class="w-3.5 h-3.5 transform transition-transform duration-300 pointer-events-none"
-            :class="{ 'rotate-180': !showSavedReportsCollapse }"
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
-          </svg>
         </div>
       </div>
 
-      <div 
-        v-if="!showSavedReportsCollapse"
-        class="space-y-2 select-none"
-      >
-        <!-- 范围选择：高值 Segmented Control 胶囊滑动控制器 -->
-        <div class="grid grid-cols-3 p-0.5 rounded-lg bg-gray-100/80 dark:bg-gray-800/40 text-gray-500 dark:text-gray-400 text-[10px] font-bold border border-gray-200/30 dark:border-gray-800/30">
-          <button
-            v-for="scope in savedReportScopes"
-            :key="scope.value"
-            type="button"
-            class="py-1 rounded-md transition-all text-center"
-            :class="savedReportScope === scope.value ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-white shadow-xs font-black' : 'hover:text-gray-800 dark:hover:text-gray-200'"
-            @click.stop="setSavedReportScope(scope.value)"
-          >
-            {{ scope.label }}
-          </button>
-        </div>
+      <!-- 范围选择：全部 / 我的 / 共享给我 -->
+      <div class="grid grid-cols-3 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/40 text-gray-500 dark:text-gray-400 text-[10px] font-bold border border-gray-200/50 dark:border-gray-800">
+        <button
+          v-for="scope in savedReportScopes"
+          :key="scope.value"
+          type="button"
+          class="py-1 rounded-md transition-all text-center cursor-pointer"
+          :class="savedReportScope === scope.value ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-white shadow-xs font-black' : 'hover:text-gray-800 dark:hover:text-gray-200'"
+          @click.stop="setSavedReportScope(scope.value)"
+        >
+          {{ scope.label }}
+        </button>
+      </div>
 
-        <!-- 细分分类 + 标签：合并为一行自适应横向滚动条 -->
-        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-0.5 px-0.5 scroll-smooth">
-          <!-- 智能分类过滤器 -->
-          <button
-            v-for="filter in savedReportSmartFilters"
-            :key="filter.value"
-            type="button"
-            class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold"
-            :class="savedReportSmartFilter === filter.value 
-              ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
-              : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
-            @click.stop="setSavedReportSmartFilter(filter.value)"
-          >
-            <span class="flex items-center gap-1">
-              <span v-if="filter.value === 'pinned'">📌</span>
-              <span v-else-if="filter.value === 'favorite'">⭐️</span>
-              <span v-else-if="filter.value === 'subscribed'">🔔</span>
-              <span v-else-if="filter.value === 'recent'">🕒</span>
-              <span v-else-if="filter.value === 'frequent'">🔥</span>
-              <span>{{ filter.label }}</span>
-            </span>
-          </button>
+      <!-- 细分分类 + 标签横向滚动条 -->
+      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-0.5 px-0.5 scroll-smooth">
+        <button
+          v-for="filter in savedReportSmartFilters"
+          :key="filter.value"
+          type="button"
+          class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold cursor-pointer"
+          :class="savedReportSmartFilter === filter.value 
+            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
+            : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
+          @click.stop="setSavedReportSmartFilter(filter.value)"
+        >
+          <span class="flex items-center gap-1">
+            <span v-if="filter.value === 'pinned'">📌</span>
+            <span v-else-if="filter.value === 'favorite'">⭐️</span>
+            <span v-else-if="filter.value === 'subscribed'">🔔</span>
+            <span v-else-if="filter.value === 'recent'">🕒</span>
+            <span v-else-if="filter.value === 'frequent'">🔥</span>
+            <span>{{ filter.label }}</span>
+          </span>
+        </button>
 
-          <!-- 分割垂直线 -->
-          <span v-if="allSavedReportTags.length > 0" class="flex-shrink-0 w-px h-3.5 bg-gray-200 dark:bg-gray-800 mx-0.5"></span>
+        <!-- 分割垂直线 -->
+        <span v-if="allSavedReportTags.length > 0" class="flex-shrink-0 w-px h-3.5 bg-gray-200 dark:bg-gray-800 mx-0.5"></span>
 
-          <!-- 标签分类 -->
-          <button
-            v-if="allSavedReportTags.length > 0"
-            type="button"
-            class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold"
-            :class="selectedSavedReportTag === '' 
-              ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
-              : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
-            @click.stop="selectedSavedReportTag = ''"
-          >
-            🏷️ 全部标签
-          </button>
-          <button
-            v-for="tag in allSavedReportTags"
-            :key="tag"
-            type="button"
-            class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold"
-            :class="selectedSavedReportTag === tag 
-              ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
-              : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
-            @click.stop="selectedSavedReportTag = tag"
-          >
-            # {{ tag }}
-          </button>
-        </div>
-        <div v-if="loadingReports" class="flex items-center justify-center py-4 text-xs text-gray-400 select-none">
-          <svg class="w-4 h-4 animate-spin text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          正在加载黄金报表...
-        </div>
-        <div v-else-if="filteredSavedReports.length === 0" class="text-center py-6 border border-dashed border-gray-200 dark:border-gray-800 rounded-xl text-gray-400 dark:text-gray-500 text-[11px] select-none">
-          暂无已存报表。您可以在 ChatBI 结果中点击 SQL 上方的「添加黄金报表」按钮进行快捷收藏。
-        </div>
-        <div v-else class="grid gap-2 max-h-80 overflow-y-auto pr-0.5 custom-scrollbar">
-          <SavedReportItemCard
-            v-for="report in filteredSavedReports"
-            :key="report.id"
-            :report="report"
-            :format-date="formatDate"
-            @execute="handleExecuteSavedReportClick"
-            @edit="handleEditReport"
-            @detail="openSavedReportDetail"
-            @favorite="toggleSavedReportFavorite"
-            @pin="toggleSavedReportPinned"
-            @share="openShareReportModal"
-            @copy="handleCopyReport"
-            @delete="handleDeleteReport"
-            @subscription="openSavedReportSubscription"
-          />
-        </div>
+        <!-- 标签分类 -->
+        <button
+          v-if="allSavedReportTags.length > 0"
+          type="button"
+          class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold cursor-pointer"
+          :class="selectedSavedReportTag === '' 
+            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
+            : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
+          @click.stop="selectedSavedReportTag = ''"
+        >
+          🏷️ 全部标签
+        </button>
+        <button
+          v-for="tag in allSavedReportTags"
+          :key="tag"
+          type="button"
+          class="flex-shrink-0 px-2.5 py-0.5 rounded-full text-[10px] transition-all border font-bold cursor-pointer"
+          :class="selectedSavedReportTag === tag 
+            ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40' 
+            : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
+          @click.stop="selectedSavedReportTag = tag"
+        >
+          # {{ tag }}
+        </button>
+      </div>
+
+      <!-- 报表卡片列表 -->
+      <div v-if="loadingReports" class="flex items-center justify-center py-8 text-xs text-gray-400 select-none">
+        <svg class="w-4 h-4 animate-spin text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        正在加载固化报表...
+      </div>
+      <div v-else-if="filteredSavedReports.length === 0" class="text-center py-8 border border-dashed border-gray-200 dark:border-gray-800 rounded-xl text-gray-400 dark:text-gray-500 text-[11px] space-y-2 select-none">
+        <p>暂无固化报表</p>
+        <p class="text-[10px] text-gray-400">您可以点击上方「➕ 新建报表」手工编写 SQL，或在 ChatBI 查数后一键保存</p>
+      </div>
+      <div v-else class="grid gap-2 max-h-[calc(100vh-280px)] overflow-y-auto pr-0.5 custom-scrollbar">
+        <SavedReportItemCard
+          v-for="report in filteredSavedReports"
+          :key="report.id"
+          :report="report"
+          :format-date="formatDate"
+          @execute="handleExecuteSavedReportClick"
+          @edit="handleEditReport"
+          @detail="openSavedReportDetail"
+          @favorite="toggleSavedReportFavorite"
+          @pin="toggleSavedReportPinned"
+          @share="openShareReportModal"
+          @copy="handleCopyReport"
+          @delete="handleDeleteReport"
+          @subscription="openSavedReportSubscription"
+        />
       </div>
     </div>
 
-    <SavedReportBrowseModal
+<SavedReportBrowseModal
       ref="savedReportBrowseModalRef"
       v-model="showSavedReportBrowser"
       :format-date="formatDate"
@@ -474,7 +497,7 @@
             <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/30">⚠️</div>
             <div class="min-w-0">
               <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">确认删除订阅？</h3>
-              <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">删除后将停止该报表的定时运行和消息推送，但不会删除黄金报表和运行历史。</p>
+              <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">删除后将停止该报表的定时运行和消息推送，但不会删除固化报表和运行历史。</p>
               <p class="mt-2 truncate text-xs font-bold text-gray-700 dark:text-gray-200">{{ selectedSavedReportDetail?.title }}</p>
             </div>
           </div>
@@ -495,7 +518,7 @@
       <div class="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
           <div>
-            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">共享黄金报表</h3>
+            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100">共享固化报表</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate max-w-[18rem]">{{ sharingReport.title }}</p>
           </div>
           <button type="button" class="p-2 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" @click="closeShareReportModal">
@@ -606,7 +629,7 @@
       v-if="showFrequentSection"
       class="rounded-xl border border-amber-100/80 dark:border-amber-900/40 bg-amber-50/10 dark:bg-amber-950/5 p-3.5 space-y-2.5 animate-fade-in-up"
     >
-      <!-- Header：折叠 + 计数，对齐黄金报表样式 -->
+      <!-- Header：折叠 + 计数，对齐固化报表样式 -->
       <div
         class="flex items-center justify-between w-full text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider transition-colors select-none cursor-pointer"
         @click="showFrequentCollapse = !showFrequentCollapse"
@@ -1344,9 +1367,15 @@
           </button>
         </div>
       </div>
-
     </div>
+  </div>
   </section>
+    <!-- 新建固化报表 Modal -->
+    <DataPortalReportCreateModal
+      :visible="showCreateReportModal"
+      @close="showCreateReportModal = false"
+      @created="fetchSavedReports"
+    />
 </template>
 
 <script setup lang="ts">
@@ -1833,11 +1862,13 @@ const handleTableDictionaryClick = (
   }
 };
 
-// 黄金报表业务逻辑
+// 固化报表业务逻辑
 const savedReports = ref<any[]>([]);
 const loadingReports = ref(false);
 const refreshingReports = ref(false);
-const showSavedReportsCollapse = ref(true); // 默认收起
+const showSavedReportsCollapse = ref(false);
+const menuActiveTab = ref<'datasets' | 'reports'>('datasets');
+const showCreateReportModal = ref(false); // 默认收起
 const showFrequentCollapse = ref(false); // 我常问默认展开
 const savedReportScope = ref<"all" | "my" | "shared">("all");
 const selectedSavedReportTag = ref("");
@@ -1960,7 +1991,7 @@ const getSavedReportButtonTitle = (report: any) => {
   if (report.is_owner && report.share_summary) {
     return getShareTargetLabel(report);
   }
-  return report.title || "运行黄金报表";
+  return report.title || "运行固化报表";
 };
 
 const isSavedReportActionDisabled = (report: any) => report.run_permission_status === "denied";
@@ -2265,7 +2296,7 @@ watch(
     const request = props.focusSavedReportRequest;
     if (!request || !requestId || requestId === lastHandledSavedReportFocusRequestId) return;
     lastHandledSavedReportFocusRequestId = requestId;
-    showSavedReportsCollapse.value = false;
+    showSavedReportsCollapse.value = false; menuActiveTab.value = 'reports';
     try {
       await focusSavedReportTarget(request, {
         getReports: () => savedReports.value,
@@ -2331,7 +2362,7 @@ const openSavedReportBrowser = async () => {
 const handleDeleteReport = async (report: any) => {
   try {
     await axios.delete(`/api/portal/saved-reports/${report.id}`);
-    showToast("删除黄金报表成功", "success");
+    showToast("删除固化报表成功", "success");
     await fetchSavedReports();
   } catch (error: any) {
     console.error("Failed to delete saved report:", error);
