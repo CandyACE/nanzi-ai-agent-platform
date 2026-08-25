@@ -92,6 +92,7 @@ const sendInitConfig = () => {
                 ...(parseSavedReportDetailTab(route.query.report_detail_tab)
                   ? { detail_tab: parseSavedReportDetailTab(route.query.report_detail_tab) }
                   : {}),
+                ...(route.query.run_now === '1' ? { run_now: true } : {}),
             } : null,
             portal_question: route.query.portal_question ? {
                 query: String(route.query.portal_question),
@@ -166,6 +167,7 @@ watch(
         route.query.report_id,
         route.query.run_id,
         route.query.report_detail_tab,
+        route.query.run_now,
     ],
     () => {
         if (skipNextQueryInit) {

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Any, Dict, Optional
 from pydantic import BaseModel
@@ -11,8 +11,8 @@ from app.services.metadata_service import MetadataService
 from app.schemas.metadata import (
     DatasetCreate, DatasetUpdate, DatasetResponse, DatasetDetailResponse, DatasetOptionResponse,
     TableCreate, TableResponse,
-    MetricSchema, MetricResponse,
-    RelationshipSchema, RelationshipResponse,
+    MetricSchema, MetricResponse, MetricRecommendRequest,
+    RelationshipSchema, RelationshipResponse, RelationshipRecommendRequest,
     BatchDeleteTablesRequest, BatchDeleteMetricsRequest, BatchDeleteRelationshipsRequest
 )
 from app.models.user import User
@@ -557,9 +557,13 @@ async def batch_delete_tables(
     return {"message": f"成功删除 {count} 张表", "deleted_count": count}
 
 @router.post("/datasets/{dataset_id}/metrics/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
-async def recommend_metrics(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):
+async def recommend_metrics(
+    dataset_id: int,
+    req: MetricRecommendRequest = Body(default_factory=MetricRecommendRequest),
+    conn: AsyncSession = Depends(get_db_session)
+):
     """
-    智能推荐指标 (返回建议值，不直接入库)
+    智能推荐指标 (返回建议值，不直接入库，支持按表范围筛选与自定义提示词及10分钟去重)
     """
     # 1. Get Schema Context
     from app.services.metadata_service import MetadataService
@@ -570,10 +574,16 @@ async def recommend_metrics(dataset_id: int, conn: AsyncSession = Depends(get_db
     if not ds:
         raise HTTPException(status_code=404, detail="数据集不存在")
          
-    schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id)
+    schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id, table_names=req.table_names)
+    existing_metrics = await MetadataService.get_metrics_by_dataset(conn, dataset_id)
     
     # 2. Call Generator
-    result = await MetadataGeneratorService.recommend_metrics(dataset_id, schema_yaml)
+    result = await MetadataGeneratorService.recommend_metrics(
+        dataset_id=dataset_id,
+        schema_context=schema_yaml,
+        user_prompt=req.user_prompt,
+        existing_metrics=existing_metrics,
+    )
     
     return {
         "code": 200,
@@ -582,9 +592,14 @@ async def recommend_metrics(dataset_id: int, conn: AsyncSession = Depends(get_db
     }
 
 @router.post("/datasets/{dataset_id}/relationships/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
-async def recommend_relationships(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):
+async def recommend_relationships(
+    dataset_id: int,
+    req: Optional[RelationshipRecommendRequest] = None,
+    conn: AsyncSession = Depends(get_db_session)
+):
     """
     智能推荐实体（表）之间的关联关系 (返回建议值 + 置信度，不直接入库)
+    支持指定表名范围 (table_names) 和自定义偏好提示词 (user_prompt)
     """
     from app.services.metadata_service import MetadataService
     from app.services.metadata_generator import MetadataGeneratorService
@@ -594,10 +609,28 @@ async def recommend_relationships(dataset_id: int, conn: AsyncSession = Depends(
     if not ds:
         raise HTTPException(status_code=404, detail="数据集不存在")
 
-    schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id)
+    table_names = req.table_names if req and req.table_names else None
+    user_prompt = req.user_prompt if req and req.user_prompt else None
+
+    # 获取当前已存在的关系列表
+    existing_rels = await MetadataService.get_relationships_by_dataset(conn, dataset_id)
+    existing_rel_strs = []
+    for r in existing_rels:
+        src = getattr(r.source_table, 'physical_name', '') if r.source_table else ''
+        tgt = getattr(r.target_table, 'physical_name', '') if r.target_table else ''
+        cond = getattr(r, 'join_condition', '')
+        if src and tgt:
+            existing_rel_strs.append(f"{src} <-> {tgt} ({cond})")
+
+    schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id, table_names=table_names)
 
     # Call Generator
-    result = await MetadataGeneratorService.recommend_relationships(dataset_id, schema_yaml)
+    result = await MetadataGeneratorService.recommend_relationships(
+        dataset_id,
+        schema_yaml,
+        user_prompt=user_prompt,
+        existing_relationships=existing_rel_strs
+    )
 
     return {
         "code": 200,

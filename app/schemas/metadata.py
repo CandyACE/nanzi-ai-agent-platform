@@ -35,6 +35,10 @@ class MetricSchema(BaseModel):
     unit: Optional[str] = None
     tags: Optional[List[str]] = []
 
+class MetricRecommendRequest(BaseModel):
+    table_names: Optional[List[str]] = None
+    user_prompt: Optional[str] = None
+
 class MetricResponse(MetricSchema):
     id: int
     dataset_id: int
@@ -50,6 +54,10 @@ class RelationshipSchema(BaseModel):
     join_condition: str
     join_type: str = "LEFT"
     description: Optional[str] = None
+
+class RelationshipRecommendRequest(BaseModel):
+    table_names: Optional[List[str]] = None
+    user_prompt: Optional[str] = None
 
 class RelationshipResponse(RelationshipSchema):
     id: int

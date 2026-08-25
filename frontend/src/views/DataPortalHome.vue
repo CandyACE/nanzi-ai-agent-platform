@@ -50,17 +50,17 @@
               v-if="activeSection === 'reports'"
               type="button"
               class="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm shadow-blue-500/20 transition hover:bg-blue-700 cursor-pointer"
-              @click="showCreateModal = true"
+              @click="openCreateReport"
             >
               <span>➕ 新建固化报表</span>
             </button>
             <button
               type="button"
               class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:border-blue-200 hover:text-blue-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 cursor-pointer"
-              :disabled="homeLoading || sceneLoading"
+              :disabled="homeLoading || sceneLoading || reportsLoading"
               @click="refresh"
             >
-              <span :class="{ 'animate-spin': homeLoading || sceneLoading }">↻</span>
+              <span :class="{ 'animate-spin': homeLoading || sceneLoading || reportsLoading }">↻</span>
               <span>刷新</span>
             </button>
           </div>
@@ -75,21 +75,24 @@
         </div>
 
         <!-- 加载骨架屏 -->
-        <div v-if="homeLoading && !homePayload" class="space-y-4">
+        <div v-if="activeSection === 'home' && homeLoading && !homePayload" class="space-y-4">
+          <div v-for="n in 3" :key="n" class="h-28 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800" />
+        </div>
+        <div v-else-if="activeSection === 'reports' && reportsLoading && !allReports.length" class="space-y-4">
           <div v-for="n in 3" :key="n" class="h-28 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800" />
         </div>
 
         <!-- 主内容区域 -->
-        <template v-else-if="homePayload">
+        <template v-else>
           <!-- 1. 数据首页 Tab -->
-          <div v-show="activeSection === 'home'" class="space-y-7 animate-fade-in">
+          <div v-if="activeSection === 'home' && homePayload" class="space-y-7 animate-fade-in">
             <DataPortalOverview :attention="homePayload.attention" :activities="homePayload.recent_analysis" @open-activity="openActivity" />
             <DataPortalReportSection
               :reports="homePayload.report_summary.items"
               :summary="homePayload.report_summary"
               :compact="true"
               @open-report="openReport"
-              @create-report="showCreateModal = true"
+              @create-report="openCreateReport"
               @open-specs="showSpecsModal = true"
             />
             <DataPortalSceneSection v-if="scenePayload" :payload="scenePayload" :compact="true" @quick-question="openQuestion" />
@@ -97,25 +100,35 @@
           </div>
 
           <!-- 2. 固化报表 Tab -->
-          <div v-show="activeSection === 'reports'" class="animate-fade-in">
+          <div v-if="activeSection === 'reports'" class="animate-fade-in">
             <DataPortalReportSection
               :reports="allReports"
-              :summary="homePayload.report_summary"
+              :summary="reportSummary"
+              :manage="true"
               :initial-filter="reportFilter"
               @filter-change="setReportFilter"
               @open-report="openReport"
-              @create-report="showCreateModal = true"
+              @create-report="openCreateReport"
+              @execute="executeReport"
+              @detail="openReportInfo"
+              @edit="openEditReport"
+              @favorite="toggleReportFavorite"
+              @pin="toggleReportPinned"
+              @share="openReportInfo"
+              @copy="copyReport"
+              @delete="deleteReport"
+              @subscription="openReportSubscription"
               @open-specs="showSpecsModal = true"
             />
           </div>
 
           <!-- 3. 推荐场景 Tab -->
-          <div v-show="activeSection === 'scenes'" class="animate-fade-in">
+          <div v-if="activeSection === 'scenes'" class="animate-fade-in">
             <DataPortalSceneSection v-if="scenePayload" :payload="scenePayload" @quick-question="openQuestion" />
           </div>
 
           <!-- 4. 数据目录 Tab -->
-          <div v-show="activeSection === 'catalog'" class="animate-fade-in">
+          <div v-if="activeSection === 'catalog'" class="animate-fade-in">
             <DataPortalCatalogSection v-if="scenePayload" :payload="scenePayload" @quick-question="openQuestion" />
           </div>
         </template>
@@ -144,7 +157,8 @@
     <!-- 新建固化报表 Modal -->
     <DataPortalReportCreateModal
       :visible="showCreateModal"
-      @close="showCreateModal = false"
+      :report="editingReport"
+      @close="closeReportModal"
       @created="handleReportCreated"
     />
 
@@ -190,7 +204,7 @@
         <!-- Content -->
         <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50 dark:bg-gray-950/40 text-xs space-y-6">
           <!-- Tab 1: Concept -->
-          <div v-if="activeSpecsTab === 'concept'" class="space-y-4 max-w-3xl mx-auto">
+          <div v-if="activeSpecsTab === 'concept'" class="space-y-4 max-w-3xl">
             <div class="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/20 border-l-4 border-blue-600 p-4 rounded-r-xl">
               <h3 class="font-bold text-blue-900 dark:text-blue-200 mb-1">什么是「固化报表」？</h3>
               <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
@@ -219,7 +233,7 @@
           </div>
 
           <!-- Tab 2: Workflow -->
-          <div v-else-if="activeSpecsTab === 'workflow'" class="space-y-4 max-w-3xl mx-auto">
+          <div v-else-if="activeSpecsTab === 'workflow'" class="space-y-4 max-w-3xl">
             <div class="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
               <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">标准化报表开发四步法</h4>
               <div class="space-y-3">
@@ -249,7 +263,7 @@
           </div>
 
           <!-- Tab 3: Practice -->
-          <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-3xl mx-auto">
+          <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-3xl">
             <div class="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
               <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">运维与共享最佳实践</h4>
               <ul class="space-y-2.5 text-gray-600 dark:text-gray-300 list-disc pl-5 leading-relaxed">
@@ -268,6 +282,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import axios from "@/utils/axios";
+import { useToast } from "@/composables/useToast";
 import DataPortalOverview from "@/components/data-portal/DataPortalOverview.vue";
 import DataPortalReportSection from "@/components/data-portal/DataPortalReportSection.vue";
 import DataPortalSceneSection from "@/components/data-portal/DataPortalSceneSection.vue";
@@ -290,15 +306,17 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "open-report", payload: { report_id: string | number; run_id?: string | number }): void;
+  (e: "open-report", payload: { report_id: string | number; run_id?: string | number; detail_tab?: "info" | "runs" | "subscription"; run_now?: boolean }): void;
   (e: "open-conversation", payload: { conversation_id: string }): void;
   (e: "open-question", payload: { query: string; action: "send" | "fill" }): void;
 }>();
 
 const route = useRoute();
 const router = useRouter();
+const { showToast } = useToast();
 
 const showCreateModal = ref(false);
+const editingReport = ref<DataPortalReportItem | null>(null);
 const showSpecsModal = ref(false);
 const activeSpecsTab = ref<"concept" | "workflow" | "practice">("concept");
 
@@ -319,12 +337,22 @@ const {
   allReports,
   homeLoading,
   sceneLoading,
+  reportsLoading,
   homeError,
   sceneError,
   reportsError,
   load,
   refresh,
 } = useDataPortalHome();
+
+const reportSummary = computed(() => ({
+  subscribed: allReports.value.filter((report) => !!report.subscription_status).length,
+  pinned: allReports.value.filter((report) => !!report.pinned_at).length,
+  favorite: allReports.value.filter((report) => !!report.is_favorite).length,
+  shared: allReports.value.filter((report) => !report.is_owner).length,
+  recent: allReports.value.filter((report) => !!report.last_run_at).length,
+  items: allReports.value,
+}));
 
 const validReportFilters: DataPortalReportFilter[] = ["all", "subscribed", "pinned", "favorite", "shared", "recent"];
 const reportFilter = ref<DataPortalReportFilter>(
@@ -359,12 +387,98 @@ const setReportFilter = (filter: DataPortalReportFilter) => {
   }
 };
 
-const openReport = (report: DataPortalReportItem) => {
+type ReportDetailTab = "info" | "runs" | "subscription";
+
+const openReportAt = (report: DataPortalReportItem, detailTab?: ReportDetailTab, runId?: string | number, runNow = false) => {
+  const payload = {
+    report_id: report.id,
+    ...(runId != null ? { run_id: runId } : {}),
+    ...(detailTab ? { detail_tab: detailTab } : {}),
+    ...(runNow ? { run_now: true } : {}),
+  };
   if (props.delegateNavigation) {
-    emit("open-report", { report_id: report.id });
+    emit("open-report", payload);
     return;
   }
-  router.push({ path: "/dashboard/chat", query: { dataset_portal: "1", report_id: report.id } });
+  router.push({
+    path: "/dashboard/chat",
+    query: {
+      dataset_portal: "1",
+      report_id: report.id,
+      ...(runId != null ? { run_id: String(runId) } : {}),
+      ...(detailTab ? { report_detail_tab: detailTab } : {}),
+      ...(runNow ? { run_now: "1" } : {}),
+    },
+  });
+};
+
+const openReport = (report: DataPortalReportItem) => openReportAt(report);
+const openReportInfo = (report: DataPortalReportItem) => openReportAt(report, "info");
+const openReportSubscription = (report: DataPortalReportItem) => openReportAt(report, "subscription");
+
+const executeReport = async (report: DataPortalReportItem) => {
+  const reportState = report as DataPortalReportItem & {
+    run_permission_status?: string;
+    run_permission_message?: string;
+    default_params?: Record<string, unknown>;
+  };
+  if (reportState.run_permission_status === "denied") {
+    showToast(reportState.run_permission_message || "暂无该报表所需数据权限，无法运行。", "warning");
+    return;
+  }
+  showToast("已打开统一运行面板，请先确认参数和权限后执行", "success");
+  openReportAt(report, "info", undefined, true);
+};
+
+const openCreateReport = () => {
+  editingReport.value = null;
+  showCreateModal.value = true;
+};
+
+const openEditReport = (report: DataPortalReportItem) => {
+  editingReport.value = report;
+  showCreateModal.value = true;
+};
+
+const closeReportModal = () => {
+  showCreateModal.value = false;
+  editingReport.value = null;
+};
+
+const updateReportPreference = async (report: DataPortalReportItem, payload: Record<string, unknown>) => {
+  try {
+    await axios.put(`/api/portal/saved-reports/${report.id}/prefs`, payload);
+    await refresh();
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "报表偏好更新失败", "error");
+  }
+};
+
+const toggleReportFavorite = (report: DataPortalReportItem) =>
+  updateReportPreference(report, { is_favorite: !report.is_favorite });
+
+const toggleReportPinned = (report: DataPortalReportItem) =>
+  updateReportPreference(report, { pinned: !report.pinned_at });
+
+const copyReport = async (report: DataPortalReportItem) => {
+  try {
+    await axios.post(`/api/portal/saved-reports/${report.id}/copy`);
+    showToast("已复制为我的固化报表", "success");
+    await refresh();
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "复制报表失败", "error");
+  }
+};
+
+const deleteReport = async (report: DataPortalReportItem) => {
+  if (!report.is_owner || !window.confirm(`确定删除「${report.title}」吗？`)) return;
+  try {
+    await axios.delete(`/api/portal/saved-reports/${report.id}`);
+    showToast("固化报表已删除", "success");
+    await refresh();
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "删除报表失败", "error");
+  }
 };
 
 const openActivity = (activity: DataPortalActivity | Record<string, any>) => {
@@ -395,6 +509,7 @@ const openQuestion = (query: string, action: "send" | "fill") => {
 };
 
 const handleReportCreated = () => {
+  closeReportModal();
   refresh();
 };
 

@@ -1654,16 +1654,14 @@
       :listen-global-event="false"
       @open-saved-report="handleInboxOpenSavedReport"
     />
-    <SavedReportEditorModal
+    <DataPortalReportCreateModal
       :visible="showSaveReportModal"
-      :form="saveReportForm"
-      :editing="isEditingReport"
-      :saving="isSavingReport"
+      :report="saveReportForm"
       :overlay-class="saveReportModalOverlayClass"
       :overlay-style="saveReportModalOverlayStyle"
       scrollbar-variant="embed"
-      @close="showSaveReportModal = false"
-      @submit="submitSaveReport"
+      @close="closeSavedReportEditor"
+      @created="handleSavedReportEditorCreated"
     />
 
     <SavedReportRunModal
@@ -1673,6 +1671,7 @@
       :previewing="isPreviewingSavedReport"
       :preview="reportRunPreview"
       :uses-month-range="savedReportUsesMonthRange"
+      :uses-date-range="savedReportUsesDateRange"
       :overlay-class="saveReportModalOverlayClass"
       :overlay-style="saveReportModalOverlayStyle"
       @close="showReportRunModal = false"
@@ -2200,7 +2199,7 @@ import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import ChatModelCallStatsModal from "@/components/chat/ChatModelCallStatsModal.vue";
-import SavedReportEditorModal from "@/components/chat/SavedReportEditorModal.vue";
+import DataPortalReportCreateModal from "@/components/data-portal/DataPortalReportCreateModal.vue";
 import SavedReportRunModal from "@/components/chat/SavedReportRunModal.vue";
 import {
   sanitizeStreamContent,
@@ -2234,7 +2233,6 @@ import {
   extractColumnMetaFromAgentMessage,
   extractSavedReportExecuteErrorMessage,
   mergeSavedReportAnalysisIntoResult,
-  parseSavedReportTags,
   todayDateString,
   todayMonthString,
 } from "@/composables/chat/useSavedReportWorkflow";
@@ -2298,7 +2296,7 @@ interface SavedReportPayload {
   sql_content: string;
   mode?: string;
   sql_template?: string;
-  params_schema?: any[];
+  params_schema?: Array<{ type?: string; name?: string; label?: string; default?: any; required?: boolean; options?: any[] }>;
   default_params?: Record<string, any>;
   analysis_mode?: string;
   description?: string;
@@ -3071,6 +3069,7 @@ const handlePersonalResourceOpenReport = (payload: any) => {
     report_id: payload?.report_id,
     run_id: payload?.run_id,
     detail_tab: payload?.detail_tab,
+    run_now: payload?.run_now,
   });
 };
 
@@ -5107,10 +5106,10 @@ const showHelpModal = ref(false);
 
 // 固化报表暂存状态
 const showSaveReportModal = ref(false);
-const isSavingReport = ref(false);
 const isEditingReport = ref(false);
 const editingReportId = ref<string | null>(null);
 const saveReportForm = ref({
+  id: null as number | string | null,
   title: '',
   description: '',
   sql_content: '',
@@ -5137,6 +5136,7 @@ const reportRunForm = ref({
   monthRange: 'last_6_completed_months',
   startMonth: '',
   endMonth: '',
+  customParams: {} as Record<string, any>,
   autoAnalyze: true,
 });
 
@@ -5178,6 +5178,7 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
   const requirementIntent = parseRequirementAnalysisFromMessage(agentMessage);
 
   saveReportForm.value = {
+    id: null,
     title: deriveSavedReportTitle(requirementIntent, originalQuery),
     description: deriveSavedReportDescription(requirementIntent, originalQuery),
     sql_content: cleanSql,
@@ -5199,6 +5200,7 @@ const openEditReportModal = (report: any) => {
   isEditingReport.value = true;
   editingReportId.value = report.id;
   saveReportForm.value = {
+    id: report.id,
     title: report.title || '',
     description: report.description || '',
     sql_content: report.sql_content || '',
@@ -5216,45 +5218,14 @@ const openEditReportModal = (report: any) => {
   showSaveReportModal.value = true;
 };
 
-const submitSaveReport = async () => {
-  if (!saveReportForm.value.title.trim()) {
-    showToast("请输入报表标题", "error");
-    return;
-  }
-  isSavingReport.value = true;
-  try {
-    const payload = {
-      title: saveReportForm.value.title.trim(),
-      description: saveReportForm.value.description?.trim() || undefined,
-      sql_content: saveReportForm.value.sql_content,
-      dataset_id: saveReportForm.value.dataset_id,
-      data_source: saveReportForm.value.data_source,
-      original_query: saveReportForm.value.original_query,
-      mode: saveReportForm.value.mode,
-      sql_template: saveReportForm.value.sql_template || undefined,
-      params_schema: saveReportForm.value.params_schema,
-      default_params: saveReportForm.value.default_params,
-      column_meta: saveReportForm.value.column_meta || undefined,
-      analysis_mode: saveReportForm.value.analysis_mode,
-      tags: parseSavedReportTags(saveReportForm.value.tags_input),
-    };
-    if (isEditingReport.value && editingReportId.value) {
-      await axios.put(`/api/portal/saved-reports/${editingReportId.value}`, payload);
-      showToast("报表修改成功", "success");
-    } else {
-      await axios.post("/api/portal/saved-reports", payload);
-      showToast("报表暂存成功！您可以在我的数据门户中查看。", "success");
-    }
-    showSaveReportModal.value = false;
-    isEditingReport.value = false;
-    editingReportId.value = null;
-  } catch (error: any) {
-    console.error("Failed to save report:", error);
-    const detail = error.response?.data?.detail || "暂存失败，请重试";
-    showToast(typeof detail === 'object' ? JSON.stringify(detail) : detail, "error");
-  } finally {
-    isSavingReport.value = false;
-  }
+const closeSavedReportEditor = () => {
+  showSaveReportModal.value = false;
+  isEditingReport.value = false;
+  editingReportId.value = null;
+};
+
+const handleSavedReportEditorCreated = () => {
+  closeSavedReportEditor();
 };
 
 const savedReportNeedsRunOptions = (report: SavedReportPayload) => {
@@ -5265,11 +5236,22 @@ const savedReportUsesMonthRange = (report?: SavedReportPayload | null) => {
   return Boolean(report?.params_schema?.some((item: any) => item?.type === 'month_range' || item?.name === 'month_range'));
 };
 
+const savedReportUsesDateRange = (report?: SavedReportPayload | null) => {
+  return Boolean(report?.params_schema?.some((item: any) => item?.type === 'date_range' || item?.name === 'date_range'));
+};
+
 let suppressSavedReportRunPreviewWatch = false;
 
 const prepareSavedReportRunForm = (report: SavedReportPayload) => {
   suppressSavedReportRunPreviewWatch = true;
   const defaults = report.default_params || {};
+  const customParams: Record<string, any> = {};
+  for (const item of report.params_schema || []) {
+    const type = String(item?.type || '');
+    const name = String(item?.name || '');
+    if (!name || type === 'date_range' || type === 'month_range' || name === 'date_range' || name === 'month_range') continue;
+    customParams[name] = defaults[name] ?? item.default ?? (type === 'select' ? item.options?.[0] ?? '' : '');
+  }
   reportRunForm.value = {
     dateRange: String(defaults.date_range || 'month_start_to_today'),
     startDate: String(defaults.start_date || todayDateString()),
@@ -5277,6 +5259,7 @@ const prepareSavedReportRunForm = (report: SavedReportPayload) => {
     monthRange: String(defaults.month_range || 'last_6_completed_months'),
     startMonth: String(defaults.start_month || todayMonthString()),
     endMonth: String(defaults.end_month || todayMonthString()),
+    customParams,
     autoAnalyze: true,
   };
   nextTick(() => {
@@ -5340,6 +5323,7 @@ watch(
     reportRunForm.value.monthRange,
     reportRunForm.value.startMonth,
     reportRunForm.value.endMonth,
+    JSON.stringify(reportRunForm.value.customParams),
   ],
   () => scheduleSavedReportPreview(false),
   { flush: 'post' }
@@ -5744,6 +5728,7 @@ const savedReportFocusRequest = ref<{
   run_id: string;
   request_id: string;
   detail_tab?: "info" | "runs" | "subscription";
+  run_now?: boolean;
 } | null>(null);
 let savedReportFocusSequence = 0;
 const openSavedReportFromHost = (target: any) => {
@@ -5757,6 +5742,7 @@ const openSavedReportFromHost = (target: any) => {
     run_id: String(target.run_id || ""),
     request_id: requestId,
     ...(target.detail_tab ? { detail_tab: target.detail_tab } : {}),
+    ...(target.run_now ? { run_now: true } : {}),
   };
   setTimeout(() => openPortalDrawer(), 0);
 };

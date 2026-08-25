@@ -6,6 +6,7 @@ defineProps<{
   previewing: boolean;
   preview: Record<string, any> | null;
   usesMonthRange: (report: any | null) => boolean;
+  usesDateRange: (report: any | null) => boolean;
   overlayClass?: string;
   overlayStyle?: Record<string, string>;
 }>();
@@ -37,7 +38,7 @@ const emit = defineEmits<{
           </button>
         </div>
         <div class="p-6 space-y-4">
-          <div v-if="!usesMonthRange(pendingReport)">
+          <div v-if="usesDateRange(pendingReport)">
             <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
             <select
               v-model="form.dateRange"
@@ -82,6 +83,33 @@ const emit = defineEmits<{
               <input v-model="form.endMonth" type="month" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm text-gray-800 dark:text-gray-200" />
             </div>
           </div>
+          <div
+            v-for="item in (pendingReport?.params_schema || []).filter((param: any) => !['date_range', 'month_range'].includes(String(param?.type || '')) && !['date_range', 'month_range'].includes(String(param?.name || '')) )"
+            :key="item.name"
+            class="space-y-1.5"
+          >
+            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              {{ item.label || item.name }}
+              <span v-if="item.required" class="text-red-500">*</span>
+            </label>
+            <select
+              v-if="item.type === 'select'"
+              v-model="form.customParams[item.name]"
+              class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+            >
+              <option v-for="option in (item.options || [])" :key="String(option)" :value="option">{{ option }}</option>
+            </select>
+            <input
+              v-else
+              v-model="form.customParams[item.name]"
+              :type="item.type === 'number' ? 'number' : 'text'"
+              class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+              :placeholder="item.type === 'number' ? '请输入数字' : `请输入${item.label || item.name}`"
+            />
+          </div>
+          <p v-if="(pendingReport?.params_schema || []).some((item: any) => !['date_range', 'month_range'].includes(String(item?.type || '')) && !['date_range', 'month_range'].includes(String(item?.name || '')))" class="text-[11px] text-gray-400">
+            参数配置会参与权限预检；请确认填写值属于业务允许范围。
+          </p>
           <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/40 dark:bg-blue-950/20">
             <span>
               <span class="block text-sm font-bold text-gray-800 dark:text-gray-100">执行并分析</span>

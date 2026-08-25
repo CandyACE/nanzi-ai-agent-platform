@@ -18,6 +18,16 @@
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <label v-if="!compact" class="relative">
+          <span class="sr-only">搜索固化报表</span>
+          <input
+            v-model="searchQuery"
+            type="search"
+            class="w-48 rounded-lg border border-gray-200 bg-white px-3 py-1.5 pr-7 text-xs text-gray-700 outline-none placeholder:text-gray-400 focus:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+            placeholder="搜索报表名称、标签"
+          />
+          <span class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">⌕</span>
+        </label>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="option in visibleFilters"
@@ -43,9 +53,26 @@
       </div>
     </div>
 
-    <div v-if="filteredReports.length" class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div v-if="filteredReports.length && manage" class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <SavedReportItemCard
+        v-for="report in pagedReports"
+        :key="report.id"
+        :report="report"
+        :format-date="formatDate"
+        @execute="emit('execute', $event)"
+        @edit="emit('edit', $event)"
+        @detail="emit('detail', $event)"
+        @favorite="emit('favorite', $event)"
+        @pin="emit('pin', $event)"
+        @share="emit('share', $event)"
+        @copy="emit('copy', $event)"
+        @delete="emit('delete', $event)"
+        @subscription="emit('subscription', $event)"
+      />
+    </div>
+    <div v-else-if="filteredReports.length" class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       <button
-        v-for="report in filteredReports"
+        v-for="report in pagedReports"
         :key="report.id"
         type="button"
         class="min-h-[116px] rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 group cursor-pointer"
@@ -74,8 +101,15 @@
         </div>
       </button>
     </div>
+    <div v-if="!compact && filteredReports.length > pageSize" class="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-3 py-2 text-xs text-gray-500 dark:border-gray-800 dark:bg-gray-900">
+      <span>共 {{ filteredReports.length }} 个报表 · 第 {{ currentPage }} / {{ pageCount }} 页</span>
+      <div class="flex items-center gap-1.5">
+        <button type="button" class="rounded-lg border border-gray-200 px-2.5 py-1 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700" :disabled="currentPage <= 1" @click="currentPage -= 1">上一页</button>
+        <button type="button" class="rounded-lg border border-gray-200 px-2.5 py-1 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700" :disabled="currentPage >= pageCount" @click="currentPage += 1">下一页</button>
+      </div>
+    </div>
     <div
-      v-else
+      v-if="!filteredReports.length"
       class="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400 dark:border-gray-800 space-y-2"
     >
       <p>当前分类下还没有固化报表</p>
@@ -88,6 +122,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
 import type { DataPortalHomePayload, DataPortalReportFilter, DataPortalReportItem } from "@/types/dataPortal";
 
 const props = withDefaults(
@@ -95,9 +130,10 @@ const props = withDefaults(
     reports: DataPortalReportItem[];
     summary: DataPortalHomePayload["report_summary"];
     compact?: boolean;
+    manage?: boolean;
     initialFilter?: DataPortalReportFilter;
   }>(),
-  { compact: false, initialFilter: "all" }
+  { compact: false, manage: false, initialFilter: "all" }
 );
 
 const emit = defineEmits<{
@@ -105,9 +141,21 @@ const emit = defineEmits<{
   (event: "filter-change", filter: DataPortalReportFilter): void;
   (event: "create-report"): void;
   (event: "open-specs"): void;
+  (event: "execute", report: DataPortalReportItem): void;
+  (event: "edit", report: DataPortalReportItem): void;
+  (event: "detail", report: DataPortalReportItem): void;
+  (event: "favorite", report: DataPortalReportItem): void;
+  (event: "pin", report: DataPortalReportItem): void;
+  (event: "share", report: DataPortalReportItem): void;
+  (event: "copy", report: DataPortalReportItem): void;
+  (event: "delete", report: DataPortalReportItem): void;
+  (event: "subscription", report: DataPortalReportItem): void;
 }>();
 
 const activeFilter = ref<DataPortalReportFilter>(props.compact ? "subscribed" : props.initialFilter);
+const searchQuery = ref("");
+const currentPage = ref(1);
+const pageSize = 12;
 const filters: Array<{ value: DataPortalReportFilter; label: string }> = [
   { value: "all", label: "全部" },
   { value: "subscribed", label: "已订阅" },
@@ -119,21 +167,40 @@ const filters: Array<{ value: DataPortalReportFilter; label: string }> = [
 
 const visibleFilters = computed(() => (props.compact ? filters.filter((item) => item.value !== "all") : filters));
 const filteredReports = computed(() => {
-  const reports = props.reports.filter((report) => {
+  const keyword = searchQuery.value.trim().toLocaleLowerCase();
+  return props.reports.filter((report) => {
     if (activeFilter.value === "all") return true;
     if (activeFilter.value === "subscribed") return !!report.subscription_status;
     if (activeFilter.value === "pinned") return report.pinned || !!report.pinned_at;
     if (activeFilter.value === "favorite") return report.is_favorite;
     if (activeFilter.value === "shared") return !report.is_owner;
     return !!report.last_run_at;
+  }).filter((report) => {
+    if (!keyword) return true;
+    const haystack = [report.title, report.description, report.owner_name, ...(report.tags || [])]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+    return haystack.includes(keyword);
   });
-  return props.compact ? reports.slice(0, 6) : reports;
+});
+
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredReports.value.length / pageSize)));
+const pagedReports = computed(() => {
+  if (props.compact) return filteredReports.value.slice(0, 6);
+  const start = (currentPage.value - 1) * pageSize;
+  return filteredReports.value.slice(start, start + pageSize);
 });
 
 const setFilter = (filter: DataPortalReportFilter) => {
   activeFilter.value = filter;
+  currentPage.value = 1;
   emit("filter-change", filter);
 };
+
+watch([searchQuery, activeFilter, () => props.reports], () => {
+  currentPage.value = 1;
+});
 
 watch(
   () => props.initialFilter,
@@ -144,4 +211,7 @@ watch(
 
 const formatTime = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) : "尚未运行";
+
+const formatDate = (value?: string | null) =>
+  value ? new Date(value).toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" }) : "";
 </script>

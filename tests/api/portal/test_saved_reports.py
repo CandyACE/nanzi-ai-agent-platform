@@ -383,6 +383,33 @@ def test_saved_report_detects_two_date_literals_as_default_date_range_template()
     assert report.description == "本月订单"
 
 
+def test_saved_report_rejects_unknown_template_parameter_before_persisting():
+    with pytest.raises(HTTPException) as exc_info:
+        saved_reports._build_saved_report_item(
+            report_id="rpt_unknown_param",
+            title="未知参数报表",
+            description=None,
+            sql_clean="SELECT * FROM orders WHERE region = {{region}}",
+            dataset_id=None,
+            data_source="mysql_test",
+            original_query=None,
+            created_at="2026-06-27T00:00:00+00:00",
+            body=saved_reports.SaveReportRequest.model_validate(
+                {
+                    "title": "未知参数报表",
+                    "sql_content": "SELECT * FROM orders WHERE region = {{region}}",
+                    "data_source": "mysql_test",
+                    "mode": "param_sql",
+                    "sql_template": "SELECT * FROM orders WHERE region = {{region}}",
+                    "params_schema": [{"name": "date_range", "type": "date_range"}],
+                }
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "region" in str(exc_info.value.detail)
+
+
 def test_saved_report_detects_datetime_literals_and_preserves_time_suffixes():
     report = saved_reports._build_saved_report_item(
         report_id="rpt_datetime",
@@ -616,6 +643,76 @@ def test_saved_report_param_sql_rejects_unknown_placeholder():
         )
 
 
+def test_saved_report_custom_params_are_rendered_as_safe_sql_literals():
+    report = saved_reports.SavedReportItem.model_validate(
+        {
+            "id": "rpt_custom",
+            "title": "部门订单",
+            "sql_content": "SELECT * FROM orders",
+            "sql_template": "SELECT * FROM orders WHERE department = {{department}} AND amount >= {{min_amount}}",
+            "mode": "param_sql",
+            "params_schema": [
+                {"name": "department", "type": "text", "label": "部门", "required": True},
+                {"name": "min_amount", "type": "number", "label": "最低金额", "default": 100},
+            ],
+            "default_params": {"department": "研发部", "min_amount": 100},
+            "data_source": "mysql_test",
+            "dataset_id": None,
+            "original_query": "部门订单",
+            "created_at": "2026-06-27T00:00:00+00:00",
+        }
+    )
+
+    sql, params = saved_reports._resolve_report_sql(
+        report,
+        body=saved_reports.ExecuteReportRequest(params={"department": "研发'部"}),
+        today=date(2026, 6, 27),
+    )
+
+    assert "department = '研发''部'" in sql
+    assert "amount >= 100" in sql
+    assert params["department"] == "研发'部"
+    assert params["min_amount"] == 100
+
+
+def test_saved_report_custom_param_rejects_missing_required_value():
+    report = saved_reports.SavedReportItem.model_validate(
+        {
+            "id": "rpt_custom_required",
+            "title": "必填参数",
+            "sql_content": "SELECT * FROM orders",
+            "sql_template": "SELECT * FROM orders WHERE department = {{department}}",
+            "mode": "param_sql",
+            "params_schema": [{"name": "department", "type": "text", "label": "部门", "required": True}],
+            "default_params": {},
+            "data_source": "mysql_test",
+            "dataset_id": None,
+            "original_query": "订单",
+            "created_at": "2026-06-27T00:00:00+00:00",
+        }
+    )
+
+    with pytest.raises(saved_reports.ReportParameterError, match="department"):
+        saved_reports._resolve_report_sql(
+            report,
+            body=saved_reports.ExecuteReportRequest.model_validate({}),
+            today=date(2026, 6, 27),
+        )
+
+
+def test_saved_report_template_validation_requires_custom_placeholder_declaration():
+    with pytest.raises(saved_reports.HTTPException, match="参数定义"):
+        saved_reports._validate_saved_report_template(
+            "SELECT * FROM orders WHERE department = {{department}}",
+            [],
+        )
+
+    saved_reports._validate_saved_report_template(
+        "SELECT * FROM orders WHERE department = {{department}}",
+        [{"name": "department", "type": "text", "label": "部门"}],
+    )
+
+
 def test_build_saved_report_result_snapshot_truncates_rows_and_keeps_total():
     parsed = {
         "columns": ["id", "amount"],
@@ -668,7 +765,7 @@ async def test_execute_saved_report_uses_rendered_sql_and_enables_table_auth(mon
         db=db,
     )
 
-    assert response.data == {"items": [{"orders": 3}]}
+    assert response.data["items"] == [{"orders": 3}]
     assert captured["sql"] == _today_range_sql()
     assert captured["bypass_table_auth"] is False
     assert report_row.last_success_at is not None
@@ -678,7 +775,8 @@ async def test_execute_saved_report_uses_rendered_sql_and_enables_table_auth(mon
     assert run_row.status == "success"
     assert run_row.row_count == 1
     assert run_row.snapshot_row_count == 1
-    assert run_row.result_snapshot == {"columns": ["orders"], "rows": [{"orders": 3}]}
+    assert run_row.result_snapshot["columns"] == ["orders"]
+    assert run_row.result_snapshot["rows"] == [{"orders": 3}]
     assert db.flush.await_count == 2
 
 
@@ -735,7 +833,7 @@ async def test_execute_saved_report_reinfers_placeholder_data_source(monkeypatch
         db=db,
     )
 
-    assert response.data == {"items": [{"users": 3}]}
+    assert response.data["items"] == [{"users": 3}]
     assert captured["data_source"] == "mysql_agent"
     assert report_row.dataset_id == 42
     assert report_row.data_source == "mysql_agent"

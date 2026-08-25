@@ -2,6 +2,7 @@ export interface SavedReportOpenTarget {
   report_id: string;
   run_id: string;
   detail_tab?: "info" | "runs" | "subscription";
+  run_now?: boolean;
 }
 
 export interface SavedReportOpenRequest extends SavedReportOpenTarget {
@@ -13,6 +14,7 @@ interface SavedReportOpenTargetInput {
   run_id?: string | number | null;
   request_id?: string | number | null;
   detail_tab?: "info" | "runs" | "subscription";
+  run_now?: boolean;
 }
 
 type SavedReportOpenDispatch = (event: CustomEvent<SavedReportOpenRequest>) => unknown;
@@ -26,6 +28,7 @@ export const createSavedReportOpenRequest = (
   report_id: String(target.report_id),
   run_id: String(target.run_id ?? ""),
   ...(target.detail_tab ? { detail_tab: target.detail_tab } : {}),
+  ...(target.run_now ? { run_now: true } : {}),
   request_id: String(
     target.request_id ?? `saved-report-${Date.now().toString(36)}-${++requestSequence}`,
   ),

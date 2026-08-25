@@ -157,8 +157,32 @@ def test_dataset_capability_menu_component_contract():
     assert "savedReportBrowseModalRef" in source
 
 
+def test_saved_report_detail_uses_read_only_sql_code_viewer():
+    detail = _source("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
+    viewer = _source("frontend/src/components/data-portal/SqlCodeViewer.vue")
+
+    assert "SqlCodeViewer" in detail
+    assert detail.count("<SqlCodeViewer") >= 2
+    assert "basicSetup" in viewer
+    assert "sql()" in viewer
+    assert "EditorState.readOnly.of(true)" in viewer
+    assert "EditorView.editable.of(false)" in viewer
+    assert "onBeforeUnmount" in viewer
+
+
+def test_saved_report_card_shows_recent_run_and_user_run_count():
+    card = _source("frontend/src/components/chatbi/SavedReportItemCard.vue")
+
+    assert "user_last_run_at" in card
+    assert "last_success_at" in card
+    assert "user_run_count" in card
+    assert "最近运行" in card
+    assert "运行次数" in card
+
+
 def test_saved_report_parameterized_execution_contract():
     source = _source("frontend/src/views/EmbedChat.vue")
+    editor = _source("frontend/src/components/data-portal/DataPortalReportCreateModal.vue")
     run_modal = _source("frontend/src/components/chat/SavedReportRunModal.vue")
     workflow = _source("frontend/src/composables/chat/useSavedReportWorkflow.ts")
     assert "showReportRunModal" in source
@@ -172,10 +196,10 @@ def test_saved_report_parameterized_execution_contract():
     assert "params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value)" in source
     assert "handleQuickQuestion(\"请基于刚才黄金报表结果做业务解读，指出关键结论、异常点和后续建议。\")" not in source
     assert "const shouldAutoAnalyze = true" not in source
-    assert "mode: saveReportForm.value.mode" in source
-    assert "sql_template: saveReportForm.value.sql_template" in source
-    assert "tags: parseSavedReportTags(saveReportForm.value.tags_input)" in source
-    assert "description: saveReportForm.value.description" in source
+    assert "mode: parameterSchema.length ? 'param_sql' : 'static_sql'" in editor
+    assert "sql_template: parameterSchema.length ? sqlContent : undefined" in editor
+    assert "tags: tagList" in editor
+    assert "description: form.value.description.trim() || undefined" in editor
     assert "\\d{2}:\\d{2}:\\d{2}" in workflow
     assert "start_datetime" in workflow
     assert "end_datetime" in workflow
@@ -183,6 +207,9 @@ def test_saved_report_parameterized_execution_contract():
     assert "start_month" in source
     assert "end_month" in source
     assert "last_6_completed_months" in source
+    assert "customParams" in workflow
+    assert "usesDateRange" in run_modal
+    assert "参数配置" in run_modal
     assert "type=\"month\"" in run_modal
     assert "extractSavedReportExecuteErrorMessage" in source
     assert "responseData?.message" in workflow
@@ -192,7 +219,7 @@ def test_saved_report_parameterized_execution_contract():
     assert "/preview" in source
     assert "reportRunPreview" in source
     assert "实际执行 SQL" in run_modal
-    assert "沉淀为黄金报表" in source
+    assert "沉淀为固化报表" in source
     assert "savedReportNeedsRunOptions" in source
     assert "scheduleSavedReportPreview" in source
     assert "请等待运行预览完成后再执行" in source
@@ -246,20 +273,35 @@ def test_saved_report_modal_avoids_pinned_dataset_portal_drawer():
     assert ':class="overlayClass"' in run_modal_source
 
 
+def test_saved_report_run_detail_renders_result_table_and_csv_export():
+    menu_source = _source("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
+    result_component = _source("frontend/src/components/chatbi/SavedReportResultTable.vue")
+
+    assert "SavedReportResultTable" in menu_source
+    assert "result_snapshot" in menu_source
+    assert "导出 CSV" in result_component
+    assert "URL.createObjectURL" in result_component
+    assert "column_labels" in result_component
+
+
 def test_saved_report_edit_contract():
     menu_source = _source("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
     drawer_source = _source("frontend/src/components/chatbi/DatasetPortalDrawer.vue")
     embed_source = _source("frontend/src/views/EmbedChat.vue")
     debug_source = _source("frontend/src/views/AgentDebug.vue")
+    editor_source = _source("frontend/src/components/data-portal/DataPortalReportCreateModal.vue")
 
     assert "edit-saved-report" in menu_source
     assert "handleEditReport" in menu_source
     assert "emit(\"edit-saved-report\", report)" in menu_source
     assert "@edit-saved-report=\"(p) => emit('edit-saved-report', p)\"" in drawer_source
     assert "const openEditReportModal = (report: any)" in embed_source
-    assert "axios.put(`/api/portal/saved-reports/${editingReportId.value}`, payload)" in embed_source
+    assert "<DataPortalReportCreateModal" in embed_source
+    assert ':report="saveReportForm"' in embed_source
     assert "const openEditReportModal = (report: any)" in debug_source
-    assert "axios.put(`/api/portal/saved-reports/${editingReportId.value}`, payload)" in debug_source
+    assert "<DataPortalReportCreateModal" in debug_source
+    assert ':report="saveReportForm"' in debug_source
+    assert "axios.put(`/api/portal/saved-reports/${activeReport.value.id}`, payload)" in editor_source
 
 
 def test_model_registry_uses_custom_delete_confirm_modal():

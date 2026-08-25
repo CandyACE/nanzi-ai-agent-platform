@@ -49,23 +49,17 @@ def test_both_chat_surfaces_use_shared_saved_report_dialogs():
     embed = _read("frontend/src/views/EmbedChat.vue")
     debug = _read("frontend/src/views/AgentDebug.vue")
 
-    for path in (
-        "frontend/src/components/chat/SavedReportEditorModal.vue",
-        "frontend/src/components/chat/SavedReportRunModal.vue",
-    ):
-        assert (ROOT / path).exists()
+    assert (ROOT / "frontend/src/components/data-portal/DataPortalReportCreateModal.vue").exists()
+    assert (ROOT / "frontend/src/components/chat/SavedReportRunModal.vue").exists()
 
     for source in (embed, debug):
-        assert "<SavedReportEditorModal" in source
+        assert "<DataPortalReportCreateModal" in source
         assert "<SavedReportRunModal" in source
+        assert "<SavedReportEditorModal" not in source
         assert "<!-- Modal: Save Report -->" not in source
         assert "<!-- Modal: Run Saved Report -->" not in source
 
-    editor = _read("frontend/src/components/chat/SavedReportEditorModal.vue")
     runner = _read("frontend/src/components/chat/SavedReportRunModal.vue")
-    assert "form: Record<string, any>" in editor
-    assert '"submit"' in editor
-    assert '@click.self="emit(\'close\')"' in editor
     assert "pendingReport: any" in runner
     assert '"execute"' in runner
     assert '@click.self="emit(\'close\')"' in runner

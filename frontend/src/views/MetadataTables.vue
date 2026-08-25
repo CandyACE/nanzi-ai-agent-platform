@@ -29,10 +29,21 @@ const loading = ref(false)
 const showImportModal = ref(false)
 const showFullDescription = ref(false)
 const showMetricModal = ref(false)
+const metricModalInitialTables = ref<string[]>([])
 const showYamlModal = ref(false)
 const showEditModal = ref(false) 
 const showCreateTableModal = ref(false)
 const yamlContent = ref('')
+
+const openSmartMetricModalForTable = (tableName: string) => {
+  metricModalInitialTables.value = [tableName]
+  showMetricModal.value = true
+}
+
+const openGlobalSmartMetricModal = () => {
+  metricModalInitialTables.value = []
+  showMetricModal.value = true
+}
 
 const newTable = ref<Table>({
   physical_name: '',
@@ -918,6 +929,13 @@ defineExpose({ fetchMetrics })
                     >
                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     </button>
+                    <button 
+                      @click.stop="openSmartMetricModalForTable(table.physical_name)"
+                      class="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 hover:bg-indigo-50 rounded-md"
+                      title="为此表智能发现推荐指标"
+                    >
+                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -978,7 +996,7 @@ defineExpose({ fetchMetrics })
 
     <!-- Content: Metrics -->
     <div v-if="activeTab === 'metrics'">
-      <MetricList :dataset-id="datasetId" ref="metricListRef" @show-smart-discovery="showMetricModal = true" />
+      <MetricList :dataset-id="datasetId" ref="metricListRef" @show-smart-discovery="openGlobalSmartMetricModal" />
     </div>
 
     <!-- Content: Relationships -->
@@ -1451,6 +1469,8 @@ defineExpose({ fetchMetrics })
     <SmartMetricModal
       :show="showMetricModal"
       :dataset-id="datasetId"
+      :tables="tables"
+      :initial-selected-tables="metricModalInitialTables"
       @close="showMetricModal = false"
       @saved="() => metricListRef?.fetchMetrics()"
     />
