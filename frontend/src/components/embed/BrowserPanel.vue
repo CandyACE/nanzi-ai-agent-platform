@@ -668,27 +668,36 @@
             </div>
           </div>
 
+          <!-- 人工输入悬浮岛 (Floating Input Island: 顶部居中显著展示，自动聚焦并支持回车一键发送) -->
           <div
             v-if="showManualInput"
-            class="absolute bottom-14 left-3 right-3 z-40 sm:left-auto sm:w-80"
+            class="absolute top-3 left-1/2 -translate-x-1/2 z-40 w-[min(440px,calc(100%-24px))] select-none transition-all duration-200"
             role="dialog"
             aria-label="人工输入"
           >
-            <div class="rounded-xl border border-blue-200 bg-white p-3 shadow-xl shadow-blue-900/10 dark:border-blue-800 dark:bg-gray-900">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="text-xs font-bold text-gray-800 dark:text-gray-100">人工输入</div>
-                  <div class="mt-0.5 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">已聚焦远程输入框，文字会发送到远程页面</div>
+            <div class="rounded-2xl border border-blue-300/90 bg-white/95 p-3.5 shadow-2xl shadow-blue-900/25 ring-4 ring-blue-500/15 backdrop-blur-md dark:border-blue-700/90 dark:bg-slate-900/95 dark:ring-blue-400/15">
+              <div class="flex items-center justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-800">
+                <div class="flex min-w-0 items-center gap-1.5">
+                  <span class="text-sm">✍️</span>
+                  <div class="text-xs font-bold text-gray-900 dark:text-gray-100">人工输入</div>
+                  <span v-if="selectedElement" class="truncate font-mono text-[10px] text-blue-600 dark:text-blue-400">
+                    [#{{ selectedElement.ref }}] {{ selectedElement.name ? `"${selectedElement.name}"` : selectedElement.role }}
+                  </span>
                 </div>
                 <button
                   type="button"
-                  class="rounded p-0.5 text-base leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  class="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition-colors"
                   aria-label="关闭人工输入"
-                  title="关闭人工输入"
+                  title="关闭人工输入 (Esc)"
                   @click="showManualInput = false"
                 >
-                  ×
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
+              </div>
+              <div class="mt-0.5 pt-1.5 text-[10px] text-gray-500 dark:text-gray-400">
+                已成功激活远程输入焦点，键入文字后回车即可直接填入页面
               </div>
               <div class="mt-2 flex gap-2">
                 <input
@@ -696,12 +705,17 @@
                   v-model="manualText"
                   type="text"
                   autocomplete="off"
-                  class="min-w-0 flex-1 rounded-md border border-blue-200 bg-blue-50/40 px-2 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-blue-800 dark:bg-blue-950/20 dark:text-gray-200"
-                  placeholder="输入文字，回车发送"
+                  class="min-w-0 flex-1 rounded-xl border border-blue-200 bg-blue-50/50 px-3 py-2 text-xs text-gray-800 outline-none transition-all focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-400/20 dark:border-blue-800 dark:bg-blue-950/30 dark:text-gray-100 dark:focus:bg-gray-900"
+                  placeholder="输入文字，回车直接发送 (Esc 关闭)"
                   @keyup.enter="sendText"
                   @keydown.esc="showManualInput = false"
                 />
-                <button class="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700" @click="sendText">发送</button>
+                <button
+                  class="shrink-0 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                  @click="sendText"
+                >
+                  发送
+                </button>
               </div>
             </div>
           </div>
@@ -1817,14 +1831,14 @@ const manualScroll = (direction: 'up' | 'down' | 'top' | 'bottom') => {
     deltaY = 2000;
     label = '滚动到页面底部';
   } else if (direction === 'up') {
-    deltaY = -480;
+    deltaY = -520;
     label = '向上滚动页面';
   } else {
-    deltaY = 480;
+    deltaY = 520;
     label = '向下滚动页面';
   }
   setHumanAction('scroll', label);
-  send({ type: 'scroll', delta_y: deltaY });
+  send({ type: 'scroll', direction, delta_y: deltaY });
   scheduleInteractionFinish();
   setTemporaryMessage(`✅ 已${label}`, 1200);
 };

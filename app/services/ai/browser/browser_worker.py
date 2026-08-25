@@ -1930,9 +1930,52 @@ class BrowserWorker:
             await _maybe_await(handle.page.mouse.move(x, y))
             await _maybe_await(handle.page.mouse.up())
         elif event == "scroll":
+            direction = str(payload.get("direction") or "").strip().lower()
             delta_y = float(payload.get("delta_y", 0))
-            delta_y = max(-2000.0, min(delta_y, 2000.0))
-            await _maybe_await(handle.page.mouse.wheel(0, delta_y))
+            if direction == "top":
+                try:
+                    await _maybe_await(handle.page.evaluate("() => window.scrollTo({ top: 0, behavior: 'instant' })"))
+                except Exception:
+                    pass
+            elif direction == "bottom":
+                try:
+                    await _maybe_await(
+                        handle.page.evaluate(
+                            "() => window.scrollTo({ top: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight), behavior: 'instant' })"
+                        )
+                    )
+                except Exception:
+                    pass
+            else:
+                delta_y = max(-2000.0, min(delta_y, 2000.0))
+                # 1. 移动鼠标到视口中心，保证聚焦在主要滚动区域
+                viewport = getattr(handle.page, "viewport_size", None) or {"width": 1280, "height": 800}
+                mid_x = float(viewport.get("width", 1280)) / 2
+                mid_y = float(viewport.get("height", 800)) / 2
+                mouse = getattr(handle.page, "mouse", None)
+                if mouse:
+                    try:
+                        if hasattr(mouse, "move"):
+                            await _maybe_await(mouse.move(mid_x, mid_y))
+                        if hasattr(mouse, "wheel"):
+                            await _maybe_await(mouse.wheel(0, delta_y))
+                    except Exception:
+                        pass
+                # 2. window.scrollBy 兜底确保无论页面是否有复杂 wheel 拦截都能产生滚动
+                try:
+                    await _maybe_await(handle.page.evaluate(f"() => window.scrollBy({{ top: {delta_y}, behavior: 'instant' }})"))
+                except Exception:
+                    pass
+
+            # 等待短暂渲染稳定时间，确保截图捕获到滚动后的真实画面
+            wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
+            if callable(wait_for_timeout):
+                try:
+                    await _maybe_await(wait_for_timeout(180))
+                except Exception:
+                    await asyncio.sleep(0.18)
+            else:
+                await asyncio.sleep(0.18)
         else:
             raise ValueError("不支持的浏览器人工输入事件")
         self._snapshots.pop(session_id, None)
