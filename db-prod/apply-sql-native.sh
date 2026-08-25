@@ -51,6 +51,43 @@ if ! command -v mysql >/dev/null 2>&1; then
     exit 1
 fi
 
+# 强制 TCP：Host 为 localhost 时，mysql 客户端默认走 Unix socket（/tmp/mysql.sock），
+# 在 Lima/Docker 端口转发场景下会失败；--protocol=TCP 可统一走 -P 端口。
+# --default-character-set=utf8mb4：客户端按 utf8mb4 发送查询和迁移内容；目标库字符集仍需单独预检。
+MYSQL_BASE_CMD="mysql -h $MYSQL_HOST_INPUT -P $MYSQL_PORT_INPUT -u $MYSQL_USER_INPUT -p$MYSQL_PASSWORD_INPUT --protocol=TCP --default-character-set=utf8mb4"
+
+# 在创建数据库之前查询 information_schema，避免把客户端字符集误当成目标库字符集。
+MYSQL_DATABASE_SQL=$(printf '%s' "$MYSQL_DATABASE_INPUT" | sed "s/'/''/g")
+CHARSET_QUERY_SQL="SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$MYSQL_DATABASE_SQL';"
+CHARSET_ERR=$(mktemp)
+CHARSET_INFO=$(printf '%s\n' "$CHARSET_QUERY_SQL" | $MYSQL_BASE_CMD --batch --skip-column-names 2>"$CHARSET_ERR")
+CHARSET_STATUS=$?
+if [ "$CHARSET_STATUS" -ne 0 ]; then
+    echo "❌ 目标数据库字符集检查失败，未执行 SQL。"
+    if [ -s "$CHARSET_ERR" ]; then
+        echo "—— MySQL 原始错误 ——"
+        cat "$CHARSET_ERR"
+    fi
+    rm -f "$CHARSET_ERR"
+    exit 1
+fi
+rm -f "$CHARSET_ERR"
+
+CHARSET_MISMATCH=0
+if [ -z "$CHARSET_INFO" ]; then
+    echo "ℹ️ 目标数据库不存在；确认后将以 utf8mb4 创建。"
+else
+    CHARSET_NAME=$(printf '%s\n' "$CHARSET_INFO" | awk 'NR == 1 {print $1}')
+    COLLATION_NAME=$(printf '%s\n' "$CHARSET_INFO" | awk 'NR == 1 {print $2}')
+    printf '%s\n' "ℹ️ 目标数据库默认字符集: ${CHARSET_NAME}，排序规则: ${COLLATION_NAME}"
+    CHARSET_NAME_NORMALIZED=$(printf '%s' "$CHARSET_NAME" | tr '[:upper:]' '[:lower:]')
+    if [ "$CHARSET_NAME_NORMALIZED" != "utf8mb4" ]; then
+        echo "⚠️ 目标数据库默认字符集不是 utf8mb4，导入包含中文的 SQL 时可能出现乱码。"
+        echo "⚠️ 如仍要继续，请在下面的确认提示中明确输入 YES。"
+        CHARSET_MISMATCH=1
+    fi
+fi
+
 echo "---------------------------------------------------"
 echo "请确认本次 SQL 执行目标："
 echo "  Host     : $MYSQL_HOST_INPUT"
@@ -63,7 +100,11 @@ if [ $# -eq 0 ]; then
 else
     echo "  SQL file : ${SQL_FILES[*]}"
 fi
-read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
+if [ "$CHARSET_MISMATCH" -eq 1 ]; then
+    read -r -p "目标库字符集存在风险；确认目标并接受风险请输入 YES 继续执行：" CONFIRM_INPUT
+else
+    read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
+fi
 CONFIRM_UPPER=$(echo "$CONFIRM_INPUT" | tr '[:lower:]' '[:upper:]')
 if [ "$CONFIRM_UPPER" != "YES" ]; then
     echo "❌ 已取消，未执行 SQL。"
@@ -83,11 +124,7 @@ echo
 # 1091: 试图删除不存在的列或键
 IGNORED_ERRORS="1007|1050|1054|1060|1061|1062|1091"
 
-# 检查连接并尝试创建数据库（若不存在）
-# 强制 TCP：Host 为 localhost 时，mysql 客户端默认走 Unix socket（/tmp/mysql.sock），
-# 在 Lima/Docker 端口转发场景下会失败；--protocol=TCP 可统一走 -P 端口。
-# --default-character-set=utf8mb4：每条语句单独开连接时避免中文乱码（仅文件头 SET NAMES 不会跨连接生效）。
-MYSQL_BASE_CMD="mysql -h $MYSQL_HOST_INPUT -P $MYSQL_PORT_INPUT -u $MYSQL_USER_INPUT -p$MYSQL_PASSWORD_INPUT --protocol=TCP --default-character-set=utf8mb4"
+# 确认后连接并尝试创建数据库（若不存在）
 CREATE_DB_SQL="CREATE DATABASE IF NOT EXISTS \`$MYSQL_DATABASE_INPUT\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
 
 echo "🔌 正在连接 MySQL 并确保目标数据库已存在..."
@@ -121,6 +158,10 @@ execute_sql_file() {
     # SET @var 属于会话级状态；每条语句单独开连接会丢失。
     # 缓冲后，对本文件后续每一条业务语句都前置执行（如 V69 多条 UPDATE 共用变量）。
     local session_prefix=""
+    # PREPARE/EXECUTE/DEALLOCATE PREPARE 也依赖同一条 MySQL 会话；暂存整个块，
+    # 避免预处理语句句柄在每条语句单独连接时丢失（如 V105/V108/V109）。
+    local prepared_block=""
+    local prepared_preview=""
 
     run_mysql_stmt() {
         local payload="$1"
@@ -163,6 +204,14 @@ execute_sql_file() {
 
     is_charset_setup_stmt() {
         [[ "$1" =~ ^[[:space:]]*SET[[:space:]]+(NAMES|CHARACTER[[:space:]]+SET)([[:space:]]|$) ]]
+    }
+
+    is_prepare_stmt() {
+        [[ "$1" =~ ^[[:space:]]*PREPARE[[:space:]]+[^[:space:]]+[[:space:]]+FROM[[:space:]]+ ]]
+    }
+
+    is_deallocate_prepare_stmt() {
+        [[ "$1" =~ ^[[:space:]]*DEALLOCATE[[:space:]]+PREPARE[[:space:]]+[^[:space:]]+[[:space:]]*$ ]]
     }
     
     # 用来读取 SQL 文件
@@ -209,6 +258,32 @@ execute_sql_file() {
             exec_stmt="${exec_stmt%;}"
             exec_stmt="${exec_stmt%"${exec_stmt##*[![:space:]]}"}"
 
+            if [ -n "$prepared_block" ]; then
+                # exec_stmt 已去掉末尾分号；重新拼接时必须补回分号，
+                # 否则 PREPARE/EXECUTE/DEALLOCATE 会被 MySQL 当成一条语句。
+                prepared_block="${prepared_block};"$'\n'"${exec_stmt}"
+                if is_deallocate_prepare_stmt "$exec_stmt"; then
+                    if ! run_mysql_stmt "$prepared_block" "$prepared_preview"; then
+                        rm -f "$err_log"
+                        return 1
+                    fi
+                    prepared_block=""
+                    prepared_preview=""
+                fi
+                stmt=""
+                continue
+            fi
+
+            if is_prepare_stmt "$exec_stmt"; then
+                prepared_block="$exec_stmt"
+                if [ -n "$session_prefix" ]; then
+                    prepared_block="${session_prefix};"$'\n'"${prepared_block}"
+                fi
+                prepared_preview="$stmt"
+                stmt=""
+                continue
+            fi
+
             if is_charset_setup_stmt "$exec_stmt"; then
                 # 已由 run_mysql_stmt 统一 SET NAMES，跳过文件内重复声明
                 stmt=""
@@ -238,6 +313,12 @@ execute_sql_file() {
             stmt=""
         fi
     done < "$sql_file"
+
+    if [ -n "$prepared_block" ]; then
+        echo "❌ 执行失败：PREPARE 语句缺少对应的 DEALLOCATE PREPARE。"
+        rm -f "$err_log"
+        return 1
+    fi
     
     # 扫尾：处理文件末尾可能没加分号的最后一条语句
     if [ -n "$stmt" ]; then

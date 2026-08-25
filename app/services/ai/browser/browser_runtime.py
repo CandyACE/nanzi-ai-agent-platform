@@ -59,6 +59,10 @@ class BrowserRuntime:
         self._ai_action_status: dict[str, dict[str, Any]] = {}
         self._event_subscribers: dict[str, set[asyncio.Queue]] = {}
 
+    async def check_environment(self) -> dict[str, Any]:
+        """查询底层浏览器 Worker 的运行环境状态。"""
+        return await self.worker.check_environment()
+
     def subscribe_events(self, session_id: str) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         self._event_subscribers.setdefault(session_id, set()).add(queue)

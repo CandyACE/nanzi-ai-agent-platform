@@ -24,6 +24,7 @@ from app.schemas.browser import (
     BrowserSessionOpenRequest,
     BrowserSessionResponse,
 )
+from app.services.ai.browser import BrowserEnvironmentError
 from app.services.ai.browser.browser_policy import BrowserUrlBlocked
 from app.services.ai.browser.browser_runtime import BrowserControlConflict
 from app.services.ai.browser.browser_runtime import browser_runtime
@@ -54,6 +55,14 @@ def _user_id(user_info: dict[str, Any]) -> int:
 
 def _viewer_cookie_name(session_id: str) -> str:
     return f"browser_viewer_{session_id}"
+
+
+@router.get("/environment")
+async def get_browser_environment(
+    user_info: dict[str, Any] = Depends(require_api_key),
+):
+    """查询当前服务端的 Playwright 与 Chromium 运行环境状态、版本及路径。"""
+    return await browser_runtime.check_environment()
 
 
 @router.get("/profiles", response_model=list[BrowserProfileResponse])
@@ -106,6 +115,9 @@ async def open_browser_session(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except BrowserProfileAccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except BrowserEnvironmentError as exc:
+        logger.warning("Browser environment missing: %s", exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to open browser session")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="浏览器启动失败，请稍后重试") from exc

@@ -145,30 +145,51 @@ def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
 class AgentScopeChatClient:
     def __init__(self, native_model: Any):
         self.native_model = native_model
+        self.last_structured_output_status = "unknown"
 
     async def generate_structured_dict(
         self,
         messages: list[RuntimeMessage],
         structured_model: Any,
     ) -> dict[str, Any] | None:
-        """Try AgentScope ``generate_structured_output``; return dict or None (fail-open)."""
+        """Try AgentScope structured output and expose the failure mode to callers."""
         native = self.native_model
-        if native is None or not hasattr(native, "generate_structured_output"):
+        generate_structured_output = getattr(native, "generate_structured_output", None)
+        if not callable(generate_structured_output):
+            self.last_structured_output_status = "unsupported"
             return None
         try:
-            response = await native.generate_structured_output(
+            response = await generate_structured_output(
                 messages=to_agentscope_messages(messages),
                 structured_model=structured_model,
             )
             content = _safe_getattr(response, "content", None)
             if isinstance(content, dict) and content:
+                self.last_structured_output_status = "success"
                 return content
             model_dump = getattr(content, "model_dump", None)
             if callable(model_dump):
                 dumped = model_dump()
                 if isinstance(dumped, dict) and dumped:
+                    self.last_structured_output_status = "success"
                     return dumped
+            if isinstance(content, str):
+                text = content.strip()
+                if text.startswith("```") and text.endswith("```"):
+                    text = text[3:-3].strip()
+                    if text.startswith("json"):
+                        text = text[4:].strip()
+                try:
+                    parsed = json.loads(text)
+                except (TypeError, json.JSONDecodeError):
+                    self.last_structured_output_status = "invalid"
+                    return None
+                if isinstance(parsed, dict) and parsed:
+                    self.last_structured_output_status = "success"
+                    return parsed
+            self.last_structured_output_status = "invalid"
         except Exception:
+            self.last_structured_output_status = "error"
             return None
         return None
 

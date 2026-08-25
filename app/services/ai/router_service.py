@@ -1,6 +1,8 @@
-from typing import List, Optional
 import json
 import logging
+import time
+from typing import List, Optional
+
 from app.core.llm.client import get_llm_async
 from app.services.ai.intent_service import (
     IntentResponse,
@@ -31,11 +33,13 @@ from app.services.ai.knowledge_catalog import (
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 from app.services.ai.turn_decision import TurnDecision
+from app.services.ai.route_progress import RouteProgressCallback, emit_route_stage
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD = 0.65
+ROUTER_MAX_OUTPUT_TOKENS = 512
 
 class LLMRouterResponse(BaseModel):
     """Internal structure for LLM output. thought 放最后，降低截断重伤概率。"""
@@ -169,6 +173,62 @@ class RouterService:
 - 用户："我有哪些数据集/知识库" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.93, "secondary_agents": [], "turn_labels": ["meta_action", "general_chat"], "relation_to_previous": "standalone", "user_action_type": "manage_agent_or_skill", "intent": "GENERAL", "domain": "general", "operation": "explain", "thought": "权限内资源目录，走通用助手工具"}
 - 用户："统计一下我机器的文件数" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.94, "secondary_agents": [], "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat", "intent": "GENERAL", "domain": "local_file", "operation": "aggregate", "fact_kind": "file_count", "thought": "本机文件统计，不是业务查数"}"""
 
+    COMPACT_SYSTEM_PROMPT = """# Role: 南孜智能体平台 · 智能路由助手
+
+你只负责选择目标智能体和判断来源意图，绝不回答业务问题本身。
+只能从【可用智能体清单】中选择，必须返回纯 JSON。
+
+## 可用智能体清单（唯一可选范围）
+{agents_context}
+
+## 当前用户可访问的内部资源摘要
+{accessible_resources_context}
+
+资源摘要只用于判断是否可能属于内部知识库或结构化数据，不能代替工具调用和服务端权限校验。
+若问题与知识库名称或摘要有明确语义关联，且属于内部 SOP/流程/规范/手册/怎么操作，优先标记
+`intent=KNOWLEDGE_BASE, domain=internal_docs`；弱关键词重合时不要强行路由到知识库。
+
+## 对话历史与上一轮路由
+{history_context}
+
+## 选择规则
+1. 先结合历史处理“它/这个/刚才/继续/再/还有/也”等指代和省略主语。
+2. 对上一轮的明确追问、补充或上下文动作，优先沿用上一轮智能体；出现明确新领域时必须重新选择。
+3. 逐一对照候选的 name、中文名、Description 和 Capabilities，不得脑补清单之外的专家。
+4. 当前系统/本机/这台机器/服务器运行状态、CPU、内存、磁盘、进程、端口、网络、日志和服务状态，
+   应选择 {fallback_agent_name}。不要因为出现"负载/利用率/CPU/内存"等词就直接判为数据查询。
+5. ChatBI 仅处理平台已接入的内部业务数据，例如销售额、订单量、客户/员工/产品/工单/审批等业务记录或数据列表。
+   天气、公共常识、外部事实、代码/API/编程、文本改写/翻译、系统使用帮助和公网信息，选择 {fallback_agent_name}。
+6. 只有明确跨越多个专家职责且可并行处理时才填写 secondary_agents，否则必须为空。
+7. intent 只能是 DATA_QUERY、KNOWLEDGE_BASE、GENERAL、UNKNOWN；
+   domain 只能是 chatbi_business_data、conversation_context、runtime_environment、local_file、public_web、
+   internal_docs、general、unknown；operation 只能是 lookup、aggregate、visualize、transform、export、explain、unknown。
+8. 难以区分时选择 {fallback_agent_name}，不要为了安全感强行选择 ChatBI 或知识库专家。
+
+## 输出格式
+agent_name 和 secondary_agents 中的值必须与清单中的英文 name 完全一致。
+confidence 是目标智能体选择置信度；intent_confidence 是来源意图置信度，二者不能混用。
+thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额外文字：
+{
+  "agent_name": "清单中的 name",
+  "confidence": 0.95,
+  "secondary_agents": [],
+  "turn_labels": [],
+  "relation_to_previous": "standalone",
+  "user_action_type": "unknown",
+  "intent": "GENERAL",
+  "domain": "general",
+  "operation": "explain",
+  "fact_kind": "unknown",
+  "freshness_requirement": "unknown",
+  "time_scope": null,
+  "reference_mode": "new_query",
+  "needs_fresh_data": false,
+  "intent_confidence": 0.0,
+  "intent_reasoning": "",
+  "thought": "一句话理由"
+}"""
+
     ALLOWED_TURN_LABELS = {
         "new_business_request",
         "continuation_followup",
@@ -216,6 +276,7 @@ class RouterService:
         last_agent_name: Optional[str] = None,
         user_name: Optional[str] = None,
         early_context: Optional[str] = None,
+        on_progress: Optional[RouteProgressCallback] = None,
     ) -> Optional[TurnDecision]:
         """
         Use LLM to select the most appropriate agent(s) for the user query.
@@ -225,27 +286,60 @@ class RouterService:
         early_context: 跨轮持久化的早期轮次压缩摘录（早于当前窗口被压缩溢出的历史要点），
         随路由上下文一并交给路由模型，使多轮后路由判断仍基于完整会话背景。
         """
-        import time
-
         current_time = time.time()
-        
-        # 1. Fetch Agents (with Caching)
-        if self._agents_cache and (current_time - self._last_cache_time < self._cache_ttl):
-            agents_metadata = self._agents_cache
-        else:
-            agents_metadata = await self._fetch_agents_from_db()
-            if agents_metadata:
-                self._agents_cache = agents_metadata
-                self._last_cache_time = current_time
-        
-        if not agents_metadata:
-            logger.warning("No agents available for routing.")
-            return None
 
-        agents_metadata = await self._filter_agents_for_user(
-            agents_metadata,
-            user_id=user_id,
-            is_admin=is_admin,
+        # 1. Fetch Agents (with Caching)
+        candidate_started = time.perf_counter()
+        await emit_route_stage(
+            on_progress,
+            "candidate_catalog",
+            "获取可用专家",
+            status="pending",
+        )
+        try:
+            if self._agents_cache and (current_time - self._last_cache_time < self._cache_ttl):
+                agents_metadata = self._agents_cache
+            else:
+                agents_metadata = await self._fetch_agents_from_db()
+                if agents_metadata:
+                    self._agents_cache = agents_metadata
+                    self._last_cache_time = current_time
+
+            if not agents_metadata:
+                logger.warning("No agents available for routing.")
+                await emit_route_stage(
+                    on_progress,
+                    "candidate_catalog",
+                    "获取可用专家",
+                    status="error",
+                    details="当前没有可用的路由专家",
+                    execution_time_ms=(time.perf_counter() - candidate_started) * 1000,
+                )
+                return None
+
+            agents_metadata = await self._filter_agents_for_user(
+                agents_metadata,
+                user_id=user_id,
+                is_admin=is_admin,
+            )
+        except Exception:
+            await emit_route_stage(
+                on_progress,
+                "candidate_catalog",
+                "获取可用专家",
+                status="error",
+                details="获取可用专家失败",
+                    execution_time_ms=(time.perf_counter() - candidate_started) * 1000,
+            )
+            raise
+
+        await emit_route_stage(
+            on_progress,
+            "candidate_catalog",
+            "获取可用专家",
+            status="success",
+            details="已完成可路由专家授权检查",
+            execution_time_ms=(time.perf_counter() - candidate_started) * 1000,
         )
         if not agents_metadata:
             logger.warning("No routeable agents available for user %s.", user_id)
@@ -255,10 +349,36 @@ class RouterService:
 
         knowledge_catalog: Optional[AuthorizedKnowledgeCatalog] = None
         if looks_like_knowledge_query(user_input):
-            knowledge_catalog = await load_authorized_knowledge_catalog(
-                user_id=user_id,
-                user_name=user_name,
-                is_admin=is_admin,
+            knowledge_started = time.perf_counter()
+            await emit_route_stage(
+                on_progress,
+                "knowledge_catalog",
+                "准备知识资源范围",
+                status="pending",
+            )
+            try:
+                knowledge_catalog = await load_authorized_knowledge_catalog(
+                    user_id=user_id,
+                    user_name=user_name,
+                    is_admin=is_admin,
+                )
+            except Exception:
+                await emit_route_stage(
+                    on_progress,
+                    "knowledge_catalog",
+                    "准备知识资源范围",
+                    status="error",
+                    details="知识资源范围准备失败",
+                    execution_time_ms=(time.perf_counter() - knowledge_started) * 1000,
+                )
+                raise
+            await emit_route_stage(
+                on_progress,
+                "knowledge_catalog",
+                "准备知识资源范围",
+                status="success",
+                details="已完成授权知识资源检查",
+                execution_time_ms=(time.perf_counter() - knowledge_started) * 1000,
             )
 
         preflight_request_decision = self._request_decision_from_intent(
@@ -525,17 +645,43 @@ class RouterService:
             )
 
         # 2. Unified LLM Routing
-        # 路由提示词内置在代码中（DEFAULT_SYSTEM_PROMPT），不再从数据库配置读取，
+        # 路由提示词内置在代码中（COMPACT_SYSTEM_PROMPT），不再从数据库配置读取，
         # 避免运营在配置页误改导致路由失准。
-        system_prompt = self.DEFAULT_SYSTEM_PROMPT
+        system_prompt = self.COMPACT_SYSTEM_PROMPT
         agents_str = self._build_agents_context(routing_agents)
         if knowledge_catalog is None:
             # 目录摘要本来就在该路径加载；保留结构化快照，避免 LLM 返回
             # KNOWLEDGE_BASE 后再次读取权限目录。
-            knowledge_catalog = await load_authorized_knowledge_catalog(
-                user_id=user_id,
-                user_name=user_name,
-                is_admin=is_admin,
+            knowledge_started = time.perf_counter()
+            await emit_route_stage(
+                on_progress,
+                "knowledge_catalog",
+                "准备知识资源范围",
+                status="pending",
+            )
+            try:
+                knowledge_catalog = await load_authorized_knowledge_catalog(
+                    user_id=user_id,
+                    user_name=user_name,
+                    is_admin=is_admin,
+                )
+            except Exception:
+                await emit_route_stage(
+                    on_progress,
+                    "knowledge_catalog",
+                    "准备知识资源范围",
+                    status="error",
+                    details="知识资源范围准备失败",
+                    execution_time_ms=(time.perf_counter() - knowledge_started) * 1000,
+                )
+                raise
+            await emit_route_stage(
+                on_progress,
+                "knowledge_catalog",
+                "准备知识资源范围",
+                status="success",
+                details="已完成授权知识资源检查",
+                execution_time_ms=(time.perf_counter() - knowledge_started) * 1000,
             )
         catalog_kwargs = {
             "user_id": user_id,
@@ -579,11 +725,19 @@ class RouterService:
 
         # 3. Invoke LLM with one retry to avoid silently dropping a valid
         # business query to general-chat on transient errors / malformed JSON.
+        router_model_started = time.perf_counter()
+        await emit_route_stage(
+            on_progress,
+            "router_model",
+            "匹配目标专家",
+            status="pending",
+        )
         last_error: Optional[Exception] = None
         for attempt in range(2):
             try:
                 llm = await get_llm_async(
                     temperature=0.0,
+                    max_output_tokens=ROUTER_MAX_OUTPUT_TOKENS,
                     ignore_session_reasoning_overrides=True,
                 )  # Use deterministic output
                 chat_client = chat_client_from_handle(llm)
@@ -636,6 +790,18 @@ class RouterService:
                 )
                 content = ""
                 if result_json is None:
+                    structured_status = getattr(
+                        chat_client,
+                        "last_structured_output_status",
+                        None,
+                    )
+                    if structured_status in {"error", "invalid"}:
+                        raise ValueError(
+                            f"Structured router output failed ({structured_status})"
+                        )
+                    # Legacy/custom clients without native structured output keep
+                    # one compatibility text call; native structured clients never
+                    # pay for a second request after a structured-output failure.
                     content = (await chat_client.generate_text(attempt_messages)).strip()
                     result_json = self._parse_router_json(content)
                 else:
@@ -675,6 +841,14 @@ class RouterService:
                     data_route_allowed=bool(data_route_allowed),
                 )
                 if decision is not None:
+                    await emit_route_stage(
+                        on_progress,
+                        "router_model",
+                        "匹配目标专家",
+                        status="success",
+                        details="已完成目标专家匹配",
+                        execution_time_ms=(time.perf_counter() - router_model_started) * 1000,
+                    )
                     return decision.model_copy(
                         update={"accessible_resources": accessible_resources_context or None}
                     )
@@ -685,9 +859,25 @@ class RouterService:
                     request_decision=request_decision,
                 )
                 if fallback_decision is not None:
+                    await emit_route_stage(
+                        on_progress,
+                        "router_model",
+                        "匹配目标专家",
+                        status="success",
+                        details="已使用安全路由兜底",
+                        execution_time_ms=(time.perf_counter() - router_model_started) * 1000,
+                    )
                     return fallback_decision.model_copy(
                         update={"accessible_resources": accessible_resources_context or None}
                     )
+                await emit_route_stage(
+                    on_progress,
+                    "router_model",
+                    "匹配目标专家",
+                    status="error",
+                    details="未找到可用目标专家",
+                    execution_time_ms=(time.perf_counter() - router_model_started) * 1000,
+                )
                 return None
             except Exception as e:  # noqa: BLE001 - retry then fall back
                 last_error = e
@@ -701,9 +891,25 @@ class RouterService:
             request_decision=request_decision,
         )
         if fallback_decision is not None:
+            await emit_route_stage(
+                on_progress,
+                "router_model",
+                "匹配目标专家",
+                status="success",
+                details="路由模型重试后使用安全兜底",
+                execution_time_ms=(time.perf_counter() - router_model_started) * 1000,
+            )
             return fallback_decision.model_copy(
                 update={"accessible_resources": accessible_resources_context or None}
             )
+        await emit_route_stage(
+            on_progress,
+            "router_model",
+            "匹配目标专家",
+            status="error",
+            details="目标专家匹配失败",
+            execution_time_ms=(time.perf_counter() - router_model_started) * 1000,
+        )
         return None
 
     @staticmethod

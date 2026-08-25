@@ -336,14 +336,25 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         agent_name = str(chunk.get("selected_agent") or "Unknown")
         confidence = chunk.get("confidence")
         conf_text = f"（置信度: {confidence}）" if confidence is not None else ""
+        existing_selection = _find_log(state, "route:target_selection")
+        selection_title = (
+            existing_selection.get("title")
+            if existing_selection and existing_selection.get("title")
+            else "智能路由决策"
+        )
+        selection_duration = (
+            existing_selection.get("execution_time_ms")
+            if existing_selection and existing_selection.get("execution_time_ms") is not None
+            else chunk.get("execution_time_ms")
+        )
         apply_stream_chunk(state, {
             "type": "log",
-            "id": _next_id(state, "router"),
-            "title": "智能路由决策",
+            "id": "route:target_selection",
+            "title": selection_title,
             "details": f"思考过程:\n{thought}\n\n最终选择: {agent_name} {conf_text}".rstrip(),
             "status": chunk.get("status") or "success",
             "category": "router",
-            "execution_time_ms": chunk.get("execution_time_ms"),
+            "execution_time_ms": selection_duration,
         })
         return
 

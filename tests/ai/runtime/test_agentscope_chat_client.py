@@ -180,3 +180,48 @@ async def test_chat_client_generate_structured_dict_fail_open_and_success():
         Payload,
     )
     assert payload == {"agent_name": "main", "confidence": 0.9}
+
+
+@pytest.mark.asyncio
+async def test_chat_client_records_structured_output_status_without_falling_back():
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+
+    class UnsupportedNative:
+        pass
+
+    unsupported = AgentScopeChatClient(UnsupportedNative())
+    assert (
+        await unsupported.generate_structured_dict([], object())
+    ) is None
+    assert unsupported.last_structured_output_status == "unsupported"
+
+    class BrokenNative:
+        async def generate_structured_output(self, **kwargs):
+            raise RuntimeError("boom")
+
+    broken = AgentScopeChatClient(BrokenNative())
+    assert await broken.generate_structured_dict([], object()) is None
+    assert broken.last_structured_output_status == "error"
+
+    class InvalidNative:
+        async def generate_structured_output(self, **kwargs):
+            return type("R", (), {"content": "not-json"})()
+
+    invalid = AgentScopeChatClient(InvalidNative())
+    assert await invalid.generate_structured_dict([], object()) is None
+    assert invalid.last_structured_output_status == "invalid"
+
+    class JsonTextNative:
+        async def generate_structured_output(self, **kwargs):
+            return type(
+                "R",
+                (),
+                {"content": '{"agent_name":"main","confidence":0.9}'},
+            )()
+
+    json_text = AgentScopeChatClient(JsonTextNative())
+    assert await json_text.generate_structured_dict([], object()) == {
+        "agent_name": "main",
+        "confidence": 0.9,
+    }
+    assert json_text.last_structured_output_status == "success"

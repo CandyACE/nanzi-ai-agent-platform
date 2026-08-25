@@ -53,7 +53,7 @@ def test_browser_panel_shows_red_notice_on_screenshot_surface():
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
     assert "当前为远程静态截图，非实时网页（操作存在延迟）· 严禁用于任何违法违规行为" in source
     assert "pointer-events-none" in source
-    assert "text-red-600" in source
+    assert "text-slate-400" in source
     notice_class = 'class="pointer-events-none absolute bottom-3 left-3 z-10"'
     image_wrapper = '<div v-if="screenshotUrl" class="relative">'
     assert notice_class in source

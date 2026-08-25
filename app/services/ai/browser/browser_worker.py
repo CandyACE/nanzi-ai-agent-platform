@@ -46,6 +46,56 @@ class BrowserActionConfirmationRequired(PermissionError):
     """当前 BrowserSession 需要用户确认后才能执行该动作。"""
 
 
+class BrowserEnvironmentError(RuntimeError):
+    """服务端浏览器运行环境或 Chromium 内核未就绪。"""
+
+    def __init__(
+        self,
+        message: str = (
+            "服务端浏览器运行环境未就绪。\n"
+            "请在服务器终端依次执行以下命令完成安装：\n"
+            "1. pip install playwright\n"
+            "2. playwright install chromium\n"
+            "（若 Linux 环境缺少系统依赖，可补充执行：playwright install-deps chromium）"
+        ),
+        *,
+        missing_component: str = "playwright",
+    ):
+        super().__init__(message)
+        self.missing_component = missing_component
+
+
+def _is_browser_env_missing(exc: BaseException) -> tuple[bool, str]:
+    """检测异常是否由 Playwright 库或 Chromium 浏览器内核缺失引发。"""
+    if isinstance(exc, ModuleNotFoundError) and "playwright" in str(exc).lower():
+        return True, (
+            "服务端未安装 Playwright 依赖库。\n"
+            "请在服务器终端执行：\n"
+            "pip install playwright\n"
+            "playwright install chromium"
+        )
+    msg = str(exc).lower()
+    if (
+        "executable doesn't exist" in msg
+        or "please run \"playwright install\"" in msg
+        or "playwright install" in msg
+        or "browsertype.launch" in msg
+        or "looks like playwright was just installed or updated" in msg
+    ):
+        return True, (
+            "服务端尚未下载 Chromium 浏览器内核。\n"
+            "请在服务器终端执行：\n"
+            "playwright install chromium"
+        )
+    if "missing dependencies" in msg or "install-deps" in msg:
+        return True, (
+            "服务端操作系统缺少运行 Chromium 浏览器所需的底层系统库。\n"
+            "请在服务器终端执行：\n"
+            "playwright install-deps chromium"
+        )
+    return False, ""
+
+
 @dataclass(frozen=True)
 class BrowserPageInfo:
     url: str
@@ -475,17 +525,105 @@ class BrowserWorker:
         self._playwright_context_manager = None
         self._handles: dict[str, _BrowserHandle] = {}
         self._snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+        self._cached_chromium_version: str | None = None
 
     async def _ensure_playwright(self) -> Any:
         if self._playwright is not None:
             return self._playwright
-        value = self._playwright_factory()
-        value = await _maybe_await(value)
-        if hasattr(value, "__aenter__"):
-            self._playwright_context_manager = value
-            value = await value.__aenter__()
-        self._playwright = value
-        return value
+        try:
+            value = self._playwright_factory()
+            value = await _maybe_await(value)
+            if hasattr(value, "__aenter__"):
+                self._playwright_context_manager = value
+                value = await value.__aenter__()
+            self._playwright = value
+            return value
+        except Exception as exc:
+            is_env_err, guidance = _is_browser_env_missing(exc)
+            if is_env_err:
+                raise BrowserEnvironmentError(guidance) from exc
+            raise
+
+    async def check_environment(self) -> dict[str, Any]:
+        """探测当前运行时的 Playwright 与 Chromium 环境状态、版本及路径。"""
+        result = {
+            "status": "ready",
+            "playwright_installed": False,
+            "playwright_version": None,
+            "chromium_installed": False,
+            "chromium_executable": None,
+            "chromium_version": None,
+            "error_detail": None,
+            "install_guide": None,
+        }
+        try:
+            import importlib.metadata
+
+            result["playwright_installed"] = True
+            result["playwright_version"] = importlib.metadata.version("playwright")
+        except Exception:
+            try:
+                import playwright
+
+                result["playwright_installed"] = True
+                result["playwright_version"] = getattr(playwright, "__version__", None)
+            except ImportError:
+                result["status"] = "missing_package"
+                result["error_detail"] = "未安装 Python playwright 依赖库"
+                result["install_guide"] = "pip install playwright\nplaywright install chromium"
+                return result
+
+        try:
+            pw = await self._ensure_playwright()
+            chromium = getattr(pw, "chromium", None)
+            if chromium is not None:
+                executable_path = getattr(chromium, "executable_path", None)
+                if callable(executable_path):
+                    exec_path = executable_path()
+                else:
+                    exec_path = str(executable_path) if executable_path else None
+                result["chromium_executable"] = exec_path
+                if exec_path and os.path.exists(exec_path):
+                    result["chromium_installed"] = True
+                    result["status"] = "ready"
+                    # 读取 Chromium 版本号
+                    if self._cached_chromium_version:
+                        result["chromium_version"] = self._cached_chromium_version
+                    else:
+                        active_version = None
+                        for h in self._handles.values():
+                            b = getattr(h, "browser", None)
+                            if b and hasattr(b, "version"):
+                                active_version = b.version
+                                break
+                            ctx = getattr(h, "context", None)
+                            b2 = getattr(ctx, "browser", None)
+                            if b2 and hasattr(b2, "version"):
+                                active_version = b2.version
+                                break
+                        if active_version:
+                            result["chromium_version"] = str(active_version)
+                            self._cached_chromium_version = str(active_version)
+                        else:
+                            try:
+                                b = await chromium.launch(headless=True, args=CHROMIUM_LAUNCH_ARGS)
+                                result["chromium_version"] = str(b.version)
+                                self._cached_chromium_version = str(b.version)
+                                await b.close()
+                            except Exception:
+                                pass
+                else:
+                    result["chromium_installed"] = False
+                    result["status"] = "missing_driver"
+                    result["error_detail"] = "尚未下载 Chromium 浏览器内核"
+                    result["install_guide"] = "playwright install chromium"
+        except Exception as exc:
+            is_env_err, guidance = _is_browser_env_missing(exc)
+            result["status"] = "missing_driver" if is_env_err else "error"
+            result["error_detail"] = str(exc)
+            result["install_guide"] = guidance or "playwright install chromium"
+
+        return result
 
     async def open(self, *, session_id: str, profile_path: str, url: str) -> BrowserPageInfo:
         self._url_validator(url)
@@ -504,22 +642,28 @@ class BrowserWorker:
             "timezone_id": "Asia/Shanghai",
         }
 
-        chromium = playwright.chromium
-        launch_persistent_context = getattr(chromium, "launch_persistent_context", None)
-        if launch_persistent_context is not None:
-            context = await launch_persistent_context(
-                user_data_dir=profile_path,
-                headless=True,
-                args=CHROMIUM_LAUNCH_ARGS,
-                **common_context_kwargs,
-            )
-            browser = None
-        else:
-            browser = await chromium.launch(
-                headless=True,
-                args=CHROMIUM_LAUNCH_ARGS,
-            )
-            context = await browser.new_context(**common_context_kwargs)
+        try:
+            chromium = playwright.chromium
+            launch_persistent_context = getattr(chromium, "launch_persistent_context", None)
+            if launch_persistent_context is not None:
+                context = await launch_persistent_context(
+                    user_data_dir=profile_path,
+                    headless=True,
+                    args=CHROMIUM_LAUNCH_ARGS,
+                    **common_context_kwargs,
+                )
+                browser = None
+            else:
+                browser = await chromium.launch(
+                    headless=True,
+                    args=CHROMIUM_LAUNCH_ARGS,
+                )
+                context = await browser.new_context(**common_context_kwargs)
+        except Exception as exc:
+            is_env_err, guidance = _is_browser_env_missing(exc)
+            if is_env_err:
+                raise BrowserEnvironmentError(guidance) from exc
+            raise
 
         add_init_script = getattr(context, "add_init_script", None)
         if callable(add_init_script):
@@ -1930,9 +2074,52 @@ class BrowserWorker:
             await _maybe_await(handle.page.mouse.move(x, y))
             await _maybe_await(handle.page.mouse.up())
         elif event == "scroll":
+            direction = str(payload.get("direction") or "").strip().lower()
             delta_y = float(payload.get("delta_y", 0))
-            delta_y = max(-2000.0, min(delta_y, 2000.0))
-            await _maybe_await(handle.page.mouse.wheel(0, delta_y))
+            if direction == "top":
+                try:
+                    await _maybe_await(handle.page.evaluate("() => window.scrollTo({ top: 0, behavior: 'instant' })"))
+                except Exception:
+                    pass
+            elif direction == "bottom":
+                try:
+                    await _maybe_await(
+                        handle.page.evaluate(
+                            "() => window.scrollTo({ top: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight), behavior: 'instant' })"
+                        )
+                    )
+                except Exception:
+                    pass
+            else:
+                delta_y = max(-2000.0, min(delta_y, 2000.0))
+                # 1. 移动鼠标到视口中心，保证聚焦在主要滚动区域
+                viewport = getattr(handle.page, "viewport_size", None) or {"width": 1280, "height": 800}
+                mid_x = float(viewport.get("width", 1280)) / 2
+                mid_y = float(viewport.get("height", 800)) / 2
+                mouse = getattr(handle.page, "mouse", None)
+                if mouse:
+                    try:
+                        if hasattr(mouse, "move"):
+                            await _maybe_await(mouse.move(mid_x, mid_y))
+                        if hasattr(mouse, "wheel"):
+                            await _maybe_await(mouse.wheel(0, delta_y))
+                    except Exception:
+                        pass
+                # 2. window.scrollBy 兜底确保无论页面是否有复杂 wheel 拦截都能产生滚动
+                try:
+                    await _maybe_await(handle.page.evaluate(f"() => window.scrollBy({{ top: {delta_y}, behavior: 'instant' }})"))
+                except Exception:
+                    pass
+
+            # 等待短暂渲染稳定时间，确保截图捕获到滚动后的真实画面
+            wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
+            if callable(wait_for_timeout):
+                try:
+                    await _maybe_await(wait_for_timeout(180))
+                except Exception:
+                    await asyncio.sleep(0.18)
+            else:
+                await asyncio.sleep(0.18)
         else:
             raise ValueError("不支持的浏览器人工输入事件")
         self._snapshots.pop(session_id, None)

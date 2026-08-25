@@ -7,6 +7,7 @@ from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.schemas.browser import BrowserToolResult
 from app.services.ai.browser.browser_runtime import browser_runtime
+from app.services.ai.browser.browser_worker import BrowserEnvironmentError
 from app.services.ai.tools.tool_compat import tool
 
 
@@ -38,19 +39,17 @@ async def _persist_browser_result(context: Any, result: Any) -> None:
     """把页面动作后的 URL 和标题写回会话，保证恢复时不会回到旧页面。"""
     if not getattr(result, "url", None) and not getattr(result, "title", None):
         return
-    from app.services.ai.browser.browser_session_service import BrowserSessionService
-
+    session_id = _session_id(context)
     async with AsyncSessionLocal() as db:
-        session = await BrowserSessionService(db).get_owned_session(
-            user_id=int(context.user_id), session_id=_session_id(context)
+        from app.services.ai.browser.browser_session_service import BrowserSessionService
+
+        service = BrowserSessionService(db)
+        await service.update_state(
+            user_id=int(context.user_id),
+            session_id=session_id,
+            url=getattr(result, "url", None),
+            title=getattr(result, "title", None),
         )
-        if getattr(result, "url", None):
-            session.current_url = result.url
-        if getattr(result, "title", None):
-            session.page_title = result.title
-        session.last_seen_at = datetime.now()
-        session.updated_at = datetime.now()
-        await db.commit()
 
 
 async def _browser_result_json(context: Any, result: Any) -> str:
@@ -62,17 +61,24 @@ async def _browser_result_json(context: Any, result: Any) -> str:
 async def browser_open(url: str = "https://www.baidu.com/", profile_id: Optional[str] = None) -> str:
     """打开或恢复当前用户的服务端浏览器，会话登录状态可跨对话复用。"""
     context = _context_or_error()
-    session = await browser_runtime.open_for_user(
-        user_id=int(context.user_id),
-        conversation_id=getattr(context, "conversation_id", None),
-        url=url,
-        profile_id=profile_id,
-    )
-    context.browser_session_id = session.id
-    snapshot = await browser_runtime.snapshot(session.id)
-    payload = snapshot.model_dump(mode="json")
-    payload["approval_mode"] = session.approval_mode
-    return json.dumps(payload, ensure_ascii=False)
+    try:
+        session = await browser_runtime.open_for_user(
+            user_id=int(context.user_id),
+            conversation_id=getattr(context, "conversation_id", None),
+            url=url,
+            profile_id=profile_id,
+        )
+        context.browser_session_id = session.id
+        snapshot = await browser_runtime.snapshot(session.id)
+        payload = snapshot.model_dump(mode="json")
+        payload["approval_mode"] = session.approval_mode
+        return json.dumps(payload, ensure_ascii=False)
+    except BrowserEnvironmentError as exc:
+        return json.dumps({
+            "error": "BROWSER_ENVIRONMENT_MISSING",
+            "message": str(exc),
+            "instruction": "服务端浏览器环境（Playwright/Chromium）尚未安装。请礼貌告知用户或管理员在服务器终端执行：playwright install chromium 即可启用网页自动化能力。",
+        }, ensure_ascii=False)
 
 
 @tool

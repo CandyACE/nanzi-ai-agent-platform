@@ -60,11 +60,39 @@ def test_router_log_becomes_intent_style_step_without_raw_event_fields():
 
     assert len(items) == 1
     assert items[0]["kind"] == "log"
+    assert items[0]["id"] == "route:target_selection"
     assert items[0]["title"] == "智能路由决策"
     assert items[0]["category"] == "router"
     assert "用户在问数据" in items[0]["details"]
     assert "chatbi" in items[0]["details"]
     assert "thought" not in items[0]
+
+
+def test_router_log_updates_route_selection_without_creating_duplicate_step():
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "route:target_selection",
+                "title": "判断并匹配目标专家",
+                "status": "success",
+                "category": "router",
+                "execution_time_ms": 6600,
+            },
+            {
+                "type": "router_log",
+                "thought": "内部路由原因",
+                "selected_agent": "chatbi",
+                "confidence": 0.9,
+                "status": "success",
+                "execution_time_ms": 7200,
+            },
+        ]
+    )
+
+    assert [item["id"] for item in items] == ["route:target_selection"]
+    assert items[0]["title"] == "判断并匹配目标专家"
+    assert items[0]["execution_time_ms"] == 6600
 
 
 def test_tool_details_are_truncated_and_empty_snapshot_is_omitted():

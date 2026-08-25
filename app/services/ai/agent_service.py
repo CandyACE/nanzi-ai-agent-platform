@@ -10,6 +10,7 @@ from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.audit import AuditManager
 from app.services.ai.config import AgentConfigProvider, RuntimeModelInfo, resolve_runtime_model_info
 from app.services.ai.context_manager import AgentContextManager
+from app.services.ai.route_progress import RouteProgressCallback, emit_route_stage
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
@@ -2083,22 +2084,51 @@ class AgentService:
         user_query: str,
         force_data_query: bool = False,
         conversation_id: Optional[str] = None,
+        route_progress: Optional[RouteProgressCallback] = None,
     ) -> tuple[Any, Any, float, Optional[str]]:
         """解析并校验智能体配置与权限。
         返回: (agent_config, route_details, route_elapsed_ms, permission_denied_err_msg)
         """
         route_start = asyncio.get_running_loop().time()
-        agent_config, route_details = await AgentContextManager.resolve_agent_config(
-            messages,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            version_id=version_id,
-            enable_multi_agent=enable_multi_agent,
-            user_info=user_info,
-            force_data_query=force_data_query,
-            conversation_id=conversation_id,
+        await emit_route_stage(
+            route_progress,
+            "target_config",
+            "加载目标专家配置",
+            status="pending",
         )
+        try:
+            agent_config, route_details = await AgentContextManager.resolve_agent_config(
+                messages,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                version_id=version_id,
+                enable_multi_agent=enable_multi_agent,
+                user_info=user_info,
+                force_data_query=force_data_query,
+                conversation_id=conversation_id,
+                on_progress=route_progress,
+            )
+        except Exception:
+            route_elapsed_ms = (asyncio.get_running_loop().time() - route_start) * 1000
+            await emit_route_stage(
+                route_progress,
+                "target_config",
+                "加载目标专家配置",
+                status="error",
+                details="目标专家配置加载失败",
+                execution_time_ms=route_elapsed_ms,
+            )
+            raise
         route_elapsed_ms = (asyncio.get_running_loop().time() - route_start) * 1000
+
+        await emit_route_stage(
+            route_progress,
+            "target_config",
+            "加载目标专家配置",
+            status="success" if agent_config else "error",
+            details="已完成目标专家配置加载" if agent_config else "未找到可用目标专家",
+            execution_time_ms=route_elapsed_ms,
+        )
 
         if not agent_config:
             return None, None, route_elapsed_ms, None
@@ -2171,6 +2201,13 @@ class AgentService:
         else:
             logger.info("[Router] No routing details (direct agent selection or fallback)")
 
+        permission_started = asyncio.get_running_loop().time()
+        await emit_route_stage(
+            route_progress,
+            "target_permission",
+            "校验目标专家权限",
+            status="pending",
+        )
         if user_info:
             u_role = user_info.get("role", "")
             u_id = user_info.get("user_id", user_info.get("id"))
@@ -2182,9 +2219,44 @@ class AgentService:
                     has_perm = await perm_service.check_permission(int(u_id), "agent", agent_id_str)
                     if not has_perm:
                         err_msg = AgentServicePrompts.permission_denied(agent_config.agent_name)
+                        await emit_route_stage(
+                            route_progress,
+                            "target_permission",
+                            "校验目标专家权限",
+                            status="error",
+                            details="目标专家权限校验失败",
+                            execution_time_ms=(asyncio.get_running_loop().time() - permission_started) * 1000,
+                        )
                         return agent_config, route_details, route_elapsed_ms, err_msg
 
+        await emit_route_stage(
+            route_progress,
+            "target_permission",
+            "校验目标专家权限",
+            status="success",
+            details="已完成目标专家权限校验",
+            execution_time_ms=(asyncio.get_running_loop().time() - permission_started) * 1000,
+        )
+
         return agent_config, route_details, route_elapsed_ms, None
+
+    def _start_route_resolution(
+        self,
+        *,
+        route_events: "asyncio.Queue[Dict[str, Any]]",
+        resolve_kwargs: Dict[str, Any],
+    ) -> "asyncio.Task[tuple[Any, Any, float, Optional[str]]]":
+        """Start target resolution while forwarding safe progress events."""
+
+        async def on_progress(event: Dict[str, Any]) -> None:
+            await route_events.put(event)
+
+        return asyncio.create_task(
+            self._resolve_and_verify_agent(
+                **resolve_kwargs,
+                route_progress=on_progress,
+            )
+        )
 
     async def _inject_skills(
         self,
@@ -2668,18 +2740,43 @@ class AgentService:
 
         try:
             # 1. Resolve and Verify Agent Configuration and Permissions
-            agent_config, route_details, route_elapsed_ms, err_msg = await self._resolve_and_verify_agent(
-                messages=messages,
-                agent_id=agent_id,
-                agent_name=agent_name,
-                version_id=version_id,
-                enable_multi_agent=enable_multi_agent,
-                user_info=user_info,
-                trace_buffer=trace_buffer,
-                user_query=user_query,
-                force_data_query=bool(metadata_dataset_ids),
-                conversation_id=conversation_id,
+            route_events: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+            resolve_task = self._start_route_resolution(
+                route_events=route_events,
+                resolve_kwargs={
+                    "messages": messages,
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "version_id": version_id,
+                    "enable_multi_agent": enable_multi_agent,
+                    "user_info": user_info,
+                    "trace_buffer": trace_buffer,
+                    "user_query": user_query,
+                    "force_data_query": bool(metadata_dataset_ids),
+                    "conversation_id": conversation_id,
+                },
             )
+            try:
+                while True:
+                    if not route_events.empty():
+                        yield await route_events.get()
+                        continue
+                    if resolve_task.done():
+                        break
+                    try:
+                        yield await asyncio.wait_for(route_events.get(), timeout=0.05)
+                    except asyncio.TimeoutError:
+                        continue
+
+                while not route_events.empty():
+                    yield await route_events.get()
+
+                agent_config, route_details, route_elapsed_ms, err_msg = await resolve_task
+            except asyncio.CancelledError:
+                if not resolve_task.done():
+                    resolve_task.cancel()
+                await asyncio.gather(resolve_task, return_exceptions=True)
+                raise
 
             if agent_config and shared_state is not None:
                 shared_state["agent_config"] = agent_config

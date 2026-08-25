@@ -8,9 +8,11 @@ from app.services.ai.browser.browser_policy import (
     redact_browser_arguments,
     validate_browser_navigation,
 )
+from app.services.ai.browser.browser_worker import BrowserEnvironmentError
 
 __all__ = [
     "BrowserDecision",
+    "BrowserEnvironmentError",
     "BrowserUrlBlocked",
     "classify_browser_action",
     "decide_browser_action",
