@@ -19,6 +19,8 @@ from app.schemas.ai_model import (
     AIModelUpdate,
     AIModelResponse,
     normalize_supported_reasoning_efforts,
+    normalize_legacy_reasoning_effort,
+    normalize_legacy_supported_reasoning_efforts,
     validate_reasoning_configuration,
 )
 from app.utils.model_credentials import encrypt_model_api_key, decrypt_model_api_key
@@ -210,13 +212,13 @@ async def update_model(
     if "supported_reasoning_efforts" in update_data and update_data["supported_reasoning_efforts"] is None:
         raise HTTPException(status_code=422, detail="supported_reasoning_efforts cannot be null")
     if "reasoning_effort" in update_data or "supported_reasoning_efforts" in update_data:
-        current_supported = normalize_supported_reasoning_efforts(
+        current_supported = normalize_legacy_supported_reasoning_efforts(
             model.supported_reasoning_efforts
         )
-        effective_reasoning_effort = update_data.get(
+        effective_reasoning_effort = normalize_legacy_reasoning_effort(update_data.get(
             "reasoning_effort",
             model.reasoning_effort,
-        )
+        ))
         effective_supported = update_data.get(
             "supported_reasoning_efforts",
             current_supported,

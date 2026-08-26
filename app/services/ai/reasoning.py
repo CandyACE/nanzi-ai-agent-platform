@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from app.schemas.ai_model import DEFAULT_SUPPORTED_REASONING_EFFORTS
+from app.schemas.ai_model import (
+    normalize_legacy_reasoning_effort,
+    normalize_legacy_supported_reasoning_efforts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +23,7 @@ class ReasoningSettings:
 
 
 def _supported_efforts(value: Any) -> list[str]:
-    if value is None:
-        return list(DEFAULT_SUPPORTED_REASONING_EFFORTS)
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-    if not isinstance(value, (list, tuple, set)):
-        return []
-    return [str(item) for item in value]
+    return normalize_legacy_supported_reasoning_efforts(value)
 
 
 def resolve_reasoning_settings(
@@ -50,7 +43,7 @@ def resolve_reasoning_settings(
     """
     supported = _supported_efforts(supported_reasoning_efforts)
     effective_thinking = bool(thinking_enable and thinking_only)
-    effective_effort = reasoning_effort
+    effective_effort = normalize_legacy_reasoning_effort(reasoning_effort)
     options = overrides or {}
 
     requested_thinking = options.get("thinking_enable", UNSET)
@@ -66,6 +59,8 @@ def resolve_reasoning_settings(
             logger.warning("Ignoring unauthorized thinking disable request")
 
     requested_effort = options.get("reasoning_effort", UNSET)
+    if requested_effort is not UNSET:
+        requested_effort = normalize_legacy_reasoning_effort(requested_effort)
     if requested_effort is not UNSET and requested_effort is not None:
         if effective_thinking and requested_effort in supported:
             effective_effort = str(requested_effort)

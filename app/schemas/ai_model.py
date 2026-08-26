@@ -48,6 +48,37 @@ def normalize_supported_reasoning_efforts(value: Any) -> list[str]:
     return [effort for effort in REASONING_EFFORT_VALUES if effort in selected]
 
 
+def normalize_legacy_reasoning_effort(value: Any) -> Optional[str]:
+    """Normalize removed reasoning values when reading legacy records."""
+    if value is None or value == "" or value == "auto":
+        return None
+    if value == "max":
+        return "xhigh"
+    return value if value in REASONING_EFFORT_VALUES else None
+
+
+def normalize_legacy_supported_reasoning_efforts(value: Any) -> list[str]:
+    """Return safe reasoning options for legacy records without mutating storage."""
+    if value is None:
+        return list(DEFAULT_SUPPORTED_REASONING_EFFORTS)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return list(DEFAULT_SUPPORTED_REASONING_EFFORTS)
+    if not isinstance(value, (list, tuple, set)):
+        return list(DEFAULT_SUPPORTED_REASONING_EFFORTS)
+
+    normalized = {
+        normalize_legacy_reasoning_effort(item)
+        for item in value
+    }
+    normalized.discard(None)
+    if not normalized:
+        return list(DEFAULT_SUPPORTED_REASONING_EFFORTS)
+    return [effort for effort in REASONING_EFFORT_VALUES if effort in normalized]
+
+
 def validate_reasoning_configuration(
     reasoning_effort: Optional[str],
     supported_reasoning_efforts: Any,
@@ -238,8 +269,19 @@ class AIModelResponse(AIModelBase):
     @staticmethod
     def from_orm_custom(obj):
         """Custom converter to handle masked API key logic"""
-        data = AIModelResponse.model_validate(obj)
-        data.has_api_key = bool(obj.api_key)
+        values = {
+            field_name: getattr(obj, field_name, None)
+            for field_name in AIModelResponse.model_fields
+            if field_name != "has_api_key"
+        }
+        values["reasoning_effort"] = normalize_legacy_reasoning_effort(
+            values.get("reasoning_effort")
+        )
+        values["supported_reasoning_efforts"] = normalize_legacy_supported_reasoning_efforts(
+            values.get("supported_reasoning_efforts")
+        )
+        data = AIModelResponse.model_validate(values)
+        data.has_api_key = bool(getattr(obj, "api_key", None))
         # Ensure API key is never leaked in the default response if Pydantic included it
         # (Though it is not in AIModelBase, better safe)
         return data
