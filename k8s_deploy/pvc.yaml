@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nanzi-ai-agent-data
+  namespace: nanzi-ai-agent
+  labels:
+    app.kubernetes.io/name: nanzi-ai-agent
+    app.kubernetes.io/component: storage
+spec:
+  # 默认 Deployment 为单副本，因此使用更普遍的 RWO。
+  # 多副本必须改为集群可用的 RWX 共享存储，并同步调整部署策略。
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

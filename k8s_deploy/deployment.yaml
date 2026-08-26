@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanzi-ai-agent
+  namespace: nanzi-ai-agent
+  labels:
+    app.kubernetes.io/name: nanzi-ai-agent
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: nanzi-ai-agent-platform
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  # RWO PVC 与单副本数据目录配套；升级时先停旧 Pod，再挂载新 Pod。
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nanzi-ai-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nanzi-ai-agent
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: nanzi-ai-agent-platform
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: api
+          image: nanzi-ai-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8001
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: nanzi-ai-agent-config
+            - secretRef:
+                name: nanzi-ai-agent-secret
+          volumeMounts:
+            - name: app-data
+              mountPath: /app/data
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: nanzi-ai-agent-data
