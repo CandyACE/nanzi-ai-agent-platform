@@ -1,0 +1,38 @@
+# 可选示例：仅适用于安装了 ingress-nginx 的集群。
+# 修改域名和 TLS Secret 后，再单独 apply，或加入 kustomization.yaml。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nanzi-ai-agent
+  namespace: nanzi-ai-agent
+  labels:
+    app.kubernetes.io/name: nanzi-ai-agent
+    app.kubernetes.io/component: ingress
+  annotations:
+    # SSE、长时间 Agent 请求和浏览器人工接管需要较长连接超时。
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+    # 浏览器运行时注册表目前位于进程内，需要会话粘性。
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "nanzi_route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - nanzi.example.com
+      secretName: nanzi-ai-agent-tls
+  rules:
+    - host: nanzi.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nanzi-ai-agent
+                port:
+                  name: http

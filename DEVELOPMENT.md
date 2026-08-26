@@ -20,7 +20,7 @@
 
 ### 前置要求
 
-- **Python**: 3.11+
+- **Python**: 3.11
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: `redis/redis-stack:latest` (因系统需要使用 RediSearch 模块，必须使用 Redis Stack 镜像)
@@ -59,13 +59,18 @@ vim .env
 
 ### 1. 后端依赖安装与初始化
 
-```bash
-# 1. 创建虚拟环境并激活
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+日常本地开发直接执行 `./dev.sh` 即可自动检测并安装 `uv`，准备 Python 3.11，创建 `.venv`，并按需安装 `requirements.txt`。首次下载需要网络；Node.js/npm、`.env`、数据库和 Redis 仍需单独准备。
 
-# 2. 安装依赖
-pip install -r requirements.txt
+如需手动准备与一键脚本一致的 Python 环境：
+
+```bash
+# 1. 安装并准备 Python 3.11
+uv python install 3.11
+uv venv --python 3.11 .venv
+
+# 2. 使用清华 PyPI 镜像安装依赖
+uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+source .venv/bin/activate
 
 # 3. 准备环境变量配置文件
 cp env.example .env
@@ -75,6 +80,8 @@ cp env.example .env
 # 执行交互式部署脚本，详见 db-prod/README.md 指南
 ./db-prod/apply-sql.sh
 ```
+
+如果需要兼容已有传统环境，也可以继续使用 `python -m venv venv`、激活 `venv` 和 `pip install -r requirements.txt`；但 `dev.sh` 统一使用项目根目录下的 `.venv` Python 3.11 环境。
 
 ### 2. 前端依赖安装
 
@@ -96,11 +103,12 @@ npm install
 
 该脚本会自动依次执行：
 
-1. **清理旧进程**：检查并停止占用 `8001` 端口的旧后端服务。
-2. **编译前端**：进入 `frontend` 目录并运行 `npx vite build` 编译前端静态资源。
-3. **启动后端**：以热重载模式（`--reload`）前台启动后端 `uvicorn` 服务，并在终端前台显示日志，极大地方便了编译与启动日志排查。
+1. **准备 Python 环境**：自动检测/安装 uv，准备 Python 3.11，创建 `.venv`，并按 `requirements.txt` 校验值安装后端依赖。
+2. **清理旧进程**：检查并停止占用 `.env` 中 `API_SERVICE_PORT` 的旧后端服务（默认 `8001`）。
+3. **编译前端**：进入 `frontend` 目录并运行 `npx vite build` 编译前端静态资源。
+4. **启动后端**：使用 `.venv/bin/python` 以热重载模式（`--reload`）前台启动后端 `uvicorn` 服务，并在终端前台显示日志，极大地方便了编译与启动日志排查。
 
-**运行输出示例**：
+**运行输出示例（后续启动，已有 `.venv` 且 `requirements.txt` 未变化）**：
 
 ```text
 $ ./dev.sh
@@ -108,16 +116,28 @@ $ ./dev.sh
        南孜智能体平台 · 本地开发启动工具       
 ==================================================
 
-🛑 [1/3] 正在检查并停止旧服务 (Port 8001)...
+启动环境信息
+       ➜ uv: uv <当前版本>
+       ➜ Python 目标版本: 3.11
+       ➜ 虚拟环境: .venv
+       ➜ PyPI 镜像: https://pypi.tuna.tsinghua.edu.cn/simple
+       ➜ DATABASE_TYPE: mysql (effective: mysql)
+       ➜ 数据库地址: localhost:3306/nanzi_ai_agent_platform
+       ➜ Redis 地址: localhost:6379/2
+
+🧰 [1/4] 正在准备 uv、Python 3.11 和后端依赖...
+✅ 后端依赖未变化，跳过安装
+
+🛑 [2/4] 正在检查并停止旧服务 (Port 8001)...
 ✅ 端口 8001 空闲，无需停止
 
-🚀 [2/3] 正在编译前端 (Building Frontend)...
+🚀 [3/4] 正在编译前端 (Building Frontend)...
 vite v7.3.0 building client environment for production...
 transforming (6423) node_modules/zrender/lib/Element.js
 ...
 ✅ 前端编译成功！
 
-🔥 [3/3] 正在启动后端服务 (Starting Backend in Foreground)...
+🔥 [4/4] 正在启动后端服务 (Starting Backend in Foreground)...
 提示：您将在此看到实时运行日志，按 Ctrl+C 可停止服务。
 ------------------------------------------------
 INFO:     Will watch for changes in these directories: ['/Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform']
@@ -135,7 +155,8 @@ INFO:     Application startup complete.
 **手动启动后端**：
 
 ```bash
-source venv/bin/activate
+source .venv/bin/activate
+# 手动示例使用默认端口 8001；dev.sh 会读取 .env 中的 API_SERVICE_PORT
 uvicorn app.main:app --reload --port 8001
 ```
 

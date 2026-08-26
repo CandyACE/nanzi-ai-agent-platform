@@ -26,23 +26,27 @@ cd tests && ./run_tests.sh
 ```bash
 # 运行所有测试
 export PYTHONPATH=$PYTHONPATH:. 
-python3 -m pytest tests/
+.venv/bin/python -m pytest tests/
 
 # 运行特定模块的测试
-python3 -m pytest tests/api/v1/test_resources_donghuan.py
+.venv/bin/python -m pytest tests/api/v1/test_resources_donghuan.py
 
 # 显示详细输出
-python3 -m pytest tests/ -v
+.venv/bin/python -m pytest tests/ -v
 
 # 显示测试覆盖率
-python3 -m pytest tests/ --cov=app
+.venv/bin/python -m pytest tests/ --cov=app
 ```
 
 ## 2. 环境要求
 
-- 确保依赖已安装：
+- 确保依赖已安装。推荐开发环境先执行 `./dev.sh`；如果只准备测试环境而不启动服务，需先确保 `uv` 已安装，再执行：
   ```bash
-  pip install -r requirements.txt
+  uv python install 3.11
+  uv venv --python 3.11 .venv
+  uv pip install --python .venv/bin/python \
+    --default-index https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r requirements.txt
   ```
 - 确保本地数据库（ClickHouse, MySQL, Redis）已启动且配置正确（参考 `.env` 文件）。
 

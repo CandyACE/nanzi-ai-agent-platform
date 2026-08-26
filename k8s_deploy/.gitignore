@@ -1,0 +1,6 @@
+# 本地填写的真实 Secret 不应进入版本库。
+secret.yaml
+*.secret.yaml
+
+# 按环境复制并填写的 Ingress 不应进入版本库。
+ingress.yaml

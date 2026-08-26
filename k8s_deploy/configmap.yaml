@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nanzi-ai-agent-config
+  namespace: nanzi-ai-agent
+  labels:
+    app.kubernetes.io/name: nanzi-ai-agent
+    app.kubernetes.io/component: api
+data:
+  API_SERVICE_ENV: "prod"
+  API_SERVICE_PORT: "8001"
+  API_SERVICE_LOG_LEVEL: "INFO"
+  LOG_LEVEL: "INFO"
+
+  # 按实际部署域名修改；ALLOWED_ORIGINS 必须是 JSON 数组字符串。
+  APP_PUBLIC_URL: "https://nanzi.example.com"
+  ALLOWED_ORIGINS: '["https://nanzi.example.com"]'
+  BROWSER_VIEWER_ALLOWED_ORIGINS: "https://nanzi.example.com"
+
+  # 主库：mysql 或 postgresql。切换数据库类型时只启用对应的一套连接配置。
+  DATABASE_TYPE: "mysql"
+  MYSQL_HOST: "mysql.example.internal"
+  MYSQL_PORT: "3306"
+  MYSQL_DB: "nanzi_ai_agent_platform"
+  POSTGRES_HOST: "postgres.example.internal"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "nanzi_ai_agent_platform"
+
+  # Redis Stack/RediSearch；平台向量索引默认要求 REDIS_DB=0。
+  REDIS_HOST: "redis.example.internal"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_ENABLE: "true"
+
+  # 基础清单不挂载 Oracle Instant Client，默认使用 Thin 模式。
+  USE_ORACLE_THICK_MODE: "0"
+  TZ: "Asia/Shanghai"
+  PLATFORM_TIMEZONE: "Asia/Shanghai"
+  API_SERVICE_API_KEY_HASH_ALGORITHM: "sha256"

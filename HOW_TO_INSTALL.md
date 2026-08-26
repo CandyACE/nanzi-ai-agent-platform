@@ -8,7 +8,7 @@
 
 NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞察（ChatBI）系统。为了适应不同用户的环境，平台主要提供两套部署安装方案：
 *   **Docker 容器化部署（生产首选，支持离线）**：通过位置参数指定版本号构建 Docker 归档包，可在隔离容器环境下运行并一键部署。
-*   **本地源码开发调试部署（开发首选）**：使用 Python 虚拟环境与 Node.js 宿主机环境，支持前后端热重载实时开发联调。
+*   **本地源码开发调试部署（开发首选）**：使用 `dev.sh` 自动准备 Python 3.11 运行环境和后端依赖，配合 Node.js 宿主机环境完成前后端热重载实时开发联调。
 
 无论采用何种部署方案，服务拉起前均需要完成平台主库结构与初始管理员账号的初始化。
 
@@ -28,7 +28,8 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 
 ### 💻 基础工具依赖
 *   **Docker**（建议 v20.10+） 与 **Docker Compose**（建议 v2.0.0+）
-*   **Python**（建议 v3.10+，仅用于本地源码调试或运行 SQL 导入工具。如果直接使用已打好的 Docker 镜像包部署，则无需安装）
+*   **Python**（项目运行基线为 v3.11；本地源码启动时 `dev.sh` 会自动安装/准备。若在启动前使用 Python 版数据库导入工具，需按数据库章节通过 uv 准备 `.venv`。如果直接使用已打好的 Docker 镜像包部署，则无需安装）
+*   **uv**（本地源码启动时 `dev.sh` 会自动安装；手动执行数据库 Python 导入工具时，建议使用 uv 创建项目 `.venv`）
 *   **Node.js**（建议 v18+ & npm，仅用于本地开发联调或宿主机前端预构建。如果不自行构建镜像且不进行本地源码调试，则无需安装）
 
 ### 🔌 数据库与外部依赖服务
@@ -54,10 +55,19 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 > 无需事先手工建库。每个版本文件开始前都会再次确保目标库存在（已存在时可能打印无害 Warning，可忽略）。
 
 1.  **准备依赖（途径一需要）**：
+    Python 工具导入需要 `aiomysql`。如果尚未准备项目 Python 环境，建议使用与
+    `dev.sh` 一致的 Python 3.11 `.venv`：
     ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
+    uv python install 3.11
+    uv venv --python 3.11 .venv
+    uv pip install --python .venv/bin/python \
+      --default-index https://pypi.tuna.tsinghua.edu.cn/simple \
+      -r requirements.txt
+    source .venv/bin/activate
+    ```
+    如果之前已经成功执行过 `./dev.sh`，可直接激活已有环境后运行下面的导入脚本：
+    ```bash
+    source .venv/bin/activate
     ```
     MySQL 建议使用 **v8.0+**，字符集以 `utf8mb4` 为准。
 
@@ -155,10 +165,19 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 > 但仍须**显式输入目标库名称**；禁止使用 `postgres`、`template0`、`template1` 作为应用库。
 
 1.  **准备依赖**：
+    Python 工具导入需要 `psycopg`。如果尚未准备项目 Python 环境，建议使用与
+    `dev.sh` 一致的 Python 3.11 `.venv`：
     ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
+    uv python install 3.11
+    uv venv --python 3.11 .venv
+    uv pip install --python .venv/bin/python \
+      --default-index https://pypi.tuna.tsinghua.edu.cn/simple \
+      -r requirements.txt
+    source .venv/bin/activate
+    ```
+    如果之前已经成功执行过 `./dev.sh`，可直接激活已有环境后运行下面的导入脚本：
+    ```bash
+    source .venv/bin/activate
     ```
     PostgreSQL 目标实例建议使用 **v14+**。
 
@@ -314,7 +333,7 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
             # 若库中已有旧 admin，先删除再创建
             # mysql ... -e "DELETE FROM ai_agent_users WHERE user_name = 'admin';"
 
-            source venv/bin/activate   # 或 .venv
+            source .venv/bin/activate
             export PYTHONPATH=.
             python scripts/create_admin_user.py
             # 也可指定用户名：python scripts/create_admin_key.py <username>
@@ -352,35 +371,29 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 ### 3.4 方案 B：本地源码开发调试部署
 适合日常编写业务逻辑、开发调试新功能时采用。
 
-#### 1. 环境准备 (Python 3.11+)
-平台要求至少 **Python 3.11** 运行环境。推荐使用 `uv` 极速管理 Python 版本与虚拟环境：
+#### 1. 环境准备 (Python 3.11)
+平台运行基线为 **Python 3.11**。本地源码开发无需提前安装 Python 或 uv，首次执行
+`./dev.sh` 时脚本会自动检测/安装 uv、准备 Python 3.11、创建项目根目录下的 `.venv`，
+并按 `requirements.txt` 安装后端依赖。
+
+启动前仍需准备以下内容：
 
 ```bash
-# 1. 安装 Python 3.11（若系统已有 Python 3.11+ 可跳过）
-uv python install 3.11
-
-# 2. 进入项目根目录
-cd nanzi-ai-agent-platform
-
-# 3. 创建并激活虚拟环境
-uv venv --python 3.11 .venv
-source .venv/bin/activate
-
-# 4. 验证 Python 版本
-python --version  # 应输出 Python 3.11.x
-
-# 5. 升级 pip 并安装后端依赖（推荐带上国内阿里源加速）
-pip install -U pip -i https://mirrors.aliyun.com/pypi/simple/
-pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
-
-# 6. 配置本地环境变量
+# 复制并编辑环境变量文件
 cp env.example .env
-# 编辑 .env：选择配置 MySQL 或 PostgreSQL，并配置 Redis；ENCRYPTION_KEY 若改动需重新创建 admin
+# 编辑 .env：选择 MySQL 或 PostgreSQL，并配置 Redis、ENCRYPTION_KEY 等
+
+# 确保数据库结构已经按上面的 MySQL/PostgreSQL 章节初始化
+# 确保本机已安装 Node.js/npm；dev.sh 会自动安装前端 npm 依赖
 ```
+
+首次运行需要联网下载 uv、Python 3.11 和 Python 依赖。若需要调整 PyPI 镜像，可设置
+`PYPI_INDEX_URL`；默认使用清华 PyPI 镜像。
 
 #### 2. 一键编译与启动 (`./dev.sh`)
 
-平台提供了高度集成的启动工具 [`dev.sh`](dev.sh)，内置**前端依赖自动感知安装**、**动态读取 .env 端口**与**旧进程自动清理**：
+平台提供了高度集成的启动工具 [`dev.sh`](dev.sh)，内置**Python 3.11 环境与后端依赖自动准备**、
+**前端依赖自动感知安装**、**动态读取 `.env` 端口**与**旧进程自动清理**：
 
 ```bash
 # 用法 1：前台调试启动（实时查看前端构建与后端日志，按 Ctrl+C 退出）
@@ -390,29 +403,44 @@ cp env.example .env
 ./dev.sh -d
 ```
 
-**后台启动示例输出 (`./dev.sh -d`)：**
+**启动输出示例 (`./dev.sh`，后续启动且依赖未变化)：**
 ```text
 ==================================================
        NanZi AI 开源智能体平台 · 本地开发启动工具         
        用法: ./dev.sh (前台调试) | ./dev.sh -d (后台常驻) 
 ==================================================
 
-🛑 [1/3] 正在检查并停止旧服务 (Port 8001)...
+启动环境信息
+       ➜ uv: uv <当前版本>
+       ➜ Python 目标版本: 3.11
+       ➜ 虚拟环境: .venv
+       ➜ PyPI 镜像: https://pypi.tuna.tsinghua.edu.cn/simple
+       ➜ DATABASE_TYPE: mysql (effective: mysql)
+       ➜ 数据库地址: localhost:3306/nanzi_ai_agent_platform
+       ➜ Redis 地址: localhost:6379/2
+
+🧰 [1/4] 正在准备 uv、Python 3.11 和后端依赖...
+✅ 后端依赖未变化，跳过安装
+
+🛑 [2/4] 正在检查并停止旧服务 (Port 8001)...
 ✅ 端口 8001 空闲，无需停止
 
-🚀 [2/3] 正在编译前端 (Building Frontend)...
+🚀 [3/4] 正在编译前端 (Building Frontend)...
 ✓ built in 55.83s
 ✅ 前端编译成功！
 
-🔥 [3/3] 正在后台启动后端服务 (Starting Backend in Daemon Mode)...
-✅ 后端服务已在后台启动！
-   ➜ 服务 PID: 75039
-   ➜ 访问端口: http://0.0.0.0:8001
-   ➜ 日志文件: server.log
-   ➜ 查看实时日志命令: tail -f server.log
+🔥 [4/4] 正在启动后端服务 (Starting Backend in Foreground)...
+提示：您将在此看到实时运行日志，按 Ctrl+C 可停止服务。
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 ```
 
-*(若需手动分步启动，也可进入 `frontend` 执行 `npm install && npm run dev`，并在根目录执行 `uvicorn app.main:app --reload --port 8001`)*
+顶部的数据库和 Redis 信息来自当前 shell/`.env` 配置，仅用于确认脚本将采用的连接类型和
+地址，不执行数据库或 Redis 连通性测试；数据库和 Redis 密码不会单独打印。
+
+*(若需手动分步启动，也可使用 `.venv/bin/python -m uvicorn app.main:app --reload --port 8001`，
+并进入 `frontend` 执行 `npm install && npm run dev`。)*
+
+上述手动命令使用默认端口 `8001`；一键脚本会读取 `.env` 中的 `API_SERVICE_PORT`，如需修改端口请以环境文件配置为准。
 
 ---
 
@@ -464,13 +492,23 @@ cp env.example .env
 
 ### Q3: 运行表初始化脚本时报错缺少 `aiomysql` 或 `psycopg`
 *   **原因**：未激活 Python 虚拟环境，或未在此虚拟环境下正确运行依赖安装。
-*   **解决**：必须先在根目录下激活虚拟环境（`source venv/bin/activate`），运行 `pip install -r requirements.txt`，确保 MySQL 导入所需的 `aiomysql` 或 PostgreSQL 导入所需的 `psycopg` 已安装。
+*   **解决**：如果之前已经成功执行过 `./dev.sh`，执行 `source .venv/bin/activate` 后再运行数据库脚本；
+    仅初始化数据库、不希望启动服务时，可手动执行以下命令准备环境：
+    ```bash
+    uv python install 3.11
+    uv venv --python 3.11 .venv
+    uv pip install --python .venv/bin/python \
+      --default-index https://pypi.tuna.tsinghua.edu.cn/simple \
+      -r requirements.txt
+    source .venv/bin/activate
+    ```
+    然后再执行数据库脚本。MySQL 导入需要 `aiomysql`，PostgreSQL 导入需要 `psycopg`。
 
 ### Q4: 改了 `ENCRYPTION_KEY` 后，默认 admin API Key 登录失败 / 后台解不开 Key
 *   **原因**：MySQL 的 `env.example` 默认 `ENCRYPTION_KEY` 与 `INIT-USER-ADMIN.sql` 里预置的 admin 密文是一对的。改了密钥后，预置密文无法再用新密钥解密；PostgreSQL 本身不使用固定预置 Key，但已经创建的凭证同样依赖当时的密钥。
 *   **解决**：MySQL 不要再依赖 `INIT-USER-ADMIN.sql` 中的默认 Key，PostgreSQL 则直接使用对应目录的管理员脚本按当前配置重新生成：
     ```bash
-    source venv/bin/activate
+    source .venv/bin/activate
     export PYTHONPATH=.
     python scripts/create_admin_user.py
     # PostgreSQL 也可以直接使用：

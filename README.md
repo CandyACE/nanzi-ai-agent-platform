@@ -12,7 +12,7 @@
 
 
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![AgentScope](https://img.shields.io/badge/AgentScope-2.x-7C3AED.svg)](https://github.com/agentscope-ai/agentscope) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![AgentScope](https://img.shields.io/badge/AgentScope-2.x-7C3AED.svg)](https://github.com/agentscope-ai/agentscope) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 > 📖 **实战连载**：[NanZi 开源智能体平台实战连载](https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzU3NzAwOTA0NA==&action=getalbum&album_id=4613921118301732865#wechat_redirect)（架构 · 安装 · 智能体配置 · ChatBI · 工具箱 · MCP）
 
@@ -305,7 +305,11 @@ cd docker
 ```bash
 ./dev.sh
 ```
-该脚本会自动停止旧的 8001 进程、编译前端（跳过类型检查以提速）并以前台 `reload` 模式拉起后端 FastAPI 服务，您可以在当前终端中实时查看联调日志与输出。
+该脚本首次运行会自动检测并安装 `uv`，准备 Python 3.11、创建 `.venv` 并安装后端依赖；后续仅在 `requirements.txt` 变化时更新依赖。随后脚本会停止旧的 `API_SERVICE_PORT` 进程（默认端口 `8001`）、编译前端（跳过类型检查以提速）并以前台 `reload` 模式拉起后端 FastAPI 服务，您可以在当前终端中实时查看联调日志与输出。
+
+启动顶部还会打印 uv、Python 目标版本、虚拟环境、PyPI 镜像、`DATABASE_TYPE`、数据库地址和 Redis 地址等配置摘要；数据库和 Redis 密码不会单独打印。这些信息仅用于确认当前配置，不代表数据库或 Redis 连通性测试已经通过。
+
+一键脚本仍需要本机具备 Node.js/npm，并且需要提前准备 `.env`、数据库和 Redis；uv、Python 与 Python 依赖的首次下载需要网络。若 PyPI 镜像需要调整，可通过 `PYPI_INDEX_URL` 覆盖默认的清华镜像地址。
 
 #### 2. 工具脚本对比
 项目提供了以下三个工具以适应不同的开发和部署场景：
@@ -319,16 +323,20 @@ cd docker
 #### 3. 传统分步手动启动
 如果您需要分步微调前后端，也可以执行传统命令：
 ```bash
-# 1. 准备环境
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+# 1. 准备与 dev.sh 相同的 Python 环境
+uv python install 3.11
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # 2. 启动后端
-uvicorn app.main:app --reload --port 8001
+# 手动示例使用默认端口 8001；一键脚本会读取 .env 中的 API_SERVICE_PORT
+.venv/bin/python -m uvicorn app.main:app --reload --port 8001
 
 # 3. 启动前端
 cd frontend && npm install && npm run dev
 ```
+
+已有传统 `venv` 环境时，仍可手动执行 `python -m venv venv`、激活该环境并使用 `pip install -r requirements.txt`；一键脚本统一使用项目根目录下的 `.venv` Python 3.11 环境。
 
 ---
 

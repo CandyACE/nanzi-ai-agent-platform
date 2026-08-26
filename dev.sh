@@ -1,5 +1,10 @@
 #!/bin/bash
 set -e
+set -o pipefail
+
+# 确保从任意工作目录执行时都以项目根目录为基准
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT"
 
 # 颜色定义
 GREEN='\033[0;32m'
@@ -7,6 +12,143 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
+
+# Python 环境配置
+PYTHON_VERSION="3.11"
+VENV_DIR=".venv"
+VENV_PYTHON="${VENV_DIR}/bin/python"
+REQUIREMENTS_FILE="requirements.txt"
+REQUIREMENTS_HASH_FILE="${VENV_DIR}/.requirements.hash"
+PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+UV_CMD=""
+
+# 读取 .env 中的非敏感配置值。仅用于打印连接类型和地址，不读取密码字段。
+read_env_value() {
+    key="$1"
+    if [ ! -f ".env" ]; then
+        return 0
+    fi
+
+    grep -E "^[[:space:]]*${key}[[:space:]]*=" ".env" \
+        | tail -n 1 \
+        | cut -d '=' -f 2- \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' \
+        || true
+}
+
+redact_url() {
+    printf '%s' "$1" | sed -E 's#(https?://)([^/@]+@)#\1***@#'
+}
+
+# 查找已安装的 uv。官方安装器默认路径不一定已进入当前 shell 的 PATH，
+# 因此额外检查常见的用户级安装目录。
+find_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        UV_CMD="$(command -v uv)"
+        return 0
+    fi
+
+    for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        if [ -x "$candidate" ]; then
+            UV_CMD="$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# uv 不依赖 Python；若用户未安装 uv，则通过官方安装入口完成引导。
+ensure_uv() {
+    if find_uv; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}📦 未检测到 uv，正在通过官方安装脚本自动安装...${NC}"
+    if command -v curl >/dev/null 2>&1; then
+        if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+            echo -e "${RED}❌ uv 自动安装失败，请检查网络后重试${NC}" >&2
+            return 1
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if ! wget -qO- https://astral.sh/uv/install.sh | sh; then
+            echo -e "${RED}❌ uv 自动安装失败，请检查网络后重试${NC}" >&2
+            return 1
+        fi
+    else
+        echo -e "${RED}❌ 未找到 curl 或 wget，无法自动安装 uv；请先安装其中一个工具${NC}" >&2
+        return 1
+    fi
+
+    if ! find_uv; then
+        echo -e "${RED}❌ uv 安装完成但当前脚本无法定位 uv，请重新打开终端后重试${NC}" >&2
+        return 1
+    fi
+
+    echo -e "${GREEN}✅ uv 已准备完成：${UV_CMD}${NC}"
+}
+
+# 准备 Python 3.11 虚拟环境及 requirements.txt 依赖。
+prepare_python_environment() {
+    if [ ! -f "$REQUIREMENTS_FILE" ]; then
+        echo -e "${RED}❌ 错误：未找到 ${REQUIREMENTS_FILE}${NC}" >&2
+        return 1
+    fi
+
+    ensure_uv
+    echo -e "\n${YELLOW}🧰 [1/4] 正在准备 uv、Python ${PYTHON_VERSION} 和后端依赖...${NC}"
+
+    current_version=""
+    if [ -x "$VENV_PYTHON" ]; then
+        current_version=$("$VENV_PYTHON" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>/dev/null || true)
+    fi
+
+    if [ "$current_version" != "$PYTHON_VERSION" ]; then
+        "$UV_CMD" python install "$PYTHON_VERSION"
+
+        if [ -L "$VENV_DIR" ]; then
+            echo -e "${RED}❌ 错误：${VENV_DIR} 是符号链接，拒绝自动清理${NC}" >&2
+            return 1
+        fi
+
+        if [ -e "$VENV_DIR" ]; then
+            echo -e "${YELLOW}♻️ 检测到 ${VENV_DIR} 不是 Python ${PYTHON_VERSION}，正在安全重建...${NC}"
+            "$UV_CMD" venv --clear --python "$PYTHON_VERSION" "$VENV_DIR"
+        else
+            echo -e "${YELLOW}🐍 正在创建 Python ${PYTHON_VERSION} 虚拟环境...${NC}"
+            "$UV_CMD" venv --python "$PYTHON_VERSION" "$VENV_DIR"
+        fi
+    else
+        echo -e "${GREEN}✅ 已复用 Python ${PYTHON_VERSION} 虚拟环境${NC}"
+    fi
+
+    if [ ! -x "$VENV_PYTHON" ]; then
+        echo -e "${RED}❌ Python 虚拟环境创建失败：未找到 ${VENV_PYTHON}${NC}" >&2
+        return 1
+    fi
+
+    current_version=$("$VENV_PYTHON" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>/dev/null || true)
+    if [ "$current_version" != "$PYTHON_VERSION" ]; then
+        echo -e "${RED}❌ Python 版本校验失败：期望 ${PYTHON_VERSION}，实际 ${current_version:-未知}${NC}" >&2
+        return 1
+    fi
+
+    current_hash=$(cksum "$REQUIREMENTS_FILE" | awk '{print $1 ":" $2}')
+    last_hash=""
+    if [ -f "$REQUIREMENTS_HASH_FILE" ]; then
+        last_hash=$(cat "$REQUIREMENTS_HASH_FILE")
+    fi
+
+    if [ "$current_hash" != "$last_hash" ]; then
+        echo -e "${YELLOW}📦 正在使用清华 PyPI 镜像安装后端依赖...${NC}"
+        "$UV_CMD" pip install --python "$VENV_PYTHON" --default-index "$PYPI_INDEX_URL" -r "$REQUIREMENTS_FILE"
+        printf '%s\n' "$current_hash" > "$REQUIREMENTS_HASH_FILE"
+        echo -e "${GREEN}✅ 后端依赖安装完成${NC}"
+    else
+        "$UV_CMD" pip check --python "$VENV_PYTHON"
+        echo -e "${GREEN}✅ 后端依赖未变化且环境检查通过，跳过安装${NC}"
+    fi
+}
 
 # 启动模式解析（默认前台，传入 -d 或 --daemon 为后台）
 DAEMON_MODE=false
@@ -21,6 +163,17 @@ echo -e "${BLUE}       NanZi AI 开源智能体平台 · 本地开发启动工�
 echo -e "${BLUE}       用法: ./dev.sh (前台调试) | ./dev.sh -d (后台常驻) ${NC}"
 echo -e "${BLUE}==================================================${NC}"
 
+echo -e "${BLUE}       启动环境信息${NC}"
+if find_uv; then
+    UV_VERSION=$("$UV_CMD" --version 2>/dev/null || echo "版本未知")
+else
+    UV_VERSION="未安装（启动时自动安装）"
+fi
+echo -e "${BLUE}       ➜ uv: ${UV_VERSION}${NC}"
+echo -e "${BLUE}       ➜ Python 目标版本: ${PYTHON_VERSION}${NC}"
+echo -e "${BLUE}       ➜ 虚拟环境: ${VENV_DIR}${NC}"
+echo -e "${BLUE}       ➜ PyPI 镜像: $(redact_url "$PYPI_INDEX_URL")${NC}"
+
 # 读取 .env 配置中的端口，默认 8001
 PORT=8001
 if [ -f ".env" ]; then
@@ -30,9 +183,74 @@ if [ -f ".env" ]; then
     fi
 fi
 
-# 1. 停止旧服务
-echo -e "\n${YELLOW}🛑 [1/3] 正在检查并停止旧服务 (Port ${PORT})...${NC}"
-PID=$(lsof -ti:${PORT} || true)
+# 打印实际采用的数据库/Redis 连接位置，但不输出用户名、密码等敏感信息。
+print_runtime_environment() {
+    DATABASE_TYPE_CONFIGURED="${DATABASE_TYPE:-$(read_env_value DATABASE_TYPE)}"
+    if [ -z "$DATABASE_TYPE_CONFIGURED" ]; then
+        DATABASE_TYPE_CONFIGURED="mysql"
+    fi
+
+    DATABASE_TYPE_NORMALIZED=$(printf '%s' "$DATABASE_TYPE_CONFIGURED" | tr '[:upper:]' '[:lower:]')
+    case "$DATABASE_TYPE_NORMALIZED" in
+        postgres|postgresql|pg)
+            DATABASE_TYPE_EFFECTIVE="postgresql"
+            DATABASE_HOST="${POSTGRES_HOST:-$(read_env_value POSTGRES_HOST)}"
+            DATABASE_PORT="${POSTGRES_PORT:-$(read_env_value POSTGRES_PORT)}"
+            DATABASE_NAME="${POSTGRES_DB:-$(read_env_value POSTGRES_DB)}"
+            DATABASE_HOST="${DATABASE_HOST:-localhost}"
+            DATABASE_PORT="${DATABASE_PORT:-5432}"
+            ;;
+        mysql|mariadb)
+            DATABASE_TYPE_EFFECTIVE="mysql"
+            DATABASE_HOST="${MYSQL_HOST:-$(read_env_value MYSQL_HOST)}"
+            DATABASE_PORT="${MYSQL_PORT:-$(read_env_value MYSQL_PORT)}"
+            DATABASE_NAME="${MYSQL_DB:-$(read_env_value MYSQL_DB)}"
+            DATABASE_HOST="${DATABASE_HOST:-未配置}"
+            DATABASE_PORT="${DATABASE_PORT:-3306}"
+            ;;
+        *)
+            DATABASE_TYPE_EFFECTIVE="unsupported"
+            DATABASE_HOST="未配置"
+            DATABASE_PORT="未配置"
+            DATABASE_NAME="未配置"
+            ;;
+    esac
+    DATABASE_NAME="${DATABASE_NAME:-未配置}"
+
+    REDIS_HOST_CONFIGURED="${REDIS_HOST:-$(read_env_value REDIS_HOST)}"
+    REDIS_PORT_CONFIGURED="${REDIS_PORT:-$(read_env_value REDIS_PORT)}"
+    REDIS_DB_CONFIGURED="${REDIS_DB:-$(read_env_value REDIS_DB)}"
+    REDIS_ENABLE_CONFIGURED="${REDIS_ENABLE:-$(read_env_value REDIS_ENABLE)}"
+    REDIS_HOST_CONFIGURED="${REDIS_HOST_CONFIGURED:-未配置}"
+    REDIS_PORT_CONFIGURED="${REDIS_PORT_CONFIGURED:-6379}"
+    REDIS_DB_CONFIGURED="${REDIS_DB_CONFIGURED:-0}"
+    REDIS_ENABLE_CONFIGURED=$(printf '%s' "${REDIS_ENABLE_CONFIGURED:-true}" | tr '[:upper:]' '[:lower:]')
+
+    echo -e "${BLUE}       ➜ DATABASE_TYPE: ${DATABASE_TYPE_CONFIGURED} (effective: ${DATABASE_TYPE_EFFECTIVE})${NC}"
+    echo -e "${BLUE}       ➜ 数据库地址: ${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}${NC}"
+    if [ "$REDIS_ENABLE_CONFIGURED" = "false" ] || [ "$REDIS_ENABLE_CONFIGURED" = "0" ] || [ "$REDIS_ENABLE_CONFIGURED" = "no" ] || [ "$REDIS_ENABLE_CONFIGURED" = "off" ]; then
+        echo -e "${BLUE}       ➜ Redis 地址: 已禁用${NC}"
+    else
+        echo -e "${BLUE}       ➜ Redis 地址: ${REDIS_HOST_CONFIGURED}:${REDIS_PORT_CONFIGURED}/${REDIS_DB_CONFIGURED}${NC}"
+    fi
+}
+
+print_runtime_environment
+
+# 1. 准备 Python 环境
+prepare_python_environment
+
+# 2. 停止旧服务
+echo -e "\n${YELLOW}🛑 [2/4] 正在检查并停止旧服务 (Port ${PORT})...${NC}"
+if ! printf '%s' "$PORT" | grep -Eq '^[0-9]+$' || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    echo -e "${RED}❌ API_SERVICE_PORT 无效：${PORT}（必须是 1-65535）${NC}" >&2
+    exit 1
+fi
+if ! command -v lsof >/dev/null 2>&1; then
+    echo -e "${RED}❌ 未找到 lsof，无法安全检查端口占用${NC}" >&2
+    exit 1
+fi
+PID=$(lsof -ti:"${PORT}")
 if [ -n "$PID" ]; then
     kill -9 $PID
     echo -e "${GREEN}✅ 已停止旧进程 (PID: $PID)${NC}"
@@ -40,10 +258,19 @@ else
     echo -e "${GREEN}✅ 端口 ${PORT} 空闲，无需停止${NC}"
 fi
 
-# 2. 编译前端
-echo -e "\n${YELLOW}🚀 [2/3] 正在编译前端 (Building Frontend)...${NC}"
+# 3. 编译前端
+echo -e "\n${YELLOW}🚀 [3/4] 正在编译前端 (Building Frontend)...${NC}"
 if [ -d "frontend" ]; then
     cd frontend
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo -e "${RED}❌ 错误：未找到 npm，请先安装 Node.js/npm${NC}" >&2
+        exit 1
+    fi
+    if ! command -v npx >/dev/null 2>&1; then
+        echo -e "${RED}❌ 错误：未找到 npx，请先安装 Node.js/npm${NC}" >&2
+        exit 1
+    fi
 
     # 自动检测前端依赖变更或缺失并执行安装
     CURRENT_HASH=$(cksum package.json 2>/dev/null || true)
@@ -77,13 +304,8 @@ else
     exit 1
 fi
 
-# 3. 启动后端
-# 确定 Python 环境
-if [ -f "venv/bin/python" ]; then
-    PYTHON_CMD="venv/bin/python"
-else
-    PYTHON_CMD="python3"
-fi
+# 4. 启动后端
+PYTHON_CMD="$VENV_PYTHON"
 
 # 热重载监听目录设置
 RELOAD_ARGS=(--reload --reload-dir app)
@@ -92,8 +314,8 @@ if [ -d "architech" ]; then
 fi
 
 if [ "$DAEMON_MODE" = true ]; then
-    echo -e "\n${YELLOW}🔥 [3/3] 正在后台启动后端服务 (Starting Backend in Daemon Mode)...${NC}"
-    nohup $PYTHON_CMD -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" "${RELOAD_ARGS[@]}" > server.log 2>&1 &
+    echo -e "\n${YELLOW}🔥 [4/4] 正在后台启动后端服务 (Starting Backend in Daemon Mode)...${NC}"
+    nohup "$PYTHON_CMD" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" "${RELOAD_ARGS[@]}" > server.log 2>&1 &
     SERVER_PID=$!
     echo -e "${GREEN}✅ 后端服务已在后台启动！${NC}"
     echo -e "${BLUE}   ➜ 服务 PID: ${SERVER_PID}${NC}"
@@ -101,8 +323,8 @@ if [ "$DAEMON_MODE" = true ]; then
     echo -e "${BLUE}   ➜ 日志文件: server.log${NC}"
     echo -e "${YELLOW}   ➜ 查看实时日志命令: tail -f server.log${NC}"
 else
-    echo -e "\n${YELLOW}🔥 [3/3] 正在前台启动后端服务 (Starting Backend on Port ${PORT} in Foreground)...${NC}"
+    echo -e "\n${YELLOW}🔥 [4/4] 正在前台启动后端服务 (Starting Backend on Port ${PORT} in Foreground)...${NC}"
     echo -e "${BLUE}提示：您将在此看到实时运行日志，按 Ctrl+C 可停止服务；后台运行请使用: ./dev.sh -d${NC}"
     echo "------------------------------------------------"
-    $PYTHON_CMD -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" "${RELOAD_ARGS[@]}"
+    "$PYTHON_CMD" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" "${RELOAD_ARGS[@]}"
 fi

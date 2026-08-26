@@ -33,13 +33,20 @@ CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 CO
 平台提供了引导式脚本来自动扫描并顺序执行所有 `V*.sql`。您可以根据环境选择以下两种运行途径之一：
 
 #### 💡 选项 A：使用 Python 虚拟环境导入（推荐）
-需要在本地准备好 Python3 虚拟环境并安装 `aiomysql` 依赖：
+需要在本地准备好 Python 3.11 虚拟环境并安装 `aiomysql` 依赖。推荐使用与
+`dev.sh` 一致的项目 `.venv`：
 1. 确保在项目根目录下并激活了虚拟环境：
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
+   uv python install 3.11
+   uv venv --python 3.11 .venv
+   uv pip install --python .venv/bin/python \
+     --default-index https://pypi.tuna.tsinghua.edu.cn/simple \
+     -r requirements.txt
+   source .venv/bin/activate
    ```
+   如果之前已经成功执行过 `./dev.sh`，它已经完成上述环境准备，直接执行
+   `source .venv/bin/activate` 即可；如果只是初始化数据库而不启动服务，请使用上面的
+   uv 命令准备环境。
 2. 运行引导脚本（提示权限不足可先执行 `chmod +x db-prod/apply-sql.sh`）：
    ```bash
    ./db-prod/apply-sql.sh
@@ -92,7 +99,10 @@ CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 CO
 
 ### Q1: 运行脚本时报错 `ModuleNotFoundError: No module named 'aiomysql'`
 **原因**：在使用 `./db-prod/apply-sql.sh` 时，未在 Python 虚拟环境中安装所需的依赖。
-**解决**：您可以按提示执行 `pip install -r requirements.txt` 安装相关依赖；或者，如果您不想配置 Python，可直接运行免 Python 依赖的 `./db-prod/apply-sql-native.sh` 原生脚本进行导入。
+**解决**：如果之前已经成功执行过 `./dev.sh`，执行 `source .venv/bin/activate` 后再运行
+`./db-prod/apply-sql.sh`。如果只需要导入数据库而不希望启动服务，可手动按上面的 uv 命令
+准备 `.venv`；如果不想配置 Python，也可直接运行免 Python 依赖的
+`./db-prod/apply-sql-native.sh` 原生脚本进行导入。
 
 ### Q2: 提示 `幂等跳过（可忽略…）` / 旧版 `Skipping (already applied)`，里面还有 `ERROR 1061` 等字样
 **原因**：迁移脚本具有幂等性设计。表/字段/索引已存在时，MySQL 会返回对应错误码，脚本识别后主动跳过，避免覆盖已有结构。日志里的 `ERROR …` 是 MySQL 原始提示被引用展示，**不代表本次导入失败**。
