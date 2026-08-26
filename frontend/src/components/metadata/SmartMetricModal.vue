@@ -27,8 +27,22 @@ const saving = ref(false)
 const loadingTables = ref(false)
 const recommendations = ref<Metric[]>([])
 const selectedIndices = ref<number[]>([])
+const selectedRecommendationIndex = ref<number | null>(null)
 const currentTraceId = ref('')
 const showLogs = ref(false)
+
+const selectedRecommendation = computed(() => {
+  if (selectedRecommendationIndex.value === null) return null
+  return recommendations.value[selectedRecommendationIndex.value] || null
+})
+
+const openRecommendationDetail = (index: number) => {
+  selectedRecommendationIndex.value = index
+}
+
+const closeRecommendationDetail = () => {
+  selectedRecommendationIndex.value = null
+}
 
 // Custom prompt and table selection state
 const internalTables = ref<TableItem[]>([])
@@ -230,6 +244,7 @@ const handleRecommend = async () => {
   analyzing.value = true
   recommendations.value = []
   selectedIndices.value = []
+  selectedRecommendationIndex.value = null
   currentTraceId.value = ''
   startTimer()
   abortController = new AbortController()
@@ -317,12 +332,14 @@ const handleSave = async () => {
 const handleBackToConfig = () => {
   recommendations.value = []
   selectedIndices.value = []
+  selectedRecommendationIndex.value = null
 }
 
 const handleClose = () => {
   if (analyzing.value || saving.value) return
   recommendations.value = []
   selectedIndices.value = []
+  selectedRecommendationIndex.value = null
   showHelpModal.value = false
   emit('close')
 }
@@ -603,6 +620,19 @@ const handleClose = () => {
               class="relative bg-white border-2 rounded-2xl p-5 transition-all cursor-pointer group hover:shadow-xl"
               :class="selectedIndices.includes(idx) ? 'border-indigo-500 bg-indigo-50/20' : 'border-transparent shadow-sm hover:border-gray-200'"
             >
+              <button
+                type="button"
+                @click.stop="openRecommendationDetail(idx)"
+                class="absolute right-14 top-4 inline-flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-600 transition-colors hover:border-indigo-200 hover:bg-indigo-100"
+                title="查看指标完整详情"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0Z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7Z" />
+                </svg>
+                <span class="hidden sm:inline">查看详情</span>
+              </button>
+
               <!-- Checkbox Overlay -->
               <div class="absolute top-4 right-4">
                 <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors"
@@ -660,6 +690,55 @@ const handleClose = () => {
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Recommendation detail modal -->
+  <div
+    v-if="selectedRecommendation"
+    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+    @click.self="closeRecommendationDetail"
+  >
+    <div class="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl">
+      <div class="flex items-start justify-between border-b border-gray-100 bg-gradient-to-r from-indigo-50/70 to-white px-6 py-5">
+        <div class="min-w-0 pr-4">
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-600">推荐指标详情</p>
+          <h3 class="mt-1 text-lg font-bold text-gray-900">{{ selectedRecommendation.display_name }}</h3>
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+            <code class="font-mono">#{{ selectedRecommendation.name }}</code>
+            <span v-if="selectedRecommendation.unit" class="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{{ selectedRecommendation.unit }}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          @click="closeRecommendationDetail"
+          class="rounded-full p-2 text-gray-400 transition-colors hover:bg-white hover:text-gray-700"
+          title="关闭详情"
+        >
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 6 12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+
+      <div class="space-y-5 overflow-y-auto p-6 text-sm">
+        <section>
+          <h4 class="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">业务描述</h4>
+          <p class="rounded-xl border border-gray-100 bg-gray-50 p-4 leading-6 text-gray-700">{{ selectedRecommendation.description || '暂无描述' }}</p>
+        </section>
+        <section>
+          <h4 class="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">计算逻辑 / SQL</h4>
+          <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-gray-950 p-4 font-mono text-xs leading-6 text-emerald-300">{{ selectedRecommendation.calculation_logic || '--' }}</pre>
+        </section>
+        <section v-if="selectedRecommendation.tags && selectedRecommendation.tags.length">
+          <h4 class="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">标签</h4>
+          <div class="flex flex-wrap gap-2">
+            <span v-for="tag in selectedRecommendation.tags" :key="tag" class="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs text-blue-700">{{ tag }}</span>
+          </div>
+        </section>
+      </div>
+
+      <div class="flex justify-end border-t border-gray-100 bg-gray-50/70 px-6 py-3">
+        <button type="button" @click="closeRecommendationDetail" class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">关闭</button>
+      </div>
     </div>
   </div>
 

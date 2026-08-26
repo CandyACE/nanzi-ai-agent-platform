@@ -1,5 +1,76 @@
 <template>
   <div
+    v-if="variant === 'list'"
+    class="group/item flex min-w-0 items-center gap-3 rounded-lg border border-blue-100/60 bg-white p-2.5 shadow-xs dark:border-blue-900/30 dark:bg-gray-900/40"
+  >
+    <button
+      type="button"
+      class="min-w-0 flex-1 text-left transition-colors hover:text-blue-600"
+      :aria-label="detailTitle"
+      @click="emit('detail', report)"
+    >
+      <span class="block truncate text-xs font-bold text-gray-800 dark:text-gray-200" :title="report.title">
+        {{ report.title }}
+      </span>
+      <span class="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">
+        <span class="truncate">{{ report.is_owner ? '我的报表' : `来自 ${report.owner_name || '共享用户'}` }}</span>
+        <span
+          v-if="!report.is_owner || report.run_permission_status === 'denied'"
+          class="shrink-0 rounded px-1.5 py-0.5 font-bold"
+          :class="permissionClass"
+          :title="report.run_permission_message || permissionLabel"
+        >
+          {{ permissionLabel }}
+        </span>
+        <span v-if="report.status === 'error'" class="shrink-0 text-red-500">最近运行失败</span>
+        <span v-else-if="report.last_success_at" class="shrink-0 text-emerald-500">已运行</span>
+        <span v-if="report.subscription_status" class="shrink-0 text-emerald-600 dark:text-emerald-300">订阅中</span>
+        <span v-for="tag in (report.tags || []).slice(0, 2)" :key="tag" class="hidden shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-blue-600 dark:bg-blue-950/30 dark:text-blue-300 sm:inline-block">
+          {{ tag }}
+        </span>
+      </span>
+    </button>
+    <div class="hidden shrink-0 text-[10px] text-gray-400 dark:text-gray-500 sm:block">
+      <div>最近运行：{{ recentRunLabel }}</div>
+      <div class="mt-1">运行次数：{{ userRunCount }}</div>
+    </div>
+    <div class="flex shrink-0 items-center gap-1 border-l border-blue-50 pl-2 text-gray-400 dark:border-blue-950/20">
+      <button
+        type="button"
+        class="inline-flex min-h-8 items-center gap-1 rounded-md px-1.5 text-[10px] font-semibold transition-colors"
+        :class="isDisabled ? 'cursor-not-allowed text-gray-300 dark:text-gray-600' : 'cursor-pointer hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40'"
+        :disabled="isDisabled"
+        :title="executeTitle"
+        @click.stop="emit('execute', report)"
+      >
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 01-18 0z" />
+        </svg>
+        <span class="hidden lg:inline">运行</span>
+      </button>
+      <button
+        type="button"
+        class="inline-flex min-h-8 items-center rounded-md px-1.5 text-[10px] font-semibold text-indigo-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/40"
+        title="打开报表详情"
+        @click.stop="emit('detail', report)"
+      >
+        详情
+      </button>
+      <button
+        type="button"
+        class="inline-flex min-h-8 items-center rounded-md px-1.5 text-[10px] font-semibold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
+        title="更多操作"
+        @click.stop="toggleMoreMenu"
+      >
+        ⋯
+      </button>
+    </div>
+  </div>
+  <div
+    v-else
     class="group/item relative flex flex-col rounded-lg border border-blue-100/60 dark:border-blue-900/30 bg-white dark:bg-gray-900/40 hover:border-blue-300 dark:hover:border-blue-700/60 overflow-visible shadow-xs"
   >
     <button
@@ -214,7 +285,10 @@ import { computed, nextTick, ref } from "vue";
 const props = defineProps<{
   report: any;
   formatDate: (iso?: string | null) => string;
+  variant?: "card" | "list";
 }>();
+
+const variant = computed(() => props.variant || "card");
 
 const emit = defineEmits<{
   (event: "execute", report: any): void;

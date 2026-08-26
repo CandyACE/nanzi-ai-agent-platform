@@ -134,11 +134,13 @@ async def test_memory_service_get_history(mock_redis):
     ]
 
     def _lrange_side_effect(key, start, end):
-        # 模拟 Redis LRange 返回 [start, end]（含端点）区间，end == -1 表示到末尾
-        if end == -1 or end >= len(mock_data):
-            end = len(mock_data) - 1
+        # 模拟 Redis LRange 返回 [start, end]（含端点）区间，并支持负索引。
         if start < 0:
-            start = 0
+            start = max(len(mock_data) + start, 0)
+        if end < 0:
+            end = len(mock_data) + end
+        else:
+            end = min(end, len(mock_data) - 1)
         if start > end:
             return []
         return mock_data[start : end + 1]
@@ -158,7 +160,31 @@ async def test_memory_service_get_history(mock_redis):
         # 2. Fetch with custom limit (2): Redis 端取窗口 [3,4]
         history_limited = await service.get_history("u1", "c1", limit=2)
         assert len(history_limited) == 2
-        assert history_limited[0]["content"] == "msg 3"
+    assert history_limited[0]["content"] == "msg 3"
+
+
+@pytest.mark.asyncio
+async def test_memory_service_get_history_uses_one_tail_range_without_llen(mock_redis):
+    service = MemoryService(max_history_turns=2)
+    mock_redis.llen.return_value = 0
+    mock_redis.lrange.return_value = [
+        json.dumps({"role": "user", "content": "msg 2"}),
+        json.dumps({"role": "assistant", "content": "msg 3"}),
+    ]
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+
+        history = await service.get_history("u1", "c1", limit=2, offset=1)
+
+    assert [item["content"] for item in history] == ["msg 2", "msg 3"]
+    mock_redis.lrange.assert_awaited_once_with(
+        "conversation:u1:c1:history",
+        -3,
+        -2,
+    )
+    mock_redis.llen.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_memory_service_clear_history(mock_redis):

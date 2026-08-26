@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -6,12 +7,38 @@ from app.services.ai.prompt_assembler import (
     NANZI_PROMPT_CACHE_BOUNDARY,
     PromptAssemblyInput,
     assemble_system_prompt,
+    resolve_prompt_assembler_flags,
     resolve_effective_prompt_tool_names,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.turn_decision import TurnDecision
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.mark.asyncio
+async def test_resolve_prompt_assembler_flags_reads_config_concurrently(monkeypatch):
+    active = 0
+    max_active = 0
+    values = {
+        "agent_prompt_cache_boundary_enabled": "true",
+        "agent_prompt_cache_reorder_enabled": "1",
+    }
+
+    async def fake_get(key, default=None):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0)
+            return values.get(key, default)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    assert await resolve_prompt_assembler_flags() == (True, True)
+    assert max_active == 2
 
 
 def _params(**overrides):

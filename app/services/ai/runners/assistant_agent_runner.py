@@ -1202,13 +1202,22 @@ class AssistantAgentRunner(BaseExecutor):
             DEFAULT_PING_PONG_THRESHOLD,
         )
 
-        enabled_raw = await ConfigService.get("agent_tool_loop_detection_enabled", "true")
-        threshold_raw = await ConfigService.get("agent_tool_loop_fuse_threshold", "3")
-        ping_pong_raw = await ConfigService.get(
-            "agent_tool_loop_ping_pong_threshold", str(DEFAULT_PING_PONG_THRESHOLD)
-        )
-        global_limit_raw = await ConfigService.get(
-            "agent_tool_loop_global_limit", str(DEFAULT_GLOBAL_LIMIT)
+        (
+            enabled_raw,
+            threshold_raw,
+            ping_pong_raw,
+            global_limit_raw,
+        ) = await asyncio.gather(
+            ConfigService.get("agent_tool_loop_detection_enabled", "true"),
+            ConfigService.get("agent_tool_loop_fuse_threshold", "3"),
+            ConfigService.get(
+                "agent_tool_loop_ping_pong_threshold",
+                str(DEFAULT_PING_PONG_THRESHOLD),
+            ),
+            ConfigService.get(
+                "agent_tool_loop_global_limit",
+                str(DEFAULT_GLOBAL_LIMIT),
+            ),
         )
         enabled = str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
         try:

@@ -187,6 +187,15 @@
         <div class="flex items-center gap-1.5">
           <button
             type="button"
+            class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-500 transition-colors hover:border-blue-200 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
+            title="切换报表视图"
+            aria-label="切换报表视图"
+            @click="setSavedReportViewMode(savedReportViewMode === 'card' ? 'list' : 'card')"
+          >
+            <span>{{ savedReportViewMode === 'card' ? '▦ 卡片' : '☷ 列表' }}</span>
+          </button>
+          <button
+            type="button"
             class="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs shadow-blue-500/20 transition-all cursor-pointer"
             @click="showCreateReportModal = true"
           >
@@ -309,12 +318,13 @@
         <p>暂无固化报表</p>
         <p class="text-[10px] text-gray-400">您可以点击上方「新建报表」手工编写 SQL，或在 ChatBI 查数后一键保存</p>
       </div>
-      <div v-else class="grid gap-2 max-h-[calc(100vh-280px)] overflow-y-auto pr-0.5 custom-scrollbar">
+      <div v-else :class="savedReportViewMode === 'list' ? 'space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto pr-0.5 custom-scrollbar' : 'grid gap-2 max-h-[calc(100vh-280px)] overflow-y-auto pr-0.5 custom-scrollbar'">
         <SavedReportItemCard
           v-for="report in filteredSavedReports"
           :key="report.id"
           :report="report"
           :format-date="formatDate"
+          :variant="savedReportViewMode"
           @execute="handleExecuteSavedReportClick"
           @edit="handleEditReport"
           @detail="openSavedReportDetail"
@@ -1926,6 +1936,25 @@ const showCreateReportModal = ref(false); // 默认收起
 const showFrequentCollapse = ref(false); // 我常问默认展开
 const savedReportScope = ref<"all" | "my" | "shared">("all");
 const selectedSavedReportTag = ref("");
+const SAVED_REPORT_VIEW_STORAGE_KEY = "nanzi_saved_report_panel_view";
+const isSavedReportViewMode = (value: string | null): value is "card" | "list" => value === "card" || value === "list";
+const readSavedReportViewMode = (): "card" | "list" => {
+  try {
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(SAVED_REPORT_VIEW_STORAGE_KEY) : null;
+    return isSavedReportViewMode(stored) ? stored : "list";
+  } catch {
+    return "list";
+  }
+};
+const savedReportViewMode = ref<"card" | "list">(readSavedReportViewMode());
+const setSavedReportViewMode = (mode: "card" | "list") => {
+  savedReportViewMode.value = mode;
+  try {
+    window.localStorage.setItem(SAVED_REPORT_VIEW_STORAGE_KEY, mode);
+  } catch {
+    // 隐私模式或禁用存储时仍保留当前会话内的切换结果。
+  }
+};
 type SavedReportSmartFilter = "all" | "pinned" | "favorite" | "subscribed" | "recent" | "frequent";
 const savedReportSmartFilter = ref<SavedReportSmartFilter>("all");
 const showSavedReportDetailDrawer = ref(false);

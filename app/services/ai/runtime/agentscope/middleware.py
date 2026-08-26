@@ -15,7 +15,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Union
 
 from agentscope.middleware import MiddlewareBase
 
-from .context_breakdown import estimate_context_breakdown
+from .context_breakdown import ModelInputTokenMemo, estimate_context_breakdown
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,8 @@ async def _clamp_completion_to_context(
     current_model: Any,
     messages: list,
     tools: list,
+    *,
+    input_tokens: int | None = None,
 ) -> tuple[Any, Any, int | None]:
     """在实际模型调用前按精确 AgentScope 估算保护总上下文预算。
 
@@ -95,16 +97,17 @@ async def _clamp_completion_to_context(
     if requested <= 0 or context_size <= 0:
         return parameters, None, None
 
-    try:
-        input_tokens = int(
-            await current_model.count_tokens(messages=messages, tools=tools)
-        )
-    except Exception as exc:
-        logger.warning(
-            "[ModelCallStatsMiddleware] Failed to count model input for completion guard: %s",
-            exc,
-        )
-        return parameters, None, None
+    if input_tokens is None:
+        try:
+            input_tokens = int(
+                await current_model.count_tokens(messages=messages, tools=tools)
+            )
+        except Exception as exc:
+            logger.warning(
+                "[ModelCallStatsMiddleware] Failed to count model input for completion guard: %s",
+                exc,
+            )
+            return parameters, None, None
 
     available = context_size - input_tokens
     if available <= 0 or requested <= available:
@@ -400,10 +403,12 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         # 各角色的消息条数统计（便于前端可视化上下文构成），以及是否包含早前对话的裁剪摘录。
         message_roles: dict[str, int] = _count_message_roles(input_messages)
         contains_compaction: bool = _contains_compaction(input_messages)
+        token_memo = ModelInputTokenMemo()
         context_breakdown = await estimate_context_breakdown(
             current_model,
             input_messages,
             tools,
+            token_memo=token_memo,
         )
 
         parameters, original_max_tokens, effective_max_tokens = (
@@ -411,6 +416,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
                 current_model,
                 input_messages,
                 tools,
+                input_tokens=token_memo.total_tokens,
             )
         )
         try:

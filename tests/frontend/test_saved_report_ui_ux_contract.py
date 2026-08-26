@@ -99,6 +99,30 @@ def test_saved_report_run_preserves_description_from_portal_card():
     assert "description: report.description" in source
 
 
+def test_saved_report_views_support_wide_and_compact_switchers():
+    section = SECTION.read_text(encoding="utf-8")
+    panel = DETAIL.read_text(encoding="utf-8")
+    card = CARD.read_text(encoding="utf-8")
+
+    assert "reportViewMode" in section
+    assert "nanzi_saved_report_portal_view" in section
+    assert 'return isReportViewMode(stored) ? stored : "list"' in section
+    assert 'return "list"' in section
+    assert "切换到卡片视图" in section
+    assert "切换到列表视图" in section
+    assert ':variant="reportViewMode"' in section
+
+    assert "savedReportViewMode" in panel
+    assert "nanzi_saved_report_panel_view" in panel
+    assert 'return isSavedReportViewMode(stored) ? stored : "list"' in panel
+    assert 'return "list"' in panel
+    assert "切换报表视图" in panel
+    assert ':variant="savedReportViewMode"' in panel
+
+    assert 'variant?: "card" | "list"' in card
+    assert "variant === 'list'" in card or 'variant === "list"' in card
+
+
 def test_saved_report_result_separates_query_and_analysis_states():
     source = WORKFLOW.read_text(encoding="utf-8")
 

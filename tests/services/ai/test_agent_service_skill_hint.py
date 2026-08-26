@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -58,6 +59,40 @@ async def _skill_config_get_strict_full_load(key, default=None):
         "skill_auto_scan_max_results": "1",
     }
     return values.get(key, default)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_resolve_skill_full_load_policy_reads_config_concurrently(monkeypatch):
+    service = AgentService()
+    active = 0
+    max_active = 0
+    values = {
+        "skill_auto_full_load_enabled": "true",
+        "skill_auto_full_load_min_score": "0.8",
+        "skill_auto_full_load_max_count": "2",
+        "skill_auto_full_load_max_bytes": "32768",
+    }
+
+    async def fake_get(key, default=None):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0)
+            return values.get(key, default)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    assert await service._resolve_skill_full_load_policy() == {
+        "enabled": True,
+        "min_score": 0.8,
+        "max_count": 2,
+        "max_bytes": 32768,
+    }
+    assert max_active == 4
 
 
 @pytest.fixture(autouse=True)

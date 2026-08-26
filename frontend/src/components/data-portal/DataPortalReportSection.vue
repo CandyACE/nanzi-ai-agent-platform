@@ -41,6 +41,31 @@
           </button>
         </div>
 
+        <div v-if="!compact && manage" class="flex shrink-0 items-center rounded-lg border border-blue-100 bg-blue-50/70 p-0.5" aria-label="固化报表视图切换">
+          <button
+            type="button"
+            class="rounded-md px-2 py-1 text-xs font-semibold transition-colors"
+            :class="reportViewMode === 'card' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-blue-600'"
+            :aria-pressed="reportViewMode === 'card'"
+            aria-label="切换到卡片视图"
+            title="切换到卡片视图"
+            @click="setReportViewMode('card')"
+          >
+            ▦ 卡片
+          </button>
+          <button
+            type="button"
+            class="rounded-md px-2 py-1 text-xs font-semibold transition-colors"
+            :class="reportViewMode === 'list' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-blue-600'"
+            :aria-pressed="reportViewMode === 'list'"
+            aria-label="切换到列表视图"
+            title="切换到列表视图"
+            @click="setReportViewMode('list')"
+          >
+            ☷ 列表
+          </button>
+        </div>
+
         <!-- 非 compact 模式下的新建主操作按钮 -->
         <button
           v-if="!compact"
@@ -66,12 +91,13 @@
       @select="emit('execute', $event)"
     />
 
-    <div v-if="filteredReports.length && manage" class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div v-if="filteredReports.length && manage" :class="reportViewMode === 'list' ? 'space-y-2' : 'grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3'">
       <SavedReportItemCard
         v-for="report in pagedReports"
         :key="report.id"
         :report="report"
         :format-date="formatDate"
+        :variant="reportViewMode"
         @execute="emit('execute', $event)"
         @edit="emit('edit', $event)"
         @detail="emit('detail', $event)"
@@ -170,6 +196,25 @@ const activeFilter = ref<DataPortalReportFilter>(props.compact ? "subscribed" : 
 const searchQuery = ref("");
 const currentPage = ref(1);
 const pageSize = 12;
+const REPORT_VIEW_STORAGE_KEY = "nanzi_saved_report_portal_view";
+const isReportViewMode = (value: string | null): value is "card" | "list" => value === "card" || value === "list";
+const readReportViewMode = (): "card" | "list" => {
+  try {
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(REPORT_VIEW_STORAGE_KEY) : null;
+    return isReportViewMode(stored) ? stored : "list";
+  } catch {
+    return "list";
+  }
+};
+const reportViewMode = ref<"card" | "list">(readReportViewMode());
+const setReportViewMode = (mode: "card" | "list") => {
+  reportViewMode.value = mode;
+  try {
+    window.localStorage.setItem(REPORT_VIEW_STORAGE_KEY, mode);
+  } catch {
+    // 隐私模式或禁用存储时仍保留当前会话内的切换结果。
+  }
+};
 const filters: Array<{ value: DataPortalReportFilter; label: string }> = [
   { value: "all", label: "全部" },
   { value: "subscribed", label: "已订阅" },

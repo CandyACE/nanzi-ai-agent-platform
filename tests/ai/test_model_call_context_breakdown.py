@@ -118,6 +118,66 @@ async def test_model_call_stats_record_contains_context_breakdown():
     }
 
 
+@pytest.mark.asyncio
+async def test_model_call_reuses_full_input_token_count_for_completion_guard():
+    from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
+
+    class CountingGuardModel:
+        model = "fake-model"
+        context_size = 100
+
+        def __init__(self):
+            self.parameters = SimpleNamespace(max_tokens=10)
+            self.count_calls = 0
+
+        async def count_tokens(self, *, messages, tools):
+            self.count_calls += 1
+            roles = [getattr(message, "role", "") for message in messages or []]
+            if not messages and tools:
+                return 4
+            if roles and all(role == "system" for role in roles):
+                return 3
+            return 20
+
+    current_model = CountingGuardModel()
+    middleware = ModelCallStatsMiddleware(
+        user_id="u1",
+        conversation_id="c1",
+        agent_name="main",
+    )
+
+    async def next_handler(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            usage=SimpleNamespace(input_tokens=20, output_tokens=2),
+            content=[],
+        )
+
+    scheduled = []
+    with patch(
+        "app.services.ai.runtime.agentscope.middleware._append_stat_to_redis",
+        new=AsyncMock(),
+    ), patch(
+        "app.services.ai.runtime.agentscope.middleware.asyncio.ensure_future",
+        side_effect=lambda coroutine: scheduled.append(coroutine),
+    ):
+        await middleware.on_model_call(
+            agent=SimpleNamespace(),
+            input_kwargs={
+                "current_model": current_model,
+                "messages": [
+                    SimpleNamespace(role="system"),
+                    SimpleNamespace(role="user"),
+                ],
+                "tools": [{"type": "function", "function": {"name": "search"}}],
+            },
+            next_handler=next_handler,
+        )
+        await scheduled[0]
+
+    assert current_model.count_calls == 3
+
+
 def test_model_call_stats_api_schema_preserves_context_breakdown():
     from app.api.v1.endpoints.chat import ModelCallStatDetail
 
