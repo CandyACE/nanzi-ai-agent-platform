@@ -587,44 +587,69 @@
                       ? 'border-red-300/80 text-red-600 dark:border-red-600/60 dark:text-red-400'
                       : 'border-slate-200/80 text-slate-500 dark:border-slate-700/80 dark:text-slate-400'
                   ]"
-                  :title="panelCacheSizeBytes === 0 ? '暂无缓存' : `已占用 ${panelCacheSizeDisplay ?? '…'}，点击右侧按钮清除云端浏览器缓存与登录态`"
+                  :title="panelCacheSizeBytes === 0 ? '暂无缓存可清除' : `云端浏览器已占用 ${panelCacheSizeDisplay ?? '…'}\n点击右侧 🗑️ 可清除：Cookie 与登录态、浏览历史、页面缓存\n不影响：本地 Chrome、平台账号、对话记录、工作区文件`"
                 >
-                  <!-- 存储图标 -->
-                  <svg v-if="!panelCacheLoading" class="h-2.5 w-2.5 shrink-0 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <!-- 存储图标（加载或正常状态） -->
+                  <svg v-if="!panelCacheLoading && !panelClearConfirm" class="h-2.5 w-2.5 shrink-0 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>
                   </svg>
-                  <svg v-else class="h-2.5 w-2.5 shrink-0 animate-spin text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <svg v-else-if="panelCacheLoading" class="h-2.5 w-2.5 shrink-0 animate-spin text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                   </svg>
+                  <!-- 确认状态：警告图标 -->
+                  <svg v-else class="h-2.5 w-2.5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+
                   <span class="font-mono text-[9px] font-medium tracking-tight whitespace-nowrap">
                     <template v-if="panelCacheLoading">计算中…</template>
+                    <template v-else-if="panelClearing">清除中…</template>
                     <template v-else-if="panelCacheSizeBytes === 0">缓存已清空</template>
+                    <template v-else-if="panelClearConfirm">确认清除？</template>
                     <template v-else>缓存 {{ panelCacheSizeDisplay }}</template>
                   </span>
-                  <!-- 清除按钮 -->
+
+                  <!-- 正常状态：清除按钮 -->
                   <button
-                    v-if="panelCacheSizeBytes !== 0"
+                    v-if="panelCacheSizeBytes !== 0 && !panelClearConfirm && !panelClearing"
                     type="button"
-                    class="rounded p-0.5 transition-all active:scale-90"
-                    :class="[
-                      panelClearing ? 'text-slate-300 cursor-not-allowed' :
-                      panelClearConfirm ? 'text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 animate-pulse' :
-                      'text-slate-400 hover:text-red-500 dark:hover:text-red-400'
-                    ]"
-                    :title="panelClearing ? '清除中…' : panelClearConfirm ? '再次点击确认清除（将清除 Cookie、登录态及文件缓存）' : '清除云端浏览器缓存与登录态'"
-                    :disabled="panelClearing"
+                    class="rounded p-0.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-all active:scale-90"
+                    title="清除云端浏览器缓存与登录态"
                     @click.stop="clearPanelCache"
                   >
-                    <svg v-if="panelClearing" class="h-2.5 w-2.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                    </svg>
-                    <svg v-else-if="panelClearConfirm" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="20 6 9 17 4 12"/>
-                    </svg>
-                    <svg v-else class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
                     </svg>
                   </button>
+
+                  <!-- 确认状态：取消 + 确认 两个按钮 -->
+                  <template v-if="panelClearConfirm && !panelClearing">
+                    <button
+                      type="button"
+                      class="rounded p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-all active:scale-90"
+                      title="取消"
+                      @click.stop="panelClearConfirm = false"
+                    >
+                      <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-0.5 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 animate-pulse transition-all active:scale-90"
+                      title="确认清除 — 将清除所有 Cookie、登录态、浏览历史和缓存；若 AI 正在执行浏览器任务将中断（不影响本地 Chrome 和平台账号）"
+                      @click.stop="clearPanelCache"
+                    >
+                      <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    </button>
+                  </template>
+
+                  <!-- 清除中 loading -->
+                  <svg v-if="panelClearing" class="h-2.5 w-2.5 animate-spin text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
                 </div>
               </transition>
 

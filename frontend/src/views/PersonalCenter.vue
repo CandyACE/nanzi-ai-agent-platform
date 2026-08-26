@@ -144,7 +144,7 @@ const browserCacheSizeDisplay = computed(() => {
 const fetchBrowserCacheSize = async () => {
     loadingCacheSize.value = true
     try {
-        const res = await axios.get('/api/v1/browser/profiles')
+        const res = await axios.get('/api/v1/chat/browser/profiles')
         const profiles: Array<{ disk_size_bytes?: number | null }> = res.data || []
         const total = profiles.reduce((acc, p) => acc + (p.disk_size_bytes ?? 0), 0)
         browserCacheSizeBytes.value = total
@@ -162,7 +162,7 @@ const handleClearBrowserData = () => {
 const confirmClearBrowserData = async () => {
     clearingBrowserData.value = true
     try {
-        await axios.delete('/api/v1/browser/profiles/clear')
+        await axios.delete('/api/v1/chat/browser/profiles/clear')
         showClearBrowserModal.value = false
         browserCacheSizeBytes.value = 0
         showToast('云端自动化浏览器历史、登录态及文件缓存已彻底清除', 'success')
@@ -526,8 +526,14 @@ onMounted(() => {
                     </div>
                     <div class="space-y-4">
                         <p class="text-xs text-gray-500 leading-relaxed">
-                            如果在智能体自动化任务中登录过外部网站，可在此一键重置您的<span class="font-semibold text-gray-700">云端服务端浏览器环境</span>，彻底擦除云端存储的 Cookie、登录状态、历史记录及本地文件缓存（不影响您本地电脑的 Chrome 浏览器数据）。
+                            当智能体在自动化任务中登录过外部网站，其 Cookie 与登录状态会保存在云端浏览器环境中。您可在此一键清除：
                         </p>
+                        <ul class="mt-2 space-y-1 text-xs text-gray-500">
+                            <li class="flex items-start gap-1.5"><span class="mt-0.5 text-red-400 shrink-0">●</span><span><span class="font-semibold text-gray-700">Cookie 与登录态</span> — 所有已登录外部网站的 Session 将失效，下次使用需重新登录</span></li>
+                            <li class="flex items-start gap-1.5"><span class="mt-0.5 text-red-400 shrink-0">●</span><span><span class="font-semibold text-gray-700">浏览历史与页面缓存</span> — 历史记录及缓存文件一并清除</span></li>
+                            <li class="flex items-start gap-1.5"><span class="mt-0.5 text-amber-400 shrink-0">⚠</span><span>若 AI 正在执行浏览器自动化任务，清除后<span class="font-semibold text-gray-700">任务将中断</span></span></li>
+                        </ul>
+                        <p class="mt-2 text-xs text-green-600">✅ 不影响：本地 Chrome / Edge 浏览器、平台账号登录、对话记录、工作区文件</p>
                         <div>
                             <button
                                 type="button"
@@ -744,14 +750,38 @@ onMounted(() => {
     <ConfirmModal
       v-if="showClearBrowserModal"
       title="清除云端自动化浏览器缓存"
-      message="确认清除您在平台上的【云端自动化浏览器】历史、登录状态和本地缓存数据吗？&#10;（此操作仅重置云端服务端浏览器，不会影响您本地电脑的 Chrome/Edge 浏览器数据）。"
       confirmText="确认清除"
       cancelText="取消"
       type="danger"
       :loading="clearingBrowserData"
       @confirm="confirmClearBrowserData"
       @cancel="showClearBrowserModal = false"
-    />
+    >
+      <div class="space-y-3 text-sm">
+        <div>
+          <p class="font-medium text-gray-700 dark:text-gray-200 mb-1.5">清除后将影响：</p>
+          <ul class="space-y-1.5">
+            <li class="flex items-start gap-2 text-gray-600 dark:text-gray-300">
+              <span class="mt-0.5 shrink-0">🔐</span>
+              <span>所有已登录外部网站的 <strong>Cookie 和登录态</strong>（需重新登录）</span>
+            </li>
+            <li class="flex items-start gap-2 text-gray-600 dark:text-gray-300">
+              <span class="mt-0.5 shrink-0">📜</span>
+              <span><strong>浏览历史</strong>与页面缓存文件</span>
+            </li>
+            <li class="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+              <span class="mt-0.5 shrink-0">⚠️</span>
+              <span>若 AI 正在执行浏览器任务，<strong>任务将立即中断</strong></span>
+            </li>
+          </ul>
+        </div>
+        <div class="rounded-lg bg-green-50 dark:bg-green-900/20 px-3 py-2">
+          <p class="text-xs text-green-700 dark:text-green-400">
+            <strong>✅ 不受影响：</strong>本地 Chrome / Edge 浏览器、平台账号登录、对话记录、工作区文件
+          </p>
+        </div>
+      </div>
+    </ConfirmModal>
 
     <Toast 
       v-if="toast.show" 
