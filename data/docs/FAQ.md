@@ -137,7 +137,7 @@
   - **核心建议**：**当平台自身部署在 Docker 容器内运行时，强烈建议安全沙箱配置走 `docker` 策略**（通过在平台容器启动时挂载 `-v /var/run/docker.sock:/var/run/docker.sock`）。若在平台主容器内使用 `local` 策略，所有 Agent 执行的 Shell 脚本和命令都会在平台后端主服务容器内裸奔执行，可能导致平台主环境被污染或崩溃；而配置为 `docker` 沙箱策略，可以为每个用户在宿主机 Docker 引擎上独立拉起纯净隔离的沙箱子容器，实现真正的操作系统级多租户安全隔离！
 - **自动化浏览器依赖 (Playwright Chromium)**：
   - **Docker 部署**：平台镜像已内置 `playwright install --with-deps chromium`，开箱即用，无需额外配置；
-  - **源码部署**：首次部署需在后端虚拟环境执行 `playwright install chromium`（Linux 服务器需执行 `playwright install --with-deps chromium` 安装底层图形/音频动态库）。
+  - **源码部署**：首次部署需在项目 `.venv` 中安装浏览器内核；macOS/Windows WSL2 使用 `.venv/bin/python -m playwright install chromium`，Linux 服务器使用 `.venv/bin/python -m playwright install --with-deps chromium` 安装底层图形/音频动态库。原生 Windows 请使用 `.venv\\Scripts\\python.exe -m playwright install chromium`。
 
 ---
 
@@ -156,10 +156,18 @@
    ./dev.sh --daemon
    ```
 3. **`dev.sh` 核心特性**：
+   - 首次运行时自动检测并安装 `uv`，准备 Python 3.11，创建项目 `.venv`，并使用清华 PyPI 镜像安装 `requirements.txt`；
+   - 记录 `requirements.txt` 校验值，依赖未变化时跳过重复安装；
    - 自动检测并停止占用旧端口的服务进程；
    - 自动校验 `frontend/package.json` 的校验和（Checksum），在依赖变更时自动执行 `npm install`；
    - 动态解析 `.env` 中的 `API_SERVICE_PORT`（默认 8001），避免端口硬编码；
-   - 前端自动执行 `npx vite build` 产出静态资源并交由 FastAPI 统一托管。
+   - 前端自动执行 `npx vite build` 产出静态资源并交由 FastAPI 统一托管；
+   - 启动顶部打印 uv、Python 目标版本、虚拟环境、PyPI 镜像、`DATABASE_TYPE`、数据库地址和 Redis 地址等配置摘要；数据库和 Redis 密码不会单独打印。
+
+   `dev.sh` 仍需要本机具备 Node.js/npm，并提前准备 `.env`、数据库和 Redis；数据库迁移、Redis 安装和
+   Playwright 浏览器内核不会由该脚本代办。首次下载 uv、Python 和 Python 依赖需要网络，
+   可通过 `PYPI_INDEX_URL` 覆盖默认 PyPI 镜像。顶部打印的数据库和 Redis 信息只是当前配置展示，
+   不代表已经完成连通性测试。
 
 ---
 
@@ -177,7 +185,7 @@
                                            v
 +-----------------------------------------------------------------------------------+
 |                        2. 接入与服务托管层 (Gateway & Service)                     |
-|  - FastAPI (Python 3.11 异步框架，统一单端口托管 8001)                             |
+|  - FastAPI (Python 3.11 异步框架，统一单端口托管，默认 8001)                      |
 |  - 静态资源路由 (自动托管 frontend/dist 编译产物，免额外 Nginx)                   |
 |  - 权限拦截与双层鉴权 (menu:* 菜单权限 + element:* 细粒度操作权限)                |
 +------------------------------------------+----------------------------------------+
@@ -201,7 +209,7 @@
 +-----------------------------+ +---------------------+ +---------------------------+
 ```
 
-1. **统一单端口托管**：开发与生产环境下，FastAPI 会自动挂载并托管前端构建生成的 `frontend/dist` 静态资源目录。用户只需访问 `http://IP:8001` 即可体验完整的 Web 界面与后端 API 服务，无需额外配置复杂的 Nginx 反向代理。
+1. **统一单端口托管**：开发与生产环境下，FastAPI 会自动挂载并托管前端构建生成的 `frontend/dist` 静态资源目录。用户只需访问 `http://IP:8001`（默认端口，可由 `.env` 的 `API_SERVICE_PORT` 覆盖）即可体验完整的 Web 界面与后端 API 服务，无需额外配置复杂的 Nginx 反向代理。
 2. **流式打字与协议通信**：对话采用标准的 **Server-Sent Events (SSE)** 流式长连接。后端在执行 Agent 思考、工具调用、文字输出时，实时向前端推送结构化事件流。
 
 ---
@@ -213,10 +221,17 @@
 - **解答**：**不可以**。
   - Python 3.8/3.9 缺少平台所需的现代异步特性与类型系统（如 `asyncio.TaskGroup`、Pydantic 2 新语法）；
   - Python 3.12+ 移除或改变了部分底层标准库 API，且部分 AI/数据分析第三方 C 扩展依赖（如旧版本轮子包）在 3.12+ 上可能缺少 pre-built wheels 导致本地编译报错。
-- **推荐做法**：使用 `uv` 极速安装隔离的 3.11 环境：
+- **推荐做法**：源码开发直接执行 `./dev.sh`，脚本会自动安装/准备隔离的 Python 3.11 环境和后端依赖：
+  ```bash
+  ./dev.sh
+  ```
+  如果只想准备环境、不启动服务，再手动执行以下命令：
   ```bash
   uv python install 3.11
   uv venv --python 3.11 .venv
+  uv pip install --python .venv/bin/python \
+    --default-index https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r requirements.txt
   source .venv/bin/activate
   ```
 
@@ -229,7 +244,7 @@
 ##### Q3: `.env` 配置文件在哪里？我修改了配置为什么不生效？
 
 - **解答**：
-  - 项目根目录下有模板文件 `.env.example`，首次使用需复制一份命名为 `.env`：`cp .env.example .env`；
+  - 项目根目录下有模板文件 `env.example`，首次使用需复制一份命名为 `.env`：`cp env.example .env`；
   - **重要逻辑**：`.env` 中的环境变量仅在**服务启动初始化阶段**由 Python 读取。**修改 `.env` 后必须重启服务（重新执行 `./dev.sh`）才能生效**。
 
 ##### Q4: 启动报 `Address already in use` 端口冲突？
@@ -641,15 +656,19 @@ mindmap
   - **报错现象**：调用 `browser_*` 工具或点击浏览器面板时，后端日志抛出 `Executable doesn't exist at .../chrome-linux/chrome` 或 `Host system is missing dependencies to run browsers`；
   - **根本原因**：通过 `pip install -r requirements.txt` 只安装了 Playwright 的 Python 接口库，**并没有自动下载 Chromium 浏览器内核及其底层运行依赖**；
   - **一键修复与安装命令**：
-    - **macOS / Windows 本地环境**：
+    - **macOS / Windows WSL2 本地环境**：
       ```bash
-      # 激活后端虚拟环境后执行
-      playwright install chromium
+      # dev.sh 已准备好项目 .venv；使用该环境安装浏览器内核
+      .venv/bin/python -m playwright install chromium
+      ```
+    - **原生 Windows PowerShell**：
+      ```powershell
+      .venv\\Scripts\\python.exe -m playwright install chromium
       ```
     - **Linux 服务器（Ubuntu / Debian / CentOS 等）**：
       ```bash
       # 安装 Chromium 内核及 Linux 底层图形/音频动态链接库 (需要 sudo 权限)
-      playwright install --with-deps chromium
+      .venv/bin/python -m playwright install --with-deps chromium
       ```
 
 ---
@@ -712,9 +731,10 @@ mindmap
 
 - **解答**：
   - **排查原因**：Docker 镜像已自带所有浏览器依赖，但如果是从源码 `pip install` 部署，Playwright 默认不会自带数十兆的浏览器内核；
-  - **解决方法**：在后端 Python 虚拟环境中运行以下命令一键初始化：
-    - macOS / Windows：`playwright install chromium`
-    - Linux 服务器：`playwright install --with-deps chromium`（自动补齐缺失的系统动态库）。
+  - **解决方法**：在项目 `.venv` 中运行以下命令一键初始化：
+    - macOS / Windows WSL2：`.venv/bin/python -m playwright install chromium`
+    - 原生 Windows PowerShell：`.venv\\Scripts\\python.exe -m playwright install chromium`
+    - Linux 服务器：`.venv/bin/python -m playwright install --with-deps chromium`（自动补齐缺失的系统动态库）。
 
 ---
 

@@ -20,7 +20,7 @@
 
 ### 前置要求
 
-- **Python**: 3.11+
+- **Python**: 3.11
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: `redis/redis-stack:latest` (因系统需要使用 RediSearch 模块，必须使用 Redis Stack 镜像)
@@ -70,6 +70,7 @@ uv venv --python 3.11 .venv
 
 # 2. 使用清华 PyPI 镜像安装依赖
 uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+source .venv/bin/activate
 
 # 3. 准备环境变量配置文件
 cp env.example .env
@@ -103,17 +104,26 @@ npm install
 该脚本会自动依次执行：
 
 1. **准备 Python 环境**：自动检测/安装 uv，准备 Python 3.11，创建 `.venv`，并按 `requirements.txt` 校验值安装后端依赖。
-2. **清理旧进程**：检查并停止占用 `8001` 端口的旧后端服务。
+2. **清理旧进程**：检查并停止占用 `.env` 中 `API_SERVICE_PORT` 的旧后端服务（默认 `8001`）。
 3. **编译前端**：进入 `frontend` 目录并运行 `npx vite build` 编译前端静态资源。
 4. **启动后端**：使用 `.venv/bin/python` 以热重载模式（`--reload`）前台启动后端 `uvicorn` 服务，并在终端前台显示日志，极大地方便了编译与启动日志排查。
 
-**运行输出示例**：
+**运行输出示例（后续启动，已有 `.venv` 且 `requirements.txt` 未变化）**：
 
 ```text
 $ ./dev.sh
 ==================================================
        南孜智能体平台 · 本地开发启动工具       
 ==================================================
+
+启动环境信息
+       ➜ uv: uv <当前版本>
+       ➜ Python 目标版本: 3.11
+       ➜ 虚拟环境: .venv
+       ➜ PyPI 镜像: https://pypi.tuna.tsinghua.edu.cn/simple
+       ➜ DATABASE_TYPE: mysql (effective: mysql)
+       ➜ 数据库地址: localhost:3306/nanzi_ai_agent_platform
+       ➜ Redis 地址: localhost:6379/2
 
 🧰 [1/4] 正在准备 uv、Python 3.11 和后端依赖...
 ✅ 后端依赖未变化，跳过安装
@@ -146,6 +156,7 @@ INFO:     Application startup complete.
 
 ```bash
 source .venv/bin/activate
+# 手动示例使用默认端口 8001；dev.sh 会读取 .env 中的 API_SERVICE_PORT
 uvicorn app.main:app --reload --port 8001
 ```
 

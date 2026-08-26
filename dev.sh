@@ -22,6 +22,20 @@ REQUIREMENTS_HASH_FILE="${VENV_DIR}/.requirements.hash"
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 UV_CMD=""
 
+# 读取 .env 中的非敏感配置值。仅用于打印连接类型和地址，不读取密码字段。
+read_env_value() {
+    key="$1"
+    if [ ! -f ".env" ]; then
+        return 0
+    fi
+
+    grep -E "^[[:space:]]*${key}[[:space:]]*=" ".env" \
+        | tail -n 1 \
+        | cut -d '=' -f 2- \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' \
+        || true
+}
+
 # 查找已安装的 uv。官方安装器默认路径不一定已进入当前 shell 的 PATH，
 # 因此额外检查常见的用户级安装目录。
 find_uv() {
@@ -144,6 +158,17 @@ echo -e "${BLUE}       NanZi AI 开源智能体平台 · 本地开发启动工�
 echo -e "${BLUE}       用法: ./dev.sh (前台调试) | ./dev.sh -d (后台常驻) ${NC}"
 echo -e "${BLUE}==================================================${NC}"
 
+echo -e "${BLUE}       启动环境信息${NC}"
+if find_uv; then
+    UV_VERSION=$("$UV_CMD" --version 2>/dev/null || echo "版本未知")
+else
+    UV_VERSION="未安装（启动时自动安装）"
+fi
+echo -e "${BLUE}       ➜ uv: ${UV_VERSION}${NC}"
+echo -e "${BLUE}       ➜ Python 目标版本: ${PYTHON_VERSION}${NC}"
+echo -e "${BLUE}       ➜ 虚拟环境: ${VENV_DIR}${NC}"
+echo -e "${BLUE}       ➜ PyPI 镜像: ${PYPI_INDEX_URL}${NC}"
+
 # 读取 .env 配置中的端口，默认 8001
 PORT=8001
 if [ -f ".env" ]; then
@@ -152,6 +177,54 @@ if [ -f ".env" ]; then
         PORT="$ENV_PORT"
     fi
 fi
+
+# 打印实际采用的数据库/Redis 连接位置，但不输出用户名、密码等敏感信息。
+print_runtime_environment() {
+    DATABASE_TYPE_CONFIGURED="${DATABASE_TYPE:-$(read_env_value DATABASE_TYPE)}"
+    if [ -z "$DATABASE_TYPE_CONFIGURED" ]; then
+        DATABASE_TYPE_CONFIGURED="mysql"
+    fi
+
+    DATABASE_TYPE_NORMALIZED=$(printf '%s' "$DATABASE_TYPE_CONFIGURED" | tr '[:upper:]' '[:lower:]')
+    case "$DATABASE_TYPE_NORMALIZED" in
+        postgres|postgresql|pg)
+            DATABASE_TYPE_EFFECTIVE="postgresql"
+            DATABASE_HOST="${POSTGRES_HOST:-$(read_env_value POSTGRES_HOST)}"
+            DATABASE_PORT="${POSTGRES_PORT:-$(read_env_value POSTGRES_PORT)}"
+            DATABASE_NAME="${POSTGRES_DB:-$(read_env_value POSTGRES_DB)}"
+            DATABASE_HOST="${DATABASE_HOST:-localhost}"
+            DATABASE_PORT="${DATABASE_PORT:-5432}"
+            ;;
+        *)
+            DATABASE_TYPE_EFFECTIVE="mysql"
+            DATABASE_HOST="${MYSQL_HOST:-$(read_env_value MYSQL_HOST)}"
+            DATABASE_PORT="${MYSQL_PORT:-$(read_env_value MYSQL_PORT)}"
+            DATABASE_NAME="${MYSQL_DB:-$(read_env_value MYSQL_DB)}"
+            DATABASE_HOST="${DATABASE_HOST:-未配置}"
+            DATABASE_PORT="${DATABASE_PORT:-3306}"
+            ;;
+    esac
+    DATABASE_NAME="${DATABASE_NAME:-未配置}"
+
+    REDIS_HOST_CONFIGURED="${REDIS_HOST:-$(read_env_value REDIS_HOST)}"
+    REDIS_PORT_CONFIGURED="${REDIS_PORT:-$(read_env_value REDIS_PORT)}"
+    REDIS_DB_CONFIGURED="${REDIS_DB:-$(read_env_value REDIS_DB)}"
+    REDIS_ENABLE_CONFIGURED="${REDIS_ENABLE:-$(read_env_value REDIS_ENABLE)}"
+    REDIS_HOST_CONFIGURED="${REDIS_HOST_CONFIGURED:-未配置}"
+    REDIS_PORT_CONFIGURED="${REDIS_PORT_CONFIGURED:-6379}"
+    REDIS_DB_CONFIGURED="${REDIS_DB_CONFIGURED:-0}"
+    REDIS_ENABLE_CONFIGURED=$(printf '%s' "${REDIS_ENABLE_CONFIGURED:-true}" | tr '[:upper:]' '[:lower:]')
+
+    echo -e "${BLUE}       ➜ DATABASE_TYPE: ${DATABASE_TYPE_CONFIGURED} (effective: ${DATABASE_TYPE_EFFECTIVE})${NC}"
+    echo -e "${BLUE}       ➜ 数据库地址: ${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}${NC}"
+    if [ "$REDIS_ENABLE_CONFIGURED" = "false" ] || [ "$REDIS_ENABLE_CONFIGURED" = "0" ] || [ "$REDIS_ENABLE_CONFIGURED" = "no" ] || [ "$REDIS_ENABLE_CONFIGURED" = "off" ]; then
+        echo -e "${BLUE}       ➜ Redis 地址: 已禁用${NC}"
+    else
+        echo -e "${BLUE}       ➜ Redis 地址: ${REDIS_HOST_CONFIGURED}:${REDIS_PORT_CONFIGURED}/${REDIS_DB_CONFIGURED}${NC}"
+    fi
+}
+
+print_runtime_environment
 
 # 1. 准备 Python 环境
 prepare_python_environment

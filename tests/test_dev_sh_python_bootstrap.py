@@ -26,6 +26,16 @@ def _prepare_fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     shutil.copy(ROOT / "dev.sh", repo / "dev.sh")
     (repo / "requirements.txt").write_text("example-package==1.0\n", encoding="utf-8")
     (repo / "frontend" / "package.json").write_text("{}\n", encoding="utf-8")
+    (repo / ".env").write_text(
+        "DATABASE_TYPE=postgresql\n"
+        "POSTGRES_HOST=pg.example.internal\n"
+        "POSTGRES_PORT=5432\n"
+        "POSTGRES_DB=nanzi_test\n"
+        "REDIS_HOST=redis.example.internal\n"
+        "REDIS_PORT=6380\n"
+        "REDIS_DB=4\n",
+        encoding="utf-8",
+    )
     return repo, fake_bin, home
 
 
@@ -133,6 +143,14 @@ def test_dev_sh_bootstraps_uv_python_and_requirements_on_first_run(tmp_path: Pat
     assert "venv" in log and "--python 3.11" in log
     assert "pip install" in log and "requirements.txt" in log
     assert (repo / ".venv" / ".requirements.hash").is_file()
+    assert "启动环境信息" in result.stdout
+    assert "uv: 未安装（启动时自动安装）" in result.stdout
+    assert "Python 目标版本: 3.11" in result.stdout
+    assert "虚拟环境: .venv" in result.stdout
+    assert "PyPI 镜像: https://pypi.tuna.tsinghua.edu.cn/simple" in result.stdout
+    assert "DATABASE_TYPE: postgresql" in result.stdout
+    assert "数据库地址: pg.example.internal:5432/nanzi_test" in result.stdout
+    assert "Redis 地址: redis.example.internal:6380/4" in result.stdout
     assert "[1/4]" in result.stdout
 
 
