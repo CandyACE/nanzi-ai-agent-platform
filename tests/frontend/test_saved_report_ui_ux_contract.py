@@ -89,6 +89,14 @@ def test_run_modal_exposes_actual_scope_and_permission_state():
     assert "本次查询范围" in source
     assert "实际执行 SQL" in source
     assert "权限预检" in source
+    assert "报表描述与业务口径说明" in source
+    assert "pendingReport?.description" in source
+
+
+def test_saved_report_run_preserves_description_from_portal_card():
+    source = DETAIL.read_text(encoding="utf-8")
+
+    assert "description: report.description" in source
 
 
 def test_saved_report_result_separates_query_and_analysis_states():

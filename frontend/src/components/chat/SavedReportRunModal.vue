@@ -65,6 +65,13 @@ const emit = defineEmits<{
           </button>
         </div>
         <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+          <div
+            v-if="String(pendingReport?.description || '').trim()"
+            class="rounded-xl border border-gray-200 bg-gray-50/70 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-900/50"
+          >
+            <p class="text-xs font-bold text-gray-700 dark:text-gray-200">报表描述与业务口径说明</p>
+            <p class="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-gray-600 dark:text-gray-300">{{ pendingReport?.description }}</p>
+          </div>
           <div v-if="usesDateRange(pendingReport)">
             <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
             <select

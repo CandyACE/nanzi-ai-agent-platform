@@ -228,6 +228,215 @@ async def test_openai_chat_model_injects_chat_template_kwargs(
     assert "chat_template_kwargs" not in captured
 
 
+def _build_bad_request_error(message: str):
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "https://llm.example.com/v1/chat/completions")
+    response = httpx.Response(400, request=request)
+    return openai.BadRequestError(
+        f"Error code: 400 - {message}",
+        response=response,
+        body={"error": {"code": "invalid_parameter_error", "message": message}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_thinking_tool_choice_fallback_disables_thinking_per_request(monkeypatch):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                raise _build_bad_request_error(
+                    "The tool_choice parameter does not support being set to "
+                    "required or object in thinking mode",
+                )
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="thinking-model",
+            streaming=False,
+            thinking_enable=True,
+            reasoning_effort="high",
+        ),
+    )
+
+    await model._call_api(
+        "thinking-model",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert len(requests) == 2
+    assert requests[0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "execute_sql_query"},
+    }
+    assert requests[0]["extra_body"] == {
+        "chat_template_kwargs": {
+            "thinking": True,
+            "enable_thinking": True,
+            "reasoning_effort": "high",
+        },
+    }
+    assert requests[0]["reasoning_effort"] == "high"
+    assert requests[1]["tool_choice"] == requests[0]["tool_choice"]
+    assert requests[1]["extra_body"] == {
+        "chat_template_kwargs": {"thinking": False, "enable_thinking": False},
+    }
+    assert "reasoning_effort" not in requests[1]
+    assert model.parameters.thinking_enable is True
+    assert model.parameters.reasoning_effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_non_matching_bad_request_does_not_trigger_thinking_tool_choice_fallback(
+    monkeypatch,
+):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            raise _build_bad_request_error("invalid model parameter")
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="thinking-model",
+            streaming=False,
+            thinking_enable=True,
+        ),
+    )
+
+    with pytest.raises(openai.BadRequestError, match="invalid model parameter"):
+        await model._call_api(
+            "thinking-model",
+            messages=[],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_sql_query",
+                        "parameters": {"type": "object"},
+                    },
+                },
+            ],
+            tool_choice=ToolChoice(mode="execute_sql_query"),
+        )
+
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_enable", "tool_choice_mode"),
+    [(True, None), (True, "auto"), (False, "execute_sql_query")],
+)
+async def test_matching_bad_request_without_fallback_conditions_is_not_retried(
+    monkeypatch,
+    thinking_enable,
+    tool_choice_mode,
+):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            raise _build_bad_request_error(
+                "The tool_choice parameter does not support being set to "
+                "required or object in thinking mode",
+            )
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="thinking-model",
+            streaming=False,
+            thinking_enable=thinking_enable,
+        ),
+    )
+
+    with pytest.raises(openai.BadRequestError, match="tool_choice"):
+        await model._call_api(
+            "thinking-model",
+            messages=[],
+            tools=(
+                [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "execute_sql_query",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ]
+                if tool_choice_mode
+                else None
+            ),
+            tool_choice=(
+                ToolChoice(mode=tool_choice_mode) if tool_choice_mode else None
+            ),
+        )
+
+    assert len(requests) == 1
+
+
 @pytest.mark.asyncio
 async def test_model_connection_test_passes_form_token_limits(monkeypatch):
     from app.api.portal.endpoints.models import _test_model_connection

@@ -1,7 +1,37 @@
 from __future__ import annotations
 
+import copy
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
+
+
+def _is_forced_tool_choice(tool_choice: Any) -> bool:
+    mode = getattr(tool_choice, "mode", None)
+    if mode is None and isinstance(tool_choice, str):
+        mode = tool_choice
+    return tool_choice is not None and mode not in {"auto", "none"}
+
+
+def _is_thinking_tool_choice_error(error: BaseException) -> bool:
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code is not None and status_code != 400:
+        return False
+
+    body = getattr(error, "body", None)
+    error_text = f"{error} {body or ''}".lower()
+    return (
+        "tool_choice" in error_text
+        and any(
+            marker in error_text
+            for marker in ("thinking", "thirking", "reasoning")
+        )
+        and any(marker in error_text for marker in ("required", "object"))
+    )
 
 
 @dataclass(frozen=True)
@@ -58,7 +88,7 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
             self._chat_template_kwargs = dict(chat_template_kwargs or {})
             super().__init__(*args, **kwargs)
 
-        async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+        async def _call_api_once(self, *args: Any, **kwargs: Any) -> Any:
             if self._chat_template_kwargs:
                 extra_body = dict(kwargs.get("extra_body") or {})
                 extra_body.setdefault(
@@ -67,6 +97,57 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
                 )
                 kwargs["extra_body"] = extra_body
             return await super()._call_api(*args, **kwargs)
+
+        async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+            import openai
+
+            try:
+                return await self._call_api_once(*args, **kwargs)
+            except openai.BadRequestError as exc:
+                tool_choice = kwargs.get("tool_choice")
+                if not (
+                    self.parameters.thinking_enable
+                    and _is_forced_tool_choice(tool_choice)
+                    and _is_thinking_tool_choice_error(exc)
+                ):
+                    raise
+
+                logger.warning(
+                    "[AgentScope] Provider rejected forced tool_choice in "
+                    "thinking mode; retrying model=%s with thinking disabled "
+                    "for this request",
+                    self.model,
+                )
+                fallback = copy.copy(self)
+                fallback.parameters = self.parameters.model_copy(
+                    update={
+                        "thinking_enable": False,
+                        "reasoning_effort": None,
+                    },
+                )
+                fallback._chat_template_kwargs = dict(self._chat_template_kwargs)
+                fallback._chat_template_kwargs.update(
+                    {
+                        "thinking": False,
+                        "enable_thinking": False,
+                    },
+                )
+                fallback._chat_template_kwargs.pop("reasoning_effort", None)
+                fallback_kwargs = dict(kwargs)
+                fallback_extra_body = dict(
+                    fallback_kwargs.get("extra_body") or {},
+                )
+                fallback_chat_template_kwargs = dict(
+                    fallback_extra_body.get("chat_template_kwargs") or {},
+                )
+                fallback_chat_template_kwargs.update(
+                    fallback._chat_template_kwargs,
+                )
+                fallback_extra_body["chat_template_kwargs"] = (
+                    fallback_chat_template_kwargs
+                )
+                fallback_kwargs["extra_body"] = fallback_extra_body
+                return await fallback._call_api_once(*args, **fallback_kwargs)
 
     parameters = OpenAIChatModel.Parameters(
         temperature=config.temperature,

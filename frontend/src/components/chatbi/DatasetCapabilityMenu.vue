@@ -1564,6 +1564,7 @@ const emit = defineEmits<{
     params_schema?: any[];
     default_params?: Record<string, any>;
     analysis_mode?: string;
+    description?: string;
     tags?: string[];
     owner_name?: string;
     is_owner?: boolean;
@@ -2565,6 +2566,7 @@ const handleExecuteSavedReportClick = (report: any) => {
     params_schema: report.params_schema,
     default_params: report.default_params,
     analysis_mode: report.analysis_mode,
+    description: report.description,
     tags: report.tags,
     owner_name: report.owner_name,
     is_owner: report.is_owner,
