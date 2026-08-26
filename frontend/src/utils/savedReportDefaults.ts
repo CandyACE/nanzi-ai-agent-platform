@@ -8,9 +8,10 @@ export type RequirementAnalysisIntent = {
 export type SavedReportSourceContext = {
   data_source: string;
   dataset_id: number | null;
+  dataset_name: string;
 };
 
-/** 从 ChatBI 结果元数据提取本轮查询的关联数据源，避免新报表退回系统默认源。 */
+/** 从 ChatBI 结果元数据提取本轮查询的关联数据源与数据集，避免新报表退回默认配置。 */
 export function resolveSavedReportSourceContext(message: any): SavedReportSourceContext {
   const sources = Array.isArray(message?.chatbiInsight?.sources)
     ? message.chatbiInsight.sources
@@ -20,8 +21,17 @@ export function resolveSavedReportSourceContext(message: any): SavedReportSource
       sources
         .map((source: any) => String(source?.data_source || '').trim())
         .filter(Boolean),
+      ),
+  );
+  const datasetNames: string[] = Array.from(
+    new Set<string>(
+      sources
+        .map((source: any) => String(source?.dataset_name || '').trim())
+        .filter(Boolean),
     ),
   );
+  const topLevelDatasetName = String(message?.chatbiInsight?.dataset_name || '').trim();
+  if (!datasetNames.length && topLevelDatasetName) datasetNames.push(topLevelDatasetName);
   const rawDatasetId = sources.find((source: any) => source?.dataset_id !== undefined)?.dataset_id
     ?? message?.chatbiInsight?.dataset_id;
   const datasetId = Number.isFinite(Number(rawDatasetId)) && Number(rawDatasetId) > 0
@@ -32,6 +42,8 @@ export function resolveSavedReportSourceContext(message: any): SavedReportSource
     // 多数据源联邦查询无法安全映射成单个连接，留空交给用户确认，不能猜第一条。
     data_source: sourceNames.length === 1 ? (sourceNames[0] || '') : '',
     dataset_id: datasetId,
+    // 多数据集联邦查询无法安全映射成单个数据集，留空交给用户确认，不能猜第一条。
+    dataset_name: datasetNames.length === 1 ? (datasetNames[0] || '') : '',
   };
 }
 

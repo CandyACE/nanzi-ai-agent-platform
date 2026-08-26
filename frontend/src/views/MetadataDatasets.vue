@@ -597,6 +597,12 @@ const toggleSort = (field: DatasetSortField) => {
 const compareDatasets = (a: Dataset, b: Dataset): number => {
   const dir = sortDirection.value === 'asc' ? 1 : -1
 
+  // 默认将已启用数据集置顶；用户主动按状态排序时，交给状态列的升降序控制。
+  if (sortField.value !== 'status') {
+    const statusPriority = Number(b.status === 1) - Number(a.status === 1)
+    if (statusPriority !== 0) return statusPriority
+  }
+
   switch (sortField.value) {
     case 'display_name': {
       const aName = (a.display_name || a.name || '').toLowerCase()

@@ -41,6 +41,10 @@ def test_smart_metric_modal_contract():
     assert "elapsedSeconds" in content
     assert "handleCancelRecommend" in content
     assert "取消生成" in content
+    assert "bg-red-50" in content
+    assert "text-red-600" in content
+    assert "border-red-200" in content
+    assert "bg-white hover:bg-red-50 text-gray-600 hover:text-red-600 border border-gray-300 hover:border-red-200" not in content
     assert "AI 努力生成中" in content or "可能较为耗时" in content
     assert "耐心等待" in content
 

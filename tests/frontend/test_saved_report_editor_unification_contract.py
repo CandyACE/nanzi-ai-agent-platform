@@ -43,6 +43,7 @@ def test_ai_saved_report_draft_inherits_source_from_the_message_context():
 
         assert "resolveSavedReportSourceContext(agentMessage)" in block
         assert "data_source: sourceContext.data_source" in block
+        assert "dataset_name: sourceContext.dataset_name" in block
         assert "data_source: 'default_clickhouse'" not in block
 
 
@@ -52,6 +53,8 @@ def test_report_editor_does_not_silently_fallback_when_ai_source_cannot_be_match
     assert "原查询数据源不可用" in source
     assert "未能从本次 AI 查询识别数据源" in source
     assert "!pendingSourceName.value" in source
+    assert "pendingDatasetName" in source
+    assert "原查询数据集不可用" in source
 
 
 def test_dynamic_sql_trial_asks_for_parameters_before_querying():
