@@ -2,6 +2,19 @@
 
 以下日志来自 `yunshu-test` 环境执行 `./dev.sh -d` 的完整启动过程，包含 uv、Python 3.11、后端依赖、端口清理、前端构建和后端后台启动信息。
 
+## 启动前配置
+
+首次启动前，先复制环境变量模板，并根据实际部署环境修改配置：
+
+```bash
+cp env.example .env
+vi .env
+```
+
+重点确认数据库、Redis、服务端口以及其他运行时配置已填写正确。
+
+## 完整启动日志
+
 ```text
 root@yunshu-test:/data/github/yunshu-ai-agent-platform# ./dev.sh -d
 ==================================================
