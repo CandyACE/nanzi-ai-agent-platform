@@ -29,7 +29,7 @@
     assert "@click.stop=\"openRecommendationDetail(idx)\"" in content
     assert "item.calculation_logic" in content
     assert "item.description" in content
-    assert "item.tags" in content
+    assert "selectedRecommendation.tags" in content
 ```
 
 - [x] **Step 2: 运行测试确认按预期失败**
