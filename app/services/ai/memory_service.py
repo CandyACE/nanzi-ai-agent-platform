@@ -372,38 +372,44 @@ class MemoryService:
         Retrieve history from Redis with pagination support.
         offset=0 means the most recent messages.
 
-        通过 `llen` 定位并仅拉取所需的窗口切片（反向分页）：
-        取最近若干条（以及 max_history_len 保留窗口内）时，不再 lrange 全量拉到 Python 侧，
-        而是直接在 Redis 端截取目标区间，减少大列表下的数据传输。
+        使用 Redis LIST 负索引直接读取最近窗口，避免先 `llen` 再 `lrange` 的额外往返；
+        同时将 limit/offset 精确转换为保留窗口内的 Redis 区间，减少大列表下的数据传输。
         """
         redis = await get_redis()
         if not redis:
             return []
 
         key = self._get_key(user_id, conversation_id)
-        total = await redis.llen(key)
-        logger.info(f"[MemoryService] Fetching history for key: {key}. Total items: {total}, Limit: {limit}, Offset: {offset}")
+        logger.info(
+            "[MemoryService] Fetching history for key: %s. Limit: %s, Offset: %s",
+            key,
+            limit,
+            offset,
+        )
 
-        # Max Retention Window: 只回看最近 max_history_len 条
-        if total > self.max_history_len:
-            valid_start = total - self.max_history_len
-            valid_end = total
-        else:
-            valid_start = 0
-            valid_end = total
+        if self.max_history_len <= 0:
+            return []
 
-        # 反向分页：end_exclusive 为保留窗口的尾部开区间上界，start_incl 为其下界。
-        # 当 limit 大于可用条数时，窗口左边界会越过保留窗口起点：此时应向上钳制到
-        # valid_start（返回窗口内全部可用条），而非返回空——与旧实现的 clamp 语义一致，
-        # 避免 GET(limit=50) 在历史只有 2 条时读到空、导致真实 Redis 下 history 消失。
+        try:
+            effective_offset = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            effective_offset = 0
+
+        # 负索引以列表尾部为基准，因此不需要先读取列表长度。
+        # 当 offset 达到保留窗口长度时，旧实现也不会返回窗口外的历史。
         if limit is not None and limit > 0:
-            end_exclusive = valid_end - offset
-            if end_exclusive <= valid_start:
-                return []  # offset 已越过保留窗口，无可读条
-            start_incl = max(end_exclusive - limit, valid_start)
-            data = await redis.lrange(key, start_incl, end_exclusive - 1)
+            if effective_offset >= self.max_history_len:
+                return []
+            start_incl = max(
+                -self.max_history_len,
+                -limit - effective_offset,
+            )
+            end_incl = -1 - effective_offset
         else:
-            data = await redis.lrange(key, valid_start, valid_end - 1)
+            start_incl = -self.max_history_len
+            end_incl = -1
+
+        data = await redis.lrange(key, start_incl, end_incl)
 
         history = []
         for item in data:

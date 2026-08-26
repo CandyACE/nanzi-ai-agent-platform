@@ -3,9 +3,32 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ModelInputTokenMemo:
+    """单次模型调用内复用完整输入 token 计数结果。"""
+
+    total_tokens: int | None = None
+
+    async def count_total(
+        self,
+        current_model: Any,
+        messages: Sequence[Any],
+        tools: Sequence[Any],
+    ) -> int:
+        if self.total_tokens is not None:
+            return self.total_tokens
+        counted = await current_model.count_tokens(
+            messages=list(messages),
+            tools=list(tools),
+        )
+        self.total_tokens = _safe_nonnegative_int(counted)
+        return self.total_tokens
 
 
 def empty_context_breakdown() -> dict[str, Any]:
@@ -30,6 +53,8 @@ async def estimate_context_breakdown(
     current_model: Any,
     messages: Sequence[Any] | None,
     tools: Sequence[Any] | None,
+    *,
+    token_memo: ModelInputTokenMemo | None = None,
 ) -> dict[str, Any]:
     """按 AgentScope ``count_tokens`` 口径拆分一次模型输入。
 
@@ -42,12 +67,12 @@ async def estimate_context_breakdown(
 
     normalized_messages = list(messages or [])
     normalized_tools = list(tools or [])
+    token_memo = token_memo or ModelInputTokenMemo()
     try:
-        total_tokens = _safe_nonnegative_int(
-            await current_model.count_tokens(
-                messages=normalized_messages,
-                tools=normalized_tools,
-            )
+        total_tokens = await token_memo.count_total(
+            current_model,
+            normalized_messages,
+            normalized_tools,
         )
         system_messages = [
             message

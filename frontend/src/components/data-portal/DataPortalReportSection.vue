@@ -201,9 +201,9 @@ const isReportViewMode = (value: string | null): value is "card" | "list" => val
 const readReportViewMode = (): "card" | "list" => {
   try {
     const stored = typeof window !== "undefined" ? window.localStorage.getItem(REPORT_VIEW_STORAGE_KEY) : null;
-    return isReportViewMode(stored) ? stored : "card";
+    return isReportViewMode(stored) ? stored : "list";
   } catch {
-    return "card";
+    return "list";
   }
 };
 const reportViewMode = ref<"card" | "list">(readReportViewMode());

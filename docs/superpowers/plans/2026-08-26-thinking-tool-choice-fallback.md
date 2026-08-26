@@ -4,7 +4,7 @@
 
 **Goal:** When an OpenAI-compatible provider rejects a forced `tool_choice` while thinking is enabled, retry the current request once with thinking disabled without changing persisted model configuration or shared model state.
 
-**Architecture:** Keep the existing pre-call `tool_choice` compatibility layer. Add a narrow fallback at the platform-owned `PlatformOpenAIChatModel._call_api` boundary, where the provider `BadRequestError` and both thinking control layers are visible. Use a shallow model copy with copied AgentScope parameters and provider template kwargs so the fallback request cannot mutate the original model used by concurrent or later calls.
+**Architecture:** Keep the existing pre-call `tool_choice` compatibility layer. Add a narrow fallback at the platform-owned `PlatformOpenAIChatModel._call_api` boundary, where the provider `BadRequestError` and both thinking control layers are visible. Use a shallow model copy with copied AgentScope parameters and provider template kwargs so the fallback request cannot mutate the original model used by concurrent or later calls. The fallback disables thinking and changes `tool_choice` to AgentScope `auto`, allowing autonomous tool selection.
 
 **Tech Stack:** Python 3.11, AgentScope OpenAIChatModel, OpenAI SDK, pytest, pytest-asyncio.
 
@@ -25,7 +25,7 @@ The fake completion client records each request. On the first call it raises `op
 Create a thinking-enabled model with `reasoning_effort="high"`, call `_call_api` with `ToolChoice(mode="execute_sql_query")`, and assert the second request has:
 
 ```python
-assert second["tool_choice"] == {"type": "function", "function": {"name": "execute_sql_query"}}
+assert second["tool_choice"] == "auto"
 assert second["extra_body"] == {
     "chat_template_kwargs": {"thinking": False, "enable_thinking": False}
 }
@@ -82,7 +82,7 @@ Copy the model instance, use `parameters.model_copy(update={"thinking_enable": F
 
 - [x] **Step 3: Retry exactly once from `_call_api`.**
 
-Catch only the matching `BadRequestError`, log a warning with model and fallback reason, invoke the parent `OpenAIChatModel._call_api` on the copied model with the original messages, tools, tool choice, and generation kwargs, and re-raise every other exception.
+Catch only the matching `BadRequestError`, log a warning with model and fallback reason, invoke the parent `OpenAIChatModel._call_api` on the copied model with the original messages and tools, `ToolChoice(mode="auto")`, and generation kwargs, and re-raise every other exception.
 
 - [x] **Step 4: Run the positive and negative tests and verify GREEN.**
 

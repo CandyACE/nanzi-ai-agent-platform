@@ -106,12 +106,16 @@ def test_saved_report_views_support_wide_and_compact_switchers():
 
     assert "reportViewMode" in section
     assert "nanzi_saved_report_portal_view" in section
+    assert 'return isReportViewMode(stored) ? stored : "list"' in section
+    assert 'return "list"' in section
     assert "切换到卡片视图" in section
     assert "切换到列表视图" in section
     assert ':variant="reportViewMode"' in section
 
     assert "savedReportViewMode" in panel
     assert "nanzi_saved_report_panel_view" in panel
+    assert 'return isSavedReportViewMode(stored) ? stored : "list"' in panel
+    assert 'return "list"' in panel
     assert "切换报表视图" in panel
     assert ':variant="savedReportViewMode"' in panel
 

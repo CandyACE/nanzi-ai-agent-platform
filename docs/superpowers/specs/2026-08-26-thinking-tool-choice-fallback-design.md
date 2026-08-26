@@ -29,14 +29,14 @@ fallback 只影响当前请求，不修改 `ai_models` 中的模型能力、默�
    - 将 `parameters.reasoning_effort` 清空；
    - 将 `chat_template_kwargs.thinking` 和 `enable_thinking` 设为 `False`；
    - 移除 `chat_template_kwargs.reasoning_effort`；
-   - 保留原始 `tool_choice`，保证 ChatBI/工具预检的强制工具语义不被悄悄改成普通文本回答。
+   - 将 `tool_choice` 改为 `ToolChoice(mode="auto")`，避免再次发送 `required` 或具体函数对象；模型仍可自主选择可用工具，但不再保证必须调用某个指定工具。
 4. 用该拷贝重新发起一次请求。fallback 成功后，原始模型对象和后续请求仍保持思考模式。
 5. 其他 400、非思考模型、没有强制工具选择的请求，原异常原样抛出，不扩大容错范围。
 
 ## 并发与副作用边界
 
 - 不直接修改共享模型实例的 `parameters` 或 `_chat_template_kwargs`，避免并发请求互相污染。
-- 第一次请求在网关参数校验阶段失败，不应产生模型输出或工具副作用；fallback 只在异常仍处于模型请求边界时执行。
+- 第一次请求在网关参数校验阶段失败，不应产生模型输出或工具副作用；fallback 只在异常仍处于模型请求边界时执行。fallback 使用 `auto` 后，工具调用由模型自主决定。
 - fallback 只重试一次，不加入通用重试，避免把真正的业务参数错误隐藏掉。
 - 记录结构化 warning，包含模型名和 fallback 原因，不记录 API Key、完整 prompt 或工具参数。
 

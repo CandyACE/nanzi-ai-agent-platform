@@ -545,12 +545,16 @@ async def resolve_knowledge_dataset_ids(
 
 async def build_rag_retrieval_debug_meta() -> Dict[str, Any]:
     """构建 Debug / meta 事件展示用的 RAG 实参快照。"""
+    import asyncio
+
     from app.services.config_service import ConfigService
 
     ctx = get_current_agent_context()
-    sys_threshold = await ConfigService.get("knowledge_ragflow_similarity_threshold")
-    sys_weight = await ConfigService.get("knowledge_ragflow_vector_weight")
-    sys_top_k = await ConfigService.get("knowledge_ragflow_metadata_top_k")
+    sys_threshold, sys_weight, sys_top_k = await asyncio.gather(
+        ConfigService.get("knowledge_ragflow_similarity_threshold"),
+        ConfigService.get("knowledge_ragflow_vector_weight"),
+        ConfigService.get("knowledge_ragflow_metadata_top_k"),
+    )
     threshold, vector_weight, top_k = resolve_rag_retrieval_params(
         system_threshold=sys_threshold,
         system_weight=sys_weight,

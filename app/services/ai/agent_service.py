@@ -29,6 +29,7 @@ from app.services.ai.runtime.conversation_run_registry import track_conversation
 from app.services.ai.executors.common import _attachment_abs_path, extract_tokens_from_message
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
+from app.services.ai.runtime.execution_observability import ExecutionPerformanceTracker
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.grounding.policy import resolve_fact_requirement
 from app.services.ai.request_decision import (
@@ -536,12 +537,21 @@ class AgentService:
             return default
 
     async def _resolve_skill_full_load_policy(self) -> Dict[str, Any]:
+        import asyncio
+
         from app.services.config_service import ConfigService
 
-        enabled_raw = await ConfigService.get("skill_auto_full_load_enabled", "true")
-        min_score_raw = await ConfigService.get("skill_auto_full_load_min_score", "0.75")
-        max_count_raw = await ConfigService.get("skill_auto_full_load_max_count", "1")
-        max_bytes_raw = await ConfigService.get("skill_auto_full_load_max_bytes", "65536")
+        (
+            enabled_raw,
+            min_score_raw,
+            max_count_raw,
+            max_bytes_raw,
+        ) = await asyncio.gather(
+            ConfigService.get("skill_auto_full_load_enabled", "true"),
+            ConfigService.get("skill_auto_full_load_min_score", "0.75"),
+            ConfigService.get("skill_auto_full_load_max_count", "1"),
+            ConfigService.get("skill_auto_full_load_max_bytes", "65536"),
+        )
         return {
             "enabled": self._parse_bool_config(enabled_raw, True),
             "min_score": self._parse_float_config(min_score_raw, 0.75),
@@ -2640,12 +2650,14 @@ class AgentService:
                         preloaded_memories = []
 
                         if target_day:
-                            d_summary = await DailySummaryService.get_daily_summary(uid, target_day)
+                            d_summary, d_sessions = await asyncio.gather(
+                                DailySummaryService.get_daily_summary(uid, target_day),
+                                MemoryIndexService.list_session_summaries_for_day(uid, target_day),
+                            )
                             if d_summary:
                                 preloaded_memories.append(
                                     AgentServicePrompts.daily_summary_section(target_day, d_summary)
                                 )
-                            d_sessions = await MemoryIndexService.list_session_summaries_for_day(uid, target_day)
                             if d_sessions:
                                 sess_lines = []
                                 for idx, s in enumerate(d_sessions, 1):
@@ -2737,6 +2749,7 @@ class AgentService:
         executor = None
         tool_run_text = None
         lane_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
+        performance_tracker = ExecutionPerformanceTracker()
 
         try:
             # 1. Resolve and Verify Agent Configuration and Permissions
@@ -2763,15 +2776,24 @@ class AgentService:
                         continue
                     if resolve_task.done():
                         break
+                    route_event_task = asyncio.create_task(route_events.get())
                     try:
-                        yield await asyncio.wait_for(route_events.get(), timeout=0.05)
-                    except asyncio.TimeoutError:
-                        continue
+                        done, _ = await asyncio.wait(
+                            (resolve_task, route_event_task),
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if route_event_task in done:
+                            yield route_event_task.result()
+                    finally:
+                        if not route_event_task.done():
+                            route_event_task.cancel()
+                        await asyncio.gather(route_event_task, return_exceptions=True)
 
                 while not route_events.empty():
                     yield await route_events.get()
 
                 agent_config, route_details, route_elapsed_ms, err_msg = await resolve_task
+                performance_tracker.mark("route_resolution")
             except asyncio.CancelledError:
                 if not resolve_task.done():
                     resolve_task.cancel()
@@ -2807,6 +2829,7 @@ class AgentService:
                     model_override=synthesis_model_name,
                     phase="synthesis",
                 )
+            performance_tracker.mark("runtime_model_metadata")
             if looks_like_current_model_query(user_query):
                 response = build_current_model_answer(runtime_model_info)
                 agent_config.model_name = runtime_model_info.configured_model
@@ -2819,6 +2842,7 @@ class AgentService:
                     "model": runtime_model_info.effective_model_id,
                     "runtime_model_info": runtime_model_info.public_dict(),
                 }
+                performance_tracker.observe_chunk({"content": response})
                 yield {"content": response, "status": "success"}
                 if conversation_id:
                     u_id = user_info.get("user_id") if user_info else None
@@ -2991,6 +3015,7 @@ class AgentService:
                 trace_buffer=trace_buffer,
                 runtime_model_info=runtime_context_metadata,
             )
+            performance_tracker.mark("context_setup")
 
             # 2. Inject Active Skills
             matched_skills_to_log = []
@@ -3005,6 +3030,7 @@ class AgentService:
                 skills_log_callback=skills_log_callback,
                 resource_scope=(debug_options or {}).get("resource_scope"),
             )
+            performance_tracker.mark("skill_injection")
 
             for skill_id, skill_name, details_msg in matched_skills_to_log:
                 yield self._build_skill_log_chunk(skill_id, skill_name, details_msg)
@@ -3038,6 +3064,7 @@ class AgentService:
                     trace_buffer=trace_buffer,
                     runtime_model_info=runtime_context_metadata,
                 )
+                performance_tracker.mark("knowledge_context_setup")
 
             # Prompt inventory must match the tools that the selected executor
             # will expose. The published version's tools are authoritative.
@@ -3054,6 +3081,7 @@ class AgentService:
                 debug_options=debug_options,
                 user_query=user_query,
             )
+            performance_tracker.mark("memory_load")
 
             user_profile = None
             if user_info and should_inject_user_context(early_turn_kind):
@@ -3151,6 +3179,7 @@ class AgentService:
                 )
             )
             agent_config.system_prompt = assembled_prompt.full_text
+            performance_tracker.mark("prompt_assembly")
             if debug_options and debug_options.get("return_raw_prompt"):
                 debug_options.setdefault("prompt_assembler_meta", {})
                 debug_options["prompt_assembler_meta"] = {
@@ -3252,6 +3281,7 @@ class AgentService:
             secondary_agents = getattr(route_details, "secondary_agents", []) if route_details else []
 
             if enable_multi_agent and secondary_agents:
+                performance_tracker.mark("executor_start")
                 async for chunk in self._execute_multi_agent(
                     agent_config,
                     secondary_agents,
@@ -3266,10 +3296,12 @@ class AgentService:
                     conversation_id,
                     dispatch_turn_decision,
                 ):
+                    performance_tracker.observe_chunk(chunk)
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
+                performance_tracker.mark("executor_finish")
             else:
                 executor = await self._dispatch_executor(
                     agent_config=agent_config,
@@ -3283,6 +3315,7 @@ class AgentService:
                     conversation_id=conversation_id,
                     turn_decision=dispatch_turn_decision,
                 )
+                performance_tracker.mark("executor_start")
 
                 yield {
                     "type": "log",
@@ -3298,10 +3331,12 @@ class AgentService:
                 }
 
                 async for chunk in executor.execute(messages):
+                    performance_tracker.observe_chunk(chunk)
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
+                performance_tracker.mark("executor_finish")
 
                 resolve_has_data_output = getattr(executor, "resolve_has_data_output", None)
                 if callable(resolve_has_data_output):
@@ -3420,24 +3455,42 @@ class AgentService:
             duration = (end_time - start_time) * 1000
 
             is_scheduled_task = bool(user_info and user_info.get("is_scheduled_task"))
-            if execution_status not in AWAITING_RESUME_STATUSES or is_scheduled_task:
-                from app.core.cancellation import await_unless_cancelling
+            audit_completed = False
+            try:
+                if execution_status not in AWAITING_RESUME_STATUSES or is_scheduled_task:
+                    from app.core.cancellation import await_unless_cancelling
 
-                async def _audit_cancelled_run():
-                    await AuditManager.log_transaction(
-                        trace_id, agent_config, user_query, full_response_content,
-                        user_info, execution_status, duration, trace_buffer,
-                        conversation_id=conversation_id,
-                        reasoning_content=full_reasoning_content or None,
-                        process_timeline=_final_process_timeline(
-                            (shared_state or {}).get("process_timeline")
-                        ),
-                        has_data_output=has_data_output if execution_status == "success" else None,
+                    async def _audit_cancelled_run():
+                        await AuditManager.log_transaction(
+                            trace_id, agent_config, user_query, full_response_content,
+                            user_info, execution_status, duration, trace_buffer,
+                            conversation_id=conversation_id,
+                            reasoning_content=full_reasoning_content or None,
+                            process_timeline=_final_process_timeline(
+                                (shared_state or {}).get("process_timeline")
+                            ),
+                            has_data_output=has_data_output if execution_status == "success" else None,
+                        )
+
+                    await await_unless_cancelling(
+                        _audit_cancelled_run,
+                        name=f"audit-run-{trace_id}",
                     )
-
-                await await_unless_cancelling(
-                    _audit_cancelled_run,
-                    name=f"audit-run-{trace_id}",
+                    audit_completed = True
+            finally:
+                if audit_completed:
+                    performance_tracker.mark("audit_finish")
+                performance_snapshot = performance_tracker.snapshot(
+                    trace_buffer=trace_buffer,
+                    status=execution_status,
+                )
+                performance_snapshot["audit_completed"] = audit_completed
+                if shared_state is not None:
+                    shared_state["execution_performance"] = performance_snapshot
+                logger.info(
+                    "[AgentPerformance] trace_id=%s metrics=%s",
+                    trace_id,
+                    performance_snapshot,
                 )
 
     async def chat_completion(

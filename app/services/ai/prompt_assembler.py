@@ -118,10 +118,14 @@ def _skills_or_discovery_block(
 
 
 async def resolve_prompt_assembler_flags() -> tuple[bool, bool]:
+    import asyncio
+
     from app.services.config_service import ConfigService
 
-    boundary_raw = await ConfigService.get("agent_prompt_cache_boundary_enabled", "false")
-    reorder_raw = await ConfigService.get("agent_prompt_cache_reorder_enabled", "false")
+    boundary_raw, reorder_raw = await asyncio.gather(
+        ConfigService.get("agent_prompt_cache_boundary_enabled", "false"),
+        ConfigService.get("agent_prompt_cache_reorder_enabled", "false"),
+    )
 
     def _enabled(raw: Optional[str]) -> bool:
         return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}

@@ -242,7 +242,9 @@ def _build_bad_request_error(message: str):
 
 
 @pytest.mark.asyncio
-async def test_thinking_tool_choice_fallback_disables_thinking_per_request(monkeypatch):
+async def test_thinking_tool_choice_fallback_disables_thinking_and_uses_auto(
+    monkeypatch,
+):
     import openai
     from agentscope.tool import ToolChoice
 
@@ -307,7 +309,7 @@ async def test_thinking_tool_choice_fallback_disables_thinking_per_request(monke
         },
     }
     assert requests[0]["reasoning_effort"] == "high"
-    assert requests[1]["tool_choice"] == requests[0]["tool_choice"]
+    assert requests[1]["tool_choice"] == "auto"
     assert requests[1]["extra_body"] == {
         "chat_template_kwargs": {"thinking": False, "enable_thinking": False},
     }

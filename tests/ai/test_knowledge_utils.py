@@ -11,6 +11,7 @@ from app.services.ai.knowledge_utils import (
     filter_invalid_citation_markers,
     format_dataset_ids_for_tool,
     format_knowledge_tool_log_display,
+    build_rag_retrieval_debug_meta,
     has_knowledge_context_in_messages,
     knowledge_prefetch_had_citations,
     merge_request_knowledge_dataset_ids,
@@ -243,6 +244,58 @@ async def test_filter_alive_knowledge_dataset_ids_keeps_all_when_live_set_unknow
     ):
         filtered = await filter_alive_knowledge_dataset_ids(ids)
     assert filtered == ids
+
+
+@pytest.mark.asyncio
+async def test_build_rag_retrieval_debug_meta_reads_config_in_parallel():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    set_agent_context(
+        AgentContext(
+            agent_id="kb",
+            agent_name="knowledge-base",
+            dataset_ids=["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        )
+    )
+    active = 0
+    max_active = 0
+    values = {
+        "knowledge_ragflow_similarity_threshold": "0.65",
+        "knowledge_ragflow_vector_weight": "0.7",
+        "knowledge_ragflow_metadata_top_k": "8",
+    }
+
+    async def get_config(key, default=None):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0)
+            return values.get(key, default)
+        finally:
+            active -= 1
+
+    try:
+        with patch(
+            "app.services.config_service.ConfigService.get",
+            new_callable=AsyncMock,
+            side_effect=get_config,
+        ) as mock_get:
+            meta = await build_rag_retrieval_debug_meta()
+    finally:
+        set_agent_context(
+            AgentContext(
+                agent_id="test-reset",
+                agent_name="test-reset",
+            )
+        )
+
+    assert max_active == 3
+    assert mock_get.await_count == 3
+    assert meta["similarity_threshold"] == 0.65
+    assert meta["vector_similarity_weight"] == 0.7
+    assert meta["top_k"] == 8
 
 
 @pytest.mark.asyncio

@@ -1941,9 +1941,9 @@ const isSavedReportViewMode = (value: string | null): value is "card" | "list" =
 const readSavedReportViewMode = (): "card" | "list" => {
   try {
     const stored = typeof window !== "undefined" ? window.localStorage.getItem(SAVED_REPORT_VIEW_STORAGE_KEY) : null;
-    return isSavedReportViewMode(stored) ? stored : "card";
+    return isSavedReportViewMode(stored) ? stored : "list";
   } catch {
-    return "card";
+    return "list";
   }
 };
 const savedReportViewMode = ref<"card" | "list">(readSavedReportViewMode());

@@ -147,6 +147,9 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
                     fallback_chat_template_kwargs
                 )
                 fallback_kwargs["extra_body"] = fallback_extra_body
+                from agentscope.tool import ToolChoice
+
+                fallback_kwargs["tool_choice"] = ToolChoice(mode="auto")
                 return await fallback._call_api_once(*args, **fallback_kwargs)
 
     parameters = OpenAIChatModel.Parameters(

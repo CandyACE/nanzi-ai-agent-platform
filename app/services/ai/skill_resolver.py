@@ -1,9 +1,12 @@
 """从用户自然语言中解析并匹配可用技能（口头指定 + 关键词扫描）。"""
 from __future__ import annotations
 
+from collections import OrderedDict
 import os
 import re
 import logging
+import threading
+import time
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,14 @@ _SKILL_USE_PATTERNS = [
     re.compile(r"(?:执行|运行|触发|加载|套用|按照)(?:一下|下)?[「\"']?(.+?)[」\"']?(?:技能|skill)", re.I),
     re.compile(r"(?:技能|skill)[「\"']?(.+?)[」\"']?(?:执行|运行|查|查询)", re.I),
 ]
+
+_SKILL_META_CACHE_MAX_ENTRIES = 128
+_SKILL_META_CACHE_TTL_SECONDS = 60.0
+_skill_meta_cache: OrderedDict[
+    tuple[str, str, tuple[Any, ...]],
+    tuple[float, tuple[Dict[str, str], ...]],
+] = OrderedDict()
+_skill_meta_cache_lock = threading.RLock()
 
 
 def _normalize(text: str) -> str:
@@ -89,6 +100,71 @@ def _scan_skill_dir(skills_dir: str, scope: str) -> List[Dict[str, str]]:
     return metas
 
 
+def _skill_dir_fingerprint(skills_dir: str) -> tuple[Any, ...]:
+    """生成技能目录轻量指纹，用于检测元数据文件变化。"""
+    abs_dir = os.path.abspath(os.fspath(skills_dir))
+    try:
+        root_stat = os.stat(abs_dir)
+    except OSError:
+        return (abs_dir, None, ())
+
+    entries: list[tuple[Any, ...]] = []
+    try:
+        names = sorted(os.listdir(abs_dir))
+    except OSError:
+        return (abs_dir, root_stat.st_mtime_ns, root_stat.st_size, ())
+
+    for item in names:
+        if item.startswith("."):
+            continue
+        item_path = os.path.join(abs_dir, item)
+        if not os.path.isdir(item_path) or not _validate_skill_id(item):
+            continue
+        skill_md_path = os.path.join(item_path, "SKILL.md")
+        try:
+            stat = os.stat(skill_md_path)
+            entries.append((item, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            entries.append((item, None, None))
+    return (abs_dir, root_stat.st_mtime_ns, root_stat.st_size, tuple(entries))
+
+
+def _copy_skill_metas(metas: tuple[Dict[str, str], ...]) -> List[Dict[str, str]]:
+    return [dict(meta) for meta in metas]
+
+
+def _scan_skill_dir_cached(skills_dir: str, scope: str) -> List[Dict[str, str]]:
+    if not skills_dir:
+        return []
+
+    abs_dir = os.path.abspath(os.fspath(skills_dir))
+    fingerprint = _skill_dir_fingerprint(abs_dir)
+    cache_key = (abs_dir, scope, fingerprint)
+    now = time.monotonic()
+    with _skill_meta_cache_lock:
+        cached = _skill_meta_cache.get(cache_key)
+        if cached and now - cached[0] <= _SKILL_META_CACHE_TTL_SECONDS:
+            _skill_meta_cache.move_to_end(cache_key)
+            return _copy_skill_metas(cached[1])
+        if cached:
+            _skill_meta_cache.pop(cache_key, None)
+
+    metas = _scan_skill_dir(abs_dir, scope)
+    frozen_metas = tuple(dict(meta) for meta in metas)
+    with _skill_meta_cache_lock:
+        _skill_meta_cache[cache_key] = (now, frozen_metas)
+        _skill_meta_cache.move_to_end(cache_key)
+        while len(_skill_meta_cache) > _SKILL_META_CACHE_MAX_ENTRIES:
+            _skill_meta_cache.popitem(last=False)
+    return _copy_skill_metas(frozen_metas)
+
+
+def clear_skill_meta_cache() -> None:
+    """清理技能元数据缓存，供技能变更流程和测试调用。"""
+    with _skill_meta_cache_lock:
+        _skill_meta_cache.clear()
+
+
 def list_skill_metas(
     user_info: Optional[Dict[str, Any]] = None,
     *,
@@ -110,7 +186,7 @@ def list_skill_metas(
     except Exception:
         return []
 
-    global_metas = _scan_skill_dir(skills_dir, SCOPE_GLOBAL)
+    global_metas = _scan_skill_dir_cached(skills_dir, SCOPE_GLOBAL)
     if skills_custom:
         allowlist = {str(s).strip() for s in (allowed_global_skills or []) if str(s).strip()}
         global_metas = [m for m in global_metas if m.get("id") in allowlist]
@@ -118,7 +194,7 @@ def list_skill_metas(
     personal_metas: List[Dict[str, str]] = []
     personal_dir = get_user_personal_skills_dir(user_info)
     if personal_dir:
-        personal_metas = _scan_skill_dir(personal_dir, SCOPE_PERSONAL)
+        personal_metas = _scan_skill_dir_cached(personal_dir, SCOPE_PERSONAL)
 
     # 合并：个人技能优先（同 ID 覆盖全局）
     merged: Dict[str, Dict[str, str]] = {m["id"]: m for m in global_metas}
