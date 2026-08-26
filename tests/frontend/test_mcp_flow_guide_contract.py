@@ -26,6 +26,9 @@ def test_mcp_flow_guide_banner_contract():
     assert "新增服务" in banner
     assert "生态市场" in banner
     assert "不再提示" in banner
+    assert "SSE / Streamable HTTP / 生态市场" in banner
+    assert "支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置" in banner
+    assert "Stdio 本地进程" not in banner
 
     # 3. 验证主视图中的组件引入与持久化机制
     assert "McpFlowGuideBanner" in view
@@ -39,3 +42,9 @@ def test_mcp_flow_guide_banner_contract():
     assert "activeHelpTab" in view
     assert "MCP 工具集设计规范与全流程指引" in view
     assert "恢复顶部流程提示" in view
+    assert "外部 MCP 远程服务（SSE / Streamable HTTP）" in view
+    assert "支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置" in view
+    assert "Streamable HTTP 远程服务传输" in view
+    assert "提取其中第一个包含 URL 的服务地址与请求头" in view
+    assert "Stdio 配置（仅 command/args）暂不支持" in view
+    assert "Stdio 本地进程执行" not in view

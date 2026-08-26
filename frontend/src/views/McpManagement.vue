@@ -102,7 +102,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         {{
           personalOnly
             ? '登记并管理仅对自己可见的 MCP，可在对话中挂载使用'
-            : '接入并管理外部 MCP SSE 服务端，自动识别工具集并无缝绑定至智能体生态'
+            : '接入并管理外部 MCP 远程服务（SSE / Streamable HTTP），自动识别工具集并无缝绑定至智能体生态'
         }}
       </p>
     </div>
@@ -213,7 +213,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                           <h4 class="font-bold text-gray-900 text-sm">服务登记与生态安装</h4>
                        </div>
                        <p class="text-xs text-gray-500 leading-relaxed">
-                          支持 SSE 远程长连接服务、Stdio 本地进程或一键粘贴 JSON 配置；可直接从生态市场一键安装官方精选服务。
+                          支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置；可直接从生态市场一键安装官方精选服务。
                        </p>
                     </div>
                     <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
@@ -315,12 +315,12 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
                        <p class="text-gray-600 leading-relaxed">适用于部署在独立 Docker 容器或云服务上的 MCP Server（例如 <code>http://mcp-server:8000/sse</code>）。支持自定义 Header 鉴权与长连接流式响应。</p>
                     </div>
                     <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
-                       <span class="font-bold text-blue-900 text-sm">2. Stdio 本地进程执行</span>
-                       <p class="text-gray-600 leading-relaxed">适用于直接通过 CLI 命令拉起的 Node/Python MCP 进程（如 <code>npx -y @modelcontextprotocol/server-postgres</code>），由沙箱直接通过标准 I/O 交互。</p>
+                       <span class="font-bold text-blue-900 text-sm">2. Streamable HTTP 远程服务传输</span>
+                       <p class="text-gray-600 leading-relaxed">适用于提供 MCP HTTP 端点的云服务或网关（例如 <code>https://example.com/mcp</code>）。系统会自动探测协议，并通过 HTTP 请求完成初始化、工具发现和调用；支持自定义 Header 鉴权。</p>
                     </div>
                     <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
-                       <span class="font-bold text-purple-900 text-sm">3. JSON 配置批量导入</span>
-                       <p class="text-gray-600 leading-relaxed">支持直接粘贴 Claude Desktop / VSCode 的标准 <code>mcpServers</code> JSON 配置段落，系统自动解析并批量录入。</p>
+                       <span class="font-bold text-purple-900 text-sm">3. JSON 配置粘贴</span>
+                       <p class="text-gray-600 leading-relaxed">支持粘贴 Claude Desktop / VSCode 的标准 <code>mcpServers</code> JSON 配置，提取其中第一个包含 URL 的服务地址与请求头；纯 Stdio 配置（仅 command/args）暂不支持。</p>
                     </div>
                  </div>
               </div>

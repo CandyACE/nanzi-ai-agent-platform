@@ -15,8 +15,8 @@ const steps = [
   {
     step: 1,
     title: '服务登记与生态安装',
-    subtitle: 'SSE/Stdio/生态市场',
-    desc: '支持接入 SSE 远程长连接服务、Stdio 本地进程或一键粘贴 JSON 配置；支持从生态市场一键安装官方精选服务。',
+    subtitle: 'SSE / Streamable HTTP / 生态市场',
+    desc: '支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置；支持从生态市场一键安装官方精选服务。',
     tag: '服务接入',
     tagClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
     iconBg: 'bg-indigo-600 text-white font-bold',
