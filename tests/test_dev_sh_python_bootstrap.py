@@ -166,7 +166,7 @@ def test_dev_sh_skips_python_install_when_requirements_are_unchanged(tmp_path: P
     assert (home / "uv.log").is_file(), second_result.stdout + second_result.stderr
     log_lines = (home / "uv.log").read_text(encoding="utf-8").splitlines()
     assert sum(line.startswith("pip install") for line in log_lines) == 1
-    assert "后端依赖未变化，跳过安装" in second_result.stdout
+    assert "后端依赖未变化且环境检查通过，跳过安装" in second_result.stdout
 
 
 def test_dev_sh_rebuilds_existing_non_311_venv(tmp_path: Path):

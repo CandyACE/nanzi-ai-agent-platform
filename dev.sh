@@ -36,6 +36,10 @@ read_env_value() {
         || true
 }
 
+redact_url() {
+    printf '%s' "$1" | sed -E 's#(https?://)([^/@]+@)#\1***@#'
+}
+
 # 查找已安装的 uv。官方安装器默认路径不一定已进入当前 shell 的 PATH，
 # 因此额外检查常见的用户级安装目录。
 find_uv() {
@@ -141,7 +145,8 @@ prepare_python_environment() {
         printf '%s\n' "$current_hash" > "$REQUIREMENTS_HASH_FILE"
         echo -e "${GREEN}✅ 后端依赖安装完成${NC}"
     else
-        echo -e "${GREEN}✅ 后端依赖未变化，跳过安装${NC}"
+        "$UV_CMD" pip check --python "$VENV_PYTHON"
+        echo -e "${GREEN}✅ 后端依赖未变化且环境检查通过，跳过安装${NC}"
     fi
 }
 
@@ -167,7 +172,7 @@ fi
 echo -e "${BLUE}       ➜ uv: ${UV_VERSION}${NC}"
 echo -e "${BLUE}       ➜ Python 目标版本: ${PYTHON_VERSION}${NC}"
 echo -e "${BLUE}       ➜ 虚拟环境: ${VENV_DIR}${NC}"
-echo -e "${BLUE}       ➜ PyPI 镜像: ${PYPI_INDEX_URL}${NC}"
+echo -e "${BLUE}       ➜ PyPI 镜像: $(redact_url "$PYPI_INDEX_URL")${NC}"
 
 # 读取 .env 配置中的端口，默认 8001
 PORT=8001
@@ -195,13 +200,19 @@ print_runtime_environment() {
             DATABASE_HOST="${DATABASE_HOST:-localhost}"
             DATABASE_PORT="${DATABASE_PORT:-5432}"
             ;;
-        *)
+        mysql|mariadb)
             DATABASE_TYPE_EFFECTIVE="mysql"
             DATABASE_HOST="${MYSQL_HOST:-$(read_env_value MYSQL_HOST)}"
             DATABASE_PORT="${MYSQL_PORT:-$(read_env_value MYSQL_PORT)}"
             DATABASE_NAME="${MYSQL_DB:-$(read_env_value MYSQL_DB)}"
             DATABASE_HOST="${DATABASE_HOST:-未配置}"
             DATABASE_PORT="${DATABASE_PORT:-3306}"
+            ;;
+        *)
+            DATABASE_TYPE_EFFECTIVE="unsupported"
+            DATABASE_HOST="未配置"
+            DATABASE_PORT="未配置"
+            DATABASE_NAME="未配置"
             ;;
     esac
     DATABASE_NAME="${DATABASE_NAME:-未配置}"
@@ -231,7 +242,15 @@ prepare_python_environment
 
 # 2. 停止旧服务
 echo -e "\n${YELLOW}🛑 [2/4] 正在检查并停止旧服务 (Port ${PORT})...${NC}"
-PID=$(lsof -ti:${PORT} || true)
+if ! printf '%s' "$PORT" | grep -Eq '^[0-9]+$' || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    echo -e "${RED}❌ API_SERVICE_PORT 无效：${PORT}（必须是 1-65535）${NC}" >&2
+    exit 1
+fi
+if ! command -v lsof >/dev/null 2>&1; then
+    echo -e "${RED}❌ 未找到 lsof，无法安全检查端口占用${NC}" >&2
+    exit 1
+fi
+PID=$(lsof -ti:"${PORT}")
 if [ -n "$PID" ]; then
     kill -9 $PID
     echo -e "${GREEN}✅ 已停止旧进程 (PID: $PID)${NC}"
