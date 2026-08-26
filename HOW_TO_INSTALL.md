@@ -366,6 +366,8 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 
 详细的 Docker 编排配置，请参考：[docker/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/docker/README.md)。
 
+Docker 打包与启动的完整执行日志，请参考：[start-logs.md](start-logs.md)。
+
 ---
 
 ### 3.4 方案 B：本地源码开发调试部署
@@ -441,6 +443,8 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 并进入 `frontend` 执行 `npm install && npm run dev`。)*
 
 上述手动命令使用默认端口 `8001`；一键脚本会读取 `.env` 中的 `API_SERVICE_PORT`，如需修改端口请以环境文件配置为准。
+
+源码启动、源码升级后启动以及 Docker 打包启动的完整日志，请参考：[start-logs.md](start-logs.md)。
 
 ---
 
