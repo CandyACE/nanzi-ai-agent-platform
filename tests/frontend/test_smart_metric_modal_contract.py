@@ -43,3 +43,13 @@ def test_smart_metric_modal_contract():
     assert "取消生成" in content
     assert "AI 努力生成中" in content or "可能较为耗时" in content
     assert "耐心等待" in content
+
+    # 6. 推荐指标单项详情弹窗契约
+    assert "selectedRecommendationIndex" in content
+    assert "openRecommendationDetail" in content
+    assert "closeRecommendationDetail" in content
+    assert "查看详情" in content
+    assert '@click.stop="openRecommendationDetail(idx)"' in content
+    assert "item.calculation_logic" in content
+    assert "item.description" in content
+    assert "selectedRecommendation.tags" in content

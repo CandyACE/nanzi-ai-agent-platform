@@ -16,7 +16,7 @@
 - Modify: `tests/frontend/test_smart_metric_modal_contract.py`
 - Test target: `frontend/src/components/metadata/SmartMetricModal.vue`
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在现有 `test_smart_metric_modal_contract` 末尾增加以下断言，明确要求详情状态、打开/关闭函数、事件隔离和完整字段展示：
 
@@ -32,7 +32,7 @@
     assert "item.tags" in content
 ```
 
-- [ ] **Step 2: 运行测试确认按预期失败**
+- [x] **Step 2: 运行测试确认按预期失败**
 
 运行：
 
@@ -47,7 +47,7 @@ pytest --confcutdir=tests/frontend tests/frontend/test_smart_metric_modal_contra
 **Files:**
 - Modify: `frontend/src/components/metadata/SmartMetricModal.vue`
 
-- [ ] **Step 1: 增加详情状态与最小操作函数**
+- [x] **Step 1: 增加详情状态与最小操作函数**
 
 在 `selectedIndices` 状态附近增加：
 
@@ -68,7 +68,7 @@ const closeRecommendationDetail = () => {
 }
 ```
 
-- [ ] **Step 2: 在列表重置路径清理详情状态**
+- [x] **Step 2: 在列表重置路径清理详情状态**
 
 在 `handleRecommend` 开始清空结果、`handleBackToConfig` 和 `handleClose` 中同步设置：
 
@@ -78,11 +78,11 @@ selectedRecommendationIndex.value = null
 
 这样重新生成、返回配置和关闭外层弹窗时不会保留失效索引。
 
-- [ ] **Step 3: 增加独立“查看详情”按钮**
+- [x] **Step 3: 增加独立“查看详情”按钮**
 
 在推荐卡片右上角勾选圆形控件旁加入带 `@click.stop="openRecommendationDetail(idx)"` 的“查看详情”按钮；保留卡片主体 `@click="toggleSelection(idx)"` 和勾选控件行为。按钮桌面端显示文字，窄屏隐藏文字但保留图标与 `title="查看指标完整详情"`。
 
-- [ ] **Step 4: 增加详情弹窗**
+- [x] **Step 4: 增加详情弹窗**
 
 在外层 `SmartMetricModal` 根节点结束前、帮助弹窗之前增加 `v-if="selectedRecommendation"` 的 `z-[60]` 弹窗：
 
@@ -123,7 +123,7 @@ selectedRecommendationIndex.value = null
 - Verify: `frontend/src/components/metadata/SmartMetricModal.vue`
 - Verify: `tests/frontend/test_smart_metric_modal_contract.py`
 
-- [ ] **Step 1: 运行详情契约和相关前端契约测试**
+- [x] **Step 1: 运行详情契约和相关前端契约测试**
 
 运行：
 
@@ -133,7 +133,7 @@ pytest --confcutdir=tests/frontend tests/frontend/test_smart_metric_modal_contra
 
 预期：全部通过。
 
-- [ ] **Step 2: 执行前端构建**
+- [x] **Step 2: 执行前端构建**
 
 运行：
 
@@ -143,7 +143,7 @@ cd frontend && npm run build
 
 预期：Vite 构建成功；既有 Browserslist、动态/静态导入或 chunk 体积提示记录为 warning，不作为本功能失败。
 
-- [ ] **Step 3: 检查差异并提交**
+- [x] **Step 3: 检查差异并提交**
 
 运行：
 
