@@ -5,6 +5,36 @@ export type RequirementAnalysisIntent = {
   metrics: string[];
 };
 
+export type SavedReportSourceContext = {
+  data_source: string;
+  dataset_id: number | null;
+};
+
+/** 从 ChatBI 结果元数据提取本轮查询的关联数据源，避免新报表退回系统默认源。 */
+export function resolveSavedReportSourceContext(message: any): SavedReportSourceContext {
+  const sources = Array.isArray(message?.chatbiInsight?.sources)
+    ? message.chatbiInsight.sources
+    : [];
+  const sourceNames: string[] = Array.from(
+    new Set<string>(
+      sources
+        .map((source: any) => String(source?.data_source || '').trim())
+        .filter(Boolean),
+    ),
+  );
+  const rawDatasetId = sources.find((source: any) => source?.dataset_id !== undefined)?.dataset_id
+    ?? message?.chatbiInsight?.dataset_id;
+  const datasetId = Number.isFinite(Number(rawDatasetId)) && Number(rawDatasetId) > 0
+    ? Number(rawDatasetId)
+    : null;
+
+  return {
+    // 多数据源联邦查询无法安全映射成单个连接，留空交给用户确认，不能猜第一条。
+    data_source: sourceNames.length === 1 ? (sourceNames[0] || '') : '',
+    dataset_id: datasetId,
+  };
+}
+
 export function extractRequirementAnalysisBullet(details: string, label: string): string {
   const lines = String(details || "").split("\n");
   for (const line of lines) {

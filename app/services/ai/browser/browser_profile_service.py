@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import datetime
@@ -9,6 +10,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.browser import BrowserProfile
+
+
+def _calc_dir_size(path: str) -> int:
+    """同步遍历目录树，返回占用字节数；路径不存在时返回 0。"""
+    total = 0
+    try:
+        for dirpath, _, filenames in os.walk(path):
+            for fname in filenames:
+                fp = os.path.join(dirpath, fname)
+                if not os.path.islink(fp):
+                    try:
+                        total += os.path.getsize(fp)
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return total
 
 
 class BrowserProfileAccessDenied(PermissionError):
@@ -59,13 +77,29 @@ class BrowserProfileService:
             raise BrowserProfileAccessDenied("浏览器 Profile 不存在或无权访问")
         return profile
 
-    async def list_owned(self, *, user_id: int) -> list[BrowserProfile]:
+    async def list_owned(self, *, user_id: int) -> list[dict]:
+        """返回当前用户所有活跃 profile，附带磁盘占用字节数（disk_size_bytes）。"""
         result = await self.db.execute(
             select(BrowserProfile)
             .where(BrowserProfile.user_id == user_id, BrowserProfile.status == "active")
             .order_by(BrowserProfile.updated_at.desc())
         )
-        return list(result.scalars().all())
+        profiles = list(result.scalars().all())
+
+        async def _with_size(profile: BrowserProfile) -> dict:
+            path = await self.profile_path(profile)
+            size = await asyncio.to_thread(_calc_dir_size, path)
+            return {
+                "id": profile.id,
+                "display_name": profile.display_name,
+                "status": profile.status,
+                "last_used_at": profile.last_used_at,
+                "created_at": profile.created_at,
+                "updated_at": profile.updated_at,
+                "disk_size_bytes": size,
+            }
+
+        return list(await asyncio.gather(*[_with_size(p) for p in profiles]))
 
     async def delete_owned(self, *, user_id: int, profile_id: str) -> None:
         profile = await self.get_owned(user_id=user_id, profile_id=profile_id)

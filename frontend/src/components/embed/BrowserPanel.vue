@@ -576,6 +576,84 @@
 
             <!-- 右侧：服务端浏览器环境状态徽标与一键刷新检测 (固定在视口右下角，与左侧水印同一水平线) -->
             <div class="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 select-none" role="status">
+
+              <!-- 缓存大小胶囊 -->
+              <transition name="fade-capsule">
+                <div
+                  v-if="panelCacheSizeDisplay !== null || panelCacheLoading"
+                  class="inline-flex items-center gap-1 rounded-md border bg-white/90 px-2 py-0.5 text-[10px] shadow-xs backdrop-blur-xs transition-all dark:bg-slate-900/90"
+                  :class="[
+                    panelClearConfirm
+                      ? 'border-red-300/80 text-red-600 dark:border-red-600/60 dark:text-red-400'
+                      : 'border-slate-200/80 text-slate-500 dark:border-slate-700/80 dark:text-slate-400'
+                  ]"
+                  :title="panelCacheSizeBytes === 0 ? '暂无缓存可清除' : `云端浏览器已占用 ${panelCacheSizeDisplay ?? '…'}\n点击右侧 🗑️ 可清除：Cookie 与登录态、浏览历史、页面缓存\n不影响：本地 Chrome、平台账号、对话记录、工作区文件`"
+                >
+                  <!-- 存储图标（加载或正常状态） -->
+                  <svg v-if="!panelCacheLoading && !panelClearConfirm" class="h-2.5 w-2.5 shrink-0 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>
+                  </svg>
+                  <svg v-else-if="panelCacheLoading" class="h-2.5 w-2.5 shrink-0 animate-spin text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                  <!-- 确认状态：警告图标 -->
+                  <svg v-else class="h-2.5 w-2.5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+
+                  <span class="font-mono text-[9px] font-medium tracking-tight whitespace-nowrap">
+                    <template v-if="panelCacheLoading">计算中…</template>
+                    <template v-else-if="panelClearing">清除中…</template>
+                    <template v-else-if="panelCacheSizeBytes === 0">缓存已清空</template>
+                    <template v-else-if="panelClearConfirm">确认清除？</template>
+                    <template v-else>缓存 {{ panelCacheSizeDisplay }}</template>
+                  </span>
+
+                  <!-- 正常状态：清除按钮 -->
+                  <button
+                    v-if="panelCacheSizeBytes !== 0 && !panelClearConfirm && !panelClearing"
+                    type="button"
+                    class="rounded p-0.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-all active:scale-90"
+                    title="清除云端浏览器缓存与登录态"
+                    @click.stop="clearPanelCache"
+                  >
+                    <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                    </svg>
+                  </button>
+
+                  <!-- 确认状态：取消 + 确认 两个按钮 -->
+                  <template v-if="panelClearConfirm && !panelClearing">
+                    <button
+                      type="button"
+                      class="rounded p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-all active:scale-90"
+                      title="取消"
+                      @click.stop="panelClearConfirm = false"
+                    >
+                      <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-0.5 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 animate-pulse transition-all active:scale-90"
+                      title="确认清除 — 将清除所有 Cookie、登录态、浏览历史和缓存；若 AI 正在执行浏览器任务将中断（不影响本地 Chrome 和平台账号）"
+                      @click.stop="clearPanelCache"
+                    >
+                      <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    </button>
+                  </template>
+
+                  <!-- 清除中 loading -->
+                  <svg v-if="panelClearing" class="h-2.5 w-2.5 animate-spin text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                </div>
+              </transition>
+
+              <!-- Chromium 环境胶囊 -->
               <div
                 class="inline-flex items-center gap-1 rounded-md border border-slate-200/80 bg-white/90 px-2 py-0.5 text-[10px] text-slate-700 shadow-xs backdrop-blur-xs transition-all hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/90 dark:text-slate-200"
                 :title="envInfoTip"
@@ -1199,6 +1277,65 @@ const envInfoTip = computed(() => {
   }
   return `环境未就绪: ${envInfo.value.error_detail || '请安装相关依赖'}\n点击重新检测`;
 });
+
+// ─── 浏览器缓存大小与清理 ───────────────────────────────────────────────────
+const panelCacheSizeBytes = ref<number | null>(null);
+const panelCacheLoading = ref(false);
+const panelClearing = ref(false);
+const panelClearConfirm = ref(false); // 二次确认状态
+
+const panelCacheSizeDisplay = computed(() => {
+  const b = panelCacheSizeBytes.value;
+  if (b === null) return null;
+  if (b === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = b, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+});
+
+const fetchPanelCacheSize = async () => {
+  panelCacheLoading.value = true;
+  try {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : '';
+    const res = await fetch('/api/v1/chat/browser/profiles', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.ok) {
+      const profiles: Array<{ disk_size_bytes?: number | null }> = await res.json();
+      panelCacheSizeBytes.value = profiles.reduce((acc, p) => acc + (p.disk_size_bytes ?? 0), 0);
+    }
+  } catch { /* 静默忽略 */ }
+  finally { panelCacheLoading.value = false; }
+};
+
+const clearPanelCache = async () => {
+  if (!panelClearConfirm.value) {
+    // 第一次点击：进入确认状态，3 秒后自动复位
+    panelClearConfirm.value = true;
+    setTimeout(() => { panelClearConfirm.value = false; }, 3000);
+    return;
+  }
+  // 第二次点击：执行清理
+  panelClearConfirm.value = false;
+  panelClearing.value = true;
+  try {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : '';
+    const res = await fetch('/api/v1/chat/browser/profiles/clear', {
+      method: 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.ok) {
+      panelCacheSizeBytes.value = 0;
+      remoteFocusMessage.value = '✅ 云端浏览器缓存已清除';
+      setTimeout(() => {
+        if (remoteFocusMessage.value.includes('缓存已清除')) remoteFocusMessage.value = '';
+      }, 3000);
+    }
+  } catch { /* 静默 */ }
+  finally { panelClearing.value = false; }
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 const controlReason = ref<string | null>(null);
 const captchaDetected = ref(false);
@@ -2286,6 +2423,7 @@ watch(() => props.refreshSignal, () => {
 onMounted(() => {
   loadCustomWidth();
   void fetchEnvironmentInfo();
+  void fetchPanelCacheSize();
   mobileMq = window.matchMedia('(max-width: 639px)');
   syncMobile();
   mobileMq.addEventListener?.('change', syncMobile);
@@ -2301,3 +2439,15 @@ onUnmounted(() => {
   window.removeEventListener('click', closeTabContextMenu);
 });
 </script>
+
+<style scoped>
+.fade-capsule-enter-active,
+.fade-capsule-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.fade-capsule-enter-from,
+.fade-capsule-leave-to {
+  opacity: 0;
+  transform: translateY(4px) scale(0.95);
+}
+</style>

@@ -747,6 +747,7 @@ async def test_execute_saved_report_uses_rendered_sql_and_enables_table_auth(mon
     db = AsyncMock()
     db.add = Mock()
     db.flush = AsyncMock()
+    db.commit = AsyncMock()
 
     async def fake_execute_sql_query_core(*args, **kwargs):
         captured.update(kwargs)
@@ -778,6 +779,7 @@ async def test_execute_saved_report_uses_rendered_sql_and_enables_table_auth(mon
     assert run_row.result_snapshot["columns"] == ["orders"]
     assert run_row.result_snapshot["rows"] == [{"orders": 3}]
     assert db.flush.await_count == 2
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

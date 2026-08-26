@@ -33,8 +33,8 @@
             v-for="option in visibleFilters"
             :key="option.value"
             type="button"
-            class="rounded-lg px-2.5 py-1 text-xs font-medium transition cursor-pointer"
-            :class="activeFilter === option.value ? 'bg-blue-600 text-white shadow-2xs' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'"
+            class="rounded-lg border px-2.5 py-1 text-xs font-medium transition cursor-pointer"
+            :class="activeFilter === option.value ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-2xs dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300' : 'border-transparent bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'"
             @click="setFilter(option.value)"
           >
             {{ option.label }} {{ option.value === 'all' ? reports.length : (summary[option.value] || '') }}
@@ -48,10 +48,23 @@
           class="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm shadow-blue-500/20 transition-all cursor-pointer"
           @click="emit('create-report')"
         >
-          <span>➕ 新建固化报表</span>
+          <span class="inline-flex items-center gap-1.5">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
+            </svg>
+            <span>新建固化报表</span>
+          </span>
         </button>
       </div>
     </div>
+
+    <!-- 快捷视图：最近运行 / 常用报表 / 订阅中；完整列表仍保留在下方。 -->
+    <SavedReportQuickViews
+      v-if="!compact && reports.length"
+      :reports="reports"
+      :format-date="formatDate"
+      @select="emit('execute', $event)"
+    />
 
     <div v-if="filteredReports.length && manage" class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       <SavedReportItemCard
@@ -114,7 +127,7 @@
     >
       <p>当前分类下还没有固化报表</p>
       <p v-if="!compact" class="text-xs text-gray-500">
-        您可以点击右上角「➕ 新建固化报表」手工录入 SQL，或在 ChatBI 智能对话查数成功后点击「添加固化报表」
+        您可以点击右上角「新建固化报表」手工录入 SQL，或在 ChatBI 智能对话查数成功后点击「添加固化报表」
       </p>
     </div>
   </section>
@@ -123,6 +136,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
+import SavedReportQuickViews from "@/components/chatbi/SavedReportQuickViews.vue";
 import type { DataPortalHomePayload, DataPortalReportFilter, DataPortalReportItem } from "@/types/dataPortal";
 
 const props = withDefaults(

@@ -115,6 +115,7 @@ import {
   deriveSavedReportTagsInput,
   deriveSavedReportTitle,
   parseRequirementAnalysisFromMessage,
+  resolveSavedReportSourceContext,
 } from "@/utils/savedReportDefaults";
 import {
   buildSavedReportRunParams,
@@ -790,14 +791,15 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
 
   const detectedTemplate = detectSavedReportDateTemplate(cleanSql);
   const requirementIntent = parseRequirementAnalysisFromMessage(agentMessage);
+  const sourceContext = resolveSavedReportSourceContext(agentMessage);
 
   saveReportForm.value = {
     id: null,
     title: deriveSavedReportTitle(requirementIntent, originalQuery),
     description: deriveSavedReportDescription(requirementIntent, originalQuery),
     sql_content: cleanSql,
-    dataset_id: null,
-    data_source: 'default_clickhouse',
+    dataset_id: sourceContext.dataset_id,
+    data_source: sourceContext.data_source,
     original_query: originalQuery,
     mode: detectedTemplate ? 'param_sql' : 'static_sql',
     sql_template: detectedTemplate?.sql_template || '',

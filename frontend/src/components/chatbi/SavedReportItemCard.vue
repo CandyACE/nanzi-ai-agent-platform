@@ -1,12 +1,12 @@
 <template>
   <div
-    class="group/item flex flex-col rounded-lg border border-blue-100/60 dark:border-blue-900/30 bg-white dark:bg-gray-900/40 hover:border-blue-300 dark:hover:border-blue-700/60 overflow-hidden shadow-xs"
+    class="group/item relative flex flex-col rounded-lg border border-blue-100/60 dark:border-blue-900/30 bg-white dark:bg-gray-900/40 hover:border-blue-300 dark:hover:border-blue-700/60 overflow-visible shadow-xs"
   >
     <button
       type="button"
       class="w-full flex flex-col p-2.5 text-left transition-all min-w-0 active:scale-[0.99] hover:bg-blue-50/30 dark:hover:bg-blue-950/20"
       :class="isDisabled ? 'opacity-90' : ''"
-      :title="detailTitle"
+      :aria-label="detailTitle"
       @click="emit('detail', report)"
     >
       <span class="text-xs font-bold text-gray-800 dark:text-gray-200 truncate w-full" :title="report.title">
@@ -56,7 +56,7 @@
         <span class="shrink-0">运行次数：{{ userRunCount }}</span>
       </span>
     </button>
-    <div class="flex items-center justify-end px-2.5 py-1 bg-gray-50/50 dark:bg-gray-900/10 border-t border-blue-50/30 dark:border-blue-950/20 text-gray-400 gap-1.5">
+    <div class="flex flex-wrap items-center justify-end px-2.5 py-1.5 bg-gray-50/50 dark:bg-gray-900/10 border-t border-blue-50/30 dark:border-blue-950/20 text-gray-400 gap-1.5">
       <button
         v-if="report.is_owner && report.subscription_status"
         type="button"
@@ -70,7 +70,7 @@
       </button>
       <button
         type="button"
-        class="flex items-center justify-center p-1 rounded transition-all duration-200"
+        class="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-[10px] font-semibold transition-colors"
         :class="isDisabled ? 'text-gray-300 dark:text-gray-600 bg-gray-50/70 dark:bg-gray-900/60 cursor-not-allowed opacity-40' : 'text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer'"
         :disabled="isDisabled"
         :title="executeTitle"
@@ -80,7 +80,17 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
+        <span>运行</span>
       </button>
+      <button
+        type="button"
+        class="inline-flex min-h-9 items-center rounded-md px-2 text-[10px] font-semibold text-indigo-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/40"
+        title="打开报表详情"
+        @click.stop="emit('detail', report)"
+      >
+        详情
+      </button>
+      <div class="hidden">
       <button
         v-if="report.is_owner"
         type="button"
@@ -159,12 +169,47 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
         </svg>
       </button>
+      </div>
+      <button
+        type="button"
+        class="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-[10px] font-semibold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
+        @click.stop="toggleMoreMenu"
+      >
+        <span>⋯</span>
+        <span>更多操作</span>
+      </button>
     </div>
   </div>
+  <teleport to="body">
+    <div
+      v-if="menuOpen"
+      class="fixed inset-0 z-[320]"
+      role="presentation"
+      @click="menuOpen = false"
+    >
+      <div
+        ref="menuRef"
+        class="fixed w-48 overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+        :style="menuStyle"
+        role="menu"
+        @click.stop
+      >
+        <button v-if="report.is_owner" type="button" class="menu-action" @click="dispatchMore('edit')">编辑报表</button>
+        <button type="button" class="menu-action" :class="report.is_favorite ? 'text-amber-600' : ''" @click="dispatchMore('favorite')">{{ report.is_favorite ? '取消收藏' : '收藏' }}</button>
+        <button type="button" class="menu-action" :class="report.pinned_at ? 'text-blue-600' : ''" @click="dispatchMore('pin')">{{ report.pinned_at ? '取消置顶' : '置顶' }}</button>
+        <button v-if="report.is_owner" type="button" class="menu-action" @click="dispatchMore('share')">共享报表</button>
+        <button v-else type="button" class="menu-action" :disabled="isDisabled" @click="dispatchMore('copy')">复制为我的报表</button>
+        <button v-if="report.is_owner && report.subscription_status" type="button" class="menu-action" @click="dispatchMore('subscription')">订阅设置</button>
+        <button v-if="report.is_owner" type="button" class="menu-action text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" @click="dispatchMore('delete')">删除报表</button>
+      </div>
+    </div>
+  </teleport>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
 
 const props = defineProps<{
   report: any;
@@ -182,6 +227,63 @@ const emit = defineEmits<{
   (event: "delete", report: any): void;
   (event: "subscription", report: any): void;
 }>();
+
+const menuOpen = ref(false);
+const menuStyle = ref<Record<string, string>>({});
+const menuRef = ref<HTMLElement | null>(null);
+
+const toggleMoreMenu = async (event: MouseEvent) => {
+  if (menuOpen.value) {
+    menuOpen.value = false;
+    return;
+  }
+  const trigger = event.currentTarget as HTMLElement | null;
+  const rect = trigger?.getBoundingClientRect();
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
+  const menuWidth = 192;
+  const estimatedMenuHeight = 260;
+  const gap = 8;
+  const right = rect?.right ?? viewportWidth - gap;
+  const initialTop = rect && rect.top >= estimatedMenuHeight + gap
+    ? rect.top - estimatedMenuHeight - gap
+    : Math.min(viewportHeight - estimatedMenuHeight - gap, (rect?.bottom ?? gap) + gap);
+  const initialLeft = Math.max(gap, Math.min(right - menuWidth, viewportWidth - menuWidth - gap));
+  const maxHeight = Math.max(180, viewportHeight - gap * 2);
+  menuStyle.value = {
+    position: "fixed",
+    top: `${Math.max(gap, initialTop)}px`,
+    left: `${initialLeft}px`,
+    maxHeight: `${maxHeight}px`,
+  };
+  menuOpen.value = true;
+  await nextTick();
+
+  const menuRect = menuRef.value?.getBoundingClientRect();
+  const actualMenuWidth = menuRect?.width || menuWidth;
+  const actualMenuHeight = menuRect?.height || estimatedMenuHeight;
+  const top = rect && rect.top >= actualMenuHeight + gap
+    ? rect.top - actualMenuHeight - gap
+    : Math.min(viewportHeight - actualMenuHeight - gap, (rect?.bottom ?? gap) + gap);
+  const left = Math.max(gap, Math.min(right - actualMenuWidth, viewportWidth - actualMenuWidth - gap));
+  menuStyle.value = {
+    position: "fixed",
+    top: `${Math.max(gap, top)}px`,
+    left: `${left}px`,
+    maxHeight: `${maxHeight}px`,
+  };
+};
+
+const dispatchMore = (event: "edit" | "favorite" | "pin" | "share" | "copy" | "subscription" | "delete") => {
+  menuOpen.value = false;
+  if (event === "edit") emit("edit", props.report);
+  else if (event === "favorite") emit("favorite", props.report);
+  else if (event === "pin") emit("pin", props.report);
+  else if (event === "share") emit("share", props.report);
+  else if (event === "copy") emit("copy", props.report);
+  else if (event === "subscription") emit("subscription", props.report);
+  else emit("delete", props.report);
+};
 
 const isDisabled = computed(() => props.report.run_permission_status === "denied");
 
@@ -213,9 +315,9 @@ const shareTargetLabel = computed(() => {
 
 const detailTitle = computed(() => {
   if (props.report.is_owner && props.report.share_summary) {
-    return `${props.report.title || "固化报表"}\n${shareTargetLabel.value}\n点击打开详情`;
+    return `${props.report.title || "固化报表"}，${shareTargetLabel.value}`;
   }
-  return props.report.title ? `${props.report.title}\n点击打开详情` : "打开报表详情";
+  return props.report.title ? `打开${props.report.title}详情` : "打开报表详情";
 });
 
 const executeTitle = computed(() => {
@@ -267,3 +369,27 @@ const subscriptionTitle = computed(() => {
   return [subscriptionLabel.value, schedule, nextRun, "点击管理订阅"].filter(Boolean).join("\n");
 });
 </script>
+
+<style scoped>
+.menu-action {
+  display: block;
+  width: 100%;
+  min-height: 2.25rem;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(75 85 99);
+}
+
+.menu-action:hover:not(:disabled) {
+  background: rgb(239 246 255);
+  color: rgb(37 99 235);
+}
+
+.menu-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+</style>

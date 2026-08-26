@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 interface Props {
   title: string
-  message: string
+  message?: string
   confirmText?: string
   cancelText?: string
   type?: 'danger' | 'primary' | 'warning'
@@ -80,7 +80,11 @@ onUnmounted(() => {
             <svg v-else class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           </div>
           <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-gray-100">{{ title }}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mt-2 whitespace-pre-line">{{ message }}</p>
+          <!-- slot 优先：有 slot 内容时左对齐展示结构化信息；否则回退到 message 文本 -->
+          <div v-if="$slots.default" class="mt-3 text-left">
+            <slot />
+          </div>
+          <p v-else-if="message" class="text-sm text-gray-500 dark:text-gray-400 mt-2 whitespace-pre-line">{{ message }}</p>
           <div v-if="details?.length" class="mt-3 text-left">
             <p class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
               {{ detailsLabel }}（{{ details.length }}）
