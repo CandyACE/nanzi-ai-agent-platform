@@ -591,7 +591,7 @@ const handleClose = () => {
             <button
               @click="handleCancelRecommend"
               type="button"
-              class="px-6 py-2 bg-white hover:bg-red-50 text-gray-600 hover:text-red-600 border border-gray-300 hover:border-red-200 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-2 group"
+              class="px-6 py-2 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-2 group"
             >
               <svg class="w-3.5 h-3.5 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
               <span>取消生成 (已等待 {{ formattedElapsedTime }})</span>

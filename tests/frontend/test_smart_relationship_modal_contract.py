@@ -35,6 +35,10 @@ def test_smart_relationship_modal_contract():
     assert "elapsedSeconds" in content
     assert "handleCancelRecommend" in content
     assert "取消生成" in content
+    assert "bg-red-50" in content
+    assert "text-red-600" in content
+    assert "border-red-200" in content
+    assert "bg-white hover:bg-red-50 text-gray-600 hover:text-red-600 border border-gray-300 hover:border-red-200" not in content
     assert "10 分钟内自动去重" in content or "自动排除已有实体关系" in content
 
     # 5. 验证 RelationshipList.vue 绑定了 SmartRelationshipModal

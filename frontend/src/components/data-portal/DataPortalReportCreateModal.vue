@@ -517,6 +517,7 @@ const dbConnections = ref<Array<{ id: number; name: string; source_key?: string;
 const datasets = ref<Array<{ id: number; name: string; display_name?: string; data_source?: string; description?: string }>>([])
 const sourceError = ref('')
 const pendingSourceName = ref('')
+const pendingDatasetName = ref('')
 
 // 试跑状态与结果
 const testing = ref(false)
@@ -581,6 +582,7 @@ const loadDataSourcesAndDatasets = async () => {
     ])
 
     const sourceErrors: string[] = []
+    const isAiDraft = Boolean(activeReport.value?.original_query)
     if (connResult.status === 'fulfilled') {
       dbConnections.value = Array.isArray(connResult.value.data?.data) ? connResult.value.data.data : []
     } else {
@@ -601,7 +603,6 @@ const loadDataSourcesAndDatasets = async () => {
           sourceResolutionMessage = `原查询数据源不可用（${pendingSourceName.value}），请手动确认关联数据源。`
         }
       }
-      const isAiDraft = Boolean(activeReport.value?.original_query)
       if (!pendingSourceName.value && !isAiDraft && dbConnections.value.length > 0 && !form.value.connectionId) {
         form.value.connectionId = dbConnections.value[0]?.id ?? null
       }
@@ -617,8 +618,49 @@ const loadDataSourcesAndDatasets = async () => {
       sourceErrors.push(dsResult.reason?.response?.status === 403 ? '当前账号无可访问数据集' : '数据集加载失败')
       datasets.value = []
     }
-    if (!dbConnections.value.length && datasets.value.length && !pendingSourceName.value) {
+
+    let datasetResolutionMessage = ''
+    if (pendingDatasetName.value) {
+      const normalizedPendingDataset = pendingDatasetName.value.trim().toLowerCase()
+      const matchedDatasets = datasets.value.filter((item) =>
+        [item.name, item.display_name]
+          .filter(Boolean)
+          .some((value) => String(value).trim().toLowerCase() === normalizedPendingDataset),
+      )
+      if (matchedDatasets.length === 1) {
+        form.value.sourceType = 'dataset'
+        form.value.datasetId = matchedDatasets[0].id
+        sourceError.value = ''
+      } else if (matchedDatasets.length === 0) {
+        form.value.sourceType = 'dataset'
+        form.value.datasetId = null
+        datasetResolutionMessage = `原查询数据集不可用（${pendingDatasetName.value}），请手动确认关联数据集。`
+      } else {
+        form.value.sourceType = 'dataset'
+        form.value.datasetId = null
+        datasetResolutionMessage = `原查询数据集存在多个匹配项（${pendingDatasetName.value}），请手动确认关联数据集。`
+      }
+    }
+
+    if (form.value.sourceType === 'dataset') {
+      const selectedDatasetAvailable = Number(form.value.datasetId) > 0
+        && datasets.value.some((item) => Number(item.id) === Number(form.value.datasetId))
+      if (selectedDatasetAvailable) {
+        sourceError.value = ''
+      } else if (datasetResolutionMessage) {
+        sourceError.value = datasetResolutionMessage
+      } else if (isAiDraft && !pendingDatasetName.value) {
+        sourceError.value = '未能从本次 AI 查询识别数据集，请手动确认关联数据集。'
+      }
+    }
+
+    if (!dbConnections.value.length && datasets.value.length && !pendingSourceName.value && !pendingDatasetName.value) {
       form.value.sourceType = 'dataset'
+      if (isAiDraft && !form.value.datasetId) {
+        sourceError.value = '未能从本次 AI 查询识别数据集，请手动确认关联数据集。'
+      } else if (!isAiDraft) {
+        sourceError.value = ''
+      }
     }
     if (!dbConnections.value.length && !datasets.value.length) {
       sourceError.value = sourceErrors.length
@@ -633,12 +675,14 @@ const loadDataSourcesAndDatasets = async () => {
 }
 
 const resetForm = (report?: any | null) => {
-  pendingSourceName.value = report?.dataset_id ? '' : String(report?.data_source || '')
+  const hasDatasetContext = Boolean(report?.dataset_id || report?.dataset_name)
+  pendingSourceName.value = hasDatasetContext ? '' : String(report?.data_source || '')
+  pendingDatasetName.value = report?.dataset_id ? '' : String(report?.dataset_name || '')
   form.value = {
     title: report?.title || '',
     description: report?.description || '',
     tags: Array.isArray(report?.tags) ? report.tags.join(', ') : String(report?.tags_input || ''),
-    sourceType: report?.dataset_id ? 'dataset' : 'connection',
+    sourceType: hasDatasetContext ? 'dataset' : 'connection',
     connectionId: null,
     datasetId: report?.dataset_id ?? null,
     sqlContent: report?.sql_template || report?.sql_content || 'SELECT * FROM \nLIMIT 50',

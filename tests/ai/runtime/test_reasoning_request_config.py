@@ -54,6 +54,19 @@ def test_explicit_disable_only_requires_allow_disable_thinking():
     assert result.thinking_enable is True
 
 
+def test_legacy_registered_reasoning_values_are_canonicalized():
+    from app.services.ai.reasoning import resolve_reasoning_settings
+
+    result = resolve_reasoning_settings(
+        thinking_enable=True,
+        thinking_only=True,
+        reasoning_effort="max",
+        supported_reasoning_efforts='["low", "high", "max"]',
+    )
+
+    assert result.reasoning_effort == "xhigh"
+
+
 @pytest.mark.parametrize(
     ("thinking_enable", "reasoning_effort"),
     [(False, None), (True, None), (True, "low"), (True, "xhigh")],
@@ -97,7 +110,8 @@ async def test_runtime_model_info_carries_registered_reasoning_configuration(mon
             provider="openai",
             thinking_enable=True,
             thinking_only=True,
-            reasoning_effort="xhigh",
+            reasoning_effort="max",
+            supported_reasoning_efforts='["low", "high", "max"]',
         )),
     )
 
@@ -106,6 +120,7 @@ async def test_runtime_model_info_carries_registered_reasoning_configuration(mon
     assert info.thinking_enable is True
     assert info.thinking_capable is True
     assert info.reasoning_effort == "xhigh"
+    assert info.supported_reasoning_efforts == ("low", "high", "xhigh")
 
 
 @pytest.mark.asyncio

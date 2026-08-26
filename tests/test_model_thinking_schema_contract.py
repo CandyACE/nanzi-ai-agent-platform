@@ -71,10 +71,71 @@ def test_thinking_configuration_normalizes_effort_order_and_legacy_response_text
     assert response.has_api_key is True
 
 
+def test_legacy_model_response_maps_removed_reasoning_values():
+    now = datetime.now(timezone.utc)
+
+    response = AIModelResponse.from_orm_custom(
+        SimpleNamespace(
+            id="legacy-model-id",
+            name="Legacy thinking model",
+            model_id="legacy-thinking-model",
+            provider="openai",
+            type="llm",
+            api_base_url=None,
+            context_size=None,
+            max_output_tokens=None,
+            thinking_enable=True,
+            thinking_only=True,
+            allow_disable_thinking=True,
+            reasoning_effort="max",
+            supported_reasoning_efforts='["low", "high", "max"]',
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            api_key=None,
+        )
+    )
+
+    assert response.reasoning_effort == "xhigh"
+    assert response.supported_reasoning_efforts == ["low", "high", "xhigh"]
+
+
+def test_legacy_model_response_falls_back_when_reasoning_values_are_invalid():
+    now = datetime.now(timezone.utc)
+
+    response = AIModelResponse.from_orm_custom(
+        SimpleNamespace(
+            id="invalid-model-id",
+            name="Invalid thinking model",
+            model_id="invalid-thinking-model",
+            provider="openai",
+            type="llm",
+            api_base_url=None,
+            context_size=None,
+            max_output_tokens=None,
+            thinking_enable=True,
+            thinking_only=True,
+            allow_disable_thinking=True,
+            reasoning_effort="auto",
+            supported_reasoning_efforts='["retired-effort"]',
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            api_key=None,
+        )
+    )
+
+    assert response.reasoning_effort is None
+    assert response.supported_reasoning_efforts == [
+        "none", "minimal", "low", "medium", "high", "xhigh",
+    ]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
         model_payload(reasoning_effort="unsupported"),
+        model_payload(reasoning_effort="max"),
         model_payload(supported_reasoning_efforts=[]),
         model_payload(reasoning_effort="high", supported_reasoning_efforts=["low"]),
         model_payload(supported_reasoning_efforts=["unsupported"]),

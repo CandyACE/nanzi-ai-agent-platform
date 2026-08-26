@@ -6,6 +6,7 @@ from app.schemas.agent import ChatConfig
 from app.core.llm.client import get_llm
 from app.services.config_service import ConfigService
 from app.utils.model_credentials import decrypt_model_api_key
+from app.schemas.ai_model import normalize_legacy_supported_reasoning_efforts
 from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
 from app.core.context import get_debug_option
@@ -164,8 +165,9 @@ async def resolve_runtime_model_info(
             thinking_only=bool(getattr(registered, "thinking_only", False)),
             allow_disable_thinking=bool(getattr(registered, "allow_disable_thinking", True)),
             supported_reasoning_efforts=tuple(
-                str(item)
-                for item in (getattr(registered, "supported_reasoning_efforts", None) or [])
+                normalize_legacy_supported_reasoning_efforts(
+                    getattr(registered, "supported_reasoning_efforts", None)
+                )
             ),
         )
 
