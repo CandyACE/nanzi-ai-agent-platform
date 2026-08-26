@@ -47,19 +47,6 @@
 
           <div class="flex items-center gap-2">
             <button
-              v-if="activeSection === 'reports'"
-              type="button"
-              class="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm shadow-blue-500/20 transition hover:bg-blue-700 cursor-pointer"
-              @click="openCreateReport"
-            >
-              <span class="inline-flex items-center gap-1.5">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
-                </svg>
-                <span>新建固化报表</span>
-              </span>
-            </button>
-            <button
               type="button"
               class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:border-blue-200 hover:text-blue-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 cursor-pointer"
               :disabled="homeLoading || sceneLoading || reportsLoading"

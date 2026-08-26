@@ -124,6 +124,36 @@ const handlePasswordChange = async () => {
 
 const clearingBrowserData = ref(false)
 const showClearBrowserModal = ref(false)
+const browserCacheSizeBytes = ref<number | null>(null)
+const loadingCacheSize = ref(false)
+
+const browserCacheSizeDisplay = computed(() => {
+    const bytes = browserCacheSizeBytes.value
+    if (bytes === null) return null
+    if (bytes === 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let val = bytes
+    let idx = 0
+    while (val >= 1024 && idx < units.length - 1) {
+        val /= 1024
+        idx++
+    }
+    return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[idx]}`
+})
+
+const fetchBrowserCacheSize = async () => {
+    loadingCacheSize.value = true
+    try {
+        const res = await axios.get('/api/v1/browser/profiles')
+        const profiles: Array<{ disk_size_bytes?: number | null }> = res.data || []
+        const total = profiles.reduce((acc, p) => acc + (p.disk_size_bytes ?? 0), 0)
+        browserCacheSizeBytes.value = total
+    } catch {
+        browserCacheSizeBytes.value = null
+    } finally {
+        loadingCacheSize.value = false
+    }
+}
 
 const handleClearBrowserData = () => {
     showClearBrowserModal.value = true
@@ -134,6 +164,7 @@ const confirmClearBrowserData = async () => {
     try {
         await axios.delete('/api/v1/browser/profiles/clear')
         showClearBrowserModal.value = false
+        browserCacheSizeBytes.value = 0
         showToast('云端自动化浏览器历史、登录态及文件缓存已彻底清除', 'success')
     } catch (e: any) {
         showToast(e.response?.data?.detail || '清除失败，请稍后重试', 'error')
@@ -225,6 +256,7 @@ watch(() => route.query.tab, (value) => {
 onMounted(() => {
     fetchUserInfo()
     loadBranding()
+    fetchBrowserCacheSize()
 })
 </script>
 
@@ -471,7 +503,27 @@ onMounted(() => {
 
                 <!-- Cloud Browser Cache & Reset -->
                 <div class="space-y-4 sm:space-y-6">
-                    <h3 class="text-md sm:text-lg font-medium text-gray-900 border-b pb-2">云端浏览器缓存</h3>
+                    <div class="flex items-center justify-between border-b pb-2">
+                        <h3 class="text-md sm:text-lg font-medium text-gray-900">云端浏览器缓存</h3>
+                        <span v-if="loadingCacheSize" class="text-xs text-gray-400 flex items-center gap-1">
+                            <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                            </svg>
+                            计算中...
+                        </span>
+                        <span
+                            v-else-if="browserCacheSizeDisplay !== null"
+                            :class="[
+                                'text-xs font-semibold px-2 py-0.5 rounded-full',
+                                browserCacheSizeBytes === 0
+                                    ? 'bg-green-50 text-green-600'
+                                    : 'bg-amber-50 text-amber-700'
+                            ]"
+                        >
+                            已占用 {{ browserCacheSizeDisplay }}
+                        </span>
+                    </div>
                     <div class="space-y-4">
                         <p class="text-xs text-gray-500 leading-relaxed">
                             如果在智能体自动化任务中登录过外部网站，可在此一键重置您的<span class="font-semibold text-gray-700">云端服务端浏览器环境</span>，彻底擦除云端存储的 Cookie、登录状态、历史记录及本地文件缓存（不影响您本地电脑的 Chrome 浏览器数据）。
@@ -480,13 +532,13 @@ onMounted(() => {
                             <button
                                 type="button"
                                 @click="handleClearBrowserData"
-                                :disabled="clearingBrowserData"
-                                class="w-full flex justify-center items-center gap-1.5 py-2.5 px-4 bg-red-50 border border-red-200 text-red-700 hover:bg-red-100 text-xs sm:text-sm font-bold rounded-lg shadow-sm transition-all disabled:opacity-50"
+                                :disabled="clearingBrowserData || browserCacheSizeBytes === 0"
+                                class="w-full flex justify-center items-center gap-1.5 py-2.5 px-4 bg-red-50 border border-red-200 text-red-700 hover:bg-red-100 text-xs sm:text-sm font-bold rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                 </svg>
-                                {{ clearingBrowserData ? '正在清理中...' : '清除云端自动化浏览器缓存与登录态' }}
+                                {{ clearingBrowserData ? '正在清理中...' : browserCacheSizeBytes === 0 ? '暂无缓存可清除' : '清除云端自动化浏览器缓存与登录态' }}
                             </button>
                         </div>
                     </div>

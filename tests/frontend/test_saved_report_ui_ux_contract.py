@@ -35,15 +35,23 @@ def test_quick_views_keep_title_area_readable_in_narrow_portal_panel():
 
 
 def test_saved_report_create_actions_use_svg_plus_and_keep_primary_blue_only():
-    for path in (SECTION, HOME, DETAIL):
+    for path in (SECTION, DETAIL):
         source = path.read_text(encoding="utf-8")
 
         assert "➕" not in source
         assert 'stroke="currentColor"' in source
         assert 'd="M12 5v14M5 12h14"' in source
 
+    assert "➕" not in HOME.read_text(encoding="utf-8")
     quick_views = QUICK_VIEWS.read_text(encoding="utf-8")
     assert "bg-blue-600" not in quick_views
+
+
+def test_data_portal_reports_tab_has_one_create_report_entrypoint():
+    source = HOME.read_text(encoding="utf-8")
+
+    assert '@click="openCreateReport"' not in source
+    assert '@create-report="openCreateReport"' in source
 
 
 def test_saved_report_more_menu_expands_card_without_covering_content():

@@ -25,6 +25,7 @@ class BrowserProfileResponse(BaseModel):
     last_used_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    disk_size_bytes: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
