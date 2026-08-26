@@ -190,7 +190,12 @@
             class="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs shadow-blue-500/20 transition-all cursor-pointer"
             @click="showCreateReportModal = true"
           >
-            <span>➕ 新建报表</span>
+            <span class="inline-flex items-center gap-1">
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
+              </svg>
+              <span>新建报表</span>
+            </span>
           </button>
           <button
             type="button"
@@ -284,6 +289,14 @@
         </button>
       </div>
 
+      <!-- 快捷视图：最近运行、常用报表、订阅中，帮助先查常用内容再管理完整列表。 -->
+      <SavedReportQuickViews
+        v-if="savedReports.length"
+        :reports="savedReports"
+        :format-date="formatDate"
+        @select="handleExecuteSavedReportClick"
+      />
+
       <!-- 报表卡片列表 -->
       <div v-if="loadingReports" class="flex items-center justify-center py-8 text-xs text-gray-400 select-none">
         <svg class="w-4 h-4 animate-spin text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
@@ -294,7 +307,7 @@
       </div>
       <div v-else-if="filteredSavedReports.length === 0" class="text-center py-8 border border-dashed border-gray-200 dark:border-gray-800 rounded-xl text-gray-400 dark:text-gray-500 text-[11px] space-y-2 select-none">
         <p>暂无固化报表</p>
-        <p class="text-[10px] text-gray-400">您可以点击上方「➕ 新建报表」手工编写 SQL，或在 ChatBI 查数后一键保存</p>
+        <p class="text-[10px] text-gray-400">您可以点击上方「新建报表」手工编写 SQL，或在 ChatBI 查数后一键保存</p>
       </div>
       <div v-else class="grid gap-2 max-h-[calc(100vh-280px)] overflow-y-auto pr-0.5 custom-scrollbar">
         <SavedReportItemCard
@@ -340,21 +353,34 @@
         @click="closeSavedReportDetail"
       />
       <aside class="absolute inset-y-0 right-0 w-full max-w-xl bg-white dark:bg-gray-950 border-l border-gray-100 dark:border-gray-800 shadow-2xl overflow-y-auto custom-scrollbar">
-        <div class="sticky top-0 z-10 bg-white/95 dark:bg-gray-950/95 border-b border-gray-100 dark:border-gray-800 px-5 py-4 flex items-center justify-between">
+        <div class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-gray-100 bg-white/95 px-5 py-4 dark:border-gray-800 dark:bg-gray-950/95">
           <div class="min-w-0">
-            <h3 class="text-sm font-black text-gray-800 dark:text-gray-100 truncate w-full">报表详情</h3>
-            <p class="text-xs text-gray-400 truncate mt-1">{{ selectedSavedReportDetail.title }}</p>
+            <h3 class="w-full truncate text-sm font-black text-gray-800 dark:text-gray-100">报表概览</h3>
+            <p class="mt-1 truncate text-xs font-bold text-gray-700 dark:text-gray-200">{{ selectedSavedReportDetail.title }}</p>
+            <p class="mt-1 truncate text-[10px] text-gray-400">{{ selectedSavedReportDetail.dataset_name || selectedSavedReportDetail.data_source || '未标注数据源' }} · 最近运行 {{ formatDate(selectedSavedReportDetail.last_success_at || selectedSavedReportDetail.user_last_run_at) || '暂无' }} · {{ selectedSavedReportDetail.user_run_count || 0 }} 次</p>
           </div>
-          <button type="button" class="p-2 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" @click="closeSavedReportDetail">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div class="relative flex shrink-0 items-center gap-1">
+            <button type="button" class="min-h-9 rounded-lg bg-blue-600 px-3 text-[11px] font-bold text-white transition hover:bg-blue-700 disabled:opacity-50" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行报表</button>
+            <button type="button" class="min-h-9 rounded-lg border border-gray-200 px-2.5 text-[11px] font-bold text-gray-500 transition hover:border-blue-300 hover:text-blue-600 dark:border-gray-700" :aria-expanded="showSavedReportDetailActions" @click="showSavedReportDetailActions = !showSavedReportDetailActions">更多操作</button>
+            <button type="button" class="rounded-full p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" aria-label="关闭报表详情" @click="closeSavedReportDetail">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <div v-if="showSavedReportDetailActions" class="absolute right-10 top-11 z-20 w-40 rounded-xl border border-gray-200 bg-white p-1 shadow-xl dark:border-gray-700 dark:bg-gray-900">
+              <button v-if="selectedSavedReportDetail.is_owner" type="button" class="detail-menu-action" @click="handleEditReport(selectedSavedReportDetail)">编辑报表</button>
+              <button type="button" class="detail-menu-action" @click="toggleSavedReportFavorite(selectedSavedReportDetail)">{{ selectedSavedReportDetail.is_favorite ? '取消收藏' : '收藏' }}</button>
+              <button type="button" class="detail-menu-action" @click="toggleSavedReportPinned(selectedSavedReportDetail)">{{ selectedSavedReportDetail.pinned_at ? '取消置顶' : '置顶' }}</button>
+              <button v-if="selectedSavedReportDetail.is_owner" type="button" class="detail-menu-action" @click="openShareReportModal(selectedSavedReportDetail)">共享报表</button>
+              <button v-else type="button" class="detail-menu-action" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleCopyReport(selectedSavedReportDetail)">复制为我的报表</button>
+              <button v-if="selectedSavedReportDetail.is_owner" type="button" class="detail-menu-action" @click="selectSavedReportDetailTab('subscription')">订阅与共享</button>
+            </div>
+          </div>
         </div>
         <div class="px-5 pt-4 flex items-center gap-1 border-b border-gray-100 dark:border-gray-800">
-          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'info' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="savedReportDetailTab = 'info'">报表信息</button>
+          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'info' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="savedReportDetailTab = 'info'">报表概览</button>
           <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'runs' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('runs')">运行历史</button>
-          <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'subscription' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('subscription')">订阅设置</button>
+          <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'subscription' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('subscription')">订阅与共享</button>
         </div>
         <div v-if="savedReportDetailTab === 'info'" class="p-5 space-y-4">
           <section class="space-y-2">
@@ -386,7 +412,7 @@
             />
           </section>
           <div class="flex flex-wrap gap-2 pt-2">
-            <button type="button" class="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white disabled:opacity-50" :title="getSavedReportButtonTitle(selectedSavedReportDetail)" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行</button>
+            <button type="button" class="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white disabled:opacity-50" :title="getSavedReportButtonTitle(selectedSavedReportDetail)" :disabled="isSavedReportActionDisabled(selectedSavedReportDetail)" @click="handleExecuteSavedReportClick(selectedSavedReportDetail)">运行报表</button>
             <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300" @click="handleEditReport(selectedSavedReportDetail)">编辑</button>
             <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300" @click="openShareReportModal(selectedSavedReportDetail)">共享</button>
           </div>
@@ -1409,6 +1435,7 @@ import { renderSafeMarkdownPreview } from "@/utils/safeMarkdown";
 import { focusSavedReportTarget } from "@/utils/savedReportFocus";
 import type { SavedReportOpenRequest } from "@/utils/savedReportOpenProtocol";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
+import SavedReportQuickViews from "@/components/chatbi/SavedReportQuickViews.vue";
 import SavedReportResultTable from "@/components/chatbi/SavedReportResultTable.vue";
 import SavedReportBrowseModal from "@/components/chatbi/SavedReportBrowseModal.vue";
 import DataPortalReportCreateModal from "@/components/data-portal/DataPortalReportCreateModal.vue";
@@ -1905,6 +1932,7 @@ const showSavedReportBrowser = ref(false);
 const savedReportBrowseModalRef = ref<{ refresh: () => Promise<void> } | null>(null);
 const selectedSavedReportDetail = ref<any | null>(null);
 const savedReportDetailTab = ref<"info" | "runs" | "subscription">("info");
+const showSavedReportDetailActions = ref(false);
 const savedReportRuns = ref<any[]>([]);
 const savedReportRunsLoading = ref(false);
 const selectedSavedReportRunId = ref<number | null>(null);
@@ -2122,6 +2150,7 @@ const openSavedReportDetail = async (report: any) => {
   showSavedReportBrowser.value = false;
   selectedSavedReportDetail.value = report;
   savedReportDetailTab.value = "info";
+  showSavedReportDetailActions.value = false;
   savedReportRuns.value = [];
   selectedSavedReportRunId.value = null;
   selectedSavedReportRunDetail.value = null;
@@ -2272,6 +2301,7 @@ const formatSavedReportRunDuration = (durationMs: number | null | undefined) => 
 
 const closeSavedReportDetail = () => {
   showSavedReportDetailDrawer.value = false;
+  showSavedReportDetailActions.value = false;
   selectedSavedReportDetail.value = null;
   savedReportRuns.value = [];
   selectedSavedReportRunId.value = null;
@@ -3559,6 +3589,28 @@ const handleRecommendedQuestionClick = (
 
 .animate-pulse-slow {
   animation: pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.detail-menu-action {
+  display: block;
+  width: 100%;
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: rgb(75 85 99);
+}
+
+.detail-menu-action:hover:not(:disabled) {
+  background: rgb(239 246 255);
+  color: rgb(37 99 235);
+}
+
+.detail-menu-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 @keyframes pulse {

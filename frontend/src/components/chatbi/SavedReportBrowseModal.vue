@@ -117,6 +117,15 @@
           </div>
         </div>
 
+        <div class="shrink-0 px-5 pt-3">
+          <SavedReportQuickViews
+            v-if="reports.length"
+            :reports="reports"
+            :format-date="formatDate"
+            @select="emit('execute', $event)"
+          />
+        </div>
+
         <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4 custom-scrollbar relative">
           <div
             v-if="refreshing"
@@ -168,6 +177,7 @@
 import { computed, ref, watch } from "vue";
 import axios from "@/utils/axios";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
+import SavedReportQuickViews from "@/components/chatbi/SavedReportQuickViews.vue";
 
 type ReportScope = "all" | "my" | "shared";
 type SmartFilter = "all" | "pinned" | "favorite" | "subscribed" | "recent" | "frequent";

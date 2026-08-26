@@ -246,16 +246,24 @@ export const composeSavedReportExecuteMarkdown = (
   const resultMarkdown = renderSavedReportDataToMarkdown(execResult);
   const analysisMarkdown = String(execResult?.analysis_markdown || "").trim();
   const analysisStatus = String(execResult?.analysis_status || "");
+  const rowCount = [execResult?.row_count, execResult?.total, execResult?.count]
+    .find((value) => typeof value === "number");
+  const resultRows = [execResult?.rows, execResult?.items, execResult?.data, execResult?.records]
+    .find((value) => Array.isArray(value));
+  const rowLabel = rowCount !== undefined ? ` · 返回 ${rowCount} 行` : Array.isArray(resultRows) ? ` · 返回 ${resultRows.length} 行` : "";
   const parts = [
     `### 📊 固化报表「${reportTitle}」执行结果：`,
+    `> ✓ 查询成功${rowLabel}`,
     resultMarkdown,
   ];
   if (analysisMarkdown) {
-    parts.push("---", analysisMarkdown);
+    parts.push("---", "### 📌 业务解读", analysisMarkdown);
   } else if (analysisStatus === "deferred" || analysisStatus === "pending") {
-    parts.push("---", "> 正在生成业务解读…");
+    parts.push("---", "### 📌 业务解读", "> 正在生成业务解读…");
+  } else if (analysisStatus === "disabled") {
+    parts.push("---", "### 📌 业务解读", "> 未启用业务解读。");
   } else if (analysisStatus && analysisStatus !== "disabled" && analysisStatus !== "success") {
-    parts.push("---", "> 业务解读暂不可用。");
+    parts.push("---", "### 📌 业务解读", "> 业务解读暂不可用，可重试解读。");
   }
   return parts.join("\n\n");
 };

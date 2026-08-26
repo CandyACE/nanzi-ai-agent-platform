@@ -220,7 +220,7 @@ watch(
   () => props.show,
   (val) => {
     if (val) {
-      records.value.push(createWelcomeRecord());
+      records.value = [createWelcomeRecord()];
       focusInput();
       void scrollToBottom();
     }

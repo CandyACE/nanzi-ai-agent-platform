@@ -116,7 +116,7 @@ def test_docker_terminal_modal_renders_structured_welcome_card_each_open():
     assert 'type WelcomeRecordKind = "command" | "welcome"' in source
     assert "const createWelcomeRecord = ()" in source
     assert 'kind: "welcome"' in source
-    assert "records.value.push(createWelcomeRecord())" in source
+    assert "records.value = [createWelcomeRecord()]" in source
     assert "immediate: true" in source
     assert "v-if=\"rec.kind === 'welcome'\"" in source
     assert "文件与同步" in source
