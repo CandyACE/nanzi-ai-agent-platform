@@ -832,23 +832,28 @@ onBeforeUnmount(() => {
                               <section class="thinking-mode-section">
                                   <div class="advanced-section-heading">
                                       <div>
-                                          <h4 class="advanced-section-title">思考模式配置</h4>
-                                          <p class="advanced-section-description">将该模型标记为思考模型，开启后显示相关配置。</p>
+                                          <h4 class="advanced-section-title">思考能力与默认设置</h4>
+                                          <p class="advanced-section-description">配置该模型是否支持思考控制，以及新会话的默认行为。</p>
                                       </div>
-                                      <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
+                                      <label class="thinking-mode-capsule thinking-mode-capsule-primary" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
                                           <input v-model="modelForm.thinking_enable" type="checkbox" class="sr-only" />
+                                          <span class="thinking-mode-capsule-label">支持思考模式</span>
                                           <span class="thinking-mode-capsule-track">
                                               <span class="thinking-mode-capsule-thumb"></span>
-                                          <span>{{ modelForm.thinking_enable ? '开启' : '关闭' }}</span>
+                                              <span>{{ modelForm.thinking_enable ? '开启' : '关闭' }}</span>
                                           </span>
                                       </label>
+                                  </div>
+                                  <div class="thinking-provider-tip" role="note">
+                                      <span class="thinking-provider-tip-label">配置建议</span>
+                                      <span>开启“支持思考模式”后，平台会向供应商显式传递思考开关。若供应商默认开启思考，请保持此项开启，再关闭“新会话默认开启思考”。</span>
                                   </div>
                                   <div v-if="modelForm.thinking_enable">
                                       <div class="thinking-options-grid">
                                           <div class="thinking-option-card">
                                               <span>
-                                                  <span class="block text-sm font-medium text-gray-700">默认思考模式</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">新会话默认开思考；不传覆盖时后端按此执行。</span>
+                                                  <span class="block text-sm font-medium text-gray-700">{{ modelForm.thinking_only ? '新会话默认开启思考' : '新会话默认关闭思考' }}</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">{{ modelForm.thinking_only ? '新会话会默认进入思考模式；用户是否可以关闭，由右侧设置决定。' : '新会话会默认使用非思考模式；需要时，用户仍可在会话中手动开启。' }}</span>
                                               </span>
                                               <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_only }">
                                                   <input v-model="modelForm.thinking_only" type="checkbox" class="sr-only" />
@@ -860,8 +865,8 @@ onBeforeUnmount(() => {
                                           </div>
                                           <div class="thinking-option-card">
                                               <span>
-                                                  <span class="block text-sm font-medium text-gray-700">允许关闭思考</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">开启后，用户可在会话里关掉思考。</span>
+                                                  <span class="block text-sm font-medium text-gray-700">{{ modelForm.allow_disable_thinking ? '允许用户关闭思考' : '禁止用户关闭思考' }}</span>
+                                                  <span class="mt-1 block text-xs text-gray-500">{{ modelForm.allow_disable_thinking ? '用户可以在当前会话中关闭思考；默认开启时仍可手动切换。' : '开启后，用户无法在本次会话中再关闭思考；默认关闭时仍可按需开启。' }}</span>
                                               </span>
                                               <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.allow_disable_thinking }">
                                                   <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="sr-only" />
@@ -879,7 +884,7 @@ onBeforeUnmount(() => {
                                                   <option :value="null">自动（使用请求层默认值）</option>
                                                   <option v-for="option in reasoningEffortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                                               </select>
-                                              <p class="mt-1 text-xs text-gray-500">对应 AgentScope 的 reasoning_effort；自动时不传该参数。</p>
+                                              <p class="mt-1 text-xs text-gray-500">选择“自动”仅表示不指定思考强度，不代表关闭思考。</p>
                                           </div>
                                       </div>
                                       <div class="supported-reasoning-section">
@@ -1191,6 +1196,20 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.thinking-mode-capsule-primary {
+  flex-shrink: 0;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.thinking-mode-capsule-label {
+  white-space: nowrap;
+}
+
+.thinking-mode-capsule-primary .thinking-mode-capsule-track {
+  min-width: 3.85rem;
+}
+
 .thinking-mode-capsule-track {
   position: relative;
   display: inline-flex;
@@ -1229,6 +1248,32 @@ onBeforeUnmount(() => {
 
 .thinking-mode-capsule-on .thinking-mode-capsule-thumb {
   left: calc(100% - 1.4375rem);
+}
+
+.thinking-provider-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  border: 1px solid rgb(191 219 254);
+  border-radius: 0.75rem;
+  background: rgb(239 246 255);
+  padding: 0.65rem 0.75rem;
+  color: rgb(30 64 175);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.thinking-provider-tip-label {
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: rgb(219 234 254);
+  padding: 0.15rem 0.45rem;
+  color: rgb(30 64 175);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .thinking-option-card .thinking-mode-capsule-track {
@@ -1335,6 +1380,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
+  .thinking-provider-tip {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
   .thinking-options-grid,
   .thinking-effort-options {
     grid-template-columns: 1fr;

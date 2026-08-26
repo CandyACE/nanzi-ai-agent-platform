@@ -32,12 +32,26 @@ def test_model_api_declares_thinking_configuration():
 def test_model_registry_shows_dependent_thinking_controls():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
 
-    assert "思考模式配置" in source
-    assert "默认思考模式" in source
-    assert "新会话默认开思考" in source
-    assert "允许关闭思考" in source
-    assert "用户可在会话里关掉思考" in source
+    assert "思考能力与默认设置" in source
+    assert "配置该模型是否支持思考控制，以及新会话的默认行为。" in source
+    assert "支持思考模式" in source
+    assert "thinking-mode-capsule-primary" in source
+    assert "thinking-mode-capsule-label" in source
+    assert "white-space: nowrap" in source
+    assert "thinking-provider-tip" in source
+    assert "thinking-provider-tip-label" in source
+    assert "配置建议" in source
+    assert "开启“支持思考模式”后，平台会向供应商显式传递思考开关。若供应商默认开启思考，请保持此项开启，再关闭“新会话默认开启思考”。" in source
+    assert "新会话默认开启思考" in source
+    assert "新会话默认关闭思考" in source
+    assert "新会话会默认进入思考模式；用户是否可以关闭，由右侧设置决定。" in source
+    assert "新会话会默认使用非思考模式；需要时，用户仍可在会话中手动开启。" in source
+    assert "允许用户关闭思考" in source
+    assert "禁止用户关闭思考" in source
+    assert "用户可以在当前会话中关闭思考；默认开启时仍可手动切换。" in source
+    assert "开启后，用户无法在本次会话中再关闭思考；默认关闭时仍可按需开启。" in source
     assert "默认思考强度" in source
+    assert "选择“自动”仅表示不指定思考强度，不代表关闭思考。" in source
     assert "支持的思考强度" in source
     assert "thinking_enable" in source
     assert "v-if=\"modelForm.thinking_enable\"" in source
@@ -76,9 +90,9 @@ def test_model_registry_places_thinking_section_above_context_section():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
     template = source[source.index("<template>"):]
 
-    assert "思考模式配置" in template
+    assert "思考能力与默认设置" in template
     assert "上下文与输出" in template
-    assert template.index("思考模式配置") < template.index("上下文与输出")
+    assert template.index("思考能力与默认设置") < template.index("上下文与输出")
     assert "thinking-mode-section" in template
     assert "advanced-context-section" in template
 
