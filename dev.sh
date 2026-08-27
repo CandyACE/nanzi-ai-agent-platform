@@ -250,7 +250,7 @@ if ! command -v lsof >/dev/null 2>&1; then
     echo -e "${RED}❌ 未找到 lsof，无法安全检查端口占用${NC}" >&2
     exit 1
 fi
-PID=$(lsof -ti:"${PORT}")
+PID=$(lsof -ti:"${PORT}" || true)
 if [ -n "$PID" ]; then
     kill -9 $PID
     echo -e "${GREEN}✅ 已停止旧进程 (PID: $PID)${NC}"

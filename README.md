@@ -311,33 +311,6 @@ cd docker
 
 一键脚本仍需要本机具备 Node.js/npm，并且需要提前准备 `.env`、数据库和 Redis；uv、Python 与 Python 依赖的首次下载需要网络。若 PyPI 镜像需要调整，可通过 `PYPI_INDEX_URL` 覆盖默认的清华镜像地址。
 
-#### 2. 工具脚本对比
-项目提供了以下三个工具以适应不同的开发和部署场景：
-
-| 脚本名称 | 运行模式 | 前端编译方式 | 后端拉起方式 | 适用场景 |
-| :--- | :--- | :--- | :--- | :--- |
-| `dev.sh` | **前台** 交互式 | 极速编译 (跳过类型检查) | 带 `--reload` 前台实时输出日志 | 本地日常功能联调与排错 |
-| `scripts/redeploy-fast.sh` | **后台** 运行 | 极速编译 (跳过类型检查) | `nohup` 后台守护进程运行 | 开发测试环境快速后台热更新 |
-| `scripts/redeploy.sh` | **后台** 运行 | 完整编译 (包含 `vue-tsc` 类型检查) | `nohup` 后台守护进程运行 | 生产/准生产环境规范发布与部署 |
-
-#### 3. 传统分步手动启动
-如果您需要分步微调前后端，也可以执行传统命令：
-```bash
-# 1. 准备与 dev.sh 相同的 Python 环境
-uv python install 3.11
-uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-
-# 2. 启动后端
-# 手动示例使用默认端口 8001；一键脚本会读取 .env 中的 API_SERVICE_PORT
-.venv/bin/python -m uvicorn app.main:app --reload --port 8001
-
-# 3. 启动前端
-cd frontend && npm install && npm run dev
-```
-
-已有传统 `venv` 环境时，仍可手动执行 `python -m venv venv`、激活该环境并使用 `pip install -r requirements.txt`；一键脚本统一使用项目根目录下的 `.venv` Python 3.11 环境。
-
 ---
 
 ## 🤝 贡献指南

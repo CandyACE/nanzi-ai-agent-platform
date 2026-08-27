@@ -250,6 +250,14 @@ watch(() => props.isOpen, (newVal) => {
                                     >
                                         查看
                                     </button>
+                                    <button
+                                        v-if="agent?.is_editable !== false"
+                                        @click="emit('create-version', v)"
+                                        class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                        title="基于此版本新建"
+                                    >
+                                        克隆
+                                    </button>
                                     <button 
                                         v-if="agent?.is_editable !== false"
                                         @click="requestDeleteVersion(v)"

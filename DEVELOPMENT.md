@@ -91,9 +91,7 @@ cd frontend
 npm install
 ```
 
-### 3. 启动开发服务器
-
-#### 方式一：使用一键开发启动脚本（推荐）
+### 3. 使用一键开发启动脚本
 
 在开发阶段，推荐直接在项目根目录下使用一键开发启动脚本，它会自动处理编译和进程清理：
 
@@ -147,27 +145,6 @@ INFO:     Started server process [45014]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 ```
-
-#### 方式二：手动分别启动（可选）
-
-如果您在开发中需要分别调试前后端，也可以手动启动它们：
-
-**手动启动后端**：
-
-```bash
-source .venv/bin/activate
-# 手动示例使用默认端口 8001；dev.sh 会读取 .env 中的 API_SERVICE_PORT
-uvicorn app.main:app --reload --port 8001
-```
-
-**手动启动前端**：
-
-```bash
-cd frontend
-npm run dev
-```
-
-前端开发服务器启动后，默认可通过 http://localhost:5173 进行访问（Vite 默认使用代理转发 `/api` 请求，无需额外配置）。
 
 ### IDE 配置
 

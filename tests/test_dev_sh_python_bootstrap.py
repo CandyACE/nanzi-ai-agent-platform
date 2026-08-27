@@ -102,7 +102,8 @@ printf '%s\\n' npx >> "$HOME/npm.log"
 exit 0
 """)
     _write_executable(fake_bin / "lsof", """#!/bin/sh
-exit 0
+# lsof returns 1 when the port is available and no process matches.
+exit 1
 """)
     _write_executable(fake_bin / "python3", """#!/bin/sh
 exit 0

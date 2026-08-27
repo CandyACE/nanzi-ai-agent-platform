@@ -205,15 +205,12 @@
     <p style="margin:0 0 4px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">cp env.example .env&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 改 MySQL/Redis/ENCRYPTION_KEY</p>
     <p style="margin:0 0 4px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 先完成 db-prod 初始化（见上一节）</p>
     <p style="margin:0 0 4px 0;font-size:12px;color:#86efac;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 日常联调：在项目根目录执行 ./dev.sh</p>
-    <p style="margin:0 0 4px 0;font-size:12px;color:#94a3b8;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># （停旧进程 → 快速编前端 → uvicorn --reload :8001）</p>
-    <p style="margin:0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 或分步：uvicorn app.main:app --reload --port 8001<br/>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;cd frontend &amp;&amp; npm i &amp;&amp; npm run dev</p>
+    <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># （环境准备 → 停旧进程 → 编译前端 → reload 启动后端）</p>
   </section>
 
   <section style="margin:12px 0 16px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
-    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;">脚本怎么选？</p>
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;">本地开发统一入口</p>
     <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">./dev.sh</code>：前台联调，跳过 vue-tsc，带 reload——日常改代码</p>
-    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">scripts/redeploy-fast.sh</code>：后台快速热更新</p>
-    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">scripts/redeploy.sh</code>：完整类型检查后后台发布，偏准生产</p>
     <p style="margin:8px 0 0 0;font-size:13px;color:#92400e;line-height:1.75;">
       编译与启停请在你自己的终端执行；配好依赖后用上述脚本即可。
     </p>

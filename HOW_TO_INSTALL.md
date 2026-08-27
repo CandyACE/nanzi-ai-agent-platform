@@ -439,11 +439,6 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 顶部的数据库和 Redis 信息来自当前 shell/`.env` 配置，仅用于确认脚本将采用的连接类型和
 地址，不执行数据库或 Redis 连通性测试；数据库和 Redis 密码不会单独打印。
 
-*(若需手动分步启动，也可使用 `.venv/bin/python -m uvicorn app.main:app --reload --port 8001`，
-并进入 `frontend` 执行 `npm install && npm run dev`。)*
-
-上述手动命令使用默认端口 `8001`；一键脚本会读取 `.env` 中的 `API_SERVICE_PORT`，如需修改端口请以环境文件配置为准。
-
 源码启动、源码升级后启动以及 Docker 打包启动的完整日志，请参考：[start-logs.md](start-logs.md)。
 
 ---
