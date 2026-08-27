@@ -32,6 +32,9 @@ class FakeRedis:
             return 1
         return 0
 
+    async def exists(self, key):
+        return 1 if key in self.store else 0
+
 
 @pytest.mark.asyncio
 async def test_conversation_run_lane_force_release(monkeypatch):
@@ -228,3 +231,22 @@ async def test_conversation_run_lane_skips_without_conversation_id():
         trace_id="trace-none",
     ) as acquired:
         assert acquired is False
+
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_is_locked(monkeypatch):
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    conversation_id = f"conv-locked-{uuid.uuid4().hex}"
+    key = lane._lock_key("u1", conversation_id)
+
+    async def _redis():
+        return fake
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+
+    assert await lane.is_locked(user_id="u1", conversation_id=conversation_id) is False
+    fake.store[key] = "trace-locked"
+    assert await lane.is_locked(user_id="u1", conversation_id=conversation_id) is True
+    assert await lane.is_locked(user_id="u1", conversation_id=None) is False
+

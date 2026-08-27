@@ -20,11 +20,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
 import logging
-from typing import Any, Dict, Literal
+from typing import Any, AsyncGenerator, Dict, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.dependencies import require_api_key
@@ -53,6 +56,10 @@ def _require_admin(user_info: Dict[str, Any]) -> None:
     role = user_info.get("role") or user_info.get("user_role")
     if role != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可执行沙箱管理操作")
+
+
+def _sse_event(name: str, data: dict[str, Any]) -> str:
+    return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @router.get(
@@ -105,6 +112,94 @@ async def trigger_docker_prebuild(
         message=result.get("message")
         if result.get("action") == "manual_download"
         else "success",
+    )
+
+
+@router.post(
+    "/admin/sandbox/docker/prebuild/stream",
+    summary="实时预构建 Docker 沙箱镜像（管理员）",
+)
+async def stream_docker_prebuild(
+    request: Request,
+    base_image: str | None = Query(None, description="临时指定的 Docker 基础镜像，为空则使用系统配置"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """以 SSE 转发管理员 Docker 预构建的阶段、原始日志和最终结果。"""
+    _require_admin(user_info)
+
+    events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def publish(event: dict[str, Any]) -> None:
+        event_type = str(event.get("type") or "log")
+        payload = {key: value for key, value in event.items() if key != "type"}
+        await events.put({"event": event_type, "data": payload})
+
+    async def run_prebuild() -> None:
+        try:
+            result = await prebuild_docker_workspace_image(
+                base_image=base_image,
+                force=False,
+                on_event=publish,
+            )
+            await events.put({"event": "result", "data": result})
+        except asyncio.CancelledError:
+            raise
+        except RuntimeError as exc:
+            await events.put(
+                {
+                    "event": "error",
+                    "data": {
+                        "reason_code": "docker_build_failed",
+                        "message": str(exc),
+                    },
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive endpoint boundary
+            logger.exception("Docker 预构建 SSE 任务异常")
+            await events.put(
+                {
+                    "event": "error",
+                    "data": {
+                        "reason_code": "docker_prebuild_stream_failed",
+                        "message": str(exc),
+                    },
+                }
+            )
+        finally:
+            await events.put({"event": "done", "data": {}})
+
+    task = asyncio.create_task(run_prebuild())
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            while True:
+                if await request.is_disconnected():
+                    task.cancel()
+                    return
+                try:
+                    event = await asyncio.wait_for(events.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                yield _sse_event(event["event"], event["data"])
+                if event["event"] == "done":
+                    await task
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

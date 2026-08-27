@@ -471,6 +471,7 @@ function iconFor(item: ProcessTimelineLogItem): string {
   if (item.title.includes("加载目标专家配置")) return "⚙️";
   if (item.title.includes("校验目标专家权限")) return "🔒";
   if (item.title.includes("判断并匹配目标专家") || item.title.includes("匹配目标专家")) return "🧠";
+  if (item.title.includes("等待上一次会话") || item.title.includes("排队")) return "⏳";
   if (item.category === "context_summarized" || item.title.includes("平台摘录")) return "📋";
   if (item.subagent || item.category === "agent") return "🤖";
   if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return "🔧";

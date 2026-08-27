@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD = 0.65
 ROUTER_MAX_OUTPUT_TOKENS = 512
+DEFAULT_ROUTER_LLM_TIMEOUT_SECONDS = 15.0
 
 class LLMRouterResponse(BaseModel):
     """Internal structure for LLM output. thought 放最后，降低截断重伤概率。"""
@@ -784,10 +786,22 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
                             ],
                         ),
                     ]
-                result_json = await chat_client.generate_structured_dict(
-                    attempt_messages,
-                    LLMRouterResponse,
-                )
+                try:
+                    result_json = await asyncio.wait_for(
+                        chat_client.generate_structured_dict(
+                            attempt_messages,
+                            LLMRouterResponse,
+                        ),
+                        timeout=DEFAULT_ROUTER_LLM_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[Router] LLM structured routing call timed out after %ss (attempt %s)",
+                        DEFAULT_ROUTER_LLM_TIMEOUT_SECONDS,
+                        attempt + 1,
+                    )
+                    raise TimeoutError(f"Router LLM generate_structured_dict timed out after {DEFAULT_ROUTER_LLM_TIMEOUT_SECONDS}s")
+
                 content = ""
                 if result_json is None:
                     structured_status = getattr(
@@ -802,7 +816,17 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
                     # Legacy/custom clients without native structured output keep
                     # one compatibility text call; native structured clients never
                     # pay for a second request after a structured-output failure.
-                    content = (await chat_client.generate_text(attempt_messages)).strip()
+                    try:
+                        content = (await asyncio.wait_for(
+                            chat_client.generate_text(attempt_messages),
+                            timeout=max(5.0, DEFAULT_ROUTER_LLM_TIMEOUT_SECONDS / 2),
+                        )).strip()
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "[Router] LLM text routing call timed out (attempt %s)",
+                            attempt + 1,
+                        )
+                        raise TimeoutError("Router LLM generate_text timed out")
                     result_json = self._parse_router_json(content)
                 else:
                     content = json.dumps(result_json, ensure_ascii=False)

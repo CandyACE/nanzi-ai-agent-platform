@@ -169,6 +169,61 @@ async def test_prebuild_passes_fileobj_to_aiodocker(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prebuild_forwards_docker_stream_events(monkeypatch, tmp_path):
+    from app.services.ai.runtime.agentscope import docker_prebuild
+
+    context_dir = tmp_path / "context_events"
+    context_dir.mkdir()
+    received_events = []
+
+    class FakeImages:
+        async def inspect(self, tag):
+            raise Exception("not found")
+
+        async def build(self, **kwargs):
+            yield {"stream": "Step 1/2 : FROM python:3.11-slim\n"}
+            yield {"status": "Successfully built abcdef123456\n"}
+
+    class FakeDocker:
+        def __init__(self):
+            self.images = FakeImages()
+
+        async def close(self):
+            pass
+
+    class FakeAioDockerModule:
+        Docker = FakeDocker
+
+    async def on_event(event):
+        received_events.append(event)
+
+    monkeypatch.setattr(
+        docker_prebuild,
+        "_prepare_context",
+        lambda _override=None: _async_value((str(context_dir), "agentscope-workspace:events123")),
+    )
+    monkeypatch.setattr(
+        docker_prebuild,
+        "check_docker_daemon",
+        lambda _aiodocker: _async_value({"available": True, "reason_code": None, "message": "ok"}),
+    )
+    monkeypatch.setattr(
+        docker_prebuild,
+        "_mark_prebuilt",
+        lambda _base=None: _async_value(None),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "aiodocker", FakeAioDockerModule)
+
+    result = await docker_prebuild.prebuild_docker_workspace_image(on_event=on_event)
+
+    assert result["built"] is True
+    assert [event["message"] for event in received_events if event["type"] == "log"] == [
+        "Step 1/2 : FROM python:3.11-slim",
+        "Successfully built abcdef123456",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_prebuild_with_custom_base_image(monkeypatch, tmp_path):
     from app.services.ai.runtime.agentscope import docker_prebuild
 
@@ -215,5 +270,4 @@ async def test_prebuild_with_custom_base_image(monkeypatch, tmp_path):
     assert result["tag"] == "agentscope-workspace:tag-python:3.11"
     assert called_images == ["python:3.11"]
     assert saved_base_images == ["python:3.11"]
-
 

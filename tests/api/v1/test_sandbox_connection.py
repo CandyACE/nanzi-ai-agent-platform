@@ -53,7 +53,7 @@ async def test_docker_prebuild_status_returns_manual_download_state(monkeypatch)
 
     monkeypatch.setattr(
         "app.api.v1.endpoints.sandbox.docker_workspace_prebuild_status",
-        lambda: _async_value(
+        lambda base_image=None: _async_value(
             {
                 "prebuilt": False,
                 "docker_available": False,
@@ -69,6 +69,43 @@ async def test_docker_prebuild_status_returns_manual_download_state(monkeypatch)
     assert response.data["action"] == "manual_download"
     assert response.data["docker_available"] is False
     assert response.data["download_url"].startswith("https://")
+
+
+@pytest.mark.asyncio
+async def test_docker_prebuild_stream_returns_sse_events(monkeypatch):
+    from app.api.v1.endpoints.sandbox import stream_docker_prebuild
+
+    class FakeRequest:
+        async def is_disconnected(self):
+            return False
+
+    async def fake_prebuild(*, base_image, force, on_event):
+        assert base_image == "python:3.11-slim"
+        assert force is False
+        await on_event({"type": "phase", "stage": "build", "message": "开始构建"})
+        await on_event({"type": "log", "level": "info", "message": "Step 1/2"})
+        return {"reused": False, "built": True, "tag": "agentscope-workspace:test123456"}
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.prebuild_docker_workspace_image",
+        fake_prebuild,
+    )
+
+    response = await stream_docker_prebuild(
+        base_image="python:3.11-slim",
+        request=FakeRequest(),
+        user_info={"role": "admin"},
+    )
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = "".join(chunks)
+
+    assert response.media_type == "text/event-stream"
+    assert "event: phase" in body
+    assert "开始构建" in body
+    assert "event: log" in body
+    assert "Step 1/2" in body
+    assert "event: result" in body
+    assert "agentscope-workspace:test123456" in body
 
 
 @pytest.mark.asyncio

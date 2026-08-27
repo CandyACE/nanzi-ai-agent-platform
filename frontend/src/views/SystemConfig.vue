@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
@@ -250,7 +250,89 @@ const dockerPrebuildReused = ref(false)
 const dockerPrebuildTag = ref('')
 const dockerPrebuildMessage = ref('')
 const dockerPrebuildHelpUrl = ref('https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md')
+type DockerPrebuildLogLevel = 'info' | 'error'
+type DockerPrebuildLogEntry = { level: DockerPrebuildLogLevel; message: string }
+const dockerPrebuildLogs = ref<DockerPrebuildLogEntry[]>([])
+const dockerPrebuildStage = ref('idle')
+const dockerPrebuildError = ref('')
+const dockerPrebuildLogsCopied = ref(false)
+const dockerPrebuildElapsedSeconds = ref(0)
+const dockerPrebuildLogsExpanded = ref(true)
+const dockerPrebuildLogContainer = ref<HTMLElement | null>(null)
+const dockerPrebuildShouldAutoScroll = ref(true)
+let dockerPrebuildTimer: number | null = null
 const sandboxConnectionTesting = ref<'e2b' | 'ssh' | null>(null)
+
+const dockerPrebuildLogsText = computed(() =>
+  dockerPrebuildLogs.value.map((entry) => entry.message).join('\n'),
+)
+const dockerPrebuildStageLabel = computed(() => {
+  const labels: Record<string, string> = {
+    idle: '等待开始',
+    environment: '检查 Docker 环境',
+    prepare: '准备构建上下文',
+    cache: '检查镜像缓存',
+    build: '构建 Docker 镜像',
+    finalize: '保存构建状态',
+    completed: '构建完成',
+  }
+  return labels[dockerPrebuildStage.value] || dockerPrebuildStage.value
+})
+const appendDockerPrebuildLog = (message: string, level: DockerPrebuildLogLevel = 'info') => {
+  const normalized = message.trimEnd()
+  if (!normalized) return
+  dockerPrebuildLogs.value.push({ level, message: normalized })
+  void nextTick(() => {
+    const container = dockerPrebuildLogContainer.value
+    if (dockerPrebuildLogsExpanded.value && dockerPrebuildShouldAutoScroll.value && container) {
+      container.scrollTop = container.scrollHeight
+    }
+  })
+}
+const scrollDockerPrebuildLogsToBottom = () => {
+  void nextTick(() => {
+    const container = dockerPrebuildLogContainer.value
+    if (container) container.scrollTop = container.scrollHeight
+  })
+}
+const handleDockerPrebuildLogScroll = (event: Event) => {
+  const container = event.currentTarget as HTMLElement
+  dockerPrebuildShouldAutoScroll.value =
+    container.scrollHeight - container.scrollTop - container.clientHeight <= 24
+}
+const toggleDockerPrebuildLogs = () => {
+  dockerPrebuildLogsExpanded.value = !dockerPrebuildLogsExpanded.value
+  if (dockerPrebuildLogsExpanded.value) {
+    dockerPrebuildShouldAutoScroll.value = true
+    scrollDockerPrebuildLogsToBottom()
+  }
+}
+const stopDockerPrebuildTimer = () => {
+  if (dockerPrebuildTimer !== null) {
+    window.clearInterval(dockerPrebuildTimer)
+    dockerPrebuildTimer = null
+  }
+}
+const startDockerPrebuildTimer = () => {
+  stopDockerPrebuildTimer()
+  const startedAt = Date.now()
+  dockerPrebuildElapsedSeconds.value = 0
+  dockerPrebuildTimer = window.setInterval(() => {
+    dockerPrebuildElapsedSeconds.value = Math.floor((Date.now() - startedAt) / 1000)
+  }, 1000)
+}
+const copyDockerPrebuildLogs = async () => {
+  if (!dockerPrebuildLogsText.value) return
+  try {
+    if (!navigator.clipboard) throw new Error('当前浏览器不支持剪贴板')
+    await navigator.clipboard.writeText(dockerPrebuildLogsText.value)
+    dockerPrebuildLogsCopied.value = true
+    showToast('构建日志已复制', 'success')
+    window.setTimeout(() => { dockerPrebuildLogsCopied.value = false }, 1600)
+  } catch (error: any) {
+    showToast(`复制构建日志失败: ${error.message}`, 'error')
+  }
+}
 
 const targetSandboxPolicy = () =>
   configGroups.value?.sandbox?.find(x => x.key === 'sandbox_policy')?.value ?? 'local'
@@ -421,33 +503,131 @@ const refreshDockerPrebuildStatus = async (silent = false, baseImageOverride?: s
   }
 }
 
+type DockerPrebuildStreamEvent = {
+  event: string
+  data: Record<string, any>
+}
+
+const parseDockerPrebuildSseBlock = (block: string): DockerPrebuildStreamEvent | null => {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+  }
+  if (dataLines.length === 0) return null
+  const payload = dataLines.join('\n')
+  try {
+    const data = JSON.parse(payload)
+    return {
+      event,
+      data: data && typeof data === 'object' ? data : { message: String(data) },
+    }
+  } catch {
+    return { event, data: { message: payload } }
+  }
+}
+
+const handleDockerPrebuildStreamEvent = (streamEvent: DockerPrebuildStreamEvent) => {
+  const data = streamEvent.data || {}
+  if (streamEvent.event === 'phase') {
+    dockerPrebuildStage.value = String(data.stage || dockerPrebuildStage.value)
+    if (data.message) appendDockerPrebuildLog(String(data.message))
+    return
+  }
+  if (streamEvent.event === 'log') {
+    appendDockerPrebuildLog(String(data.message || ''), data.level === 'error' ? 'error' : 'info')
+    return
+  }
+  if (streamEvent.event === 'result') {
+    dockerPrebuildReused.value = !!data.reused
+    applyDockerPrebuildStatus(data)
+    if (data.docker_available === false) {
+      dockerPrebuildError.value = String(data.message || '当前环境不支持自动构建')
+      appendDockerPrebuildLog(dockerPrebuildError.value, 'error')
+    }
+    return
+  }
+  if (streamEvent.event === 'error') {
+    dockerPrebuildError.value = String(data.message || 'Docker 镜像预构建失败')
+    appendDockerPrebuildLog(dockerPrebuildError.value, 'error')
+  }
+}
+
 const executeDockerPrebuild = async () => {
   dockerPrebuilding.value = true
+  startDockerPrebuildTimer()
   dockerPrebuildReused.value = false
   dockerPrebuildTag.value = ''
+  dockerPrebuildLogs.value = []
+  dockerPrebuildLogsExpanded.value = true
+  dockerPrebuildShouldAutoScroll.value = true
+  dockerPrebuildStage.value = 'environment'
+  dockerPrebuildError.value = ''
+  dockerPrebuildLogsCopied.value = false
+  let receivedDoneEvent = false
   try {
     const baseImage = getTargetDockerBaseImage() || DEFAULT_DOCKER_BASE_IMAGE
-    const res = await axios.post('/api/v1/admin/sandbox/docker/prebuild', null, {
-      params: baseImage ? { base_image: baseImage } : {}
-    })
-    if (res.data?.code !== 200 && res.data?.code != null) {
-      throw new Error((res.data as any)?.message || '预构建接口返回异常')
+    const params = new URLSearchParams()
+    if (baseImage) params.set('base_image', baseImage)
+    const apiKey = localStorage.getItem('api_key')
+    const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token')
+    const headers: Record<string, string> = { Accept: 'text/event-stream' }
+    if (apiKey) headers['X-API-Key'] = apiKey
+    if (token) headers.Authorization = `Bearer ${token}`
+    const response = await fetch(
+      `/api/v1/admin/sandbox/docker/prebuild/stream?${params.toString()}`,
+      {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+      },
+    )
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.detail || body.message || `请求失败（${response.status}）`)
     }
-    const data = res.data?.data ?? res.data
-    dockerPrebuildReused.value = !!data?.reused
-    applyDockerPrebuildStatus(data)
-    if (data?.docker_available === false) {
-      showToast(data?.message || '当前环境不支持自动构建，请参考 FAQ 帮助文档', 'warning')
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('浏览器不支持实时构建日志流')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() || ''
+      for (const block of blocks) {
+        const streamEvent = parseDockerPrebuildSseBlock(block)
+        if (!streamEvent) continue
+        handleDockerPrebuildStreamEvent(streamEvent)
+        if (streamEvent.event === 'done') receivedDoneEvent = true
+      }
+      if (receivedDoneEvent || done) break
+    }
+    if (buffer.trim()) {
+      const streamEvent = parseDockerPrebuildSseBlock(buffer)
+      if (streamEvent) {
+        handleDockerPrebuildStreamEvent(streamEvent)
+        if (streamEvent.event === 'done') receivedDoneEvent = true
+      }
+    }
+    if (!receivedDoneEvent) throw new Error('构建日志流意外中断')
+    if (dockerPrebuildError.value) {
+      showToast(`Docker 镜像预构建失败: ${dockerPrebuildError.value}`, 'error')
       return
     }
     showToast(
-      data?.reused ? '已复用既有镜像缓存，无需重新构建' : 'Docker 沙箱镜像预构建完成',
-      'success'
+      dockerPrebuildReused.value ? '已复用既有镜像缓存，无需重新构建' : 'Docker 沙箱镜像预构建完成',
+      'success',
     )
   } catch (e: any) {
     const msg = e.response?.data?.detail || e.message
+    dockerPrebuildError.value = msg
+    appendDockerPrebuildLog(msg, 'error')
     showToast(`Docker 镜像预构建失败: ${msg}`, 'error')
   } finally {
+    stopDockerPrebuildTimer()
     dockerPrebuilding.value = false
   }
 }
@@ -893,6 +1073,7 @@ const getCategoryIcon = (cat: string) => {
 }
 
 const isLongText = (item: ConfigItem) => {
+  if (item.key === 'sandbox_docker_base_image') return false
   if (item.key.toLowerCase().includes('prompt')) return true
   if (item.value && (item.value.length > 60 || item.value.includes('\n'))) return true
   return false
@@ -1602,6 +1783,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  stopDockerPrebuildTimer()
 })
 </script>
 
@@ -2947,7 +3129,8 @@ onUnmounted(() => {
                                >
                                  <ArrowPathIcon v-if="!dockerPrebuilding" class="h-4 w-4 mr-1.5" />
                                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-indigo-400 border-t-transparent rounded-full"></span>
-                                 {{ dockerPrebuilding ? '预构建中...' : (dockerPrebuilt ? '重新预构建' : '预构建镜像') }}
+                                 <template v-if="dockerPrebuilding">预构建中 {{ dockerPrebuildElapsedSeconds }}s</template>
+                                 <template v-else>{{ dockerPrebuilt ? '重新预构建' : '预构建镜像' }}</template>
                                </button>
                                <span v-if="dockerPrebuildChecking" class="text-xs text-gray-500">正在检查预构建状态...</span>
                                <span v-else-if="dockerPrebuilt" class="text-xs text-green-700 bg-green-50 border border-green-100 rounded-md px-2.5 py-1">
@@ -2957,6 +3140,42 @@ onUnmounted(() => {
                                <span v-else class="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
                                  ⚠ 镜像尚未预构建，首个 docker 沙箱会话需等待构建
                                </span>
+                             </div>
+                             <div
+                               v-if="dockerPrebuilding || dockerPrebuildLogs.length || dockerPrebuildError"
+                               class="mt-3 overflow-hidden rounded-md border border-slate-200 bg-slate-950 shadow-inner"
+                             >
+                               <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-700 px-3 py-2 text-xs text-slate-200">
+                                 <div class="flex items-center gap-2">
+                                   <span class="h-2 w-2 rounded-full" :class="dockerPrebuildError ? 'bg-red-400' : (dockerPrebuilding ? 'animate-pulse bg-amber-400' : 'bg-emerald-400')"></span>
+                                   <button
+                                     type="button"
+                                     @click="toggleDockerPrebuildLogs"
+                                     class="font-medium text-left text-slate-200 hover:text-white"
+                                   >
+                                     {{ dockerPrebuildLogsExpanded ? '收起构建日志' : '展开构建日志' }}
+                                   </button>
+                                   <span class="text-slate-400">{{ dockerPrebuildError ? '构建失败' : dockerPrebuildStageLabel }}</span>
+                                   <span class="text-slate-400">{{ dockerPrebuildLogs.length }} 条日志</span>
+                                 </div>
+                                 <button
+                                   type="button"
+                                   @click="copyDockerPrebuildLogs"
+                                   :disabled="!dockerPrebuildLogsText"
+                                   class="rounded border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                 >
+                                   {{ dockerPrebuildLogsCopied ? '已复制' : '复制构建日志' }}
+                                 </button>
+                               </div>
+                               <pre
+                                 v-if="dockerPrebuildLogsExpanded"
+                                 ref="dockerPrebuildLogContainer"
+                                 @scroll="handleDockerPrebuildLogScroll"
+                                 class="max-h-72 overflow-y-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-200"
+                               >{{ dockerPrebuildLogsText || '正在等待 Docker 构建输出…' }}</pre>
+                               <div v-if="dockerPrebuildError" class="border-t border-red-900/80 bg-red-950/60 px-3 py-2 text-xs leading-relaxed text-red-200">
+                                 <span class="font-semibold">失败原因：</span>{{ dockerPrebuildError }}
+                               </div>
                              </div>
                              <div v-if="dockerPrebuildTag" class="mt-1.5 text-[11px] text-gray-500 leading-relaxed select-none">
                                当前预构建镜像 Tag：<code class="font-mono text-indigo-700">{{ dockerPrebuildTag }}</code>
