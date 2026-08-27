@@ -2,7 +2,7 @@
 
 本目录提供基于普通 Kubernetes YAML 和 Kustomize 的部署基线，不包含 Helm Chart。
 默认目标是：使用现有 Docker 镜像、集群外部 MySQL/PostgreSQL 和 Redis Stack，运行一
-个完整功能的单副本应用 Pod。
+个单副本应用 Pod；RAGFlow、LLM、SSO 等可选能力按外部依赖准备后再配置启用。
 
 ## 目录边界
 
@@ -23,7 +23,229 @@
 本目录只提供这些外部依赖的配置接入位置和检查说明，不会创建 MySQL、PostgreSQL、Redis
 或 RAGFlow 的 StatefulSet/Deployment，也不会替用户生成真实凭据。
 
-## 给第一次部署的人：先按这 8 步做
+## K3s 单机实操：在一台 Linux 测试服务器上运行 NanZi
+
+如果手上只有一台 Linux 服务器，K3s 是很适合本项目测试部署的轻量 Kubernetes 发行版。
+它不是模拟器，单个 `k3s server` 节点本身就是完整的 Kubernetes 集群，同时承担
+control-plane 和工作负载。K3s 默认带有 containerd、Flannel、CoreDNS、Traefik、
+ServiceLB 和 Local Path Provisioner；单 Server 默认可以使用 SQLite 保存集群数据。
+
+这和本目录的边界要区分开：K3s 负责承载 Kubernetes 资源，但本项目的业务数据库和
+Redis 仍按上面的外部依赖方案准备。不要因为 K3s 自带 SQLite，就把它当成 NanZi 的
+MySQL/PostgreSQL 业务库。
+
+### 1. 适合什么配置
+
+K3s 官方 Server 基线是 2 核 CPU / 2 GB 内存，这个数字不包含 NanZi、数据库、Redis
+和其他业务 Pod。对本项目可以按下面估算：
+
+| 场景 | 建议 | 说明 |
+| --- | --- | --- |
+| 只验证 K3s 和基础 YAML | 2C / 4G | 可以跑系统组件和简单测试 Pod |
+| NanZi + 外部 MySQL/Redis | 4C / 8G 起步 | 仍需看模型调用、Playwright 和并发 |
+| NanZi、数据库、Redis 也同机 | 8C / 16G 或更高 | 业务容器资源应与 K3s 资源分开评估 |
+
+建议使用 SSD。K3s 的 Local Path 存储默认写入服务器本地的
+`/var/lib/rancher/k3s/storage`，PVC 会绑定到这个节点；这适合单机测试，不等于多节点
+共享存储。
+
+### 2. 安装 K3s
+
+以下命令在目标 Linux 服务器上执行，需要 root 或 `sudo` 权限。官方安装脚本会安装
+systemd 服务、`k3s`、`kubectl`、`crictl` 和 `ctr`，并把管理员 kubeconfig 写入
+`/etc/rancher/k3s/k3s.yaml`：
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+```
+
+如果服务器访问 GitHub 较慢，可以使用你当前已经验证过的国内镜像安装方式：
+
+```bash
+curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh \
+  | INSTALL_K3S_MIRROR=cn sh -
+```
+
+安装后先不要马上部署业务，等待 K3s 系统组件完成启动：
+
+```bash
+sudo systemctl status k3s --no-pager
+sudo kubectl get nodes -o wide
+sudo kubectl get pods -A
+sudo kubectl get storageclass
+```
+
+你当前服务器 `yunshu-test` 的安装结果是正常的，类似下面这样即可：
+
+```text
+NAME          STATUS   ROLES           AGE   VERSION
+yunshu-test   Ready    control-plane   1m    v1.36.3+k3s1
+```
+
+刚安装后的 `coredns`、`local-path-provisioner`、`metrics-server` 或
+`helm-install-traefik-*` 短时间显示 `ContainerCreating` 是正常的，先等待一两分钟再看：
+
+```bash
+sudo kubectl get pods -A -w
+```
+
+至少确认 `coredns`、`local-path-provisioner`、`metrics-server` 最终为 `Running`，两个
+Traefik 安装 Job 成功完成或消失。非 root 用户需要使用 K3s 管理集群时，把 kubeconfig
+复制到自己的目录；这个文件具有集群管理员权限，只应复制到可信机器：
+
+```bash
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown "$(id -u):$(id -g)" ~/.kube/config
+chmod 600 ~/.kube/config
+kubectl get nodes
+```
+
+### 3. 先做一个 K3s 冒烟测试（可选）
+
+如果想先确认 K3s 能拉镜像、创建 Pod 和暴露 Service，可以临时部署 nginx：
+
+```bash
+kubectl create deployment k3s-smoke --image=nginx:stable-alpine
+kubectl expose deployment k3s-smoke --type=NodePort --port=80
+kubectl get pods,svc -o wide
+```
+
+测试完成后清理临时资源：
+
+```bash
+kubectl delete service k3s-smoke
+kubectl delete deployment k3s-smoke
+```
+
+如果 nginx 一直拉取失败，先不要判断 K3s 本身故障，检查服务器的外网访问、DNS 和
+镜像仓库配置；NanZi 也可以改用项目 Release 镜像或企业镜像仓库。
+
+### 4. K3s 单机导入 NanZi 镜像
+
+K3s 默认使用 containerd。`docker load` 只会把镜像加载到 Docker daemon，不能保证
+K3s 的 kubelet 能看到它；在 K3s 单机上，推荐直接导入 K3s 的 containerd：
+
+```bash
+sudo k3s ctr images import /path/to/nanzi-ai-agent_版本_linux-amd64.tar
+sudo k3s ctr images list | grep nanzi-ai-agent
+```
+
+也可以把 Docker 镜像归档放入 K3s 的预导入目录，K3s 会自动导入：
+
+```bash
+sudo mkdir -p /var/lib/rancher/k3s/agent/images
+sudo cp /path/to/nanzi-ai-agent_版本_linux-amd64.tar \
+  /var/lib/rancher/k3s/agent/images/
+sudo k3s ctr images list | grep nanzi-ai-agent
+```
+
+看到目标版本后，把 `k8s_deploy/kustomization.yaml` 的 `newTag` 改成相同版本，并保持
+Deployment 的 `imagePullPolicy: IfNotPresent`。如果使用镜像仓库，则直接把 `newName`
+改成仓库地址，不需要在节点手工导入：
+
+```yaml
+images:
+  - name: nanzi-ai-agent
+    newName: registry.example.com/nanzi-ai-agent
+    newTag: "1.2.0"
+```
+
+远程或私有仓库场景还要确保 K3s containerd 能访问仓库；需要认证、私有 CA 或镜像代理
+时，按节点配置 `/etc/rancher/k3s/registries.yaml`，并重启 K3s 后再检查 Pod 事件。
+
+### 5. 检查 K3s 存储并部署 NanZi
+
+K3s 通常会提供名为 `local-path` 的默认 StorageClass：
+
+```bash
+kubectl get storageclass
+kubectl get storageclass local-path -o yaml
+```
+
+看到 `local-path (default)` 后，本目录的 `pvc.yaml` 可以直接使用，不需要填写
+`storageClassName`。如果没有默认 StorageClass，先检查：
+
+```bash
+kubectl -n kube-system get pods -l app=local-path-provisioner
+kubectl -n kube-system logs deployment/local-path-provisioner --tail=100
+```
+
+确认 K3s 已经 Ready、镜像已导入或仓库可访问后，回到下面的“第一次部署”流程，按顺序
+执行：
+
+```bash
+cp k8s_deploy/secret.example.yaml k8s_deploy/secret.yaml
+# 编辑 configmap.yaml、secret.yaml 和 kustomization.yaml
+
+kubectl apply -f k8s_deploy/namespace.yaml
+kubectl apply -f k8s_deploy/secret.yaml
+kubectl apply -f k8s_deploy/pvc.yaml
+kubectl apply -k k8s_deploy
+kubectl -n nanzi-ai-agent rollout status deployment/nanzi-ai-agent
+```
+
+如果需要把镜像内公共文档同步到 K3s 的 Local Path PVC，先按下面主流程的“第 7 步”执行
+`data-init-job.example.yaml`，再执行上面的 `kubectl apply -k`。K3s 单节点的
+`ReadWriteOnce` PVC 和本项目的 `Recreate` 策略是匹配的，但升级期间会有短暂不可用。
+
+部署完成后用 K3s 本机访问最简单：
+
+```bash
+kubectl -n nanzi-ai-agent port-forward svc/nanzi-ai-agent 8001:80
+```
+
+另开一个终端检查：
+
+```bash
+curl http://127.0.0.1:8001/health
+kubectl -n nanzi-ai-agent get pod,svc,pvc
+```
+
+### 6. K3s 单机常见问题
+
+| 现象 | 检查命令 | 常见原因 |
+| --- | --- | --- |
+| 系统 Pod 长时间 `ContainerCreating` | `sudo journalctl -u k3s -n 200 --no-pager` | 镜像下载、DNS、磁盘或 CNI 尚未完成 |
+| NanZi `ImagePullBackOff` | `kubectl -n nanzi-ai-agent describe pod <pod名>` | 只执行了 `docker load`，但镜像没有导入 K3s containerd，或标签不一致 |
+| PVC 一直 `Pending` | `kubectl -n nanzi-ai-agent describe pvc nanzi-ai-agent-data` | `local-path` 未 Ready、没有默认 StorageClass 或磁盘空间不足 |
+| Pod Ready 但访问失败 | `kubectl -n nanzi-ai-agent get svc,pod` | 端口转发、Service 选择器、应用探针或外部 DB/Redis 配置错误 |
+| Ingress 占用 80/443 | `kubectl -n kube-system get pods,svc | grep -i traefik` | K3s 默认 Traefik/ServiceLB 与服务器已有 Nginx 或网关冲突 |
+
+单机只使用 `port-forward` 时不需要额外配置 Ingress；如果服务器已有 80/443 服务，
+可以继续使用 `port-forward`，或由运维方在安装 K3s 时明确规划 Traefik、ServiceLB 和
+现有网关的端口边界。不要为了让 NanZi 能访问就直接删除 K3s 系统组件。
+
+### 7. 从单机扩展到多节点时要注意
+
+增加 agent 节点不需要重装现有 Server，但必须准备唯一 hostname、节点间网络和同版本
+K3s。Server 上的加入令牌位于：
+
+```bash
+sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+在新节点执行加入命令时，把 `<server-ip>` 和 `<token>` 替换为实际值；不要把 token
+提交到代码仓库或发到聊天记录：
+
+```bash
+curl -sfL https://get.k3s.io \
+  | K3S_URL=https://<server-ip>:6443 K3S_TOKEN='<token>' sh -
+```
+
+多节点至少确认 Server 可达 TCP `6443`，Flannel VXLAN 节点间可达 UDP `8472`；这些
+端口只对必要的节点/安全组开放，不要暴露到公网。K3s 的 `local-path` 仍然是节点本地
+存储，NanZi 当前 PVC 是 `ReadWriteOnce`，所以加 agent 不等于可以把 NanZi 扩成多副本。
+
+官方资料：
+
+- [K3s 官方快速开始](https://docs.k3s.io/quick-start)
+- [K3s 安装要求与网络端口](https://docs.k3s.io/installation/requirements)
+- [K3s 镜像导入](https://docs.k3s.io/add-ons/import-images)
+- [K3s 存储与 Local Path Provisioner](https://docs.k3s.io/add-ons/storage)
+- [K3s 集群访问与 kubeconfig](https://docs.k3s.io/cluster-access)
+
+## 给第一次部署的人：先按这 9 步做
 
 如果你不熟悉 Kubernetes，可以只按本节操作；后面的章节用于解释细节和排查问题。
 
@@ -48,10 +270,12 @@
 ```bash
 kubectl config current-context
 kubectl get nodes
+kubectl get storageclass
 ```
 
 确认显示的是目标集群和目标节点。不要在不确定上下文时执行 `kubectl apply`，否则可能
-把应用部署到另一个集群。
+把应用部署到另一个集群。确认至少有一个可用的默认 `StorageClass`；如果没有，部署前
+在 `pvc.yaml` 中填写集群管理员提供的 `storageClassName`。
 
 ### 第 2 步：准备 NanZi 镜像
 
@@ -65,7 +289,7 @@ K8S 不会自动从 GitHub 源码生成镜像，必须先准备好镜像。推�
 | 多节点但没有镜像仓库 | 每个可能调度 Pod 的节点都导入同一个镜像 | 可行但维护麻烦，不推荐 |
 
 项目已经提供官方 Release 镜像包，可以先打开
-[NanZi 1.0.x Release](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.x)，
+[NanZi Releases](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases)，
 在页面的 **Assets** 中下载与 K8S 节点架构匹配的镜像归档文件。
 
 先查看集群节点架构：
@@ -117,6 +341,18 @@ docker load -i docker/release/nanzi-ai-agent_1.2.0_linux-amd64_*.tar
 docker image ls nanzi-ai-agent
 ```
 
+#### 构建上下文中的运行时数据
+
+`docker/Dockerfile` 需要使用项目根目录作为构建上下文，并通过 `COPY . .` 复制源码。
+根目录的 `.dockerignore` 已排除 `data/uploads`、`data/agent_workspaces`、品牌资源、浏览器配置、
+生成文件、沙箱等运行时和用户数据目录，因此本地上传文件不会进入 Release 镜像。随版本
+发布的公共 `data/docs` 和 `data/skills` 会保留在镜像中；部署到 K8S 后，PVC 挂载到
+`/app/data` 会遮住镜像中的同路径内容，首次部署需要按第 7 步选择性同步公共文档。
+
+不要用 `docker build` 把某个本地 `data/` 目录单独作为额外构建上下文，也不要为了让
+容器“自带数据”而取消这些 `.dockerignore` 规则。旧环境的上传文件和工作区应通过备份、
+对象存储或受控的 PVC 迁移流程恢复。
+
 如果是远程或多节点集群，即使镜像包是从 GitHub Release 下载的，也不能只在本机执行
 `docker load`。应将镜像导入实际节点，或者更推荐先在本机导入，再重新打标签并推送到
 目标集群可访问的镜像仓库：
@@ -142,6 +378,7 @@ docker push registry.example.com/nanzi-ai-agent:1.2.0
 | `pvc.yaml` | 通常不用 | 为 `/app/data` 申请持久化磁盘 | 默认 20Gi、RWO；空间不够时只改容量 |
 | `deployment.yaml` | 通常不用 | 创建 NanZi 应用 Pod、探针和数据卷挂载 | 先保持单副本；资源不足时再调整 CPU/内存 |
 | `service.yaml` | 不用 | 让集群内部通过 80 访问应用 8001 | 保持不变 |
+| `data-init-job.example.yaml` | 需要公共文档时可用 | 一次性把镜像内的公共文档同步到 PVC | 复制为 `data-init-job.yaml`，把镜像改成与 Deployment 相同后单独应用 |
 | `ingress.example.yaml` | 需要域名访问时 | 配置外部域名、TLS、SSE 超时和会话粘性 | 复制为 `ingress.yaml`，改域名和证书后单独应用 |
 | `namespace.yaml` | 通常不用 | 创建独立的 `nanzi-ai-agent` 命名空间 | 保持不变 |
 
@@ -187,12 +424,23 @@ cp k8s_deploy/secret.example.yaml k8s_deploy/secret.yaml
 | `MYSQL_USER` / `MYSQL_PASSWORD` | 使用 MySQL 时必填 | MySQL 登录账号和密码 |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` | 使用 PostgreSQL 时必填 | PostgreSQL 登录账号和密码 |
 | `REDIS_PASSWORD` | Redis 开启认证时必填 | Redis 登录密码；无密码时填写空字符串 |
-| `ENCRYPTION_KEY` | 必填 | 加密平台保存的模型/API 凭据；必须沿用原系统值，不能随意更换 |
+| `ENCRYPTION_KEY` | 必填，模板已提供默认值 | 加密平台保存的模型/API 凭据；新环境可直接保留，已有环境必须沿用原系统值 |
 
 `secret.yaml` 不会被 `kustomization.yaml` 默认引用，也已被 `.gitignore` 排除。需要先
-单独应用它。不要把真实密码写入 `configmap.yaml`、README 或 Git 提交。
+单独应用它。模板中的 `ENCRYPTION_KEY` 已经按项目默认值填写，新环境可以不改，不需要
+额外生成；如果生产环境希望替换，也可以改成自己的 Fernet key。替换前要确认平台还没有
+使用旧 key 保存加密凭据；一旦开始使用，就必须长期保存同一个值。不要把真实密码写入
+`configmap.yaml`、README 或 Git 提交。
 
-### 第 6 步：先初始化数据库
+如果确实要换成新值，可在安装了项目依赖的 Python 环境中生成：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+把输出值写入 `secret.yaml` 的 `ENCRYPTION_KEY`，不要把它写入 `ConfigMap`。
+
+### 第 6 步：初始化数据库和管理员账号
 
 数据库迁移由用户/运维方执行，不由 K8S Deployment 自动执行。只选择与
 `DATABASE_TYPE` 对应的一套：
@@ -218,15 +466,56 @@ cd /path/to/nanzi-ai-agent-platform
 
 脚本会交互询问数据库地址、端口、账号和密码。生产环境执行前先备份数据库；详细行为
 和升级规则见 [MySQL 迁移说明](../db-prod/README.md) 或
-[PostgreSQL 迁移说明](../db-prod-pg/README.md)。不要同时执行两套迁移。
+[PostgreSQL 迁移说明](../db-prod-pg/README.md)。数据库迁移脚本不会读取 K8S Secret，
+请手工输入与 `configmap.yaml`、`secret.yaml` 相同的数据库连接信息。不要同时执行两套
+迁移。
 
-### 第 7 步：启动 NanZi
+迁移完成后必须准备一个管理员登录凭据：
 
-确认镜像、数据库、Redis、PVC 和 Secret 都准备好后，在项目根目录执行：
+- MySQL 脚本按提示选择导入初始管理员；如果保留模板中的默认 `ENCRYPTION_KEY`，脚本
+  生成的初始 API Key 与平台默认配置兼容。请把脚本输出的账号和 API Key 保存到密码管理器。
+- PostgreSQL 脚本按提示创建初始管理员，并保存脚本输出的 API Key。
+- 如果迁移时跳过了初始管理员，按对应数据库 README 中的管理员脚本补建；执行管理员
+  脚本时使用与 `secret.yaml` 完全相同的 `ENCRYPTION_KEY`。
+
+### 第 7 步：创建 Secret、PVC 并启动 NanZi
+
+先创建命名空间、Secret 和 PVC：
 
 ```bash
 kubectl apply -f k8s_deploy/namespace.yaml
 kubectl apply -f k8s_deploy/secret.yaml
+kubectl apply -f k8s_deploy/pvc.yaml
+kubectl -n nanzi-ai-agent get pvc nanzi-ai-agent-data
+```
+
+#### 首次初始化 `/app/data`（可选）
+
+如果需要使用镜像内随版本发布的公共文档，建议在启动应用前执行一次下面的 Job。它只
+复制 `data/docs`，不会复制本地上传文件、用户工作区或其他运行时目录：
+
+```bash
+cp k8s_deploy/data-init-job.example.yaml k8s_deploy/data-init-job.yaml
+```
+
+编辑 `k8s_deploy/data-init-job.yaml`，把 `image` 改成与 `deployment.yaml` 最终使用的
+镜像（包括仓库地址和版本标签），再执行：
+
+```bash
+kubectl apply -f k8s_deploy/data-init-job.yaml
+kubectl -n nanzi-ai-agent wait --for=condition=complete job/nanzi-ai-agent-data-init --timeout=10m
+kubectl -n nanzi-ai-agent logs job/nanzi-ai-agent-data-init
+kubectl -n nanzi-ai-agent delete job nanzi-ai-agent-data-init
+```
+
+如果不需要公共文档，可以跳过这个 Job；应用会在 PVC 中按需创建上传、工作区和生成文件
+目录。旧环境已有数据不要通过重新构建镜像迁移，应使用备份或受控的存储迁移流程。
+
+#### 部署应用
+
+确认镜像、数据库、Redis、PVC 和 Secret 都准备好后，在项目根目录执行：
+
+```bash
 kubectl apply -k k8s_deploy
 kubectl -n nanzi-ai-agent rollout status deployment/nanzi-ai-agent
 ```
@@ -270,6 +559,21 @@ kubectl -n nanzi-ai-agent get ingress
 之后通过 `https://你的域名` 访问。Ingress 示例不是默认资源，不执行这一步也不影响
 集群内的 Service 和 `port-forward` 访问。
 
+## 首次登录后的可选能力配置
+
+`Pod Ready` 和 `/health` 只代表应用进程、基础配置和探针正常，不代表模型、知识库或
+第三方系统已经连通。登录后按实际需要在平台管理界面配置：
+
+| 能力 | 配置位置 | 说明 |
+| --- | --- | --- |
+| LLM/模型 | 系统配置或模型管理 | 新增模型的 Provider、Base URL、模型名和 API Key，并设置默认模型 |
+| RAGFlow 知识库 | 系统配置 → 知识库设置 | 开启知识库，填写 RAGFlow API 地址、API Key 和默认知识库 ID |
+| SSO、Jira 等 | 对应第三方集成配置 | 先确认外部服务、网络和凭据，再按功能页面启用 |
+
+当前 K8S `ConfigMap` 只放基础运行参数，不会自动把 RAGFlow 或模型凭据注入应用；这些
+敏感配置由平台保存并使用 `ENCRYPTION_KEY` 加密。基础部署完成后，至少分别验证健康检查、
+管理员登录、模型调用和（启用时）知识库检索。
+
 ## 启动后常用操作
 
 | 目的 | 命令 | 说明 |
@@ -308,6 +612,7 @@ kubectl -n nanzi-ai-agent get ingress
 | `pvc.yaml` | `/app/data` 的 20Gi、`ReadWriteOnce` PVC |
 | `deployment.yaml` | 单副本 Deployment、环境变量、PVC 和 `/health` 探针 |
 | `service.yaml` | ClusterIP Service，端口 80 转发到容器 8001 |
+| `data-init-job.example.yaml` | 可选的一次性公共文档初始化 Job，不在默认 Kustomize 资源中 |
 | `ingress.example.yaml` | ingress-nginx 的可选示例，含 SSE 超时和会话粘性 |
 
 ## 常见问题与注意事项
@@ -336,7 +641,7 @@ kubectl -n nanzi-ai-agent get ingress
 - [ ] 镜像使用明确版本标签，且目标节点或镜像仓库可拉取该版本。
 - [ ] `DATABASE_TYPE`、数据库地址、账号和迁移版本匹配。
 - [ ] Redis 为共享的 Redis Stack/RediSearch，`REDIS_DB=0`，网络和认证可用。
-- [ ] `ENCRYPTION_KEY` 沿用原系统值，未写入 ConfigMap 或代码仓库。
+- [ ] 新环境确认是否保留模板默认 `ENCRYPTION_KEY`；已有环境沿用原系统值，且未写入 ConfigMap 或 Git 提交。
 - [ ] PVC 已绑定，`/app/data` 中的公共文档、上传目录和用户数据已确认。
 - [ ] `APP_PUBLIC_URL`、CORS 域名和 Ingress/TLS 域名一致。
 - [ ] 已用 `/health`、登录、文件读写、模型调用和 SSE 分别验证，而不是只看 Pod 为 `Ready`。
@@ -345,12 +650,18 @@ kubectl -n nanzi-ai-agent get ingress
 
 ## 升级和回滚
 
-修改镜像标签或配置后重新应用资源，并等待滚动状态：
+修改镜像标签或配置后重新应用资源，并等待滚动状态。Secret 需要单独应用；ConfigMap
+和 Secret 只会在 Pod 启动时读取，因此修改后必须重启 Deployment：
 
 ```bash
+kubectl apply -f k8s_deploy/secret.yaml
 kubectl apply -k k8s_deploy
+kubectl -n nanzi-ai-agent rollout restart deployment/nanzi-ai-agent
 kubectl -n nanzi-ai-agent rollout status deployment/nanzi-ai-agent
 ```
+
+如果本次只修改镜像标签，`kubectl apply -k` 会触发更新，随后一条 `rollout restart`
+可以省略；如果修改了 ConfigMap 或 Secret，建议保留重启命令。
 
 当前 Deployment 使用单副本 + `Recreate`，升级期间会有短暂不可用窗口，但可以避免
 `ReadWriteOnce` PVC 被新旧 Pod 同时挂载。需要回滚时：
@@ -387,6 +698,7 @@ PVC 不随 Deployment 回滚，回滚前应确认新版本没有改变数据格�
 ```bash
 kubectl kustomize k8s_deploy
 kubectl apply --dry-run=client -k k8s_deploy
+venv/bin/python -m pytest tests/test_dockerignore_contract.py tests/test_k8s_deploy_docs_contract.py -q
 ```
 
 如果本机没有 `kubectl`，至少使用 YAML 解析器检查语法，并人工确认：默认资源不含真实

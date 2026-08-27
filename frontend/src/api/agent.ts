@@ -52,6 +52,16 @@ export interface AIAgentBase {
   sort_order?: number
 }
 
+export interface ToolConfigItem {
+  name: string
+  enabled?: boolean | null
+  model_name?: string | null
+  temperature?: number | null
+  description_override?: string | null
+  engine_config_override?: Record<string, unknown> | null
+  metadata_dataset_ids?: string[] | null
+}
+
 export interface AIAgentVersion {
   id: string
   agent_id: string
@@ -61,7 +71,7 @@ export interface AIAgentVersion {
   synthesis_model_name?: string
   synthesis_temperature?: number
   system_prompt: string
-  tools: string[]
+  tools: Array<string | ToolConfigItem>
   skills_custom?: boolean
   skills?: string[]
   welcome_config?: WelcomeConfig
