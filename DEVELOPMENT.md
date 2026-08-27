@@ -57,54 +57,25 @@ vim .env
 
 ## 开发环境搭建
 
-### 1. 后端依赖安装与初始化
+> 从现状起，**不再需要分别手动安装后端与前端依赖**：`./dev.sh` 一键即可同时完成前后端的依赖准备、前端编译与后端启动。你只需提前准备好 Node.js/npm、`.env`、数据库和 Redis。
 
-日常本地开发直接执行 `./dev.sh` 即可自动检测并安装 `uv`，准备 Python 3.11，创建 `.venv`，并按需安装 `requirements.txt`。首次下载需要网络；Node.js/npm、`.env`、数据库和 Redis 仍需单独准备。
+### 1. 一键开发启动（推荐）
 
-如需手动准备与一键脚本一致的 Python 环境：
-
-```bash
-# 1. 安装并准备 Python 3.11
-uv python install 3.11
-uv venv --python 3.11 .venv
-
-# 2. 使用清华 PyPI 镜像安装依赖
-uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-source .venv/bin/activate
-
-# 3. 准备环境变量配置文件
-cp env.example .env
-# 编辑 .env 文件，配置数据库连接等信息
-
-# 4. 初始化数据库（请先确保已手动创建数据库，如 `nanzi_ai_agent_platform`）
-# 执行交互式部署脚本，详见 db-prod/README.md 指南
-./db-prod/apply-sql.sh
-```
-
-如果需要兼容已有传统环境，也可以继续使用 `python -m venv venv`、激活 `venv` 和 `pip install -r requirements.txt`；但 `dev.sh` 统一使用项目根目录下的 `.venv` Python 3.11 环境。
-
-### 2. 前端依赖安装
-
-```bash
-# 进入前端目录并安装依赖
-cd frontend
-npm install
-```
-
-### 3. 使用一键开发启动脚本
-
-在开发阶段，推荐直接在项目根目录下使用一键开发启动脚本，它会自动处理编译和进程清理：
+日常本地开发直接执行 `./dev.sh` 即可，无需手动分离前后端：
 
 ```bash
 ./dev.sh
 ```
 
-该脚本会自动依次执行：
+该脚本会在启动时自动依次执行：
 
-1. **准备 Python 环境**：自动检测/安装 uv，准备 Python 3.11，创建 `.venv`，并按 `requirements.txt` 校验值安装后端依赖。
-2. **清理旧进程**：检查并停止占用 `.env` 中 `API_SERVICE_PORT` 的旧后端服务（默认 `8001`）。
-3. **编译前端**：进入 `frontend` 目录并运行 `npx vite build` 编译前端静态资源。
-4. **启动后端**：使用 `.venv/bin/python` 以热重载模式（`--reload`）前台启动后端 `uvicorn` 服务，并在终端前台显示日志，极大地方便了编译与启动日志排查。
+1. **准备 Python 环境**：自动检测/安装 `uv`，准备 Python 3.11，创建 `.venv`，并按 `requirements.txt` 校验值安装后端依赖（仅首次或依赖变化时）。
+2. **准备前端依赖**：进入 `frontend` 目录，若 `node_modules` 不存在或 `package-lock.json` 有变更，自动执行 `npm install` 安装/更新前端依赖。
+3. **清理旧进程**：检查并停止占用 `.env` 中 `API_SERVICE_PORT` 的旧后端服务（默认 `8001`）。
+4. **编译前端**：运行 `npx vite build` 编译前端静态资源。
+5. **启动后端**：使用 `.venv/bin/python` 以热重载模式（`--reload`）前台启动后端 `uvicorn` 服务，并在终端前台显示日志，极大地方便了编译与启动日志排查。
+
+首次运行需下载 Python 依赖并与前端 `npm install`，均需要网络。
 
 #### 后台启动与生命周期管理
 
@@ -122,6 +93,35 @@ npm install
 ```
 
 `status` 与 `stop` 会直接读取 `.env` 中的 `API_SERVICE_PORT`（默认 `8001`），不会执行 Python 依赖准备或前端构建。端口监听探测优先使用 `lsof`，缺失时自动回退到 `ss`/`fuser`；脚本能识别以绝对/相对 `.venv` 路径或 `python3 -m uvicorn` 等形态启动的本项目 Uvicorn。脚本只会停止 PID 文件或端口探测结果能够确认属于本项目 Uvicorn 的进程；若仍无法确认归属（或确实被其他进程占用），会列出监听 PID 及命令行提示，并拒绝停止以避免误杀。
+
+### 2. 初始化数据库
+
+`.env` 就绪后，还需初始化数据库表结构（请先确保已手动创建数据库，如 `nanzi_ai_agent_platform`）：
+
+```bash
+# 执行交互式部署脚本，详见 db-prod/README.md 指南
+./db-prod/apply-sql.sh
+```
+
+### 3. 手动准备 Python 环境（可选）
+
+如果你希望手动准备与一键脚本一致的 Python 环境，可以参考以下命令；但 `dev.sh` 会自动完成这一切，通常无需手动执行：
+
+```bash
+# 1. 安装并准备 Python 3.11
+uv python install 3.11
+uv venv --python 3.11 .venv
+
+# 2. 使用清华 PyPI 镜像安装依赖
+uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+source .venv/bin/activate
+
+# 3. 准备环境变量配置文件
+cp env.example .env
+# 编辑 .env 文件，配置数据库连接等信息
+```
+
+如果需要兼容已有传统环境，也可以继续使用 `python -m venv venv`、激活 `venv` 和 `pip install -r requirements.txt`；但 `dev.sh` 统一使用项目根目录下的 `.venv` Python 3.11 环境。
 
 **运行输出示例（后续启动，已有 `.venv` 且 `requirements.txt` 未变化）**：
 
