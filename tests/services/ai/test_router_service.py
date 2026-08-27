@@ -1361,3 +1361,25 @@ async def test_route_query_does_not_add_text_call_when_structured_output_fails(
     assert client.text_calls == 0
     assert client.structured_calls == 2
     assert mock_get_llm.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_route_query_timeout_falls_back_to_general(mock_agents_metadata):
+    """路由大模型超时时，重试后应平滑安全降级至通用助手，不挂死异常。"""
+    service = RouterService()
+    mock_chat = AsyncMock()
+    mock_chat.generate_structured_dict.side_effect = TimeoutError("Simulated timeout")
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.build_accessible_resource_catalog", new_callable=AsyncMock, return_value=""), \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle", return_value=mock_chat):
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+
+        result = await service.route_query("请统计本周各智能体的Token消耗总量并排名")
+
+    assert result is not None
+    assert result.agent_id == "agent-general"
+    assert "Routing exception" in result.reasoning
+

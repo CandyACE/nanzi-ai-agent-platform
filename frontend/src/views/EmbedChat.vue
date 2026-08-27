@@ -2281,7 +2281,7 @@ interface LogEntry {
   status: "pending" | "success" | "error";
   isExpanded: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'system' | 'default';
   tool_name?: string;
   resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
@@ -4553,11 +4553,17 @@ const startThoughtTimer = (msg: Message) => {
     }
     // Switch message every 3 seconds (30 * 100ms)
     if (ticks % 30 === 0) {
-      const stepIndex = ticks / 30;
-      if (stepIndex < THINKING_MESSAGES.length) {
-        msg.thinkingText = THINKING_MESSAGES[stepIndex];
+      const activePendingLog = msg.logs ? [...msg.logs].reverse().find((l) => l.status === "pending" && l.title) : null;
+      if (activePendingLog && activePendingLog.title) {
+        const titleStr = activePendingLog.title.startsWith("正在") ? activePendingLog.title : `正在${activePendingLog.title}`;
+        msg.thinkingText = `${titleStr}…`;
       } else {
-        msg.thinkingText = "任务处理中，请稍候…";
+        const stepIndex = ticks / 30;
+        if (stepIndex < THINKING_MESSAGES.length) {
+          msg.thinkingText = THINKING_MESSAGES[stepIndex];
+        } else {
+          msg.thinkingText = "任务处理中，请稍候…";
+        }
       }
       triggerRef(messages);
     }

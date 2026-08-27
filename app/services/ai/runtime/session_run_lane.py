@@ -188,6 +188,29 @@ class ConversationRunLane:
             logger.warning("[ConversationRunLane] force_release failed: %s", exc)
             return False
 
+    async def is_locked(
+        self,
+        *,
+        user_id: str | int | None,
+        conversation_id: str | None,
+    ) -> bool:
+        """Check whether the conversation run lane currently holds an active lock."""
+        if not conversation_id or not await self._is_enabled():
+            return False
+
+        from app.core.redis import get_redis
+
+        redis = await get_redis()
+        if redis is None:
+            return False
+
+        key = self._lock_key(user_id, conversation_id)
+        try:
+            return bool(await redis.exists(key))
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] is_locked check failed: %s", exc)
+            return False
+
     @asynccontextmanager
     async def hold(
         self,

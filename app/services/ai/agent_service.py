@@ -876,6 +876,19 @@ class AgentService:
                 }
                 return
 
+        waiting_log_emitted = False
+        queue_start_time = asyncio.get_running_loop().time()
+        if conversation_id and await conversation_run_lane.is_locked(user_id=lane_user_id, conversation_id=conversation_id):
+            waiting_log_emitted = True
+            yield {
+                "type": "log",
+                "id": "session:queue_wait",
+                "title": "等待上一次会话任务完成",
+                "details": "检测到当前会话有未结束的任务，正在排队等待释放资源...",
+                "status": "pending",
+                "category": "system",
+            }
+
         try:
             async with track_conversation_run(
                 lane_user_id, conversation_id
@@ -884,6 +897,17 @@ class AgentService:
                 conversation_id=conversation_id,
                 trace_id=trace_id,
             ):
+                if waiting_log_emitted:
+                    queue_elapsed_ms = (asyncio.get_running_loop().time() - queue_start_time) * 1000
+                    yield {
+                        "type": "log",
+                        "id": "session:queue_wait",
+                        "title": "上一次任务已完成",
+                        "details": "会话资源已释放，继续处理当前任务",
+                        "status": "success",
+                        "category": "system",
+                        "execution_time_ms": max(1.0, queue_elapsed_ms),
+                    }
                 from app.services.ai.executors.common import sanitize_client_messages_for_identity
 
                 messages = sanitize_client_messages_for_identity(messages)
@@ -1172,6 +1196,17 @@ class AgentService:
                 agent_config = shared_state["agent_config"]
                 execution_status = shared_state["execution_status"]
         except ConversationRunBusyError:
+            if waiting_log_emitted:
+                queue_elapsed_ms = (asyncio.get_running_loop().time() - queue_start_time) * 1000
+                yield {
+                    "type": "log",
+                    "id": "session:queue_wait",
+                    "title": "等待上一次会话任务超时",
+                    "details": "排队等待超时，上一次任务仍未结束，请稍后再试",
+                    "status": "error",
+                    "category": "system",
+                    "execution_time_ms": max(1.0, queue_elapsed_ms),
+                }
             yield {
                 "type": "error",
                 "status": "error",
