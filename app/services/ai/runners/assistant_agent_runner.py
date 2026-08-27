@@ -159,6 +159,7 @@ class AssistantAgentRunner(BaseExecutor):
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
         turn_decision: Optional[TurnDecision] = None,
+        current_user_query: Optional[str] = None,
     ):
         super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
         self.turn_decision = turn_decision or TurnDecision(
@@ -169,6 +170,7 @@ class AssistantAgentRunner(BaseExecutor):
         # 供保存点读取并跨轮持久化，避免污染 assistant 展示内容。
         self._last_turn_tool_meta: Optional[Dict[str, Any]] = None
         self._execution_backend: str | None = None
+        self.current_user_query = current_user_query
 
     def _runtime_user_id(self) -> str | None:
         if not self.user_info:
@@ -200,6 +202,7 @@ class AssistantAgentRunner(BaseExecutor):
                 if self.turn_decision is not None
                 else None
             ),
+            "current_user_query": self.current_user_query,
         }
 
     @classmethod
@@ -222,6 +225,7 @@ class AssistantAgentRunner(BaseExecutor):
             user_info=user_info,
             conversation_id=conversation_id,
             turn_decision=TurnDecision.model_validate(runner_context["turn_decision"]),
+            current_user_query=runner_context.get("current_user_query"),
         )
         return runner
 
@@ -231,6 +235,12 @@ class AssistantAgentRunner(BaseExecutor):
             if msg.get("role") == "user":
                 return str(msg.get("content") or "")
         return ""
+
+    def _current_user_query(self, history: List[Dict[str, str]]) -> str:
+        """Return the request submitted in this turn, with history as fallback only."""
+        if self.current_user_query is not None:
+            return str(self.current_user_query)
+        return self._extract_last_user_query(history)
 
     def _is_direct_agent_selection(self) -> bool:
         """专家模式 / @提及 / 显式 agent_id 直达，不走自动路由。"""
@@ -592,7 +602,7 @@ class AssistantAgentRunner(BaseExecutor):
         self,
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        user_query = self._extract_last_user_query(history)
+        user_query = self._current_user_query(history)
         grounding_enabled = self._grounding_enabled()
         run_data_guard = (
             grounding_enabled
@@ -783,6 +793,8 @@ class AssistantAgentRunner(BaseExecutor):
             run_multimodal_gate,
         )
 
+        user_query = self._current_user_query(history)
+
         model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
         async for chunk in run_multimodal_gate(
             history,
@@ -822,7 +834,7 @@ class AssistantAgentRunner(BaseExecutor):
             load_session_tool_artifact,
         )
 
-        _user_q_for_artifact = self._extract_last_user_query(history)
+        _user_q_for_artifact = user_query
         _session_artifact = await load_session_tool_artifact(
             self._runtime_user_id(),
             self.conversation_id,
@@ -837,7 +849,7 @@ class AssistantAgentRunner(BaseExecutor):
 
         system_content = append_time_anchor_for_user_question(
             system_content,
-            self._extract_last_user_query(history),
+            user_query,
         )
         tools = filter_redundant_time_tools(tools, system_content)
 
@@ -945,7 +957,6 @@ class AssistantAgentRunner(BaseExecutor):
 
         from app.services.ai.memory_recall_policy import (
             MEMORY_SEARCH_CORRECTION_MSG,
-            last_user_message_text,
             looks_like_cross_session_recall_query,
             tools_include_memory_search,
         )
@@ -957,11 +968,11 @@ class AssistantAgentRunner(BaseExecutor):
             try:
                 enabled = await MemoryConfigService.get_bool("memory_service_enabled", True)
                 recall_query_pending = enabled and looks_like_cross_session_recall_query(
-                    last_user_message_text(history)
+                    user_query
                 )
             except Exception:
                 recall_query_pending = looks_like_cross_session_recall_query(
-                    last_user_message_text(history)
+                    user_query
                 )
 
         native_system_content = system_content
@@ -975,7 +986,7 @@ class AssistantAgentRunner(BaseExecutor):
         # 识别该不该用工具、用哪个，并按配置力度促发模型调用（记忆类有专门便签，故跳过）。
         # 模式 agent_tool_preflight_mode：off=关闭；soft=仅注入强约束便签；hard=便签+首步强制调用。
         preflight_tool_choice = None
-        _preflight_user_query = self._extract_last_user_query(history)
+        _preflight_user_query = user_query
         from app.services.ai.tool_nudge_policy import (
             is_automatic_delivery_context,
             looks_like_explicit_user_question_request,
@@ -1038,7 +1049,7 @@ class AssistantAgentRunner(BaseExecutor):
                         )
                     else:
                         tool_nudge = resolve_tool_nudge(
-                            self._extract_last_user_query(history),
+                            user_query,
                             tools,
                             available_sub_agent_names=available_sub_agent_names,
                             sub_agent_candidates_by_capability=sub_agent_candidates_by_capability,
@@ -1548,7 +1559,7 @@ class AssistantAgentRunner(BaseExecutor):
                 try:
                     await persist_user_question_event(
                         event=question_event,
-                        user_id=self._runtime_user_id() or "anonymous",
+                        user_id=self._runtime_user_id(),
                         conversation_id=self.conversation_id or "",
                     )
                 except Exception:

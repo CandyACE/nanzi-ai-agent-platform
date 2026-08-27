@@ -28,7 +28,9 @@ class AgentScopeSessionLock:
     ) -> str:
         from app.services.ai.memory_service import memory_service
 
-        uid = str(user_id) if user_id is not None else "anonymous"
+        from app.services.ai.conversation_identity import require_user_id
+
+        uid = require_user_id(user_id)
         safe_agent = agent_name.replace(":", "_")
         return (
             f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:"
@@ -99,7 +101,9 @@ class AgentScopeSessionLock:
     ) -> str:
         from app.services.ai.memory_service import memory_service
 
-        uid = str(user_id) if user_id is not None else "anonymous"
+        from app.services.ai.conversation_identity import require_user_id
+
+        uid = require_user_id(user_id)
         return f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:agent_lock:*"
 
     async def force_release_all_for_conversation(

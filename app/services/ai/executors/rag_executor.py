@@ -29,8 +29,10 @@ class RAGExecutor(BaseExecutor):
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Optional[Dict[str, Any]] = None,
+        current_user_query: Optional[str] = None,
     ):
         super().__init__(agent_config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+        self.current_user_query = current_user_query
         self.client = RagFlowClient(config_prefix="knowledge_ragflow")
 
     async def execute(self, history: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
@@ -48,12 +50,14 @@ class RAGExecutor(BaseExecutor):
 
         import time
         full_content = ""
-        # Extract query from the last user message in history
-        query = ""
-        for msg in reversed(history):
-            if msg["role"] == "user":
-                query = msg["content"]
-                break
+        # 当前前端提交的输入由 Dispatcher 显式传入；history 仅作为兼容旧调用的兜底。
+        query = self.current_user_query
+        if query is None:
+            query = ""
+            for msg in reversed(history):
+                if msg["role"] == "user":
+                    query = msg["content"]
+                    break
 
         # Trace Step: Start Retrieval
         self._increment_step()

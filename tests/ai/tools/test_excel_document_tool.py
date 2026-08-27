@@ -83,3 +83,53 @@ async def test_excel_write_cells_creates_downloadable_copy(excel_context):
     assert result["changes"]["written_cells"] == 1
     assert result["artifact"]["download_url"]
     assert load_workbook(excel_context)["Sales"]["B2"].value == 10
+
+
+@pytest.mark.asyncio
+async def test_excel_create_writes_initial_rows(excel_context, tmp_path):
+    from app.services.ai.tools.excel_document_tool import excel_document_write
+
+    result = await excel_document_write.ainvoke({
+        "action": "create",
+        "output_filename": "weather.xlsx",
+        "sheet_name": "天气预报",
+        "rows": [["时间", "天气"], ["09:00", "晴"]],
+    })
+
+    assert result["changes"]["created_workbook"] is True
+    assert result["changes"]["appended_rows"] == 2
+    output_path = next((tmp_path / "agent_workspaces").rglob("weather.xlsx"))
+    workbook = load_workbook(output_path, data_only=False)
+    try:
+        assert [list(row) for row in workbook["天气预报"].values] == [["时间", "天气"], ["09:00", "晴"]]
+    finally:
+        workbook.close()
+
+
+@pytest.mark.asyncio
+async def test_excel_create_writes_initial_cells(excel_context, tmp_path):
+    from app.services.ai.tools.excel_document_tool import excel_document_write
+
+    result = await excel_document_write.ainvoke({
+        "action": "create",
+        "output_filename": "weather_cells.xlsx",
+        "sheet_name": "天气概况",
+        "cells": [
+            {"address": "A1", "value": "日期"},
+            {"address": "B1", "value": "天气"},
+            {"address": "A2", "value": "2026-08-27"},
+            {"address": "B2", "value": "晴"},
+        ],
+    })
+
+    assert result["changes"]["created_workbook"] is True
+    assert result["changes"]["written_cells"] == 4
+    output_path = next((tmp_path / "agent_workspaces").rglob("weather_cells.xlsx"))
+    workbook = load_workbook(output_path, data_only=False)
+    try:
+        assert [list(row) for row in workbook["天气概况"].values] == [
+            ["日期", "天气"],
+            ["2026-08-27", "晴"],
+        ]
+    finally:
+        workbook.close()

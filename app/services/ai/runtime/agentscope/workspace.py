@@ -141,12 +141,9 @@ def resolve_workspace_user_key(
     user_name: str | None = None,
 ) -> str:
     """Build a readable, stable workspace directory key: user_name__user_id."""
-    if user_id is None:
-        return _clean_key_part(None, "anonymous")
+    from app.services.ai.conversation_identity import require_user_id
 
-    uid_str = str(user_id).strip()
-    if not uid_str:
-        return _clean_key_part(None, "anonymous")
+    uid_str = require_user_id(user_id)
 
     raw_name = (user_name or "").strip()
     if raw_name:
@@ -154,7 +151,7 @@ def resolve_workspace_user_key(
         id_part = _clean_key_part(uid_str, "user")
         return f"{name_part}{WORKSPACE_USER_KEY_SEP}{id_part}"
 
-    return _clean_key_part(uid_str, "anonymous")
+    return _clean_key_part(uid_str, "user")
 
 
 def build_workspace_key(trace_id: str | None, conversation_id: str | None = None) -> str:

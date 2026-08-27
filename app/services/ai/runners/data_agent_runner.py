@@ -84,12 +84,13 @@ class UpgradeToFederatedQuery(Exception):
 class DataAgentRunner(BaseExecutor):
     """AgentScope-native runner foundation for ChatBI/DataExecutor migration."""
 
-    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, turn_decision: Optional[TurnDecision]=None):
+    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, turn_decision: Optional[TurnDecision]=None, current_user_query: Optional[str]=None):
         super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
         self.turn_decision = turn_decision or TurnDecision(
             route_status="failed",
             provenance="missing_turn_decision",
         )
+        self.current_user_query = current_user_query
         self._last_run_state: _DataRunState | None = None
         self.turn_classification = None
         self.intent_info = None
@@ -599,7 +600,11 @@ class DataAgentRunner(BaseExecutor):
             if chunk.get("status") == "error" and not chunk.get("type"):
                 return
         runtime_messages = [message for message in normalize_messages_for_llm(convert_history_to_messages(history, strip_thought=True)) if not isinstance(message, SystemMessage)]
-        user_question = next((str(getattr(message, 'content', '')) for message in reversed(runtime_messages)), '')
+        user_question = (
+            str(self.current_user_query)
+            if self.current_user_query is not None
+            else next((str(getattr(message, 'content', '')) for message in reversed(runtime_messages)), '')
+        ).strip()
         if not self._mixed_task_plan_active:
             from app.services.ai.chatbi_task_plan import (
                 ChatBITaskStatus,

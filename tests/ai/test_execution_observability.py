@@ -113,6 +113,11 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
         "app.services.ai.agent_service.AuditManager.log_transaction",
         audit,
     )
+    persist = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.ai.agent_service.memory_service.add_message",
+        persist,
+    )
 
     shared_state = {
         "agent_config": None,
@@ -127,8 +132,8 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
             agent_id=None,
             agent_name=None,
             version_id=None,
-            conversation_id=None,
-            user_info=None,
+            conversation_id="conv-observe",
+            user_info={"user_id": "42"},
             api_key=None,
             enable_multi_agent=False,
             debug_options=None,
@@ -144,6 +149,9 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
 
     snapshot = shared_state["execution_performance"]
     assert events[-1]["content"]
+    assert not any(event.get("type") == "error" for event in events)
+    await asyncio.sleep(0)
+    persist.assert_awaited_once()
     assert "route_resolution" in snapshot["stages_ms"]
     assert "runtime_model_metadata" in snapshot["stages_ms"]
     assert snapshot["ttft_ms"] is not None

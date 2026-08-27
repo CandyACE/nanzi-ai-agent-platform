@@ -121,6 +121,7 @@ export interface AgentStreamMessage {
   processTimeline?: ProcessTimelineItem[];
   agentName?: string;
   agentDisplayName?: string;
+  fallbackNotice?: string;
   turnType?: string;
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -443,6 +444,33 @@ export function handleModelCallEvent<T extends AgentStreamMessage>(
   }
 }
 
+export function handleModelFallbackEvent<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+  addLog: AddStreamLogFn<T>,
+): void {
+  const primaryModel = String(data.primary_model || "unknown");
+  const fallbackModel = String(data.fallback_model || "unknown");
+  const notice = String(
+    data.content ||
+      `> ⚠️ 主模型 \`${primaryModel}\` 调用失败，本次回答由 fallback 模型 \`${fallbackModel}\` 生成。\n\n`,
+  );
+  if (!notice || msg.fallbackNotice === notice.trim()) return;
+
+  const normalizedNotice = notice.endsWith("\n\n") ? notice : `${notice}\n\n`;
+  msg.fallbackNotice = notice.trim();
+  if (!String(msg.content || "").startsWith(msg.fallbackNotice)) {
+    msg.content = msg.content ? `${normalizedNotice}${msg.content}` : normalizedNotice;
+  }
+  addLog(msg, {
+    id: `model_fallback_${fallbackModel}`,
+    title: "⚠️ 已切换 fallback 模型",
+    details: `主模型 ${primaryModel} 调用失败，当前回答由 fallback 模型 ${fallbackModel} 生成。`,
+    status: "warning",
+    category: "model",
+  });
+}
+
 export function handleAgentReplyEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
@@ -755,7 +783,13 @@ export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
     return true;
   }
   if (eventType === "retraction") {
-    msg.content = String(data.content ?? "");
+    const replacement = String(data.content ?? "");
+    msg.content =
+      msg.fallbackNotice && !replacement.startsWith(msg.fallbackNotice)
+        ? replacement
+          ? `${msg.fallbackNotice}\n\n${replacement}`
+          : msg.fallbackNotice
+        : replacement;
     if (data.final === false) {
       msg.isThinking = true;
       msg.isProcessNarrationExpanded = true;
@@ -825,6 +859,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "model_call":
       handleModelCallEvent(msg, data, addLog);
+      return true;
+    case "model_fallback":
+      handleModelFallbackEvent(msg, data, addLog);
       return true;
     case "agent_reply":
       handleAgentReplyEvent(msg, data, addLog);

@@ -130,6 +130,10 @@ async def excel_document_write(
 ) -> dict[str, Any]:
     """Create or modify an Excel workbook copy and return a download link.
 
+    For ``action="create"``, pass ``rows`` and/or ``cells`` to populate the
+    new workbook's active sheet in the same call. A create call without either
+    parameter intentionally produces a blank workbook.
+
     Copy artifact.download_url verbatim in the final response; do not alter its
     protocol, host, path, or token.
     """
@@ -149,7 +153,20 @@ async def excel_document_write(
         if action != "create_sheet" and sheet_name not in workbook.sheetnames:
             raise DocumentPathError("工作表不存在")
     changes: dict[str, Any] = {}
-    if action == "write_cells":
+    if action == "create":
+        if cells:
+            for cell in cells:
+                address = str(cell.get("address") or "")
+                if not address:
+                    raise DocumentPathError("单元格地址不能为空")
+                worksheet[address] = cell.get("value")
+            changes["written_cells"] = len(cells)
+        if rows:
+            for row in rows:
+                worksheet.append(list(row))
+            changes["appended_rows"] = len(rows)
+        changes["created_workbook"] = True
+    elif action == "write_cells":
         worksheet = workbook[sheet_name]
         if not cells:
             raise DocumentPathError("write_cells 需要 cells")
@@ -171,8 +188,6 @@ async def excel_document_write(
             raise DocumentPathError("工作表已存在")
         workbook.create_sheet(sheet_name)
         changes["created_sheet"] = sheet_name
-    else:
-        changes["created_workbook"] = True
     output_path = await _output_path(output_filename)
     workbook.save(output_path)
     workbook.close()

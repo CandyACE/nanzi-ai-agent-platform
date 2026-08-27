@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from app.services.ai.memory_service import memory_service
+from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class PendingAgentScopeStore:
         self._memory_fallback: dict[str, PendingAgentScopeSnapshot] = {}
 
     def _user_id(self, user_id: str | int | None) -> str:
-        return str(user_id) if user_id is not None else "anonymous"
+        return require_user_id(user_id)
 
     def _key(self, user_id: str | int | None, request_id: str) -> str:
         return (
@@ -57,7 +58,7 @@ class PendingAgentScopeStore:
         user_id: str | int | None,
     ) -> bool:
         if snapshot.user_id is None or user_id is None:
-            return True
+            return False
         return str(snapshot.user_id) == str(user_id)
 
     async def register(self, snapshot: PendingAgentScopeSnapshot) -> PendingAgentScopeSnapshot:

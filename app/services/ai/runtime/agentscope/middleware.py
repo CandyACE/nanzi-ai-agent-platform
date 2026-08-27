@@ -25,8 +25,9 @@ STATS_TTL_SECONDS = 2592000  # 30 天
 
 def _build_redis_key(user_id: str | int | None, conversation_id: str) -> str:
     from app.services.ai.memory_service import memory_service
+    from app.services.ai.conversation_identity import require_user_id
 
-    uid = str(user_id) if user_id is not None else "anonymous"
+    uid = require_user_id(user_id)
     return f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:{STATS_KEY_SUFFIX}"
 
 
@@ -68,6 +69,41 @@ def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
         if isinstance(obj, dict):
             return obj.get(name, default)
         return default
+
+
+def mark_model_fallback(agent: Any, current_model: Any) -> dict[str, str] | None:
+    """Record the actual fallback model selected by AgentScope for this Agent."""
+    primary_model = _safe_getattr(agent, "model")
+    if primary_model is None or current_model is None:
+        return None
+    if current_model is primary_model:
+        # AgentScope 可复用同一个 Agent；新一轮主模型调用开始时清掉上轮标记。
+        try:
+            setattr(agent, "_platform_fallback_info", None)
+        except Exception:
+            logger.warning("[ModelCallStatsMiddleware] Failed to clear fallback model info")
+        return None
+
+    existing = _safe_getattr(agent, "_platform_fallback_info")
+    if isinstance(existing, dict):
+        return existing
+
+    info = {
+        "primary_model": str(_safe_getattr(primary_model, "model", "unknown") or "unknown"),
+        "fallback_model": str(_safe_getattr(current_model, "model", "unknown") or "unknown"),
+    }
+    logger.warning(
+        "[ModelCallStatsMiddleware] AgentScope model fallback: primary=%s fallback=%s",
+        info["primary_model"],
+        info["fallback_model"],
+    )
+    try:
+        setattr(agent, "_platform_fallback_info", info)
+    except Exception:
+        logger.warning(
+            "[ModelCallStatsMiddleware] Failed to record fallback model info"
+        )
+    return info
 
 
 async def _clamp_completion_to_context(
@@ -379,6 +415,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
 
         tools: list = input_kwargs.get("tools", [])
         current_model = input_kwargs.get("current_model")
+        mark_model_fallback(agent, current_model)
         model_name: str = getattr(current_model, "model", "unknown")
         input_messages: list = input_kwargs.get("messages", [])
         input_message_count: int = len(input_messages)

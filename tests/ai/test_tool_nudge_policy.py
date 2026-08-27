@@ -937,7 +937,7 @@ def test_tool_nudge_attaches_neutral_or_registered_metadata():
 
     assert nudge is not None
     assert nudge.metadata is not None
-    assert nudge.metadata.capability == "unknown"
+    assert nudge.metadata.capability == "runtime_tool"
 
 
 def test_explicit_multi_sub_agents_nudges_batch_call():

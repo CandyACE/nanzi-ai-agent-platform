@@ -1,5 +1,6 @@
 from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
 from app.services.ai.runtime.agentscope.process_narration import (
+    accumulate_visible_answer,
     agent_text_is_process_narration,
     extract_agent_answer_after_process_narration,
     on_model_call_end,
@@ -8,6 +9,27 @@ from app.services.ai.runtime.agentscope.process_narration import (
     on_tool_call_start,
     on_tool_result_end,
 )
+
+
+def test_accumulate_visible_answer_persists_model_fallback_notice():
+    warning = accumulate_visible_answer(
+        "",
+        {
+            "type": "model_fallback",
+            "content": "> ⚠️ fallback warning",
+        },
+    )
+    assert warning == "> ⚠️ fallback warning"
+
+
+def test_retraction_keeps_persisted_model_fallback_notice():
+    warning = "> ⚠️ 主模型 `deepseek-v4-pro` 调用失败，本次回答由 fallback 模型 `gemma-4-31b` 生成。\n\n"
+    full = accumulate_visible_answer("", {"type": "model_fallback", "content": warning})
+
+    assert accumulate_visible_answer(
+        full,
+        {"type": "retraction", "content": "fallback answer"},
+    ) == f"{warning.strip()}\n\nfallback answer"
 
 
 def _types(events):

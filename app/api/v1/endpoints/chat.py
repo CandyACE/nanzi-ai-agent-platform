@@ -26,6 +26,7 @@ from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
 from app.services.ai.business_context import sanitize_injected_context
+from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
 from app.utils.env import get_env
 import logging
 
@@ -41,6 +42,23 @@ SSE_RESPONSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 public_router = APIRouter()
+
+
+def _require_chat_user_id(user_info: Optional[Dict[str, Any]]) -> str:
+    """聊天会话相关接口统一使用稳定用户 ID，缺失时返回 401。"""
+    try:
+        return require_user_id(user_info)
+    except MissingUserIdentityError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+def _require_numeric_chat_user_id(user_info: Optional[Dict[str, Any]]) -> int:
+    """需要整型主键的聊天接口也必须先通过稳定身份校验。"""
+    stable_user_id = _require_chat_user_id(user_info)
+    try:
+        return int(stable_user_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="当前用户身份格式无效") from exc
 
 
 @public_router.get("/generated-files/{artifact_id}")
@@ -99,10 +117,7 @@ async def list_artifacts(
     )
     from sqlalchemy import func, select
 
-    raw_user_id = user_info.get("user_id") or user_info.get("id")
-    user_id = int(raw_user_id) if raw_user_id is not None else None
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    user_id = _require_numeric_chat_user_id(user_info)
 
     filters = [AiArtifact.owner_user_id == user_id]
     if artifact_type:
@@ -185,10 +200,7 @@ async def count_artifacts_by_trace(
     from app.models.artifact import AiArtifact
     from sqlalchemy import func, select
 
-    raw_user_id = user_info.get("user_id") or user_info.get("id")
-    user_id = int(raw_user_id) if raw_user_id is not None else None
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    user_id = _require_numeric_chat_user_id(user_info)
 
     rows = (
         await db.execute(
@@ -434,8 +446,7 @@ async def get_dataset_menu_navigation(
 ):
     from app.services.dataset_navigation_service import DatasetNavigationService
 
-    raw_user_id = user_info.get("user_id") or user_info.get("id")
-    user_id = int(raw_user_id) if raw_user_id is not None else None
+    user_id = _require_numeric_chat_user_id(user_info)
     is_admin = user_info.get("role") == "admin"
     payload = await DatasetNavigationService.build_navigation_for_user(
         db,
@@ -462,7 +473,7 @@ async def cancel_chat_completion(
     if not conversation_id:
         raise HTTPException(status_code=400, detail="conversation_id is required")
 
-    lane_user_id = user_info.get("user_id") or user_info.get("id")
+    lane_user_id = _require_chat_user_id(user_info)
     result = await cancel_conversation_run(
         user_id=lane_user_id,
         conversation_id=conversation_id,
@@ -483,8 +494,7 @@ async def record_dataset_menu_question_click(
 ):
     from app.services.dataset_navigation_service import DatasetNavigationService
 
-    raw_user_id = user_info.get("user_id") or user_info.get("id")
-    user_id = int(raw_user_id) if raw_user_id is not None else None
+    user_id = _require_numeric_chat_user_id(user_info)
     is_admin = user_info.get("role") == "admin"
     await DatasetNavigationService.record_question_click(
         user_id=user_id,
@@ -508,8 +518,7 @@ async def clear_dataset_menu_question_click(
 ):
     from app.services.dataset_navigation_service import DatasetNavigationService
 
-    raw_user_id = user_info.get("user_id") or user_info.get("id")
-    user_id = int(raw_user_id) if raw_user_id is not None else None
+    user_id = _require_numeric_chat_user_id(user_info)
     is_admin = user_info.get("role") == "admin"
     cleared = await DatasetNavigationService.clear_question_click(
         user_id=user_id,
@@ -533,11 +542,7 @@ async def refresh_group_questions(
     from app.services.dataset_navigation_service import DatasetNavigationService
 
     purpose = str(request.purpose or "questions").strip().lower()
-    raw_user_id = user_info.get("user_id") or user_info.get("id")
-    try:
-        user_id = int(raw_user_id) if raw_user_id is not None else None
-    except (TypeError, ValueError):
-        user_id = None
+    user_id = _require_numeric_chat_user_id(user_info)
     is_admin = user_info.get("role") == "admin"
     if purpose == "followups":
         questions = await DatasetNavigationService.refresh_group_followups(
@@ -673,7 +678,7 @@ async def get_conversation_history(
     Retrieve conversation history from server-side memory (Redis),
     with automatic database audit log recovery fallback.
     """
-    user_id = user_info.get("user_id") if user_info else None
+    user_id = _require_chat_user_id(user_info)
     
     from app.services.ai.memory_service import memory_service
     
@@ -711,12 +716,10 @@ async def get_conversation_history(
         from app.models.audit import AgentExecutionHistory
         from sqlalchemy import select
         
-        stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.conversation_id == conversation_id)
-        
-        # Apply user isolation unless admin
-        is_admin = user_info.get("role") == "admin" if user_info else False
-        if not is_admin and user_info and user_info.get("user_name"):
-            stmt = stmt.where(AgentExecutionHistory.username == user_info.get("user_name"))
+        stmt = select(AgentExecutionHistory).where(
+            AgentExecutionHistory.conversation_id == conversation_id,
+            AgentExecutionHistory.user_id == user_id,
+        )
             
         stmt = stmt.order_by(AgentExecutionHistory.created_at.asc())
         
@@ -789,9 +792,7 @@ async def get_conversation_context_usage(
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
-    user_id = user_info.get("user_id") if user_info else None
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    user_id = _require_chat_user_id(user_info)
 
     runtime_model_info: Dict[str, Any] = {}
     if model_id and db is not None:
@@ -856,11 +857,9 @@ async def finalize_conversation(
 ):
     from app.services.ai.session_summary_service import SessionSummaryService
 
-    user_id = user_info.get("user_id") if user_info else None
-    if not user_id:
-        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    user_id = _require_chat_user_id(user_info)
 
-    result = await SessionSummaryService.finalize_session(str(user_id), conversation_id)
+    result = await SessionSummaryService.finalize_session(user_id, conversation_id)
     return StandardResponse(
         data=ConversationFinalizeResponse(
             finalized=bool(result.get("finalized")),
@@ -964,12 +963,10 @@ async def get_context_compactions(
     conversation_id: str,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    raw_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
-    if raw_user_id is None or not str(raw_user_id).strip():
-        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    raw_user_id = _require_chat_user_id(user_info)
 
     raw_records = await context_compaction_log_service.list_records(
-        str(raw_user_id), conversation_id
+        raw_user_id, conversation_id
     )
     records: List[ContextCompactionRecord] = []
     for raw_record in raw_records:
@@ -999,8 +996,7 @@ async def get_conversation_model_calls(
     trace_id: Optional[str] = None,
     user_info: Dict[str, Any] = Depends(require_api_key)
 ):
-    user_id = user_info.get("user_id") if user_info else None
-    uid = str(user_id) if user_id else "anonymous"
+    uid = _require_chat_user_id(user_info)
 
     from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
     from app.services.ai.memory_service import memory_service
@@ -1047,6 +1043,7 @@ async def create_chat_completion(
     Unified Chat Completion endpoint (V1).
     Supports both standard JSON response and SSE Streaming.
     """
+    chat_user_id = _require_chat_user_id(user_info)
     # Initialize Request Context for Debugging
     effective_debug_options = dict(completion_request.debug_options or {})
     # 资源范围只能由服务端会话快照决定，禁止客户端通过 debug_options 注入范围。
@@ -1079,7 +1076,7 @@ async def create_chat_completion(
     }
     if completion_request.conversation_id:
         conversation_scope = await ConversationResourceService.get(
-            user_info.get("user_id") or user_info.get("id"),
+            chat_user_id,
             completion_request.conversation_id,
         )
     if any(
@@ -1131,7 +1128,7 @@ async def create_chat_completion(
 
     # Convert Pydantic models to dicts for the service
     if completion_request.stream:
-        lane_user_id = user_info.get("user_id") or user_info.get("id")
+        lane_user_id = chat_user_id
         conversation_id = completion_request.conversation_id
 
         async def _release_locks_on_client_abort() -> None:
@@ -1350,6 +1347,19 @@ async def get_history(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
 
+    # 1. User scope is resolved before grouping so one user's latest turn
+    # cannot hide or select another user's conversation row.
+    user_info = getattr(request.state, "user", None) if request else None
+    if not user_info:
+        raise HTTPException(status_code=401, detail="缺少用户身份")
+    is_admin = user_info.get("role") == "admin"
+    history_user_id = None if is_admin else _require_chat_user_id(user_info)
+    scope_filters = []
+    if history_user_id is not None:
+        scope_filters.append(AgentExecutionHistory.user_id == history_user_id)
+    elif username:
+        scope_filters.append(AgentExecutionHistory.username == username)
+
     # 1. Base Query
     if group_by_conversation:
         # Aggregation Logic: Get latest record AND total count per conversation
@@ -1358,6 +1368,7 @@ async def get_history(
                 func.max(AgentExecutionHistory.id).label("max_id"),
                 func.count(AgentExecutionHistory.id).label("turn_count")
             )
+            .where(*scope_filters)
             .group_by(func.coalesce(AgentExecutionHistory.conversation_id, AgentExecutionHistory.trace_id))
             .subquery()
         )
@@ -1369,13 +1380,8 @@ async def get_history(
         query = select(AgentExecutionHistory)
 
     # 2. User Filter (Security)
-    user_info = getattr(request.state, "user", None) if request else None
-    if user_info:
-        is_admin = user_info.get("role") == "admin"
-        if not is_admin:
-            query = query.where(AgentExecutionHistory.username == user_info.get("user_name"))
-        elif username:
-            query = query.where(AgentExecutionHistory.username == username)
+    if scope_filters:
+        query = query.where(*scope_filters)
 
     # 3. Apply Filters
     if agent_id:
@@ -1417,7 +1423,6 @@ async def get_history(
         agent_map = {}
 
     items = []
-    history_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
     if group_by_conversation:
         rows = result.all()
         if (user_info or {}).get("role") == "admin":
@@ -1495,6 +1500,10 @@ async def delete_history(
     from app.models.audit import AgentExecutionHistory, AgentExecutionTrace
     from sqlalchemy import delete, select
 
+    user_info = getattr(request.state, "user", None) if request else None
+    current_user_id = _require_chat_user_id(user_info)
+    is_admin = user_info.get("role") == "admin"
+
     # 1. Find Record
     stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
     result = await db.execute(stmt)
@@ -1504,12 +1513,9 @@ async def delete_history(
         raise HTTPException(status_code=404, detail="History not found")
 
     # 2. Permission Check
-    user_info = getattr(request.state, "user", None)
-    if user_info:
-        is_admin = user_info.get("role") == "admin"
-        # Only allow if admin OR owner
-        if not is_admin and history.username != user_info.get("user_name"):
-             raise HTTPException(status_code=403, detail="Permission denied")
+    # Only allow if admin OR the persisted stable user ID owns the record.
+    if not is_admin and str(history.user_id or "") != current_user_id:
+        raise HTTPException(status_code=403, detail="Permission denied")
 
     # 3. Delete Traces and History
     await db.execute(delete(AgentExecutionTrace).where(AgentExecutionTrace.trace_id == trace_id))
@@ -1540,20 +1546,18 @@ async def batch_delete_history(
 
     # 1. 权限隔离：如果是非 admin 用户，只能删除属于该用户的会话
     user_info = getattr(request.state, "user", None)
-    is_admin = False
-    username = None
-    if user_info:
-        is_admin = user_info.get("role") == "admin"
-        username = user_info.get("user_name")
+    current_user_id = _require_chat_user_id(user_info)
+    is_admin = user_info.get("role") == "admin"
 
     # 2. 同时取出会话归属人；Redis key 的 user_id 必须使用目标用户，而不是当前管理员。
     stmt = select(
         AgentExecutionHistory.conversation_id,
         AgentExecutionHistory.trace_id,
         AgentExecutionHistory.username,
+        AgentExecutionHistory.user_id,
     ).where(AgentExecutionHistory.conversation_id.in_(payload.conversation_ids))
     if user_info and not is_admin:
-        stmt = stmt.where(AgentExecutionHistory.username == username)
+        stmt = stmt.where(AgentExecutionHistory.user_id == current_user_id)
     
     result = await db.execute(stmt)
     history_rows = result.all()
@@ -1565,7 +1569,7 @@ async def batch_delete_history(
     
     delete_history_stmt = delete(AgentExecutionHistory).where(AgentExecutionHistory.conversation_id.in_(payload.conversation_ids))
     if user_info and not is_admin:
-        delete_history_stmt = delete_history_stmt.where(AgentExecutionHistory.username == username)
+        delete_history_stmt = delete_history_stmt.where(AgentExecutionHistory.user_id == current_user_id)
         
     await db.execute(delete_history_stmt)
     
@@ -1573,24 +1577,14 @@ async def batch_delete_history(
 
     # 数据库历史删除后同步清理会话 Redis，避免项目资源范围和记忆残留。
     from app.services.ai.memory_service import memory_service
-    owner_ids: Dict[str, Any] = {}
-    if history_rows:
-        from app.models.user import User
-        usernames = {str(row.username).strip() for row in history_rows if row.username}
-        if usernames:
-            owner_result = await db.execute(
-                select(User.user_name, User.id).where(User.user_name.in_(usernames))
-            )
-            owner_ids = {str(row.user_name): row.id for row in owner_result.all()}
-    current_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
     for conversation_id in payload.conversation_ids:
         matching_owners = {
-            owner_ids.get(str(row.username).strip())
+            str(row.user_id).strip()
             for row in history_rows
-            if row.conversation_id == conversation_id and row.username
+            if row.conversation_id == conversation_id and row.user_id
         }
         matching_owners.discard(None)
-        if not matching_owners and not is_admin and current_user_id is not None:
+        if not matching_owners and not is_admin:
             matching_owners.add(current_user_id)
         for owner_id in matching_owners:
             await memory_service.clear_history(owner_id, conversation_id)
@@ -1619,9 +1613,7 @@ async def truncate_history_endpoint(
     from app.services.ai.memory_service import memory_service
     from sqlalchemy import delete, select
 
-    user_id = user_info.get("user_id") or user_info.get("id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="缺少用户身份")
+    user_id = _require_chat_user_id(user_info)
 
     # 1. 截断 Redis 记忆
     history_truncated = await memory_service.truncate_history(
@@ -1641,7 +1633,7 @@ async def truncate_history_endpoint(
         select(AgentExecutionHistory)
         .where(
             AgentExecutionHistory.conversation_id == payload.conversation_id,
-            AgentExecutionHistory.username == user_info.get("user_name"),
+            AgentExecutionHistory.user_id == user_id,
         )
         .order_by(AgentExecutionHistory.created_at.asc())
     )
@@ -1680,19 +1672,18 @@ async def get_trace_logs(
     from sqlalchemy import select
     from app.schemas.agent import AgentExecutionStep, AgentExecutionHistoryResponse
     
-    # 1. Fetch High-Level History
-    history_res = await db.execute(
-        select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
-    )
+    # 1. Fetch High-Level History within the current user's stable identity scope.
+    current_user_id = _require_chat_user_id(user_info)
+    is_admin = user_info.get("role") == "admin"
+    history_stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
+    if not is_admin:
+        history_stmt = history_stmt.where(AgentExecutionHistory.user_id == current_user_id)
+    history_res = await db.execute(history_stmt)
     history_item = history_res.scalar_one_or_none()
     if not history_item:
         raise HTTPException(status_code=404, detail="History not found")
 
     # Permission Check: only admin or owner can view trace logs
-    is_admin = (user_info or {}).get("role") == "admin"
-    if not is_admin and history_item.username != (user_info or {}).get("user_name"):
-        raise HTTPException(status_code=403, detail="Permission denied")
-
     # 2. Fetch Trace Steps
     trace_stmt = select(AgentExecutionTrace).where(AgentExecutionTrace.trace_id == trace_id)
     if history_item and history_item.created_at:
@@ -1769,14 +1760,15 @@ async def export_trace_data(
     # Permission Check: only admin or owner can export
     from app.models.audit import AgentExecutionHistory
     from sqlalchemy import select
-    history_res = await db.execute(select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id))
+    current_user_id = _require_chat_user_id(user_info)
+    is_admin = user_info.get("role") == "admin"
+    history_stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
+    if not is_admin:
+        history_stmt = history_stmt.where(AgentExecutionHistory.user_id == current_user_id)
+    history_res = await db.execute(history_stmt)
     history_item = history_res.scalar_one_or_none()
     if not history_item:
         raise HTTPException(status_code=404, detail="History not found")
-
-    is_admin = (user_info or {}).get("role") == "admin"
-    if not is_admin and history_item.username != (user_info or {}).get("user_name"):
-        raise HTTPException(status_code=403, detail="Permission denied")
 
     data = await ExportService.get_trace_data(trace_id)
     if not data:
@@ -1815,7 +1807,7 @@ async def export_trace_data(
         out_path.write_bytes(content.encode("utf-8"))
 
     # owner_user_id：优先取鉴权用户 id，回退 history.user_id（register_artifact 内部会 int() 转换）
-    owner_user_id = (user_info or {}).get("user_id") or history_item.user_id
+    owner_user_id = history_item.user_id
     artifact = await register_artifact(
         source_path=out_path,
         filename=out_name,
@@ -1901,7 +1893,8 @@ async def get_active_conversation(
     instance_id: Optional[str] = Query(default=None, max_length=128),
 ):
     from app.services.ai.memory_service import memory_service
-    user_id = user_info.get("user_id")
+    stable_user_id = _require_chat_user_id(user_info)
+    user_id: Any = int(stable_user_id) if stable_user_id.isdigit() else stable_user_id
     conv_id = await memory_service.get_active_conversation(user_id, instance_id=instance_id)
     return StandardResponse(data={"conversation_id": conv_id})
 
@@ -1913,7 +1906,8 @@ async def set_active_conversation(
     instance_id: Optional[str] = Query(default=None, max_length=128),
 ):
     from app.services.ai.memory_service import memory_service
-    user_id = user_info.get("user_id")
+    stable_user_id = _require_chat_user_id(user_info)
+    user_id: Any = int(stable_user_id) if stable_user_id.isdigit() else stable_user_id
     await memory_service.set_active_conversation(
         user_id,
         body.conversation_id,
@@ -1927,7 +1921,7 @@ async def get_conversation_resource_scope(
     conversation_id: str,
     user_info: dict = Depends(require_api_key),
 ):
-    user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = _require_chat_user_id(user_info)
     scope = await ConversationResourceService.get(user_id, conversation_id)
     return StandardResponse(data=scope)
 
@@ -1939,7 +1933,7 @@ async def update_conversation_resource_scope(
     user_info: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
-    user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = _require_chat_user_id(user_info)
     normalized = await _normalize_conversation_resource_scope(db, user_info, body.model_dump())
     scope = await ConversationResourceService.replace(user_id, conversation_id, normalized)
     return StandardResponse(data=scope)

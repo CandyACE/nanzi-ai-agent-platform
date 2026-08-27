@@ -41,15 +41,17 @@ async def test_rag_executor_uses_conversation_id(rag_config):
         trace_id="trace-abc",
         trace_buffer=[],
         conversation_id="conv-xyz",
+        current_user_query="本轮前端输入",
     )
 
     async def mock_stream(*args, **kwargs):
         assert kwargs.get("conversation_id") == "conv-xyz"
+        assert kwargs.get("query") == "本轮前端输入"
         yield {"type": "answer", "content": "ok"}
 
     with patch("app.services.ai.ragflow_client.RagFlowClient.chat_stream", side_effect=mock_stream), \
          patch("asyncio.sleep", new_callable=AsyncMock):
-        history = [{"role": "user", "content": "Hi"}]
+        history = [{"role": "user", "content": "历史问题：查询系统负载"}]
         events = []
         async for chunk in executor.execute(history):
             events.append(chunk)

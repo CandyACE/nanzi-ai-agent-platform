@@ -19,6 +19,7 @@ class KnowledgeExecutor(BaseExecutor):
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
         turn_decision: Optional[TurnDecision] = None,
+        current_user_query: Optional[str] = None,
     ):
         super().__init__(
             config,
@@ -30,6 +31,7 @@ class KnowledgeExecutor(BaseExecutor):
             permission_options,
         )
         self.turn_decision = turn_decision
+        self.current_user_query = current_user_query
 
     async def execute(
         self,
@@ -44,6 +46,7 @@ class KnowledgeExecutor(BaseExecutor):
             user_info=self.user_info,
             conversation_id=self.conversation_id,
             turn_decision=self.turn_decision,
+            current_user_query=self.current_user_query,
         )
         runner.step_counter = self.step_counter
 

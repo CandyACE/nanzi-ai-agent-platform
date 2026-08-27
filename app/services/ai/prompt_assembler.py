@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Iterable, List, Optional
@@ -9,6 +10,7 @@ from app.services.ai.prompt_sections import PromptSection, render_prompt_section
 from app.services.ai.turn_decision import TurnDecision
 
 NANZI_PROMPT_CACHE_BOUNDARY = "\n<!-- NANZI_CACHE_BOUNDARY -->\n"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,12 +47,17 @@ class PromptAssemblyInput:
 
 def resolve_effective_prompt_tool_names(
     agent_config: Any,
+    *,
+    current_user_query: str | None = None,
+    turn_decision: TurnDecision | None = None,
 ) -> set[str]:
     """Build the tool inventory shown to the model for the current turn.
 
     The published tool configuration is the source of truth. Disabled tools
     are excluded so the model cannot call a name that AgentScope did not
-    register.
+    register. When the production current-turn boundary is available, apply
+    the same gate used by the runtime so prompt inventory and executable tools
+    cannot drift apart.
     """
     names: set[str] = set()
     for item in getattr(agent_config, "tools", None) or []:
@@ -84,10 +91,22 @@ def resolve_effective_prompt_tool_names(
 
         if is_main_general_agent(agent_config):
             names.add("sub_agent_call")
+            names.add("sub_agent_batch_call")
+            names.add("todo_write")
     except Exception:
         pass
 
     return names
+
+
+async def resolve_effective_prompt_tool_names_for_turn(
+    agent_config: Any,
+    *,
+    current_user_query: str,
+    turn_decision: TurnDecision,
+) -> set[str]:
+    """Resolve prompt names for the turn directly from configured and implicit tools."""
+    return resolve_effective_prompt_tool_names(agent_config)
 
 
 def _prepend_block(current: str, block: Optional[str]) -> str:

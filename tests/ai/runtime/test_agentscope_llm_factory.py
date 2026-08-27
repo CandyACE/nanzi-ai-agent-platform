@@ -228,6 +228,436 @@ async def test_openai_chat_model_injects_chat_template_kwargs(
     assert "chat_template_kwargs" not in captured
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "provider",
+        "model",
+        "thinking_enable",
+        "thinking_capable",
+        "expected_extra_body",
+    ),
+    [
+        (
+            "kimi",
+            "kimi-k2.6",
+            False,
+            True,
+            {"thinking": {"type": "disabled"}},
+        ),
+        (
+            "zhipu",
+            "glm-4.6",
+            True,
+            True,
+            {"thinking": {"type": "enabled"}},
+        ),
+        (
+            "volcengine",
+            "doubao-seed-1-6-251015",
+            False,
+            True,
+            {"thinking": {"type": "disabled"}},
+        ),
+        (
+            "dashscope",
+            "qwen3-plus",
+            False,
+            True,
+            {"enable_thinking": False},
+        ),
+        (
+            "siliconflow",
+            "Qwen/Qwen3-32B",
+            False,
+            True,
+            {"enable_thinking": False},
+        ),
+        (
+            "ollama",
+            "qwen3",
+            False,
+            True,
+            {"think": False},
+        ),
+    ],
+)
+async def test_openai_chat_model_uses_builtin_provider_thinking_protocol(
+    monkeypatch,
+    provider,
+    model,
+    thinking_enable,
+    thinking_capable,
+    expected_extra_body,
+):
+    import openai
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model_handle = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model=model,
+            provider=provider,
+            streaming=False,
+            thinking_enable=thinking_enable,
+            thinking_capable=thinking_capable,
+        )
+    )
+
+    await model_handle._call_api(model, messages=[])
+
+    assert captured.get("extra_body") == expected_extra_body
+    assert "chat_template_kwargs" not in captured
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_model_does_not_guess_extension_for_native_provider(
+    monkeypatch,
+):
+    import openai
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model_handle = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+            model="o4-mini",
+            provider="openai",
+            streaming=False,
+            thinking_capable=True,
+        )
+    )
+
+    await model_handle._call_api("o4-mini", messages=[])
+
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_enable", "reasoning_effort", "expected_type"),
+    [
+        (False, None, "disabled"),
+        (True, "high", "enabled"),
+    ],
+)
+async def test_deepseek_v4_uses_official_thinking_request_body(
+    monkeypatch,
+    thinking_enable,
+    reasoning_effort,
+    expected_type,
+):
+    import openai
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            provider="deepseek",
+            streaming=False,
+            thinking_enable=thinking_enable,
+            thinking_capable=True,
+            reasoning_effort=reasoning_effort,
+        ),
+    )
+
+    await model._call_api("deepseek-v4-pro", messages=[])
+
+    assert captured["extra_body"] == {
+        "thinking": {"type": expected_type},
+    }
+    if thinking_enable:
+        assert captured["reasoning_effort"] == reasoning_effort
+    else:
+        assert "reasoning_effort" not in captured
+
+
+@pytest.mark.asyncio
+async def test_deepseek_v4_thinking_omits_forced_tool_choice(monkeypatch):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            provider="deepseek",
+            streaming=False,
+            thinking_enable=True,
+            thinking_capable=True,
+            reasoning_effort="high",
+        ),
+    )
+
+    await model._call_api(
+        "deepseek-v4-pro",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert "tool_choice" not in captured
+    assert captured["extra_body"] == {
+        "thinking": {"type": "enabled"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_deepseek_v4_disabled_thinking_preserves_forced_tool_choice(monkeypatch):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            provider="deepseek",
+            streaming=False,
+            thinking_enable=False,
+            thinking_capable=True,
+        ),
+    )
+
+    await model._call_api(
+        "deepseek-v4-pro",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert captured["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "execute_sql_query"},
+    }
+    assert captured["extra_body"] == {
+        "thinking": {"type": "disabled"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_deepseek_v4_fallback_uses_official_disabled_thinking_body(monkeypatch):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                raise _build_bad_request_error(
+                    "The tool_choice parameter does not support being set to "
+                    "required or object in thinking mode",
+                )
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            provider="deepseek",
+            streaming=False,
+            thinking_enable=True,
+            thinking_capable=True,
+            reasoning_effort="high",
+        ),
+    )
+
+    await model._call_api(
+        "deepseek-v4-pro",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert len(requests) == 2
+    assert requests[1]["extra_body"] == {
+        "thinking": {"type": "disabled"},
+    }
+    assert requests[1]["tool_choice"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_provider_thinking_fallback_uses_builtin_disabled_body(monkeypatch):
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                raise _build_bad_request_error(
+                    "The tool_choice parameter does not support being set to "
+                    "required or object in thinking mode",
+                )
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://llm.example.com/v1",
+            model="qwen3-plus",
+            provider="dashscope",
+            streaming=False,
+            thinking_enable=True,
+            thinking_capable=True,
+        ),
+    )
+
+    await model._call_api(
+        "qwen3-plus",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert len(requests) == 2
+    assert requests[1]["extra_body"] == {"enable_thinking": False}
+    assert requests[1]["tool_choice"] == "auto"
+
+
 def _build_bad_request_error(message: str):
     import httpx
     import openai

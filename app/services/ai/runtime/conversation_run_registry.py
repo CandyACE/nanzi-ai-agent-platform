@@ -12,6 +12,8 @@ from typing import Any, AsyncIterator
 
 logger = logging.getLogger(__name__)
 
+from app.services.ai.conversation_identity import require_user_id
+
 _current_run: ContextVar[ConversationRunHandle | None] = ContextVar(
     "conversation_run_handle",
     default=None,
@@ -19,7 +21,7 @@ _current_run: ContextVar[ConversationRunHandle | None] = ContextVar(
 
 
 def _run_key(user_id: str | int | None, conversation_id: str) -> tuple[str, str]:
-    uid = str(user_id) if user_id is not None else "anonymous"
+    uid = require_user_id(user_id)
     return uid, conversation_id
 
 

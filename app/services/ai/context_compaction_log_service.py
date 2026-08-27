@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.redis import get_redis
+from app.services.ai.conversation_identity import require_user_id
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class ContextCompactionLogService:
 
     @classmethod
     def key(cls, user_id: Any, conversation_id: str) -> str:
-        uid = str(user_id) if user_id is not None and str(user_id) else "anonymous"
+        uid = require_user_id(user_id)
         return f"{cls.KEY_PREFIX}:{uid}:{conversation_id}:{cls.KEY_SUFFIX}"
 
     @classmethod

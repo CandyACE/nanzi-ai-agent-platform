@@ -6,6 +6,7 @@ from urllib.parse import quote
 from redis.exceptions import WatchError
 
 from app.core.redis import get_redis
+from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -35,22 +36,19 @@ class MemoryService:
         Generate Redis Key.
         Format: conversation:{user_id}:{conversation_id}:history
         """
-        # Ensure user_id is string and handle potential None (fallback to 'anonymous' or error?)
-        # For security, we should probably fail if user_id is missing, but for backward compat 
-        # with loose validation systems, we safeguard str conversion.
-        uid = str(user_id) if user_id else "anonymous" 
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.HISTORY_SUFFIX}"
 
     def _get_data_result_key(self, user_id: str, conversation_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.DATA_RESULT_SUFFIX}"
 
     def _get_data_result_stack_key(self, user_id: str, conversation_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.DATA_RESULT_STACK_SUFFIX}"
 
     def _get_session_tool_artifact_key(self, user_id: str, conversation_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.SESSION_TOOL_ARTIFACT_SUFFIX}"
 
     def _get_digest_key(self, user_id: str, conversation_id: str) -> str:
@@ -59,7 +57,7 @@ class MemoryService:
         与 history（LIST）分开存储，保证不进入 get_conversation_history 的展示路径。
         仅保存本轮压缩得到的 system 摘录文本。
         """
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:digest"
 
     def _get_digest_meta_key(
@@ -68,7 +66,7 @@ class MemoryService:
         conversation_id: str,
         field: str,
     ) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:digest_{field}"
 
     def _get_seq_counter_key(self, user_id: str, conversation_id: str) -> str:
@@ -78,12 +76,12 @@ class MemoryService:
         新追加消息的 seq 仍保持严格单调递增，供摘要游标（synced_seq）判定增量窗口，
         且编辑重发（截断后重发）时新消息 seq 更大，能使摘要基于当前分支重算。
         """
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:seq_counter"
 
     def _get_context_revision_key(self, user_id: str, conversation_id: str) -> str:
         """Return the branch revision used to invalidate in-flight digest tasks."""
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:context_revision"
 
     async def get_data_result_stack(
@@ -672,7 +670,7 @@ class MemoryService:
         user_id: str,
         instance_id: Optional[str] = None,
     ) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         normalized_instance_id = str(instance_id or "").strip()
         if not normalized_instance_id:
             return f"{self.KEY_PREFIX}:{uid}:active"
@@ -727,7 +725,7 @@ class LongTermMemoryService:
     KEY_PREFIX = "nanzi:agent:ltm"
 
     def _get_key(self, user_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}"
 
     async def update_preference(self, user_id: str, key: str, value: str) -> bool:
