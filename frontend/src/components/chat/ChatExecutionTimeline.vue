@@ -302,19 +302,19 @@
                 <button
                   type="button"
                   class="flex w-full items-center gap-2 text-left"
-                  :aria-expanded="subStep.isExpanded === true"
-                  @click="subStep.details ? subStep.isExpanded = !subStep.isExpanded : undefined"
+                  :aria-expanded="subStep.children?.length ? subStep.childrenExpanded !== false : subStep.isExpanded === true"
+                  @click="subStep.children?.length ? (subStep.childrenExpanded = subStep.childrenExpanded === false) : (subStep.details ? subStep.isExpanded = !subStep.isExpanded : undefined)"
                 >
                   <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                   <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
                   <span class="min-w-0 flex-1 truncate" :title="subStep.title">{{ subStep.title }}</span>
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                   <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
-                  <svg v-if="subStep.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg v-if="subStep.details || subStep.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.children?.length ? (subStep.childrenExpanded !== false) : subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                   </svg>
                 </button>
-                <div v-if="subStep.details && subStep.isExpanded" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                <div v-if="subStep.details && subStep.isExpanded && !subStep.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                   <button
                     type="button"
                     class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
@@ -330,6 +330,35 @@
                     </svg>
                   </button>
                   <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ subStep.details }}</pre>
+                </div>
+                <div v-if="subStep.children?.length && subStep.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+                  <div
+                    v-for="nestedStep in subStep.children"
+                    :key="nestedStep.id"
+                    class="rounded-md px-1 py-0.5 text-[11px] leading-5 transition-colors"
+                    :class="{
+                      'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': nestedStep.status === 'error',
+                      'text-gray-600 dark:text-gray-300': nestedStep.status === 'pending',
+                      'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': nestedStep.status !== 'pending' && nestedStep.status !== 'error',
+                    }"
+                  >
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-2 text-left"
+                      :aria-expanded="nestedStep.isExpanded === true"
+                      @click="nestedStep.details ? nestedStep.isExpanded = !nestedStep.isExpanded : undefined"
+                    >
+                      <span v-if="nestedStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
+                      <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(nestedStep) }}</span>
+                      <span class="min-w-0 flex-1 truncate" :title="nestedStep.title">{{ nestedStep.title }}</span>
+                      <span v-if="nestedStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
+                      <span v-if="formatTimelineDuration(nestedStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(nestedStep)">{{ formatTimelineDuration(nestedStep) }}</span>
+                      <svg v-if="nestedStep.details" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': nestedStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                      </svg>
+                    </button>
+                    <pre v-if="nestedStep.details && nestedStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ nestedStep.details }}</pre>
+                  </div>
                 </div>
               </div>
             </div>
@@ -373,6 +402,7 @@ const props = withDefaults(defineProps<{
   timeline?: ProcessTimelineItem[];
   logs?: Array<{
     id: string | number;
+    parent_id?: string | number;
     title: string;
     details: string;
     status: "pending" | "success" | "error" | "warning";
@@ -466,6 +496,11 @@ function toggleTimelineItem(item: ProcessTimelineLogItem): void {
 function iconFor(item: ProcessTimelineLogItem): string {
   if (item.category === "tool_resolution") return item.status === "error" ? "⚠️" : "🧭";
   if (item.status === "error") return "⚠️";
+  if (item.title.includes("鉴权及上下文与能力准备")) return "🛡️";
+  if (item.title.includes("请求校验")) return "🛡️";
+  if (item.title.includes("会话上下文")) return "🗂️";
+  if (item.title.includes("知识库和专家清单加载")) return "📚";
+  if (item.title.includes("Prompt 组装")) return "🧩";
   if (item.title.includes("获取可用专家")) return "📚";
   if (item.title.includes("准备知识资源范围")) return "📋";
   if (item.title.includes("加载目标专家配置")) return "⚙️";

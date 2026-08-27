@@ -1,9 +1,8 @@
 import logging
-import time
 from typing import Optional, List, Dict, Any
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
-from app.services.ai.router_service import router_service, RouterService
+from app.services.ai.router_service import RouterService
 from app.core.context import (
     get_current_agent_context,
     set_debug_context,
@@ -13,9 +12,12 @@ from app.core.context import (
 from app.schemas.agent import ChatConfig
 from app.services.ai.agent_prompts import ContextManagerPrompts
 from app.services.ai.turn_decision import TurnDecision
-from app.services.ai.route_progress import RouteProgressCallback, emit_route_stage
+from app.services.ai.route_progress import RouteProgressCallback
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAIN_AGENT_ID = "sys-agent-chat"
+DEFAULT_MAIN_AGENT_NAMES = ("main", "assistant", "general-chat")
 
 
 def select_data_query_agent_id(agents: List[Any]) -> Optional[str]:
@@ -67,6 +69,7 @@ class AgentContextManager:
         """
         agent_config = None
         route_details = None
+        has_explicit_agent = bool(version_id or agent_id or agent_name)
 
         async with AsyncSessionLocal() as session:
             if version_id:
@@ -76,117 +79,22 @@ class AgentContextManager:
             elif agent_name:
                 agent_config = await AgentManagerService.get_active_agent_config(session, agent_name=agent_name)
             else:
-                if force_data_query:
-                    data_agent_id = select_data_query_agent_id(
-                        await AgentManagerService.list_agents(session, user=user_info or {})
+                agent_config = await AgentManagerService.get_active_agent_config(
+                    session, agent_id=DEFAULT_MAIN_AGENT_ID
+                )
+                if not agent_config:
+                    for fallback_name in DEFAULT_MAIN_AGENT_NAMES:
+                        agent_config = await AgentManagerService.get_active_agent_config(
+                            session, agent_name=fallback_name
+                        )
+                        if agent_config:
+                            break
+                if agent_config:
+                    route_details = TurnDecision.for_default_main_delegation(agent_config)
+                    logger.info(
+                        "Resolved default Main agent without semantic router: %s",
+                        getattr(agent_config, "agent_name", None),
                     )
-                    if data_agent_id:
-                        agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=data_agent_id)
-                        route_details = TurnDecision(
-                            route_status="resolved",
-                            turn_kind="data_query",
-                            agent_id=data_agent_id,
-                            agent_name=getattr(agent_config, "agent_name", None),
-                            reasoning="检测到本轮元数据集限定，强制路由到数据查询智能体",
-                            confidence=1.0,
-                            source="internal_structured_data",
-                            capability="data_query",
-                            request_reasoning="metadata_dataset_ids 非空",
-                            allows_data_route=True,
-                            chatbi_mode="forced_by_metadata_dataset_scope",
-                            chatbi_evidence_level="explicit",
-                            chatbi_reason="本轮已选择元数据集",
-                            provenance="metadata_dataset_scope",
-                        )
-                route_user_id = None
-                route_is_admin = False
-                route_user_name = None
-                if user_info:
-                    raw_user_id = user_info.get("user_id") or user_info.get("id")
-                    route_user_id = int(raw_user_id) if raw_user_id else None
-                    route_is_admin = user_info.get("role") == "admin"
-                    route_user_name = user_info.get("user_name") or user_info.get("username")
-
-                # Routing Logic
-                # Extract last user message and history for routing
-                last_user_msg = ""
-                history = []
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i]["role"] == "user":
-                        last_user_msg = messages[i]["content"]
-                        history = messages[:i]
-                        break
-
-                # Session affinity: find which agent handled the previous turn
-                # so follow-up / coreference queries can stick to it.
-                last_agent_name = None
-                for msg in reversed(history):
-                    if msg.get("role") == "assistant" and msg.get("agent_name"):
-                        last_agent_name = msg["agent_name"]
-                        break
-
-                # D 项：路由决策复用早期压缩摘录。
-                # 当无显式 agent 身份、需走 router_service.route_query 路由时，
-                # 把跨轮持久化的 digest（早期轮次被压缩溢出的历史要点）作为
-                # early_context 随路由上下文交给路由模型，使路由判断能基于完整上下文，
-                # 而非仅当前窗口内的 history（避免多轮后路由失真）。
-                early_context = None
-                if agent_config is None and route_user_id is not None and conversation_id:
-                    try:
-                        from app.services.ai.memory_service import memory_service
-
-                        early_digest = await memory_service.get_digest(
-                            str(route_user_id), conversation_id
-                        )
-                        if early_digest:
-                            early_context = early_digest
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "[AgentContextManager] Failed to load early digest for routing: %s", e
-                        )
-
-                if agent_config is None:
-                    selection_started = time.perf_counter()
-                    await emit_route_stage(
-                        on_progress,
-                        "target_selection",
-                        "判断并匹配目标专家",
-                        status="pending",
-                    )
-                    try:
-                        route_result = await router_service.route_query(
-                            last_user_msg,
-                            history=history,
-                            enable_multi_agent=enable_multi_agent,
-                            user_id=route_user_id,
-                            is_admin=route_is_admin,
-                            last_agent_name=last_agent_name,
-                            user_name=route_user_name,
-                            early_context=early_context,
-                            on_progress=on_progress,
-                        )
-                    except Exception:
-                        await emit_route_stage(
-                            on_progress,
-                            "target_selection",
-                            "判断并匹配目标专家",
-                            status="error",
-                            details="目标专家判断失败",
-                            execution_time_ms=(time.perf_counter() - selection_started) * 1000,
-                        )
-                        raise
-                    await emit_route_stage(
-                        on_progress,
-                        "target_selection",
-                        "判断并匹配目标专家",
-                        status="success",
-                        details="已完成目标专家判断",
-                        execution_time_ms=(time.perf_counter() - selection_started) * 1000,
-                    )
-                    route_details = route_result
-
-                    if route_result and route_result.agent_id:
-                        agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=route_result.agent_id)
 
         # Fallback: try known general-assistant slugs in DB before synthetic config
         if not agent_config:
@@ -215,6 +123,9 @@ class AgentContextManager:
                 capabilities=["chat"],
                 engine_type="LOCAL"
             )
+
+        if not has_explicit_agent and route_details is None:
+            route_details = TurnDecision.for_default_main_delegation(agent_config)
 
         return agent_config, route_details
 

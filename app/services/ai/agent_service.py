@@ -16,6 +16,10 @@ from app.services.ai.memory_service import memory_service
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.agent_types import AgentType
+from app.services.ai.error_response_service import (
+    build_error_presentation,
+    sanitize_error_text,
+)
 from app.services.ai.prompt_assembler import (
     PromptAssemblyInput,
     assemble_system_prompt,
@@ -75,6 +79,41 @@ def _format_execution_error_for_user(
     from app.services.ai.multimodal_support import format_execution_error
 
     return format_execution_error(exc, model_name=model_name)
+
+
+async def _enrich_terminal_error_chunk(
+    chunk: Dict[str, Any],
+    *,
+    config: Optional[ChatConfig] = None,
+    model_name: Optional[str] = None,
+    source_exception: Optional[BaseException] = None,
+) -> Dict[str, Any]:
+    """只为终端 error 事件补充友好正文；步骤级日志错误保持原样。"""
+
+    if not isinstance(chunk, dict) or chunk.get("type") != "error":
+        return chunk
+    if chunk.get("error_detail"):
+        return chunk
+
+    raw_error = chunk.get("error") or chunk.get("message") or chunk.get("content")
+    error_for_presentation = (
+        source_exception
+        if source_exception is not None
+        else RuntimeError(str(raw_error or "未知错误"))
+    )
+    presentation = await build_error_presentation(
+        error_for_presentation,
+        config=config,
+        model_name=model_name,
+        tool_name=chunk.get("tool_name"),
+        stage=chunk.get("phase") or chunk.get("category"),
+        operation=chunk.get("operation") or chunk.get("title"),
+    )
+    return {
+        **chunk,
+        "content": presentation.content,
+        "error_detail": presentation.as_error_detail(),
+    }
 
 
 async def _persist_assistant_message_and_summary(
@@ -419,6 +458,267 @@ def _build_route_grounding_metadata(
         ),
         "decision_conflicts": list(requirement.decision_conflicts),
     }
+
+
+def _build_turn_execution_log(
+    turn_decision: TurnDecision,
+    *,
+    turn_display_label: str,
+    execution_time_ms: float,
+) -> Dict[str, Any]:
+    """Build the pre-execution event without mislabeling Main delegation."""
+    if turn_decision.provenance == "automatic_delegation":
+        return {
+            "type": "log",
+            "title": "进入主专家自动委派",
+            "details": "未指定专家，主专家将直接回答或按任务需要自动委派其他智能体。",
+            "status": "success",
+            "category": "intent",
+            "turn_type": turn_decision.turn_kind,
+            "execution_time_ms": execution_time_ms,
+        }
+
+    return {
+        "type": "log",
+        "title": "分析用户请求并进行意图识别",
+        "details": (
+            f"{turn_display_label}。"
+            f"{turn_decision.request_reasoning or turn_decision.reasoning or '复用统一轮次决策'}"
+        ),
+        "status": "success",
+        "category": "intent",
+        "turn_type": turn_decision.turn_kind,
+        "execution_time_ms": execution_time_ms,
+    }
+
+
+def _build_request_validation_log(
+    *,
+    user_info: Optional[Dict[str, Any]],
+    conversation_id: Optional[str],
+    request_observability: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a safe, user-facing summary of request preflight checks.
+
+    The event deliberately contains status and counts only. Authentication
+    credentials, raw request payloads, and resource contents must never enter
+    the execution timeline.
+    """
+    metadata = request_observability or {}
+    user_info = user_info or {}
+    user_id = str(user_info.get("user_id") or user_info.get("id") or "未知")
+    user_name = str(
+        user_info.get("real_name")
+        or user_info.get("user_name")
+        or user_info.get("username")
+        or "未知用户"
+    )
+    role = str(user_info.get("role_name") or user_info.get("role") or "普通用户")
+
+    def _status(key: str, fallback: str) -> str:
+        value = metadata.get(key)
+        if value is None:
+            return fallback
+        return "已通过" if bool(value) else "未通过"
+
+    scope = metadata.get("resource_scope") or {}
+
+    def _scope_count(key: str) -> int:
+        value = scope.get(key, 0) if isinstance(scope, dict) else 0
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(value)
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    idempotency_status = metadata.get("idempotency_status")
+    if not idempotency_status:
+        idempotency_status = "未启用（无客户端请求 ID）"
+
+    session_status = "已加载" if conversation_id else "未绑定会话"
+    details = (
+        f"鉴权：{_status('authenticated', '已通过')}；"
+        f"当前会话用户：{user_name}（ID：{user_id}，角色：{role}）；"
+        f"参数校验：{_status('parameters_validated', '已通过')}；"
+        f"会话资源：{session_status}，数据集 {_scope_count('datasets')} 个、"
+        f"知识库 {_scope_count('knowledge_bases')} 个、"
+        f"Skill {_scope_count('skills')} 个、"
+        f"MCP 工具 {_scope_count('mcp_tools')} 个；"
+        f"幂等校验：{idempotency_status}。"
+    )
+    return {
+        "type": "log",
+        "id": "request:validation",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "请求校验",
+        "details": details,
+        "status": "success",
+        "category": "system",
+    }
+
+
+def _build_context_history_log(
+    *,
+    conversation_id: Optional[str],
+    source_history_count: int,
+    selected_history_count: int,
+    trimmed_history_count: int,
+    history_token_budget: Optional[int],
+    max_context_messages: Optional[int],
+    compaction_applied: bool = False,
+    request_history_count: int = 0,
+) -> Dict[str, Any]:
+    """Build a count-only summary of history loading and context-window control."""
+    if conversation_id:
+        session_text = f"会话 {conversation_id}"
+        history_text = f"读取历史 {max(0, source_history_count)} 条"
+    else:
+        session_text = "未绑定会话"
+        history_text = (
+            f"未读取服务端历史，请求携带上下文 {max(0, request_history_count)} 条"
+        )
+    budget_text = (
+        f"{history_token_budget} tokens"
+        if history_token_budget
+        else "未设置"
+    )
+    max_messages_text = str(max_context_messages) if max_context_messages else "未设置"
+    details = (
+        f"{session_text}；{history_text}；"
+        f"上下文窗口保留 {max(0, selected_history_count)} 条；"
+        f"裁剪 {max(0, trimmed_history_count)} 条；"
+        f"历史 Token 预算：{budget_text}；"
+        f"消息条数上限：{max_messages_text}；"
+        f"上下文压缩：{'已触发' if compaction_applied else '未触发'}。"
+    )
+    return {
+        "type": "log",
+        "id": "context:history",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "会话上下文",
+        "details": details,
+        "status": "success",
+        "category": "context",
+    }
+
+
+def _build_model_config_log(
+    runtime_model_info: RuntimeModelInfo,
+    synthesis_runtime_model_info: Optional[RuntimeModelInfo] = None,
+) -> Dict[str, Any]:
+    """Build a non-sensitive summary of the resolved runtime model settings."""
+    def _model_text(label: str, info: RuntimeModelInfo) -> str:
+        context_size = info.context_size or "未返回"
+        output_tokens = info.max_output_tokens or "未返回"
+        return (
+            f"{label}：{info.effective_model_id}（配置：{info.configured_model}，"
+            f"来源：{info.source}，上下文：{context_size}，"
+            f"最大输出：{output_tokens}，状态：{info.resolution_status}）"
+        )
+
+    details = _model_text("主模型", runtime_model_info)
+    if synthesis_runtime_model_info is not None:
+        details = f"{details}；{_model_text('合成模型', synthesis_runtime_model_info)}"
+    return {
+        "type": "log",
+        "id": "config:model",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "模型配置解析",
+        "details": details,
+        "status": "success",
+        "category": "model",
+    }
+
+
+def _build_capability_catalog_log(
+    *,
+    knowledge_dataset_count: int,
+    configured_dataset_count: int,
+    skill_count: int,
+    delegable_agent_count: int,
+    roster_loaded: bool,
+    runtime_tool_count: int,
+) -> Dict[str, Any]:
+    """Build a count-only summary of the turn's capability catalog."""
+    roster_text = (
+        f"已加载 {max(0, delegable_agent_count)} 个"
+        if roster_loaded
+        else "未加载（当前专家不需要委派清单）"
+    )
+    details = (
+        f"请求知识库/数据集 {max(0, knowledge_dataset_count)} 个；"
+        f"专家配置数据集 {max(0, configured_dataset_count)} 个；"
+        f"Skill {max(0, skill_count)} 个；"
+        f"可委派专家清单：{roster_text}；"
+        f"运行时工具 {max(0, runtime_tool_count)} 个。"
+    )
+    return {
+        "type": "log",
+        "id": "capability:catalog",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "知识库和专家清单加载",
+        "details": details,
+        "status": "success",
+        "category": "system",
+    }
+
+
+def _build_prompt_assembly_log(
+    assembled_prompt: Any,
+    *,
+    runtime_tool_count: int,
+    final_prompt_chars: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a safe summary of prompt assembly without exposing prompt text."""
+    section_names = list(getattr(assembled_prompt, "section_names", ()) or ())
+    stable_chars = len(str(getattr(assembled_prompt, "stable_prefix", "") or ""))
+    dynamic_chars = len(str(getattr(assembled_prompt, "dynamic_suffix", "") or ""))
+    total_chars = (
+        final_prompt_chars
+        if final_prompt_chars is not None
+        else len(str(getattr(assembled_prompt, "full_text", "") or ""))
+    )
+    return {
+        "type": "log",
+        "id": "prompt:assembly",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "Prompt 组装",
+        "details": (
+            f"已组装 {len(section_names)} 个提示词区块；"
+            f"稳定部分 {stable_chars} 字符；动态部分 {dynamic_chars} 字符；"
+            f"最终 Prompt {max(0, total_chars)} 字符；"
+            f"运行时工具 {max(0, runtime_tool_count)} 个。"
+        ),
+        "status": "success",
+        "category": "system",
+    }
+
+
+def _build_preparation_parent_log(
+    *,
+    status: str,
+    details: Optional[str] = None,
+    execution_time_ms: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Build the shared parent for request/context/capability preparation logs."""
+    if details is None:
+        details = (
+            "正在完成鉴权、会话上下文、专家配置、模型与能力准备。"
+            if status == "pending"
+            else "鉴权、会话上下文、专家配置、模型与能力准备已完成。"
+        )
+    event: Dict[str, Any] = {
+        "type": "log",
+        "id": "preparation:auth_context_capability",
+        "title": "鉴权及上下文与能力准备",
+        "details": details,
+        "status": status,
+        "category": "system",
+    }
+    if execution_time_ms is not None:
+        event["execution_time_ms"] = max(1.0, float(execution_time_ms))
+    return event
 
 
 class AgentService:
@@ -832,6 +1132,7 @@ class AgentService:
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
+        request_observability: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Main entry point for streaming chat.
@@ -858,6 +1159,8 @@ class AgentService:
             "agent_config": None,
             "execution_status": "success",
             "process_timeline": [],
+            "preparation_started_at": None,
+            "preparation_ready": False,
         }
 
         # 1. Initial Identity Chunk
@@ -976,6 +1279,20 @@ class AgentService:
                         }
                         return
 
+                # 请求级前置校验已经在 API 层完成；这里将结果以安全摘要写入
+                # 原有执行时间线，供 EmbedChat 和 AgentDebug 共同展示。
+                shared_state["preparation_started_at"] = asyncio.get_running_loop().time()
+                preparation_parent_log = _build_preparation_parent_log(status="pending")
+                _track_process_timeline(shared_state["process_timeline"], preparation_parent_log)
+                yield preparation_parent_log
+                request_validation_log = _build_request_validation_log(
+                    user_info=user_info,
+                    conversation_id=conversation_id,
+                    request_observability=request_observability,
+                )
+                _track_process_timeline(shared_state["process_timeline"], request_validation_log)
+                yield request_validation_log
+
                 # --- Memory Integration ---
                 # If conversation_id is provided, we use server-side history
                 user_msg = (
@@ -985,12 +1302,23 @@ class AgentService:
                     and messages[-1].get("role") == "user"
                     else None
                 )
+                context_source_history_count = 0
+                context_selected_history_count = 0
+                context_window_history_count = 0
+                context_trimmed_history_count = 0
+                context_history_budget: Optional[int] = None
+                context_max_messages: Optional[int] = None
+                context_compaction_applied = False
+                context_request_history_count = _client_prefix_history_len(messages)
 
                 if conversation_id:
                     u_id = lane_user_id
                     server_history = _regular_completion_history(
                         await memory_service.get_history(u_id, conversation_id),
                         messages,
+                    )
+                    context_source_history_count = len(
+                        _history_messages_for_context(server_history)
                     )
 
                     # 路由前只使用平台兜底预算；真实目标 agent/model 在内部 runner
@@ -1015,6 +1343,8 @@ class AgentService:
                         history_max_tokens = await self._resolve_history_context_budget(
                             runtime_max_tokens
                         )
+                        context_history_budget = history_max_tokens
+                        context_max_messages = max_context
                         if shared_state is not None:
                             shared_state["context_source_history"] = list(server_history or [])
                             shared_state["context_user_message"] = user_msg
@@ -1025,7 +1355,12 @@ class AgentService:
                             history_max_tokens,
                         )
                         context_history = _history_messages_for_context(window_hidden)
+                        context_window_history_count = len(context_history)
                         context_full_history = _history_messages_for_context(server_history)
+                        context_trimmed_history_count = max(
+                            0,
+                            context_source_history_count - context_window_history_count,
+                        )
                         ctx_event: dict = {}
                         context_history = await self._maybe_compact_overflow(
                             context_full_history,
@@ -1041,6 +1376,7 @@ class AgentService:
                             physical_window=runtime_max_tokens,
                         )
                         if ctx_event:
+                            context_compaction_applied = True
                             ctx_event = dict(ctx_event)
                             ctx_event["type"] = "context_summarized"
                             await self._persist_context_compaction_event(
@@ -1054,6 +1390,7 @@ class AgentService:
                             )
                             yield ctx_event
                         messages = context_history + [user_msg]
+                        context_selected_history_count = len(context_history)
                     else:
                         from app.services.config_service import ConfigService
                         max_context = await ConfigService.get("agent_max_context_messages", "60")
@@ -1064,6 +1401,8 @@ class AgentService:
                         history_max_tokens = await self._resolve_history_context_budget(
                             runtime_max_tokens
                         )
+                        context_history_budget = history_max_tokens
+                        context_max_messages = max_context
                         if shared_state is not None:
                             shared_state["context_source_history"] = list(server_history or [])
                             shared_state["context_user_message"] = None
@@ -1074,6 +1413,11 @@ class AgentService:
                                 max_context,
                                 history_max_tokens,
                             )
+                        )
+                        context_window_history_count = len(window)
+                        context_trimmed_history_count = max(
+                            0,
+                            context_source_history_count - context_window_history_count,
                         )
                         ctx_event: dict = {}
                         messages = await self._maybe_compact_overflow(
@@ -1090,6 +1434,7 @@ class AgentService:
                             physical_window=runtime_max_tokens,
                         )
                         if ctx_event:
+                            context_compaction_applied = True
                             ctx_event = dict(ctx_event)
                             ctx_event["type"] = "context_summarized"
                             await self._persist_context_compaction_event(
@@ -1102,6 +1447,23 @@ class AgentService:
                                 agent_name=agent_name,
                             )
                             yield ctx_event
+                        context_selected_history_count = len(messages)
+
+                if not conversation_id:
+                    context_selected_history_count = context_request_history_count
+
+                context_history_log = _build_context_history_log(
+                    conversation_id=conversation_id,
+                    source_history_count=context_source_history_count,
+                    selected_history_count=context_selected_history_count,
+                    trimmed_history_count=context_trimmed_history_count,
+                    history_token_budget=context_history_budget,
+                    max_context_messages=context_max_messages,
+                    compaction_applied=context_compaction_applied,
+                    request_history_count=context_request_history_count,
+                )
+                _track_process_timeline(shared_state["process_timeline"], context_history_log)
+                yield context_history_log
 
                 from app.utils.skill_metadata import enrich_messages_with_skill_meta
 
@@ -2183,7 +2545,7 @@ class AgentService:
         if not agent_config:
             return None, None, route_elapsed_ms, None
 
-        if route_details:
+        if route_details and getattr(route_details, "provenance", None) == "router":
             logger.info(f"[Router] Routing decision found: {route_details}")
             from app.services.config_service import ConfigService
             router_model = await ConfigService.get("llm_model_name") or "DeepSeek-V3.2"
@@ -2249,7 +2611,9 @@ class AgentService:
                 execution_time_ms=route_elapsed_ms
             ))
         else:
-            logger.info("[Router] No routing details (direct agent selection or fallback)")
+            logger.info(
+                "[AgentService] No semantic router decision (direct selection or automatic delegation)"
+            )
 
         permission_started = asyncio.get_running_loop().time()
         await emit_route_stage(
@@ -2299,6 +2663,15 @@ class AgentService:
         """Start target resolution while forwarding safe progress events."""
 
         async def on_progress(event: Dict[str, Any]) -> None:
+            # 目标专家解析仍保留原有 route 父子结构，但整体挂到统一的
+            # “鉴权及上下文与能力准备”父节点下。
+            if isinstance(event, dict) and event.get("type") == "log":
+                event = dict(event)
+                event["parent_id"] = (
+                    "preparation:auth_context_capability"
+                    if event.get("id") == "route:target_config"
+                    else "route:target_config"
+                )
             await route_events.put(event)
 
         return asyncio.create_task(
@@ -2805,7 +3178,6 @@ class AgentService:
                     "user_info": user_info,
                     "trace_buffer": trace_buffer,
                     "user_query": user_query,
-                    "force_data_query": bool(metadata_dataset_ids),
                     "conversation_id": conversation_id,
                 },
             )
@@ -2844,6 +3216,14 @@ class AgentService:
                 shared_state["agent_config"] = agent_config
 
             if not agent_config:
+                preparation_elapsed_ms = (
+                    asyncio.get_running_loop().time() - (shared_state or {}).get("preparation_started_at", start_time)
+                ) * 1000
+                yield _build_preparation_parent_log(
+                    status="error",
+                    details="鉴权及上下文与能力准备失败：未找到可用目标专家。",
+                    execution_time_ms=preparation_elapsed_ms,
+                )
                 yield {"content": AgentServicePrompts.NO_AGENT_CONFIG}
                 return
 
@@ -2870,6 +3250,10 @@ class AgentService:
                     phase="synthesis",
                 )
             performance_tracker.mark("runtime_model_metadata")
+            yield _build_model_config_log(
+                runtime_model_info,
+                synthesis_runtime_model_info,
+            )
             if looks_like_current_model_query(user_query):
                 response = build_current_model_answer(runtime_model_info)
                 agent_config.model_name = runtime_model_info.configured_model
@@ -2898,6 +3282,16 @@ class AgentService:
                             agent_display_name=(agent_config.agent_display_name or agent_config.agent_name),
                         )
                     )
+                if shared_state is not None:
+                    shared_state["preparation_ready"] = True
+                yield _build_preparation_parent_log(
+                    status="success",
+                    details="请求校验、会话上下文、专家配置和模型配置已完成。",
+                    execution_time_ms=(
+                        asyncio.get_running_loop().time()
+                        - (shared_state or {}).get("preparation_started_at", start_time)
+                    ) * 1000,
+                )
                 return
 
             messages = await self._rebuild_context_for_resolved_model(
@@ -2960,7 +3354,7 @@ class AgentService:
                     stage_timings_ms={"route_resolution": route_elapsed_ms},
                 )
 
-            if route_details:
+            if route_details and route_details.provenance == "router":
                 r_thought = getattr(route_details, "reasoning", "No reasoning")
                 r_conf = getattr(route_details, "confidence", 0.0)
                 r_agent = getattr(route_details, "agent_id", "unknown")
@@ -2995,6 +3389,7 @@ class AgentService:
                 )
                 yield {
                     "type": "router_log",
+                    "parent_id": "route:target_config",
                     "thought": r_thought,
                     "confidence": r_conf,
                     "selected_agent": r_agent,
@@ -3025,6 +3420,14 @@ class AgentService:
                 }
 
             if err_msg:
+                preparation_elapsed_ms = (
+                    asyncio.get_running_loop().time() - (shared_state or {}).get("preparation_started_at", start_time)
+                ) * 1000
+                yield _build_preparation_parent_log(
+                    status="error",
+                    details=f"鉴权及上下文与能力准备失败：{sanitize_error_text(err_msg)}",
+                    execution_time_ms=preparation_elapsed_ms,
+                )
                 yield {"content": err_msg}
                 execution_status = "denied"
                 return
@@ -3161,6 +3564,8 @@ class AgentService:
             # --- 主助手或显式配置了 sub_agent_call 的智能体：动态专家清单 + sub_agent_call 通讯录 ---
             agent_system_prompt = agent_config.system_prompt
             sub_agents_context = None
+            delegable_agent_count = 0
+            roster_loaded = False
             from app.services.ai.skill_resolver import is_main_general_agent
             has_subagent_tool = any(
                 (isinstance(t, str) and t in ("sub_agent_call", "sub_agent_batch_call"))
@@ -3186,6 +3591,8 @@ class AgentService:
                             user_info=user_info,
                             current_agent_id=agent_config.agent_id,
                         )
+                        delegable_agent_count = len(delegable_agents or [])
+                        roster_loaded = True
                         current_agent_row = await session.get(AIAgent, agent_config.agent_id)
                         current_desc = (current_agent_row.description if current_agent_row else "") or ""
                         if AGENT_ROSTER_PLACEHOLDER in (agent_system_prompt or ""):
@@ -3198,6 +3605,23 @@ class AgentService:
                         sub_agents_context = build_sub_agents_context(delegable_agents)
                 except Exception as sa_err:
                     logger.warning(f"Failed to build main-agent roster/sub-agents context: {sa_err}")
+
+            yield _build_capability_catalog_log(
+                knowledge_dataset_count=len({
+                    str(item).strip()
+                    for item in (request_knowledge_dataset_ids or [])
+                    if str(item).strip()
+                }),
+                configured_dataset_count=len({
+                    str(item).strip()
+                    for item in configured_agent_dataset_ids
+                    if str(item).strip()
+                }),
+                skill_count=len(skills_injection),
+                delegable_agent_count=delegable_agent_count,
+                roster_loaded=roster_loaded,
+                runtime_tool_count=len(effective_prompt_tool_names),
+            )
 
             from app.core.config import settings
             cache_boundary_enabled, cache_reorder_enabled = await resolve_prompt_assembler_flags()
@@ -3278,6 +3702,20 @@ class AgentService:
             agent_config.system_prompt = build_chat_history_boundary_prompt(
                 agent_config.system_prompt
             )
+            yield _build_prompt_assembly_log(
+                assembled_prompt,
+                runtime_tool_count=len(effective_prompt_tool_names),
+                final_prompt_chars=len(agent_config.system_prompt or ""),
+            )
+            if shared_state is not None:
+                shared_state["preparation_ready"] = True
+            yield _build_preparation_parent_log(
+                status="success",
+                execution_time_ms=(
+                    asyncio.get_running_loop().time()
+                    - (shared_state or {}).get("preparation_started_at", start_time)
+                ) * 1000,
+            )
 
             if debug_options and debug_options.get("return_raw_prompt"):
                 raw_messages = []
@@ -3340,6 +3778,11 @@ class AgentService:
                     conversation_id,
                     dispatch_turn_decision,
                 ):
+                    chunk = await _enrich_terminal_error_chunk(
+                        chunk,
+                        config=agent_config,
+                        model_name=getattr(agent_config, "model_name", None),
+                    )
                     performance_tracker.observe_chunk(chunk)
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
@@ -3361,20 +3804,18 @@ class AgentService:
                 )
                 performance_tracker.mark("executor_start")
 
-                yield {
-                    "type": "log",
-                    "title": "分析用户请求并进行意图识别",
-                    "details": (
-                        f"{turn_display_label}。"
-                        f"{turn_decision.request_reasoning or turn_decision.reasoning or '复用统一轮次决策'}"
-                    ),
-                    "status": "success",
-                    "category": "intent",
-                    "turn_type": turn_decision.turn_kind,
-                    "execution_time_ms": turn_intent_elapsed_ms,
-                }
+                yield _build_turn_execution_log(
+                    turn_decision,
+                    turn_display_label=turn_display_label,
+                    execution_time_ms=turn_intent_elapsed_ms,
+                )
 
                 async for chunk in executor.execute(messages):
+                    chunk = await _enrich_terminal_error_chunk(
+                        chunk,
+                        config=agent_config,
+                        model_name=getattr(agent_config, "model_name", None),
+                    )
                     performance_tracker.observe_chunk(chunk)
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
@@ -3422,11 +3863,12 @@ class AgentService:
                     if full_response_content
                     else no_tool_message
                 )
-                yield {
+                no_tool_error = await _enrich_terminal_error_chunk({
                     "type": "error",
                     "status": "error",
                     "content": no_tool_message,
-                }
+                }, config=agent_config, model_name=getattr(agent_config, "model_name", None))
+                yield no_tool_error
 
             todo_completion = _finalize_todo_success(
                 (shared_state or {}).get("process_timeline"),
@@ -3488,12 +3930,22 @@ class AgentService:
         except Exception as e:
             logger.error(f"Execution Error: {str(e)}", exc_info=True)
             execution_status = "error"
+            if shared_state.get("preparation_started_at") and not shared_state.get("preparation_ready"):
+                preparation_elapsed_ms = (
+                    asyncio.get_running_loop().time() - shared_state["preparation_started_at"]
+                ) * 1000
+                yield _build_preparation_parent_log(
+                    status="error",
+                    details=f"鉴权及上下文与能力准备失败：{sanitize_error_text(e)}",
+                    execution_time_ms=preparation_elapsed_ms,
+                )
             model_name = getattr(agent_config, "model_name", None) if agent_config else None
-            yield {
+            error_chunk = await _enrich_terminal_error_chunk({
                 "type": "error",
-                "content": _format_execution_error_for_user(e, model_name=model_name),
+                "content": str(e),
                 "status": "error",
-            }
+            }, config=agent_config, model_name=model_name, source_exception=e)
+            yield error_chunk
         finally:
             end_time = asyncio.get_running_loop().time()
             duration = (end_time - start_time) * 1000
@@ -3551,6 +4003,7 @@ class AgentService:
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
+        request_observability: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Non-streaming wrapper for chat completion.
@@ -3575,6 +4028,7 @@ class AgentService:
             permission_options=permission_options,
             knowledge_dataset_ids=knowledge_dataset_ids,
             metadata_dataset_ids=metadata_dataset_ids,
+            request_observability=request_observability,
         ):
             if "trace_id" in chunk and chunk.get("status") == "init":
                 trace_id = chunk["trace_id"]
@@ -3701,6 +4155,11 @@ class AgentService:
                 ):
                     if run_handle is not None and run_handle.cancelled:
                         raise asyncio.CancelledError
+                    chunk = await _enrich_terminal_error_chunk(
+                        chunk,
+                        config=runner.config,
+                        model_name=getattr(runner.config, "model_name", None),
+                    )
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     _track_process_timeline(process_timeline_state, chunk)
@@ -3974,6 +4433,11 @@ class AgentService:
                 ):
                     if run_handle is not None and run_handle.cancelled:
                         raise asyncio.CancelledError
+                    chunk = await _enrich_terminal_error_chunk(
+                        chunk,
+                        config=runner.config,
+                        model_name=getattr(runner.config, "model_name", None),
+                    )
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     _track_process_timeline(process_timeline_state, chunk)
@@ -4155,10 +4619,10 @@ class AgentService:
                 await queue.put({
                     "type": "log",
                     "title": f"[{config.agent_name}] 执行异常",
-                    "details": str(e),
+                    "details": sanitize_error_text(e),
                     "status": "error"
                 })
-                full_text = f"【{config.agent_name} 执行失败】: {str(e)}"
+                full_text = f"【{config.agent_name} 执行失败】: {sanitize_error_text(e)}"
             if stream_error is not None:
                 return {"name": config.agent_name, "content": "", "error": stream_error}
             return {"name": config.agent_name, "content": full_text}

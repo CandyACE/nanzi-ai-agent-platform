@@ -32,7 +32,7 @@ defineEmits(['switch-to-auto']);
         <div v-if="showAutoRoutingHint" class="w-full bg-green-50 dark:bg-green-900/20 border-b border-green-100 dark:border-green-800 px-4 py-2 flex items-center justify-center shadow-sm">
             <div class="flex items-center space-x-2">
                 <svg class="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                <span class="text-[10px] font-bold text-green-700 dark:text-green-300 tracking-wide">已切换为自动路由模式</span>
+                <span class="text-[10px] font-bold text-green-700 dark:text-green-300 tracking-wide">已切换为智能委派模式</span>
             </div>
         </div>
 

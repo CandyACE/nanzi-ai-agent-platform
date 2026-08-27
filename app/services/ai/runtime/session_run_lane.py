@@ -32,6 +32,17 @@ class ConversationRunLane:
         safe_cid = conversation_id.replace(":", "_")
         return f"nanzi:conv_run:{uid}:{safe_cid}"
 
+    @staticmethod
+    def _safe_trace_id(value: object) -> str | None:
+        text = str(value or "").strip()
+        if not text or len(text) > 128:
+            return None
+        try:
+            uuid.UUID(text)
+        except (TypeError, ValueError, AttributeError):
+            return None
+        return text
+
     async def _is_enabled(self) -> bool:
         from app.services.config_service import ConfigService
 
@@ -210,6 +221,59 @@ class ConversationRunLane:
         except Exception as exc:
             logger.warning("[ConversationRunLane] is_locked check failed: %s", exc)
             return False
+
+    async def get_status(
+        self,
+        *,
+        user_id: str | int | None,
+        conversation_id: str | None,
+    ) -> dict[str, object | None]:
+        """读取当前会话运行状态，不改变锁，也不暴露锁的内部实现细节。"""
+        empty = {"active": False, "trace_id": None, "ttl_seconds": None}
+        if not conversation_id:
+            return empty
+        try:
+            enabled = await self._is_enabled()
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] get_status config check failed: %s", exc)
+            return empty
+        if not enabled:
+            return empty
+
+        from app.core.redis import get_redis
+
+        try:
+            redis = await get_redis()
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] get_status Redis unavailable: %s", exc)
+            return empty
+        if redis is None:
+            return empty
+
+        key = self._lock_key(user_id, conversation_id)
+        try:
+            raw_token = await redis.get(key)
+            if raw_token is None:
+                return empty
+            if isinstance(raw_token, bytes):
+                raw_token = raw_token.decode("utf-8", errors="ignore")
+            token = str(raw_token)
+            # 锁值只允许返回服务端 UUID trace token；异常/非预期 Redis 内容不回传给客户端。
+            trace_id = self._safe_trace_id(token)
+            ttl_seconds = None
+            ttl_reader = getattr(redis, "ttl", None)
+            if ttl_reader is not None:
+                raw_ttl = await ttl_reader(key)
+                try:
+                    parsed_ttl = int(raw_ttl)
+                    if parsed_ttl >= 0:
+                        ttl_seconds = parsed_ttl
+                except (TypeError, ValueError):
+                    pass
+            return {"active": True, "trace_id": trace_id, "ttl_seconds": ttl_seconds}
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] get_status failed: %s", exc)
+            return empty
 
     @asynccontextmanager
     async def hold(

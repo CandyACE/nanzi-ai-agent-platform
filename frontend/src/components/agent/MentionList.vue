@@ -20,7 +20,7 @@ const props = withDefaults(
     keyword: string;
     agents: AgentOption[];
     position: { top: number; left: number };
-    /** 当前路由模式，用于高亮「全能助手 / 当前专家」 */
+    /** 当前委派模式，用于高亮「智能委派 / 当前专家」 */
     routingMode?: string;
     expertAgentId?: string;
   }>(),
@@ -61,7 +61,13 @@ const filteredAgents = computed(() => {
 const showAutoOption = computed(() => {
   const k = (props.keyword || '').trim().toLowerCase();
   if (!k) return true;
-  return '全能助手'.includes(k) || '自动'.includes(k) || 'auto'.includes(k);
+  return (
+    '智能委派'.includes(k) ||
+    '委派'.includes(k) ||
+    '全能助手'.includes(k) ||
+    '自动'.includes(k) ||
+    'auto'.includes(k)
+  );
 });
 
 const rows = computed<MentionRow[]>(() => {
@@ -153,7 +159,7 @@ defineExpose({ handleKeydown });
 
     <div ref="listContainer" class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-1.5 space-y-0.5 bg-white dark:bg-gray-800">
       <template v-for="(row, index) in rows" :key="row.kind === 'auto' ? 'auto' : row.agent.id">
-        <!-- 全能助手 -->
+        <!-- 智能委派 -->
         <button
           v-if="row.kind === 'auto'"
           type="button"
@@ -173,7 +179,7 @@ defineExpose({ handleKeydown });
               <span
                 class="text-[13px] font-semibold truncate"
                 :class="index === selectedIndex || !isExpertMode ? 'text-primary' : 'text-gray-900 dark:text-gray-100'"
-              >全能助手 (自动)</span>
+              >智能委派</span>
               <svg
                 v-if="!isExpertMode"
                 class="w-3.5 h-3.5 text-primary shrink-0"
@@ -183,7 +189,7 @@ defineExpose({ handleKeydown });
                 <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
               </svg>
             </div>
-            <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2">智能调度最合适的专家处理</p>
+            <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2">由主助手直接处理，或按任务需要自动委派其他专家</p>
           </div>
         </button>
 

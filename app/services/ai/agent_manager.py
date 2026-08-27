@@ -14,6 +14,19 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+MAIN_GENERAL_AGENT_ID = "sys-agent-chat"
+MAIN_GENERAL_AGENT_NAMES = frozenset({"main", "assistant", "general-chat"})
+
+
+def _is_main_general_agent_record(agent: Any) -> bool:
+    """Identify the fixed Main record before mutable metadata is updated."""
+    if not agent:
+        return False
+    return (
+        str(getattr(agent, "id", "") or "").strip() == MAIN_GENERAL_AGENT_ID
+        or str(getattr(agent, "name", "") or "").strip().lower() in MAIN_GENERAL_AGENT_NAMES
+    )
+
 
 class AgentNotReadyError(ValueError):
     def __init__(self, missing: tuple[str, ...]):
@@ -807,6 +820,9 @@ class AgentManagerService:
         if agent.is_system and not is_admin:
             return None
 
+        if _is_main_general_agent_record(agent) and data.is_enabled is False:
+            raise ValueError("主助手不可禁用")
+
         original_engine_type = str(agent.engine_type or "LOCAL").upper()
         if "engine_type" in data.model_fields_set:
             requested_engine_type = str(data.engine_type or original_engine_type).upper()
@@ -858,7 +874,7 @@ class AgentManagerService:
     async def delete_agent(session: AsyncSession, agent_id: str, user: Any = None) -> bool:
         """Delete an agent (system agents cannot be deleted)"""
         agent = await session.get(AIAgent, agent_id)
-        if not agent or agent.is_system:
+        if not agent or agent.is_system or _is_main_general_agent_record(agent):
             return False
 
         # Permission Check

@@ -185,6 +185,35 @@ class TurnDecision(BaseModel):
         )
 
     @classmethod
+    def for_default_main_delegation(
+        cls,
+        agent_config: Any,
+        *,
+        stage_timings_ms: Optional[Mapping[str, Any]] = None,
+    ) -> "TurnDecision":
+        """Create the canonical decision for an unselected request entering Main."""
+        return cls(
+            agent_id=_value(getattr(agent_config, "agent_id", None)),
+            agent_name=_value(
+                getattr(agent_config, "agent_name", None)
+                or getattr(agent_config, "agent_display_name", None)
+            ),
+            turn_kind="general",
+            route_status="resolved",
+            source="general",
+            capability="answer",
+            reasoning="未指定专家，交由主助手直接回答或自动委派",
+            request_reasoning="默认进入主助手自动委派链路",
+            provenance="automatic_delegation",
+            fast_path="default_main",
+            stage_timings_ms={
+                str(key): _float(value)
+                for key, value in (stage_timings_ms or {}).items()
+            },
+            evidence=["default_main_agent"],
+        )
+
+    @classmethod
     def from_router_components(
         cls,
         *,

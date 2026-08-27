@@ -2668,7 +2668,13 @@ class _WorkspaceFileAccessNativeTool:
         return result
 
     async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
-        mapped_input = self._map(tool_input)
+        try:
+            mapped_input = self._map(tool_input)
+        except (PermissionError, ValueError):
+            # AgentScope 会先执行只读 fast path；路径不合法时必须让它继续
+            # 到 check_permissions()，由该阶段返回结构化 DENY，而不是把
+            # 权限拒绝升级成并发工具 ExceptionGroup。
+            return False
         checker = getattr(self._native_tool, "check_read_only", None)
         if checker is None:
             return bool(getattr(self._native_tool, "is_read_only", False))

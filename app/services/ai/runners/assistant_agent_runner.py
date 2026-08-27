@@ -243,14 +243,14 @@ class AssistantAgentRunner(BaseExecutor):
         return self._extract_last_user_query(history)
 
     def _is_direct_agent_selection(self) -> bool:
-        """专家模式 / @提及 / 显式 agent_id 直达，不走自动路由。"""
+        """专家模式 / @提及 / 显式 agent_id 直达，不走主专家自动委派。"""
         return bool(
             self.turn_decision is not None
             and self.turn_decision.provenance == "direct_agent_selection"
         )
 
     def _should_run_data_hallucination_guard(self, user_query: str) -> bool:
-        """仅主助手 + 自动路由 + 明确查数诉求时启用，防止无 DB 连接时编造业务数据。"""
+        """仅主助手自动委派链路 + 明确查数诉求时启用，防止无 DB 连接时编造业务数据。"""
         if not is_main_general_agent(self.config):
             return False
         if self._is_direct_agent_selection():

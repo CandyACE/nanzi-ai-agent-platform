@@ -43,20 +43,25 @@ def _last_pending_text(
 
 
 def _find_log(items: List[Dict[str, Any]], log_id: Any) -> Optional[Dict[str, Any]]:
+    def find_in_logs(logs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        for log in logs:
+            if log.get("id") == log_id:
+                return log
+            found = find_in_logs(log.get("children") or [])
+            if found is not None:
+                return found
+
+        return None
+
     for item in items:
         if item.get("kind") == "log":
-            if item.get("id") == log_id:
-                return item
-            for sub in item.get("children") or []:
-                if sub.get("id") == log_id:
-                    return sub
+            found = find_in_logs([item])
+            if found is not None:
+                return found
         elif item.get("kind") == "text":
-            for child in item.get("children") or []:
-                if child.get("id") == log_id:
-                    return child
-                for sub in child.get("children") or []:
-                    if sub.get("id") == log_id:
-                        return sub
+            found = find_in_logs(item.get("children") or [])
+            if found is not None:
+                return found
     return None
 
 
@@ -350,6 +355,7 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         apply_stream_chunk(state, {
             "type": "log",
             "id": "route:target_selection",
+            "parent_id": chunk.get("parent_id") or "route:target_config",
             "title": selection_title,
             "details": f"思考过程:\n{thought}\n\n最终选择: {agent_name} {conf_text}".rstrip(),
             "status": chunk.get("status") or "success",
@@ -427,6 +433,14 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         "isExpanded": False,
         "children": [],
     }
+
+    parent_id = chunk.get("parent_id")
+    if parent_id is not None and parent_id != log_id:
+        parent = _find_log(state, parent_id)
+        if parent is not None:
+            parent.setdefault("children", []).append(log)
+            parent.setdefault("childrenExpanded", True)
+            return
 
     # If this is an inner step of a subagent
     is_subagent_container = str(log_id).startswith("subagent_") or "sub_agent_call" in title_str

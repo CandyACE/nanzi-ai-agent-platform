@@ -109,7 +109,7 @@ const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
             <span
               class="text-sm font-semibold truncate"
               :class="!isExpertMode(routingMode, expertAgentId) ? 'text-primary' : 'text-gray-900 dark:text-gray-100'"
-            >全能助手 (自动)</span>
+            >智能委派</span>
             <svg
               v-if="!isExpertMode(routingMode, expertAgentId)"
               class="w-3.5 h-3.5 text-primary shrink-0"
@@ -119,7 +119,7 @@ const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
               <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
             </svg>
           </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2">智能调度最合适的专家处理</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2">由主助手直接处理，或按任务需要自动委派其他专家</p>
         </div>
       </button>
 

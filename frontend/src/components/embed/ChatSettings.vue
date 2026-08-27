@@ -471,11 +471,11 @@ const handleLogout = () => {
             </div>
           </div>
 
-          <!-- Group 2: 智能体路由 -->
+          <!-- Group 2: 主专家自动委派 -->
           <div v-if="!routingLocked" class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-4">
             <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
               <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 7h8M8 12h8M8 17h5M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
-              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">智能体路由 / Routing</h4>
+              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">主专家自动委派 / Delegation</h4>
             </div>
 
             <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
@@ -487,7 +487,7 @@ const handleLogout = () => {
                   ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm font-black'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'"
               >
-                自动路由
+                主专家自动委派
               </button>
               <button
                 type="button"
@@ -502,7 +502,7 @@ const handleLogout = () => {
             </div>
 
             <p v-if="routingMode === 'auto'" class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal">
-              自动路由会先识别问题意图，再选择合适的主智能体，适合多业务场景；部分请求可能增加一次路由判断耗时。
+              未指定专家时，默认由主专家直接回答，或按任务需要自动委派其他智能体，统一流程并减少额外判断耗时。
             </p>
 
             <div v-if="routingMode === 'expert'" class="space-y-1.5">
@@ -519,7 +519,7 @@ const handleLogout = () => {
                 </option>
               </select>
               <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal">
-                默认智能体优先处理当前问题；主智能体仍可按任务需要调用其他智能体，适合明确主责领域的场景。
+                默认智能体优先处理当前问题；主专家仍可按任务需要调用其他智能体，适合明确主责领域的场景。
               </p>
             </div>
           </div>

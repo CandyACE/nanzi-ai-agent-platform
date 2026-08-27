@@ -24,6 +24,7 @@ export type ProcessTimelineTextItem = {
 export type ProcessTimelineLogItem = {
   kind: "log";
   id: string | number;
+  parent_id?: string | number;
   title: string;
   details: string;
   status: ProcessTimelineStatus;
@@ -459,6 +460,7 @@ export function upsertTimelineLog(
   target: ProcessTimelineTarget,
   data: {
     id: string | number;
+    parent_id?: string | number;
     title?: string;
     details?: string;
     status?: ProcessTimelineStatus;
@@ -473,6 +475,7 @@ export function upsertTimelineLog(
   if (!target.processTimeline) target.processTimeline = [];
   const existing = findTimelineLog(target.processTimeline, data.id);
   if (existing) {
+    if (data.parent_id !== undefined) existing.parent_id = data.parent_id;
     if (data.title !== undefined) existing.title = data.title;
     if (data.details !== undefined) existing.details = data.details;
     if (data.status !== undefined) existing.status = data.status;
@@ -514,6 +517,7 @@ export function upsertTimelineLog(
   const log: ProcessTimelineLogItem = {
     kind: "log",
     id: data.id,
+    parent_id: data.parent_id,
     title: data.title || "处理步骤",
     details: data.details || "",
     status: data.status || "success",
@@ -527,6 +531,16 @@ export function upsertTimelineLog(
     children: [],
     childrenExpanded: true,
   };
+
+  if (data.parent_id !== undefined && data.parent_id !== null && data.parent_id !== data.id) {
+    const parent = findTimelineLog(target.processTimeline, data.parent_id);
+    if (parent) {
+      parent.children ||= [];
+      parent.children.push(log);
+      parent.childrenExpanded ??= true;
+      return;
+    }
+  }
 
   // If this is an inner step of a subagent (subagent metadata present, but not the subagent container itself)
   const isSubagentContainer = String(data.id).startsWith("subagent_") || (data.title && data.title.includes("sub_agent_call"));
@@ -565,6 +579,7 @@ export function mergeTimelineLogs(
   timeline: ProcessTimelineItem[] | undefined,
   logs: Array<{
     id: string | number;
+    parent_id?: string | number;
     title: string;
     details: string;
     status: ProcessTimelineStatus;
@@ -587,11 +602,12 @@ export function mergeTimelineLogs(
 
   for (const log of logs || []) {
     const existingIndex = indexes.get(log.id);
-    if (existingIndex !== undefined) {
-      const existing = items[existingIndex];
-      const nested = findTimelineLog(items, log.id);
+    const nested = findTimelineLog(items, log.id);
+    if (existingIndex !== undefined || nested) {
+      const existing = existingIndex === undefined ? undefined : items[existingIndex];
       const targetLog = nested || (existing?.kind === "log" ? existing : undefined);
       if (targetLog) {
+        targetLog.parent_id = log.parent_id ?? targetLog.parent_id;
         targetLog.title = log.title || targetLog.title;
         targetLog.details = log.details ?? targetLog.details;
         targetLog.status = log.status || targetLog.status;
@@ -676,6 +692,14 @@ export function countTimelineSteps(items: ProcessTimelineItem[]): number {
     if (item.kind === "log" && item.id === ROUTE_TIMELINE_ROOT_ID) {
       return count + 1 + (item.children?.length || 0);
     }
+    if (item.kind === "log" && item.id === "preparation:auth_context_capability") {
+      return count + 1 + (item.children || []).reduce((nestedCount, child) => {
+        if (child.id === ROUTE_TIMELINE_ROOT_ID) {
+          return nestedCount + 1 + (child.children?.length || 0);
+        }
+        return nestedCount + 1;
+      }, 0);
+    }
     return count + 1;
   }, 0);
 }
@@ -683,6 +707,7 @@ export function countTimelineSteps(items: ProcessTimelineItem[]): number {
 export function buildLegacyProcessTimeline(input: {
   logs?: Array<{
     id: string | number;
+    parent_id?: string | number;
     title: string;
     details: string;
     status: ProcessTimelineStatus;

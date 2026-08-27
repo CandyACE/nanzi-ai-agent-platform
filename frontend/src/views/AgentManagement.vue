@@ -1309,6 +1309,10 @@ const fetchAgents = async () => {
 };
 
 const handleDeleteAgent = (agent: AIAgent) => {
+  if (isMainAgent(agent)) {
+    showToast("主助手不可删除", "warning");
+    return;
+  }
   if (agent.is_system && userInfo.value?.role !== 'admin') {
     showToast("系统智能体无法删除", "warning");
     return;
@@ -1768,7 +1772,7 @@ const handleDrawerPublishVersion = (version: AIAgentVersion) => {
   confirmState.value = {
     show: true,
     title: "发布版本",
-    message: `确定要发布版本 V${version.version_number} 吗？\n该版本将立即生效，所有自动路由将使用此版本配置。`,
+    message: `确定要发布版本 V${version.version_number} 吗？\n该版本将立即生效，主专家自动委派将使用此版本配置。`,
     type: "primary",
     onConfirm: async () => {
       confirmState.value.show = false;
@@ -1806,6 +1810,10 @@ const handleDrawerPublishVersion = (version: AIAgentVersion) => {
 };
 
 const toggleAgentStatus = (agent: AIAgent) => {
+  if (isMainAgent(agent)) {
+    showToast("主助手不可禁用", "warning");
+    return;
+  }
   if (agent.is_editable === false) {
     showToast("无权修改此智能体状态", "warning");
     return;
@@ -1851,7 +1859,7 @@ const openPreview = async (agent: AIAgent) => {
   } catch (e) {
     console.warn("Failed to generate embed ticket for preview, falling back to chat route", e);
   }
-  // 降级兜底：在平台内部对话路由打开
+  // 降级兜底：在平台内部对话页打开
   window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agentKey)}`, "_blank");
 };
 
@@ -2408,6 +2416,10 @@ const getAgentTypeBadgeClass = (agent: AIAgent) => {
   return 'border-slate-200 bg-slate-100 text-slate-700'
 }
 
+const isMainAgent = (agent: AIAgent) =>
+  agent.id === 'sys-agent-chat' ||
+  ['main', 'assistant', 'general-chat'].includes(String(agent.name || '').trim().toLowerCase())
+
 const READINESS_MISSING_LABELS: Record<string, string> = {
   published_version: '发布版本',
   primary_capability: '主类型能力',
@@ -2502,6 +2514,8 @@ const toggleBatchMode = () => {
   if (!batchMode.value) selectedAgentIds.value = new Set()
 }
 const toggleAgentSelection = (agentId: string) => {
+  const agent = agents.value.find((item) => item.id === agentId)
+  if (agent && isMainAgent(agent)) return
   const next = new Set(selectedAgentIds.value)
   if (next.has(agentId)) next.delete(agentId)
   else next.add(agentId)
@@ -2512,7 +2526,7 @@ const clearAgentSelection = () => {
 }
 const batchSetEnabled = async (enabled: boolean) => {
   const targets = selectedAgents.value.filter(
-    (agent) => agent.is_editable !== false && Boolean(agent.is_enabled) !== enabled
+    (agent) => !isMainAgent(agent) && agent.is_editable !== false && Boolean(agent.is_enabled) !== enabled
   )
   if (!targets.length) {
     showToast(enabled ? '所选智能体均已启用' : '所选智能体均已禁用', 'info')
@@ -2868,6 +2882,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             type="checkbox"
             class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
             :checked="selectedAgentIds.has(agent.id)"
+            :disabled="isMainAgent(agent)"
+            :title="isMainAgent(agent) ? '主助手固定启用，不参与批量状态操作' : undefined"
             @click.stop
             @change="toggleAgentSelection(agent.id)"
           />
@@ -2946,7 +2962,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
           <div class="shrink-0 pt-0.5" @click.stop>
             <button
-              v-if="agent.is_editable !== false"
+              v-if="agent.is_editable !== false && !isMainAgent(agent)"
               class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
               :class="agent.is_enabled ? 'bg-green-500' : 'bg-gray-200'"
               @click.stop="toggleAgentStatus(agent)"
@@ -2972,7 +2988,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 class="w-1.5 h-1.5 rounded-full"
                 :class="agent.is_enabled ? 'bg-green-500' : 'bg-gray-400'"
               ></span>
-              <span>{{ agent.is_enabled ? '已启用' : '已禁用' }}</span>
+              <span>{{ isMainAgent(agent) ? '主助手 · 固定启用' : (agent.is_enabled ? '已启用' : '已禁用') }}</span>
             </span>
           </div>
         </div>
@@ -3097,7 +3113,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 历史记录
               </button>
               <button
-                v-if="!agent.is_system && agent.is_editable !== false"
+                v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false"
                 v-has-perm="'element:agent:delete'"
                 @click="closeCardMenus(); handleDeleteAgent(agent)"
                 class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
@@ -3165,6 +3181,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     type="checkbox"
                     class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
                     :checked="selectedAgentIds.has(agent.id)"
+                    :disabled="isMainAgent(agent)"
+                    :title="isMainAgent(agent) ? '主助手固定启用，不参与批量状态操作' : undefined"
                     @click.stop
                     @change="toggleAgentSelection(agent.id)"
                   />
@@ -3248,7 +3266,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       ]"
                     >
                       <span class="w-1 h-1 rounded-full mr-1.5" :class="agent.is_enabled ? 'bg-green-500 animate-pulse' : 'bg-gray-400'"></span>
-                      {{ agent.is_enabled ? "活跃" : "已禁用" }}
+                      {{ isMainAgent(agent) ? "固定启用" : (agent.is_enabled ? "活跃" : "已禁用") }}
                     </span>
                   </div>
                 </td>
@@ -3285,7 +3303,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     </button>
                     <button
                       v-has-perm="'element:agent:delete'"
-                      v-if="!agent.is_system && agent.is_editable !== false"
+                      v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false"
                       @click.stop="handleDeleteAgent(agent)"
                       class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100"
                       title="删除"
@@ -3325,7 +3343,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <label
           v-if="userInfo?.role === 'admin'"
           class="flex cursor-pointer items-center gap-2"
-          title="标记为系统预置智能体，防止误删并提高路由权重"
+          title="标记为系统预置智能体，防止误删并加入主专家委派目录"
         >
           <span class="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Admin Only</span>
           <span
@@ -3748,7 +3766,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <textarea
             v-model="agentForm.description"
             rows="2"
-            placeholder="简要描述此智能体的功能，这将用于自动路由匹配。例如：擅长回答销售数据相关的问题。"
+            placeholder="简要描述此智能体的功能，便于主专家判断是否需要委派。例如：擅长回答销售数据相关的问题。"
             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
           ></textarea>
         </div>
@@ -3807,7 +3825,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         >
           <div class="font-semibold text-gray-800">智能体类型：通用助手</div>
           <p class="mt-1 leading-5">
-            RAGFlow / OpenClaw 引擎固定为通用类型（<span class="font-mono">general_chat</span>），可在下方补充扩展能力标签用于自动路由与委派。
+            RAGFlow / OpenClaw 引擎固定为通用类型（<span class="font-mono">general_chat</span>），可在下方补充扩展能力标签供主专家自动委派参考。
           </p>
         </div>
 
@@ -3822,7 +3840,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               @click="showCapabilityHelp = true"
             >?</button>
           </div>
-          <p class="mt-1 text-xs text-gray-500">主类型能力由系统锁定；这里可补充 contract_review 等自定义路由标签。</p>
+          <p class="mt-1 text-xs text-gray-500">主类型能力由系统锁定；这里可补充 contract_review 等自定义委派标签。</p>
           <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
             <div class="text-[10px] font-bold uppercase tracking-wider text-blue-600">系统内置标签</div>
             <span class="mt-2 inline-flex items-center rounded-full border border-blue-200 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-blue-700">
@@ -4063,7 +4081,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
             <div>
               <h3 class="text-lg font-bold text-gray-900">扩展能力标签怎么用？</h3>
-              <p class="mt-1 text-sm text-gray-500">标签用于语义路由与 Main 委派，不会自动增加工具或数据权限。</p>
+              <p class="mt-1 text-sm text-gray-500">标签用于 Main 的委派判断，不会自动增加工具或数据权限。</p>
             </div>
             <button
               type="button"
@@ -4078,10 +4096,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <section class="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
                 <h4 class="text-sm font-bold text-gray-900">有什么用途</h4>
-                <p class="mt-2 text-sm leading-relaxed text-gray-600">标签会与智能体名称、描述一起提供给语义路由器，并进入 Main 的可委派智能体通讯录，用来表达这个智能体擅长处理什么任务。</p>
+                <p class="mt-2 text-sm leading-relaxed text-gray-600">标签会与智能体名称、描述一起提供给 Main 的委派判断，并进入可委派智能体通讯录，用来表达这个智能体擅长处理什么任务。</p>
               </section>
               <section class="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
-                <h4 class="text-sm font-bold text-gray-900">如何影响路由</h4>
+                <h4 class="text-sm font-bold text-gray-900">如何影响委派</h4>
                 <p class="mt-2 text-sm leading-relaxed text-gray-600">Main 会构建“能力 → 子智能体”映射。多个智能体拥有相同标签时，优先选择排序权重更高且当前用户有权限调用的智能体。</p>
               </section>
               <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
@@ -4090,7 +4108,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </section>
               <section class="rounded-xl border border-amber-100 bg-amber-50/60 p-4">
                 <h4 class="text-sm font-bold text-gray-900">重要提醒</h4>
-                <p class="mt-2 text-sm leading-relaxed text-gray-600">标签只影响路由和委派，不会自动安装工具、开放数据权限或增加执行能力。</p>
+                <p class="mt-2 text-sm leading-relaxed text-gray-600">标签只影响主专家的委派判断，不会自动安装工具、开放数据权限或增加执行能力。</p>
               </section>
             </div>
           </div>
@@ -4147,7 +4165,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <h4 class="text-sm font-bold text-gray-900">RAGFlow（外部智能体）</h4>
               </div>
               <p class="mt-2 text-sm leading-relaxed text-gray-600">
-                接入已在 RAGFlow 侧编排好的外部智能体。平台主要负责登记与路由，对话编排、知识库等仍在 RAGFlow 中维护。
+                接入已在 RAGFlow 侧编排好的外部智能体。平台主要负责登记与统一委派，对话编排、知识库等仍在 RAGFlow 中维护。
               </p>
               <ul class="mt-3 space-y-1.5 text-xs text-gray-500">
                 <li>· 单页创建，需填写 RAGFlow App ID</li>
@@ -4346,7 +4364,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
              :class="activeHelpTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
            >
              {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'routing' ? '调度与路由机制 (Routing)' : '就绪度与发布规范 (Readiness)' }}
+                tab === 'routing' ? '调度与委派机制 (Delegation)' : '就绪度与发布规范 (Readiness)' }}
            </button>
         </div>
 
@@ -4357,7 +4375,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
                  <h3 class="font-bold text-blue-900 mb-1">智能体 5 步全生命周期构建体系</h3>
                  <p class="text-xs text-blue-700 leading-relaxed">
-                    智能体涵盖需求定义、模型装配、多版本隔离、权限下发与渠道落地。注意：仅勾选「系统智能体」才参与协同路由；必须在「角色管理」中完成授权分配，普通用户方可访问。
+                    智能体涵盖需求定义、模型装配、多版本隔离、权限下发与渠道落地。注意：系统智能体由主专家统一自动委派；必须在「角色管理」中完成授权分配，普通用户方可访问。
                  </p>
               </div>
 
@@ -4370,7 +4388,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                           <h4 class="font-bold text-gray-900 text-sm">定义与系统标识</h4>
                        </div>
                        <p class="text-xs text-gray-500 leading-relaxed">
-                          填写名称与业务描述（描述是 Auto-Router 语义分发的核心依据）。勾选为「系统智能体」以加入主对话多智能体协同路由，或从场景模板一键交付。
+                          填写名称与业务描述（描述帮助主专家判断委派方向）。勾选为「系统智能体」以加入主专家的自动委派目录，或从场景模板一键交付。
                        </p>
                     </div>
                     <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
@@ -4459,7 +4477,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                           <h4 class="font-bold text-gray-900 text-sm">调试验证与渠道消费</h4>
                        </div>
                        <p class="text-xs text-gray-500 leading-relaxed">
-                          在「智能体调试台」实时观测思考链时序与工具链调用；系统智能体由协同路由自动分派，支持生成 Embed 嵌入链接或对接钉钉/企微/邮件机器人。
+                          在「智能体调试台」实时观测思考链时序与工具链调用；系统智能体由主专家按任务需要自动委派，支持生成 Embed 嵌入链接或对接钉钉/企微/邮件机器人。
                        </p>
                     </div>
                     <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
@@ -4478,13 +4496,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
            <!-- Tab 2: Routing Mechanism -->
            <div v-else-if="activeHelpTab === 'routing'" class="space-y-4 max-w-4xl mx-auto">
               <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">智能体调度与自动路由规则</h4>
+                 <h4 class="font-bold text-gray-900 text-base">主专家自动委派规则</h4>
                  <div class="flex items-start gap-3 p-3 bg-blue-50/50 rounded-xl border border-blue-100">
                     <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold">1</span>
                     <div>
-                       <div class="font-semibold text-gray-900">系统智能体自动路由机制</div>
+                       <div class="font-semibold text-gray-900">主专家自动委派机制</div>
                        <div class="text-xs text-gray-600 mt-0.5">
-                          状态为 <span class="font-bold text-emerald-600">已启用</span> 且属性为 <span class="font-bold text-blue-600">系统智能体 (is_system = true)</span> 的智能体，主对话 Auto-Router 会自动提取其业务描述进行语义意图匹配与自动委派。
+                          未指定专家时，主对话默认进入 <span class="font-bold text-blue-600">主专家 Main</span>；主专家会根据任务需要直接回答，或从已启用且有权限的系统智能体中自动委派。系统智能体的描述用于辅助委派判断。
                        </div>
                     </div>
                  </div>
@@ -4493,7 +4511,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     <div>
                        <div class="font-semibold text-gray-900">个人与自定义智能体访问</div>
                        <div class="text-xs text-gray-600 mt-0.5">
-                          非系统智能体属于独立专属沙箱助手，不会参与主路由自动抢单，用户可在对话框输入 <code class="font-mono bg-purple-100 text-purple-700 px-1 rounded">@智能体名称</code> 进行显式手动调用。
+                          非系统智能体属于独立专属沙箱助手，不会自动进入主专家的委派目录；用户可在对话框输入 <code class="font-mono bg-purple-100 text-purple-700 px-1 rounded">@智能体名称</code> 进行显式手动调用。
                        </div>
                     </div>
                  </div>
@@ -4502,7 +4520,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     <div>
                        <div class="font-semibold text-gray-900">外部托管引擎协同</div>
                        <div class="text-xs text-gray-600 mt-0.5">
-                          若引擎类型为 <span class="font-bold text-gray-900">RAGFlow</span> 或 <span class="font-bold text-gray-900">OpenClaw</span>，本平台作为统一路由代理层与安全审计网关，复杂流程编排在对应外部工作流中维护。
+                          若引擎类型为 <span class="font-bold text-gray-900">RAGFlow</span> 或 <span class="font-bold text-gray-900">OpenClaw</span>，本平台作为统一委派代理层与安全审计网关，复杂流程编排在对应外部工作流中维护。
                        </div>
                     </div>
                  </div>
@@ -4516,7 +4534,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                  <p class="text-xs text-gray-500">发布或启用智能体前，系统会自动对配置完整度进行静态与运行时校验：</p>
                  <div class="space-y-2.5">
                     <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                       <span class="font-bold text-gray-800">✅ 必须具备已发布版本 (Published Version)</span>：未发布的草稿版本不可被路由。
+                       <span class="font-bold text-gray-800">✅ 必须具备已发布版本 (Published Version)</span>：未发布的草稿版本不可被主专家委派。
                     </div>
                     <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
                        <span class="font-bold text-gray-800">✅ 主类型能力匹配 (Primary Capability)</span>：ChatBI 类型必须装配 SQL/数据查询工具；知识库类型必须挂载知识库或检索工具。

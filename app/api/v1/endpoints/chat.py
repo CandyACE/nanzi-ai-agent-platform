@@ -44,6 +44,26 @@ SSE_RESPONSE_HEADERS = {
 public_router = APIRouter()
 
 
+def _duplicate_chat_request_response(claim: Any) -> StreamingResponse:
+    """以 SSE 事件告知前端请求已被幂等键接收，避免重复创建 producer。"""
+    payload = {
+        "type": "duplicate_request",
+        "status": "duplicate_request",
+        "trace_id": getattr(claim, "trace_id", None),
+        "content": "相同发送请求已提交，正在等待原任务完成，请勿重复操作。",
+    }
+
+    async def sse_generator() -> AsyncGenerator[str, None]:
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
+
+
 def _require_chat_user_id(user_info: Optional[Dict[str, Any]]) -> str:
     """聊天会话相关接口统一使用稳定用户 ID，缺失时返回 401。"""
     try:
@@ -262,6 +282,11 @@ class ChatCompletionRequest(BaseModel):
     grounding_action: Optional[Dict[str, Any]] = Field(
         default=None,
         description="事实取证卡片触发的结构化动作，仅影响当前轮",
+    )
+    client_request_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="客户端一次发送意图的幂等 ID；网络重试应复用同一 ID",
     )
 
 
@@ -660,6 +685,32 @@ class ConversationHistoryResponse(BaseModel):
 
     conversation_id: str = Field(..., description="会话ID")
     messages: List[ConversationMessage] = Field(..., description="消息列表")
+
+
+class ConversationRunStatusResponse(BaseModel):
+    active: bool = False
+    trace_id: Optional[str] = None
+    ttl_seconds: Optional[int] = None
+
+
+@router.get(
+    "/conversation/{conversation_id}/run-status",
+    response_model=StandardResponse[ConversationRunStatusResponse],
+    summary="获取会话当前运行状态",
+    description="读取当前用户会话的 Redis 运行锁状态，用于断线恢复期间阻止重复发送。",
+)
+async def get_conversation_run_status(
+    conversation_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.session_run_lane import conversation_run_lane
+
+    user_id = _require_chat_user_id(user_info)
+    status = await conversation_run_lane.get_status(
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+    return StandardResponse(data=ConversationRunStatusResponse(**status))
 
 @router.get("/conversation/{conversation_id}",
     response_model=StandardResponse[ConversationHistoryResponse],
@@ -1126,10 +1177,48 @@ async def create_chat_completion(
             else:
                 api_key_str = auth
 
+    request_claim = None
+    if completion_request.client_request_id and completion_request.conversation_id:
+        from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
+
+        request_claim = await chat_request_idempotency.claim(
+            user_id=chat_user_id,
+            conversation_id=completion_request.conversation_id,
+            client_request_id=completion_request.client_request_id,
+        )
+        if request_claim is not None and not request_claim.acquired:
+            if completion_request.stream:
+                return _duplicate_chat_request_response(request_claim)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_chat_request",
+                    "status": request_claim.status,
+                    "trace_id": request_claim.trace_id,
+                    "message": "相同发送请求已提交，请勿重复操作。",
+                },
+            )
+
+    request_observability = {
+        "authenticated": True,
+        "parameters_validated": True,
+        "idempotency_status": (
+            "已通过"
+            if request_claim is not None
+            else "未启用（无客户端请求 ID 或未绑定会话）"
+        ),
+        "resource_scope": {
+            key: len(conversation_scope.get(key, []) or [])
+            for key in ("datasets", "knowledge_bases", "skills", "mcp_tools")
+        },
+    }
+
     # Convert Pydantic models to dicts for the service
     if completion_request.stream:
         lane_user_id = chat_user_id
         conversation_id = completion_request.conversation_id
+        claim_trace_id: Optional[str] = None
+        claim_status = "completed"
 
         async def _release_locks_on_client_abort() -> None:
             from app.services.ai.runtime.conversation_run_cancel import release_conversation_run_locks
@@ -1143,6 +1232,7 @@ async def create_chat_completion(
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
         async def _producer_task() -> None:
+            nonlocal claim_trace_id, claim_status
             try:
                 async for chunk in agent_service.chat_completion_stream(
                     history,
@@ -1156,12 +1246,34 @@ async def create_chat_completion(
                     permission_options=completion_request.permission_options,
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
                     metadata_dataset_ids=effective_metadata_dataset_ids,
+                    request_observability=request_observability,
                 ):
+                    if isinstance(chunk, dict):
+                        if chunk.get("trace_id"):
+                            claim_trace_id = str(chunk["trace_id"])
+                        if chunk.get("type") == "error" or chunk.get("status") == "error":
+                            claim_status = "failed"
                     if not client_disconnected_event.is_set():
                         await queue.put(("chunk", chunk))
                 if not client_disconnected_event.is_set():
                     await queue.put(("done", None))
+                if request_claim is not None:
+                    from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
+
+                    await chat_request_idempotency.finish(
+                        request_claim,
+                        status=claim_status,
+                        trace_id=claim_trace_id,
+                    )
             except asyncio.CancelledError:
+                if request_claim is not None:
+                    from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
+
+                    await chat_request_idempotency.finish(
+                        request_claim,
+                        status="failed",
+                        trace_id=claim_trace_id,
+                    )
                 from app.core.cancellation import spawn_detached
 
                 spawn_detached(
@@ -1175,6 +1287,14 @@ async def create_chat_completion(
                     exc,
                     exc_info=True,
                 )
+                if request_claim is not None:
+                    from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
+
+                    await chat_request_idempotency.finish(
+                        request_claim,
+                        status="failed",
+                        trace_id=claim_trace_id,
+                    )
                 if not client_disconnected_event.is_set():
                     await queue.put(("error", exc))
 
@@ -1240,19 +1360,36 @@ async def create_chat_completion(
                 else:
                     api_key_str = auth
 
-        result = await agent_service.chat_completion(
-            history, 
-            agent_id=completion_request.agent_id,
-            version_id=completion_request.version_id,
-            conversation_id=completion_request.conversation_id,
-            user_info=user_info,
-            api_key=api_key_str,
-            enable_multi_agent=completion_request.enable_multi_agent,
-            debug_options=effective_debug_options,
-            permission_options=completion_request.permission_options,
-            knowledge_dataset_ids=effective_knowledge_dataset_ids,
-            metadata_dataset_ids=effective_metadata_dataset_ids,
-        )
+        try:
+            result = await agent_service.chat_completion(
+                history,
+                agent_id=completion_request.agent_id,
+                version_id=completion_request.version_id,
+                conversation_id=completion_request.conversation_id,
+                user_info=user_info,
+                api_key=api_key_str,
+                enable_multi_agent=completion_request.enable_multi_agent,
+                debug_options=effective_debug_options,
+                permission_options=completion_request.permission_options,
+                knowledge_dataset_ids=effective_knowledge_dataset_ids,
+                metadata_dataset_ids=effective_metadata_dataset_ids,
+                request_observability=request_observability,
+            )
+        except Exception:
+            if request_claim is not None:
+                from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
+
+                await chat_request_idempotency.finish(request_claim, status="failed")
+            raise
+        if request_claim is not None:
+            from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
+
+            trace_id = result.get("trace_id") if isinstance(result, dict) else None
+            await chat_request_idempotency.finish(
+                request_claim,
+                status="completed",
+                trace_id=trace_id,
+            )
         return StandardResponse(data=result)
 
 

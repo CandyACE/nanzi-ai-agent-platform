@@ -724,6 +724,7 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
   if (id === undefined || id === null) return;
   upsertTimelineLog(msg, {
     id,
+    parent_id: data.parent_id as string | number | undefined,
     title: data.title === undefined ? undefined : String(data.title),
     details: data.details === undefined ? undefined : String(data.details),
     status: data.status as "pending" | "success" | "error" | "warning" | undefined,

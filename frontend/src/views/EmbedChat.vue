@@ -860,8 +860,13 @@
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
                                                                 />
+                                                                <ErrorDetailCard
+                                                                  v-if="msg.errorDetail?.rawError"
+                                                                  :raw-error="msg.errorDetail.rawError"
+                                                                  :ai-status="msg.errorDetail.aiStatus"
+                                                                />
                                                                 <DatasetCapabilityMenu
-                                                                  v-else-if="msg.datasetNavigation"
+                                                                  v-if="msg.datasetNavigation"
                                                                   :payload="msg.datasetNavigation"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
@@ -1184,7 +1189,8 @@
       <ChatInput
         ref="chatInputRef"
         v-model="userInput"
-        :is-processing="isProcessing || sendInFlight"
+        :is-processing="isProcessing || remoteRunActive"
+        :is-submitting="sendLocked"
         :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="effectiveSlashCommands"
         :allowed-agents="allowedAgents"
@@ -2147,6 +2153,7 @@ import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
+import ErrorDetailCard from "@/components/chat/ErrorDetailCard.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import BrowserPanel from "@/components/embed/BrowserPanel.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
@@ -2161,6 +2168,10 @@ import KnowledgePortalDrawer from "@/components/knowledge/KnowledgePortalDrawer.
 import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
 import CitationPopover from "@/components/CitationPopover.vue";
 import { copyToClipboard as copyTextSecure } from "@/utils/clipboard";
+import {
+  applyStreamErrorMessage,
+  type StreamErrorDetail,
+} from "@/utils/streamErrorPresentation";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import ConfirmModal from "@/components/ConfirmModal.vue";
@@ -2238,6 +2249,9 @@ import {
   todayMonthString,
 } from "@/composables/chat/useSavedReportWorkflow";
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas";
+import { createChatSendGate } from "@/composables/chat/useChatSendGate";
+import { useConversationRunStatus } from "@/composables/chat/useConversationRunStatus";
+import { createClientRequestId } from "@/utils/clientRequestId";
 import {
   USER_MESSAGE_CONTEXT_DIVIDER,
   splitUserMessageContent,
@@ -2275,6 +2289,7 @@ import {
 // --- Types ---
 interface LogEntry {
   id: number | string;
+  parent_id?: string | number;
   name?: string;
   title: string;
   details: string;
@@ -2325,6 +2340,20 @@ interface ChatFile {
   skillMeta?: SkillMeta;
   memoryMeta?: any[];
 }
+
+interface ChatSendSnapshot {
+  content: string;
+  files: ChatFile[];
+  clientRequestId: string;
+  groundingAction?: Record<string, unknown>;
+}
+
+interface ChatSendOverrides {
+  content?: string;
+  files?: ChatFile[];
+  clientRequestId?: string;
+  groundingAction?: Record<string, unknown>;
+}
 interface DatasetCapabilityQuestion {
   label: string;
   query: string;
@@ -2367,6 +2396,7 @@ interface Message {
   trace_id?: string;
   role: "user" | "agent" | "system";
   content: string;
+  errorDetail?: StreamErrorDetail;
   reasoningContent?: string;
   isReasoningExpanded?: boolean;
   files?: ChatFile[];
@@ -2821,6 +2851,7 @@ const closeMessageArtifacts = () => {
   artifactsOpenMsgId.value = "";
 };
 const isProcessing = ref(false);
+const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
 const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | null>(null);
 const bashBannerDismissed = ref(false);
 const showBashBanner = computed(
@@ -3260,13 +3291,13 @@ const resetEmbedThinkingOverrides = () => {
 };
 const switchToAuto = () => {
     if (isRoutingSettingsLocked.value) {
-      showToast("当前链接已锁定指定智能体，无法切换到自动路由", "warning");
+      showToast("当前链接已锁定指定智能体，无法切换到智能委派", "warning");
       return;
     }
     config.routingMode = "auto";
     config.expertAgentId = "";
     void saveRoutingPreference("auto");
-    showToast("已切换为自动路由模式", "success");
+    showToast("已切换为智能委派模式", "success");
 };
 const switchToExpert = (agentId: string) => {
     if (isRoutingSettingsLocked.value) {
@@ -3288,7 +3319,7 @@ const switchToExpert = (agentId: string) => {
 const onModeChange = (mode: string) => {
     saveRoutingSettings();
     if (mode === "auto") {
-        showToast("已切换为自动路由模式", "success");
+        showToast("已切换为智能委派模式", "success");
     }
 };
 const conversationId = ref("");
@@ -3911,6 +3942,28 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
   };
 };
 
+const {
+  remoteRunActive,
+  refresh: refreshRemoteRunStatus,
+  stopPolling: stopRemoteRunPolling,
+} = useConversationRunStatus(async (cid) => {
+  const response = await axios.get(
+    `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
+    { headers: embedAuthHeaders() },
+  );
+  return response.data?.data || {};
+});
+
+const refreshCurrentRunStatus = () => (
+  conversationId.value
+    ? refreshRemoteRunStatus(conversationId.value)
+    : Promise.resolve(false)
+);
+
+watch(conversationId, () => {
+  void refreshCurrentRunStatus();
+}, { immediate: true });
+
 const DOCKER_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_docker_workspace_banner";
 
 const readDockerWorkspaceBannerDismissed = (): boolean => {
@@ -4283,17 +4336,9 @@ const fetchAllowedAgents = async (force = false) => {
                 const saved = savedRoutingPreference.value;
                 const savedAgentAllowed = saved.expert_agent_id
                     && res.data.some((agent: any) => String(agent.id) === saved.expert_agent_id);
-                const mainAgent = res.data.find((agent: any) => {
-                    const agentId = String(agent?.id || "").trim().toLowerCase();
-                    const agentName = String(agent?.name || "").trim().toLowerCase();
-                    return agentId === "main" || agentName === "main";
-                });
                 if (saved.routing_configured && saved.routing_mode === "expert" && savedAgentAllowed) {
                     config.routingMode = "expert";
                     config.expertAgentId = saved.expert_agent_id;
-                } else if (!saved.routing_configured && mainAgent) {
-                    config.routingMode = "expert";
-                    config.expertAgentId = String(mainAgent.id);
                 } else {
                     config.routingMode = "auto";
                     config.expertAgentId = "";
@@ -4819,45 +4864,38 @@ const cancelEdit = () => {
   editContent.value = "";
 };
 const saveAndResend = async () => {
-  if (editingMsgId.value === null) return;
-  const msgIndex = messages.value.findIndex(m => m.id === editingMsgId.value);
-  if (msgIndex === -1) return;
-  const originalMsg = messages.value[msgIndex];
-  if (!originalMsg) return;
-  const newContent = editContent.value.trim();
-  if (!newContent) return;
+  await sendPreparedMessage(async () => {
+    if (editingMsgId.value === null) return null;
+    const msgIndex = messages.value.findIndex(m => m.id === editingMsgId.value);
+    if (msgIndex === -1) return null;
+    const originalMsg = messages.value[msgIndex];
+    if (!originalMsg) return null;
+    const newContent = editContent.value.trim();
+    if (!newContent) return null;
 
-  const remainingMessages = messages.value.slice(0, msgIndex);
-  const keepCount = remainingMessages.filter(isChatContextMessage).length;
+    // 在任何 await 前冻结本次重发的参数，避免编辑框/附件被后续交互改写。
+    const clientRequestId = createClientRequestId();
+    const originalFiles = (originalMsg.files || []).map((file) => ({ ...file }));
+    const remainingMessages = messages.value.slice(0, msgIndex);
+    const keepCount = remainingMessages.filter(isChatContextMessage).length;
 
-  if (!(await truncateServerHistory(keepCount))) return;
+    if (!(await truncateServerHistory(keepCount))) return null;
 
-  // Truncate history: keep up to this message
-  messages.value = remainingMessages;
-  // Reset
-  editingMsgId.value = null;
-  editContent.value = "";
-
-  // Send
-  userInput.value = newContent;
-  if (originalMsg.files?.length && chatInputRef.value) {
-    chatInputRef.value.uploadedFiles = [...originalMsg.files];
-  }
-  await sendMessage();
+    messages.value = remainingMessages;
+    editingMsgId.value = null;
+    editContent.value = "";
+    return { content: newContent, files: originalFiles, clientRequestId };
+  });
 };
 
 const handleAnalyzeDiff = async (question: string) => {
   canvasVisible.value = false;
-  userInput.value = question;
-  await nextTick();
-  sendMessage();
+  await sendMessage({ content: question });
 };
 
 const handleAnalyzeCodeOutput = async (question: string) => {
   canvasVisible.value = false;
-  userInput.value = question;
-  await nextTick();
-  sendMessage();
+  await sendMessage({ content: question });
 };
 
 const handlePreviewImageUrl = (url: string, filename: string) => {
@@ -6509,7 +6547,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   if (normalizedCmd === "/switch_to_auto" || normalizedCmd === "/switch_agent_auto") {
     userInput.value = "";
     if (isRoutingSettingsLocked.value) {
-      showToast("当前链接已锁定指定智能体，无法切换到自动路由", "warning");
+      showToast("当前链接已锁定指定智能体，无法切换到智能委派", "warning");
       return true;
     }
     switchToAuto();
@@ -6610,25 +6648,24 @@ const exportData = async (traceId: string, format = 'xlsx') => {
   }
 };
 const regenerate = async () => {
-  if (isProcessing.value) return;
-  // Find last user message
-  const lastUserMsg = [...messages.value]
-    .reverse()
-    .find((m) => m.role === "user");
-  if (lastUserMsg) {
+  await sendPreparedMessage(async () => {
+    const lastUserMsg = [...messages.value]
+      .reverse()
+      .find((m) => m.role === "user");
+    if (!lastUserMsg) return null;
     const userIndex = messages.value.findIndex((message) => message.id === lastUserMsg.id);
     const remainingMessages = userIndex >= 0
       ? messages.value.slice(0, userIndex)
       : [...messages.value];
     const keepCount = remainingMessages.filter(isChatContextMessage).length;
-    if (!(await truncateServerHistory(keepCount))) return;
+    const content = splitUserMessageContent(lastUserMsg.content).userPart.trim();
+    if (!content && !lastUserMsg.files?.length) return null;
+    const files = (lastUserMsg.files || []).map((file) => ({ ...file }));
+    const clientRequestId = createClientRequestId();
+    if (!(await truncateServerHistory(keepCount))) return null;
     messages.value = remainingMessages;
-    userInput.value = splitUserMessageContent(lastUserMsg.content).userPart;
-    if (lastUserMsg.files?.length && chatInputRef.value) {
-      chatInputRef.value.uploadedFiles = [...lastUserMsg.files];
-    }
-    sendMessage();
-  }
+    return { content, files, clientRequestId };
+  });
 };
 const handleFeedback = async (msg: Message, type: "up" | "down") => {
   const oldFeedback = msg.feedback;
@@ -6694,6 +6731,8 @@ const stopGeneration = () => {
     void cancelConversationRun(conversationId.value, {
       traceId: lastMsg?.trace_id,
       headers: embedAuthHeaders(),
+    }).finally(() => {
+      void refreshCurrentRunStatus();
     });
   }
   if (abortController) {
@@ -6872,42 +6911,37 @@ const handleChatBIResultAction = async (
 
 const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send", sourceContent?: string) => {
   if (!content) return;
-  if (action === "send" && isProcessing.value) return;
-  if (action === "send" && await handleSystemCommand(content)) return;
+  if (action === "send" && (isProcessing.value || remoteRunActive.value || sendLocked.value)) return;
   const selectedSource = sourceContent?.trim();
-  userInput.value = selectedSource
+  const nextContent = selectedSource
     ? `${content}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
     : content;
   if (action === "send") {
-    sendMessage();
+    await sendMessage({ content: nextContent });
+  } else {
+    userInput.value = nextContent;
   }
 };
-
-const pendingGroundingAction = ref<Record<string, unknown> | null>(null);
 
 const handleGroundingAction = async (
   payload: GroundingBlockedPayload | undefined,
   action: GroundingBlockedAction,
 ) => {
-  if (!payload || isProcessing.value) return;
+  if (!payload || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
   if (action.kind === "grounding_retry") {
-    pendingGroundingAction.value = {
+    const groundingAction = {
       ...(action.payload || {}),
       type: "retry",
     };
-    userInput.value = payload.retry_query;
-    await sendMessage();
-    pendingGroundingAction.value = null;
+    await sendMessage({ content: payload.retry_query, groundingAction });
     return;
   }
   if (action.kind === "grounding_method") {
-    pendingGroundingAction.value = {
+    const groundingAction = {
       ...(action.payload || {}),
       type: "method",
     };
-    userInput.value = String(action.payload?.message || "");
-    await sendMessage();
-    pendingGroundingAction.value = null;
+    await sendMessage({ content: String(action.payload?.message || ""), groundingAction });
     return;
   }
   if (action.kind === "send_message") {
@@ -7203,6 +7237,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
         : currentLog.execution_time_ms);
     msg.logs[existingIdx] = {
       ...currentLog,
+      parent_id: data.parent_id ?? currentLog.parent_id,
       title: preserveRouteSelectionTitle ? currentLog.title : (data.title || currentLog.title),
       details: data.details ?? currentLog.details,
       status: nextStatus,
@@ -7228,6 +7263,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
   }
   msg.logs.push({
     id: logId,
+    parent_id: data.parent_id,
     title: data.title || "Log Info",
     details: data.details || "",
     status: (data.status as any) || "success",
@@ -7256,7 +7292,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
       if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
       msg.isThinking = false;
-      msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
+      applyStreamErrorMessage(msg, data);
     } else if (
       data.content &&
       data.type !== "reasoning_content" &&
@@ -7292,6 +7328,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       status: "success",
       isRouter: true,
       category: "router",
+      parent_id: data.parent_id || "route:target_config",
       execution_time_ms: data.execution_time_ms ?? null,
     });
   } else if (data.type === "meta") {
@@ -7306,7 +7343,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
   } else if (data.type === "error") {
     if (msg.pendingPermission) msg.pendingPermission.status = "error";
     msg.isThinking = false;
-    msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
+    applyStreamErrorMessage(msg, data);
   } else if (data.content) {
     const piece = sanitizeStreamContent(String(data.content || ""));
     if (piece) {
@@ -7320,7 +7357,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
 
 const submitPendingExternalExecution = async (msg: Message) => {
   const pending = msg.pendingExternalExecution;
-  if (!pending || pending.status !== "pending") return;
+  if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
   isProcessing.value = true;
   msg.isThinking = true;
@@ -7404,7 +7441,7 @@ const submitUserQuestion = async (
 
 const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
   const pending = msg.pendingPermission;
-  if (!pending || pending.status !== "pending") return;
+  if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
   isProcessing.value = true;
   if (confirmed) {
@@ -7553,26 +7590,38 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
   return false;
 };
 
-const sendInFlight = ref(false);
+const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapshot => ({
+  content: String(overrides.content ?? userInput.value).trim(),
+  files: overrides.files
+    ? overrides.files.map((file) => ({ ...file }))
+    : (chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [])
+        .map((file) => ({ ...file })),
+  clientRequestId: overrides.clientRequestId || createClientRequestId(),
+  groundingAction: overrides.groundingAction ? { ...overrides.groundingAction } : undefined,
+});
 
-const sendMessage = async () => {
-  if (sendInFlight.value) return;
-  sendInFlight.value = true;
-  try {
-    return await sendMessageInternal();
-  } finally {
-    sendInFlight.value = false;
-  }
-};
+const sendPreparedMessage = async (
+  prepare: () => Promise<ChatSendSnapshot | null>,
+) => runSendExclusive(async () => {
+  if (isProcessing.value || remoteRunActive.value) return;
+  const snapshot = await prepare();
+  if (!snapshot) return;
+  return sendMessageInternal(snapshot);
+});
 
-const sendMessageInternal = async () => {
-  const content = userInput.value.trim();
-  const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
-  if ((!content && files.length === 0) || isProcessing.value) return;
+const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusive(async () => {
+  if (isProcessing.value || remoteRunActive.value) return;
+  return sendMessageInternal(captureSendSnapshot(overrides));
+});
+
+const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
+  const { content, files } = snapshot;
+  if ((!content && files.length === 0) || isProcessing.value || remoteRunActive.value) return;
 
   // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
   const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
   forceDataQueryAgentOnce.value = false;
+  const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
 
   const quotaBlock = await ensureCanSend();
   if (quotaBlock) {
@@ -7588,7 +7637,6 @@ const sendMessageInternal = async () => {
   }
 
   const messageContent = files.length > 0 ? appendAttachmentContext(content, files) : content;
-  const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
 
   // 全局兜底：确保一定存在会话 ID
   if (!conversationId.value) {
@@ -7645,6 +7693,8 @@ const sendMessageInternal = async () => {
   // Start thought timer
   startThoughtTimer(agentMsg.value);
   // 3. API Call
+  // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
+  remoteRunActive.value = true;
   abortController = new AbortController();
   try {
     const mountedKnowledgeDatasetIds = resourceScope.value.knowledge_bases.map((item: any) => String(item.id || '').trim()).filter(Boolean);
@@ -7684,10 +7734,8 @@ const sendMessageInternal = async () => {
     if (turnMetadataDatasetIds.length > 0) {
       body.metadata_dataset_ids = turnMetadataDatasetIds;
     }
-    if (pendingGroundingAction.value) {
-      body.grounding_action = pendingGroundingAction.value;
-      pendingGroundingAction.value = null;
-    }
+    if (snapshot.groundingAction) body.grounding_action = snapshot.groundingAction;
+    body.client_request_id = snapshot.clientRequestId;
     const headers: any = {
       "Content-Type": "application/json",
     };
@@ -7725,7 +7773,13 @@ const sendMessageInternal = async () => {
         try {
           const data = JSON.parse(dataStr);
           applyStreamTraceId(agentMsg.value, data);
-          if (data.type === "browser_session") {
+          if (data.type === "duplicate_request") {
+            agentMsg.value.isThinking = false;
+            (agentMsg.value as any).status = "duplicate_request";
+            agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
+            remoteRunActive.value = true;
+            void refreshCurrentRunStatus();
+          } else if (data.type === "browser_session") {
             const openingGeneration = browserOpenGeneration;
             void attachBrowserSession(
               String(data.session_id || ""),
@@ -7755,6 +7809,7 @@ const sendMessageInternal = async () => {
               status: "success",
               isRouter: true,
               category: "router",
+              parent_id: data.parent_id || "route:target_config",
               execution_time_ms: data.execution_time_ms ?? null,
             });
           } else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
@@ -7809,7 +7864,7 @@ const sendMessageInternal = async () => {
           } else if (data.type === "error") {
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "error";
-            agentMsg.value.content += "\n\n> ❌ **服务异常**: " + (data.content || "未知错误");
+            applyStreamErrorMessage(agentMsg.value, data);
           } else if (data.type === "answer" || data.type === "answer_delta" || data.content) {
             const piece = sanitizeStreamContent(String(data.content || ""));
             if (piece) {
@@ -7830,10 +7885,9 @@ const sendMessageInternal = async () => {
             if (agentMsg.value.content) {
               agentMsg.value.isThinking = false;
             }
-          } else if (data.status === "error") {
+          } else if (data.type === "error" || data.status === "error") {
             agentMsg.value.isThinking = false;
-            const errText = String(data.content || data.message || "未知错误").trim();
-            agentMsg.value.content += `\n\n> ❌ **服务异常**: ${errText}`;
+            applyStreamErrorMessage(agentMsg.value, data);
           }
           scrollToBottom();
         } catch (e) {
@@ -7865,6 +7919,7 @@ const sendMessageInternal = async () => {
     }
   } finally {
     isProcessing.value = false;
+    void refreshCurrentRunStatus();
     agentMsg.value.isThinking = false;
     void refreshQuota();
     void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
@@ -8162,8 +8217,10 @@ onMounted(() => {
   const onVisibilityChange = () => {
     if (document.visibilityState === "visible") {
       clearVisibilitySyncTimer();
+      void refreshCurrentRunStatus();
       syncLatestSessionHistory(1, 15);
     } else {
+      stopRemoteRunPolling();
       clearVisibilitySyncTimer();
     }
   };

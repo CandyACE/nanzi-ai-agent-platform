@@ -74,6 +74,8 @@ const REASONING_EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string; d
 const props = defineProps<{
   modelValue: string;
   isProcessing: boolean;
+  /** 发送前置检查/历史同步阶段；此时不能显示“停止生成”。 */
+  isSubmitting?: boolean;
   showShortcuts: boolean;
   slashCommands: any[];
   allowedAgents: any[];
@@ -118,6 +120,8 @@ const props = defineProps<{
   /** Docker 沙箱错误信息 */
   dockerWorkspaceError?: string;
 }>();
+
+const isInteractionLocked = computed(() => props.isProcessing || props.isSubmitting === true);
 
 const contextUsagePercent = computed(() => {
   const current = Number(props.contextUsage?.estimated_current_tokens || 0);
@@ -526,7 +530,7 @@ const handleDrop = (_e: DragEvent, targetCmd: any, type: string) => {
 
 watch(() => props.modelValue, (val) => { if (!val && inputRef.value) inputRef.value.style.height = "auto"; });
 
-watch(() => props.isProcessing, (processing) => {
+watch(isInteractionLocked, (processing) => {
   if (processing) {
     showPlusMenu.value = false;
     showApprovalMenu.value = false;
@@ -538,7 +542,7 @@ watch(() => props.isProcessing, (processing) => {
 });
 
 const toggleApprovalMenu = () => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   const next = !showApprovalMenu.value;
   showApprovalMenu.value = next;
   if (next) {
@@ -560,7 +564,7 @@ const handleFocus = () => {
 };
 
 const handleInput = (e: Event) => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   const target = e.target as HTMLTextAreaElement;
   const val = target.value;
   emit('update:modelValue', val);
@@ -597,7 +601,7 @@ const handleInput = (e: Event) => {
 };
 
 const handleKeydown = (e: KeyboardEvent) => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   if (e.isComposing || isComposing.value) return;
   if (showMentionList.value && mentionListRef.value && mentionListRef.value.handleKeydown(e)) return;
   if (showCommandMenu.value) {
@@ -614,7 +618,7 @@ const handleKeydown = (e: KeyboardEvent) => {
 };
 
 const selectCommand = (cmd: any) => {
-  if (props.isProcessing || !cmd) return;
+  if (isInteractionLocked.value || !cmd) return;
   if (cmd.disabled) return;
   if (String(cmd.id).startsWith('sys_')) {
     emit('system-command', cmd.command);
@@ -656,7 +660,7 @@ const handleMentionSelectAuto = () => {
 };
 
 const handleShortcutClick = (cmd: any) => {
-    if (props.isProcessing || !cmd) return;
+    if (isInteractionLocked.value || !cmd) return;
     if (cmd.disabled) return;
     if (String(cmd.id).startsWith('sys_')) {
         emit('system-command', cmd.command);
@@ -668,7 +672,7 @@ const handleShortcutClick = (cmd: any) => {
 };
 
 const openDataPortalFromPlusMenu = () => {
-    if (props.isProcessing) return;
+    if (isInteractionLocked.value) return;
     showPlusMenu.value = false;
     showSkillCascade.value = false;
     showExpertCascade.value = false;
@@ -865,7 +869,7 @@ const updateModelDropdownPosition = () => {
 };
 
 const toggleModelDropdown = () => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   const willOpen = !showModelDropdown.value;
   if (willOpen) {
     // 每次打开先回模型列表；桌面不自动展开思考侧栏
@@ -947,7 +951,7 @@ const updateContextUsageDetailsPlacement = () => {
 };
 
 const toggleContextUsageDetails = async () => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   closeContextCompactionDetails();
   showContextUsageDetails.value = !showContextUsageDetails.value;
   if (showContextUsageDetails.value) {
@@ -976,7 +980,7 @@ const updateContextCompactionDetailsPlacement = () => {
 };
 
 const toggleContextCompactionDetails = async () => {
-  if (props.isProcessing || props.contextCompactionEnabled !== true) return;
+  if (isInteractionLocked.value || props.contextCompactionEnabled !== true) return;
   closeContextUsageDetails();
   showContextCompactionDetails.value = !showContextCompactionDetails.value;
   if (showContextCompactionDetails.value) {
@@ -1219,13 +1223,13 @@ const expertCapsuleLabel = computed(() => {
       || currentExpertAgent.value?.name
       || "专家";
   }
-  return isMobileViewport.value ? "自动" : "全能助手";
+  return "智能委派";
 });
 
 const approvalCapsuleLabel = computed(() => activeApprovalLabel.value);
 
 const inputPlaceholder = computed(() => {
-  if (props.isProcessing) return "";
+  if (isInteractionLocked.value) return "";
   if (props.lockExpertAgent) {
     return isMobileViewport.value ? "今天帮你做些什么？" : "今天帮你做些什么？ / 调用技能与指令";
   }
@@ -1234,7 +1238,7 @@ const inputPlaceholder = computed(() => {
 });
 
 const togglePlusMenu = () => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   showPlusMenu.value = !showPlusMenu.value;
   if (showPlusMenu.value) {
     showApprovalMenu.value = false;
@@ -1251,7 +1255,7 @@ const togglePlusMenu = () => {
 };
 
 const toggleExpertSelector = () => {
-  if (props.isProcessing || props.lockExpertAgent) return;
+  if (isInteractionLocked.value || props.lockExpertAgent) return;
   showExpertSelector.value = !showExpertSelector.value;
   if (showExpertSelector.value) {
     showPlusMenu.value = false;
@@ -1407,7 +1411,7 @@ const removeFile = (index: number) => {
 
 // 核心文件上传逻辑
 const uploadSingleFile = async (file: File) => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   if (file.size > 20 * 1024 * 1024) {
     alert("文件大小不能超过 20MB");
     return;
@@ -1451,7 +1455,7 @@ const handleFileChange = async (e: Event) => {
 
 // 拖拽与粘贴
 const handlePaste = async (e: ClipboardEvent) => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   const items = e.clipboardData?.items;
   if (!items) return;
   for (const item of Array.from(items)) {
@@ -1466,7 +1470,7 @@ const handlePaste = async (e: ClipboardEvent) => {
 };
 
 const handleDropFile = async (e: DragEvent) => {
-  if (props.isProcessing) return;
+  if (isInteractionLocked.value) return;
   e.preventDefault();
   const files = e.dataTransfer?.files;
   if (!files) return;
@@ -1649,15 +1653,15 @@ defineExpose({
             : 'border-gray-200 dark:border-gray-700'"
         >
             <!-- 三点跳动 Loading 指示器 -->
-            <div v-if="isProcessing" class="absolute top-3 left-3 flex items-center space-x-1.5 pointer-events-none z-20">
+            <div v-if="isInteractionLocked" class="absolute top-3 left-3 flex items-center space-x-1.5 pointer-events-none z-20">
                 <span class="ai-dot" style="animation-delay: 0ms"></span>
                 <span class="ai-dot" style="animation-delay: 150ms"></span>
                 <span class="ai-dot" style="animation-delay: 300ms"></span>
-                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">AI 正在生成回复…</span>
+                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? 'AI 正在生成回复…' : isSubmitting ? '准备发送…' : '' }}</span>
             </div>
 
             <div
-              v-if="showCommandMenu && filteredCommands.length > 0 && !isProcessing"
+              v-if="showCommandMenu && filteredCommands.length > 0 && !isInteractionLocked"
               class="absolute bottom-full left-0 right-0 z-[100] mb-2 flex max-h-72 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl animate-fade-in-up dark:border-gray-700 dark:bg-gray-800 sm:max-w-sm"
             >
               <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-600 dark:bg-gray-700">
@@ -1693,8 +1697,8 @@ defineExpose({
               </div>
             </div>
 
-            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="[
-              isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100',
+            <textarea ref="inputRef" :value="modelValue" :disabled="isInteractionLocked" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="[
+              isInteractionLocked ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100',
               contextUsage && contextUsage.physical_window ? 'pr-24' : '',
             ]" :placeholder="inputPlaceholder"></textarea>
 
@@ -1850,7 +1854,7 @@ defineExpose({
                           aria-controls="context-compaction-details"
                           :aria-label="`上下文压缩 ${contextCompactionCount} 次`"
                           :title="`上下文压缩 ${contextCompactionCount} 次`"
-                          :disabled="isProcessing"
+                          :disabled="isInteractionLocked"
                           @click.stop="toggleContextCompactionDetails"
                         >
                           压缩 {{ contextCompactionCount }} 次
@@ -1911,7 +1915,7 @@ defineExpose({
                                 v-if="(dockerWorkspaceStatus || 'idle') === 'idle' || (dockerWorkspaceStatus || 'idle') === 'error'"
                                 type="button"
                                 class="rounded bg-indigo-600 px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition-all disabled:opacity-50"
-                                :disabled="isProcessing"
+                                :disabled="isInteractionLocked"
                                 :title="(dockerWorkspaceStatus || 'idle') === 'error' ? (dockerWorkspaceError || '重试启动 Docker 沙箱') : '启动当前用户的 Docker 沙箱容器'"
                                 @click.stop="emit('start-docker-workspace')"
                               >
@@ -2039,7 +2043,7 @@ defineExpose({
             <div class="relative z-20 mt-1 flex min-h-7 flex-nowrap items-center gap-0.5 sm:gap-1.5">
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
                 <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
-                    <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
+                    <button @click="togglePlusMenu" :disabled="isInteractionLocked" class="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isInteractionLocked }" title="添加附件或上下文">
                         <svg class="w-5 h-5 sm:w-4 sm:h-4 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
                         </svg>
@@ -2386,12 +2390,12 @@ defineExpose({
                     </Teleport>
                 </div>
 
-                <!-- Expert routing capsule (桌面端；移动端走加号「专家中心」；URL 锁定时隐藏) -->
+                <!-- 智能委派胶囊 (桌面端；移动端走加号「专家中心」；URL 锁定时隐藏) -->
                 <div v-if="!isMobileViewport && !lockExpertAgent" ref="expertSelectorRef" class="relative flex-shrink-0 z-30">
                     <button
                       type="button"
-                      :disabled="isProcessing"
-                      :title="isExpertMode ? `当前专家：${expertCapsuleLabel}` : '全能助手（自动路由）'"
+                      :disabled="isInteractionLocked"
+                      :title="isExpertMode ? `当前专家：${expertCapsuleLabel}` : '智能委派：由主助手处理或委派其他专家'"
                       class="flex h-8 sm:h-7 items-center gap-0.5 sm:gap-0.5 rounded-full px-1.5 sm:px-2 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 max-w-[5.25rem] sm:max-w-[11rem]"
                       :class="isExpertMode
                         ? 'bg-primary/10 text-primary hover:bg-primary/15 dark:bg-primary/20 dark:hover:bg-primary/25'
@@ -2508,12 +2512,12 @@ defineExpose({
                     <button
                       ref="approvalTriggerRef"
                       type="button"
-                      :disabled="isProcessing"
+                      :disabled="isInteractionLocked"
                       :title="`工具批准：${activeApprovalLabel}`"
                       class="flex h-7 max-w-[7.25rem] sm:max-w-none items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                       :class="[
                         approvalTriggerToneClass,
-                        showApprovalMenu && !isProcessing
+                        showApprovalMenu && !isInteractionLocked
                           ? (activeApprovalMode === 'ask'
                             ? 'bg-gray-100 dark:bg-gray-700/70'
                             : 'ring-1 ring-current/25 shadow-sm')
@@ -2677,7 +2681,7 @@ defineExpose({
                 <div ref="modelDropdownRef" class="relative flex-shrink min-w-0">
                     <button
                       ref="modelDropdownTriggerRef"
-                      :disabled="isProcessing"
+                      :disabled="isInteractionLocked"
                       @click="toggleModelDropdown"
                       class="relative flex h-7 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(46vw,10.5rem)] sm:max-w-[280px]"
                       :title="selectedModel ? `覆盖模型: ${modelLabel}${thinkingSummaryLabel ? ` · ${thinkingSummaryLabel}` : ''}` : '使用智能体默认模型'"
@@ -2896,7 +2900,7 @@ defineExpose({
                     </transition>
                 </div>
 
-                <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !canSend" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : '发送'">
+                <button type="button" @click="isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" :disabled="isSubmitting || (!isProcessing && !canSend)" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : isSubmitting ? '准备发送…' : '发送'">
                     <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
                     <svg v-else class="w-4 h-4 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M5 12h14M13 6l6 6-6 6" /></svg>
                 </button>
