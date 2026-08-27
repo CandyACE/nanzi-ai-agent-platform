@@ -134,8 +134,11 @@ process_command() {
 
 is_managed_process() {
     PROCESS_COMMAND=$(process_command "$1") || return 1
+    # 本项目受管 uvicorn 判定：监听目标端口、入口为 app.main:app、由 Python 解释器启动。
+    # 不再强制要求绝对路径 .venv/bin/python，兼容相对路径（.venv/bin/python）与包装启动
+    # （python3 -m uvicorn）等实际形态；端口 + 入口双约束已足以与同机无关进程区分。
     case "$PROCESS_COMMAND" in
-        *"$MANAGED_PYTHON_CMD"*uvicorn*app.main:app*--port*"$PORT"*)
+        *uvicorn*app.main:app*--port*"$PORT"*)
             return 0
             ;;
         *"$MANAGED_PYTHON_CMD"*multiprocessing*)
@@ -148,23 +151,44 @@ is_managed_process() {
 }
 
 get_port_pids() {
-    if ! command -v lsof >/dev/null 2>&1; then
-        return 2
+    # 依次尝试 lsof → ss → fuser 探测监听目标端口的 PID。
+    # 任一工具可用且执行成功即返回其结果（可能为空 = 端口无监听）。全部不可用返回 2。
+    if command -v lsof >/dev/null 2>&1; then
+        LSOF_STATUS=0
+        LSOF_OUTPUT=$(lsof -tiTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null) || LSOF_STATUS=$?
+        if [ "$LSOF_STATUS" -le 1 ]; then
+            printf '%s\n' "$LSOF_OUTPUT"
+            return 0
+        fi
     fi
 
-    LSOF_STATUS=0
-    LSOF_OUTPUT=$(lsof -tiTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null) || LSOF_STATUS=$?
-    if [ "$LSOF_STATUS" -gt 1 ]; then
-        return 2
+    if command -v ss >/dev/null 2>&1; then
+        SS_STATUS=0
+        SS_OUTPUT=$(ss -ltn "sport = :${PORT}" 2>/dev/null) || SS_STATUS=$?
+        if [ "$SS_STATUS" -le 1 ]; then
+            SS_PIDS=$(printf '%s\n' "$SS_OUTPUT" | grep -oE 'pid=[0-9]+' | sed 's/pid=//' || true)
+            printf '%s\n' "$SS_PIDS"
+            return 0
+        fi
     fi
-    printf '%s\n' "$LSOF_OUTPUT"
+
+    if command -v fuser >/dev/null 2>&1; then
+        FUSER_OUTPUT=$(fuser "${PORT}/tcp" 2>/dev/null || true)
+        if [ -n "$FUSER_OUTPUT" ]; then
+            printf '%s\n' "$FUSER_OUTPUT"
+        fi
+        return 0
+    fi
+
+    return 2
 }
 
-require_lsof() {
-    if ! command -v lsof >/dev/null 2>&1; then
-        echo -e "${RED}❌ 未找到 lsof，无法安全检查端口占用${NC}" >&2
-        return 1
+require_port_probe() {
+    if command -v lsof >/dev/null 2>&1 || command -v ss >/dev/null 2>&1 || command -v fuser >/dev/null 2>&1; then
+        return 0
     fi
+    echo -e "${RED}❌ 未找到 lsof/ss/fuser，无法安全检查端口占用${NC}" >&2
+    return 1
 }
 
 require_ps() {
@@ -250,7 +274,7 @@ health_check() {
 
 status_service() {
     validate_port || return 1
-    require_lsof || return 1
+    require_port_probe || return 1
     require_ps || return 1
 
     RUNNING_PID=""
@@ -294,7 +318,13 @@ status_service() {
     MANAGED_LISTENER_PID=$(find_managed_listener_pid || true)
     if [ -z "$MANAGED_LISTENER_PID" ]; then
         if [ -n "$PORT_PIDS" ]; then
-            echo -e "${YELLOW}⚠️ 后台服务未受管，但端口 ${PORT} 被其他进程占用${NC}"
+            echo -e "${YELLOW}⚠️ 后台服务未受管，但端口 ${PORT} 被监听中（PID: ${PORT_PIDS}）${NC}"
+            if command -v ps >/dev/null 2>&1; then
+                for o_pid in $PORT_PIDS; do
+                    echo -e "${YELLOW}   ➜ PID ${o_pid}: $(process_command "$o_pid")${NC}"
+                done
+            fi
+            echo -e "${YELLOW}   ➜ 若该进程是本项目 uvicorn（如以相对路径/别名启动），请在控制台核对命令行后手动处理${NC}"
         else
             echo -e "${YELLOW}ℹ️ 后台服务未运行${NC}"
         fi
@@ -395,7 +425,7 @@ stop_managed_process() {
 
 stop_service() {
     validate_port || return 1
-    require_lsof || return 1
+    require_port_probe || return 1
     require_ps || return 1
 
     PORT_PIDS=""
@@ -437,11 +467,18 @@ stop_service() {
     fi
 
     if [ -z "$TARGET_PIDS" ]; then
-        if ! require_lsof; then
+        if ! require_port_probe; then
             return 1
         fi
-        if [ -n "$(get_port_pids)" ]; then
-            echo -e "${RED}❌ 未找到受管后台服务；端口 ${PORT} 被其他进程占用，未执行停止${NC}" >&2
+        FALLBACK_PIDS=$(get_port_pids || true)
+        if [ -n "$FALLBACK_PIDS" ]; then
+            echo -e "${RED}❌ 未找到受管后台服务；端口 ${PORT} 被监听中（PID: ${FALLBACK_PIDS}），未执行停止${NC}" >&2
+            if command -v ps >/dev/null 2>&1; then
+                for o_pid in $FALLBACK_PIDS; do
+                    echo -e "${RED}   ➜ PID ${o_pid}: $(process_command "$o_pid")${NC}" >&2
+                done
+            fi
+            echo -e "${YELLOW}   ➜ 若该进程是本项目 uvicorn（如以相对路径/别名启动），请核对命令行后确认处理${NC}" >&2
             return 1
         fi
         rm -f "$PID_FILE"

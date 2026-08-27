@@ -275,3 +275,139 @@ def test_dev_sh_rejects_unknown_command_without_bootstrap(tmp_path: Path):
     assert result.returncode != 0
     assert "未知参数：restart" in result.stderr
     assert "正在准备 uv" not in result.stdout
+
+
+def _install_custom_probe_command(fake_bin: Path, pid: int, state_file: Path, command: str) -> None:
+    """Install fake ps/lsof that report a listener with a custom command line."""
+    _write_executable(
+        fake_bin / "ps",
+        f"""#!/bin/sh
+case "$*" in
+  *"stat="*)
+    if [ -e '{state_file}' ]; then
+      printf '%s\\n' 'S'
+    else
+      printf '%s\\n' 'Z'
+    fi
+    exit 0
+    ;;
+esac
+if [ -e '{state_file}' ] && kill -0 {pid} 2>/dev/null; then
+  printf '%s\\n' '{command}'
+fi
+""",
+    )
+    _write_executable(
+        fake_bin / "lsof",
+        f"""#!/bin/sh
+if [ -e '{state_file}' ] && kill -0 {pid} 2>/dev/null; then
+  printf '%s\\n' '{pid}'
+fi
+""",
+    )
+    _write_executable(
+        fake_bin / "curl",
+        """#!/bin/sh
+printf '%s\\n' '{"status":"ok"}'
+""",
+    )
+
+
+def test_dev_sh_stop_matches_relative_python_cmd(tmp_path: Path):
+    """A uvicorn started via a relative .venv path must still be recognized and stopped."""
+    managed_process, state_file = _start_managed_probe_process(tmp_path)
+    try:
+        repo, fake_bin, home = _prepare_repo(tmp_path, managed_process.pid)
+        # Command uses the relative venv path form (mirrors real `.venv/bin/python`).
+        _install_custom_probe_command(
+            fake_bin,
+            managed_process.pid,
+            state_file,
+            ".venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8123 --reload",
+        )
+
+        result = _run_command(repo, fake_bin, home, "stop")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "后台服务已停止" in result.stdout, result.stdout
+        assert not (repo / ".dev-server.pid").exists()
+        managed_process.wait(timeout=5)
+    finally:
+        state_file.unlink(missing_ok=True)
+        if managed_process.poll() is None:
+            managed_process.terminate()
+        managed_process.wait(timeout=5)
+
+
+def test_dev_sh_stop_matches_wrapped_python_change_cmd(tmp_path: Path):
+    """A uvicorn started through `python3 -m uvicorn` (no venv path in argv) is still managed."""
+    managed_process, state_file = _start_managed_probe_process(tmp_path)
+    try:
+        repo, fake_bin, home = _prepare_repo(tmp_path, managed_process.pid)
+        _install_custom_probe_command(
+            fake_bin,
+            managed_process.pid,
+            state_file,
+            "python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8123 --reload",
+        )
+
+        result = _run_command(repo, fake_bin, home, "stop")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "后台服务已停止" in result.stdout, result.stdout
+        assert not (repo / ".dev-server.pid").exists()
+        managed_process.wait(timeout=5)
+    finally:
+        state_file.unlink(missing_ok=True)
+        if managed_process.poll() is None:
+            managed_process.terminate()
+        managed_process.wait(timeout=5)
+
+
+def test_dev_sh_probe_uses_ss_when_lsof_absent(tmp_path: Path):
+    """When lsof is unavailable, status should fall back to `ss` to find the listener PID."""
+    managed_process, state_file = _start_managed_probe_process(tmp_path)
+    try:
+        repo, fake_bin, home = _prepare_repo(tmp_path, managed_process.pid)
+        # Install ps/curl probes, but NO lsof in fake_bin. Provide an `ss` fake instead.
+        _write_executable(
+            fake_bin / "ps",
+            f"""#!/bin/sh
+case "$*" in
+  *"stat="*)
+    if [ -e '{state_file}' ]; then printf '%s\\n' 'S'; else printf '%s\\n' 'Z'; fi
+    exit 0
+    ;;
+esac
+if [ -e '{state_file}' ] && kill -0 {managed_process.pid} 2>/dev/null; then
+  printf '%s\\n' '{repo}/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8123 --reload'
+fi
+""",
+        )
+        _write_executable(
+            fake_bin / "curl",
+            """#!/bin/sh
+printf '%s\\n' '{"status":"ok"}'
+""",
+        )
+        _write_executable(
+            fake_bin / "ss",
+            f"""#!/bin/sh
+if [ -e '{state_file}' ] && kill -0 {managed_process.pid} 2>/dev/null; then
+  printf '%s\\n' 'users:(("python",pid={managed_process.pid},fd=3))'
+fi
+""",
+        )
+        # Ensure no lsof exists on the probe's PATH.
+        assert not (fake_bin / "lsof").exists()
+
+        result = _run_command(repo, fake_bin, home, "status")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "后台服务正在运行" in result.stdout, result.stdout
+        assert f"PID: {managed_process.pid}" in result.stdout, result.stdout
+    finally:
+        state_file.unlink(missing_ok=True)
+        if managed_process.poll() is None:
+            managed_process.terminate()
+        managed_process.wait(timeout=5)

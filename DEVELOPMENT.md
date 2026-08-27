@@ -121,7 +121,7 @@ npm install
 ./dev.sh stop
 ```
 
-`status` 与 `stop` 会直接读取 `.env` 中的 `API_SERVICE_PORT`（默认 `8001`），不会执行 Python 依赖准备或前端构建。脚本只会停止 PID 文件或端口探测结果能够确认属于本项目 Uvicorn 的进程；无法确认归属时会拒绝停止并提示端口占用。
+`status` 与 `stop` 会直接读取 `.env` 中的 `API_SERVICE_PORT`（默认 `8001`），不会执行 Python 依赖准备或前端构建。端口监听探测优先使用 `lsof`，缺失时自动回退到 `ss`/`fuser`；脚本能识别以绝对/相对 `.venv` 路径或 `python3 -m uvicorn` 等形态启动的本项目 Uvicorn。脚本只会停止 PID 文件或端口探测结果能够确认属于本项目 Uvicorn 的进程；若仍无法确认归属（或确实被其他进程占用），会列出监听 PID 及命令行提示，并拒绝停止以避免误杀。
 
 **运行输出示例（后续启动，已有 `.venv` 且 `requirements.txt` 未变化）**：
 

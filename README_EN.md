@@ -274,7 +274,7 @@ For background development, use the lifecycle commands below:
 ./dev.sh stop
 ```
 
-`status` and `stop` do not reinstall dependencies or rebuild the frontend. If the port is occupied by a process that cannot be confirmed as this project's Uvicorn service, the script refuses to terminate it.
+`status` and `stop` never reinstall dependencies or rebuild the frontend. Port probing prefers `lsof` and falls back to `ss`/`fuser` when `lsof` is absent. The script recognizes this project's Uvicorn started via an absolute or relative `.venv` path, or as `python3 -m uvicorn`; if ownership still cannot be confirmed (or the port is genuinely held by another process), it lists the listening PID and command line and refuses to kill it so the situation can be inspected manually.
 
 The startup banner also prints uv, Python target version, virtual environment, PyPI mirror, `DATABASE_TYPE`, database address, and Redis address information. Database and Redis passwords are not printed as separate fields. These values only describe the active configuration; they do not verify database or Redis connectivity.
 
