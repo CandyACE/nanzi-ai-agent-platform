@@ -106,6 +106,23 @@ npm install
 3. **编译前端**：进入 `frontend` 目录并运行 `npx vite build` 编译前端静态资源。
 4. **启动后端**：使用 `.venv/bin/python` 以热重载模式（`--reload`）前台启动后端 `uvicorn` 服务，并在终端前台显示日志，极大地方便了编译与启动日志排查。
 
+#### 后台启动与生命周期管理
+
+需要释放当前终端时，可以使用后台模式：
+
+```bash
+# 后台启动，服务 PID 保存到项目根目录的 .dev-server.pid
+./dev.sh -d
+
+# 查看后台服务是否运行：PID、端口监听和 /health 健康检查
+./dev.sh status
+
+# 停止后台服务：先优雅停止，超时后再强制停止
+./dev.sh stop
+```
+
+`status` 与 `stop` 会直接读取 `.env` 中的 `API_SERVICE_PORT`（默认 `8001`），不会执行 Python 依赖准备或前端构建。脚本只会停止 PID 文件或端口探测结果能够确认属于本项目 Uvicorn 的进程；无法确认归属时会拒绝停止并提示端口占用。
+
 **运行输出示例（后续启动，已有 `.venv` 且 `requirements.txt` 未变化）**：
 
 ```text
@@ -226,7 +243,7 @@ yovole-nanzi-ai-agent-platform/
 │   └── specs/                    # 接口规格文档
 ├── docker/                       # Docker 配置
 ├── scripts/                      # 脚本工具
-├── dev.sh                        # 本地开发一键前台编译重启服务脚本
+├── dev.sh                        # 本地开发一键编译及前后台生命周期管理脚本
 ├── requirements.txt              # Python 依赖
 ├── env.example                   # 环境变量示例
 ├── README.md                     # 项目说明

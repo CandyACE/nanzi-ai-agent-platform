@@ -307,6 +307,21 @@ cd docker
 ```
 该脚本首次运行会自动检测并安装 `uv`，准备 Python 3.11、创建 `.venv` 并安装后端依赖；后续仅在 `requirements.txt` 变化时更新依赖。随后脚本会停止旧的 `API_SERVICE_PORT` 进程（默认端口 `8001`）、编译前端（跳过类型检查以提速）并以前台 `reload` 模式拉起后端 FastAPI 服务，您可以在当前终端中实时查看联调日志与输出。
 
+如需后台运行，可使用以下生命周期命令：
+
+```bash
+# 后台启动，PID 保存到 .dev-server.pid
+./dev.sh -d
+
+# 查看 PID、端口监听和 /health 健康状态
+./dev.sh status
+
+# 优雅停止后台服务，超时后自动强制停止
+./dev.sh stop
+```
+
+`status` 和 `stop` 不会重新安装依赖或编译前端；如果端口被无法确认归属的其他进程占用，脚本会提示并拒绝误杀。
+
 启动顶部还会打印 uv、Python 目标版本、虚拟环境、PyPI 镜像、`DATABASE_TYPE`、数据库地址和 Redis 地址等配置摘要；数据库和 Redis 密码不会单独打印。这些信息仅用于确认当前配置，不代表数据库或 Redis 连通性测试已经通过。
 
 一键脚本仍需要本机具备 Node.js/npm，并且需要提前准备 `.env`、数据库和 Redis；uv、Python 与 Python 依赖的首次下载需要网络。若 PyPI 镜像需要调整，可通过 `PYPI_INDEX_URL` 覆盖默认的清华镜像地址。
