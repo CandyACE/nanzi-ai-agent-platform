@@ -230,7 +230,6 @@
               'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': item.status === 'error',
               'text-gray-600 dark:text-gray-300': item.status === 'pending',
               'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': item.status !== 'pending' && item.status !== 'error',
-              'border border-sky-200/80 bg-sky-50/70 px-2 text-gray-700 shadow-sm dark:border-sky-900/50 dark:bg-sky-950/20 dark:text-gray-200': isPreparationParent(item),
             }"
           >
             <button
@@ -250,13 +249,14 @@
               </span>
               <span
                 v-if="isPreparationParent(item)"
-                class="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                class="shrink-0 text-[10px] font-medium"
+                :class="item.status === 'error' ? 'text-red-600 dark:text-red-400' : item.status === 'pending' ? 'text-sky-600 dark:text-sky-400' : 'text-gray-400 dark:text-gray-500'"
               >
                 {{ preparationStatusLabel(item) }}
               </span>
               <span
                 v-if="isPreparationParent(item) && item.children?.length"
-                class="shrink-0 text-[10px] text-sky-600 dark:text-sky-300"
+                class="shrink-0 text-[10px] text-gray-400 dark:text-gray-500"
               >
                 {{ item.children.length }} 项准备
               </span>
