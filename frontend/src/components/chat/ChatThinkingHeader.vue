@@ -129,14 +129,14 @@ const stepBadgeTitle = computed(() => {
   width: 0.55rem;
   height: 0.55rem;
   border-radius: 9999px;
-  background: #22c55e;
-  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.3);
+  background: #0ea5e9;
+  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35);
   animation: thought-header-breathe 1.6s ease-in-out infinite;
 }
 
 @keyframes thought-header-breathe {
-  0%, 100% { opacity: 0.55; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.28); }
-  50% { opacity: 1; transform: scale(1.12); box-shadow: 0 0 0 0.28rem rgba(34, 197, 94, 0.08); }
+  0%, 100% { opacity: 0.55; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.28); }
+  50% { opacity: 1; transform: scale(1.12); box-shadow: 0 0 0 0.28rem rgba(14, 165, 233, 0.08); }
 }
 
 @media (prefers-reduced-motion: reduce) {

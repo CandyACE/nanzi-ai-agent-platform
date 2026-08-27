@@ -2900,7 +2900,7 @@ defineExpose({
                     </transition>
                 </div>
 
-                <button type="button" @click="isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" :disabled="isSubmitting || (!isProcessing && !canSend)" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : isSubmitting ? '准备发送…' : '发送'">
+                <button type="button" @click="isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" :disabled="!isProcessing && (isSubmitting || !canSend)" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : isSubmitting ? '准备发送…' : '发送'">
                     <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
                     <svg v-else class="w-4 h-4 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M5 12h14M13 6l6 6-6 6" /></svg>
                 </button>

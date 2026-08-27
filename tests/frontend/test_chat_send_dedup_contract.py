@@ -46,5 +46,5 @@ def test_chat_input_does_not_treat_submission_lock_as_a_cancelable_generation():
     assert "const isInteractionLocked = computed" in source
     assert 'type="button"' in source
     assert "isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" in source
-    assert ':disabled="isSubmitting || (!isProcessing && !canSend)"' in source
+    assert ':disabled="!isProcessing && (isSubmitting || !canSend)"' in source
     assert "isProcessing ? 'AI 正在生成回复…' : isSubmitting ? '准备发送…'" in source

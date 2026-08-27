@@ -54,6 +54,24 @@ export type ProcessTimelineTodoItem = {
 
 export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem | ProcessTimelineTodoItem;
 
+/** 将底层事件名转换为思考卡片中的用户语言，原始详情仍保留在展开内容中。 */
+export function formatTimelineTitle(title: unknown): string {
+  const value = String(title || "处理步骤");
+  if (value === "Agent 回复开始") return "主专家开始处理";
+  if (value === "Agent 回复结束") return "主专家处理完成";
+  if (value.startsWith("工具预检：")) return "工具可用性检查";
+  if (value === "智能体配置变更：历史会话状态已重置") return "会话状态已更新";
+  if (value.startsWith("模型调用: ")) return `模型调用 · ${value.slice("模型调用: ".length)}`;
+  if (value.startsWith("工具完成: ")) return `工具完成 · ${value.slice("工具完成: ".length)}`;
+  if (value.startsWith("调用工具: ")) {
+    const toolName = value.slice("调用工具: ".length).trim();
+    if (toolName === "sub_agent_call") return "委派智能体";
+    if (toolName === "sub_agent_batch_call") return "并行委派智能体";
+    return `调用工具 · ${toolName}`;
+  }
+  return value;
+}
+
 export function timelineHasPending(items: ProcessTimelineItem[] | undefined): boolean {
   return (items || []).some((item) => {
     if (item.kind === "log") {
@@ -85,8 +103,8 @@ export function resolveTimelineCurrentStep(
   for (const item of [...(items || [])].reverse()) {
     if (item.kind === "log") {
       const pendingSub = [...(item.children || [])].reverse().find((child) => child.status === "pending");
-      if (pendingSub) return `${pendingSub.title} · 进行中`;
-      if (item.status === "pending") return `${item.title} · 进行中`;
+      if (pendingSub) return `${formatTimelineTitle(pendingSub.title)} · 进行中`;
+      if (item.status === "pending") return `${formatTimelineTitle(item.title)} · 进行中`;
     }
     if (item.kind === "todo") {
       const current = item.todos.find((todo) => todo.status === "in_progress")
@@ -97,8 +115,8 @@ export function resolveTimelineCurrentStep(
       const pendingChild = [...(item.children || [])].reverse().find((child) => child.status === "pending");
       if (pendingChild) {
         const pendingSub = [...(pendingChild.children || [])].reverse().find((sub) => sub.status === "pending");
-        if (pendingSub) return `${pendingSub.title} · 进行中`;
-        return `${pendingChild.title} · 进行中`;
+        if (pendingSub) return `${formatTimelineTitle(pendingSub.title)} · 进行中`;
+        return `${formatTimelineTitle(pendingChild.title)} · 进行中`;
       }
       return item.content.trim();
     }
@@ -106,8 +124,8 @@ export function resolveTimelineCurrentStep(
       const pendingChild = [...(item.children || [])].reverse().find((child) => child.status === "pending");
       if (pendingChild) {
         const pendingSub = [...(pendingChild.children || [])].reverse().find((sub) => sub.status === "pending");
-        if (pendingSub) return `${pendingSub.title} · 进行中`;
-        return `${pendingChild.title} · 进行中`;
+        if (pendingSub) return `${formatTimelineTitle(pendingSub.title)} · 进行中`;
+        return `${formatTimelineTitle(pendingChild.title)} · 进行中`;
       }
     }
   }

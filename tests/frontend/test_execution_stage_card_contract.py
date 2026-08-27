@@ -52,3 +52,19 @@ def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     assert "鉴权及上下文与能力准备" in timeline
     assert "parent_id" in timeline
     assert 'return "🛡️"' in timeline
+
+
+def test_thinking_card_strengthens_parent_hierarchy_and_uses_user_facing_labels():
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+    header = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
+    timeline_utils = _read("frontend/src/utils/processTimeline.ts")
+
+    assert "isPreparationParent" in timeline
+    assert "项准备" in timeline
+    assert "bg-sky-50" in timeline
+    assert "displayTimelineTitle" in timeline
+    assert "主专家开始处理" in timeline_utils
+    assert "工具可用性检查" in timeline_utils
+    assert "模型调用 ·" in timeline_utils
+    assert "#0ea5e9" in timeline
+    assert "#0ea5e9" in header
