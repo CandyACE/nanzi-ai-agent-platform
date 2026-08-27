@@ -64,6 +64,9 @@ def test_thinking_card_strengthens_parent_hierarchy_and_uses_user_facing_labels(
     assert "bg-sky-50" not in timeline
     assert "border-sky-200" not in timeline
     assert "displayTimelineTitle" in timeline
+    assert "collapseCompletedPreparation" in timeline
+    assert "childrenExpanded = false" in timeline
+    assert "watch(items" in timeline
     assert "主专家开始处理" in timeline_utils
     assert "工具可用性检查" in timeline_utils
     assert "模型调用 ·" in timeline_utils

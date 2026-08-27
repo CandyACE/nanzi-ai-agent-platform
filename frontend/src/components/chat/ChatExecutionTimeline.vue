@@ -475,6 +475,12 @@ const headerSkillSummary = computed(() =>
   props.skillSummary || summarizeSkillFlowBadges(props.skillBadges)
 );
 
+const preparationCollapseState = new Map<string, ProcessTimelineLogItem["status"]>();
+
+watch(items, (nextItems) => {
+  collapseCompletedPreparation(nextItems);
+}, { deep: true, immediate: true });
+
 watch(hasPending, (pending) => {
   if (pending && !props.hasAnswer) expanded.value = true;
 }, { immediate: true });
@@ -503,6 +509,26 @@ function preparationStatusLabel(item: ProcessTimelineLogItem): string {
 
 function displayTimelineTitle(item: ProcessTimelineLogItem): string {
   return formatTimelineTitle(item.title || item.tool_name || "执行步骤");
+}
+
+function collapseCompletedPreparation(nextItems: ProcessTimelineItem[]): void {
+  for (const item of nextItems) {
+    if (item.kind === "log") {
+      const itemId = String(item.id);
+      const previousStatus = preparationCollapseState.get(itemId);
+      if (isPreparationParent(item) && item.children?.length) {
+        const enteredCompletedState = item.status !== "pending"
+          && (previousStatus === undefined || previousStatus === "pending");
+        if (enteredCompletedState) item.childrenExpanded = false;
+        preparationCollapseState.set(itemId, item.status);
+      }
+      if (item.children?.length) collapseCompletedPreparation(item.children);
+      continue;
+    }
+    if (item.kind === "text" && item.children?.length) {
+      collapseCompletedPreparation(item.children);
+    }
+  }
 }
 
 function isTimelineItemExpanded(item: ProcessTimelineLogItem): boolean {
