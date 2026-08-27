@@ -30,6 +30,7 @@ import logging
 import os
 import shutil
 import tarfile
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,16 @@ FAQ_HELP_URL = "https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/ma
 
 
 DEFAULT_DOCKER_BASE_IMAGE = "python:3.11-slim"
+BuildEventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+async def _emit_event(
+    callback: BuildEventCallback | None,
+    event_type: str,
+    **payload: Any,
+) -> None:
+    if callback is not None:
+        await callback({"type": event_type, **payload})
 
 
 async def _prepare_context(base_image_override: str | None = None) -> tuple[str, str]:
@@ -158,6 +169,7 @@ async def prebuild_docker_workspace_image(
     *,
     base_image: str | None = None,
     force: bool = False,
+    on_event: BuildEventCallback | None = None,
 ) -> dict[str, Any]:
     """预构建 docker 沙箱镜像（一次性的运维/预热操作）。
 
@@ -179,9 +191,16 @@ async def prebuild_docker_workspace_image(
         RuntimeError: 无法生成构建上下文，或 docker build 失败（含 build stream
             尾部日志）。
     """
+    await _emit_event(on_event, "phase", stage="environment", message="正在检查 Docker 环境…")
     try:
         import aiodocker
     except ImportError as exc:
+        await _emit_event(
+            on_event,
+            "log",
+            level="error",
+            message=f"后端环境未安装 aiodocker: {exc}",
+        )
         tag = await _try_prepare_context_tag(base_image)
         return {
             "reused": False,
@@ -198,6 +217,12 @@ async def prebuild_docker_workspace_image(
 
     daemon_status = await check_docker_daemon(aiodocker)
     if not daemon_status["available"]:
+        await _emit_event(
+            on_event,
+            "log",
+            level="error",
+            message=daemon_status["message"],
+        )
         tag = await _try_prepare_context_tag(base_image)
         return {
             "reused": False,
@@ -212,11 +237,19 @@ async def prebuild_docker_workspace_image(
     ctx_dir: str | None = None
     client: Any | None = None
     try:
+        await _emit_event(on_event, "phase", stage="prepare", message="正在准备构建上下文…")
         ctx_dir, tag = await _prepare_context(base_image)
+        await _emit_event(
+            on_event,
+            "phase",
+            stage="prepare",
+            message=f"构建上下文已准备，目标 Tag：{tag}",
+        )
         try:
             client = aiodocker.Docker()
         except Exception as exc:
             daemon_status = _docker_unavailable_status(exc)
+            await _emit_event(on_event, "log", level="error", message=daemon_status["message"])
             return {
                 "reused": False,
                 "built": False,
@@ -228,12 +261,20 @@ async def prebuild_docker_workspace_image(
             }
 
         # 命中已有镜像且非 force => 幂等跳过（与运行时 _build_or_reuse_image 相同）。
+        await _emit_event(on_event, "phase", stage="cache", message="正在检查目标镜像缓存…")
         if not force and await _image_exists(client, tag):
             logger.info("[docker_prebuild] image cache hit %r, skip build", tag)
             await _mark_prebuilt(base_image)
+            await _emit_event(on_event, "phase", stage="completed", message="已命中既有镜像缓存，跳过构建")
             return {"reused": True, "built": False, "tag": tag}
 
         logger.info("[docker_prebuild] building image %r", tag)
+        await _emit_event(
+            on_event,
+            "phase",
+            stage="build",
+            message=f"开始构建 Docker 镜像：{tag}",
+        )
         tar_buf = io.BytesIO()
         with tarfile.open(fileobj=tar_buf, mode="w") as tf:
             tf.add(ctx_dir, arcname=".")
@@ -252,21 +293,27 @@ async def prebuild_docker_workspace_image(
                 if isinstance(chunk, dict):
                     stream_text = chunk.get("stream") or chunk.get("status")
                     if stream_text and isinstance(stream_text, str):
-                        build_output.append(stream_text.rstrip())
+                        stream_text = stream_text.rstrip()
+                        build_output.append(stream_text)
+                        await _emit_event(on_event, "log", level="info", message=stream_text)
                     error = chunk.get("error") or chunk.get("errorDetail")
                     if error:
                         msg = error.get("message") if isinstance(error, dict) else str(error)
+                        await _emit_event(on_event, "log", level="error", message=msg)
                         tail = "\n".join(build_output[-20:])
                         raise RuntimeError(f"docker build 失败: {msg}\n--- build log tail ---\n{tail}")
         except RuntimeError:
             raise
         except Exception as exc:
             tail = "\n".join(build_output[-20:])
+            await _emit_event(on_event, "log", level="error", message=str(exc))
             raise RuntimeError(f"docker build 异常: {exc}\n--- build log tail ---\n{tail}") from exc
 
         # 构建成功，写入 prebuilt 标记并持久化 base_image（如有传入）
+        await _emit_event(on_event, "phase", stage="finalize", message="Docker 构建完成，正在保存状态…")
         await _mark_prebuilt(base_image)
         logger.info("[docker_prebuild] successfully built image %r", tag)
+        await _emit_event(on_event, "phase", stage="completed", message="Docker 沙箱镜像预构建完成")
         return {"reused": False, "built": True, "tag": tag}
     finally:
         if ctx_dir:
@@ -364,4 +411,3 @@ async def _try_prepare_context_tag(
     finally:
         if ctx_dir:
             shutil.rmtree(ctx_dir, ignore_errors=True)
-
