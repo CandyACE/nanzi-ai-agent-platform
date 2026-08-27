@@ -261,36 +261,24 @@ For daily local development, it is highly recommended to use the integration scr
 ```
 On the first run, this script automatically detects and installs `uv`, prepares Python 3.11, creates `.venv`, and installs backend dependencies. Later runs only refresh dependencies when `requirements.txt` changes. It then terminates stale processes on the `.env`-configured `API_SERVICE_PORT` (default `8001`), compiles frontend assets (skipping type-checks for speed), and launches the FastAPI backend service in `reload` mode. You can monitor live logs directly in your active terminal.
 
+For background development, use the lifecycle commands below:
+
+```bash
+# Start in the background; the PID is saved to .dev-server.pid
+./dev.sh -d
+
+# Check the PID, listening port, and /health status
+./dev.sh status
+
+# Gracefully stop the background service, then force-stop after the timeout
+./dev.sh stop
+```
+
+`status` and `stop` do not reinstall dependencies or rebuild the frontend. If the port is occupied by a process that cannot be confirmed as this project's Uvicorn service, the script refuses to terminate it.
+
 The startup banner also prints uv, Python target version, virtual environment, PyPI mirror, `DATABASE_TYPE`, database address, and Redis address information. Database and Redis passwords are not printed as separate fields. These values only describe the active configuration; they do not verify database or Redis connectivity.
 
 The one-click script still requires Node.js/npm, and `.env`, database, and Redis must be prepared separately. The first uv, Python, and Python dependency downloads require network access. Set `PYPI_INDEX_URL` to override the default Tsinghua PyPI mirror when needed.
-
-#### 2. Utility Scripts Comparison
-We provide three utility scripts tailored for different development and deployment environments:
-
-| Script | Mode | Frontend Build Method | Backend Execution Method | Best Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| `dev.sh` | **Foreground** Interactive | Quick Build (skips type check) | Active logging with `--reload` | Local debugging & troubleshooting |
-| `scripts/redeploy-fast.sh` | **Background** Daemon | Quick Build (skips type check) | Runs in background via `nohup` | Fast hot updates in dev/test setups |
-| `scripts/redeploy.sh` | **Background** Daemon | Full Build (includes `vue-tsc` checks) | Runs in background via `nohup` | Standard releases in production environments |
-
-#### 3. Traditional Step-by-Step Manual Run
-If you need to tweak the frontend or backend separately, you can run:
-```bash
-# 1. Prepare the same Python environment used by dev.sh
-uv python install 3.11
-uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-
-# 2. Run backend
-# This manual example uses the default port 8001; dev.sh reads API_SERVICE_PORT from .env
-.venv/bin/python -m uvicorn app.main:app --reload --port 8001
-
-# 3. Run frontend
-cd frontend && npm install && npm run dev
-```
-
-Existing traditional `venv` environments can still be used for manual work with `python -m venv venv`, activation, and `pip install -r requirements.txt`; the one-click script consistently uses the project-level Python 3.11 `.venv`.
 
 ---
 

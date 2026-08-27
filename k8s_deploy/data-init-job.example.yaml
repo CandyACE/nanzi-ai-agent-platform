@@ -1,0 +1,42 @@
+# 可选的一次性初始化 Job，不会被 kustomization.yaml 默认部署。
+#
+# 用途：把镜像内随版本发布的公共文档复制到 PVC。
+# 注意：这里只复制 /app/data/docs，不会把上传文件、用户工作区或其他运行时数据打进 PVC。
+# 使用前复制为 data-init-job.yaml，并把 image 改成与 deployment.yaml 完全相同的镜像。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nanzi-ai-agent-data-init
+  namespace: nanzi-ai-agent
+  labels:
+    app.kubernetes.io/name: nanzi-ai-agent
+    app.kubernetes.io/component: data-init
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nanzi-ai-agent
+        app.kubernetes.io/component: data-init
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: data-init
+          image: nanzi-ai-agent:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              mkdir -p /mnt/data/docs
+              if [ -d /app/data/docs ]; then
+                cp -a /app/data/docs/. /mnt/data/docs/
+              fi
+              echo "Public documents copied to the PVC."
+          volumeMounts:
+            - name: app-data
+              mountPath: /mnt/data
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: nanzi-ai-agent-data

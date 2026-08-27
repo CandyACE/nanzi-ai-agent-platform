@@ -3,7 +3,12 @@ import { ref, computed, watch } from 'vue';
 import type { AIAgent, AIAgentVersion } from '../../api/agent';
 import { agentApi } from '../../api/agent';
 import ConfirmModal from '../ConfirmModal.vue';
+import AgentVersionDiffModal from './AgentVersionDiffModal.vue';
 import { TrashIcon } from '@heroicons/vue/24/outline';
+import {
+  findPublishedAgentVersion,
+  getAgentVersionDiffPair,
+} from '../../utils/agentVersionDiff';
 // We'll reuse the Toast logic from parent or implementing a simple one, 
 // for now let's assume props or simple alert, or inject a notification service. 
 // But to keep it standalone, let's allow events.
@@ -27,6 +32,18 @@ const loading = ref(false);
 const activeVersions = computed(() => versions.value.filter((v) => v.status !== "ARCHIVED"));
 const archivedVersions = computed(() => versions.value.filter((v) => v.status === "ARCHIVED"));
 const showArchived = ref(false);
+const diffVersion = ref<AIAgentVersion | null>(null);
+const publishedVersion = computed(() => findPublishedAgentVersion(versions.value));
+
+const openDiff = (version: AIAgentVersion) => {
+  const pair = getAgentVersionDiffPair(versions.value, version.id);
+  if (!pair) return;
+  diffVersion.value = pair.sourceVersion;
+};
+
+const closeDiff = () => {
+  diffVersion.value = null;
+};
 
 const loadVersions = async () => {
   if (!props.agent) return;
@@ -78,6 +95,8 @@ const confirmDeleteVersion = async () => {
 watch(() => props.isOpen, (newVal) => {
     if (newVal && props.agent) {
         loadVersions();
+    } else if (!newVal) {
+        closeDiff();
     }
 });
 </script>
@@ -201,6 +220,15 @@ watch(() => props.isOpen, (newVal) => {
                                  >
                                      {{ v.status === 'PUBLISHED' ? '查看' : '编辑' }}
                                  </button>
+                                 <button
+                                     v-if="publishedVersion && v.status !== 'PUBLISHED'"
+                                     type="button"
+                                     @click="openDiff(v)"
+                                     class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                     title="与当前线上版本对比"
+                                 >
+                                     Diff
+                                 </button>
                                  <button 
                                      v-if="agent?.is_editable !== false"
                                      @click="emit('create-version', v)"
@@ -250,6 +278,23 @@ watch(() => props.isOpen, (newVal) => {
                                     >
                                         查看
                                     </button>
+                                    <button
+                                        v-if="publishedVersion && v.status !== 'PUBLISHED'"
+                                        type="button"
+                                        @click="openDiff(v)"
+                                        class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                        title="与当前线上版本对比"
+                                    >
+                                        Diff
+                                    </button>
+                                    <button
+                                        v-if="agent?.is_editable !== false"
+                                        @click="emit('create-version', v)"
+                                        class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                        title="基于此版本新建"
+                                    >
+                                        克隆
+                                    </button>
                                     <button 
                                         v-if="agent?.is_editable !== false"
                                         @click="requestDeleteVersion(v)"
@@ -279,6 +324,13 @@ watch(() => props.isOpen, (newVal) => {
       type="danger"
       @confirm="confirmDeleteVersion"
       @cancel="showDeleteConfirm = false"
+    />
+
+    <AgentVersionDiffModal
+      :show="!!diffVersion"
+      :source-version="diffVersion"
+      :published-version="publishedVersion"
+      @close="closeDiff"
     />
   </div>
 </template>

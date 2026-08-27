@@ -307,36 +307,24 @@ cd docker
 ```
 该脚本首次运行会自动检测并安装 `uv`，准备 Python 3.11、创建 `.venv` 并安装后端依赖；后续仅在 `requirements.txt` 变化时更新依赖。随后脚本会停止旧的 `API_SERVICE_PORT` 进程（默认端口 `8001`）、编译前端（跳过类型检查以提速）并以前台 `reload` 模式拉起后端 FastAPI 服务，您可以在当前终端中实时查看联调日志与输出。
 
+如需后台运行，可使用以下生命周期命令：
+
+```bash
+# 后台启动，PID 保存到 .dev-server.pid
+./dev.sh -d
+
+# 查看 PID、端口监听和 /health 健康状态
+./dev.sh status
+
+# 优雅停止后台服务，超时后自动强制停止
+./dev.sh stop
+```
+
+`status` 和 `stop` 不会重新安装依赖或编译前端；如果端口被无法确认归属的其他进程占用，脚本会提示并拒绝误杀。
+
 启动顶部还会打印 uv、Python 目标版本、虚拟环境、PyPI 镜像、`DATABASE_TYPE`、数据库地址和 Redis 地址等配置摘要；数据库和 Redis 密码不会单独打印。这些信息仅用于确认当前配置，不代表数据库或 Redis 连通性测试已经通过。
 
 一键脚本仍需要本机具备 Node.js/npm，并且需要提前准备 `.env`、数据库和 Redis；uv、Python 与 Python 依赖的首次下载需要网络。若 PyPI 镜像需要调整，可通过 `PYPI_INDEX_URL` 覆盖默认的清华镜像地址。
-
-#### 2. 工具脚本对比
-项目提供了以下三个工具以适应不同的开发和部署场景：
-
-| 脚本名称 | 运行模式 | 前端编译方式 | 后端拉起方式 | 适用场景 |
-| :--- | :--- | :--- | :--- | :--- |
-| `dev.sh` | **前台** 交互式 | 极速编译 (跳过类型检查) | 带 `--reload` 前台实时输出日志 | 本地日常功能联调与排错 |
-| `scripts/redeploy-fast.sh` | **后台** 运行 | 极速编译 (跳过类型检查) | `nohup` 后台守护进程运行 | 开发测试环境快速后台热更新 |
-| `scripts/redeploy.sh` | **后台** 运行 | 完整编译 (包含 `vue-tsc` 类型检查) | `nohup` 后台守护进程运行 | 生产/准生产环境规范发布与部署 |
-
-#### 3. 传统分步手动启动
-如果您需要分步微调前后端，也可以执行传统命令：
-```bash
-# 1. 准备与 dev.sh 相同的 Python 环境
-uv python install 3.11
-uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python --default-index https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-
-# 2. 启动后端
-# 手动示例使用默认端口 8001；一键脚本会读取 .env 中的 API_SERVICE_PORT
-.venv/bin/python -m uvicorn app.main:app --reload --port 8001
-
-# 3. 启动前端
-cd frontend && npm install && npm run dev
-```
-
-已有传统 `venv` 环境时，仍可手动执行 `python -m venv venv`、激活该环境并使用 `pip install -r requirements.txt`；一键脚本统一使用项目根目录下的 `.venv` Python 3.11 环境。
 
 ---
 

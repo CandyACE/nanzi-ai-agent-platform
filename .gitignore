@@ -46,6 +46,7 @@ env/
 # Logs
 *.log
 logs/
+.dev-server.pid
 
 # Testing / lint cache
 .pytest_cache/
@@ -57,6 +58,8 @@ htmlcov/
 data/agent_workspaces/
 data/uploads/
 data/browser-profiles/
+data/branding/
+data/generated/
 data/generated_files/
 data/office_preview_cache/
 data/sandbox/
@@ -73,6 +76,9 @@ frontend/.DS_Store
 
 # Credentials (DO NOT COMMIT)
 ADMIN_CREDENTIALS.md
+
+# Local deployment overrides (DO NOT COMMIT)
+k8s_deploy/data-init-job.yaml
 
 key.txt
 nohup.out

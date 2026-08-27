@@ -33,6 +33,16 @@ htmlcov/
 # Frontend source (exclude node_modules; dist 需保留以便宿主机预构建后 COPY 进镜像)
 frontend/node_modules
 
+# Runtime-generated and user-owned data (never send these into the Docker build context)
+data/agent_workspaces/
+data/uploads/
+data/browser-profiles/
+data/branding/
+data/generated/
+data/generated_files/
+data/office_preview_cache/
+data/sandbox/
+
 # Docs and metadata (safe to ignore)
 architech/
 openspec/

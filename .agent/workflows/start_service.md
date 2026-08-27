@@ -1,16 +1,11 @@
 ---
-description: Start the NanZi API Data Platform application service correctly using venv
+description: Start the NanZi AI Agent Platform application for local development
 ---
 
-1. Kill any existing uvicorn processes
-   ```bash
-   pkill -f "uvicorn app.main:app" || true
-   ```
-2. Activate virtual environment and start the service in background
-   ```bash
-   source venv/bin/activate && nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload > app.log 2>&1 &
-   ```
-3. Verify startup by checking logs
-   ```bash
-   tail -n 20 app.log
-   ```
+本地开发统一使用项目根目录下的 `dev.sh` 一键准备环境、编译前端并启动后端服务。
+
+```bash
+./dev.sh
+```
+
+服务启停请由用户在自己的终端执行；不要分别启动前后端，也不要直接执行 Uvicorn。
