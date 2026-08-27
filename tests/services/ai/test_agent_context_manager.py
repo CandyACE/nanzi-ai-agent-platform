@@ -17,6 +17,124 @@ ID_DB_ALL_2 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 
 @pytest.mark.asyncio
+async def test_resolve_without_explicit_agent_uses_main_without_router():
+    main_config = ChatConfig(
+        agent_id="sys-agent-chat",
+        agent_name="main",
+        model_name="DeepSeek",
+        temperature=0.7,
+        system_prompt="main prompt",
+        tools=[],
+        capabilities=["general_chat"],
+    )
+    session_context = MagicMock()
+    session_context.__aenter__.return_value = AsyncMock()
+
+    with patch(
+        "app.services.ai.context_manager.AsyncSessionLocal",
+        return_value=session_context,
+    ), patch(
+        "app.services.ai.context_manager.AgentManagerService.get_active_agent_config",
+        new_callable=AsyncMock,
+        return_value=main_config,
+    ) as get_config, patch(
+        "app.services.ai.router_service.router_service.route_query",
+        new_callable=AsyncMock,
+    ) as route_query:
+        config, decision = await AgentContextManager.resolve_agent_config(
+            messages=[{"role": "user", "content": "你好"}],
+            user_info=None,
+        )
+
+    assert config is main_config
+    assert decision.provenance == "automatic_delegation"
+    assert decision.agent_id == "sys-agent-chat"
+    get_config.assert_awaited_once()
+    route_query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_metadata_dataset_scope_also_starts_at_main_without_data_shortcut():
+    main_config = ChatConfig(
+        agent_id="sys-agent-chat",
+        agent_name="main",
+        model_name="DeepSeek",
+        temperature=0.7,
+        system_prompt="main prompt",
+        tools=[],
+        capabilities=["general_chat"],
+    )
+    session_context = MagicMock()
+    session_context.__aenter__.return_value = AsyncMock()
+
+    with patch(
+        "app.services.ai.context_manager.AsyncSessionLocal",
+        return_value=session_context,
+    ), patch(
+        "app.services.ai.context_manager.AgentManagerService.get_active_agent_config",
+        new_callable=AsyncMock,
+        return_value=main_config,
+    ) as get_config, patch(
+        "app.services.ai.context_manager.AgentManagerService.list_agents",
+        new_callable=AsyncMock,
+    ) as list_agents, patch(
+        "app.services.ai.router_service.router_service.route_query",
+        new_callable=AsyncMock,
+    ) as route_query:
+        config, decision = await AgentContextManager.resolve_agent_config(
+            messages=[{"role": "user", "content": "查询销售数据"}],
+            force_data_query=True,
+            user_info=None,
+        )
+
+    assert config is main_config
+    assert decision.provenance == "automatic_delegation"
+    get_config.assert_awaited_once()
+    list_agents.assert_not_awaited()
+    route_query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_explicit_agent_id_keeps_direct_resolution_without_default_main():
+    selected_config = ChatConfig(
+        agent_id="agent-selected",
+        agent_name="selected-agent",
+        model_name="DeepSeek",
+        temperature=0.7,
+        system_prompt="selected prompt",
+        tools=[],
+        capabilities=["general_chat"],
+    )
+    session_context = MagicMock()
+    session_context.__aenter__.return_value = AsyncMock()
+
+    with patch(
+        "app.services.ai.context_manager.AsyncSessionLocal",
+        return_value=session_context,
+    ), patch(
+        "app.services.ai.context_manager.AgentManagerService.get_active_agent_config",
+        new_callable=AsyncMock,
+        return_value=selected_config,
+    ) as get_config, patch(
+        "app.services.ai.router_service.router_service.route_query",
+        new_callable=AsyncMock,
+    ) as route_query:
+        config, decision = await AgentContextManager.resolve_agent_config(
+            messages=[{"role": "user", "content": "请使用指定专家"}],
+            agent_id="agent-selected",
+            user_info=None,
+        )
+
+    assert config is selected_config
+    assert decision is None
+    get_config.assert_awaited_once_with(
+        session_context.__aenter__.return_value,
+        agent_id="agent-selected",
+    )
+    route_query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_enrich_for_knowledge_turn_does_not_merge_fallback_agent_tools():
     config = ChatConfig(
         agent_id="sys-agent-chat",

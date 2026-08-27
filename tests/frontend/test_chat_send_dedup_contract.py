@@ -8,17 +8,14 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 def _assert_send_lock_contract(source: str) -> None:
-    wrapper_start = source.index("const sendMessage = async () => {")
-    internal_start = source.index("const sendMessageInternal = async () => {", wrapper_start)
-    wrapper = source[wrapper_start:internal_start]
-
-    assert "const sendInFlight = ref(false);" in source[:wrapper_start]
-    assert "if (sendInFlight.value) return;" in wrapper
-    assert "sendInFlight.value = true;" in wrapper
-    assert "return await sendMessageInternal();" in wrapper
-    assert "finally" in wrapper
-    assert "sendInFlight.value = false;" in wrapper
-    assert wrapper.index("sendInFlight.value = true;") < wrapper.index("await sendMessageInternal();")
+    assert 'createChatSendGate' in source
+    assert 'const { locked: sendLocked, runExclusive: runSendExclusive }' in source
+    assert 'const sendPreparedMessage = async (' in source
+    assert 'return sendMessageInternal(snapshot);' in source
+    assert 'clientRequestId' in source
+    assert 'groundingAction' in source
+    assert 'const sendMessageInternal = async (snapshot: ChatSendSnapshot)' in source
+    assert 'client_request_id = snapshot.clientRequestId;' in source
 
 
 def test_chat_surfaces_lock_duplicate_sends_before_async_preflight_finishes():
@@ -28,4 +25,26 @@ def test_chat_surfaces_lock_duplicate_sends_before_async_preflight_finishes():
     ):
         source = (ROOT / relative_path).read_text(encoding="utf-8")
         _assert_send_lock_contract(source)
-        assert ':is-processing="isProcessing || sendInFlight"' in source
+        assert ':is-processing="isProcessing || remoteRunActive"' in source
+        assert ':is-submitting="sendLocked"' in source
+
+
+def test_preflight_send_paths_claim_the_gate_before_history_or_render_awaits():
+    for relative_path in (
+        "frontend/src/views/EmbedChat.vue",
+        "frontend/src/views/AgentDebug.vue",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert 'await sendPreparedMessage(async () =>' in source
+        assert 'await truncateServerHistory(keepCount)' in source
+        assert 'await nextTick();\n  sendMessage();' not in source
+
+
+def test_chat_input_does_not_treat_submission_lock_as_a_cancelable_generation():
+    source = (ROOT / "frontend/src/components/embed/ChatInput.vue").read_text(encoding="utf-8")
+    assert "isSubmitting?: boolean;" in source
+    assert "const isInteractionLocked = computed" in source
+    assert 'type="button"' in source
+    assert "isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" in source
+    assert ':disabled="isSubmitting || (!isProcessing && !canSend)"' in source
+    assert "isProcessing ? 'AI 正在生成回复…' : isSubmitting ? '准备发送…'" in source

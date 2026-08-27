@@ -139,6 +139,18 @@ def test_agent_center_card_ux_hierarchy_and_primary_cta():
     assert "完善配置" in management
 
 
+def test_main_agent_is_fixed_enabled_and_not_deletable_in_management():
+    management = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert "isMainAgent" in management
+    assert "主助手不可禁用" in management
+    assert "主专家自动委派" in management
+    assert "固定启用" in management
+    assert ':disabled="isMainAgent(agent)"' in management
+    assert 'v-if="agent.is_editable !== false && !isMainAgent(agent)"' in management
+    assert '!agent.is_system && !isMainAgent(agent)' in management
+
+
 def test_agent_list_keeps_continue_configuration_action_horizontal():
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
 
@@ -328,4 +340,3 @@ def test_browser_automation_tools_are_available_in_a_dedicated_group():
         assert tool_name in management
     assert "groups.browser.tools.push(tool)" in management
     assert "name.startsWith('browser_') || name.includes('browser')" in management
-

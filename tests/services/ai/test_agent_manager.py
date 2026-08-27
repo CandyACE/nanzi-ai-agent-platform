@@ -248,6 +248,52 @@ async def test_update_agent_permission(mock_session, mock_user_normal):
     res = await AgentManagerService.update_agent(mock_session, "s1", AIAgentBase(name="x", display_name="X"), mock_user_normal)
     assert res is None # Forbidden
 
+
+@pytest.mark.asyncio
+async def test_update_main_rejects_disabling_even_for_admin(mock_session, mock_user_admin):
+    main_agent = AIAgent(
+        id="sys-agent-chat",
+        name="main",
+        display_name="主助手(Main)",
+        is_system=False,
+        is_enabled=True,
+        engine_type="LOCAL",
+    )
+    mock_session.get.return_value = main_agent
+
+    with pytest.raises(ValueError, match="主助手不可禁用"):
+        await AgentManagerService.update_agent(
+            mock_session,
+            "sys-agent-chat",
+            AIAgentBase(
+                name="main",
+                display_name="主助手(Main)",
+                is_enabled=False,
+            ),
+            mock_user_admin,
+        )
+
+    assert main_agent.is_enabled is True
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_main_is_rejected_without_deleting(mock_session, mock_user_admin):
+    main_agent = AIAgent(
+        id="sys-agent-chat",
+        name="main",
+        display_name="主助手(Main)",
+        is_system=False,
+        is_enabled=True,
+    )
+    mock_session.get.return_value = main_agent
+
+    assert await AgentManagerService.delete_agent(
+        mock_session, "sys-agent-chat", user=mock_user_admin
+    ) is False
+    mock_session.delete.assert_not_called()
+    mock_session.commit.assert_not_called()
+
     # Case 2: Other's Agent
     other_agent = AIAgent(id="o1", name="other", is_system=False, created_by="other_user")
     mock_session.get.return_value = other_agent

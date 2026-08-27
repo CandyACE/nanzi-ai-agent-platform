@@ -13,12 +13,21 @@ pytestmark = pytest.mark.no_infrastructure
 class FakeRedis:
     def __init__(self):
         self.store: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
 
     async def set(self, key, value, ex=None, nx=False):
         if nx and key in self.store:
             return False
         self.store[key] = value
+        if ex is not None:
+            self.ttls[key] = int(ex)
         return True
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def ttl(self, key):
+        return self.ttls.get(key, -1) if key in self.store else -2
 
     async def eval(self, script, numkeys, key, token):
         if self.store.get(key) == token:
@@ -243,10 +252,76 @@ async def test_conversation_run_lane_is_locked(monkeypatch):
     async def _redis():
         return fake
 
+    async def _config_get(key, default=None):
+        return default
+
     monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
 
     assert await lane.is_locked(user_id="u1", conversation_id=conversation_id) is False
     fake.store[key] = "trace-locked"
     assert await lane.is_locked(user_id="u1", conversation_id=conversation_id) is True
     assert await lane.is_locked(user_id="u1", conversation_id=None) is False
 
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_status_exposes_trace_and_ttl(monkeypatch):
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    conversation_id = f"conv-status-{uuid.uuid4().hex}"
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        if key == "agent_session_run_lock_enabled":
+            return "true"
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    assert await lane.get_status(user_id="u1", conversation_id=conversation_id) == {
+        "active": False,
+        "trace_id": None,
+        "ttl_seconds": None,
+    }
+    key = lane._lock_key("u1", conversation_id)
+    trace_id = str(uuid.uuid4())
+    fake.store[key] = trace_id
+    fake.ttls[key] = 321
+    assert await lane.get_status(user_id="u1", conversation_id=conversation_id) == {
+        "active": True,
+        "trace_id": trace_id,
+        "ttl_seconds": 321,
+    }
+    fake.store[key] = "untrusted-arbitrary-value"
+    assert (await lane.get_status(user_id="u1", conversation_id=conversation_id))["trace_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_status_is_safe_when_disabled_or_unavailable(monkeypatch):
+    async def _config_get(key, default=None):
+        return "false" if key == "agent_session_run_lock_enabled" else default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+    lane = ConversationRunLane()
+    assert await lane.get_status(user_id="u1", conversation_id="disabled") == {
+        "active": False,
+        "trace_id": None,
+        "ttl_seconds": None,
+    }
+
+    async def _redis_unavailable():
+        return None
+
+    async def _enabled_config(key, default=None):
+        return "true" if key == "agent_session_run_lock_enabled" else default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _enabled_config)
+    monkeypatch.setattr("app.core.redis.get_redis", _redis_unavailable)
+    assert await lane.get_status(user_id="u1", conversation_id="unavailable") == {
+        "active": False,
+        "trace_id": None,
+        "ttl_seconds": None,
+    }

@@ -335,6 +335,46 @@ async def test_host_grep_falls_back_when_ripgrep_is_unavailable(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_workspace_path_denial_does_not_raise_from_read_only_fast_path(tmp_path):
+    from agentscope.permission import PermissionBehavior
+
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+    from app.services.ai.runtime.agentscope.workspace import (
+        _WorkspaceFileAccessNativeTool,
+    )
+
+    class NativeGrep:
+        name = "Grep"
+        description = "Grep"
+        input_schema = {"type": "object"}
+        is_read_only = True
+
+        async def __call__(self, **kwargs):
+            raise AssertionError("denied workspace path must not invoke native Grep")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    wrapped = _WorkspaceFileAccessNativeTool(
+        NativeGrep(),
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(workspace_root),
+    )
+    approval_tool = AgentScopeNativeApprovalTool(
+        wrapped,
+        approval_mode="allow",
+        permission_scope="read",
+    )
+    denied_input = {"pattern": "needle", "path": "/", "output_mode": "content"}
+
+    assert await wrapped.check_read_only(denied_input) is False
+    decision = await approval_tool.check_permissions(denied_input, None)
+
+    assert decision.behavior == PermissionBehavior.DENY
+    assert decision.decision_reason == "workspace_path_access_denied"
+    assert "文件访问被拒绝" in decision.message
+
+
+@pytest.mark.asyncio
 async def test_host_file_tools_scan_only_direct_root_help_markdown(tmp_path, monkeypatch):
     from agentscope.message import ToolResultState
 

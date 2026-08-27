@@ -256,3 +256,73 @@ async def test_chat_completion_stream_client_disconnect_resilience(mocker):
         app.dependency_overrides.pop(chat_endpoint.require_api_key, None)
         app.dependency_overrides.pop(get_db_session, None)
 
+
+@pytest.mark.no_infrastructure
+@pytest.mark.asyncio
+async def test_duplicate_client_request_id_does_not_start_another_stream(monkeypatch):
+    from app.api.v1.endpoints import chat as chat_endpoint
+    from app.core.orm import get_db_session
+    from app.services.ai.runtime.chat_request_idempotency import ChatRequestClaim
+
+    called = 0
+
+    async def fake_chat_completion_stream(*args, **kwargs):
+        nonlocal called
+        called += 1
+        yield {"content": "should not run"}
+
+    class DuplicateStore:
+        async def claim(self, **kwargs):
+            return ChatRequestClaim(
+                key="idempotency-key",
+                owner_token=None,
+                acquired=False,
+                status="processing",
+                trace_id="trace-original",
+            )
+
+    async def fake_scope(*args, **kwargs):
+        return {"project_name": "", "datasets": [], "knowledge_bases": [], "skills": [], "mcp_tools": []}
+
+    async def fake_db_session():
+        yield None
+
+    async def fake_require_api_key():
+        return {"user_id": "u-duplicate", "role": "user"}
+
+    monkeypatch.setattr(chat_endpoint.agent_service, "chat_completion_stream", fake_chat_completion_stream)
+    monkeypatch.setattr(chat_endpoint.ConversationResourceService, "get", fake_scope)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.chat_request_idempotency.chat_request_idempotency",
+        DuplicateStore(),
+    )
+    app.dependency_overrides[chat_endpoint.require_api_key] = fake_require_api_key
+    app.dependency_overrides[get_db_session] = fake_db_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            payload = {
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+                "conversation_id": "conv-duplicate",
+                "client_request_id": "req-duplicate",
+            }
+            async with client.stream(
+                "POST",
+                "/api/v1/chat/completions",
+                json=payload,
+                headers={"X-API-Key": "test-key"},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = [line async for line in resp.aiter_lines() if line.startswith("data: ")]
+    finally:
+        app.dependency_overrides.pop(chat_endpoint.require_api_key, None)
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert called == 0
+    assert json.loads(lines[0].removeprefix("data: ")) == {
+        "type": "duplicate_request",
+        "status": "duplicate_request",
+        "trace_id": "trace-original",
+        "content": "相同发送请求已提交，正在等待原任务完成，请勿重复操作。",
+    }
+    assert lines[-1] == "data: [DONE]"

@@ -113,6 +113,25 @@ def test_direct_agent_selection_is_a_first_class_single_track_decision():
     assert decision.provenance == "direct_agent_selection"
 
 
+def test_default_main_delegation_is_not_explicit_selection():
+    config = SimpleNamespace(
+        agent_id="sys-agent-chat",
+        agent_name="main",
+        agent_display_name="主助手(Main)",
+        capabilities=["general_chat", "coding"],
+    )
+
+    decision = TurnDecision.for_default_main_delegation(config)
+
+    assert decision.route_status == "resolved"
+    assert decision.turn_kind == "general"
+    assert decision.source == "general"
+    assert decision.capability == "answer"
+    assert decision.provenance == "automatic_delegation"
+    assert decision.fast_path == "default_main"
+    assert decision.evidence == ["default_main_agent"]
+
+
 def test_unknown_or_failed_route_status_is_not_a_resolved_decision():
     unknown = TurnDecision()
     failed = TurnDecision(route_status="failed", capability="data_query")

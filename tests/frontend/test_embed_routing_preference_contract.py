@@ -28,7 +28,7 @@ def test_embed_loads_and_saves_user_routing_preference_through_redis_api():
 def test_settings_has_auto_and_default_agent_tabs():
     source = SETTINGS.read_text(encoding="utf-8")
 
-    assert "自动路由" in source
+    assert "主专家自动委派" in source
     assert "默认智能体" in source
     assert "routingLocked" in source
     assert "allowedAgents" in source
@@ -69,19 +69,25 @@ def test_clicking_auto_routing_keeps_settings_open_for_further_choice():
 def test_routing_mode_help_text_explains_latency_and_delegation():
     source = SETTINGS.read_text(encoding="utf-8")
 
-    assert "先识别问题意图，再选择合适的主智能体" in source
-    assert "可能增加一次路由判断耗时" in source
-    assert "主智能体仍可按任务需要调用其他智能体" in source
+    assert "主专家自动委派" in source
+    assert "未指定专家时，默认由主专家直接回答，或按任务需要自动委派其他智能体" in source
+    assert "先识别问题意图，再选择合适的主智能体" not in source
+    assert "可能增加一次路由判断耗时" not in source
+    assert "主专家仍可按任务需要调用其他智能体" in source
 
 
-def test_unconfigured_routing_prefers_allowed_main_agent_before_auto():
+def test_unconfigured_routing_defaults_to_auto_without_selecting_main():
     source = EMBED.read_text(encoding="utf-8")
 
-    assert "saved.routing_configured" in source
-    assert "const mainAgent = res.data.find" in source
-    assert 'agentId === "main" || agentName === "main"' in source
-    assert "!saved.routing_configured && mainAgent" in source
-    assert 'config.routingMode = "expert"' in source
+    preference_segment = source.split("const saved = savedRoutingPreference.value", 1)[1].split(
+        "// 自动应用当前激活智能体推荐的排版风格", 1
+    )[0]
+    assert "saved.routing_configured" in preference_segment
+    assert "const mainAgent = res.data.find" not in preference_segment
+    assert 'agentId === "main" || agentName === "main"' not in preference_segment
+    assert "!saved.routing_configured && mainAgent" not in preference_segment
+    assert 'config.routingMode = "auto"' in preference_segment
+    assert 'config.expertAgentId = ""' in preference_segment
 
 
 def test_integration_agent_lock_covers_all_host_entry_points():
