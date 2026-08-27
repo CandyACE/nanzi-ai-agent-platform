@@ -324,6 +324,16 @@ cd docker
 
 启动顶部还会打印 uv、Python 目标版本、虚拟环境、PyPI 镜像、`DATABASE_TYPE`、数据库地址和 Redis 地址等配置摘要；数据库和 Redis 密码不会单独打印。这些信息仅用于确认当前配置，不代表数据库或 Redis 连通性测试已经通过。
 
+> **运行前的环境准备（`.env`）**：脚本首次运行前必须先编辑 `.env` 配置文件。项目根目录提供了模板 `env.example`，请先基于它创建 `.env` 并填写为你的实际环境：
+> ```bash
+> cp env.example .env
+> ```
+> 然后按需修改 `.env` 中的关键项：
+> - **数据库**：`DATABASE_TYPE`（`mysql` 默认 / `postgresql`），以及对应的 `MYSQL_*` 或 `POSTGRES_*` 主机、端口、库名、账号与密码；
+> - **Redis**：`REDIS_HOST`、`REDIS_PORT`、`REDIS_DB`、`REDIS_PASSWORD`（无密码时留空）；
+> - **加密密钥**：`ENCRYPTION_KEY`（API Key 的对称加密密钥，可保留模板默认值，生产环境务必更换为独立的 Fernet Key）；
+> - **可选集成**：SSO、RAGFlow、Jira 等信息按需填写。
+
 一键脚本仍需要本机具备 Node.js/npm，并且需要提前准备 `.env`、数据库和 Redis；uv、Python 与 Python 依赖的首次下载需要网络。若 PyPI 镜像需要调整，可通过 `PYPI_INDEX_URL` 覆盖默认的清华镜像地址。
 
 ---
