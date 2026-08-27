@@ -131,12 +131,30 @@ def agent_text_is_process_narration(state: Dict[str, Any], agent_text: str) -> b
     return not extract_agent_answer_after_process_narration(state, agent_text).strip()
 
 
+def _extract_model_fallback_notice(text: str) -> str:
+    """Extract the platform fallback notice so retraction cannot erase it."""
+    first_block = str(text or "").split("\n\n", 1)[0]
+    if first_block.startswith("> ⚠️ 主模型 `") and "fallback 模型 `" in first_block:
+        return first_block
+    return ""
+
+
 def accumulate_visible_answer(full: str, chunk: Dict[str, Any]) -> str:
     """Merge a stream chunk into the confirmed/speculative visible answer."""
     chunk_type = str(chunk.get("type") or "")
     if chunk_type == "retraction":
-        return str(chunk.get("content") or "")
-    if chunk_type in {"process_narration_promote", "answer_delta", "error", "external_execution_required"}:
+        replacement = str(chunk.get("content") or "")
+        fallback_notice = _extract_model_fallback_notice(full)
+        if fallback_notice and not replacement.startswith(fallback_notice):
+            return f"{fallback_notice}\n\n{replacement}" if replacement else fallback_notice
+        return replacement
+    if chunk_type in {
+        "process_narration_promote",
+        "answer_delta",
+        "error",
+        "external_execution_required",
+        "model_fallback",
+    }:
         return full + str(chunk.get("content") or "")
     if chunk_type:
         return full

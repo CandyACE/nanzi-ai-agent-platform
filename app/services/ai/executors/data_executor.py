@@ -13,6 +13,7 @@ class DataQueryExecutor(BaseExecutor):
 
     def __init__(self, *args, **kwargs):
         self.turn_decision: TurnDecision | None = kwargs.pop("turn_decision", None)
+        self.current_user_query: str | None = kwargs.pop("current_user_query", None)
         super().__init__(*args, **kwargs)
         self._runner: DataAgentRunner | None = None
 
@@ -29,6 +30,7 @@ class DataQueryExecutor(BaseExecutor):
             user_info=self.user_info,
             conversation_id=self.conversation_id,
             turn_decision=self.turn_decision,
+            current_user_query=self.current_user_query,
         )
         self._runner = runner
         async for chunk in runner.execute(history):

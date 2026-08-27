@@ -36,6 +36,17 @@ def test_thinking_configuration_defaults_to_agent_scope_values():
     ]
 
 
+def test_builtin_volcengine_provider_is_accepted_by_model_registry_schema():
+    model = AIModelCreate(
+        **model_payload(
+            model_id="doubao-seed-1-6-251015",
+            provider="volcengine",
+        )
+    )
+
+    assert model.provider == "volcengine"
+
+
 def test_thinking_configuration_normalizes_effort_order_and_legacy_response_text():
     model = AIModelCreate(
         **model_payload(

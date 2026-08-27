@@ -1,6 +1,7 @@
 import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch
+from app.services.ai.conversation_identity import MissingUserIdentityError
 from app.services.ai.memory_service import MemoryService
 
 # --- Mocks ---
@@ -49,9 +50,8 @@ async def test_memory_service_get_key():
     key = service._get_key("user123", "conv456")
     assert key == "conversation:user123:conv456:history"
     
-    # Test anonymous
-    key_anon = service._get_key(None, "conv789")
-    assert "anonymous" in key_anon
+    with pytest.raises(MissingUserIdentityError):
+        service._get_key(None, "conv789")
 
 
 @pytest.mark.asyncio

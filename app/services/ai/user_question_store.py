@@ -39,11 +39,15 @@ class UserQuestionStore:
 
     @classmethod
     def _key(cls, user_id: int | str, conversation_id: str, question_id: str) -> str:
-        return f"{cls.KEY_PREFIX}:{user_id}:{conversation_id}:{question_id}"
+        from app.services.ai.conversation_identity import require_user_id
+
+        return f"{cls.KEY_PREFIX}:{require_user_id(user_id)}:{conversation_id}:{question_id}"
 
     @classmethod
     def _active_key(cls, user_id: int | str, conversation_id: str) -> str:
-        return f"{cls.KEY_PREFIX}:active:{user_id}:{conversation_id}"
+        from app.services.ai.conversation_identity import require_user_id
+
+        return f"{cls.KEY_PREFIX}:active:{require_user_id(user_id)}:{conversation_id}"
 
     async def create_pending(
         self,

@@ -449,7 +449,6 @@ def convert_history_to_messages(history: List[Dict[str, str]], strip_thought: bo
     return messages
 
 
-
 def _system_content_text(message: SystemMessage) -> str:
     content = getattr(message, "content", "")
     if isinstance(content, str):

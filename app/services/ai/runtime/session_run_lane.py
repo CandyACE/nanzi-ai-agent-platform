@@ -8,6 +8,8 @@ from typing import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
+from app.services.ai.conversation_identity import require_user_id
+
 DEFAULT_LOCK_TTL_SECONDS = 600
 DEFAULT_WAIT_SECONDS = 0.0
 DEFAULT_POLL_INTERVAL_SECONDS = 0.1
@@ -26,7 +28,7 @@ class ConversationRunLane:
     """Serialize agent turns per (user_id, conversation_id)."""
 
     def _lock_key(self, user_id: str | int | None, conversation_id: str) -> str:
-        uid = str(user_id) if user_id is not None else "anonymous"
+        uid = require_user_id(user_id)
         safe_cid = conversation_id.replace(":", "_")
         return f"nanzi:conv_run:{uid}:{safe_cid}"
 

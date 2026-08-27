@@ -73,6 +73,7 @@ async def test_dispatcher_uses_turn_kind_as_the_only_outer_executor_route():
 
     assert isinstance(executor, DataQueryExecutor)
     assert executor.turn_decision == _resolved_data_decision()
+    assert executor.current_user_query == "分析一下"
     assert not hasattr(executor, "turn_classification")
 
 
@@ -166,6 +167,7 @@ async def test_dispatcher_reuses_turn_decision_for_general_agent_without_reclass
     assert isinstance(executor, AssistantExecutor)
     assert executor.turn_decision.turn_kind == "general"
     assert executor.turn_decision.semantic_intent == "GENERAL"
+    assert executor.current_user_query == "你好"
 
 
 @pytest.mark.asyncio
@@ -266,6 +268,7 @@ async def test_dispatcher_allows_explicit_knowledge_context_to_preempt_data_agen
 
     assert isinstance(executor, KnowledgeExecutor)
     assert executor.turn_decision.turn_kind == "knowledge"
+    assert executor.current_user_query == "按这个知识库回答"
 
 
 @pytest.mark.asyncio
@@ -300,6 +303,7 @@ async def test_dispatcher_allows_explicit_knowledge_context_without_agent_datase
     )
 
     assert isinstance(executor, KnowledgeExecutor)
+    assert executor.current_user_query == "按这个知识库回答"
 
 
 @pytest.mark.asyncio
@@ -368,3 +372,4 @@ async def test_dispatcher_routes_only_fully_bound_knowledge_agent_to_knowledge_e
     )
 
     assert isinstance(executor, KnowledgeExecutor)
+    assert executor.current_user_query == "操作流程是什么"

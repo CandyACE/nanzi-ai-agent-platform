@@ -227,7 +227,12 @@ async def _last_model_call_stats(context: Any) -> dict[str, Any]:
     if context is None or not getattr(context, "conversation_id", None):
         return result
 
-    uid = str(getattr(context, "user_id", None) or "anonymous")
+    from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
+
+    try:
+        uid = require_user_id(getattr(context, "user_id", None))
+    except MissingUserIdentityError:
+        return result
     key = f"{memory_service.KEY_PREFIX}:{uid}:{context.conversation_id}:{STATS_KEY_SUFFIX}"
     try:
         redis = await _maybe_await(get_redis())
@@ -259,8 +264,19 @@ async def _context_usage_estimate(context: Any) -> dict[str, Any]:
     """复用共享服务估算当前会话上下文，保持 session_status 原有空历史语义。"""
     if context is None:
         return await estimate_context_usage(user_id=None, conversation_id=None)
+    from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
+
+    try:
+        user_id = require_user_id(getattr(context, "user_id", None))
+    except MissingUserIdentityError:
+        return {
+            "history_messages": 0,
+            "estimated_tokens": 0,
+            "token_budget": None,
+            "status": "identity_unavailable",
+        }
     return await estimate_context_usage(
-        user_id=str(getattr(context, "user_id", None) or "anonymous"),
+        user_id=user_id,
         conversation_id=getattr(context, "conversation_id", None),
         runtime_model_info=getattr(context, "runtime_model_info", {}) or {},
     )

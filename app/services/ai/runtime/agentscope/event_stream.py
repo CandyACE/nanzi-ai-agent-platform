@@ -80,6 +80,7 @@ def new_native_stream_state(
         "system_content": system_content,
         "max_steps": max_steps,
         "model_call_started_at": {},
+        "model_fallback_notice_emitted": False,
         "_observed_summary_len": 0,
     }
 
@@ -112,6 +113,31 @@ def extract_latest_assistant_text(agent: Any, *, include_thinking: bool = False)
             if cleaned.strip():
                 return cleaned
     return ""
+
+
+def _model_fallback_notice_event(
+    agent: Any | None,
+    state: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    if state.get("model_fallback_notice_emitted"):
+        return None
+    info = getattr(agent, "_platform_fallback_info", None) if agent is not None else None
+    if not isinstance(info, dict):
+        return None
+
+    primary_model = str(info.get("primary_model") or "unknown")
+    fallback_model = str(info.get("fallback_model") or "unknown")
+    state["model_fallback_notice_emitted"] = True
+    return {
+        "type": "model_fallback",
+        "status": "warning",
+        "primary_model": primary_model,
+        "fallback_model": fallback_model,
+        "content": (
+            f"> ⚠️ 主模型 `{primary_model}` 调用失败，"
+            f"本次回答由 fallback 模型 `{fallback_model}` 生成。\n\n"
+        ),
+    }
 
 
 def is_interrupt_sse_chunk(chunk: Dict[str, Any]) -> bool:
@@ -269,6 +295,10 @@ async def stream_observability_agentscope_events(
     agent_name: str | None = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     event_type = str(getattr(event, "type", ""))
+
+    fallback_notice = _model_fallback_notice_event(agent, state)
+    if fallback_notice:
+        yield fallback_notice
 
     if event_type == "REPLY_START":
         yield {

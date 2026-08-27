@@ -12,6 +12,7 @@ ModelProvider = Literal[
     "zhipu",
     "siliconflow",
     "dashscope",
+    "volcengine",
     "ollama",
     "other",
 ]

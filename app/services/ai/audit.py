@@ -3,6 +3,7 @@ from typing import List, Any, Optional, Dict
 from app.schemas.agent import AgentExecutionStep
 from app.core.orm import AsyncSessionLocal
 from app.models.audit import AgentExecutionTrace
+from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -189,13 +190,14 @@ class AuditManager:
         """
         try:
             from app.models.audit import AgentExecutionHistory
+            history_user_id = require_user_id(user_info)
             
             async with AsyncSessionLocal() as session:
                 history_entry = AgentExecutionHistory(
                     trace_id=trace_id,
                     agent_id=agent_id,
                     conversation_id=conversation_id,
-                    user_id=user_info.get("user_id") if user_info else None,
+                    user_id=history_user_id,
                     username=user_info.get("user_name") if user_info else None,
                     query=query,
                     summary=summary,

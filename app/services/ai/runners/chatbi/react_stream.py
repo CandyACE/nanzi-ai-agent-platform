@@ -360,7 +360,7 @@ async def stream_agentscope_events(
                 try:
                     await persist_user_question_event(
                         event=question_event,
-                        user_id=runner._runtime_user_id() or "anonymous",
+                        user_id=runner._runtime_user_id(),
                         conversation_id=runner.conversation_id or "",
                     )
                 except Exception:

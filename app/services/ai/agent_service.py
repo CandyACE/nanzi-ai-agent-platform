@@ -48,6 +48,7 @@ from app.services.ai.turn_decision import (
 )
 from app.services.ai.intent_service import looks_like_current_model_query
 from app.services.ai.business_context import sanitize_injected_context
+from app.services.ai.conversation_identity import require_user_id
 from app.services.schema_chunk_format import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
@@ -843,6 +844,10 @@ class AgentService:
         from app.utils.context import current_user_info
         current_user_info.set(user_info)
 
+        # 会话运行 lane、Redis 记忆和后续审计必须绑定真实用户；不能让内部
+        # 入口把缺失身份降级为 anonymous 后继续执行。
+        required_user_id = require_user_id(user_info)
+
         trace_id = str(uuid.uuid4())
         trace_buffer: List[AgentExecutionStep] = []
         agent_config = None
@@ -858,7 +863,7 @@ class AgentService:
         # 1. Initial Identity Chunk
         yield {"trace_id": trace_id, "status": "init"}
 
-        lane_user_id = user_info.get("user_id") if user_info else None
+        lane_user_id = required_user_id
 
         if user_info:
             quota_block = await self._quota_block_message(user_info)
@@ -912,7 +917,7 @@ class AgentService:
                     try:
                         question_store = await UserQuestionStore.from_runtime()
                         submitted_question = await question_store.submit_answer(
-                            user_id=lane_user_id or "anonymous",
+                            user_id=lane_user_id,
                             conversation_id=conversation_id,
                             question_id=receipt["question_id"],
                             selected_option_ids=receipt["selected_option_ids"],
@@ -2845,7 +2850,7 @@ class AgentService:
                 performance_tracker.observe_chunk({"content": response})
                 yield {"content": response, "status": "success"}
                 if conversation_id:
-                    u_id = user_info.get("user_id") if user_info else None
+                    u_id = require_user_id(user_info)
                     asyncio.create_task(
                         memory_service.add_message(
                             u_id,
@@ -3068,10 +3073,14 @@ class AgentService:
 
             # Prompt inventory must match the tools that the selected executor
             # will expose. The published version's tools are authoritative.
-            from app.services.ai.prompt_assembler import resolve_effective_prompt_tool_names
+            from app.services.ai.prompt_assembler import (
+                resolve_effective_prompt_tool_names_for_turn,
+            )
 
-            effective_prompt_tool_names = resolve_effective_prompt_tool_names(
+            effective_prompt_tool_names = await resolve_effective_prompt_tool_names_for_turn(
                 agent_config,
+                current_user_query=user_query,
+                turn_decision=turn_decision,
             )
 
             # 3. Load Memory Context
@@ -3410,7 +3419,7 @@ class AgentService:
                 yield {"type": "meta", "has_data_output": True}
 
             if conversation_id and full_response_content:
-                u_id = user_info.get("user_id") if user_info else None
+                u_id = require_user_id(user_info)
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
                 _schedule_post_process(
                     _persist_assistant_message_and_summary(

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.ai.memory_service import memory_service
+from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class RuntimeStateEnvelope:
 
 class AgentStateStore:
     def _user_id(self, user_id: str | int | None) -> str:
-        return str(user_id) if user_id is not None else "anonymous"
+        return require_user_id(user_id)
 
     def _key(self, user_id: str | int | None, conversation_id: str, agent_name: str) -> str:
         uid = self._user_id(user_id)
@@ -212,4 +213,3 @@ def prune_agent_state_context(state_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 agent_state_store = AgentStateStore()
-

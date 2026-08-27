@@ -51,6 +51,7 @@ class AgentDispatcher:
                 user_info,
                 conversation_id,
                 permission_options=permission_options,
+                current_user_query=user_query,
             )
 
         if agent_config.engine_type == 'OPENCLAW':
@@ -62,6 +63,7 @@ class AgentDispatcher:
                 user_info,
                 conversation_id,
                 permission_options=permission_options,
+                current_user_query=user_query,
             )
 
         can_do_data = "data_query" in (agent_config.capabilities or [])
@@ -101,6 +103,7 @@ class AgentDispatcher:
                     conversation_id,
                     permission_options=permission_options,
                     turn_decision=turn_decision,
+                    current_user_query=user_query,
                 )
             logger.info(
                 "[Dispatcher] knowledge route unavailable; fallback=Assistant "
@@ -128,6 +131,7 @@ class AgentDispatcher:
                 conversation_id,
                 permission_options=permission_options,
                 turn_decision=turn_decision,
+                current_user_query=user_query,
             )
 
         logger.info(
@@ -146,4 +150,5 @@ class AgentDispatcher:
             conversation_id,
             permission_options=permission_options,
             turn_decision=turn_decision,
+            current_user_query=user_query,
         )

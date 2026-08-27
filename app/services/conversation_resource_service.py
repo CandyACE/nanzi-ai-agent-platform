@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, List, Iterable
 
 from app.core.redis import get_redis
+from app.services.ai.conversation_identity import require_user_id
 
 
 class ConversationResourceService:
@@ -15,7 +16,7 @@ class ConversationResourceService:
 
     @classmethod
     def _key(cls, user_id: Any, conversation_id: str) -> str:
-        return f"{cls.KEY_PREFIX}:{user_id or 'anonymous'}:{conversation_id}:{cls.SUFFIX}"
+        return f"{cls.KEY_PREFIX}:{require_user_id(user_id)}:{conversation_id}:{cls.SUFFIX}"
 
     @classmethod
     def _empty_scope(cls) -> Dict[str, Any]:

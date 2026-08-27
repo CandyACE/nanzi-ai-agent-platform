@@ -475,10 +475,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             }
             return
 
-        user_question = next(
-            (str(message.get("content") or "") for message in reversed(history) if message.get("role") == "user"),
-            "",
-        ).strip()
+        user_question = self._current_user_query(history).strip()
 
         # 从 debug_options 读取会话级反幻觉开关（与模型覆盖等参数同通道）
         hallucination_check_enabled = bool(self.debug_options.get("hallucination_check", False))

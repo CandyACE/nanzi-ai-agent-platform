@@ -9,6 +9,7 @@ from app.services.ai.prompt_assembler import (
     assemble_system_prompt,
     resolve_prompt_assembler_flags,
     resolve_effective_prompt_tool_names,
+    resolve_effective_prompt_tool_names_for_turn,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.turn_decision import TurnDecision
@@ -216,6 +217,17 @@ def test_effective_prompt_tool_names_uses_configured_tools_and_enabled_flag():
 
     assert "search_knowledge_base" in names
     assert "execute_sql_query" not in names
+
+
+def test_effective_prompt_tool_names_exposes_configured_tools():
+    config = SimpleNamespace(
+        agent_name="TestAgent",
+        tools=["Bash", "excel_document_write"],
+    )
+    names = resolve_effective_prompt_tool_names(config)
+
+    assert "excel_document_write" in names
+    assert "Bash" in names
 
 
 def test_platform_prompt_prefers_mermaid_for_structural_diagrams_only():
