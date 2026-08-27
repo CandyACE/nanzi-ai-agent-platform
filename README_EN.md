@@ -20,7 +20,7 @@
 **NanZi AI Agent Platform** is an AI intelligence center purpose-built for complex enterprise scenarios.
 
 The platform revolves around the following core capability matrix:
-*   💬 **Deep Interactive Dialogue**: High-performance streaming chat with auto-routing, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call tools; integrated `ask_user_question` smart cards (single/multi-choice, text input), **Todo task lists** with step-by-step progress tracking, and skill auto-scan with permission suspend/resume.
+*   💬 **Deep Interactive Dialogue**: High-performance streaming chat with **intelligent delegation through the default Main agent**, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call tools; integrated `ask_user_question` smart cards (single/multi-choice, text input), **Todo task lists** with step-by-step progress tracking, and skill auto-scan with permission suspend/resume.
 *   🛡️ **Multi-Policy Sandbox & Isolation**: Native support for **Local** (host process), **Docker** (isolated private container), **E2B** (cloud sandbox), and **SSH** (remote secure channel) policies. Docker containers mount user workspaces at **identical absolute paths** for seamless canvas preview and edit persistence; idle auto-reaper (30m timeout), graceful shutdown cleanup, and chat popover control with **live second-by-second uptime tracking**.
 *   🌐 **Persistent Browser & Live Takeover**: Server-side persistent browser sessions with complete automation toolsets (navigation, click, fill, human-like trajectory slider dragging, scroll, keys, snapshot, file upload, multi-tabs); frontend right-side **live Web interactive drawer** with stream rendering and human-in-the-loop takeover.
 *   📊 **Native Enterprise ChatBI & Self-Healing**: Data sources, metadata sync, case-library Few-Shot, SQL self-healing, and optional **sql_plan** structured plans; **My Data Portal** via `/dataset_portal`; direct physical SQL and golden report stash.
@@ -106,8 +106,8 @@ The platform revolves around the following core capability matrix:
 ![NanZi Core Capabilities Matrix](docs/images/core.png)
 
 ### 1. 🧠 Multi-Engine & Hybrid Orchestration
-*   **Smart routing**: When no agent is specified, heuristic shortcuts (greetings, web search, ChatBI session break) run before LLM semantic routing; multi-intent parallel execution with Synthesizer aggregation.
-*   **Direct expert selection**: Embed expert mode, `agent_id`, or `@mention` skips auto-routing and loads the chosen agent.
+*   **Intelligent delegation**: When no agent is specified, the request goes directly to the default `Main`, which answers directly or delegates to authorized experts through `sub_agent_call` / `sub_agent_batch_call` when needed.
+*   **Direct expert selection**: Embed expert mode, `agent_id`, or `@mention` directly loads the chosen agent; that expert can still delegate sub-agents.
 *   **AgentScope ReAct**: Assistant / ChatBI / Knowledge run on AgentScope Agent + Toolkit with permission suspend/resume.
 *   **Thinking model compatibility**: Built-in `tool_choice_for_model` support and 6-tier `reasoning_effort` tuning for DeepSeek-R1, Kimi, GLM, etc.
 *   **Main assistant extras**: Tool preflight (relevance-based nudge), skill auto-scan, anti–business-data hallucination guard with one-click ChatBI switch.
@@ -160,15 +160,15 @@ The platform revolves around the following core capability matrix:
 
 ## 🔄 Execution Flow
 
-The system follows **Routing → Dispatch → Execution → Synthesis**:
+The system follows **Entry Resolution → Delegation/Dispatch → Execution → Synthesis**:
 
-1.  **Intent Router**: Without `agent_id`, heuristic shortcuts run first (greetings, web search, ChatBI session break → general assistant), then LLM routing with recent history and agent metadata; multi-agent hints supported.
-2.  **Direct selection**: Embed expert mode, `agent_id`, or `@mention` bypasses the router.
+1.  **Entry resolution**: Without `agent_id`, the request directly loads the default `Main`; with `agent_id`, `agent_name`, `version_id`, or `@mention`, it directly loads the selected expert.
+2.  **Intelligent delegation**: Main or the selected parent expert answers directly or invokes `sub_agent_call` / `sub_agent_batch_call` when a vertical capability is needed.
 3.  **Dispatcher**: Routes to **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / RAGFlow / OpenClaw; ChatBI classifies new query vs reuse vs context action internally.
 4.  **ReAct execution**: AgentScope reasoning-action loop with per-executor guards (SQL gates, tool preflight, permissions).
 5.  **Synthesis**: Multi-agent answers aggregated by Synthesizer; single-agent streams SSE content, logs, and citations.
 
-See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md)
+See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegation and expert selection](architech/design/AGENT_ROUTING_DESIGN.md)
 
 ---
 
@@ -181,7 +181,7 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [AGENT_ROUTING_DESIGN.
 | [architech/README.md](architech/README.md) | Architecture index |
 | [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) | End-to-end chat flow |
 | [PROMPT_LAYERS.md](architech/design/chat/PROMPT_LAYERS.md) | Prompt layering |
-| [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | Agent routing |
+| [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | Intelligent delegation and expert selection |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API integration |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | Code Canvas, workspace files, and execution API |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent gating contract |

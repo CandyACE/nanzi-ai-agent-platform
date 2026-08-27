@@ -1,7 +1,8 @@
 # AI 上下文管理指南
 
 > 本文档描述平台在**多轮对话上下文连续性**上的设计与实现，供后续维护、排障与扩展参考。
-> 覆盖：信息流、溢出压缩（compaction）、语义摘要（LLM digest）、跨轮摘录持久化（digest）、路由层复用（early_context）及对应配置项。
+> 覆盖：信息流、溢出压缩（compaction）、语义摘要（LLM digest）、跨轮摘录持久化（digest）及对应配置项。
+> **当前实现校准（2026-08-27）**：未指定专家时直接进入默认 Main，不再调用外层 `RouterService.route_query()`；下文旧版 `early_context` 路由复用仅供历史调用兼容参考。
 
 ---
 
@@ -13,7 +14,7 @@
 
 1. **窗口内不可逆丢失**：被丢弃的旧消息若无任何兜底，后续轮次的指代（「我刚才说的那个」「第三轮那个人」）与事实（已确认决策、未完成事项）会断档。
 2. **跨轮滑动丢失**：即使每轮都做局部保留，随着窗口持续滑动，最早的事实仍会被最终挤出，长会话尾部仍可能遗忘真正早期的前提。
-3. **路由层丢失**：路由器（router）做会话转向判断时，若看不到更早轮次要点，可能把本该延续本话题的请求误判为「新会话」。
+3. **委派上下文丢失**：Main 或子代理执行时若看不到更早轮次要点，可能无法正确理解用户的连续任务或指代。
 
 ### 1.2 目标
 
@@ -25,8 +26,8 @@
 
 截断窗口的 token 预算并**非固定值**，而是分两个阶段运行时解析，语义如下：
 
-1. **路由前安全预算**：自动路由尚未确定目标 agent 时，只使用 `agent_context_max_tokens` 配置兜底，不读取默认 agent（例如 `chat-bi`）的模型配置，也不启动 LLM 摘要。这样路由阶段不会把 A 模型的窗口误用到最终的 B 模型。
-2. **最终模型窗口优先**：agent 路由完成后，优先采纳最终显式指定模型所注册的 `context_size`（即 `current_model.context_size`，共用源），解析顺序：
+1. **默认 Main 入口预算**：未指定专家时直接读取默认 Main 的模型与上下文配置，不增加一轮外层路由模型调用。
+2. **最终模型窗口优先**：确定 Main 或指定专家后，优先采纳最终模型所注册的 `context_size`（即 `current_model.context_size`，共用源），解析顺序：
    - `debug_options.model`（输入框切换所选模型）→ 经 debug 通道解析；
    - 否则最终发布 agent 的 `model_name` → 经注册表解析。
 3. **配置兜底**：最终模型不可解析、或模型是 `system_default`（系统默认回落，无显式指定）时，回落 `agent_context_max_tokens`（默认 **65536**）。
@@ -47,10 +48,10 @@ get_history()                      # ① MemoryService 读取最近 N 条持久�
 _history_messages_for_context()    # ② 白名单过滤（只留 system/user/assistant，可为多模态结构）
     │
     ▼
-路由前安全窗口                      # ③ 先按 agent_context_max_tokens 构造路由所需上下文；溢出只做确定性摘录
+    Main / 指定专家入口                 # ③ 确定父智能体；未指定时直接使用默认 Main
     │
     ▼
-最终 agent/model 确定                 # ④ 完成路由和模型解析
+最终 agent/model 确定                 # ④ 完成父智能体与模型解析
     │
     ▼
 按最终模型重建窗口                  # ⑤ 用目标模型 context_size 重新截取；溢出时本轮确定性摘录，后台生成语义摘要
@@ -67,10 +68,10 @@ convert_history_to_messages() / normalize_messages_for_llm()   # ⑥ 归一化�
 
 > 关键点：摘录以 `role="system"` 消息注入窗口**最前**。`normalize_messages_for_llm` 会把多条 system 合并到系统区，因此不会破坏 user/assistant 的相对顺序，用户在界面看到的完整历史也不受影响。
 
-### 2.1 智能体直连路径 vs 路由路径
+### 2.1 默认 Main 路径 vs 指定专家路径
 
-- **智能体直连**（`agent_service._run_chat_turn_stream`）：走 ④ 的 `_maybe_compact_overflow` 完整链路。
-- **路由路径**（`router_service.route_query`）：不重复调用 `_maybe_compact_overflow`，而是把已持久化的 history **digest** 通过独立的 `early_context` 参数直接拼入路由上下文（见 [§6](#6-路由层复用-dearly_contextd)），避免为「判断转向」再付一次压缩 + 摘要的模型成本。
+- **默认 Main**（`agent_service._run_chat_turn_stream`）：直接进入 Main，走 `_maybe_compact_overflow` 完整链路。
+- **指定专家**：直接加载目标专家，同样走 `_maybe_compact_overflow` 完整链路；专家是否委派子代理由其自身执行过程决定。
 
 两条路径共用同一份持久化 digest key，因此业务感知一致。
 
@@ -188,30 +189,9 @@ digest 用独立 key，`get_conversation_history` 的展示路径读取的是 hi
 
 ---
 
-## 6. 路由层复用（early_context，D 项）
+## 6. 旧路由上下文兼容（early_context，历史 D 项）
 
-### 6.1 为什么单独走参数
-
-路由层 `route_query` 内用于判断转向的上下文经 `_condense_history` 重整，而 `_condense_history` 会**丢弃 `role="system"` 的消息、且只取最近若干轮**。若把 digest 作为 system 消息注入 history 前段，会被 `_condense_history` 扔掉，造成 D 项不生效。
-
-因此改为**独立的 `early_context` 参数**直接拼入 `_build_history_context`：
-
-```
-context_manager 路由分支：
-    early_context = await MemoryService().get_digest(uid, cid) if (uid and cid) else None
-    route_query(..., history=history, ..., early_context=early_context)
-
-router_service.route_query(..., early_context: Optional[str] = None):
-    context_str = _build_history_context_history(..., early_context=early_context, ...)
-```
-
-### 6.2 注入位置
-
-`_build_history_context` 在 `last_agent_name` 段（最近一轮智能体名）**之前**注入「### 更早轮次要点 (Earlier Background)」段，内容即持久化的 digest 正文。无 digest 时该段自然省略。
-
-这样路由器在判断「是否开启新会话 / 继续哪个智能体 / 转向到别的 agent」时，能读到早期轮次的要点；且**不重复触发**一次独立压缩 + LLM 摘要（复用智能体路径已持久化的 digest）。
-
-> 注意：`handoff.py` 等调用 `resolve_agent_config` 但**未传 `conversation_id`** 的路径，D 项的 `early_context` 注入在该分支自然跳过（read-digest 依赖 uid+cid 同时存在）。
+当前默认 Main 和指定专家路径不调用 `RouterService.route_query()`，因此不会为外层专家转向额外构建 `early_context`。历史代码或外部旧调用若仍直接使用 `route_query(..., early_context=...)`，可以继续复用持久化 digest；该兼容参数不改变当前 Main 的入口语义。
 
 ---
 
@@ -236,7 +216,7 @@ router_service.route_query(..., early_context: Optional[str] = None):
 - **A** 工具结果纳入历史（`full_history` 含 tool 相关角色，见 §2 白名单）。
 - **B** 溢出摘录 ↔ `LongTermMemory`（digest 跨轮持久化，§5）。
 - **C** 以 token 预算替代条数窗口（此处以 `max_chars` 控制摘录 token 上限）。
-- **D** 路由层复用压缩摘录（`early_context`，§6）。
+- **D** 旧 RouterService 路由层复用压缩摘录（`early_context`，§6；当前默认 Main 不使用）。
 - **E** 摘录跨轮持久化 + 可选 LLM 语义摘要（当前会话模型，§4）。
 - **F** 窗口内保留 agent / 工具元数据。
 
@@ -273,7 +253,7 @@ router_service.route_query(..., early_context: Optional[str] = None):
 - `docs/md/ai_agent_gating_contract.md` —— 智能体开关/准入契约。
 - `docs/md/embed_integration_guide.md`、`docs/md/code_canvas_and_workspace_guide.md`、`docs/md/chatbi_v1_http_api.md` —— 其它功能/集成指南。
 - `docs/release/1.0.3/release_log.md` —— 1.0.3「上下文压缩与会话 followup 队列」特性发布记录。
-- `architech/design/AGENT_ROUTING_DESIGN.md` —— 智能体路由设计（对应 §6 路由层 `route_query` / `early_context` 的用途上下文）。
+- `architech/design/AGENT_ROUTING_DESIGN.md` —— 智能委派与专家直选设计；旧 `route_query` / `early_context` 仅作兼容背景。
 - `docs/html/B01-long-term-memory.html`、`docs/html/C03-prompt-context-loop.html` —— 长期记忆与提示词上下文循环产品文档。
 
 ---

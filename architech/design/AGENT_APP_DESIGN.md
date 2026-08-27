@@ -8,9 +8,9 @@
 
 ## 2. 核心功能 (Core Features)
 
-### 2.1 智能路由与多模式 (Routing & Modes)
-- **自动路由 (Auto Router)**: 用户的意图首先经过 `RouterService` (分类器)，自动分发给最合适的专业智能体（如 ChatBI, KnowledgeBase 等）。
-- **指定智能体 (Specific)**: 允许用户强制指定与某个特定版本或特定 ID 的智能体对话，用于测试特定能力。
+### 2.1 智能委派与多模式 (Delegation & Modes)
+- **智能委派 (Intelligent Delegation)**: 未指定专家时直接进入默认 `Main`，由 Main 自己回答，或按需调用 `sub_agent_call` / `sub_agent_batch_call` 委派已授权专家。
+- **指定智能体 (Specific)**: 允许用户强制指定与某个特定版本或特定 ID 的智能体对话，用于测试特定能力；指定专家仍可继续委派子代理。
 
 ### 2.2 实时流式响应 (Real-time Streaming)
 - **打字机效果**: 基于 Server-Sent Events (SSE) 协议，实现字符级的实时输出。
@@ -40,7 +40,7 @@
 - **核心服务**:
     - `AgentService`: 编排层，负责组装 Prompt、调用 LLM、执行工具。
     - `DataQueryExecutor` / `KnowledgeExecutor` / `AssistantExecutor`: 具体的执行器。
-    - `RouterService`: 路由层。
+    - `RouterService`: 兼容保留的旧路由服务，不参与默认 Main 主链路。
 - **通信协议**: HTTP + SSE (text/event-stream)。
 
 ## 4. 接口协议 (API Specification)

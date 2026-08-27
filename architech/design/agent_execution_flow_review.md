@@ -11,6 +11,8 @@
 
 本文档保留执行流评审与优化优先级，不作为唯一流程说明。当前实现已不再使用历史缩写命名；ChatBI 内部请求类别为「新数据查询 / 复用上一轮结果 / 上下文动作 / 技能执行」。
 
+> **当前实现校准（2026-08-27）**：未指定专家时，ContextManager 直接加载默认 `Main`，由 Main 直接回答或通过 `sub_agent_call` / `sub_agent_batch_call` 智能委派；当前主链路不调用 `RouterService.route_query()`。指定专家仍走直达逻辑。下方早期评审中关于 RouterService 语义选型的内容保留为历史评审背景。
+
 ---
 
 ## 1. 智能体执行流程总览
@@ -23,7 +25,7 @@ flowchart TB
 
     subgraph AS["AgentService"]
         M["Redis 会话记忆"]
-        CM["ContextManager + RouterService<br/>启发式短路 + LLM"]
+        CM["ContextManager<br/>默认 Main / 指定专家"]
         INJ["注入: 技能/LTM/记忆/Skill扫描/用户画像 stable_prefix"]
         DP["AgentDispatcher"]
     end
@@ -42,15 +44,15 @@ flowchart TB
     D & K & A & R & O --> SSE["流式 content / log"]
 ```
 
-**一轮请求的主路径**：Redis 读历史 -> 路由选智能体 -> 注入上下文 -> Dispatcher 选 Executor -> ReAct/合成 -> 写回 Redis + Trace。
+**一轮请求的主路径**：Redis 读历史 -> 解析默认 Main 或指定专家 -> 注入上下文 -> Main 按需委派 -> Dispatcher 选 Executor -> ReAct/合成 -> 写回 Redis + Trace。
 
 当前分类边界：
 
 - `TurnClassification` 是通用会话请求分类，只表达 `DATA_QUERY_REQUEST / CONTEXT_ACTION / SKILL_EXECUTION / META_ACTION / GENERAL / KNOWLEDGE` 等跨执行器概念。
-- `shared_turn` 由 `resolve_turn_for_session` 统一产出（启发式 + 意图 LLM），供 Dispatcher 与各 Executor 复用，避免重复意图调用。
-- 路由层输出的 `turn_labels / relation_to_previous / user_action_type` 是通用 hint，可被 Assistant 参考；当前仅把它注入为弱提示词，不做硬分支。
-- **RouterService** 在 LLM 前尝试：问候短路、联网短路、ChatBI 亲和性 `BREAK` 打断（`resolve_data_agent_session_affinity`；`UNCERTAIN` 不短路）。
-- 显式 `agent_id` / 专家模式 → `direct_agent_selection`，跳过自动路由与主助手数据反幻觉 Guard。
+- `shared_turn` 由 `resolve_turn_for_session` 统一产出（启发式 + 意图 LLM），供 Dispatcher 与各 Executor 复用，避免重复意图调用；它不负责重新选择外层专家。
+- Main 的委派工具会接收当前用户可用的专家候选和能力信息；Main 仅在任务需要时委派，不因为候选数量变化而逐个调用。
+- **RouterService** 当前仅兼容保留，用于旧调用、路由常量和缓存失效，不参与未指定专家的默认主链路。
+- 显式 `agent_id` / 专家模式 → `direct_agent_selection`，直接加载指定专家；该专家仍可继续委派子代理。
 - ChatBI 专用请求类别由 `DataQueryTurnClassifier` 在 `DataQueryExecutor` 内部执行（新查数 / 追问 / 结果分析与呈现 / 动作 / 元数据 / 非查数处置等），详见 [CHAT_BI_DESIGN.md](./CHAT_BI_DESIGN.md)。
 
 ---
@@ -111,7 +113,7 @@ flowchart TD
 
 ---
 
-## 3. Dispatcher（路由层）
+## 3. Dispatcher（执行器分发层）
 
 Dispatcher 当前只负责选择执行器：
 
@@ -167,7 +169,7 @@ AgentService 统一输出「轮次分类」日志；ChatBI 场景在 `DATA_QUERY
 - 通用助手执行器：`AssistantExecutor` → `AssistantAgentRunner`。
 - 系统隐式工具（create_skills、memory_search、任务等）是元操作、上下文动作、技能的正确归宿。
 - 非 ChatBI / 非 Knowledge 的 `GENERAL`、`META_ACTION`、`CONTEXT_ACTION` 等轮次走此链路。
-- `turn_labels / relation_to_previous / user_action_type` 会作为「路由层通用理解」注入 system prompt；仅弱 hint，不驱动硬分支。
+- `turn_labels / relation_to_previous / user_action_type`（如有）会作为通用理解注入 system prompt；仅弱 hint，不驱动外层专家选择。
 - **工具预检**（`tool_nudge_policy` + `agent_tool_preflight_mode`）：按已绑定工具 description 相关度注入便签；`hard` 模式首步强制 ToolChoice。
 - **数据反幻觉 Guard**：仅主助手 + 非 `direct_agent_selection` + 强查数信号；拦截假 ChatBI 话术或「表格+内网 IP/内部字段」类编造；可 yield `quick:/switch_agent_expert`。
 - **Skill 自动扫描**（主助手）：`skill_auto_scan_*` 配置，未挂载技能时按问题扫描技能库。
@@ -203,7 +205,7 @@ AgentService 统一输出「轮次分类」日志；ChatBI 场景在 `DATA_QUERY
 5. `GeneralChat*` 重命名为 `Assistant*`（通用助手，非闲聊专用）
 6. 多智能体共享 `session_turn`（通用分类 + 意图 LLM）
 7. RAGExecutor：`conversation_id` 修复
-8. 路由启发式短路（问候/联网/ChatBI 亲和性三态，仅 `BREAK` 打断）与 `resolve_data_agent_session_affinity`
+8. （历史兼容）路由启发式短路（问候/联网/ChatBI 亲和性三态，仅 `BREAK` 打断）与 `resolve_data_agent_session_affinity`
 9. 主助手工具预检（`tool_nudge_policy`）与 Skill 自动扫描
 10. 主助手数据反幻觉 Guard 收紧 + 专家直选 bypass
 11. ChatBI `sql_plan` 可选门禁（`enable_sql_plan`）+ 前端 SqlPlanCard 渲染

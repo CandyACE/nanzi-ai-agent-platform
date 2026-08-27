@@ -6,7 +6,7 @@
 | 类型 | 运行时位置 |
 |------|------------|
 | 平台全局守则 | `app/services/ai/agent_prompts.py` → `PLATFORM_GLOBAL_SYSTEM_PROMPT` |
-| 路由 / 意图 | `router_service.py`、`intent_service.py`（内置，不可 DB 配置） |
+| Main 智能委派 / 意图 | `agent_prompts.py`、`agent_service.py`、`intent_service.py`（内置，不可 DB 配置） |
 | 编排注入（技能/LTM/记忆） | `agent_prompts.py` + `agent_service.py` |
 | ChatBI / 通用对话护栏 | `app/services/ai/executors/prompts.py` |
 | 智能体主提示 | DB `ai_agent_versions.system_prompt` |
@@ -35,5 +35,5 @@
 ## 调优说明
 
 1. **ChatBI**：线上 `system_prompt` 须保留 `{dataset_menu}` 占位，由 `DataQueryExecutor` 按权限注入。
-2. **路由**：见 `RouterService.DEFAULT_SYSTEM_PROMPT`；产品说明见 `design/AGENT_ROUTING_DESIGN.md`。
+2. **智能委派**：默认请求直接进入 Main，由 `sub_agent_call` / `sub_agent_batch_call` 按需委派；`RouterService` 仅兼容保留。产品说明见 `design/AGENT_ROUTING_DESIGN.md`。
 3. **全局安全/工具/记忆对照**：优先改代码中的 `PLATFORM_GLOBAL_SYSTEM_PROMPT`（含 memory_search、知识库、仅调用已绑定工具等），避免在每个智能体草稿里重复冗长安全段。

@@ -32,10 +32,10 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 ## 外层路由执行流程
 
-每个用户轮次只生成一个外层 `TurnDecision`。自动路由由 `RouterService` 生成，专家直选或 `@` 提及由 `TurnDecision.for_direct_agent_selection()` 生成；之后由 `AgentDispatcher` 根据 `turn_kind`、Agent capability 和安全资格选择 Executor。Prompt、工具预检、Grounding、子代理和 Runner 都消费同一个决策快照，不再从独立字典或会话分类结果重新推导外层路由。
+每个用户轮次只生成一个外层 `TurnDecision`。未指定专家时直接进入默认 `Main` 的智能委派入口，指定专家或 `@` 提及时由 `TurnDecision.for_direct_agent_selection()` 记录直达来源；之后由 `AgentDispatcher` 根据 `turn_kind`、Agent capability 和安全资格选择 Executor。Prompt、工具预检、Grounding、子代理和 Runner 都消费同一个决策快照，不再从独立字典或会话分类结果重新推导外层路由。
 
 ```text
-用户消息 → RouterService / 专家直选 → TurnDecision
+用户消息 → 默认 Main 智能委派 / 专家直选 → TurnDecision
   → 权限与能力校验 → PromptAssembler → AgentDispatcher
   → Assistant / Knowledge / DataQuery / 外部引擎 Executor
 ```
@@ -44,7 +44,7 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 ### 可访问资源摘要
 
-路由前由 `app/services/ai/accessible_resource_catalog.py` 按当前用户权限读取知识库和数据集的目录级名称及短描述，作为 RouterService 的 `accessible_resources_context` 动态提示词 Section。路由完成后，非 ChatBI 轮次将同一摘要传给 PromptAssembler 的 `accessible_resources` Section，位置在用户画像之后、记忆和技能之前。
+进入 Main 或指定专家前后，由 `app/services/ai/accessible_resource_catalog.py` 按当前用户权限读取知识库和数据集的目录级名称及短描述，作为 PromptAssembler 的 `accessible_resources` 动态提示词 Section，位置在用户画像之后、记忆和技能之前。默认 Main 路径不再为外层 Router 预先调用一次语义路由。
 
 该摘要只用于来源判断和语义关联，不包含表结构、字段、指标、文档正文、知识库备注或负责人信息，也不替代 `search_knowledge_base`、数据工具和服务端权限校验。资源查询失败时只移除提示摘要，不能因此放宽任何访问权限。
 
@@ -55,7 +55,7 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 | Agent 类型 | 路由/意图门控 | 工具权限门控 | 外部执行挂起 | 数据/知识真实性门控 | SQL 安全门控 | 输出安全/反幻觉 | 中断恢复 | 当前契约状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ChatBI / DataQuery | 必须。外层只有在 `TurnDecision.turn_kind=data_query`、Agent 具备 `data_query` capability 且 `allows_data_route=true` 时进入 DataQuery；进入后以 `DataQueryTurnClassifier` 判定内部动作 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。schema、few-shot、结果复用、空结果、异常结果均需可观测 | 必须。只读 SQL、schema-before-sql、静态风险、重复 SQL、修复轮次、最终 guard | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后最终文字超出成功数据结果时保留正文并追加风险提示 | 必须。pending snapshot 保存 data run state | 基本完整，需收口测试和少数边界顺序 |
-| General Assistant | 必须。使用 RouterService 生成的 `TurnDecision`；GENERAL 路由若与用户明确的公网/运行状态意图冲突，以权限边界内的请求决策投影升级证据要求 | 必须。AgentScope runtime tool scope 统一处理；可选工具预检（`agent_tool_preflight_mode`） | 必须。支持 `external_execution_required` | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后普通 GENERAL 直接流式；明确来源请求和旧查数 Guard 才进入事实审核 | 不适用 | 柔性。开启时保留正文并按证据匹配结果追加来源或风险提示，不再发送阻断卡片 | 必须。AgentScope pending 恢复后遵循本轮开关 | 基础完整，不等同 ChatBI 强门控 |
+| General Assistant | 必须。默认请求直接进入 Main 智能委派；指定专家使用 `direct_agent_selection`；GENERAL 仍以 `TurnDecision` 表达外层执行类型，公网/运行状态意图按权限边界内的请求决策提升证据要求 | 必须。AgentScope runtime tool scope 统一处理；可选工具预检（`agent_tool_preflight_mode`） | 必须。支持 `external_execution_required` | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后普通 GENERAL 直接流式；明确来源请求和旧查数 Guard 才进入事实审核 | 不适用 | 柔性。开启时保留正文并按证据匹配结果追加来源或风险提示，不再发送阻断卡片 | 必须。AgentScope pending 恢复后遵循本轮开关 | 基础完整，不等同 ChatBI 强门控 |
 | Knowledge Agent | 必须。知识库问答可优先于普通对话 | 必须。AgentScope runtime tool scope 统一处理 | 必须。支持 `external_execution_required` | 必须。dataset 范围、自动检索、空召回、引用约束 | 不适用 | 会话可选：Embed 默认开，AgentDebug/原始 API 默认关。开启后先反思重写；最终仍不一致时保留最后回答并追加风险提示 | 必须。AgentScope pending 恢复 | 基本完整，需明确 dataset 缺失与后续反幻觉测试关系 |
 | RAGFlow 外部引擎 | 弱。适配器内只做查询提取和日志 | 不适用。外部引擎不走本地 AgentScope 工具权限 | 不适用。当前无统一挂起恢复 | 依赖 RAGFlow 返回引用和错误 | 不适用 | 弱。无本地二次反幻觉审计 | 不适用 | 非统一门控路径，需明确为外部引擎自管或补统一适配 |
 | OpenClaw 外部引擎 | 弱。主要交给 OpenClaw 处理 | 不适用。外部引擎不走本地 AgentScope 工具权限 | 不适用。当前无统一挂起恢复 | 部分。透传用户可访问 dataset 给外部引擎 | 不适用 | 必须。输入和输出安全审计可配置 | 不适用 | 有安全审计，但非统一 AgentScope 门控 |
@@ -87,7 +87,7 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 1. 只要 Agent 配置包含 `data_query` capability，dispatcher 可以进入 `DataQueryExecutor`。
 2. 进入 `DataQueryExecutor` 后，ChatBI 内部行为必须以 `DataQueryTurnClassifier` 为最终判定，不能只依赖外层 router。
-3. 外层会话亲和性为三态（`KEEP` / `BREAK` / `UNCERTAIN`）：仅 `BREAK` 可在 Router 启发式层离开 ChatBI；`UNCERTAIN` 必须进入语义路由，不得直接 fallback Main。详见 `intent_service.DataSessionAffinity`。
+3. ChatBI 内部仍可使用 `DataSessionAffinity`（`KEEP` / `BREAK` / `UNCERTAIN`）辅助判断连续分析；它不再负责默认请求的外层专家选择，也不触发默认 Main 之前的 Router 语义调用。详见 `intent_service.DataSessionAffinity`。
 4. 分类类型必须覆盖（含兼容旧名）：
    - `new_data_query` / `data_followup_query` / `federated_data_query`
    - `metadata_query`
@@ -166,7 +166,7 @@ Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`�
 
 ## General Assistant 契约
 
-1. General Assistant 必须使用 RouterService 生成的 `TurnDecision`，由其中的 `turn_kind` 表达 general、knowledge、data query 或 context action。
+1. General Assistant 默认由 Main 智能委派入口生成 `TurnDecision`；指定专家使用 `direct_agent_selection`，并由 `turn_kind` 表达 general、knowledge、data query 或 context action。
 2. 如果当前 Agent 无 `data_query` capability，但用户问题被识别为数据查询，必须按通用助手处理，并保留降级语义。
 3. General Assistant 不得连接 ChatBI 数据库，也不得编造内部业务数据。
 4. **数据反幻觉 Guard**（`AssistantAgentRunner.execute`）仅在以下条件**同时**满足时启用：

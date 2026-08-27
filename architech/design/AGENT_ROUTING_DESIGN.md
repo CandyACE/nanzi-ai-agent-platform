@@ -1,123 +1,89 @@
-# 智能体路由分发设计 (Agent Routing Design)
+# 智能委派与专家直选设计 (Intelligent Delegation & Explicit Expert Selection)
 
-本文档详细说明了南孜智能体平台如何将用户的自然语言请求分发给最合适的智能体。
+本文档说明南孜智能体平台当前如何确定对话入口，以及由 `Main` 或指定专家按需委派子代理。
 
-## 1. 核心路由策略
+> **当前实现校准（2026-08-27）**：未指定专家时不再先做外层语义路由。请求直接进入默认 `Main`，由 Main 自己回答或调用 `sub_agent_call` / `sub_agent_batch_call`。`RouterService` 仅作为旧调用、常量和缓存失效的兼容保留，不是当前默认请求的运行时入口。
 
-平台采用 **“上下文感知的 LLM 路由机制” (Context-Aware LLM Routing)**。当请求未显式指定智能体时，路由器会结合可用智能体清单、最近多轮对话、上一轮处理智能体和当前用户输入，选择最合适的主智能体。
+## 1. 核心入口与委派策略
 
-路由层只负责选择最合适的智能体 / 执行器，并可输出通用会话标签作为 hint；它不负责 ChatBI 内部请求类别判断。ChatBI 的新查数 / 追问 / 结果分析与呈现 / 动作 / 元数据 / 非查数处置由 `DataQueryExecutor` 内部的 `DataQueryTurnClassifier` 判定。
+平台采用 **“默认 Main + 按需智能委派”**。入口只区分用户是否显式指定了专家：未指定时直接加载 Main；指定 `agent_id`、`agent_name`、`version_id` 或使用 `@` / 专家模式时直接加载目标专家。Main 和指定的父专家都可以在自身执行过程中按需委派子代理。
 
-### 1.1 路由流程图
+委派层只负责在任务确实需要垂直能力时调用子代理，不负责替代 ChatBI 内部请求类别判断。ChatBI 的新查数 / 追问 / 结果分析与呈现 / 动作 / 元数据 / 非查数处置仍由 `DataQueryExecutor` 内部的 `DataQueryTurnClassifier` 判定。
+
+### 1.1 入口与委派流程图
 
 ```mermaid
 graph TD
     A[用户输入 User Input] --> B[上下文组装 Context Assembly]
     B --> C{是否显式指定智能体<br/>agent_id / agent_name / 专家模式}
     C -- 是 --> D[直接加载指定 Agent<br/>route_hints.direct_agent_selection=true]
-    C -- 否 --> H1{启发式短路}
-    H1 -- 纯问候 --> G1[通用助手 无 LLM]
-    H1 -- 联网/外部搜索 --> G1
-    H1 -- 上轮 ChatBI 且亲和性 BREAK --> G1
-    H1 -- 否 --> E[RouterService LLM 路由]
-    E --> F{LLM 决策结果}
-    F -- 匹配成功 --> G[路由至主 Agent]
-    F -- 低置信 / 未知 / 异常 --> H[兜底路由: 通用对话助手]
+    C -- 否 --> M[直接加载默认 Main]
+    M --> N{Main 是否需要垂直能力?}
+    N -- 否 --> G1[Main 直接回答]
+    N -- 是 --> E[Main 调用 sub_agent_call / sub_agent_batch_call]
+    E --> F[已授权子代理执行任务]
+    F --> G[Main 汇总子代理结果]
     D --> I[进入 Executor 内部流程]
-    G --> I
     G1 --> I
-    H --> I
+    G --> I
 ```
 
 ## 2. 逻辑详解
 
-### 2.1 上下文感知 (Context Awareness)
-- **机制**：系统在路由阶段会自动提取当前会话的最近 **6 轮** 对话历史。
-- **作用**：解决多轮对话中的指代消解问题（如用户问“那里的温度呢？”中的“那里”）。
-- **实现**：在 `RouterService.route_query` 接口中通过 `history` 参数接收上下文。
-- **边界**：多轮上下文用于避免把连续追问路由到错误智能体；进入 ChatBI 后，是否新查数、是否复用上一轮结果，由 ChatBI 执行器内部再次分析。
+### 2.1 入口解析
 
-### 2.2 LLM 语义路由 (LLM Semantic Routing)
-- **模块**：`RouterService`
-- **提示词**：`app/services/ai/router_service.py` 内置 `DEFAULT_SYSTEM_PROMPT`
-- **输入数据**：
-    - **Agent 列表**：从数据库 `ai_agents` 实时获取所有可用智能体的名称、描述和能力标签。
-    - **会话上下文**：最近历史对话记录，并带上一轮处理智能体。
-    - **当前 Query**：用户最新的提问。
-- **决策逻辑**：LLM 扮演高级调度员角色，阅读所有智能体的“简历”后，决定哪个 Agent 的能力最能满足当前用户意图。
-- **输出结构**：
-    - `agent_id`：主智能体 ID。
-    - `secondary_agents`：可选辅助智能体 ID 列表，仅用于明确复合意图。
-    - `confidence`：主智能体选择置信度。
-    - `reasoning`：指代消解、会话连续性和命中理由。
-    - `turn_labels`：通用会话标签，如 `new_business_request`、`continuation_followup`、`topic_switch`、`context_action`、`meta_action`、`business_related`、`same_topic`、`multi_intent`、`general_chat`、`ambiguous`。
-    - `relation_to_previous`：与上一轮关系，如 `new_topic`、`followup`、`topic_switch`、`standalone`、`unknown`。
-    - `user_action_type`：通用动作类型，如 `ask_business_data_or_task`、`ask_knowledge`、`transform_context`、`save_or_export_context`、`manage_agent_or_skill`、`chat`、`unknown`。
+入口解析只负责确定父智能体，不做问题语义选专家：
 
-这些通用标签只作为后续 executor 的参考 hint。是否采用、如何采用，由各智能体 executor 自己决定：
+| 输入 | `TurnDecision` 来源 | 行为 |
+|------|---------------------|------|
+| 未指定 `agent_id` / `agent_name` / `version_id` | `default_main_delegation` | 直接加载默认 `Main` |
+| 指定智能体或 `@` 提及 | `direct_agent_selection` | 直接加载目标专家 |
 
-- `AssistantExecutor` 会把标签注入为弱 system hint，帮助 LLM 理解本轮是否追问、是否上下文动作、是否话题切换；但不基于标签写死业务分支，最终仍由完整对话和模型判断。
-- `DataQueryExecutor` 不消费这些通用标签来决定 ChatBI 查数流程。ChatBI 仍会在执行器内部执行自己的 `DataQueryTurnClassifier` 请求类别分析。
-- `KnowledgeExecutor` 由 `TurnType=KNOWLEDGE` 驱动，不依赖路由标签硬分支。
+多轮历史、用户画像、可访问资源、技能和附件仍会注入实际执行 Prompt；它们用于帮助当前父智能体完成任务，不会再触发一轮外层专家匹配。
 
-### 2.4 启发式短路（无 LLM）
+### 2.2 Main 的智能委派
 
-在调用路由 LLM 之前，`RouterService.route_query` 会按顺序尝试以下短路（实现见 `router_service.py` + `intent_service.py`）：
+Main 只有在任务需要其他专家的垂直能力时才委派：
 
-| 短路 | 判定 | 目标 | 说明 |
-|------|------|------|------|
-| 纯问候 | `looks_like_greeting()` | 通用助手 | 短句寒暄/自我介绍/致谢，且无复合业务词 |
-| 联网/外部搜索 | `looks_like_web_search_query()` | 通用助手 | 明确公网/新闻/搜索引擎语义，走 `web_search` 等工具 |
-| ChatBI 会话打断 | 上轮为 data_query 智能体 **且** `resolve_data_agent_session_affinity() == BREAK` | 通用助手 | 仅明确离开数据会话时短路；灰区不直接 fallback |
+1. 先判断是否可由自身直接回答或使用自身工具完成；
+2. 需要单个垂直专家时调用 `sub_agent_call`；
+3. 有多个互不依赖的子任务时调用 `sub_agent_batch_call`；
+4. 委派目标必须来自当前用户有权调用、已发布且可用的候选范围；
+5. 平台校验自委派、重复调用、超时、结果截断和最大嵌套深度；
+6. Main 汇总子代理结果后统一向用户交付。
 
-#### ChatBI 会话亲和性（三态）
+指定专家时逻辑保持一致：该专家直接成为父专家，若自身拥有委派能力且任务需要，仍可调用其他子代理。
 
-实现：`DataSessionAffinity` + `resolve_data_agent_session_affinity(user_question)`。  
-兼容包装：`should_inherit_data_agent_session()` ≡「亲和性 == `KEEP`」。
+### 2.3 专家直选与 Guard 边界
 
-| 状态 | 含义 | 典型信号 | Router 行为 |
-|------|------|----------|-------------|
-| `KEEP` | 明确仍在数据会话 | 强业务查数、结果追问/加工、结果动作（导出/保存等）、元数据探索 | 不因「上轮是 ChatBI」以外的理由打断；倾向沿用 |
-| `BREAK` | 明确离开数据会话 | 纯问候、公网搜索、平台自助、运行诊断、明显无关通用任务 | **唯一**会在启发式层短路到通用助手的粘性分支 |
-| `UNCERTAIN` | 灰区 | 表述不明、可能切换也可能追问 | **不**直接 fallback Main；进入语义 Router / LLM 选型 |
-
-说明：
-
-- 结果动作 / 上下文动作对已有查数结果的操作属于 **`KEEP`**（不再按「反向排除」打断粘性）。
-- LLM 路由历史上下文仍可在「应打断」场景注入禁止机械沿用提示，避免仅因上轮是数据智能体就继续选 ChatBI。
-- 进入 ChatBI 后的非查数处置见 [CHAT_BI_DESIGN.md](./CHAT_BI_DESIGN.md) §4（本地帮助 / 结果动作 / `agent_handoff` 委派）。
-
-### 2.5 专家直选与 Guard 边界
-
-当请求携带 `agent_id`、`agent_name`，或 Embed **专家模式**选定智能体时：
+当请求携带 `agent_id`、`agent_name`、`version_id`，或 Embed **专家模式**选定智能体时：
 
 - `AgentService` 设置 `route_hints.direct_agent_selection = True`；
-- **跳过**自动路由 LLM（直接加载指定智能体）；
-- 主通用助手的**数据反幻觉 Guard 不启用**（专家/指定智能体按自身能力回答，含 Bash、联网等）。
+- 直接加载指定智能体，不调用外层语义路由；
+- 主通用助手的数据反幻觉 Guard 继续按 `direct_agent_selection` 边界处理。
 
-### 2.6 兜底机制 (Fallback Strategy)
-- 当路由系统无法做出明确决策，或后端服务出现异常时，请求将统一分发至 **`general-chat`（通用助手 Agent，执行层为 AssistantExecutor）**。
-- 确保系统始终有响应，不中断用户体验。
+### 2.4 Dispatcher 与内部分类边界
+
+`AgentDispatcher` 根据已经解析出的 Agent、`TurnDecision.turn_kind`、引擎类型、能力和安全资格选择 Executor。进入 ChatBI 后，`DataQueryTurnClassifier` 只负责数据域内部的新查数、追问、结果复用、结果分析或上下文动作；它不会回写外层专家入口。
 
 ## 3. 关键组件与位置
 
-- **路由逻辑入口**：`app/services/ai/router_service.py` -> `route_query()`
-- **通用意图/追问启发式模块**：`app/services/ai/intent_service.py`
-- **路由提示词定义**：`app/services/ai/router_service.py`
-- **智能体元数据**：数据库 `ai_agents` 表
+- **默认入口解析**：`app/services/ai/context_manager.py` -> `resolve_agent_config()`
+- **委派工具**：`app/services/ai/tools/agent_delegate_tool.py` -> `sub_agent_call` / `sub_agent_batch_call`
+- **执行分发**：`app/services/ai/dispatcher.py`
+- **智能体元数据与权限**：数据库 `ai_agents`、当前用户权限和运行时工具门控
+- **兼容保留**：`app/services/ai/router_service.py`，用于旧调用、路由常量和缓存失效，不参与当前默认主链路
 
 ## 4. 相关配置与测试
 
-| 配置键 | 默认值 | 说明 |
-|--------|--------|------|
-| （无 DB 项） | — | 路由 `DEFAULT_SYSTEM_PROMPT` 写死在 `router_service.py` |
+| 配置/门禁 | 说明 |
+|-----------|------|
+| `routingMode=auto` | 前端兼容字段，产品语义为“智能委派” |
+| `enable_multi_agent` | 允许 Main 使用批量委派处理独立子任务 |
+| `max_subagent_depth` 等委派限制 | 防自委派、递归死循环、超时和过量结果 |
 
 测试映射：
 
-- `tests/services/ai/test_router_service.py` — 问候/联网短路、ChatBI 会话打断、LLM 路由与 fallback
-- `tests/ai/test_router_context.py` — 长对话上下文与指代
-
-## 5. 优化方向
-
-1. **动态热更新**：支持在不重启服务的情况下，通过修改 `ai_agents` 表的描述实时影响路由倾向。
-2. **多意图并行**：未来计划支持单条指令拆分为多个任务并由不同智能体协同处理（Orchestration 增强）。
+- `tests/services/ai/test_agent_context_manager.py` — 无指定专家直接解析默认 Main，指定专家直达
+- `tests/ai/test_sub_agent_delegation.py` — 权限、深度、自委派、重复调用、并行委派与结果回传
+- `tests/ai/test_tool_nudge_policy.py` — Main 的委派工具促发提示

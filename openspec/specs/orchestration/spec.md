@@ -1,73 +1,64 @@
-# 智能路由与编排 (Orchestration & Routing)
+# 智能委派与编排 (Orchestration & Intelligent Delegation)
 
 ## Purpose
-`RouterService` 是多智能体系统的核心中枢，负责根据用户意图和对话上下文，将请求分发给最合适的智能体（Agent）。
+未指定专家时，系统直接将请求交给默认 `Main` 智能体。Main 根据自身 Prompt、可用能力、工具、权限和委派门禁决定直接回答，或调用子代理完成垂直任务。指定专家时直接加载该专家，原有指定专家逻辑保持不变。
+
+`RouterService` 仅兼容保留，用于旧调用、路由常量和缓存失效；它不再是未指定专家请求的默认运行时入口。
 
 ## Requirements
-### Requirement: Intelligent Routing Strategy
-The system SHALL route user queries to the most appropriate agent based on intent and context.
+### Requirement: Default Main Delegation
+The system SHALL send requests without an explicit agent directly to the default `Main` agent, without invoking an outer semantic router.
 
-#### Scenario: Context Aware Routing
-- **WHEN** user sends a query
-- **THEN** system analyzes input using LLM (after optional heuristic shortcuts)
-- **AND** system considers recent conversation history (N turns)
-- **AND** system checks agent `description` and `capabilities`
-- **AND** system returns target agent ID with confidence score
+#### Scenario: Main Answers Directly
+- **WHEN** user sends a query without `agent_id`, `agent_name`, or `version_id`
+- **THEN** system loads the default `Main` agent directly
+- **AND** Main may answer with its own prompt and tools without calling a sub-agent
 
-#### Scenario: Heuristic Shortcuts (No LLM)
-- **WHEN** user sends a pure greeting (`looks_like_greeting`)
-- **THEN** system routes to general assistant without invoking router LLM
-- **WHEN** user requests external/web search (`looks_like_web_search_query`)
-- **THEN** system routes to general assistant without invoking router LLM
-- **WHEN** previous turn was handled by a data-query agent AND `resolve_data_agent_session_affinity()` returns `BREAK`
-- **THEN** system breaks ChatBI session affinity and routes to general assistant without invoking router LLM
-- **WHEN** previous turn was handled by a data-query agent AND affinity is `UNCERTAIN`
-- **THEN** system does NOT heuristic-fallback to general assistant; it proceeds to semantic router LLM
-- **WHEN** previous turn was handled by a data-query agent AND affinity is `KEEP`
-- **THEN** system does NOT break ChatBI affinity via this heuristic shortcut
+#### Scenario: Main Delegates on Demand
+- **WHEN** Main determines that a task needs a vertical expert
+- **THEN** Main may call `sub_agent_call` for one dependent task
+- **OR** Main may call `sub_agent_batch_call` for independent tasks
+- **AND** the platform validates candidate availability, user permission, self-delegation, duplicate calls, timeout, result size, and maximum nesting depth
+- **AND** Main synthesizes the returned results for the user
 
 #### Scenario: Direct Agent Selection
-- **WHEN** request includes `agent_id` or `agent_name` (including Embed expert mode)
-- **THEN** system skips router LLM and loads the specified agent
+- **WHEN** request includes `agent_id`, `agent_name`, or `version_id` (including Embed expert mode or `@` mention)
+- **THEN** system directly loads the specified agent
 - **AND** sets `route_hints.direct_agent_selection = true` (disables main-assistant data hallucination guard)
 
-#### Scenario: Fallback Mechanism
-- **WHEN** routing confidence is below threshold (e.g., 0.5) or LLM fails after retries
-- **THEN** system falls back to `general-chat` or default logic
-
 ### Requirement: Implementation Details
-The system MUST implement the following data flow and API definitions to support routing logic.
+The system MUST implement the following data flow and API boundaries to support unified entry and delegation.
 
 #### Data Flow
 1. **输入**: 用户 Query + 对话历史 (Conversation History) + 可选 `last_agent_name`。
 2. **处理**:
-   - 若未显式指定智能体：依次尝试问候短路、联网短路、ChatBI 亲和性 `BREAK` 打断（`UNCERTAIN` 不短路）。
-   - 构建 Prompt，注入 Agent 列表、历史摘要及「禁止机械沿用 ChatBI」提示（当适用）。
-   - 调用 LLM 获取 JSON 格式的路由结果（包含 `agent_name`、`confidence`、`turn_labels` 等）。
-3. **输出**: 目标 Agent 的标识符及通用会话 hint。
+   - 若未显式指定智能体：直接加载默认 `Main`，不调用外层语义 Router。
+   - 构建 Main Prompt，按权限注入可访问资源、历史摘要、技能和工具信息。
+   - Main 按需调用 `sub_agent_call` / `sub_agent_batch_call`，平台对委派目标和执行边界做门控。
+3. **输出**: Main 或指定专家的流式回答，以及可选的子代理 trace。
 
 #### API Definitions
-**RouterService.route_query**
+**默认 Main 入口**
 ```python
-async def route_query(
+async def resolve_agent_config(
     self,
-    user_input: str,
-    history: Optional[List[dict]] = None,
     *,
-    last_agent_name: Optional[str] = None,
+    agent_id: Optional[int] = None,
+    agent_name: Optional[str] = None,
+    version_id: Optional[int] = None,
     ...
-) -> Optional[RouteResult]
+) -> AgentConfig
 ```
-- **user_input**: 用户当前的文本输入。
-- **history**: 对话历史列表，格式为 `[{'role': 'user', 'content': '...'}, ...]`。用于增强语义理解。
-- **last_agent_name**: 上一轮处理智能体名称，用于会话粘性与 ChatBI 亲和性判定。
+- 未提供显式标识时返回默认 `Main` 配置；提供标识时返回指定专家配置。
+- 对话历史、资源目录和技能等用于 Prompt 组装，不作为外层语义路由输入。
 
 #### Configuration
-- **System Prompt**: 内置于代码 `RouterService.DEFAULT_SYSTEM_PROMPT`，定义了路由器的角色和规则。不再从数据库 `system_configs` 读取，也不在"提示词管理"中暴露，避免运营误改导致路由失准。
-- **Agent Metadata**: 动态从 `agents` 表加载，作为 Prompt 的上下文。
-- **Session affinity**: `DataSessionAffinity` + `resolve_data_agent_session_affinity()` in `intent_service.py`（`KEEP` / `BREAK` / `UNCERTAIN`）；`should_inherit_data_agent_session()` 为「== KEEP」的兼容包装。
+- **Main Prompt**: 来自默认 Main 的已发布版本，并由 PromptAssembler 注入权限范围、工具和运行时上下文。
+- **Delegation tools**: `sub_agent_call` / `sub_agent_batch_call` 受用户权限、目标状态、递归深度、超时和结果大小门禁约束。
+- **Compatibility**: `RouterService.DEFAULT_SYSTEM_PROMPT`、`route_query()` 和会话亲和性相关实现仅供旧调用或兼容测试，不参与当前默认 Main 主链路。
 
 ## History
 - **2026-01-05**: 增加上下文感知能力 (`history` 参数)，优化多轮对话路由准确率。
 - **2026-06**: 问候/联网启发式短路；ChatBI 会话粘性修正（`should_inherit_data_agent_session`）；专家直选 `direct_agent_selection`；路由历史上下文注入「禁止机械沿用」提示。
 - **2026-07**: ChatBI 会话亲和性三态（仅 `BREAK` 启发式离开；`UNCERTAIN` 进语义路由）。
+- **2026-08-27**: 未指定专家改为直接进入默认 Main，由 Main 按需智能委派；指定专家逻辑保持不变；外层 Router 不再参与默认主链路。

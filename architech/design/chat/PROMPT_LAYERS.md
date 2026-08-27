@@ -1,20 +1,20 @@
 # 提示词分层与注入说明
 
 > 关联：[CHAT_FLOW.md](./CHAT_FLOW.md)（业务流）、代码 `agent_service.py` / `agent_prompts.py` / `executors/prompts.py`  
-> 版本：2026-06-19
+> 版本：2026-08-27
 
 ---
 
-## 1. 三类 LLM 调用（不要混在同一条 messages 里）
+## 1. 当前 LLM 调用分层（不要混在同一条 messages 里）
 
 | 层级 | 何时触发 | 提示词位置 | 进入主对话？ |
 |------|----------|------------|--------------|
-| **路由** | 未传 `agent_id` | `RouterService.DEFAULT_SYSTEM_PROMPT` + 启发式短路 | 否 |
+| **智能委派** | 未传 `agent_id` | 默认 Main 的 system prompt + 委派工具/能力目录 | 是（Main 主对话） |
 | **轮次/意图** | `resolve_turn_for_session` | `IntentService.DEFAULT_SYSTEM_PROMPT` 或启发式 | 否 |
 | **主对话** | 执行器 `execute()` | 见下文 | 是 |
 | **会话摘要** | 流结束后异步 | `ConversationSummarizer` | 否 |
 
-路由与意图提示**写死在代码**（`PromptService.SYSTEM_PROMPT_REGISTRY` 为空，避免配置页误改）。
+委派与意图相关的运行时约束由 Main/执行器代码组装（`PromptService.SYSTEM_PROMPT_REGISTRY` 为空，避免配置页误改）。`RouterService` 不再为默认请求额外生成一轮路由提示词。
 
 ---
 
@@ -168,7 +168,7 @@ HumanMessage       ← 本轮用户（见 §4）
 
 ### 3.3 执行器入口行为差异
 
-- **Assistant**：`SystemMessage(system_prompt)` + 历史；路由 hint 弱注入；Runner 内 **工具预检** 便签 prepend。
+- **Assistant**：`SystemMessage(system_prompt)` + 历史；默认 Main 的委派 hint（如有）弱注入；Runner 内 **工具预检** 便签 prepend。
 - **Knowledge**：`KnowledgeChatPrompts` + 自动检索结果上下文 + ReAct。
 - **DataQuery**：Few-Shot prepend、`{dataset_menu}` 占位替换为授权数据集目录、SQL 计划（`enable_sql_plan`）与 SQL 护栏（`executors/prompts.py`）。
 - **RAG / OpenClaw**：不走 LOCAL 全局 prepend 栈，自有逻辑。

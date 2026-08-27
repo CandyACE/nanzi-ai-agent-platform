@@ -4,13 +4,13 @@
 实现真相以代码与域 README 为准：`app/services/ai/runners/chatbi/README.md`。  
 设计演进说明见：`docs/superpowers/specs/2026-07-19-chatbi-analysis-workflow-evolution-design.md`。
 
-> 更新说明（2026-07）：已从「四类 turn + 单一 last_data_result + 非查数统一切换」迁到「外层粘性三态 + 内部分诊/结果栈/交付动作」。旧「只引导切换智能体、不自动委派」方案见 [2026-07-14-chatbi-non-data-routing-design.md](../../docs/superpowers/specs/2026-07-14-chatbi-non-data-routing-design.md)（已取代）。
+> 更新说明（2026-08-27）：ChatBI 的内部请求分类、结果栈和交付动作保持不变；外层未指定专家时直接进入默认 Main，由 Main 按需委派 ChatBI。旧的外层 Router 粘性三态只作为兼容背景，不再作为默认请求的入口步骤。
 
 ## 1. 核心流程概览
 
 ChatBI 采用「两层边界 + 内部分诊」：
 
-1. **路由层只选智能体**：Router 用粘性三态决定是否打断 ChatBI 会话；灰区不直接 fallback Main，交给语义路由。
+1. **入口由 Main 统一承接**：未指定专家时直接进入默认 Main；Main 判断需要数据能力后，再通过 `sub_agent_call` 委派 ChatBI，指定 ChatBI 时则直接进入。
 2. **执行器内部做请求类别分析**：`DataAgentRunner` 调用 `DataQueryTurnClassifier`，再决定新查数、带上下文追问、结果分析/呈现/动作、元数据探索、非查数处置或澄清。
 3. **非查数不是统一拒绝**：本地帮助 / 结果动作留在 ChatBI / 无感委派 Main·Web；委派失败才降级「切换智能体」引导。
 
@@ -18,30 +18,27 @@ ChatBI 采用「两层边界 + 内部分诊」：
 sequenceDiagram
     participant User as 用户
     participant API as AgentService
-    participant Router as RouterService
+    participant Main as Main / 父专家
     participant Runner as DataAgentRunner
     participant Classifier as DataQueryTurnClassifier
     participant Policy as non_data_policy/handoff
     participant Tools as Schema/SQL/交付 API
 
     User->>API: 发送聊天消息
-    alt 上轮为 ChatBI 且亲和性 BREAK
-        API->>Router: 短路到通用助手
-    else KEEP 或 UNCERTAIN
-        Router-->>API: 选中或语义路由到 ChatBI
-        API->>Runner: DataQueryExecutor
-        Runner->>Classifier: 分析请求类别
-        alt NEW_DATA / DATA_FOLLOWUP / FEDERATED
-            Runner->>Tools: Schema → SQL → 结果栈入库
-        else RESULT_ANALYSIS / PRESENTATION / REUSE / FORMAT
-            Runner->>Runner: 读结果栈 / last_data_result 合成
-        else RESULT_ACTION / CONTEXT_ACTION
-            Runner->>Tools: 工具链或交付动作
-        else NON_DATA_REQUEST
-            Runner->>Policy: LOCAL_HELP / RESULT_ACTION / DELEGATE_*
-        else METADATA_QUERY
-            Runner->>Tools: Schema + chatbi_metadata_guide
-        end
+    API->>Main: 未指定专家时直接进入默认 Main
+    Main->>Main: 判断是否需要数据能力
+    Main->>Runner: 按需委派 ChatBI / 指定 ChatBI 直达
+    Runner->>Classifier: 分析请求类别
+    alt NEW_DATA / DATA_FOLLOWUP / FEDERATED
+        Runner->>Tools: Schema → SQL → 结果栈入库
+    else RESULT_ANALYSIS / PRESENTATION / REUSE / FORMAT
+        Runner->>Runner: 读结果栈 / last_data_result 合成
+    else RESULT_ACTION / CONTEXT_ACTION
+        Runner->>Tools: 工具链或交付动作
+    else NON_DATA_REQUEST
+        Runner->>Policy: LOCAL_HELP / RESULT_ACTION / DELEGATE_*
+    else METADATA_QUERY
+        Runner->>Tools: Schema + chatbi_metadata_guide
     end
 ```
 
@@ -55,19 +52,19 @@ sequenceDiagram
 - **执行器选择**：`AgentDispatcher` — 具备 `data_query` capability → `DataQueryExecutor` → `DataAgentRunner`
 - Dispatcher **不**根据 ChatBI 内部 turn 类型决定是否进入 DataQuery；进入后再分类。
 
-### 外层会话亲和性（三态）
+### 外层会话亲和性（三态，兼容背景）
 
-实现：`intent_service.resolve_data_agent_session_affinity()` / `DataSessionAffinity`；Router 仅在 **`BREAK`** 时短路离开 ChatBI。
+实现：`intent_service.resolve_data_agent_session_affinity()` / `DataSessionAffinity`。该逻辑保留给旧调用和 ChatBI 内部兼容场景；当前默认 Main 主链路不通过 Router 依赖这组三态做外层选型。
 
 | 状态 | 含义 | 典型场景 | Router 行为 |
 |------|------|----------|-------------|
-| `KEEP` | 明确仍在数据会话 | 查数、结果追问、结果动作、元数据探索 | 倾向沿用 ChatBI |
-| `BREAK` | 明确离开数据会话 | 纯问候、公网搜索、平台自助、无关通用任务 | 启发式短路到通用助手 |
-| `UNCERTAIN` | 灰区 | 表述不明、可能切换也可能追问 | **不**直接 fallback；交给语义 Router |
+| `KEEP` | 明确仍在数据会话 | 查数、结果追问、结果动作、元数据探索 | 兼容旧调用中的会话延续 hint |
+| `BREAK` | 明确离开数据会话 | 纯问候、公网搜索、平台自助、无关通用任务 | 兼容旧调用中的离开 hint |
+| `UNCERTAIN` | 灰区 | 表述不明、可能切换也可能追问 | 不再触发默认外层语义 Router |
 
 兼容：`should_inherit_data_agent_session()` 等价于「亲和性 == KEEP」。
 
-详见 [AGENT_ROUTING_DESIGN.md](./AGENT_ROUTING_DESIGN.md) §2.4。
+详见 [AGENT_ROUTING_DESIGN.md](./AGENT_ROUTING_DESIGN.md)；Router 相关内容仅作兼容说明。
 
 ---
 
@@ -169,7 +166,7 @@ sequenceDiagram
 | 用途 | 路径 |
 |------|------|
 | 编排入口 | `app/services/ai/agent_service.py` |
-| 路由与粘性 | `router_service.py`、`intent_service.py`（`DataSessionAffinity`） |
+| 入口与兼容粘性 | `context_manager.py`；`router_service.py`、`intent_service.py`（`DataSessionAffinity`，旧调用兼容） |
 | 请求类别 | `data_query_turn_classifier.py` |
 | Runner | `runners/data_agent_runner.py` |
 | 域模块 | `runners/chatbi/`（见 `README.md`） |
@@ -189,4 +186,4 @@ sequenceDiagram
 - 监控弹层：[2026-07-19-chatbi-monitor-dialog-design.md](../../docs/superpowers/specs/2026-07-19-chatbi-monitor-dialog-design.md)
 - 可信说明与继续分析：[2026-07-15-chatbi-trust-and-followup-design.md](../../docs/superpowers/specs/2026-07-15-chatbi-trust-and-followup-design.md)
 - SQL 门禁评审：[CHATBI_GUARDS_REVIEW.md](./CHATBI_GUARDS_REVIEW.md)
-- 路由设计：[AGENT_ROUTING_DESIGN.md](./AGENT_ROUTING_DESIGN.md)
+- 入口与委派设计：[AGENT_ROUTING_DESIGN.md](./AGENT_ROUTING_DESIGN.md)

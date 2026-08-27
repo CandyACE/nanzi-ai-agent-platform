@@ -1,5 +1,7 @@
 # 南孜・智维・AI 平台 - AI智能体系统设计文档
 
+> **当前实现校准（2026-08-27）**：未指定专家时，V1 对话直接进入默认 `Main`，由 Main 直接回答或按需调用子代理；指定专家仍直接进入目标专家。本文中“意图识别”仅表示 Main/Executor 内部的业务分类，不代表当前存在一轮外层语义专家路由；`RouterService` 为兼容保留。
+
 > **运行时更新（2026-06）**：本地智能体（General / ChatBI）已迁移至 **AgentScope 2.x**，不再使用 LangChain LCEL / `bind_tools`。请以 [AGENTSCOPE_RUNTIME.md](./AGENTSCOPE_RUNTIME.md)、[chat/CHAT_FLOW.md](./chat/CHAT_FLOW.md) 为准；下文 §3.2.4、§4.1、§5.1 中 LangChain 描述为历史快照。
 
 ## 1. 文档信息
@@ -73,8 +75,8 @@
 - **编排引擎**：AgentScope `Agent` + `ReActConfig`；事件经 `event_stream.py` 映射为平台 SSE
 
 ### 3.3 Agent Orchestrator 层（已实现）
-- **AgentService**：作为 V1 接口的核心调度中枢，负责：
-  - **意图路由**：基于 `IntentChain` 将请求分发至 `GENERAL`, `DATA_QUERY`, `KNOWLEDGE_BASE`。
+- **AgentService**：作为 V1 接口的核心编排中枢，负责：
+  - **入口与智能委派**：未指定专家时直接进入默认 `Main`；Main 按需委派子代理，业务类型再由对应 Executor 内部分诊为 `GENERAL`, `DATA_QUERY`, `KNOWLEDGE_BASE`。
   - **工具调度**：在 DATA_QUERY 模式下，自主决策调用 `query_datacenter_metrics` 等工具。
   - **流式分发**：封装异步生成器，通过 SSE (Server-Sent Events) 向前端实时推送字符。
 - **对外接口**：
@@ -112,7 +114,7 @@ app/
 
 #### 5.1.2 核心流程
 1. **统一入口**：`POST /api/v1/chat/completions`。
-2. **路由**：`RouterService` / `AgentDispatcher` 选择 Executor。
+2. **入口与分发**：ContextManager 解析默认 `Main` 或指定专家；`AgentDispatcher` 根据最终 Agent 选择 Executor。`RouterService` 仅兼容保留，不参与默认主链路。
 3. **本地执行**（`TurnType=KNOWLEDGE` 优先）：
    - **Knowledge**：`KnowledgeAgentRunner` → 自动知识库检索 + AgentScope ReAct。
    - **ChatBI**：`DataAgentRunner` → AgentScope ReAct + ChatBI 守卫（schema 前置、SQL 自愈）。
@@ -127,7 +129,8 @@ sequenceDiagram
     participant User as 用户 (Client)
     participant API as V1 API
     participant Agent as AgentService
-    participant Intent as IntentChain
+    participant Main as Main / 父专家
+    participant Intent as Executor 内部分类
     participant LLM as DeepSeek-V3.2
     participant Tool as Data Tools
 
@@ -135,11 +138,10 @@ sequenceDiagram
     API->>Agent: 调度请求
     
     rect rgb(230, 245, 255)
-        Note right of Agent: 第一阶段: 意图识别 (Intent Recognition)
-        Agent->>Intent: 识别意图
-        Intent->>LLM: Classification Prompt
-        LLM-->>Intent: JSON {"intent": "DATA_QUERY"}
-        Intent-->>Agent: 意图 = DATA_QUERY
+        Note right of Agent: 第一阶段: 统一入口与 Main 智能委派
+        Agent->>Main: 未指定专家时直接进入默认 Main
+        Main->>Main: 判断直接回答或委派数据专家
+        Main->>Intent: 进入数据执行器后进行内部请求分类
     end
     
     rect rgb(235, 255, 235)
@@ -163,11 +165,11 @@ sequenceDiagram
 
 #### 5.1.2 API路由设计
 
-> 💡 **架构更新提示**：系统已重构为统一的 Agent 调度中枢，早期的零散 API（如 `/chatbi/query`、`/nlp/parse`）已被整合废弃。当前的对话入口与意图识别均统一收拢于 Agent 的 Executor 链路中。
+> 💡 **架构更新提示**：系统已重构为统一的 Agent 编排中枢，早期的零散 API（如 `/chatbi/query`、`/nlp/parse`）已被整合废弃。当前未指定专家的对话直接进入默认 Main；业务意图识别统一收拢于 Main/Executor 链路中。
 
 ```
 # 统一对话与调度入口
-POST /api/v1/chat/completions            # 核心对话接口，自动路由（ChatBI / Knowledge / Assistant）
+POST /api/v1/chat/completions            # 核心对话接口，默认 Main 智能委派（ChatBI / Knowledge / Assistant）
 GET  /api/v1/chat/conversation/{id}      # 获取会话历史（包含多轮消息）
 
 # 会话管理与审计

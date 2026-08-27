@@ -15,7 +15,7 @@ sequenceDiagram
     participant API as POST /api/v1/chat/completions
     participant AS as AgentService
     participant CM as AgentContextManager
-    participant RT as RouterService
+    participant MAIN as Main / 父专家
     participant DP as AgentDispatcher
     participant EX as Executor
     participant LLM as 模型 / 外部引擎
@@ -26,9 +26,9 @@ sequenceDiagram
     API->>AS: chat_completion_stream
     AS->>AS: Redis 会话记忆读写
     AS->>CM: resolve_agent_config
-    CM->>RT: 无指定 agent 时智能路由
+    CM->>MAIN: 无指定 agent 时直接进入默认 Main
     AS->>AS: 智能体权限 / 注入技能&LTM
-    AS->>DP: dispatch + route_hints
+    AS->>DP: dispatch + TurnDecision / route_hints
     DP->>EX: Chat / Data / RAG / OpenClaw
     EX->>LLM: 流式调用 + 工具循环
     LLM-->>EX: token / log / citation
@@ -74,7 +74,7 @@ sequenceDiagram
 
 | 条件 | 使用的 ID |
 |------|-----------|
-| `routingMode === 'expert'` 且已选专家 | `config.expertAgentId`（后端 `route_hints.direct_agent_selection=true`，跳过自动路由与主助手反幻觉 Guard） |
+| `routingMode === 'expert'` 且已选专家 | `config.expertAgentId`（后端 `route_hints.direct_agent_selection=true`，直达指定专家） |
 | 否则 | `config.overrideAgentId`（`@` 提及）或 `config.agentId`（嵌入默认） |
 
 ### 1.6 UI 反馈
@@ -95,7 +95,7 @@ sequenceDiagram
 |------|------|
 | `messages` | 历史 + 本轮用户消息（含 `files`） |
 | `stream` | `true` 时使用 SSE |
-| `agent_id` | 指定或由后端路由后的智能体 |
+| `agent_id` | 指定智能体；为空时由后端直接加载默认 Main |
 | `conversation_id` | 服务端 Redis 会话记忆 |
 | `enable_multi_agent` | 是否启用多智能体协同 |
 | `debug_options.injected_context` | 页面信息、用户身份等注入上下文 |
@@ -109,12 +109,12 @@ sequenceDiagram
 | `trace_id` | 绑定追踪 ID |
 | `content` | 追加助手正文 |
 | `log` | 思考/工具步骤日志 |
-| `router_log` | 智能路由决策展示，包含 `selected_agent`、`confidence`、`thought`，以及通用 hint：`turn_labels`、`relation_to_previous`、`user_action_type` |
+| `router_log` | 兼容旧路由决策展示；默认 Main 智能委派主链路不依赖该事件。委派过程通过普通 `log` / Agent 时间线展示 |
 | `citation` | 知识库引用来源 |
 | `meta` | 智能体显示名等 |
 | `[DONE]` | 流结束 |
 
-路由层通用 hint 只表达“这轮像不像追问 / 上下文动作 / 切换话题”等跨智能体理解，不表达 ChatBI 内部的“新查数 / 复用结果 / 上下文动作 / 技能执行”。后端会把这些 hint 透传给 executor：
+`TurnDecision` 与可选通用 hint 只表达当前入口和跨执行器上下文，不表达 ChatBI 内部的“新查数 / 复用结果 / 上下文动作 / 技能执行”。后端会把这些信息透传给 executor：
 
 - Assistant 会把 hint 作为弱 system prompt 参考，让 LLM 结合完整上下文自行判断如何回答。
 - ChatBI 不用这组 hint 决定查数流程，进入 `DataQueryExecutor` 后会再做 ChatBI 请求类别分析。
@@ -144,7 +144,7 @@ sequenceDiagram
 
 1. 从 Redis 拉取该用户、该会话的历史
 2. 将本轮 user 消息**异步** `add_message` 写入 Redis
-3. 用「历史 + 本轮」组成后续 `messages`（再经路由/执行器处理）
+3. 用「历史 + 本轮」组成后续 `messages`（再经 Main/指定专家与执行器处理）
 
 #### Redis Key 设计
 
@@ -240,7 +240,7 @@ flowchart LR
 
 1. `get_history(user_id, conversation_id)` → 读出 Redis 中该 key 的列表（≤100 条）
 2. `asyncio.create_task(add_message(...))` → 异步写入本轮 user
-3. `messages = context_history[-max_context:] + [user_msg]` → 再进入路由与执行
+3. `messages = context_history[-max_context:] + [user_msg]` → 再进入 Main/指定专家与执行
 
 #### 用户隔离
 
@@ -418,7 +418,7 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 - 正文形如 `@某智能体名 问题`，且未传 `agent_id` 时
 - 拆出 `agent_name`，按名称直接选智能体
 
-### 4.3 解析智能体配置（路由）
+### 4.3 解析智能体配置（默认 Main / 指定专家）
 
 **文件**：`app/services/ai/context_manager.py` → `resolve_agent_config`
 
@@ -426,10 +426,10 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 |------|------|
 | 传了 `version_id` | 加载指定版本配置 |
 | 传了 `agent_id` / `agent_name` | 直接加载该智能体；设置 `route_hints.direct_agent_selection=True` |
-| 都未传 | `RouterService.route_query`：先启发式短路（问候/联网/ChatBI 亲和性 `BREAK`），再 LLM 选型；`UNCERTAIN` 不短路 |
+| 都未传 | 直接加载默认 `Main`，创建默认 Main 智能委派决策；不调用外层语义 Router |
 | 仍无配置 | 回退 **Assistant** 默认配置 |
 
-路由结果通过 SSE 发送 `router_log`，并写入执行 trace。`turn_labels`、`relation_to_previous`、`user_action_type` 只表示路由层对当前轮次的通用理解，供 executor 参考；各 executor 是否使用这些 hint，由自身业务流程决定。
+默认 Main 的入口决策不需要额外的 `router_log`；Main 调用 `sub_agent_call` / `sub_agent_batch_call` 时，委派过程和子代理结果写入执行 trace。各 executor 仍可消费 `TurnDecision` 中的通用 hint，但不据此重新推导外层专家。
 
 ### 4.4 智能体访问权限
 
@@ -520,7 +520,7 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 3. `build_messages()` 组装 `system_prompt` + 历史；`build_user_msg()` 处理多模态与附件路径
 4. **无工具**：`synthesis_llm.astream()` 直出，不走 AgentScope Agent
 5. **有工具**：`Agent(name, model, toolkit, react_config).reply_stream()` → `map_standard_agentscope_event()` 映射 SSE
-6. **数据反幻觉 Guard**（主助手 + 自动路由）：流结束后若无工具尝试且输出像编造内部业务数据，拦截并 yield `quick:/switch_agent_expert` 切换链接
+6. **数据反幻觉 Guard**（主助手 + 默认 Main 智能委派）：流结束后若无工具尝试且输出像编造内部业务数据，拦截并 yield `quick:/switch_agent_expert` 切换链接
 7. ASK 工具挂起：`REQUIRE_USER_CONFIRM` → 用户确认后 `UserConfirmResultEvent` 恢复
 
 ### 6.3 DataQueryExecutor → DataAgentRunner
@@ -554,13 +554,13 @@ ChatBI 流式正文中的 `<sql_plan>{...}</sql_plan>` 由前端 `MessageRendere
 
 ## 8. 典型路径示例
 
-### A. 嵌入页 + 自动路由
+### A. 嵌入页 + 智能委派
 
-用户只输入文字 → 未传 `agent_id` → `RouterService` 选型 → `Assistant` / `Knowledge` / `Data` / `RAG` 执行 → 流式回复。
+用户只输入文字 → 未传 `agent_id` → 直接进入默认 `Main` → Main 直接回答或委派 `Assistant` / `Knowledge` / `Data` / `RAG` 专家 → 流式回复。
 
 ### B. 嵌入页 + 选择知识库
 
-用户选库 → 正文带检索指令 + 可能切专家智能体 → `TurnType=KNOWLEDGE` 路由至 `KnowledgeExecutor` → 自动 `search_knowledge_base` → 再生成回答。
+用户选库 → 正文带检索指令 + 可能切专家智能体 → `TurnType=KNOWLEDGE` 分发至 `KnowledgeExecutor` → 自动 `search_knowledge_base` → 再生成回答。
 
 ### C. 嵌入页 + 挂载技能
 
@@ -578,7 +578,7 @@ ChatBI 流式正文中的 `<sql_plan>{...}</sql_plan>` 由前端 `MessageRendere
 | 编排入口 | `app/services/ai/agent_service.py` |
 | 平台全局 / 编排提示词 | `app/services/ai/agent_prompts.py` |
 | 提示词分层说明 | [PROMPT_LAYERS.md](./PROMPT_LAYERS.md) |
-| 配置与路由 | `app/services/ai/context_manager.py`、`app/services/ai/router_service.py` |
+| 入口解析与兼容路由 | `app/services/ai/context_manager.py`、`app/services/ai/router_service.py`（旧调用兼容） |
 | 通用请求分类 | `app/services/ai/turn_classifier.py` |
 | ChatBI 请求类别分析 | `app/services/ai/data_query_turn_classifier.py` |
 | 执行分发 | `app/services/ai/dispatcher.py` |
@@ -595,7 +595,7 @@ ChatBI 流式正文中的 `<sql_plan>{...}</sql_plan>` 由前端 `MessageRendere
 | 记忆管理 UI | `frontend/src/views/MemoryManagement.vue` |
 | 工具注册 | `app/services/ai/tools/registry.py` |
 | 执行流评审 / 请求类别边界 | [../agent_execution_flow_review.md](../agent_execution_flow_review.md) |
-| 智能路由设计 | [../AGENT_ROUTING_DESIGN.md](../AGENT_ROUTING_DESIGN.md) |
+| 智能委派与专家直选设计 | [../AGENT_ROUTING_DESIGN.md](../AGENT_ROUTING_DESIGN.md) |
 | Embed / V1 API 设计 | [../AGENT_APP_DESIGN.md](../AGENT_APP_DESIGN.md) |
 
 ---
@@ -605,7 +605,7 @@ ChatBI 流式正文中的 `<sql_plan>{...}</sql_plan>` 由前端 `MessageRendere
 | 配置键 | 默认值 | 说明 |
 |--------|--------|------|
 | `agent_max_context_messages` | `20` | 发给 LLM 的历史消息条数上限 |
-| `llm_model_name` | `DeepSeek-V3.2` | 路由日志与 Assistant 回退模型名 |
+| `llm_model_name` | `DeepSeek-V3.2` | Main/Assistant 默认模型名 |
 | `agent_tool_preflight_mode` | `soft` | 主助手工具预检：`off` / `soft` / `hard` |
 | `skill_auto_scan_enabled` | `true` | 主助手是否自动扫描技能库 |
 | `skill_auto_scan_min_score` | `0.45` | 技能扫描最低相关度 |
@@ -614,4 +614,4 @@ ChatBI 流式正文中的 `<sql_plan>{...}</sql_plan>` 由前端 `MessageRendere
 
 ---
 
-*文档版本：2026-07-19。含工具预检、Skill 自动扫描、路由启发式短路、用户画像 stable_prefix、sql_plan 前端卡片、ChatBI 亲和性三态与结果栈 `data_result_stack_v1`。*
+*文档版本：2026-08-27。含工具预检、Skill 自动扫描、默认 Main 智能委派、用户画像 stable_prefix、sql_plan 前端卡片与结果栈 `data_result_stack_v1`；旧 RouterService/ChatBI 亲和性仅作兼容背景。*

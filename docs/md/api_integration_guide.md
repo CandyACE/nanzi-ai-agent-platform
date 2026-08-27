@@ -11,10 +11,10 @@ graph TD
     User[用户/外部系统] --> API_Gateway[API Gateway / Nginx]
     
     subgraph "Agent Platform"
-        API_Gateway --> |Route: /v1/chat/completions| Router[Router Service]
+        API_Gateway --> |Route: /v1/chat/completions| Main[Default Main / Delegation]
         API_Gateway --> |Route: /v1/agents/{id}/chat| Direct[Direct Execution]
         
-        Router --> |Analyze Intent + Capabilities| Selected_Agent[Selected Agent]
+        Main --> |Answer or delegate by capability| Selected_Agent[Selected Agent]
         Direct --> Selected_Agent
         
         Selected_Agent --> |Load Config & Tools| LLM[LLM Engine]
@@ -32,11 +32,11 @@ graph TD
 
 ### 2.1 智能编排模式 (推荐)
 - **Endpoint**: `POST /api/v1/chat/completions`
-- **场景**: 通用对话入口，模拟真实用户操作。无需指定具体的 Agent ID，系统会根据用户的问题自动分发给最合适的专家智能体。支持**多智能体并行协作**。
+- **场景**: 通用对话入口，模拟真实用户操作。无需指定具体的 Agent ID，请求会直接进入默认 `Main` 智能体，由 Main 自主回答或按需智能委派专家。支持**多智能体并行协作**。
 - **参数**:
   - `messages`: 对话历史
-  - `agent_id`: **不传** 或 `null` (表示启用自动路由)
-  - `enable_multi_agent`: **可选** (Boolean)，默认为 `true`。开启后，系统可以同时调度多个专家智能体处理复合意图。
+  - `agent_id`: **不传** 或 `null` (表示直接进入默认 Main 的智能委派流程)
+  - `enable_multi_agent`: **可选** (Boolean)，默认为 `true`。开启后，Main 可以同时调度多个专家处理相互独立的子任务。
 - **请求示例**:
   ```json
   {
@@ -46,12 +46,10 @@ graph TD
   }
   ```
 - **工作流程**:
-  1. **Router Service 介入**: 系统首先调用 Router LLM，分析用户意图。
-  2. **智能路由 (多意图识别)**: Router 会判断问题是否跨域。如果跨域且开启了 `enable_multi_agent`，将返回一个主 Agent 和多个辅助 Agent。
-  3. **并行执行 (Parallel Execution)**:
-     - 系统并行启动多个 Agent 执行器。
-     - 各 Agent 的日志流会交错推送，并带上 `[AgentName]` 前缀。
-  4. **结果聚合 (Synthesis)**: 系统调用专门的聚合模型，将多方专家的输出整合为一段连贯的回答。
+  1. **直接进入 Main**: 未指定 `agent_id` 时，后端加载默认 `Main`，不再先调用外层 Router LLM。
+  2. **Main 判断是否委派**: Main 结合自身 Prompt、可用工具、专家能力目录、权限和委派深度门禁，决定直接回答，或调用 `sub_agent_call` / `sub_agent_batch_call`。
+  3. **并行执行 (Parallel Execution)**: 批量委派时并行启动多个已授权专家执行器，各 Agent 的日志流会交错推送，并带上 `[AgentName]` 前缀。
+  4. **结果聚合 (Synthesis)**: Main 将子代理返回的结果整合为一段连贯的回答。
 
 ### 2.2 直接调用模式 (专家模式)
 - **Endpoint**: `POST /api/v1/agents/{agent_id}/chat` (或 `/api/v1/chat/completions` 带 `agent_id`)
@@ -66,7 +64,7 @@ graph TD
     "stream": true
   }
   ```
-- **工作流程**: 跳过 Router 分析，强制使用指定 Agent 的 Prompt 和 Tools 执行。
+- **工作流程**: 直接使用指定 Agent 的 Prompt 和 Tools 执行；指定 Agent 仍可按自身委派策略调用其他已授权子代理。
 
 ---
 
@@ -105,7 +103,7 @@ POST /api/v1/chat/code-executions/{execution_id}/stop
 | `sys-agent-chatbi` | **数据智能助手** | 专注于数据查询、SQL 生成与报表分析。 | `data_query`, `sql_generation` | 核心 BI 能力 |
 | `sys-agent-metadata` | **元数据专家** | 解析 DDL、定义业务口径、治理元数据。 | `metadata_parsing`, `ddl_analysis` | 运维/开发辅助 |
 | `sys-agent-kb` | **知识库助手** | 解答运维规范、操作文档、故障排查流程。 | `knowledge_retrieval`, `qa` | 内部知识问答 |
-| `sys-agent-chat` | **通用对话助手** | 处理闲聊、通用问答、代码辅助以及未分类请求。 | `general_chat`, `coding` | **默认兜底路由** |
+| `sys-agent-chat` | **通用对话助手** | 处理闲聊、通用问答、代码辅助以及未分类请求。 | `general_chat`, `coding` | **默认 Main 入口** |
 
 ### 3.1 自动初始化
 我们在开发阶段提供了重置脚本，可一键恢复上述初始状态：
@@ -116,54 +114,44 @@ python3 scripts/reinit_system_agents.py
 
 ---
 
-## 4. 路由逻辑详解 (Router Logic)
+## 4. 默认 Main 与智能委派逻辑
 
-Router Service 是编排的核心组件。未传 `agent_id` / `agent_name` 时决策顺序如下：
+未传 `agent_id` / `agent_name` / `version_id` 时，编排入口直接解析为默认 `Main`，当前主链路不调用 `RouterService.route_query()`。
 
-### 4.1 启发式短路（无 LLM）
+### 4.1 入口决策
 
 | 条件 | 结果 |
 |------|------|
-| 纯问候/寒暄（`looks_like_greeting`） | 通用助手 |
-| 联网/外部公网搜索（`looks_like_web_search_query`） | 通用助手（配合 `web_search` 等工具） |
-| 上轮为 ChatBI，且本轮亲和性为 `BREAK`（`resolve_data_agent_session_affinity`） | 打断粘性 → 通用助手 |
+| 未传 `agent_id` / `agent_name` / `version_id` | 直接加载默认 `Main`，进入智能委派 |
+| 传入 `agent_id` / `agent_name` / `version_id` | 直接加载指定专家 |
+| Embed 专家模式或 `@` 提及 | 直接加载被选中的专家 |
 
-ChatBI 会话亲和性为三态（`DataSessionAffinity`）：
+### 4.2 Main 的委派判断
 
-- `KEEP`：明确仍在数据会话（查数追问、结果加工/动作、元数据探索等）→ 不因「上轮是 ChatBI」以外的理由打断
-- `BREAK`：明确离开数据会话（寒暄、公网、平台自助、明显无关任务等）→ **唯一**会在启发式层短路到通用助手的粘性分支
-- `UNCERTAIN`：灰区 → **不**直接 fallback，进入 §4.2 语义路由
+Main 不会因为专家数量变化而机械地逐个调用专家。运行时会在委派工具可用时提供当前用户有权限且满足状态、能力和深度等门禁的候选信息，由 Main 按任务需要选择：
 
-兼容：`should_inherit_data_agent_session()` ≡「亲和性 == `KEEP`」。
+1. 能由 Main 自身完成的问候、通用问答、简单改写等任务，直接回答；
+2. 需要垂直能力时调用 `sub_agent_call`，并通过 `agent_name` 指定目标专家；
+3. 多个相互独立的子任务可调用 `sub_agent_batch_call` 并行执行；
+4. 委派受专家可用性、用户权限、自委派/重复调用、超时、结果长度和最大嵌套深度限制；
+5. 子代理只返回任务结果，Main 负责最终整合和对用户交付。
 
-### 4.2 LLM 语义路由
+### 4.3 兼容说明
 
-1. **元数据加载**: 从数据库加载当前用户有权限的活跃 Agent 的 `name`, `description`, `capabilities`。
-2. **上下文组装**: 最近约 6 轮历史（逐条截断、去表格/代码块）+ 上一轮智能体 + 必要时「禁止机械沿用 ChatBI」提示。
-3. **意图分析**: 将用户输入 + Agent 列表 + 历史发送给路由 LLM（`DEFAULT_SYSTEM_PROMPT`，代码内置）。
-4. **决策 (复合意图)**:
-   - LLM 返回最匹配的 `agent_name` (Primary)。
-   - 若 `enable_multi_agent` 且问题跨域，可返回 `secondary_agents`。
-   - 路由服务将语义证据和能力资格固化为一个 `TurnDecision`，`turn_kind` 直接决定外层 Executor。
-5. **Fallback 机制**:
-   - LLM 解析失败（最多重试 1 次）、置信度低或异常时，降级到 `sys-agent-chat`（通用对话助手）。
+`RouterService` 仍保留用于兼容旧调用、路由常量和缓存失效；它不是未指定专家请求的当前运行时入口。`routingMode=auto` 等前端/API 兼容字段仍可存在，但产品语义是“智能委派”，不会额外增加一轮外层语义识别。
 
-### 4.3 专家直选
+### 4.4 执行器边界
 
-传 `agent_id` / `agent_name` 或 Embed **专家模式** 时：**跳过** Router LLM，并创建 `TurnDecision(provenance=direct_agent_selection)`（主助手数据反幻觉 Guard 不启用）。
+`TurnDecision` 仍是本轮外层决策快照，但默认来源是 `Main` 委派入口，指定专家来源是 `direct_agent_selection`。进入 DataQuery 后，才由 `DataQueryTurnClassifier` 继续判断新查询、数据追问、结果复用、结果分析或上下文动作；该内部分类不会替代或回写外层 `TurnDecision`。
 
-### 4.4 外层路由与 ChatBI 内部分类
-
-外层路由只负责确定本轮是否进入普通对话、知识库或 DataQuery Executor；`TurnDecision` 是从路由传递到执行器的唯一外层决策。进入 DataQuery 后，才由 `DataQueryTurnClassifier` 继续判断新查询、数据追问、结果复用、结果分析或上下文动作。该内部分类不会替代或回写外层 `TurnDecision`。
-
-当 `route_status` 未解析、当前 Agent 没有 `data_query` capability，或 `allows_data_route=false` 时，系统不会因为 Agent 配置或模型输出而强行进入 DataQuery，而是按安全规则回退到通用执行路径。
+当当前 Agent 没有 `data_query` capability，或 `allows_data_route=false` 时，系统不会因为 Agent 配置或模型输出而强行进入 DataQuery，而是按安全规则回退到通用执行路径。
 
 ---
 
 ## 5. UI 集成与调试
 
 前端提供了 **智能体调试 (Agent Debug)** 界面，支持两种模式的实时切换：
-- **🤖 自动路由 (Auto)**: 对应 API 的 `agent_id: null`，用于测试 Router 的分发准确性。
+- **🤖 智能委派 (Auto)**: 对应 API 的 `agent_id: null`，用于测试默认 Main 的直接回答与子代理委派能力。
 - **🎯 指定智能体 (Specific)**: 对应 API 的指定 `agent_id`，用于针对性调优某个 Agent 的 Prompt。
 
 此外，聊天气泡会通过 `[AgentName]` 徽标展示当前正在服务的智能体来源。

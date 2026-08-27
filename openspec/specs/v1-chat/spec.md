@@ -1,13 +1,13 @@
 # v1-chat Specification
 
 ## Purpose
-TBD - created by archiving change unified-chat-api-v1. Update Purpose after archive.
+定义 V1 聊天接口的统一响应、异常安全和执行器内部意图分类边界。未指定专家时，接口直接进入默认 `Main` 的智能委派流程；意图分类只用于当前 Main/Executor 的业务处理，不负责在外层选择专家。
 ## Requirements
-### Requirement: 统一意图决策 (Unified Intent Decision)
-对外接口 **MUST** 在处理任何业务逻辑前，先进行意图识别决策。
+### Requirement: 统一执行决策 (Unified Execution Decision)
+对外接口 **MUST** 在处理业务逻辑前确定默认 `Main` 或显式指定专家，并由 `TurnDecision` 传递统一执行上下文。需要区分业务类型时，可由对应 Executor 在内部进行意图分类。
 
-#### Scenario: 自动分类分发
-当外部系统发送“上月 PUE 统计”时，V1 接口应内部识别为数据查询并触发对应的逻辑链路，而不是按普通聊天返回。
+#### Scenario: Main 委派数据任务
+当外部系统未指定专家并发送“上月 PUE 统计”时，V1 接口应直接进入默认 `Main`；Main 可按需委派数据专家，或由当前执行器完成数据查询分类并触发对应的安全链路，而不是先调用外层语义路由。
 
 ### Requirement: 响应结构标准化 (Standardized Response Structure)
 所有 V1 对话响应 **MUST** 包含意图标识，以便第三方系统根据意图类型展示不同的 UI 组件（如表格、图表或文本）。
@@ -20,4 +20,3 @@ TBD - created by archiving change unified-chat-api-v1. Update Purpose after arch
 
 #### Scenario: 模型异常时的优雅提示
 当内部网关响应失败时，接口应返回“抱歉，智能体暂时无法解析此请求，请稍后重试”，并保持 HTTP 200 或适当的业务错误码。
-

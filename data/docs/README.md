@@ -22,7 +22,7 @@
 **NanZi 智能体平台** 是专为企业级复杂场景打造的 AI 智能中枢。
 
 平台核心聚焦于以下能力矩阵：
-*   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持自动路由与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用工具；支持 `ask_user_question` 智能提问卡（单选/多选/输入）、**Todo 任务清单** 分步执行与常驻跟踪；主助手支持 **Skill 自动扫描** 与权限挂起恢复。
+*   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持 **智能委派（默认进入 Main）** 与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用工具；支持 `ask_user_question` 智能提问卡（单选/多选/输入）、**Todo 任务清单** 分步执行与常驻跟踪；主助手支持 **Skill 自动扫描** 与权限挂起恢复。
 *   🛡️ **多策略安全沙箱与隔离执行 (Multi-Policy Sandbox)**：原生支持 **Local**（本机进程）、**Docker**（私有容器隔离）、**E2B**（云端安全沙箱）、**SSH**（远端安全通道）四大执行策略；Docker 容器与宿主机工作区**同绝对路径挂载**，支持在代码画布中直接打开预览并保存回宿主机物理文件；支持镜像预构建、空闲 30 分钟自动回收（Idle Reaper）、优雅停机清理及输入框浮标面板一键探测与**秒级运行时长监控**。
 *   🌐 **持久化浏览器会话与实时接管面板 (Persistent Browser & Live Takeover)**：服务端持久化浏览器会话与全套自动化工具（网页访问、点击、输入、拟人滑块轨迹拖拽、按键、滚动、截图与多标签）；前端右侧提供**实时 Web 交互面板**，支持快照串流渲染与无缝人机协同交互接管。
 *   📊 **原生企业级 ChatBI 与自愈分析 (ChatBI & Self-Healing)**：数据源与元数据管理、案例集 Few-Shot、SQL 自愈与 **sql_plan 结构化计划**；**我的数据门户**（`/dataset_portal`）个性化导航；支持直连物理 SQL 与黄金报表暂存订阅。
@@ -56,7 +56,7 @@
 ┌─────────────────────────────▼────────────────────────────┐
 │                  核心网关 (Portal Gateway)               │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ 统一鉴权 │  │ 意图路由 │  │ 任务调度 │  │ 审计回溯 │  │
+│  │ 统一鉴权 │  │ Main 委派 │  │ 任务调度 │  │ 审计回溯 │  │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
 └─────────────────────────────┬──────────────┬─────────────┘
                               │              │ (状态与队列)
@@ -112,8 +112,8 @@
 ![NanZi 核心能力矩阵](docs/images/core.png)
 
 ### 1. 🧠 多引擎与混合编排 (Multi-Engine & Hybrid Orchestration)
-*   **智能路由**：未指定智能体时，先走问候/联网/ChatBI 会话亲和性（`KEEP`/`BREAK`/`UNCERTAIN`）等启发式短路，再 LLM 语义路由；支持多意图并行与 Synthesizer 聚合。
-*   **专家直选**：Embed 专家模式、`agent_id` 或 `@` 提及可跳过自动路由，直达指定智能体。
+*   **智能委派**：未指定智能体时直接进入 `Main`，由 Main 根据任务判断直接回答，或通过 `sub_agent_call` / `sub_agent_batch_call` 按需委派已授权专家；不再增加外层语义路由 LLM。
+*   **专家直选**：Embed 专家模式、`agent_id` 或 `@` 提及保持直达指定智能体；指定专家后仍可由该专家继续委派其他子代理。
 *   **AgentScope ReAct**：Assistant / ChatBI / Knowledge 基于 AgentScope Agent + Toolkit，闭环调度本地工具，支持权限挂起与恢复。
 *   **主助手增强**：工具预检（按绑定工具相关度促发调用）、Skill 自动扫描、反业务数据幻觉 Guard（可一键切换 ChatBI）。
 *   **思考模型兼容层**：支持 DeepSeek-R1、Kimi 等思考模型展开与 6 级 `reasoning_effort` 调优，自动挂载 `tool_choice_for_model` 确保工具稳定触发。
@@ -170,13 +170,13 @@
 
 系统遵循 **「路由 → 分发 → 执行 → 聚合」** 链路：
 
-1.  **意图路由 (Router)**：未传 `agent_id` 时，先尝试启发式短路（纯问候、联网搜索、ChatBI 亲和性 `BREAK` → 通用助手；`UNCERTAIN` 不短路），否则 LLM 结合最近对话与智能体元数据选型；支持多专家并行 hint。
-2.  **专家直选**：Embed 专家模式 / `agent_id` / `@提及` 跳过 Router，直接进入指定智能体。
-3.  **执行分发 (Dispatcher)**：按引擎与能力选择 **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / RAGFlow / OpenClaw 执行器；ChatBI 内部分诊新查数、结果分析/呈现/动作、元数据、非查数委派或澄清等。
+1.  **入口解析**：未传 `agent_id` 时直接加载默认 `Main`；传入 `agent_id`、`agent_name`、`version_id` 或使用 `@` / 专家模式时，直接加载指定专家。
+2.  **智能委派**：Main（或当前指定的父专家）结合自身 Prompt、能力目录、工具与权限门禁，决定直接回答，或调用 `sub_agent_call` / `sub_agent_batch_call` 委派子任务。
+3.  **执行分发 (Dispatcher)**：按最终智能体的引擎与能力选择 **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / RAGFlow / OpenClaw 执行器；ChatBI 内部分诊新查数、结果分析/呈现/动作、元数据、非查数委派或澄清等。
 4.  **动态执行 (ReAct)**：AgentScope「思考-行动-观察」循环，工具权限挂起、SQL 护栏、工具预检等按执行器生效。
 5.  **结果合成 (Synthesis)**：多 Agent 场景由 Synthesizer 聚合；单 Agent 流式 SSE 返回正文、日志与引用。
 
-详见 [architech/design/chat/CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md)
+详见 [architech/design/chat/CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [智能委派与专家直选设计](architech/design/AGENT_ROUTING_DESIGN.md)
 
 ---
 
@@ -189,7 +189,7 @@
 | [architech/README.md](architech/README.md) | 架构文档索引 |
 | [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) | 聊天端到端流程 |
 | [PROMPT_LAYERS.md](architech/design/chat/PROMPT_LAYERS.md) | 提示词分层与注入 |
-| [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | 智能体路由设计 |
+| [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | 智能委派与专家直选设计 |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API 集成 |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | 代码画布、工作区文件与执行 API |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent 门控契约 |

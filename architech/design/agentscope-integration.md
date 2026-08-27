@@ -459,7 +459,7 @@ LLM API
 |---|---|
 | `memory_service` | 存储对话历史（Human/AI 消息），独立于 AgentState.context |
 | `session_summary_service` | 每轮异步更新会话摘要（独立于 AgentScope 压缩摘要）|
-| `turn_classifier.py` | 意图路由（DataAgent/KnowledgeAgent/AssistantAgent），决定走哪个 Runner |
+| `turn_classifier.py` | 执行器内部意图分类（DataAgent/KnowledgeAgent/AssistantAgent）；默认入口由 Main 智能委派统一承接 |
 | `agent_service.py` | 最外层编排，调用各 Runner，管理 `agent_max_context_messages` 截断 |
 | `tools/registry.py` | 工具注册中心，将系统工具转换为 RuntimeToolSpec |
 | `executors/common.py` | 历史消息预处理（`_clean_assistant_text` / `_compress_markdown_tables`）|

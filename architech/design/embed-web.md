@@ -25,7 +25,7 @@
 
 | 参数名 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `agent_id` | 否 | `null` (自动路由) | 指定默认连接的智能体 ID。 |
+| `agent_id` | 否 | `null`（智能委派） | 指定默认连接的智能体 ID；不传时直接进入默认 `Main`，由 Main 按需委派。 |
 | `token` | 是 | - | 用户鉴权 Token (Bearer Token)。 |
 | `theme` | 否 | `light` | 主题模式：`light` / `dark` / `auto`。 |
 | `show_logs` | 否 | `false` | 是否展开显示“思考过程”日志。普通用户建议关闭。 |
