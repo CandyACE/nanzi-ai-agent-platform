@@ -131,7 +131,7 @@ watch(
 
 <template>
   <section
-    class="mt-3 rounded-xl border p-3 text-xs shadow-sm transition-all sm:p-4"
+    class="mt-3 w-full min-w-0 max-w-[42rem] rounded-xl border p-3 text-xs shadow-sm transition-all lg:max-w-[48rem] 2xl:max-w-[52rem] sm:p-4"
     :class="display.riskTone === 'low'
       ? 'border-sky-200 bg-sky-50/90 text-sky-950 dark:border-sky-900/50 dark:bg-sky-900/20 dark:text-sky-100'
       : 'border-amber-200 bg-amber-50/90 text-amber-950 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-100'"

@@ -119,6 +119,19 @@ def test_tool_permission_card_uses_adaptive_compact_layout_for_single_commands()
     assert "v-else" in card
 
 
+def test_tool_permission_card_aligns_with_thinking_timeline_width():
+    card = _read("frontend/src/components/chat/ToolPermissionCard.vue")
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+
+    for width_class in (
+        "w-full min-w-0 max-w-[42rem]",
+        "lg:max-w-[48rem]",
+        "2xl:max-w-[52rem]",
+    ):
+        assert width_class in timeline
+        assert width_class in card
+
+
 def test_permission_timeline_row_can_be_suppressed_when_detail_card_is_visible():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     embed = _read("frontend/src/views/EmbedChat.vue")
