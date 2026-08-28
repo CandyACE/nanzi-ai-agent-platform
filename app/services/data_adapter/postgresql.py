@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,6 +30,7 @@ class SqlLabUndefined(Undefined):
 
 SQL_LAB_ENV = Environment(loader=BaseLoader(), undefined=SqlLabUndefined)
 POSTGRESQL_TYPES = ("postgres", "postgresql", "pg")
+logger = logging.getLogger(__name__)
 
 
 def is_postgresql_type(db_type: str) -> bool:
@@ -67,6 +69,128 @@ def qualified_identifier(name: str, default_schema: str = "public") -> sql.Compo
     return sql.SQL(".").join(
         [sql.Identifier(schema or default_schema), sql.Identifier(table)]
     )
+
+
+def normalize_postgresql_identifiers(sql_text: str) -> str:
+    """将 SQL 中的 MySQL 反引号标识符转换为 PostgreSQL 双引号标识符。
+
+    数据门户可能复用 MySQL 风格的物理表名（例如 ``public.ny_function``）。
+    PostgreSQL 不支持反引号，因此只在 SQL 的标识符上下文中做兼容转换；
+    单引号字符串、双引号标识符、注释和 dollar-quoted 字符串会原样保留。
+    """
+    source = str(sql_text or "")
+    if "`" not in source:
+        return source
+
+    output: List[str] = []
+    index = 0
+    length = len(source)
+    while index < length:
+        current = source[index]
+
+        # SQL 字符串中的反引号是普通文本，不能当作标识符转换。
+        if current == "'":
+            start = index
+            index += 1
+            while index < length:
+                if source[index] == "'":
+                    if index + 1 < length and source[index + 1] == "'":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                if source[index] == "\\" and index + 1 < length:
+                    index += 2
+                    continue
+                index += 1
+            output.append(source[start:index])
+            continue
+
+        # 双引号标识符允许包含反引号，同样必须保持原样。
+        if current == '"':
+            start = index
+            index += 1
+            while index < length:
+                if source[index] == '"':
+                    if index + 1 < length and source[index + 1] == '"':
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            output.append(source[start:index])
+            continue
+
+        # 保留行注释和块注释内容，避免转换示例 SQL 或说明文字。
+        if source.startswith("--", index):
+            end = source.find("\n", index)
+            if end < 0:
+                output.append(source[index:])
+                break
+            output.append(source[index:end])
+            index = end
+            continue
+        if source.startswith("/*", index):
+            end = source.find("*/", index + 2)
+            if end < 0:
+                output.append(source[index:])
+                break
+            end += 2
+            output.append(source[index:end])
+            index = end
+            continue
+
+        # PostgreSQL 的 dollar-quoted 字符串常用于函数或复杂表达式。
+        if current == "$":
+            dollar_match = re.match(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$", source[index:])
+            if dollar_match:
+                delimiter = dollar_match.group(0)
+                end = source.find(delimiter, index + len(delimiter))
+                if end >= 0:
+                    end += len(delimiter)
+                    output.append(source[index:end])
+                    index = end
+                    continue
+
+        if current != "`":
+            output.append(current)
+            index += 1
+            continue
+
+        # 读取一个 MySQL 反引号标识符，`` 表示标识符内部的单个反引号。
+        start = index + 1
+        index = start
+        identifier_parts: List[str] = []
+        buffer: List[str] = []
+        closed = False
+        while index < length:
+            if source[index] == "`":
+                if index + 1 < length and source[index + 1] == "`":
+                    buffer.append("`")
+                    index += 2
+                    continue
+                identifier_parts.append("".join(buffer))
+                index += 1
+                closed = True
+                break
+            buffer.append(source[index])
+            index += 1
+
+        if not closed:
+            # 不完整的标识符交由数据库返回语法错误，避免猜测并改变原始 SQL。
+            logger.warning("PostgreSQL SQL 存在未闭合的反引号标识符，保留原始内容")
+            output.append(source[start - 1 :])
+            break
+
+        identifier = identifier_parts[0]
+        # 上游把 schema.table 整体包在反引号中时，拆成 PostgreSQL 的限定标识符。
+        quoted_parts = [quote_postgresql_identifier(part) for part in identifier.split(".")]
+        output.append(".".join(quoted_parts))
+
+    normalized = "".join(output)
+    if normalized != source:
+        logger.info("PostgreSQL SQL 已将 MySQL 反引号标识符转换为双引号")
+    return normalized
 
 
 class PostgreSQLAdapter(DataSourceAdapter):
@@ -128,6 +252,7 @@ class PostgreSQLAdapter(DataSourceAdapter):
                 raw_sql = SQL_LAB_ENV.from_string(raw_sql).render(**(params or {}))
             except Exception:
                 pass
+            raw_sql = normalize_postgresql_identifiers(raw_sql)
             final_sql = f"SELECT * FROM ({raw_sql}) AS _pg_columns LIMIT 0"
             async with pool.connection() as connection:
                 async with connection.cursor() as cursor:
@@ -162,6 +287,7 @@ class PostgreSQLAdapter(DataSourceAdapter):
     async def execute_sql(self, sql_text: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         from app.services.pool_manager import DataSourcePoolManager
 
+        sql_text = normalize_postgresql_identifiers(sql_text)
         pool = await DataSourcePoolManager.get_pool(self.source_id)
         async with pool.connection() as connection:
             async with connection.cursor() as cursor:
@@ -198,7 +324,7 @@ class PostgreSQLAdapter(DataSourceAdapter):
             except Exception as exc:
                 raise ValueError(f"Jinja2 模板渲染失败: {exc}") from exc
 
-        clean_sql = rendered_sql.strip().rstrip(";")
+        clean_sql = normalize_postgresql_identifiers(rendered_sql.strip().rstrip(";"))
         limit_match = re.search(r"\bLIMIT\s+(\d+)", clean_sql, re.IGNORECASE)
         if limit_match:
             final_sql = (
