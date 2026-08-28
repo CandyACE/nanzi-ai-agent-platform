@@ -95,6 +95,10 @@ async def test_append_docker_workspace_prompt_uses_real_user_workspace_paths(mon
         "app.services.config_service.ConfigService.get",
         _config,
     )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace._resolve_docker_public_docs_source",
+        lambda: None,
+    )
 
     result = await append_session_workspace_sandbox_to_system_prompt(
         "Base prompt",
@@ -105,7 +109,12 @@ async def test_append_docker_workspace_prompt_uses_real_user_workspace_paths(mon
 
     assert "/tmp/workspaces/u1/sessions/conv-1" in result
     assert "/tmp/workspaces/u1/docs" in result
-    assert "`/workspace`" not in result
+    assert "Bash 使用沙箱路径" in result
+    assert "Read/Write/Edit/Glob/Grep 使用文件工具路径" in result
+    assert "不要将 `/tmp` 等容器专属路径交给 Read" in result
+    assert "Bash 的相对路径默认相对会话目录" in result
+    assert "文件工具的相对路径默认相对用户工作区根目录" in result
+    assert "公共 docs 未挂载" in result
 
 
 @pytest.mark.asyncio

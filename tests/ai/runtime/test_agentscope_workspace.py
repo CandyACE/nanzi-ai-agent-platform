@@ -525,6 +525,137 @@ def test_docker_workspace_path_mapping_uses_one_logical_root_and_rejects_escape(
         )
 
 
+def test_docker_workspace_path_mapping_prefers_child_mounts():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_root = "/srv/agent_workspaces/alice__1"
+    backend_docs = "/app/data/docs"
+
+    mapped = workspace_module._map_docker_workspace_path(
+        "/workspace/public/docs/FAQ.md",
+        host_root,
+        mount_mappings=[
+            ("/workspace", host_root, "rw"),
+            ("/workspace/public/docs", backend_docs, "ro"),
+        ],
+    )
+
+    assert mapped == "/app/data/docs/FAQ.md"
+
+
+def test_docker_workspace_path_mapping_rejects_container_only_mount():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    with pytest.raises(ValueError, match="container-only"):
+        workspace_module._map_docker_workspace_path(
+            "/workspace/skills/platform/SKILL.md",
+            "/srv/agent_workspaces/alice__1",
+            mount_mappings=[
+                ("/workspace", "/srv/agent_workspaces/alice__1", "rw"),
+                ("/workspace/skills", None, "rw"),
+            ],
+        )
+
+
+def test_docker_file_tool_mount_mapping_has_public_docs_before_user_root(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    backend_data = tmp_path / "backend-data"
+    backend_docs = backend_data / "docs"
+    backend_skills = backend_data / "skills"
+    backend_docs.mkdir(parents=True)
+    backend_skills.mkdir(parents=True)
+    monkeypatch.setattr(
+        "app.utils.fs_paths.get_data_base_dir",
+        lambda: str(backend_data),
+    )
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root",
+        lambda: str(backend_skills),
+    )
+
+    mappings = workspace_module._build_docker_file_tool_mount_mappings(
+        str(tmp_path / "user")
+    )
+
+    assert mappings == [
+        ("/workspace/public/docs", str(backend_docs), "ro"),
+        ("/workspace/skills", None, "ro"),
+        ("/workspace", str(tmp_path / "user"), "rw"),
+    ]
+
+
+def test_docker_file_tool_mount_mapping_marks_unmounted_children_container_only(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    backend_data = tmp_path / "backend-data"
+    (backend_data / "docs").mkdir(parents=True)
+    monkeypatch.setattr(
+        "app.utils.fs_paths.get_data_base_dir",
+        lambda: str(backend_data),
+    )
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root",
+        lambda: None,
+    )
+
+    mappings = workspace_module._build_docker_file_tool_mount_mappings(
+        str(tmp_path / "user"),
+        public_docs_mounted=False,
+    )
+
+    assert mappings == [
+        ("/workspace/public/docs", None, "ro"),
+        ("/workspace/skills", None, "ro"),
+        ("/workspace", str(tmp_path / "user"), "rw"),
+    ]
+
+
+def test_docker_file_tool_mapping_allows_authorized_public_doc_symlink(tmp_path):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    backend_docs = tmp_path / "data" / "docs"
+    service_root = tmp_path / "service"
+    backend_docs.mkdir(parents=True)
+    service_root.mkdir()
+    (service_root / "FAQ.md").write_text("help", encoding="utf-8")
+    (backend_docs / "FAQ.md").symlink_to(service_root / "FAQ.md")
+
+    mapped = workspace_module._map_docker_workspace_path(
+        "/workspace/public/docs/FAQ.md",
+        str(tmp_path / "user"),
+        mount_mappings=[
+            ("/workspace/public/docs", str(backend_docs), "ro"),
+            ("/workspace", str(tmp_path / "user"), "rw"),
+        ],
+    )
+
+    assert mapped == str(backend_docs / "FAQ.md")
+
+
+def test_docker_glob_absolute_pattern_maps_to_child_mount(tmp_path):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    mapped = workspace_module._map_docker_workspace_tool_input(
+        "Glob",
+        {"pattern": "/workspace/public/docs/*.md"},
+        str(tmp_path / "user"),
+        mount_mappings=[
+            ("/workspace/public/docs", str(tmp_path / "data" / "docs"), "ro"),
+            ("/workspace", str(tmp_path / "user"), "rw"),
+        ],
+    )
+
+    assert mapped["path"] == str(tmp_path / "data" / "docs")
+    assert mapped["pattern"] == "*.md"
+
+
 def test_docker_workspace_results_keep_real_user_workspace_paths():
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
@@ -600,6 +731,75 @@ async def test_docker_workspace_file_tools_translate_workspace_paths_to_user_roo
             ),
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_bound_docker_file_tool_maps_public_docs_to_backend_path(
+    tmp_path,
+    monkeypatch,
+):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    base = tmp_path / "data"
+    public_root = base / "docs"
+    own_root = base / "agent_workspaces" / "alice__1"
+    public_root.mkdir(parents=True)
+    own_root.mkdir(parents=True)
+    monkeypatch.setattr("app.utils.fs_access.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_paths.get_data_base_dir", lambda: str(base))
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.default_workspace_root",
+        lambda: str(base / "agent_workspaces"),
+    )
+
+    calls = []
+
+    class FakeRead:
+        name = "Read"
+        description = "read"
+        input_schema = {"type": "object", "properties": {}}
+        is_read_only = True
+
+        async def __call__(self, **kwargs):
+            calls.append(kwargs)
+            return "read-ok"
+
+    class FakeLocalWorkspace:
+        workdir = str(own_root / "sessions" / "conversation-1")
+        workspace_user_root = str(own_root)
+
+        async def list_tools(self):
+            return [FakeRead()]
+
+    class FakeDockerSandbox:
+        _platform_sandbox_policy = "docker"
+        _platform_docker_file_tool_mount_mappings = [
+            ("/workspace/public/docs", str(public_root), "ro"),
+            ("/workspace", str(own_root), "rw"),
+        ]
+
+    spec = RuntimeToolSpec(
+        name="Read",
+        description="read",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=lambda **kwargs: kwargs,
+        permission_scope="read",
+        native_tool=FakeRead(),
+    )
+
+    bound = await workspace_module.bind_configured_tools_to_workspace(
+        (FakeDockerSandbox(), FakeLocalWorkspace()),
+        [spec],
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+    )
+
+    assert await bound[0].callable(
+        file_path="/workspace/public/docs/FAQ.md",
+    ) == "read-ok"
+    assert calls == [{"file_path": str(public_root / "FAQ.md")}]
 
 
 @pytest.mark.asyncio

@@ -178,6 +178,8 @@ async def list_accessible_directories() -> str:
             extract_workspace_identity,
             resolve_workspace_user_key,
             default_workspace_root,
+            USER_SESSIONS_DIR_NAME,
+            _resolve_docker_public_docs_source,
             SANDBOX_POLICY_DOCKER,
             SANDBOX_POLICY_LOCAL,
         )
@@ -236,6 +238,30 @@ async def list_accessible_directories() -> str:
                     return os.path.join(host_data_dir, rel) if rel != "." else host_data_dir
             return abs_service
 
+        def _tool_paths(
+            *,
+            container_path: str | None,
+            backend_path: str,
+            file_tool_path: str | None = None,
+        ) -> dict[str, Any]:
+            """Describe the path accepted by each execution backend."""
+            return {
+                "bash": container_path if is_docker_sandbox else backend_path,
+                "file_tools": file_tool_path or backend_path,
+            }
+
+        def _path_namespace(container_path: str | None) -> dict[str, str | None]:
+            return {
+                "bash": (
+                    "docker_sandbox"
+                    if is_docker_sandbox and container_path
+                    else None
+                    if is_docker_sandbox
+                    else "backend_service"
+                ),
+                "file_tools": "backend_service",
+            }
+
         # 用户私有目录详细路径
         docs_service_path = os.path.join(user_host_workspace, "docs")
         uploads_service_path = os.path.join(user_host_workspace, "uploads")
@@ -248,6 +274,14 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_path": "/workspace/docs" if is_docker_sandbox else docs_service_path,
                 "backend_service_path": docs_service_path,
                 "host_physical_path": _to_host_path(docs_service_path),
+                "paths": _tool_paths(
+                    container_path="/workspace/docs" if is_docker_sandbox else None,
+                    backend_path=docs_service_path,
+                    file_tool_path="docs",
+                ),
+                "path_namespace": _path_namespace(
+                    "/workspace/docs" if is_docker_sandbox else None,
+                ),
                 "permission": "read_write",
                 "category": "user_persistent_docs",
                 "description": "用户专属持久化文档库。跨会话共享，AI 生成的最终分析报告、Markdown、Excel、PDF、图表及长久保存文件请默认保存在此目录。",
@@ -263,11 +297,30 @@ async def list_accessible_directories() -> str:
                 conversation_id=conversation_id,
                 user_info=user_info,
             )
+            session_container_path = (
+                f"/workspace/sessions/{os.path.basename(session_phys)}"
+                if is_docker_sandbox
+                else None
+            )
+            session_file_tool_path = os.path.join(
+                USER_SESSIONS_DIR_NAME,
+                os.path.basename(session_phys),
+            )
             user_directories.append({
                 "directory_name": f"sessions/{conversation_id}",
-                "container_sandbox_path": f"/workspace/sessions/{conversation_id}" if is_docker_sandbox else session_phys,
+                "container_sandbox_path": session_container_path if is_docker_sandbox else session_phys,
                 "backend_service_path": session_phys,
                 "host_physical_path": _to_host_path(session_phys),
+                "paths": _tool_paths(
+                    container_path=(
+                        session_container_path
+                    ),
+                    backend_path=session_phys,
+                    file_tool_path=session_file_tool_path,
+                ),
+                "path_namespace": _path_namespace(
+                    session_container_path,
+                ),
                 "permission": "read_write",
                 "category": "session_scratchpad",
                 "description": "当前会话的专属临时工作区。存放仅限本次对话使用的中间过程文件、临时脚本、计算缓存等。",
@@ -280,6 +333,14 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_path": "/workspace/uploads" if is_docker_sandbox else uploads_service_path,
                 "backend_service_path": uploads_service_path,
                 "host_physical_path": _to_host_path(uploads_service_path),
+                "paths": _tool_paths(
+                    container_path="/workspace/uploads" if is_docker_sandbox else None,
+                    backend_path=uploads_service_path,
+                    file_tool_path="uploads",
+                ),
+                "path_namespace": _path_namespace(
+                    "/workspace/uploads" if is_docker_sandbox else None,
+                ),
                 "permission": "read_write",
                 "category": "user_uploads",
                 "description": "用户上传的会话附件目录。存放用户在聊天界面上传的文件与原始数据资料。",
@@ -287,9 +348,19 @@ async def list_accessible_directories() -> str:
             },
             {
                 "directory_name": "skills",
-                "container_sandbox_path": "/workspace/skills" if is_docker_sandbox else skills_service_path,
+                # Docker 的 /workspace/skills 是运行时合并后的公共技能副本，
+                # 不是用户私有 skills 源目录；宿主文件工具仍使用用户工作区下的 skills/。
+                "container_sandbox_path": None if is_docker_sandbox else skills_service_path,
                 "backend_service_path": skills_service_path,
                 "host_physical_path": _to_host_path(skills_service_path),
+                "paths": _tool_paths(
+                    container_path=None,
+                    backend_path=skills_service_path,
+                    file_tool_path="skills",
+                ),
+                "path_namespace": _path_namespace(
+                    None,
+                ),
                 "permission": "read_write",
                 "category": "user_personal_skills",
                 "description": "用户个人专属自定义技能目录。存放当前用户专属创建或定制的 Prompt/技能包。",
@@ -300,6 +371,14 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_path": "/workspace/.trash" if is_docker_sandbox else trash_service_path,
                 "backend_service_path": trash_service_path,
                 "host_physical_path": _to_host_path(trash_service_path),
+                "paths": _tool_paths(
+                    container_path="/workspace/.trash" if is_docker_sandbox else None,
+                    backend_path=trash_service_path,
+                    file_tool_path=".trash",
+                ),
+                "path_namespace": _path_namespace(
+                    "/workspace/.trash" if is_docker_sandbox else None,
+                ),
                 "permission": "read_write",
                 "category": "trash",
                 "description": "用户工作区回收站。存放已删除但可恢复的文件。",
@@ -311,26 +390,49 @@ async def list_accessible_directories() -> str:
         global_skills_service_path = get_platform_skills_root() or os.path.join(data_base, "skills")
         branding_service_path = os.path.join(data_base, "branding")
         global_docs_service_path = os.path.join(data_base, "docs")
+        public_docs_mounted = bool(
+            is_docker_sandbox
+            and _resolve_docker_public_docs_source() is not None
+        )
 
         public_directories: list[dict[str, Any]] = [
             {
                 "directory_name": "docs",
                 "container_sandbox_path": (
-                    "/workspace/public/docs" if is_docker_sandbox else global_docs_service_path
+                    "/workspace/public/docs"
+                    if public_docs_mounted
+                    else None
+                    if is_docker_sandbox
+                    else global_docs_service_path
                 ),
                 "backend_service_path": global_docs_service_path,
                 "host_physical_path": _to_host_path(global_docs_service_path),
+                "paths": _tool_paths(
+                    container_path=(
+                        "/workspace/public/docs" if public_docs_mounted else None
+                    ),
+                    backend_path=global_docs_service_path,
+                    file_tool_path=global_docs_service_path,
+                ),
+                "path_namespace": _path_namespace(
+                    "/workspace/public/docs" if public_docs_mounted else None,
+                ),
                 "access_via": (
                     ["Bash", "Read", "Glob", "Grep"]
-                    if is_docker_sandbox
+                    if public_docs_mounted
                     else ["Read", "Glob", "Grep"]
                 ),
                 "permission": "read_only",
                 "category": "platform_global_docs",
                 "description": (
                     "平台全局公共文档与模板库（data/docs）。"
-                    "Docker 模式下以只读方式挂载到 /workspace/public/docs；"
-                    "其他模式通过宿主文件工具只读查阅。"
+                    + (
+                        "Docker 模式下以只读方式挂载到 /workspace/public/docs；"
+                        if public_docs_mounted
+                        else "当前 Docker 沙箱未挂载，通过宿主文件工具只读查阅；"
+                        if is_docker_sandbox
+                        else "通过宿主文件工具只读查阅。"
+                    )
                 ),
                 "recommended_for": ["查阅公共产品手册", "参考公共标准模板与制度文档"],
             },
@@ -339,6 +441,14 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_path": "/workspace/skills" if is_docker_sandbox else global_skills_service_path,
                 "backend_service_path": global_skills_service_path,
                 "host_physical_path": _to_host_path(global_skills_service_path),
+                "paths": _tool_paths(
+                    container_path="/workspace/skills" if is_docker_sandbox else None,
+                    backend_path=global_skills_service_path,
+                    file_tool_path=global_skills_service_path,
+                ),
+                "path_namespace": _path_namespace(
+                    "/workspace/skills" if is_docker_sandbox else None,
+                ),
                 "path_semantics": (
                     "per_user_seeded_copy" if is_docker_sandbox else "platform_directory"
                 ),
@@ -358,6 +468,12 @@ async def list_accessible_directories() -> str:
                 ),
                 "backend_service_path": branding_service_path,
                 "host_physical_path": _to_host_path(branding_service_path),
+                "paths": _tool_paths(
+                    container_path=None,
+                    backend_path=branding_service_path,
+                    file_tool_path=branding_service_path,
+                ),
+                "path_namespace": _path_namespace(None),
                 "access_via": ["Read", "Glob", "Grep"],
                 "permission": "read_only",
                 "category": "platform_branding_assets",
@@ -375,6 +491,14 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_path": None,
                 "backend_service_path": path,
                 "host_physical_path": path,
+                "paths": {
+                    "bash": None,
+                    "file_tools": path,
+                },
+                "path_namespace": {
+                    "bash": None,
+                    "file_tools": "backend_service",
+                },
                 "path_semantics": "service_root_host_file_tool_path",
                 "access_via": ["Read", "Glob", "Grep"],
                 "permission": "read_only",
@@ -401,6 +525,14 @@ async def list_accessible_directories() -> str:
                 "container_sandbox_root": "/workspace" if is_docker_sandbox else user_host_workspace,
                 "backend_service_root": user_host_workspace,
                 "host_physical_root": _to_host_path(user_host_workspace),
+                "paths": {
+                    "bash": "/workspace" if is_docker_sandbox else user_host_workspace,
+                    "file_tools": ".",
+                },
+                "path_namespace": {
+                    "bash": "docker_sandbox" if is_docker_sandbox else "backend_service",
+                    "file_tools": "backend_service",
+                },
                 "access": "read_write",
                 "subdirectories": user_directories,
             },
@@ -410,11 +542,18 @@ async def list_accessible_directories() -> str:
             },
             "platform_help_files": platform_help_files,
             "usage_guidelines": [
-                "1. 在 Docker 沙箱环境（Docker Sandbox）下执行 Bash 命令或 Python 脚本时，请使用非空的 container_sandbox_path（以 /workspace 开头）；若该字段为空，则按 access_via 使用宿主文件工具；",
+                "1. 在 Docker 沙箱环境下执行 Bash 命令或 Python 脚本时，请使用 paths.bash（通常以 /workspace 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，不能把 Bash 的容器路径直接当作文件工具路径；",
                 "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
                 "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
                 "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",
-                "5. 公共 docs 在 Docker 中通过 /workspace/public/docs 只读访问；未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
+                (
+                    "5. 公共 docs 在 Docker 中通过 paths.bash=/workspace/public/docs 只读访问；"
+                    if public_docs_mounted
+                    else "5. 公共 docs 当前未挂载到 Docker Bash；"
+                    if is_docker_sandbox
+                    else "5. 公共 docs 通过宿主文件工具只读访问；"
+                )
+                + "文件工具使用 paths.file_tools 对应的后端 data/docs 路径；未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
             ],
         }

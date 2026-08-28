@@ -107,6 +107,8 @@ DOCKER_SANDBOX_DIR_NAME = "sandbox"
 DOCKER_PUBLIC_DIR_NAME = "public"
 DOCKER_WORKSPACE_SKILLS_PATH = "/workspace/skills"
 DOCKER_WORKSPACE_PUBLIC_DOCS_PATH = "/workspace/public/docs"
+DockerMountMapping = tuple[str, str | None, str]
+DOCKER_CONTAINER_ONLY_PATH_PREFIXES = ("/tmp", "/proc", "/sys", "/dev", "/root")
 
 
 def _clean_key_part(value: str | None, fallback_prefix: str) -> str:
@@ -631,6 +633,36 @@ def _build_docker_workspace_mounts(
     return mounts
 
 
+def _build_docker_file_tool_mount_mappings(
+    backend_workspace_root: str,
+    *,
+    public_docs_mounted: bool = True,
+) -> list[DockerMountMapping]:
+    """Build the Docker-to-backend path mapping for host file tools.
+
+    The user workspace is shared with the Docker container. Public docs and
+    runtime skills are child mounts and therefore must be resolved before the
+    parent ``/workspace`` mount. The merged runtime skills child mount is
+    container-only for host file tools; callers should use the backend skills
+    path from the resource catalog when they need to read a platform skill.
+    """
+    from app.utils.fs_paths import get_data_base_dir
+
+    backend_skills_root = None
+
+    return [
+        (
+            DOCKER_WORKSPACE_PUBLIC_DOCS_PATH,
+            os.path.join(get_data_base_dir(), "docs")
+            if public_docs_mounted
+            else None,
+            "ro",
+        ),
+        (DOCKER_WORKSPACE_SKILLS_PATH, backend_skills_root, "ro"),
+        (DOCKER_WORKSPACE_LOGICAL_ROOT, os.path.abspath(backend_workspace_root), "rw"),
+    ]
+
+
 def _resolve_docker_host_data_path(service_path: str) -> str:
     """Map a platform-container data path to the Docker daemon's host path."""
     abs_path = os.path.abspath(service_path)
@@ -703,15 +735,17 @@ async def _policy_docker_workspace(
     )
 
     extra_bind_mounts: list[tuple[str, str, str]] = []
+    public_docs_source: str | None = None
     if host_workdir:
         os.makedirs(_docker_sandbox_skills_dir(host_workdir), exist_ok=True)
         os.makedirs(
             os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
             exist_ok=True,
         )
+        public_docs_source = _resolve_docker_public_docs_source()
         extra_bind_mounts = _build_docker_workspace_mounts(
             host_workdir,
-            _resolve_docker_public_docs_source(),
+            public_docs_source,
         )[1:]
 
     default_mcp = build_container_tool_mcp()
@@ -746,6 +780,7 @@ async def _policy_docker_workspace(
 
         workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
         workspace._platform_execution_backend = SANDBOX_POLICY_DOCKER
+        workspace._platform_docker_public_docs_mounted = public_docs_source is not None
         workspace._platform_workspace_id = workspace_id or getattr(
             workspace, "workspace_id", None
         )
@@ -1294,6 +1329,19 @@ async def get_local_workspace(
         )
         if policy == SANDBOX_POLICY_DOCKER and sandbox_user_key:
             local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
+            if sandbox_ws is not None:
+                sandbox_ws._platform_docker_file_tool_mount_mappings = (
+                    _build_docker_file_tool_mount_mappings(
+                        local_ws.workspace_user_root,
+                        public_docs_mounted=bool(
+                            getattr(
+                                sandbox_ws,
+                                "_platform_docker_public_docs_mounted",
+                                False,
+                            )
+                        ),
+                    )
+                )
         await local_ws.initialize()
         if sandbox_ws is not None:
             sandbox_ws._platform_sandbox_policy = policy
@@ -2021,10 +2069,41 @@ async def append_session_workspace_sandbox_to_system_prompt(
         user_name=user_name,
         user_info=user_info,
     )
+    from app.services.config_service import ConfigService, resolve_effective_sandbox_policy
+
+    try:
+        effective_policy = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+            SANDBOX_POLICY_LOCAL,
+        )
+    except Exception as exc:  # pragma: no cover - infrastructure fallback
+        logger.warning("[workspace] Failed to resolve sandbox policy for prompt: %s", exc)
+        effective_policy = SANDBOX_POLICY_LOCAL
+    docker_logical_root = (
+        DOCKER_WORKSPACE_LOGICAL_ROOT
+        if effective_policy == SANDBOX_POLICY_DOCKER
+        else None
+    )
+    logical_session_workdir = None
+    logical_docs_dir = None
+    logical_public_docs_dir = None
+    if docker_logical_root:
+        logical_session_workdir = os.path.join(
+            docker_logical_root,
+            USER_SESSIONS_DIR_NAME,
+            os.path.basename(session_workdir),
+        )
+        logical_docs_dir = os.path.join(docker_logical_root, USER_DOCS_DIR_NAME)
+        if _resolve_docker_public_docs_source() is not None:
+            logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
     block = AgentServicePrompts.session_workspace_sandbox_block(
         session_workdir=session_workdir,
         docs_dir=docs_dir,
         file_tool_names=sorted(file_tools),
+        logical_workspace_root=docker_logical_root,
+        logical_session_workdir=logical_session_workdir,
+        logical_docs_dir=logical_docs_dir,
+        logical_public_docs_dir=logical_public_docs_dir,
     )
     base = (system_content or "").strip()
     if base:
@@ -2096,27 +2175,83 @@ async def _sandbox_bash_tool_from_mcps(mcps: Any) -> Any | None:
     return None
 
 
-def _map_docker_workspace_path(path: str | None, host_root: str) -> str:
-    """Map a model-visible Docker path to the host user's workspace root."""
+def _normalize_docker_mount_mappings(
+    host_root: str,
+    mount_mappings: list[DockerMountMapping]
+    | tuple[DockerMountMapping, ...]
+    | None,
+) -> list[DockerMountMapping]:
+    """Return Docker mounts ordered for deterministic longest-prefix matching."""
+    root = os.path.abspath(host_root)
+    mappings = list(mount_mappings or [(DOCKER_WORKSPACE_LOGICAL_ROOT, root, "rw")])
+    normalized: list[DockerMountMapping] = []
+    for sandbox_prefix, backend_root, mode in mappings:
+        prefix = str(sandbox_prefix).rstrip("/") or "/"
+        normalized.append(
+            (
+                prefix,
+                os.path.abspath(backend_root) if backend_root is not None else None,
+                str(mode),
+            )
+        )
+    return sorted(normalized, key=lambda item: len(item[0]), reverse=True)
+
+
+def _map_docker_workspace_path(
+    path: str | None,
+    host_root: str,
+    *,
+    mount_mappings: list[DockerMountMapping]
+    | tuple[DockerMountMapping, ...]
+    | None = None,
+) -> str:
+    """Map a model-visible Docker path to a backend file-tool path.
+
+    Child bind mounts win over the parent ``/workspace`` mount. A mount
+    without a backend target is container-only and cannot be guessed as a host
+    path.
+    """
     root = os.path.abspath(host_root)
     raw = "" if path is None else str(path).strip()
     if not raw:
         return root
 
-    logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
-    is_logical_path = raw == logical_root or raw.startswith(f"{logical_root}/")
-    if is_logical_path:
-        relative = raw[len(logical_root):].lstrip("/\\")
-        candidate = os.path.abspath(os.path.join(root, relative))
+    mappings = _normalize_docker_mount_mappings(host_root, mount_mappings)
+    matched: DockerMountMapping | None = None
+    for sandbox_prefix, backend_root, mode in mappings:
+        if raw == sandbox_prefix or raw.startswith(f"{sandbox_prefix}/"):
+            matched = (sandbox_prefix, backend_root, mode)
+            break
+
+    if matched is not None:
+        sandbox_prefix, backend_root, _mode = matched
+        if backend_root is None:
+            raise ValueError(
+                f"container-only path cannot be used by host file tools: {path}"
+            )
+        relative = raw[len(sandbox_prefix):].lstrip("/\\")
+        candidate = os.path.abspath(os.path.join(backend_root, relative))
+        # Check lexical mount containment here. The final file-tool access
+        # guard resolves symlinks and applies the public/private policy; doing
+        # realpath containment at this layer would reject authorized public
+        # docs symlinks (for example data/docs/FAQ.md).
+        root_real = os.path.abspath(backend_root)
     elif os.path.isabs(raw):
-        # Preserve platform paths such as /app/data/uploads supplied by the
-        # user; only the canonical Docker workspace namespace is translated.
+        if any(
+            raw == prefix or raw.startswith(f"{prefix}/")
+            for prefix in DOCKER_CONTAINER_ONLY_PATH_PREFIXES
+        ):
+            raise ValueError(
+                f"container-only path cannot be used by host file tools: {path}"
+            )
+        # Preserve backend service paths such as /app/data/docs supplied for
+        # host-side file tools. They are checked by the normal access guard.
         return raw
     else:
         candidate = os.path.abspath(os.path.join(root, raw))
+        root_real = os.path.realpath(root)
 
-    root_real = os.path.realpath(root)
-    candidate_real = os.path.realpath(candidate)
+    candidate_real = os.path.abspath(candidate)
     try:
         is_inside = os.path.commonpath((root_real, candidate_real)) == root_real
     except ValueError:
@@ -2130,6 +2265,10 @@ def _map_docker_workspace_tool_input(
     tool_name: str,
     tool_input: Mapping[str, Any],
     host_root: str,
+    *,
+    mount_mappings: list[DockerMountMapping]
+    | tuple[DockerMountMapping, ...]
+    | None = None,
 ) -> dict[str, Any]:
     """Translate the shared ``/workspace`` contract for host file tools."""
     mapped = dict(tool_input)
@@ -2137,19 +2276,45 @@ def _map_docker_workspace_tool_input(
         mapped["file_path"] = _map_docker_workspace_path(
             mapped.get("file_path"),
             host_root,
+            mount_mappings=mount_mappings,
         )
 
     if tool_name in {"Glob", "Grep"}:
         if mapped.get("path"):
-            mapped["path"] = _map_docker_workspace_path(mapped["path"], host_root)
+            mapped["path"] = _map_docker_workspace_path(
+                mapped["path"],
+                host_root,
+                mount_mappings=mount_mappings,
+            )
         else:
             mapped["path"] = os.path.abspath(host_root)
 
     if tool_name == "Glob":
         pattern = str(mapped.get("pattern") or "")
-        logical_root = DOCKER_WORKSPACE_LOGICAL_ROOT
-        if pattern == logical_root or pattern.startswith(f"{logical_root}/"):
-            mapped["pattern"] = pattern[len(logical_root):].lstrip("/\\") or "**"
+        if os.path.isabs(pattern):
+            pattern_mapping = next(
+                (
+                    (sandbox_prefix, backend_root, mode)
+                    for sandbox_prefix, backend_root, mode in _normalize_docker_mount_mappings(
+                        host_root,
+                        mount_mappings,
+                    )
+                    if pattern == sandbox_prefix
+                    or pattern.startswith(f"{sandbox_prefix}/")
+                ),
+                None,
+            )
+            if pattern_mapping is not None:
+                sandbox_prefix, backend_root, _mode = pattern_mapping
+                if backend_root is None:
+                    raise ValueError(
+                        f"container-only path cannot be used by host file tools: {pattern}"
+                    )
+                relative_pattern = pattern[len(sandbox_prefix):].lstrip("/\\") or "**"
+                if ".." in relative_pattern.replace("\\", "/").split("/"):
+                    raise ValueError(f"path escapes Docker workspace: {pattern}")
+                mapped["path"] = os.path.abspath(backend_root)
+                mapped["pattern"] = relative_pattern
 
     return mapped
 
@@ -2169,6 +2334,7 @@ _WORKSPACE_ERROR_MARKERS = (
     "not a directory",
     "path escapes",
     "escapes docker workspace",
+    "container-only",
 )
 
 
@@ -2193,16 +2359,30 @@ def _logicalize_docker_workspace_result(result: Any, host_root: str) -> Any:
 class _DockerLogicalWorkspaceNativeTool:
     """Map legacy ``/workspace`` inputs while preserving real output paths."""
 
-    def __init__(self, native_tool: Any, host_root: str) -> None:
+    def __init__(
+        self,
+        native_tool: Any,
+        host_root: str,
+        *,
+        mount_mappings: list[DockerMountMapping]
+        | tuple[DockerMountMapping, ...]
+        | None = None,
+    ) -> None:
         self._native_tool = native_tool
         self._host_root = os.path.abspath(host_root)
+        self._mount_mappings = mount_mappings
         self.name = getattr(native_tool, "name", "")
 
     def __getattr__(self, attribute: str) -> Any:
         return getattr(self._native_tool, attribute)
 
     def _map(self, tool_input: Mapping[str, Any]) -> dict[str, Any]:
-        return _map_docker_workspace_tool_input(self.name, tool_input, self._host_root)
+        return _map_docker_workspace_tool_input(
+            self.name,
+            tool_input,
+            self._host_root,
+            mount_mappings=self._mount_mappings,
+        )
 
     async def __call__(self, **kwargs: Any) -> Any:
         try:
@@ -2257,6 +2437,10 @@ def _normalize_workspace_file_tool_input(
     tool_name: str,
     tool_input: Mapping[str, Any],
     workspace_root: str,
+    *,
+    mount_mappings: list[DockerMountMapping]
+    | tuple[DockerMountMapping, ...]
+    | None = None,
 ) -> dict[str, Any]:
     """Normalize host file-tool paths before applying tenant authorization."""
     mapped = dict(tool_input)
@@ -2269,7 +2453,11 @@ def _normalize_workspace_file_tool_input(
             if raw == DOCKER_WORKSPACE_LOGICAL_ROOT or raw.startswith(
                 f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"
             ):
-                raw = _map_docker_workspace_path(raw, root)
+                raw = _map_docker_workspace_path(
+                    raw,
+                    root,
+                    mount_mappings=mount_mappings,
+                )
             elif not os.path.isabs(raw):
                 raw = os.path.join(root, raw)
             mapped["file_path"] = os.path.realpath(raw)
@@ -2281,7 +2469,11 @@ def _normalize_workspace_file_tool_input(
         if raw == DOCKER_WORKSPACE_LOGICAL_ROOT or raw.startswith(
             f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"
         ):
-            raw = _map_docker_workspace_path(raw, root)
+            raw = _map_docker_workspace_path(
+                raw,
+                root,
+                mount_mappings=mount_mappings,
+            )
         elif not os.path.isabs(raw):
             raw = os.path.join(root, raw)
         mapped["path"] = os.path.realpath(raw)
@@ -2342,6 +2534,9 @@ def _assert_workspace_file_access(
     *,
     user_info: dict[str, Any] | None,
     workspace_root: str,
+    mount_mappings: list[DockerMountMapping]
+    | tuple[DockerMountMapping, ...]
+    | None = None,
 ) -> dict[str, Any]:
     """Authorize a host file-tool input and return its canonicalized form."""
     from app.utils.fs_access import (
@@ -2353,6 +2548,7 @@ def _assert_workspace_file_access(
         tool_name,
         tool_input,
         workspace_root,
+        mount_mappings=mount_mappings,
     )
     path_key = "file_path" if tool_name in {"Read", "Write", "Edit"} else "path"
     target_path = mapped.get(path_key)
@@ -2601,10 +2797,14 @@ class _WorkspaceFileAccessNativeTool:
         *,
         user_info: dict[str, Any] | None,
         workspace_root: str,
+        mount_mappings: list[DockerMountMapping]
+        | tuple[DockerMountMapping, ...]
+        | None = None,
     ) -> None:
         self._native_tool = native_tool
         self._user_info = user_info
         self._workspace_root = os.path.abspath(workspace_root)
+        self._mount_mappings = mount_mappings
         self.name = getattr(native_tool, "name", "")
 
     def __getattr__(self, attribute: str) -> Any:
@@ -2616,6 +2816,7 @@ class _WorkspaceFileAccessNativeTool:
             tool_input,
             user_info=self._user_info,
             workspace_root=self._workspace_root,
+            mount_mappings=self._mount_mappings,
         )
 
     def check_path_access(self, tool_input: dict[str, Any]) -> None:
@@ -2648,7 +2849,7 @@ class _WorkspaceFileAccessNativeTool:
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
         try:
             mapped_input = self._map(tool_input)
-        except PermissionError as exc:
+        except (PermissionError, ValueError) as exc:
             try:
                 from agentscope.permission import PermissionBehavior, PermissionDecision
             except Exception:
@@ -2784,6 +2985,11 @@ async def bind_configured_tools_to_workspace(
         and local_ws is not None
     ):
         docker_host_root = getattr(local_ws, "workspace_user_root", None)
+    docker_file_tool_mount_mappings = (
+        getattr(sandbox_ws, "_platform_docker_file_tool_mount_mappings", None)
+        if sandbox_ws is not None
+        else None
+    )
 
     file_access_root = docker_host_root
     if file_access_root is None and local_ws is not None:
@@ -2858,6 +3064,7 @@ async def bind_configured_tools_to_workspace(
             workspace_tool = _DockerLogicalWorkspaceNativeTool(
                 workspace_tool,
                 docker_host_root,
+                mount_mappings=docker_file_tool_mount_mappings,
             )
         if native_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES:
             if not file_access_root:
@@ -2868,6 +3075,7 @@ async def bind_configured_tools_to_workspace(
                 workspace_tool,
                 user_info=user_info,
                 workspace_root=file_access_root,
+                mount_mappings=docker_file_tool_mount_mappings,
             )
         if (
             docker_host_root

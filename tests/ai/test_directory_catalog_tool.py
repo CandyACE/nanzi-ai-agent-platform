@@ -85,7 +85,7 @@ async def test_list_accessible_directories_docker_sandbox_mode():
     mock_ctx = SimpleNamespace(
         user_id=202,
         is_admin=False,
-        conversation_id="conv-abc",
+        conversation_id="conv:abc",
         user_dimensions={"user_name": "lisi"},
     )
 
@@ -93,6 +93,10 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=mock_ctx),
         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="docker")),
         patch("app.utils.fs_access.get_public_runtime_help_files", return_value=["/app/FAQ.md"]),
+        patch(
+            "app.services.ai.runtime.agentscope.workspace._resolve_docker_public_docs_source",
+            return_value="/data/host_nanzi/docs",
+        ),
         patch.dict("os.environ", {"HOST_DATA_DIR": "/data/host_nanzi"}),
     ):
         raw = await list_accessible_directories.ainvoke({})
@@ -103,15 +107,37 @@ async def test_list_accessible_directories_docker_sandbox_mode():
 
         subdirs = {d["directory_name"]: d for d in data["user_workspace"]["subdirectories"]}
         assert subdirs["docs"]["container_sandbox_path"] == "/workspace/docs"
-        assert subdirs["sessions/conv-abc"]["container_sandbox_path"] == "/workspace/sessions/conv-abc"
+        assert subdirs["sessions/conv:abc"]["container_sandbox_path"] == "/workspace/sessions/conv_abc"
+        assert subdirs["sessions/conv:abc"]["paths"]["file_tools"] == "sessions/conv_abc"
         assert subdirs["uploads"]["container_sandbox_path"] == "/workspace/uploads"
+        assert subdirs["skills"]["container_sandbox_path"] is None
+        assert subdirs["skills"]["paths"] == {
+            "bash": None,
+            "file_tools": "skills",
+        }
+        assert subdirs["skills"]["path_namespace"] == {
+            "bash": None,
+            "file_tools": "backend_service",
+        }
         assert "/data/host_nanzi" in subdirs["docs"]["host_physical_path"]
+        assert subdirs["docs"]["paths"]["bash"] == "/workspace/docs"
+        assert subdirs["docs"]["paths"]["file_tools"] == "docs"
+        assert subdirs["docs"]["path_namespace"] == {
+            "bash": "docker_sandbox",
+            "file_tools": "backend_service",
+        }
 
         public_dirs = {
             item["directory_name"]: item
             for item in data["public_directories"]["directories"]
         }
         assert public_dirs["docs"]["container_sandbox_path"] == "/workspace/public/docs"
+        assert public_dirs["docs"]["paths"]["bash"] == "/workspace/public/docs"
+        assert public_dirs["docs"]["paths"]["file_tools"] == public_dirs["docs"]["backend_service_path"]
+        assert public_dirs["docs"]["path_namespace"] == {
+            "bash": "docker_sandbox",
+            "file_tools": "backend_service",
+        }
         assert public_dirs["docs"]["access_via"] == ["Bash", "Read", "Glob", "Grep"]
         assert data["platform_help_files"]
         assert all(item["container_sandbox_path"] is None for item in data["platform_help_files"])
@@ -122,10 +148,43 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         )
         assert all(item["access_via"] == ["Read", "Glob", "Grep"] for item in data["platform_help_files"])
         assert public_dirs["branding"]["container_sandbox_path"] is None
+        assert public_dirs["branding"]["path_namespace"]["bash"] is None
         assert public_dirs["branding"]["access_via"] == ["Read", "Glob", "Grep"]
         assert public_dirs["skills"]["container_sandbox_path"] == "/workspace/skills"
         assert public_dirs["skills"]["path_semantics"] == "per_user_seeded_copy"
-        assert "若该字段为空，则按 access_via 使用宿主文件工具" in data["usage_guidelines"][0]
+        assert "paths.file_tools" in data["usage_guidelines"][0]
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_directories_docker_without_public_docs_mount():
+    mock_ctx = SimpleNamespace(
+        user_id=203,
+        is_admin=False,
+        conversation_id="conv-no-docs",
+        user_dimensions={"user_name": "wangwu"},
+    )
+
+    with (
+        patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=mock_ctx),
+        patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="docker")),
+        patch("app.services.ai.runtime.agentscope.workspace._resolve_docker_public_docs_source", return_value=None),
+        patch("app.utils.fs_access.get_public_runtime_help_files", return_value=[]),
+    ):
+        raw = await list_accessible_directories.ainvoke({})
+        data = json.loads(raw)
+
+    public_docs = next(
+        item
+        for item in data["public_directories"]["directories"]
+        if item["directory_name"] == "docs"
+    )
+    assert public_docs["container_sandbox_path"] is None
+    assert public_docs["paths"] == {
+        "bash": None,
+        "file_tools": public_docs["backend_service_path"],
+    }
+    assert public_docs["access_via"] == ["Read", "Glob", "Grep"]
+    assert "未挂载到 Docker Bash" in data["usage_guidelines"][4]
 
 
 @pytest.mark.asyncio
