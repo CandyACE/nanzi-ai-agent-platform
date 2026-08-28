@@ -635,108 +635,14 @@
                 :duration="msg.thoughtDuration"
                 :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
+                :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 dark-mode
               />
-              <!-- Tool Permission Confirmation -->
-              <div
+              <ToolPermissionCard
                 v-if="msg.pendingPermission"
-                class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-900/20 p-3 text-xs transition-all"
-              >
-                <div class="flex items-start gap-2">
-                  <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
-                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                    </svg>
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <!-- Card Header with Toggle -->
-                    <div
-                      class="flex items-center justify-between gap-2 cursor-pointer select-none group"
-                      :title="(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) ? '点击收起' : '点击展开'"
-                      @click="msg.pendingPermission.expanded = !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending'))"
-                    >
-                      <div class="flex min-w-0 flex-1 items-center gap-2">
-                        <div class="font-bold text-amber-900 dark:text-amber-100 shrink-0">
-                          {{ msg.pendingPermission.title || '工具调用确认' }}
-                        </div>
-                        <!-- Collapsed summary preview -->
-                        <span
-                          v-if="!(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) && (msg.pendingPermission.tool_call?.name || msg.pendingPermission.details)"
-                          class="min-w-0 flex-1 truncate text-[11px] text-amber-800/70 dark:text-amber-200/70 font-normal"
-                        >
-                          {{ msg.pendingPermission.tool_call?.name ? `${msg.pendingPermission.tool_call.name}${msg.pendingPermission.tool_call.args ? ': ' + JSON.stringify(msg.pendingPermission.tool_call.args) : ''}` : msg.pendingPermission.details }}
-                        </span>
-                      </div>
-                      <div class="flex items-center gap-1.5 shrink-0">
-                        <span
-                          class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
-                          :class="{
-                            'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': msg.pendingPermission.status === 'pending',
-                            'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': msg.pendingPermission.status === 'approved',
-                            'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': msg.pendingPermission.status === 'rejected',
-                            'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': msg.pendingPermission.status === 'error' || msg.pendingPermission.status === 'expired'
-                          }"
-                        >
-                          {{ formatPermissionStatus(msg.pendingPermission.status) }}
-                        </span>
-                        <!-- Fold/Unfold Arrow -->
-                        <button
-                          type="button"
-                          class="flex h-5 w-5 items-center justify-center rounded text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200 transition-colors"
-                          :aria-label="(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) ? '收起确认' : '展开确认'"
-                          @click.stop="msg.pendingPermission.expanded = !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending'))"
-                        >
-                          <svg
-                            class="h-3.5 w-3.5 transition-transform duration-200"
-                            :class="{ 'rotate-180': !(msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')) }"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 15-7-7-7 7" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Expanded Content -->
-                    <div v-show="msg.pendingPermission.expanded ?? (msg.pendingPermission.status === 'pending')" class="mt-2">
-                      <div class="text-amber-800/80 dark:text-amber-200/80 break-words">
-                        {{ msg.pendingPermission.details }}
-                      </div>
-                      <div
-                        v-if="msg.pendingPermission.tool_call?.name"
-                        class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-amber-100 dark:border-amber-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto max-h-56 overflow-y-auto"
-                      >
-                        <div class="font-semibold text-amber-900 dark:text-amber-200 mb-0.5">{{ msg.pendingPermission.tool_call.name }}</div>
-                        <pre v-if="msg.pendingPermission.tool_call.args" class="whitespace-pre-wrap break-all font-mono">{{ JSON.stringify(msg.pendingPermission.tool_call.args, null, 2) }}</pre>
-                      </div>
-                      <div v-if="msg.pendingPermission.status === 'pending'" class="mt-3 flex items-center gap-2">
-                        <button
-                          @click="confirmPendingPermission(msg, true)"
-                          :disabled="msg.pendingPermission.isSubmitting"
-                          class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
-                          </svg>
-                          允许
-                        </button>
-                        <button
-                          @click="confirmPendingPermission(msg, false)"
-                          :disabled="msg.pendingPermission.isSubmitting"
-                          class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
-                        >
-                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18 18 6M6 6l12 12" />
-                          </svg>
-                          拒绝
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                :payload="msg.pendingPermission"
+                @submit="(confirmed) => confirmPendingPermission(msg, confirmed)"
+              />
               <!-- External Tool Execution -->
               <div
                 v-if="msg.pendingExternalExecution"
@@ -2145,6 +2051,7 @@ const {
 } = useTokenQuota();
 const showToast = toast.showToast;
 import MessageRenderer from "@/components/MessageRenderer.vue";
+import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
 import UserQuestionCard from "@/components/UserQuestionCard.vue";
@@ -2263,7 +2170,6 @@ import {
   appendAssistantBodyDelta,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
-  formatPermissionStatus,
   resolveStreamLogDurationMs,
   finalizeAllPendingStreamLogs,
   markStalePendingStreamLogs,

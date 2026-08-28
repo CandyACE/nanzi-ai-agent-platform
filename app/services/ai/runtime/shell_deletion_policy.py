@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ast
+import io
 import os
 import re
 import shlex
+import tokenize
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
@@ -33,6 +36,24 @@ _SUDO_OPTIONS_WITH_VALUE = {
     "--type",
 }
 _SHELL_INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+_PROGRAM_INTERPRETERS = {"python", "python3", "perl", "node", "ruby"}
+_PYTHON_DELETE_CALLS = {
+    "remove",
+    "unlink",
+    "rmtree",
+    "rmdir",
+    "rm",
+    "rmsync",
+    "unlinksync",
+    "rmdirsync",
+}
+_PYTHON_SUBPROCESS_CALLS = {
+    "call",
+    "check_call",
+    "check_output",
+    "popen",
+    "run",
+}
 _PROGRAMMATIC_DELETE_MARKERS = re.compile(
     r"\b(?:os\.(?:remove|unlink)|shutil\.rmtree|(?:fs\.)?(?:rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync)|rmtree|unlink|remove)\b",
     re.IGNORECASE,
@@ -115,17 +136,18 @@ def _assess_command(
             "删除命令嵌套层级无法安全解析，需要确认",
         )
 
+    shell_source = _shell_source_without_heredocs(command)
     try:
-        tokens = _shell_tokens(command)
+        tokens = _shell_tokens(shell_source)
     except ValueError:
-        if _DELETE_INTENT_MARKERS.search(command):
+        if _DELETE_INTENT_MARKERS.search(shell_source):
             return ShellDeletionDecision(
                 "ask",
                 "删除命令解析失败，需要确认",
             )
         return ShellDeletionDecision("pass")
 
-    if _has_dynamic_shell(command) and _DELETE_INTENT_MARKERS.search(command):
+    if _has_dynamic_shell(shell_source) and _shell_delete_intent_present(tokens):
         return ShellDeletionDecision(
             "ask",
             "删除命令包含无法静态解析的 Shell 结构，需要确认",
@@ -135,7 +157,7 @@ def _assess_command(
     for segment in _split_shell_segments(tokens):
         decision = _assess_segment(
             segment,
-            command=command,
+            command=shell_source,
             current_dir=current_dir,
             roots=roots,
             depth=depth,
@@ -153,6 +175,17 @@ def _assess_command(
             "; ".join(reasons) or "删除操作需要确认",
             targets,
         )
+
+    for interpreter, program, _start, _end in _iter_heredoc_programs(command):
+        if interpreter in _PROGRAM_INTERPRETERS:
+            decision = _assess_programmatic_delete(
+                program,
+                current_dir=current_dir,
+                roots=roots,
+                language=interpreter,
+            )
+            if decision.action != "pass":
+                return decision
     return ShellDeletionDecision("pass")
 
 
@@ -231,6 +264,7 @@ def _assess_segment(
             " ".join(rest),
             current_dir=current_dir,
             roots=roots,
+            language=base,
         )
 
     return ShellDeletionDecision("pass")
@@ -389,6 +423,54 @@ def _shell_tokens(command: str) -> list[str]:
     return list(lexer)
 
 
+_HEREDOC_PROGRAM_RE = re.compile(
+    r"(?:^|[;&|]\s*|(?:then|do|else|elif)\s+)"
+    r"(?:(?:sudo|doas|env)\s+)*"
+    r"(?P<interpreter>python3?|perl|node|ruby)\b[^\n]*?"
+    r"(?:\s-\s*)?<<(?P<strip_tabs>-?)\s*"
+    r"(?P<quote>['\"]?)(?P<delimiter>[A-Za-z_][A-Za-z0-9_-]*)(?P=quote)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _iter_heredoc_programs(command: str) -> list[tuple[str, str, int, int]]:
+    """Extract interpreter heredocs without treating their body as Shell syntax."""
+    lines = command.splitlines(keepends=True)
+    plain_lines = [line.rstrip("\r\n") for line in lines]
+    programs: list[tuple[str, str, int, int]] = []
+    index = 0
+    while index < len(plain_lines):
+        match = _HEREDOC_PROGRAM_RE.search(plain_lines[index])
+        if not match:
+            index += 1
+            continue
+
+        delimiter = match.group("delimiter")
+        strip_tabs = bool(match.group("strip_tabs"))
+        body: list[str] = []
+        end = len(plain_lines)
+        for candidate_index in range(index + 1, len(plain_lines)):
+            candidate = plain_lines[candidate_index]
+            if strip_tabs:
+                candidate = candidate.lstrip("\t")
+            if candidate == delimiter:
+                end = candidate_index
+                break
+            body.append(plain_lines[candidate_index])
+        programs.append((match.group("interpreter").lower(), "\n".join(body), index, end))
+        index = end + 1 if end < len(plain_lines) else len(plain_lines)
+    return programs
+
+
+def _shell_source_without_heredocs(command: str) -> str:
+    """Return only the outer Shell source, excluding embedded program bodies."""
+    lines = command.splitlines(keepends=True)
+    skipped: set[int] = set()
+    for _interpreter, _program, start, end in _iter_heredoc_programs(command):
+        skipped.update(range(start + 1, end))
+    return "".join(line for index, line in enumerate(lines) if index not in skipped)
+
+
 def _split_shell_segments(tokens: list[str]) -> list[list[str]]:
     segments: list[list[str]] = []
     current: list[str] = []
@@ -436,12 +518,41 @@ def _has_dynamic_shell(command: str) -> bool:
     return bool(_DYNAMIC_SHELL_MARKERS.search(command))
 
 
+def _shell_delete_intent_present(tokens: list[str]) -> bool:
+    """Detect delete commands at Shell command positions, not in arguments/comments."""
+    shell_keywords = {"then", "do", "else", "elif"}
+    for segment in _split_shell_segments(tokens):
+        candidate = list(segment)
+        while candidate and candidate[0].lower() in shell_keywords:
+            candidate.pop(0)
+        base_index = _find_base_command(candidate)
+        if base_index is None:
+            continue
+        base = _command_basename(candidate[base_index])
+        rest = candidate[base_index + 1 :]
+        if base in _DELETE_COMMANDS:
+            return True
+        if base == "find" and "-delete" in rest:
+            return True
+        if base == "git" and rest and rest[0] == "clean":
+            return True
+    return False
+
+
 def _assess_programmatic_delete(
     text: str,
     *,
     current_dir: str,
     roots: set[str],
+    language: str | None = None,
 ) -> ShellDeletionDecision:
+    if language in {"python", "python3"}:
+        return _assess_python_programmatic_delete(
+            text,
+            current_dir=current_dir,
+            roots=roots,
+        )
+
     if not (
         _PROGRAMMATIC_DELETE_MARKERS.search(text)
         or _DELETE_INTENT_MARKERS.search(text)
@@ -477,6 +588,138 @@ def _assess_programmatic_delete(
             tuple(target for decision in asks for target in decision.targets),
         )
     return ShellDeletionDecision("ask", "命令可能执行程序化删除，需要确认")
+
+
+def _assess_python_programmatic_delete(
+    text: str,
+    *,
+    current_dir: str,
+    roots: set[str],
+) -> ShellDeletionDecision:
+    source = _python_source_from_interpreter_args(text)
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, TypeError):
+        code = _python_code_without_comments_and_strings(source)
+        if _PROGRAMMATIC_DELETE_MARKERS.search(code):
+            return ShellDeletionDecision(
+                "ask",
+                "命令可能执行程序化删除，需要确认",
+            )
+        return ShellDeletionDecision("pass")
+
+    decisions: list[ShellDeletionDecision] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callable_name = _python_callable_name(node.func)
+        if not callable_name:
+            continue
+        terminal_name = callable_name.rsplit(".", 1)[-1].lower()
+        if terminal_name in _PYTHON_DELETE_CALLS:
+            if not node.args:
+                return ShellDeletionDecision(
+                    "ask",
+                    "程序化删除目标无法静态解析，需要确认",
+                )
+            target = node.args[0]
+            if not isinstance(target, ast.Constant) or not isinstance(target.value, str):
+                return ShellDeletionDecision(
+                    "ask",
+                    "程序化删除目标无法静态解析，需要确认",
+                )
+            decision = _classify_targets(
+                (target.value,),
+                current_dir=current_dir,
+                roots=roots,
+            )
+            if decision.action == "deny":
+                return decision
+            decisions.append(decision)
+            continue
+
+        if not _is_python_shell_call(callable_name, terminal_name):
+            continue
+        shell_command = _python_shell_command_from_call(node)
+        if shell_command is None:
+            decisions.append(
+                ShellDeletionDecision(
+                    "ask",
+                    "程序化 Shell 命令无法静态解析，需要确认",
+                )
+            )
+            continue
+        decision = _assess_command(
+            shell_command,
+            current_dir=current_dir,
+            roots=roots,
+            depth=1,
+        )
+        if decision.action == "deny":
+            return decision
+        if decision.action == "ask":
+            decisions.append(decision)
+
+    if decisions:
+        return ShellDeletionDecision(
+            "ask",
+            "命令可能执行程序化删除，需要确认",
+            tuple(target for decision in decisions for target in decision.targets),
+        )
+    return ShellDeletionDecision("pass")
+
+
+def _python_source_from_interpreter_args(text: str) -> str:
+    match = re.match(r"^\s*-c\s+(.*)$", text, flags=re.DOTALL)
+    return match.group(1) if match else text
+
+
+def _python_callable_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _python_callable_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _is_python_shell_call(callable_name: str, terminal_name: str) -> bool:
+    normalized_name = callable_name.lower()
+    return normalized_name in {"os.system", "os.popen"} or (
+        normalized_name.startswith("subprocess.")
+        and terminal_name in _PYTHON_SUBPROCESS_CALLS
+    )
+
+
+def _python_shell_command_from_call(node: ast.Call) -> str | None:
+    command_node = node.args[0] if node.args else None
+    if command_node is None:
+        for keyword in node.keywords:
+            if keyword.arg in {"args", "command"}:
+                command_node = keyword.value
+                break
+    if isinstance(command_node, ast.Constant) and isinstance(command_node.value, str):
+        return command_node.value
+    if isinstance(command_node, (ast.List, ast.Tuple)):
+        values: list[str] = []
+        for element in command_node.elts:
+            if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+                return None
+            values.append(element.value)
+        return " ".join(values)
+    return None
+
+
+def _python_code_without_comments_and_strings(source: str) -> str:
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+        return " ".join(
+            token.string
+            for token in tokens
+            if token.type not in {tokenize.COMMENT, tokenize.STRING}
+        )
+    except (IndentationError, tokenize.TokenError):
+        return source
 
 
 def _quoted_literals(text: str) -> tuple[str, ...]:

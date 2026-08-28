@@ -1,5 +1,8 @@
+import asyncio
+
 import pytest
 
+from app.services.ai.agent_service import AgentService
 from app.services.ai.route_progress import build_route_stage_log
 
 
@@ -42,12 +45,34 @@ def test_route_stage_log_keeps_same_id_for_completion_and_duration():
 def test_route_stage_log_normalizes_sub_millisecond_duration_for_display():
     event = build_route_stage_log(
         "target_permission",
-        "校验目标专家权限",
+        "校验入口专家权限",
         status="success",
         execution_time_ms=0,
     )
 
     assert event["execution_time_ms"] == 1
+
+
+@pytest.mark.asyncio
+async def test_entry_config_and_permission_events_are_preparation_siblings():
+    service = AgentService()
+    route_events = asyncio.Queue()
+
+    async def fake_resolve(**kwargs):
+        progress = kwargs["route_progress"]
+        await progress(build_route_stage_log("target_config", "加载入口专家配置", status="pending"))
+        await progress(build_route_stage_log("target_permission", "校验入口专家权限", status="pending"))
+        return None
+
+    service._resolve_and_verify_agent = fake_resolve
+    task = service._start_route_resolution(route_events=route_events, resolve_kwargs={})
+    await task
+
+    events = [await route_events.get() for _ in range(2)]
+    assert [event["parent_id"] for event in events] == [
+        "preparation:auth_context_capability",
+        "preparation:auth_context_capability",
+    ]
 
 
 @pytest.mark.asyncio

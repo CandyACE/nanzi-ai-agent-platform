@@ -94,6 +94,37 @@ def _knowledge_bases_for_prompt(rows: Iterable[Any]) -> list[Any]:
     ]
 
 
+async def fetch_accessible_resource_counts(
+    db: Any,
+    *,
+    user_id: Optional[int],
+    user_name: Optional[str] = None,
+    is_admin: bool = False,
+) -> dict[str, int | str]:
+    """Return permission-filtered counts for the user-facing execution trace."""
+    if user_id is None:
+        return {"status": "empty", "datasets": 0, "knowledge_bases": 0}
+
+    datasets = await MetadataService.list_accessible_dataset_options(
+        db,
+        user_id=user_id,
+        is_admin=is_admin,
+        status=1,
+    )
+    knowledge_catalog = await fetch_authorized_knowledge_catalog(
+        db,
+        user_id=user_id,
+        user_name=user_name,
+        is_admin=is_admin,
+        permission_service=PermissionService(db),
+    )
+    return {
+        "status": knowledge_catalog.status,
+        "datasets": len(datasets),
+        "knowledge_bases": len(_knowledge_bases_for_prompt(knowledge_catalog.items)),
+    }
+
+
 def render_accessible_resource_catalog(
     *,
     datasets: Iterable[Any],
@@ -198,5 +229,6 @@ async def build_accessible_resource_catalog(
 
 __all__ = [
     "build_accessible_resource_catalog",
+    "fetch_accessible_resource_counts",
     "render_accessible_resource_catalog",
 ]
