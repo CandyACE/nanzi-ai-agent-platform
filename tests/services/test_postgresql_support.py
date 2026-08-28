@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.data_adapter.factory import get_adapter
-from app.services.data_adapter.postgresql import PostgreSQLAdapter
+from app.services.data_adapter.postgresql import (
+    PostgreSQLAdapter,
+    normalize_postgresql_identifiers,
+)
 from app.services.db_import_service import DBImportService
 from app.services.db_profile_service import DbProfileService
 from app.services.pool_manager import DataSourcePoolManager
@@ -17,6 +20,32 @@ pytestmark = pytest.mark.no_infrastructure
 def test_dialect_from_data_source_postgresql_aliases():
     assert dialect_from_data_source("postgresql_demo") == "postgres"
     assert dialect_from_data_source("pg_reporting") == "postgres"
+
+
+@pytest.mark.no_infrastructure
+@pytest.mark.parametrize(
+    ("sql_text", "expected"),
+    [
+        (
+            "SELECT * FROM `public.ny_function`",
+            'SELECT * FROM "public"."ny_function"',
+        ),
+        (
+            "SELECT * FROM `public`.`ny_function`",
+            'SELECT * FROM "public"."ny_function"',
+        ),
+        (
+            "SELECT '`public.ny_function`' AS literal -- `keep`",
+            "SELECT '`public.ny_function`' AS literal -- `keep`",
+        ),
+        (
+            "SELECT $$`public.ny_function`$$ AS function_text",
+            "SELECT $$`public.ny_function`$$ AS function_text",
+        ),
+    ],
+)
+def test_normalize_postgresql_identifiers_only_converts_identifier_backticks(sql_text, expected):
+    assert normalize_postgresql_identifiers(sql_text) == expected
 
 
 @pytest.mark.asyncio
@@ -127,6 +156,41 @@ async def test_postgresql_adapter_preview_uses_pool_connection():
     assert result["rows"] == [[1]]
     assert result["columns"][0]["name"] == "customer_id"
     cursor.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_postgresql_adapter_preview_normalizes_backticks_for_total_count():
+    adapter = PostgreSQLAdapter(source_id=11)
+    pool = MagicMock()
+    connection = MagicMock()
+    cursor = AsyncMock()
+    cursor.description = [("id", "int4")]
+    cursor.fetchone.return_value = (1,)
+    cursor.fetchall.return_value = [(1,)]
+    cursor_cm = MagicMock()
+    cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+    connection.cursor.return_value = cursor_cm
+    connection_cm = MagicMock()
+    connection_cm.__aenter__ = AsyncMock(return_value=connection)
+    pool.connection.return_value = connection_cm
+
+    with patch(
+        "app.services.pool_manager.DataSourcePoolManager.get_pool",
+        new_callable=AsyncMock,
+        return_value=pool,
+    ):
+        result = await adapter.preview(
+            "SELECT * FROM `public.ny_function`",
+            limit=10,
+            include_total=True,
+        )
+
+    assert result["total_count"] == 1
+    executed_sql = [call.args[0] for call in cursor.execute.await_args_list]
+    assert executed_sql == [
+        'SELECT COUNT(*) FROM (SELECT * FROM "public"."ny_function") AS _preview_count',
+        'SELECT * FROM (SELECT * FROM "public"."ny_function") AS _preview_sub LIMIT 10',
+    ]
 
 
 def test_profile_import_preview_strips_postgresql_schema_from_physical_name():
