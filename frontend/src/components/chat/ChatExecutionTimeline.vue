@@ -523,6 +523,13 @@ const timelineItems = computed(() => {
 const items = computed(() => groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value));
 
 const hasPending = computed(() => timelineHasPending(items.value));
+const preparationStatus = computed(() => {
+  const preparation = items.value.find(
+    (item): item is ProcessTimelineLogItem =>
+      item.kind === "log" && isPreparationParent(item),
+  );
+  return preparation?.status;
+});
 
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
 const currentStep = computed(() => resolveTimelineCurrentStep(
@@ -538,6 +545,19 @@ const headerSkillSummary = computed(() =>
 
 watch(hasPending, (pending) => {
   if (pending && !props.hasAnswer) expanded.value = true;
+}, { immediate: true });
+
+watch(preparationStatus, (status, previousStatus) => {
+  if (status !== "success" || (previousStatus !== undefined && previousStatus !== "pending")) {
+    return;
+  }
+  const preparation = items.value.find(
+    (item): item is ProcessTimelineLogItem =>
+      item.kind === "log" && isPreparationParent(item),
+  );
+  if (preparation?.children?.length) {
+    preparation.childrenExpanded = false;
+  }
 }, { immediate: true });
 
 watch(() => props.hasAnswer, (answer) => {

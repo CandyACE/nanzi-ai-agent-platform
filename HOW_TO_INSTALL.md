@@ -311,10 +311,11 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
         ```bash
         cd docker
         cp env.example .env
-        # 编辑 .env 文件，选择并填入 MySQL 或 PostgreSQL 主库，以及 Redis、Oracle、Jira 配置
+        # 编辑 .env 文件，先确认 HOST_DATA_DIR，再填写 MySQL/PostgreSQL、Redis、Oracle、Jira 配置
         vim .env
         ```
         *注：因容器是网络隔离的沙箱，主库 Host 和 `REDIS_HOST` 均严禁配置为 `localhost` 或 `127.0.0.1`。使用 MySQL 时填写 `MYSQL_HOST`，使用 PostgreSQL 时填写 `POSTGRES_HOST`，可设置为宿主机局域网 IP 或 `host.docker.internal`。*
+        *   **`HOST_DATA_DIR`（DooD 必填）**：填写 Docker daemon 所在宿主机上的数据目录绝对路径，例如 `HOST_DATA_DIR=/data/yunshu-aiagent/data`。该目录会挂载到平台容器的 `/app/data`，平台再通过 Docker Socket 创建用户沙箱时，会把用户工作区映射为宿主机的 `/data/yunshu-aiagent/data/agent_workspaces/{user_key}`。只配置 Compose 的 `/app/data` 挂载而不配置此变量，会导致沙箱挂载到错误的宿主机路径，表现为 `/workspace/sessions` 为空。*
         *   **`DATABASE_TYPE`（默认 `mysql`）**：选择平台主库类型。设置为 `mysql` 时使用 `MYSQL_*`，设置为 `postgresql` 时使用 `POSTGRES_*`。
         *   **`TASK_SCHEDULER_ENABLED`（默认 `true`）**：控制当前容器是否启动定时任务调度器。单节点保持 `true`；多节点只给一个节点 `true`，其他 API 节点 `false`。所有节点必须共享同一主库和 Redis，修改后重启对应容器；滚动发布时避免两个节点短时间同时为 `true`。
         *   **`ENCRYPTION_KEY`（必填）**：用户 API Key 的 Fernet 对称加密密钥（用于加密入库 / 后台解密查看）。MySQL 的 `db-prod/INIT-USER-ADMIN.sql` 固定管理员 Key 只在保持 `env.example` 默认密钥时有效；PostgreSQL 不写入固定管理员凭证，会在初始化或手动创建时使用当前密钥生成管理员。生成新密钥示例：
@@ -355,6 +356,15 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
             ```
         2.  **Oracle 客户端挂载卷调整（仅当需要直连 Oracle 数据库时）**：请根据宿主机上 Oracle Instant Client 实际物理存放路径，将 `volumes` 下的 `/app/nanzi-aiagent/lib/instantclient_19_30` 替换为宿主机对应的真实目录。
             *   *低版本 Oracle 数据库兼容提示*：若需要连接低版本 Oracle（如 Oracle 11g 或更低版本），Python 的默认 Thin 模式无法兼容，**必须启用 Thick 模式**（即在 `.env` 中设置 `USE_ORACLE_THICK_MODE=1`），并在此处正确挂载兼容该低版本 Oracle 的物理客户端目录。如果您的智能体不需要操作 Oracle 数据库，此挂载卷配置可直接保留默认或予以注释。
+        3.  **DooD 沙箱挂载配置（启用 `docker` 策略时必查）**：Compose 中必须同时存在以下两项，并且两处使用同一个宿主机绝对路径：
+            ```yaml
+            volumes:
+              - /data/yunshu-aiagent/data:/app/data
+              - /var/run/docker.sock:/var/run/docker.sock
+            environment:
+              - HOST_DATA_DIR=/data/yunshu-aiagent/data
+            ```
+            `HOST_DATA_DIR` 不是平台容器内的 `/app/data`，而是宿主机 Docker daemon 能访问的真实目录。修改 `.env` 或 Compose 后必须重新创建平台容器，旧的用户沙箱也需要停止并重新创建才能获得新的挂载。
 4.  **一键启动与停止服务**：
     平台封装了高内聚的容器启动管理脚本，能自动完成冲突校验与状态检测：
     ```bash

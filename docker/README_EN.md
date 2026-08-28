@@ -29,6 +29,26 @@ vim .env
 
 Use host IP instead of `localhost` for MySQL/Redis from inside the container. On Mac/Windows you can use `host.docker.internal`.
 
+If the platform container will use the `docker` sandbox policy, configure DooD before starting:
+
+```dotenv
+# Absolute path on the host where the Docker daemon runs.
+# It must be the host-side source of the platform container's /app/data mount.
+HOST_DATA_DIR=/data/yunshu-aiagent/data
+```
+
+The Compose file must also contain both mounts:
+
+```yaml
+volumes:
+  - /data/yunshu-aiagent/data:/app/data
+  - /var/run/docker.sock:/var/run/docker.sock
+environment:
+  - HOST_DATA_DIR=/data/yunshu-aiagent/data
+```
+
+The mapping is: host `/data/yunshu-aiagent/data/agent_workspaces/{user_key}` -> platform `/app/data/agent_workspaces/{user_key}` -> sandbox `/workspace`. `{user_key}` is normally `<user_name>__<user_id>`, such as `admin__1`. Without `HOST_DATA_DIR`, the platform container may see the files while the Docker daemon mounts the wrong host path, leaving `/workspace/sessions` empty.
+
 ### 2. Build image and export tar
 
 ```bash

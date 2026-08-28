@@ -476,7 +476,7 @@ graph TD
 
 #### 9. Bash 沙箱/本地运行环境横幅感知与安全边界
 输入框上方集成了动态的 **环境策略提示横幅 (Environment Banner)**：
-- **`Docker` 沙箱模式**：展示绿色容器图标与工作区隔离说明（`data/workspace/<user_id>`），提示当前命令执行完全处于安全沙盒内；
+- **`Docker` 沙箱模式**：展示绿色容器图标与工作区隔离说明（`agent_workspaces/{user_key}`），提示当前命令执行完全处于安全沙盒内；
 - **`Local` 本机模式**：展示黄色安全提醒，告知用户当前处于宿主机环境，执行系统级命令需谨慎防范高危操作；
 - **清晰的工作区根路径感知**：自动将当前会话绑定的沙箱真实工作区目录呈现给模型与用户，避免模型在执行命令时产生越界路径幻觉。
 
@@ -2255,6 +2255,16 @@ graph TD
      volumes:
        - /var/run/docker.sock:/var/run/docker.sock
      ```
+   - **DooD 工作区路径必须额外配置 `HOST_DATA_DIR`**。它必须填写 Docker daemon 所在宿主机上的数据目录绝对路径，并与 `/app/data` 的 Compose 源目录一致：
+      ```yaml
+      volumes:
+        - /data/yunshu-aiagent/data:/app/data
+        - /var/run/docker.sock:/var/run/docker.sock
+      environment:
+        - HOST_DATA_DIR=/data/yunshu-aiagent/data
+      ```
+   - 映射关系为：宿主机 `/data/yunshu-aiagent/data/agent_workspaces/{user_key}` → 平台容器 `/app/data/agent_workspaces/{user_key}` → 用户沙箱 `/workspace`。`{user_key}` 通常是 `用户名__用户ID`，例如 `admin__1`。
+   - **不能只配置 `/app/data` 挂载而留空 `HOST_DATA_DIR`**。平台容器可能正常看到 `sessions`，但宿主 Docker daemon 会收到错误的 `/app/data/...` 挂载源，导致沙箱 `/workspace/sessions` 为空。
 
 ---
 
@@ -2330,7 +2340,7 @@ sequenceDiagram
     Front->>Backend: POST /api/v1/chat (携带 session & token)
     Backend->>Backend: 检查沙箱策略 (sandbox_policy = docker)
     Backend->>Daemon: 探测或拉起该用户私有容器 (agentscope-workspace:<hash>)
-    Note over Backend,Daemon: 仅精准挂载当前用户目录 data/workspace/<user_id>
+    Note over Backend,Daemon: 仅精准挂载当前用户目录 agent_workspaces/<user_key>
     Daemon->>Container: 启动容器并孵化 In-Container Gateway
     Container->>Gateway: 拉起 FastMCP 工具服务 (Bash / Read / Write)
     Backend->>Gateway: 建立健康探活并分发智能体工具调用
@@ -2342,8 +2352,8 @@ sequenceDiagram
 
 ##### 流程关键节点解析：
 
-1. **多租户按需拉起**：每个登录用户拥有独立的容器与物理隔离的工作区（`data/workspace/<user_id>`），互不干扰。
-2. **同路径物理映射与 DooD 挂载对齐**：宿主机用户物理工作区与容器内挂载目录完全对齐。平台后端部署在 Docker 中时，通过 `HOST_DATA_DIR` 环境变量自动将容器内 `/app/data/agent_workspaces/<user_id>` 换算为宿主机物理硬盘上的对应真实路径下发给 Docker Daemon，保证生成的工件/文件能被画布实时预览和下载。
+1. **多租户按需拉起**：每个登录用户拥有独立的容器与物理隔离的工作区（`agent_workspaces/{user_key}`），互不干扰。
+2. **同路径物理映射与 DooD 挂载对齐**：宿主机用户物理工作区挂载到平台容器的 `/app/data/agent_workspaces/{user_key}`，再挂载到沙箱容器的 `/workspace`。平台后端部署在 Docker 中时，必须通过 `HOST_DATA_DIR` 将容器内 `/app/data` 换算为 Docker daemon 所在宿主机上的真实数据目录；否则平台容器可见的文件不会自动出现在沙箱中。
 3. **In-Container Gateway 通信**：AgentScope 在容器内拉起专用的 FastMCP 网关，智能体调用工具均通过 RPC/STDIO 协议与网关交互，异常崩溃不影响平台主进程。
 4. **纵深安全防御**：
    - **防路径穿越**：容器内工具严禁 `..` 越界访问工作区之外的文件；
@@ -2366,19 +2376,29 @@ sequenceDiagram
   2. 检查当前运行平台后端进程的用户是否有访问 Docker Socket 的权限（非 root 用户需加入 `docker` 用户组：`sudo usermod -aG docker $USER`）；
   3. 若平台运行在容器内，确保挂载了 `-v /var/run/docker.sock:/var/run/docker.sock`。
 
-##### Q2: 预构建阶段拉取基础镜像卡住、超时或报 `access denied`
+##### Q2: 平台容器能看到 `agent_workspaces` 和 `sessions`，但沙箱 `/workspace/sessions` 为空
+
+- **原因**：DooD 场景只配置了平台容器的 `/app/data` 挂载，未配置 `HOST_DATA_DIR`，或者修改后没有重建旧沙箱。平台容器内的 `/app/data` 是容器视角路径，宿主 Docker daemon 无法直接使用这个路径作为挂载源。
+- **解决方案**：
+  1. 在 `docker/.env` 或 Compose `environment` 中设置宿主机绝对路径，例如 `HOST_DATA_DIR=/data/yunshu-aiagent/data`；
+  2. 确认 Compose 同时存在 `/data/yunshu-aiagent/data:/app/data` 和 `/var/run/docker.sock:/var/run/docker.sock`；
+  3. 重新创建平台容器；
+  4. 停止并重新创建 `as_ws_<user_key>` 沙箱；
+  5. 用 `docker inspect as_ws_<user_key> --format '{{range .Mounts}}{{println .Source " -> " .Destination}}{{end}}'` 确认 `/workspace` 的源路径是宿主机真实路径，而不是 `/app/data/...`。
+
+##### Q3: 预构建阶段拉取基础镜像卡住、超时或报 `access denied`
  
 - **原因**：部分公有云加速地址（如阿里云未登录状态）会拦截匿名拉取报 access denied，或直接访问 Docker Hub / PyPI 发生网络阻塞。
 - **解决方案**：
   1. 在【系统配置】->【安全沙箱】中确保选用官方标准 **`python:3.11-slim`**，并在本地 Docker daemon 配置合法镜像加速器/代理；或选择「自定义镜像地址…」填入企业私有 Harbor 镜像地址后点击预构建；
   2. 若当前机器需要 HTTP/HTTPS 代理才能访问外部网络，可直接在宿主机或进入容器终端运行 `./prebuild-sandbox.sh --proxy http://<代理IP>:<端口>` 进行构建，可实时流式观察下载与编译日志并自动落库。
 
-##### Q3: 普通用户提示 `403 Forbidden` 无法启动沙箱
+##### Q4: 普通用户提示 `403 Forbidden` 无法启动沙箱
 
 - **原因**：老版本未将普通用户沙箱工作区端点加入 V1 API 白名单。
 - **解决方案**：平台已在 `v1.0.12+` 中将 `/sandbox/docker/workspace` 纳入白名单放行，请同步拉取平台最新代码。
 
-##### Q4: 沙箱运行中进程卡死、死循环占用或需要排查容器内环境依赖如何处理？
+##### Q5: 沙箱运行中进程卡死、死循环占用或需要排查容器内环境依赖如何处理？
 
 - **解决方案**：
   1. **进入容器 Shell 调试**：在聊天输入框右上角浮标展开沙箱卡片，点击「操作 ▾」->【进入终端】，可呼出深色交互式 CLI Shell 弹窗，输入 `ps aux` 查看占用进程或 `pip list` 检查包版本；

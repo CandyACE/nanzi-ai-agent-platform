@@ -65,7 +65,7 @@ def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     assert 'return "🛡️"' in timeline
 
 
-def test_thinking_card_keeps_preparation_expanded_after_completion():
+def test_preparation_children_collapse_after_completion_but_can_be_reopened():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     header = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
     timeline_utils = _read("frontend/src/utils/processTimeline.ts")
@@ -75,10 +75,11 @@ def test_thinking_card_keeps_preparation_expanded_after_completion():
     assert "bg-sky-50" not in timeline
     assert "border-sky-200" not in timeline
     assert "displayTimelineTitle" in timeline
-    assert "collapseCompletedPreparation" not in timeline
-    assert "preparationCollapseState" not in timeline
-    assert "watch(items" not in timeline
-    assert "childrenExpanded = false" not in timeline
+    assert "preparationStatus" in timeline
+    assert "watch(preparationStatus" in timeline
+    assert "preparation.childrenExpanded = false" in timeline
+    assert 'previousStatus !== undefined && previousStatus !== "pending"' in timeline
+    assert "toggleTimelineItem" in timeline
     assert "主专家开始处理" in timeline_utils
     assert "工具可用性检查" in timeline_utils
     assert "模型调用 ·" in timeline_utils
