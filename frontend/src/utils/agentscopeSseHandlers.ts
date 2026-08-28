@@ -95,6 +95,7 @@ export interface AgentStreamLog {
   title: string;
   details: string;
   status: "pending" | "success" | "error" | "warning";
+  error_reason?: string;
   isExpanded?: boolean;
   category?: string;
   tool_name?: string;
@@ -728,6 +729,7 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     title: data.title === undefined ? undefined : String(data.title),
     details: data.details === undefined ? undefined : String(data.details),
     status: data.status as "pending" | "success" | "error" | "warning" | undefined,
+    error_reason: data.error_reason === undefined ? undefined : String(data.error_reason),
     category: category || (data.category ? String(data.category) : undefined),
     tool_name: data.tool_name === undefined ? undefined : String(data.tool_name),
     resolution_status: data.resolution_status as "disabled" | "missing" | "filtered" | undefined,

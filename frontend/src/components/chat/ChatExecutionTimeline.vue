@@ -159,6 +159,9 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
+                  <div v-if="child.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                    错误原因：{{ child.error_reason }}
+                  </div>
                   <div v-if="child.details && child.isExpanded && !child.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                     <button
                       type="button"
@@ -209,6 +212,9 @@
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                         </svg>
                       </button>
+                      <div v-if="subStep.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                        错误原因：{{ subStep.error_reason }}
+                      </div>
                       <div v-if="subStep.details && subStep.isExpanded" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                         <button
                           type="button"
@@ -297,6 +303,9 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
               </svg>
             </button>
+            <div v-if="item.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+              错误原因：{{ item.error_reason }}
+            </div>
             <div v-if="item.details && item.isExpanded && !item.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
               <button
                 type="button"
@@ -395,6 +404,9 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                       </svg>
                     </button>
+                    <div v-if="nestedStep.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                      错误原因：{{ nestedStep.error_reason }}
+                    </div>
                     <pre v-if="nestedStep.details && nestedStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ nestedStep.details }}</pre>
                   </div>
                 </div>
@@ -446,6 +458,7 @@ const props = withDefaults(defineProps<{
     title: string;
     details: string;
     status: "pending" | "success" | "error" | "warning";
+    error_reason?: string;
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;

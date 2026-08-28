@@ -131,17 +131,17 @@ def format_knowledge_tool_log_display(
     max_len: int = 1200,
 ) -> str:
     """将 search_knowledge_base 结果格式化为可读日志文本后再截断。"""
-    from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+    from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_display
 
     payload = parse_knowledge_tool_payload(tool_output)
     if not payload:
-        return truncate_for_context(str(tool_output or ""), max_len=max_len)
+        return truncate_for_display(str(tool_output or ""), max_len=max_len)
 
     lines: List[str] = []
     status = payload.get("status")
     if status == "empty":
         lines.append(str(payload.get("content") or "未找到与用户问题高度相关的文档片段。"))
-        return truncate_for_context("\n".join(lines), max_len=max_len)
+        return truncate_for_display("\n".join(lines), max_len=max_len)
 
     content = str(payload.get("content") or "").strip()
     if content:
@@ -171,8 +171,8 @@ def format_knowledge_tool_log_display(
                 lines.append(body)
 
     if not lines:
-        return truncate_for_context(str(tool_output or ""), max_len=max_len)
-    return truncate_for_context("\n".join(lines), max_len=max_len)
+        return truncate_for_display(str(tool_output or ""), max_len=max_len)
+    return truncate_for_display("\n".join(lines), max_len=max_len)
 
 
 def knowledge_prefetch_had_citations(tool_output: Any) -> bool:

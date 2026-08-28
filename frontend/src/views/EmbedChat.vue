@@ -2200,6 +2200,7 @@ interface LogEntry {
   title: string;
   details: string;
   status: "pending" | "success" | "error";
+  error_reason?: string;
   isExpanded: boolean;
   isRouter?: boolean;
   category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'system' | 'default';
@@ -7147,6 +7148,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       title: preserveRouteSelectionTitle ? currentLog.title : (data.title || currentLog.title),
       details: data.details ?? currentLog.details,
       status: nextStatus,
+      error_reason: data.error_reason ?? currentLog.error_reason,
       category: category !== "default" ? category : currentLog.category,
       execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
       elapsed_time_ms: data.elapsed_time_ms ?? currentLog.elapsed_time_ms,
@@ -7173,6 +7175,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     title: data.title || "Log Info",
     details: data.details || "",
     status: (data.status as any) || "success",
+    error_reason: data.error_reason,
     isExpanded: false,
     category,
     execution_time_ms: data.execution_time_ms ?? null,

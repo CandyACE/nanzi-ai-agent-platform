@@ -86,6 +86,21 @@ async def test_map_standard_agentscope_event_emits_reasoning_content_delta():
 
 
 @pytest.mark.asyncio
+async def test_map_standard_agentscope_event_records_tool_result_state():
+    state = new_native_stream_state()
+    event = SimpleNamespace(
+        type="TOOL_RESULT_END",
+        tool_call_id="tool-1",
+        state="success",
+    )
+
+    async for _ in map_standard_agentscope_event(event, state=state):
+        pass
+
+    assert state["tool_result_states"]["tool-1"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_custom_state_updated_emits_context_update():
     state = new_native_stream_state()
     event = SimpleNamespace(

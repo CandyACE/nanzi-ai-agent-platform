@@ -8,6 +8,7 @@ import uuid
 from typing import Any, AsyncGenerator, Callable, Dict, List, Protocol
 
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
+from app.services.ai.runtime.agentscope.tool_result import normalize_tool_result_state
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ def new_native_stream_state(
         "tool_names": {},
         "tool_args_text": {},
         "tool_outputs": {},
+        "tool_result_states": {},
         "tool_data": {},
         "tool_started_at": {},
         "content_emitted": False,
@@ -544,6 +546,12 @@ async def map_standard_agentscope_event(
         return
 
     if event_type == "TOOL_RESULT_END":
+        tool_id = getattr(event, "tool_call_id", "")
+        result_state = getattr(event, "state", None)
+        if tool_id and result_state is not None:
+            state.setdefault("tool_result_states", {})[tool_id] = normalize_tool_result_state(
+                result_state
+            )
         if on_tool_result_end is not None:
             async for chunk in on_tool_result_end(event):
                 yield chunk

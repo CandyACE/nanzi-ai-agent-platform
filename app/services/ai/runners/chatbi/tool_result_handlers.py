@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_display
 from app.services.ai.runners.chatbi.constants import (
     _SQL_RESULT_DISPLAY_MAX_ROWS,
     _SQL_RESULT_ROW_KEYS,
@@ -85,7 +85,7 @@ def build_sql_error_tool_details(runner: Any, output: Any, tool_args: dict[str, 
             raw_sql = tool_args.get("sql") or tool_args.get("query")
             if isinstance(raw_sql, str) and raw_sql.strip():
                 sql_part = raw_sql.strip()
-    error_display = truncate_for_context(error_part, max_len=1000)
+    error_display = truncate_for_display(error_part, max_len=1000)
     if sql_part:
         return f"[Executed SQL]:\n{sql_part}\n\n{_SQL_TOOL_ERROR_DELIMITER}\n{error_display}"
     return error_display
@@ -101,7 +101,7 @@ def format_tool_details(
         parsed = runner._try_parse_json_output(output)
         if runner._is_structured_sql_result(parsed):
             result_text = runner._format_sql_result_for_display(output)
-            result_details = truncate_for_context(result_text, max_len=1000)
+            result_details = truncate_for_display(result_text, max_len=1000)
             details = result_details
             output_text = str(output or "")
             if "[Executed SQL]:" not in output_text and tool_args:
@@ -112,14 +112,14 @@ def format_tool_details(
                         f"{_SQL_TOOL_RESULT_DELIMITER}\n{result_details}"
                     )
         elif runner._is_failed_sql_repeat_gate_block(output):
-            details = truncate_for_context(str(output or ""), max_len=1000)
+            details = truncate_for_display(str(output or ""), max_len=1000)
         elif runner._is_sql_sandbox_gate_block(output):
             details = runner._build_sql_error_tool_details(output, tool_args)
         elif state.sql_error:
             details = runner._build_sql_error_tool_details(output, tool_args)
         else:
             result_text = runner._format_sql_result_for_display(output)
-            details = truncate_for_context(result_text, max_len=1000)
+            details = truncate_for_display(result_text, max_len=1000)
             output_text = str(output or "")
             if "[Executed SQL]:" not in output_text and tool_args:
                 executed_sql = resolve_executed_sql_for_tool_log(parsed, tool_args)
@@ -129,7 +129,7 @@ def format_tool_details(
                         f"{_SQL_TOOL_RESULT_DELIMITER}\n{details}"
                     )
     else:
-        details = truncate_for_context(str(output or ""), max_len=1000)
+            details = truncate_for_display(str(output or ""), max_len=1000)
     if tool_name == "get_dataset_schema":
         from app.services.schema_chunk_format import format_schema_hit_summary
         from app.core.context import get_current_agent_context
