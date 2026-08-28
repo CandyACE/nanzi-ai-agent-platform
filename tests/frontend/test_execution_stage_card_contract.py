@@ -47,6 +47,17 @@ def test_backend_exposes_request_and_context_details_as_real_timeline_logs():
     assert "裁剪" in source
 
 
+def test_backend_flattens_entry_expert_steps_under_preparation_parent():
+    source = _read("app/services/ai/agent_service.py")
+
+    assert '"加载入口专家配置"' in source
+    assert '"校验入口专家权限"' in source
+    assert '"加载目标专家配置"' not in source
+    assert '"校验目标专家权限"' not in source
+    assert 'event.get("id") in {"route:target_config", "route:target_permission"}' in source
+    assert 'event["parent_id"] = "preparation:auth_context_capability"' in source
+
+
 def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     assert "鉴权及上下文与能力准备" in timeline
@@ -54,7 +65,7 @@ def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     assert 'return "🛡️"' in timeline
 
 
-def test_thinking_card_strengthens_parent_hierarchy_and_uses_user_facing_labels():
+def test_thinking_card_keeps_preparation_expanded_after_completion():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     header = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
     timeline_utils = _read("frontend/src/utils/processTimeline.ts")
@@ -64,11 +75,80 @@ def test_thinking_card_strengthens_parent_hierarchy_and_uses_user_facing_labels(
     assert "bg-sky-50" not in timeline
     assert "border-sky-200" not in timeline
     assert "displayTimelineTitle" in timeline
-    assert "collapseCompletedPreparation" in timeline
-    assert "childrenExpanded = false" in timeline
-    assert "watch(items" in timeline
+    assert "collapseCompletedPreparation" not in timeline
+    assert "preparationCollapseState" not in timeline
+    assert "watch(items" not in timeline
+    assert "childrenExpanded = false" not in timeline
     assert "主专家开始处理" in timeline_utils
     assert "工具可用性检查" in timeline_utils
     assert "模型调用 ·" in timeline_utils
     assert "#0ea5e9" in timeline
     assert "#0ea5e9" in header
+
+
+def test_tool_permission_card_exposes_decision_context_and_accessible_actions():
+    card = _read("frontend/src/components/chat/ToolPermissionCard.vue")
+
+    for marker in (
+        "需要确认执行",
+        "影响范围",
+        "风险等级",
+        "命令详情",
+        "复制命令",
+        "已复制",
+        "复制失败",
+        "本次允许执行",
+        "拒绝执行",
+        "正在提交确认",
+        "aria-live=\"polite\"",
+        "aria-busy",
+        "@keydown.enter",
+        "@keydown.space",
+        "min-h-[2.75rem]",
+        "sm:flex-row",
+    ):
+        assert marker in card
+
+
+def test_tool_permission_card_uses_adaptive_compact_layout_for_single_commands():
+    card = _read("frontend/src/components/chat/ToolPermissionCard.vue")
+
+    assert "const isCompact = computed" in card
+    assert 'v-if="isCompact"' in card
+    assert "仅本次执行" in card
+    assert "v-else" in card
+
+
+def test_tool_permission_card_aligns_with_thinking_timeline_width():
+    card = _read("frontend/src/components/chat/ToolPermissionCard.vue")
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+
+    for width_class in (
+        "w-full min-w-0 max-w-[42rem]",
+        "lg:max-w-[48rem]",
+        "2xl:max-w-[52rem]",
+    ):
+        assert width_class in timeline
+        assert width_class in card
+
+
+def test_permission_timeline_row_can_be_suppressed_when_detail_card_is_visible():
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    assert "suppressPermissionLogs" in timeline
+    assert "category === \"permission\"" in timeline
+    for source in (embed, debug):
+        assert ':suppress-permission-logs="Boolean(msg.pendingPermission)"' in source
+
+
+def test_both_chat_surfaces_use_the_shared_tool_permission_card():
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    for source in (embed, debug):
+        assert "import ToolPermissionCard from \"@/components/chat/ToolPermissionCard.vue\"" in source
+        assert "<ToolPermissionCard" in source
+        assert "@submit=\"(confirmed) => confirmPendingPermission(msg, confirmed)\"" in source
+        assert "<!-- Tool Permission Confirmation -->" not in source

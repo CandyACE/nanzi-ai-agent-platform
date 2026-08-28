@@ -219,7 +219,12 @@ def test_process_narration_handler_is_shared_across_chat_surfaces():
     assert "text-violet-500" not in timeline
     assert "<blockquote" in timeline
     assert "border-l-2 border-gray-200" in timeline
+    # iconFor 仍服务于复制文本序列化，界面渲染由 WrenchScrewdriverIcon 接管。
     assert "🔧" in timeline
+    assert "WrenchScrewdriverIcon" in timeline
+    assert "isToolTimelineItem" in timeline
+    assert 'v-if="isToolTimelineItem(child)"' in timeline
+    assert 'if (item.subagent || item.status === "error" || item.category === "tool_resolution") return false;' in timeline
     assert "🛠️" not in timeline
     assert "inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" in timeline
     assert "shrink-0 truncate rounded-full border border-purple-100 bg-purple-50" in (
@@ -1146,3 +1151,90 @@ return { traceId: message.trace_id, citations: message.citations };
 
     assert result["traceId"] == 42
     assert [citation["chunk_id"] for citation in result["citations"]] == ["1", "2"]
+
+
+def test_tool_permission_display_summarizes_read_only_bash_as_low_risk():
+    result = _run_typescript(
+        "frontend/src/utils/toolPermissionDisplay.ts",
+        """
+const display = api.getToolPermissionDisplay({
+  toolName: 'Bash',
+  args: {
+    command: 'uptime; nproc; free -h; df -h | grep -v tmpfs; ps aux --sort=-%cpu | head -11'
+  },
+  details: '参数: {...}',
+});
+return display;
+""",
+    )
+
+    assert result["displayTitle"] == "读取服务器状态"
+    assert result["summary"] == "读取当前运行环境的 CPU、内存、磁盘和进程信息"
+    assert result["riskLabel"] == "低风险 · 只读"
+    assert result["scopeLabel"] == "当前运行环境"
+    assert result["commandCount"] == 5
+    assert result["isReadOnly"] is True
+
+
+def test_tool_permission_display_is_conservative_for_unknown_tools():
+    result = _run_typescript(
+        "frontend/src/utils/toolPermissionDisplay.ts",
+        """
+return api.getToolPermissionDisplay({
+  toolName: 'send_message',
+  args: { message: 'hello' },
+  details: '参数: {"message":"hello"}',
+});
+""",
+    )
+
+    assert result["displayTitle"] == "执行 send_message"
+    assert result["summary"] == "将调用该工具，并根据工具参数执行对应操作"
+    assert result["riskLabel"] == "需要确认"
+    assert result["isReadOnly"] is False
+    assert '"message": "hello"' in result["parameterText"]
+
+
+def test_tool_permission_display_does_not_count_echo_separators_as_checks():
+    result = _run_typescript(
+        "frontend/src/utils/toolPermissionDisplay.ts",
+        """
+return api.getToolPermissionDisplay({
+  toolName: 'Bash',
+  args: {
+    command: 'echo "负载"; uptime; echo "CPU"; nproc; echo "内存"; free -h; echo "磁盘"; df -h | grep -v tmpfs; echo "进程"; ps aux --sort=-%cpu | head -11'
+  },
+});
+""",
+    )
+
+    assert result["commandCount"] == 5
+
+
+def test_tool_permission_display_compacts_safe_proc_inspection_without_lowering_risk():
+    result = _run_typescript(
+        "frontend/src/utils/toolPermissionDisplay.ts",
+        """
+return api.getToolPermissionDisplay({
+  toolName: 'Bash',
+  args: { command: 'cat /proc/meminfo' },
+});
+""",
+    )
+
+    assert result["isCompact"] is True
+    assert result["riskLabel"] == "需要确认"
+
+
+def test_tool_permission_display_keeps_sensitive_cat_path_in_full_layout():
+    result = _run_typescript(
+        "frontend/src/utils/toolPermissionDisplay.ts",
+        """
+return api.getToolPermissionDisplay({
+  toolName: 'Bash',
+  args: { command: 'cat /etc/shadow' },
+});
+""",
+    )
+
+    assert result["isCompact"] is False

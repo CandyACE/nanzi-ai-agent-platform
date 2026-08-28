@@ -133,7 +133,12 @@
                     @click="child.children?.length ? (child.childrenExpanded = child.childrenExpanded === false) : (child.details ? child.isExpanded = !child.isExpanded : undefined)"
                   >
                     <span v-if="child.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
-                    <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(child) }}</span>
+                    <WrenchScrewdriverIcon
+                      v-if="isToolTimelineItem(child)"
+                      class="h-3.5 w-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(child) }}</span>
                     <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(child)">
                       <span
                         v-if="child.subagent && !child.children?.length"
@@ -191,7 +196,12 @@
                         @click="subStep.details ? subStep.isExpanded = !subStep.isExpanded : undefined"
                       >
                         <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
-                        <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
+                        <WrenchScrewdriverIcon
+                          v-if="isToolTimelineItem(subStep)"
+                          class="h-3.5 w-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
                         <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
                         <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                         <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
@@ -239,7 +249,12 @@
               @click="item.children?.length ? toggleTimelineItem(item) : (item.details ? item.isExpanded = !item.isExpanded : undefined)"
             >
               <span v-if="item.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
-              <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(item) }}</span>
+              <WrenchScrewdriverIcon
+                v-if="isToolTimelineItem(item)"
+                class="h-3.5 w-3.5 shrink-0"
+                aria-hidden="true"
+              />
+              <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(item) }}</span>
               <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(item)">
                 <span
                   v-if="item.subagent && !item.children?.length"
@@ -319,7 +334,12 @@
                   @click="subStep.children?.length ? (subStep.childrenExpanded = subStep.childrenExpanded === false) : (subStep.details ? subStep.isExpanded = !subStep.isExpanded : undefined)"
                 >
                   <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
-                  <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
+                  <WrenchScrewdriverIcon
+                    v-if="isToolTimelineItem(subStep)"
+                    class="h-3.5 w-3.5 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
                   <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                   <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
@@ -362,7 +382,12 @@
                       @click="nestedStep.details ? nestedStep.isExpanded = !nestedStep.isExpanded : undefined"
                     >
                       <span v-if="nestedStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
-                      <span class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(nestedStep) }}</span>
+                      <WrenchScrewdriverIcon
+                        v-if="isToolTimelineItem(nestedStep)"
+                        class="h-3.5 w-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(nestedStep) }}</span>
                       <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(nestedStep)">{{ displayTimelineTitle(nestedStep) }}</span>
                       <span v-if="nestedStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                       <span v-if="formatTimelineDuration(nestedStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(nestedStep)">{{ formatTimelineDuration(nestedStep) }}</span>
@@ -389,6 +414,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
+import { WrenchScrewdriverIcon } from "@heroicons/vue/24/outline";
 import { copyToClipboard } from "@/utils/clipboard";
 import {
   skillFlowNoticeLabel,
@@ -436,6 +462,8 @@ const props = withDefaults(defineProps<{
   skillBadges?: SkillFlowBadge[];
   bordered?: boolean;
   darkMode?: boolean;
+  /** 权限卡已承载确认详情时，隐藏其上方重复的权限时间线行。 */
+  suppressPermissionLogs?: boolean;
 }>(), {
   timeline: () => [],
   logs: () => [],
@@ -450,15 +478,35 @@ const props = withDefaults(defineProps<{
   skillBadges: () => [],
   bordered: false,
   darkMode: false,
+  suppressPermissionLogs: false,
 });
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 const routeGroupExpanded = ref(true);
 const PREPARATION_PARENT_ID = "preparation:auth_context_capability";
 
-const timelineItems = computed(() => (props.timeline.length
-  ? mergeTimelineLogs(props.timeline, props.logs)
-  : buildLegacyProcessTimeline(props)).filter((item) => item.kind !== "todo"));
+function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[] {
+  return items.flatMap((item) => {
+    if (item.kind === "log") {
+      if (item.category === "permission") return [];
+      return item.children?.length
+        ? [{ ...item, children: suppressPermissionLogs(item.children) }]
+        : [item];
+    }
+    if (item.kind === "text" && item.children?.length) {
+      return [{ ...item, children: suppressPermissionLogs(item.children) }];
+    }
+    return [item];
+  });
+}
+
+const timelineItems = computed(() => {
+  const merged = props.timeline.length
+    ? mergeTimelineLogs(props.timeline, props.logs)
+    : buildLegacyProcessTimeline(props);
+  const visibleItems = props.suppressPermissionLogs ? suppressPermissionLogs(merged) : merged;
+  return visibleItems.filter((item) => item.kind !== "todo");
+});
 const items = computed(() => groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value));
 
 const hasPending = computed(() => timelineHasPending(items.value));
@@ -475,12 +523,6 @@ const headerSkillSummary = computed(() =>
   props.skillSummary || summarizeSkillFlowBadges(props.skillBadges)
 );
 
-const preparationCollapseState = new Map<string, ProcessTimelineLogItem["status"]>();
-
-watch(items, (nextItems) => {
-  collapseCompletedPreparation(nextItems);
-}, { deep: true, immediate: true });
-
 watch(hasPending, (pending) => {
   if (pending && !props.hasAnswer) expanded.value = true;
 }, { immediate: true });
@@ -494,7 +536,7 @@ function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
 }
 
 function isRouteGroup(item: ProcessTimelineLogItem): boolean {
-  return String(item.id) === "route:target_config";
+  return String(item.id) === "route:target_config" && Boolean(item.children?.length);
 }
 
 function isPreparationParent(item: ProcessTimelineLogItem): boolean {
@@ -511,24 +553,9 @@ function displayTimelineTitle(item: ProcessTimelineLogItem): string {
   return formatTimelineTitle(item.title || item.tool_name || "执行步骤");
 }
 
-function collapseCompletedPreparation(nextItems: ProcessTimelineItem[]): void {
-  for (const item of nextItems) {
-    if (item.kind === "log") {
-      const itemId = String(item.id);
-      const previousStatus = preparationCollapseState.get(itemId);
-      if (isPreparationParent(item) && item.children?.length) {
-        const enteredCompletedState = item.status !== "pending"
-          && (previousStatus === undefined || previousStatus === "pending");
-        if (enteredCompletedState) item.childrenExpanded = false;
-        preparationCollapseState.set(itemId, item.status);
-      }
-      if (item.children?.length) collapseCompletedPreparation(item.children);
-      continue;
-    }
-    if (item.kind === "text" && item.children?.length) {
-      collapseCompletedPreparation(item.children);
-    }
-  }
+function isToolTimelineItem(item: ProcessTimelineLogItem): boolean {
+  if (item.subagent || item.status === "error" || item.category === "tool_resolution") return false;
+  return item.category === "tool" || item.category === "sql" || item.title.includes("工具");
 }
 
 function isTimelineItemExpanded(item: ProcessTimelineLogItem): boolean {
@@ -558,8 +585,8 @@ function iconFor(item: ProcessTimelineLogItem): string {
   if (item.title.includes("Prompt 组装")) return "🧩";
   if (item.title.includes("获取可用专家")) return "📚";
   if (item.title.includes("准备知识资源范围")) return "📋";
-  if (item.title.includes("加载目标专家配置")) return "⚙️";
-  if (item.title.includes("校验目标专家权限")) return "🔒";
+  if (item.title.includes("加载入口专家配置") || item.title.includes("加载目标专家配置")) return "⚙️";
+  if (item.title.includes("校验入口专家权限") || item.title.includes("校验目标专家权限")) return "🔒";
   if (item.title.includes("判断并匹配目标专家") || item.title.includes("匹配目标专家")) return "🧠";
   if (item.title.includes("等待上一次会话") || item.title.includes("排队")) return "⏳";
   if (item.category === "context_summarized" || item.title.includes("平台摘录")) return "📋";

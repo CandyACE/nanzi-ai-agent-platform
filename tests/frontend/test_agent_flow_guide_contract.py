@@ -20,6 +20,11 @@ def test_agent_flow_guide_banner_contract():
     assert "版本管理与发布" in banner
     assert "角色授权与权限" in banner
     assert "调试与渠道消费" in banner
+    assert "设定业务定位与委派依据" in banner
+    assert "仅勾选「系统智能体」才能进入主专家的智能委派目录" in banner
+    assert "系统智能体由主专家按任务需要自动委派" in banner
+    assert "主路由自动分派" not in banner
+    assert "自动加入意图路由" not in banner
 
     # 2. 验证关键动作与路由跳转
     assert "/dashboard/roles" in banner

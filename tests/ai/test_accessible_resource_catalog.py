@@ -5,8 +5,10 @@ import pytest
 
 from app.services.ai.accessible_resource_catalog import (
     build_accessible_resource_catalog,
+    fetch_accessible_resource_counts,
     render_accessible_resource_catalog,
 )
+from app.services.ai.knowledge_catalog import AuthorizedKnowledgeCatalog, KnowledgeBaseCatalogItem
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -156,3 +158,45 @@ async def test_build_accessible_resource_catalog_uses_authorized_dataset_and_kb_
         status=1,
     )
     permission_service.get_knowledge_base_access.assert_awaited_once_with(7, "alice")
+
+
+@pytest.mark.asyncio
+async def test_fetch_accessible_resource_counts_reports_permission_filtered_totals():
+    authorized_catalog = AuthorizedKnowledgeCatalog(
+        status="available",
+        items=(
+            KnowledgeBaseCatalogItem(
+                ragflow_dataset_id="kb-allowed",
+                name="蔚来汽车手册",
+            ),
+            KnowledgeBaseCatalogItem(
+                ragflow_dataset_id="kb-example",
+                name="chatbi-example-meta",
+            ),
+        ),
+    )
+
+    with patch(
+        "app.services.ai.accessible_resource_catalog.MetadataService.list_accessible_dataset_options",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(id=1),
+                SimpleNamespace(id=2),
+            ]
+        ),
+    ), patch(
+        "app.services.ai.accessible_resource_catalog.fetch_authorized_knowledge_catalog",
+        AsyncMock(return_value=authorized_catalog),
+    ):
+        counts = await fetch_accessible_resource_counts(
+            MagicMock(),
+            user_id=7,
+            user_name="alice",
+            is_admin=False,
+        )
+
+    assert counts == {
+        "status": "available",
+        "datasets": 2,
+        "knowledge_bases": 1,
+    }

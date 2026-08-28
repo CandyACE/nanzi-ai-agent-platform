@@ -37,6 +37,14 @@ def test_request_validation_log_contains_identity_checks_and_never_credentials()
                 "skills": 3,
                 "mcp_tools": 4,
             },
+            "turn_resource_scope": {
+                "datasets": 1,
+                "knowledge_bases": 2,
+            },
+            "authorized_resource_scope": {
+                "datasets": 7,
+                "knowledge_bases": 6,
+            },
         },
     )
 
@@ -44,7 +52,9 @@ def test_request_validation_log_contains_identity_checks_and_never_credentials()
     assert "当前会话用户：张三（ID：7，角色：分析员）" in event["details"]
     assert "鉴权：已通过" in event["details"]
     assert "参数校验：已通过" in event["details"]
-    assert "数据集 2 个" in event["details"]
+    assert "会话挂载：已加载，数据集 2 个、知识库 1 个" in event["details"]
+    assert "本轮请求：数据集 1 个、知识库 2 个" in event["details"]
+    assert "当前用户有权限：数据集 7 个、知识库 6 个" in event["details"]
     assert "幂等校验：已通过" in event["details"]
     assert "api_key" not in event["details"]
 
@@ -84,6 +94,11 @@ def test_model_capability_and_prompt_logs_are_safe_summaries():
         delegable_agent_count=5,
         roster_loaded=True,
         runtime_tool_count=8,
+        metadata_dataset_count=4,
+        session_dataset_count=2,
+        session_knowledge_base_count=1,
+        authorized_dataset_count=7,
+        authorized_knowledge_base_count=6,
     )
     prompt_event = _build_prompt_assembly_log(
         SimpleNamespace(
@@ -97,6 +112,9 @@ def test_model_capability_and_prompt_logs_are_safe_summaries():
 
     assert "deepseek-chat" in model_event["details"]
     assert "上下文：32768" in model_event["details"]
+    assert "会话挂载：数据集 2 个、知识库 1 个" in capability_event["details"]
+    assert "本轮选用：数据集 4 个、知识库 2 个" in capability_event["details"]
+    assert "当前用户有权限：数据集 7 个、知识库 6 个" in capability_event["details"]
     assert "可委派专家清单：已加载 5 个" in capability_event["details"]
     assert "已组装 2 个提示词区块" in prompt_event["details"]
     assert "assembled prompt" not in prompt_event["details"]
@@ -135,3 +153,17 @@ def test_preparation_logs_are_nested_under_one_auth_context_parent():
         "request:validation",
         "context:history",
     ]
+
+
+def test_capability_catalog_does_not_fake_permission_counts_when_catalog_is_unavailable():
+    event = _build_capability_catalog_log(
+        knowledge_dataset_count=0,
+        configured_dataset_count=0,
+        skill_count=0,
+        delegable_agent_count=0,
+        roster_loaded=False,
+        runtime_tool_count=0,
+    )
+
+    assert "当前用户有权限：权限目录未统计" in event["details"]
+    assert "暂不可用 个" not in event["details"]

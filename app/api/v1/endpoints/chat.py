@@ -1199,6 +1199,21 @@ async def create_chat_completion(
                 },
             )
 
+    authorized_resource_scope: Dict[str, Any] = {"status": "unavailable"}
+    try:
+        from app.services.ai.accessible_resource_catalog import fetch_accessible_resource_counts
+
+        raw_numeric_user_id = user_info.get("user_id") or user_info.get("id")
+        numeric_user_id = int(raw_numeric_user_id) if raw_numeric_user_id is not None else None
+        authorized_resource_scope = await fetch_accessible_resource_counts(
+            db,
+            user_id=numeric_user_id,
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            is_admin=user_info.get("role") == "admin",
+        )
+    except Exception as exc:  # 目录统计只用于可观测性，不能阻断聊天请求
+        logger.warning("Failed to load authorized resource counts for trace: %s", exc)
+
     request_observability = {
         "authenticated": True,
         "parameters_validated": True,
@@ -1211,6 +1226,19 @@ async def create_chat_completion(
             key: len(conversation_scope.get(key, []) or [])
             for key in ("datasets", "knowledge_bases", "skills", "mcp_tools")
         },
+        "turn_resource_scope": {
+            "datasets": len({
+                str(item).strip()
+                for item in (effective_metadata_dataset_ids or [])
+                if str(item).strip()
+            }),
+            "knowledge_bases": len({
+                str(item).strip()
+                for item in (effective_knowledge_dataset_ids or [])
+                if str(item).strip()
+            }),
+        },
+        "authorized_resource_scope": authorized_resource_scope,
     }
 
     # Convert Pydantic models to dicts for the service
