@@ -55,6 +55,12 @@ export type ProcessTimelineTodoItem = {
 
 export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem | ProcessTimelineTodoItem;
 
+export const PREPARATION_TIMELINE_PARENT_ID = "preparation:auth_context_capability";
+
+export function defaultChildrenExpandedForLog(id: string | number | undefined): boolean {
+  return String(id) !== PREPARATION_TIMELINE_PARENT_ID;
+}
+
 /** 将底层事件名转换为思考卡片中的用户语言，原始详情仍保留在展开内容中。 */
 export function formatTimelineTitle(title: unknown): string {
   const value = String(title || "处理步骤");
@@ -551,7 +557,7 @@ export function upsertTimelineLog(
     subagent: data.subagent,
     isExpanded: false,
     children: [],
-    childrenExpanded: true,
+    childrenExpanded: defaultChildrenExpandedForLog(data.id),
   };
 
   if (data.parent_id !== undefined && data.parent_id !== null && data.parent_id !== data.id) {
@@ -559,7 +565,7 @@ export function upsertTimelineLog(
     if (parent) {
       parent.children ||= [];
       parent.children.push(log);
-      parent.childrenExpanded ??= true;
+      parent.childrenExpanded ??= defaultChildrenExpandedForLog(parent.id);
       return;
     }
   }
@@ -571,7 +577,7 @@ export function upsertTimelineLog(
     if (subagentContainer) {
       subagentContainer.children ||= [];
       subagentContainer.children.push(log);
-      subagentContainer.childrenExpanded ??= true;
+      subagentContainer.childrenExpanded ??= defaultChildrenExpandedForLog(subagentContainer.id);
       return;
     }
   }
@@ -585,7 +591,7 @@ export function upsertTimelineLog(
   if (parent) {
     parent.children ||= [];
     parent.children.push(log);
-    parent.childrenExpanded ??= true;
+    parent.childrenExpanded ??= defaultChildrenExpandedForLog(parent.id);
     return;
   }
   target.processTimeline.push(log);
@@ -751,7 +757,13 @@ export function buildLegacyProcessTimeline(input: {
   // 历史消息没有事件序列，只能保留旧页面的兼容顺序：步骤日志在前，
   // 过程/思考文本在后。新消息会直接走 processTimeline，具备精确顺序。
   for (const log of input.logs || []) {
-    items.push({ kind: "log", ...log, isExpanded: false, children: [], childrenExpanded: true });
+    items.push({
+      kind: "log",
+      ...log,
+      isExpanded: false,
+      children: [],
+      childrenExpanded: defaultChildrenExpandedForLog(log.id),
+    });
   }
   if (input.processNarration) {
     items.push({
@@ -892,7 +904,7 @@ export function hydrateHistoryProcessTimeline(
   const mapLog = (log: ProcessTimelineLogItem): ProcessTimelineLogItem => ({
     ...log,
     isExpanded: false,
-    childrenExpanded: true,
+    childrenExpanded: defaultChildrenExpandedForLog(log.id),
     children: (log.children || []).map(mapLog),
   });
 

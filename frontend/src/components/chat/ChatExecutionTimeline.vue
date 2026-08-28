@@ -442,6 +442,7 @@ import {
   mergeTimelineLogs,
   resolveTimelineCurrentStep,
   timelineHasPending,
+  PREPARATION_TIMELINE_PARENT_ID,
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
   type ProcessTimelineTextItem,
@@ -496,7 +497,6 @@ const props = withDefaults(defineProps<{
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 const routeGroupExpanded = ref(true);
-const PREPARATION_PARENT_ID = "preparation:auth_context_capability";
 
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[] {
   return items.flatMap((item) => {
@@ -523,14 +523,6 @@ const timelineItems = computed(() => {
 const items = computed(() => groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value));
 
 const hasPending = computed(() => timelineHasPending(items.value));
-const preparationStatus = computed(() => {
-  const preparation = items.value.find(
-    (item): item is ProcessTimelineLogItem =>
-      item.kind === "log" && isPreparationParent(item),
-  );
-  return preparation?.status;
-});
-
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
 const currentStep = computed(() => resolveTimelineCurrentStep(
   items.value,
@@ -547,19 +539,6 @@ watch(hasPending, (pending) => {
   if (pending && !props.hasAnswer) expanded.value = true;
 }, { immediate: true });
 
-watch(preparationStatus, (status, previousStatus) => {
-  if (status !== "success" || (previousStatus !== undefined && previousStatus !== "pending")) {
-    return;
-  }
-  const preparation = items.value.find(
-    (item): item is ProcessTimelineLogItem =>
-      item.kind === "log" && isPreparationParent(item),
-  );
-  if (preparation?.children?.length) {
-    preparation.childrenExpanded = false;
-  }
-}, { immediate: true });
-
 watch(() => props.hasAnswer, (answer) => {
   if (answer) expanded.value = false;
 }, { immediate: true });
@@ -573,7 +552,7 @@ function isRouteGroup(item: ProcessTimelineLogItem): boolean {
 }
 
 function isPreparationParent(item: ProcessTimelineLogItem): boolean {
-  return String(item.id) === PREPARATION_PARENT_ID;
+  return String(item.id) === PREPARATION_TIMELINE_PARENT_ID;
 }
 
 function preparationStatusLabel(item: ProcessTimelineLogItem): string {
