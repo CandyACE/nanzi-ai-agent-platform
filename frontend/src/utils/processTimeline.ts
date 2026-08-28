@@ -28,6 +28,7 @@ export type ProcessTimelineLogItem = {
   title: string;
   details: string;
   status: ProcessTimelineStatus;
+  error_reason?: string;
   category?: string;
   tool_name?: string;
   resolution_status?: ToolResolutionStatus;
@@ -482,6 +483,7 @@ export function upsertTimelineLog(
     title?: string;
     details?: string;
     status?: ProcessTimelineStatus;
+    error_reason?: string;
     category?: string;
     tool_name?: string;
     resolution_status?: ToolResolutionStatus;
@@ -497,6 +499,7 @@ export function upsertTimelineLog(
     if (data.title !== undefined) existing.title = data.title;
     if (data.details !== undefined) existing.details = data.details;
     if (data.status !== undefined) existing.status = data.status;
+    if (data.error_reason !== undefined) existing.error_reason = data.error_reason;
     if (data.category !== undefined) existing.category = data.category;
     if (data.tool_name !== undefined) existing.tool_name = data.tool_name;
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
@@ -539,6 +542,7 @@ export function upsertTimelineLog(
     title: data.title || "处理步骤",
     details: data.details || "",
     status: data.status || "success",
+    error_reason: data.error_reason,
     category: data.category,
     tool_name: data.tool_name,
     resolution_status: data.resolution_status,
@@ -601,6 +605,7 @@ export function mergeTimelineLogs(
     title: string;
     details: string;
     status: ProcessTimelineStatus;
+    error_reason?: string;
     category?: string;
     tool_name?: string;
     resolution_status?: ToolResolutionStatus;
@@ -629,6 +634,7 @@ export function mergeTimelineLogs(
         targetLog.title = log.title || targetLog.title;
         targetLog.details = log.details ?? targetLog.details;
         targetLog.status = log.status || targetLog.status;
+        targetLog.error_reason = log.error_reason ?? targetLog.error_reason;
         targetLog.category = log.category ?? targetLog.category;
         targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
         targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
@@ -729,6 +735,7 @@ export function buildLegacyProcessTimeline(input: {
     title: string;
     details: string;
     status: ProcessTimelineStatus;
+    error_reason?: string;
     category?: string;
     tool_name?: string;
     resolution_status?: ToolResolutionStatus;

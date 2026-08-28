@@ -13,7 +13,12 @@ from app.schemas.agent import AgentExecutionStep
 from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content, map_sql_tool_error_for_user
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk, map_standard_agentscope_event
-from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.tool_result import (
+    extract_tool_result_error_reason,
+    is_tool_result_error,
+    normalize_tool_result_state,
+)
+from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_display
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.sql_result_compact import (
@@ -317,12 +322,15 @@ async def stream_agentscope_events(
             notice = final_parsed.get("permission_notice") if isinstance(final_parsed, dict) else None
             if isinstance(notice, dict) and notice.get("row_filter_applied") is True:
                 yield {"type": "meta", "permission_notice": notice}
-        is_error = (
-            "Error" in str(output)
-            or "安全策略拦截" in str(output)
-            or "Permission Denied" in str(output)
-            or "PermissionDenied" in str(output)
-            or getattr(state, "sql_error", False)
+        tool_result_state = (
+            stream_state.get("tool_result_states", {}).get(tool_id)
+            or getattr(event, "state", None)
+        )
+        is_error = is_tool_result_error(
+            tool_name,
+            output,
+            result_state=tool_result_state,
+            domain_error=bool(getattr(state, "sql_error", False)),
         )
         log_payload: Dict[str, Any] = {
             "type": "log",
@@ -332,6 +340,17 @@ async def stream_agentscope_events(
             "status": "success" if not is_error else "error",
             "execution_time_ms": duration_ms,
         }
+        normalized_result_state = normalize_tool_result_state(tool_result_state)
+        if normalized_result_state:
+            log_payload["tool_result_state"] = normalized_result_state
+        error_reason = extract_tool_result_error_reason(
+            tool_name,
+            getattr(state, "sql_error_message", "") or output,
+            result_state=tool_result_state,
+            domain_error=bool(getattr(state, "sql_error", False)),
+        )
+        if error_reason:
+            log_payload["error_reason"] = error_reason
         if (
             tool_name == "execute_sql_query"
             and isinstance(notice, dict)
@@ -636,7 +655,7 @@ async def yield_sql_fatal_abort(
         "type": "log",
         "id": f"fatal_sql_{uuid.uuid4().hex[:8]}",
         "title": presentation.title,
-        "details": truncate_for_context(str(state.sql_fatal_message or ""), max_len=1000)
+        "details": truncate_for_display(str(state.sql_fatal_message or ""), max_len=1000)
         or presentation.title,
         "status": "error",
     }
@@ -687,7 +706,7 @@ async def yield_schema_fatal_abort(
         "type": "log",
         "id": f"schema_fatal_{uuid.uuid4().hex[:8]}",
         "title": title,
-        "details": truncate_for_context(str(details or ""), max_len=1000) or title,
+        "details": truncate_for_display(str(details or ""), max_len=1000) or title,
         "status": "error",
     }
     yield {

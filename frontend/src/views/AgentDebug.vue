@@ -1220,6 +1220,7 @@ interface LogEntry {
   title: string;
   details: string;
   status: "pending" | "success" | "error" | "warning";
+  error_reason?: string;
   isExpanded: boolean;
   isDebug?: boolean;
   isRouter?: boolean;
@@ -3513,6 +3514,7 @@ const addRealLog = (msg: Message, data: any) => {
     existingLog.status = data.status || "success";
     existingLog.title = data.title || existingLog.title;
     existingLog.details = data.details || existingLog.details;
+    if (data.error_reason !== undefined) existingLog.error_reason = data.error_reason;
     if (data.isDebug !== undefined) existingLog.isDebug = data.isDebug;
     if (data.isRouter !== undefined) existingLog.isRouter = data.isRouter;
     if (data.category !== undefined) existingLog.category = data.category as any;
@@ -3543,6 +3545,7 @@ const addRealLog = (msg: Message, data: any) => {
       title: data.title || "Processing",
       details: data.details || "",
       status: data.status || "success",
+      error_reason: data.error_reason,
       isExpanded: false,
       isDebug: data.isDebug,
       isRouter: data.isRouter,

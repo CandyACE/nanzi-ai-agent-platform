@@ -18,7 +18,7 @@ from app.services.ai.grounding.service import GroundingService
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.turn_decision import TurnDecision
-from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_display
 from app.services.metadata_rag_service import MetadataRagService
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage, AIMessage
 from app.services.ai.runtime.agentscope.tools import (
@@ -412,7 +412,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             "type": "log",
             "id": f"kb_fatal_{uuid.uuid4().hex[:8]}",
             "title": "知识库服务不可用",
-            "details": truncate_for_context(str(details or ""), max_len=1000) or "知识库服务不可用",
+            "details": truncate_for_display(str(details or ""), max_len=1000) or "知识库服务不可用",
             "status": "error",
         }
         yield {

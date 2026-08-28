@@ -69,6 +69,11 @@ from app.services.ai.runtime.agentscope.event_stream import (
     map_standard_agentscope_event,
     new_native_stream_state,
 )
+from app.services.ai.runtime.agentscope.tool_result import (
+    extract_tool_result_error_reason,
+    is_tool_result_error,
+    normalize_tool_result_state,
+)
 from app.services.ai.runtime.agentscope import process_narration as process_narration_events
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.stream_reconcile import (
@@ -76,6 +81,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import (
     compute_stream_reconcile_gap,
     needs_tool_synthesis_fallback,
     truncate_for_context,
+    truncate_for_display,
 )
 from app.services.ai.runtime.agentscope.session_lock import (
     SessionLockTimeout,
@@ -1537,6 +1543,10 @@ class AssistantAgentRunner(BaseExecutor):
                     "text": output,
                     "data_blocks": tool_data.get(tool_id, []),
                 }
+            tool_result_state = (
+                state.get("tool_result_states", {}).get(tool_id)
+                or getattr(event, "state", None)
+            )
             duration_ms = (time.time() - tool_started_at.get(tool_id, time.time())) * 1000
             target_tool = next((t for t in tools if t.name == tool_name), None)
             result = self._build_tool_observation(
@@ -1547,6 +1557,7 @@ class AssistantAgentRunner(BaseExecutor):
                 duration_tool=duration_ms,
                 target_tool=target_tool,
                 tool_index=0,
+                tool_result_state=tool_result_state,
             )
             if result.get("log"):
                 yield result["log"]
@@ -2327,8 +2338,18 @@ class AssistantAgentRunner(BaseExecutor):
         duration_tool: float,
         target_tool: Any,
         tool_index: int,
+        tool_result_state: Any = None,
     ) -> Dict[str, Any]:
-        is_error = "Error" in str(tool_output) or "安全策略拦截" in str(tool_output) or "Permission Denied" in str(tool_output) or "PermissionDenied" in str(tool_output)
+        is_error = is_tool_result_error(
+            tool_name,
+            tool_output,
+            result_state=tool_result_state,
+        )
+        error_reason = extract_tool_result_error_reason(
+            tool_name,
+            tool_output,
+            result_state=tool_result_state,
+        )
 
         if not is_error and target_tool is not None:
             from app.services.ai.session_tool_artifact import consider_turn_artifact_candidate
@@ -2363,7 +2384,7 @@ class AssistantAgentRunner(BaseExecutor):
 
             display_output = format_knowledge_tool_log_display(tool_output, max_len=1200)
         else:
-            display_output = truncate_for_context(str(tool_output), max_len=500)
+            display_output = truncate_for_display(str(tool_output), max_len=500)
         log_event = {
             "type": "log",
             "id": tool_id,
@@ -2373,6 +2394,11 @@ class AssistantAgentRunner(BaseExecutor):
             "model": t_model,
             "temperature": t_temp,
         }
+        normalized_result_state = normalize_tool_result_state(tool_result_state)
+        if normalized_result_state:
+            log_event["tool_result_state"] = normalized_result_state
+        if error_reason:
+            log_event["error_reason"] = error_reason
 
         # --- [NEW: Citation Extraction & Multi-Track Unpacking] ---
         citation_event = None

@@ -44,3 +44,14 @@ def test_error_detail_card_is_rendered_after_main_message_content():
         assert renderer_at >= 0
         assert detail_at > renderer_at
         assert "msg.errorDetail?.rawError" in source
+
+
+def test_tool_error_reason_is_carried_to_the_execution_timeline():
+    handlers = _source("frontend/src/utils/agentscopeSseHandlers.ts")
+    timeline = _source("frontend/src/utils/processTimeline.ts")
+    component = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
+
+    assert "error_reason" in handlers
+    assert "error_reason" in timeline
+    assert "error_reason" in component
+    assert "错误原因：" in component

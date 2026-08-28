@@ -10,11 +10,20 @@ DEFAULT_TOOL_LOG_MAX_LEN = 500
 
 
 def truncate_for_context(text: str, *, max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LEN) -> str:
-    """工具结果写入 synthesis / 日志时的通用截断。"""
+    """工具结果写入 synthesis / 历史摘要时的通用截断。"""
     raw = str(text or "")
     if len(raw) <= max_len:
         return raw
     return raw[:max_len] + "\n… [输出已截断]"
+
+
+def truncate_for_display(text: str, *, max_len: int = DEFAULT_TOOL_LOG_MAX_LEN) -> str:
+    """截断用户时间线中的日志预览，并明确这是展示层截断。"""
+
+    raw = str(text or "")
+    if len(raw) <= max_len:
+        return raw
+    return raw[:max_len] + "\n… [日志预览已截断]"
 
 
 _SUBSTANTIAL_OVERLAP_CHARS = 64
