@@ -13,6 +13,10 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
     AGENT_MAX_TOOLCALL_TIMEOUT_KEY,
     validate_agent_max_toolcall_timeout,
 )
+from app.services.ai.runtime.tool_loop_detector import (
+    AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY,
+    validate_agent_tool_loop_global_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,8 @@ def validate_config_update(key: str, value: str) -> None:
     """校验系统配置更新是否合法。"""
     if key == AGENT_MAX_TOOLCALL_TIMEOUT_KEY:
         validate_agent_max_toolcall_timeout(value)
+    elif key == AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY:
+        validate_agent_tool_loop_global_limit(value)
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",

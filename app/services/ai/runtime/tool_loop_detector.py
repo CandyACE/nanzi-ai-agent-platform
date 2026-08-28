@@ -4,12 +4,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+
+AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY = "agent_tool_loop_global_limit"
+
 # 同参重复调用熔断阈值放宽至 5 次，为通用工具重试提供更充裕的容错空间。
 DEFAULT_FUSE_THRESHOLD = 5
 # 全局熔断：单轮内所有工具调用总次数上限，防止"无限换参数"绕过同参重复检测。
-DEFAULT_GLOBAL_LIMIT = 30
+DEFAULT_GLOBAL_LIMIT = 50
 # 浏览器会话可能包含大量分步表单与快照操作，适度放宽全局上限。
 DEFAULT_BROWSER_GLOBAL_LIMIT = 50
+MIN_GLOBAL_LIMIT = 1
+MAX_GLOBAL_LIMIT = 3600
 # ping-pong：两个工具交替调用（A→B→A→B…）达到该长度即熔断。
 DEFAULT_PING_PONG_THRESHOLD = 6
 # 仅保留最近若干次调用用于序列模式识别，避免内存无界增长。
@@ -75,6 +80,26 @@ _WORKSPACE_ACTION_TOOLS = frozenset({
     "excel_document_write",
     "word_document_write",
 })
+
+
+def validate_agent_tool_loop_global_limit(value: Any) -> None:
+    """校验管理端保存的单轮工具调用总次数上限。"""
+    if isinstance(value, bool):
+        raise ValueError(
+            f"{AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY} must be an integer between 1 and 3600"
+        )
+    if isinstance(value, int):
+        candidate = value
+    elif isinstance(value, str) and value.isdigit():
+        candidate = int(value)
+    else:
+        raise ValueError(
+            f"{AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY} must be an integer between 1 and 3600"
+        )
+    if not MIN_GLOBAL_LIMIT <= candidate <= MAX_GLOBAL_LIMIT:
+        raise ValueError(
+            f"{AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY} must be an integer between 1 and 3600"
+        )
 
 
 @dataclass
@@ -253,4 +278,3 @@ class ToolLoopDetector:
         self.fuse_reason_code = reason_code
         self.fuse_count = count
         return ToolLoopVerdict(fused=True, count=count, message=message, reason_code=reason_code)
-

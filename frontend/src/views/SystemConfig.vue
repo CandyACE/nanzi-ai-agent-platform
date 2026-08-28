@@ -717,6 +717,35 @@ const getAgentToolcallTimeoutValue = (item: ConfigItem) => {
   if (Number.isInteger(value) && value >= 1 && value <= 3600) return value
   return 120
 }
+const getAgentToolLoopGlobalLimitValue = (item: ConfigItem) => {
+  const value = Number(item.value)
+  if (Number.isInteger(value) && value >= 1 && value <= 3600) return value
+  return 50
+}
+const adjustAgentToolLoopGlobalLimit = (item: ConfigItem, delta: number) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const current = getAgentToolLoopGlobalLimitValue(item)
+  item.value = String(Math.min(3600, Math.max(1, current + delta)))
+}
+const handleAgentToolLoopGlobalLimitKeydown = (event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Enter', 'Escape'].includes(event.key)) return
+  if (!/^\d$/.test(event.key)) event.preventDefault()
+}
+const handleAgentToolLoopGlobalLimitInput = (item: ConfigItem, event: Event) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const target = event.target as HTMLInputElement
+  const digits = target.value.replace(/\D/g, '')
+  item.value = digits
+  target.value = digits
+}
+const normalizeAgentToolLoopGlobalLimitInput = (item: ConfigItem) => {
+  const digits = String(item.value ?? '').replace(/\D/g, '')
+  const value = Number(digits)
+  item.value = Number.isFinite(value) && Number.isInteger(value) && value >= 1
+    ? String(Math.min(3600, value))
+    : '50'
+}
 const adjustAgentToolcallTimeout = (item: ConfigItem, delta: number) => {
   if (isConfigItemDisabled('agent', item)) return
   const current = getAgentToolcallTimeoutValue(item)
@@ -984,6 +1013,9 @@ const fetchConfigs = async () => {
             if (item.key === 'agent_max_toolcall_timeout') {
               item.value = String(getAgentToolcallTimeoutValue(item))
             }
+            if (item.key === 'agent_tool_loop_global_limit') {
+              item.value = String(getAgentToolLoopGlobalLimitValue(item))
+            }
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
               item.description = '第三方用户同步配置（数据源、表、字段映射、定时周期）'
@@ -1135,6 +1167,7 @@ const getCategoryTip = (key: string) => {
     'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
     'agent_max_toolcall_timeout': '单次 Agent 工具调用的全局超时时间（秒），默认 120 秒，范围 1-3600；版本级配置优先于全局配置。',
+    'agent_tool_loop_global_limit': '单次对话所有工具调用的总次数上限，默认 50 次，范围 1-3600，用于防止工具循环空转。',
     'agent_max_context_turns': '智能体能够保留的最大历史上下文轮数。设置合理的值能防止发送给大模型的消息体过长，从而节约 Token 并加速模型响应。',
     'external_sql_api_url': '用于远程安全沙箱中执行生成 SQL 查询的 API 服务网关地址。直连物理执行模式（local）下此配置项将被忽略。',
     'external_sql_api_key': '用于调用远程安全 SQL 执行服务的身份验证 Token，请确保保密。',
@@ -1484,6 +1517,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   if (category === 'agent') {
     const order = [
       'agent_max_iterations',
+      'agent_tool_loop_global_limit',
       'agent_max_toolcall_timeout',
       'llm_model_name',
       'multimodal_model_name',
@@ -3106,6 +3140,37 @@ onUnmounted(() => {
                                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                              >+</button>
                              <span class="text-xs text-gray-500">秒</span>
+                          </div>
+                          <div v-else-if="item.key === 'agent_tool_loop_global_limit'" class="flex items-center gap-2 max-w-xs">
+                             <button
+                               type="button"
+                               aria-label="减少工具调用总次数上限"
+                               :disabled="isConfigItemDisabled(String(category), item) || getAgentToolLoopGlobalLimitValue(item) <= 1"
+                               @click="adjustAgentToolLoopGlobalLimit(item, -1)"
+                               class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                             >−</button>
+                             <input
+                               type="number"
+                               inputmode="numeric"
+                               min="1"
+                               max="3600"
+                               step="1"
+                               :value="item.value"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               @keydown="handleAgentToolLoopGlobalLimitKeydown"
+                               @input="handleAgentToolLoopGlobalLimitInput(item, $event)"
+                               @blur="normalizeAgentToolLoopGlobalLimitInput(item)"
+                               aria-label="Agent 工具调用总次数上限"
+                               class="min-w-[5rem] rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
+                             />
+                             <button
+                               type="button"
+                               aria-label="增加工具调用总次数上限"
+                               :disabled="isConfigItemDisabled(String(category), item) || getAgentToolLoopGlobalLimitValue(item) >= 3600"
+                               @click="adjustAgentToolLoopGlobalLimit(item, 1)"
+                               class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                             >+</button>
+                             <span class="text-xs text-gray-500">次</span>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
