@@ -16,6 +16,8 @@ services:
       # Service Config
       - API_SERVICE_ENV=${API_SERVICE_ENV:-dev}
       - API_SERVICE_LOG_LEVEL=${API_SERVICE_LOG_LEVEL:-INFO}
+      # 多节点部署时只在一个节点设为 true，其他 API 节点设为 false
+      - TASK_SCHEDULER_ENABLED=${TASK_SCHEDULER_ENABLED:-true}
       # 宿主机数据目录真实物理路径（DooD 沙箱容器挂载对齐，留空则自动按容器工作区解析）
       - HOST_DATA_DIR=${HOST_DATA_DIR:-}
       # 业务默认时区（与系统配置 platform_timezone 默认值一致；无法改 MySQL 时仍可对齐应用写入时间）

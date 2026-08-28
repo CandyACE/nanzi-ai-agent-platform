@@ -1986,11 +1986,14 @@
       :refresh-signal="browserRefreshSignal"
       :session-id="browserSessionId"
       :viewer-token="browserViewerToken"
+      :environment-error="browserEnvironmentError"
+      :auth-token="config.token"
       :approval-mode="browserApprovalMode"
       v-model:pinned="browserPinned"
       v-model:panel-width="browserPanelWidthReactive"
       @close="closeBrowserPanel"
       @close-session="closeBrowserSession"
+      @retry="openBrowserPanel"
       @update:approval-mode="updateBrowserApprovalMode"
       @ask-ai-crop="handleBrowserCropAskAi"
     />
@@ -2834,6 +2837,7 @@ const browserViewerToken = ref<string | null>(null);
 const browserApprovalMode = ref<BrowserApprovalMode>("autopilot");
 const browserPinned = ref(true);
 const browserPanelOpening = ref(false);
+const browserEnvironmentError = ref<string | null>(null);
 const browserRefreshSignal = ref(0);
 let browserOpenGeneration = 0;
 
@@ -2880,6 +2884,7 @@ const openBrowserPanel = async () => {
   const generation = ++browserOpenGeneration;
   browserPanelOpening.value = true;
   browserPanelVisible.value = true;
+  browserEnvironmentError.value = null;
   try {
     const sessionResponse = await axios.post(
       "/api/v1/chat/browser/sessions/open",
@@ -2888,12 +2893,21 @@ const openBrowserPanel = async () => {
     );
     if (generation !== browserOpenGeneration) return;
     const session = sessionResponse.data;
+    browserEnvironmentError.value = null;
     const attached = await attachBrowserSession(session.id, session.approval_mode, generation);
     if (!attached && generation === browserOpenGeneration) browserPanelVisible.value = false;
   } catch (error: any) {
     if (generation !== browserOpenGeneration) return;
-    browserPanelVisible.value = false;
-    showToast(error?.response?.data?.detail || "打开服务端浏览器失败", "error");
+    const detail = String(error?.response?.data?.detail || "");
+    const isEnvironmentFailure =
+      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+    if (isEnvironmentFailure) {
+      browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
+      browserPanelVisible.value = true;
+    } else {
+      browserPanelVisible.value = false;
+      showToast(detail || "打开服务端浏览器失败", "error");
+    }
   } finally {
     if (generation === browserOpenGeneration) browserPanelOpening.value = false;
   }

@@ -76,6 +76,18 @@ async def list_agents(session: AsyncSession = Depends(get_db_session), user: Dic
     """获取所有智能体列表 (基于权限过滤)"""
     return await AgentManagerService.list_agents(session, user=user)
 
+
+@router.get("/toolcall-timeout")
+async def get_agent_toolcall_timeout(
+    user: Dict[str, Any] = Depends(require_permission("menu", "menu:agent_management")),
+):
+    """返回智能体管理页需要展示的全局工具调用超时。"""
+    from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
+
+    timeout_seconds = await load_agent_max_toolcall_timeout()
+    return {"seconds": int(timeout_seconds)}
+
+
 @router.post("/reorder")
 async def reorder_agents(
     data: AIAgentReorderRequest,

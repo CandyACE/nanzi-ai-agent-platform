@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pydantic import BaseModel, Field, ConfigDict, StrictInt, model_validator, field_validator
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 from app.services.ai.agent_types import AgentType
@@ -23,6 +23,7 @@ class AIAgentVersionBase(BaseModel):
     synthesis_temperature: Optional[float] = None # NEW: Separate synthesizer temp
     system_prompt: str
     tools: List[Union[str, ToolConfigItem]] = Field(default_factory=list)
+    toolcall_timeout_seconds: Optional[StrictInt] = Field(default=None, ge=1, le=86400)
     skills_custom: bool = False
     skills: List[str] = Field(default_factory=list)
     welcome_config: Optional[Dict[str, Any]] = None
@@ -130,6 +131,7 @@ class ChatConfig(BaseModel):
     synthesis_temperature: Optional[float] = None
     system_prompt: str
     tools: List[Union[str, ToolConfigItem]]
+    toolcall_timeout_seconds: Optional[int] = None
     skills_custom: bool = False
     skills: List[str] = Field(default_factory=list)
     welcome_config: Optional[Dict[str, Any]] = None

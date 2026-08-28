@@ -131,6 +131,30 @@ def test_browser_panel_opens_immediately_with_loading_stages_and_reuses_viewer_s
     assert "browserSessionId.value && browserViewerToken.value" in embed
 
 
+def test_browser_panel_keeps_open_and_exposes_environment_retry_after_open_failure():
+    panel = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "environmentError?: string | null" in panel
+    assert "environmentError" in panel
+    assert "envInfo.value?.status === 'missing_driver'" in panel
+    assert "(event: 'retry'): void;" in panel
+    assert "@click=\"emit('retry')\"" in panel
+    assert "installBrowserEnvironment" in panel
+    assert "/api/v1/chat/browser/environment/install/stream" in panel
+    assert "installLogs" in panel
+    assert "text/event-stream" in panel
+    assert "管理员一键安装" in panel
+    assert "authToken?: string" in panel
+    assert ':auth-token="config.token"' in embed
+    assert "props.authToken || (typeof localStorage" in panel
+    assert "browserEnvironmentError" in embed
+    assert ":environment-error=\"browserEnvironmentError\"" in embed
+    assert '@retry="openBrowserPanel"' in embed
+    assert "error?.response?.status === 503" in embed
+    assert "browserPanelVisible.value = true;" in embed.split("} catch", 1)[1].split("} finally", 1)[0]
+
+
 def test_browser_panel_does_not_request_duplicate_initial_snapshot_and_reports_disconnect():
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
     on_open = source.split("client.onopen", 1)[1].split("client.onmessage", 1)[0]

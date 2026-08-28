@@ -56,6 +56,7 @@ async def resolve_chatbi_runtime_tools(
     *,
     implicit_tools: Iterable[Any] | None = None,
     on_resolved: Callable[[ResolvedToolSet], None] | None = None,
+    agent_timeout: Any = None,
 ) -> list[RuntimeToolSpec]:
     configured_items = list(tool_configs) if tool_configs else list(CHATBI_DEFAULT_TOOL_NAMES)
     resolved = await resolve_tool_capabilities(
@@ -71,7 +72,14 @@ async def resolve_chatbi_runtime_tools(
             "missing required ChatBI runtime tools",
             details={"missing_tools": list(resolved.missing_required)},
         )
-    return list(resolved.specs)
+    from app.services.ai.runtime.agentscope.tool_timeout import (
+        apply_configured_agent_tool_timeout,
+    )
+
+    return await apply_configured_agent_tool_timeout(
+        resolved.specs,
+        agent_timeout=agent_timeout,
+    )
 
 
 async def build_chatbi_toolkit(
@@ -79,11 +87,13 @@ async def build_chatbi_toolkit(
     *,
     implicit_tools: Iterable[Any] | None = None,
     on_resolved: Callable[[ResolvedToolSet], None] | None = None,
+    agent_timeout: Any = None,
 ) -> tuple[Any, list[RuntimeToolSpec]]:
     specs = await resolve_chatbi_runtime_tools(
         tool_configs,
         implicit_tools=implicit_tools,
         on_resolved=on_resolved,
+        agent_timeout=agent_timeout,
     )
     toolkit = AgentScopeToolConsumer().consume_specs(specs)
     return toolkit, specs

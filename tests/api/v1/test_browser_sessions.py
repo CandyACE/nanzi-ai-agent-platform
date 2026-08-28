@@ -16,16 +16,44 @@ from app.schemas.browser import BrowserProfileResponse, BrowserSessionResponse, 
 pytestmark = pytest.mark.no_infrastructure
 
 
+def _mounted_paths(router, prefix=""):
+    paths = set()
+    for route in router.routes:
+        include_context = getattr(route, "include_context", None)
+        if include_context is not None:
+            nested_prefix = f"{prefix}{include_context.prefix}".rstrip("/")
+            paths.update(_mounted_paths(include_context.included_router, nested_prefix))
+            continue
+
+        path = getattr(route, "path", None)
+        if path is not None:
+            paths.add(f"{prefix}{path}" or "/")
+    return paths
+
+
 def test_browser_routes_are_mounted_under_secured_chat_prefix():
-    paths = {route.path for route in v1_secured.routes}
+    paths = _mounted_paths(v1_secured)
     assert "/chat/browser/sessions/open" in paths
     assert "/chat/browser/sessions/active" in paths
     assert "/chat/browser/sessions/{session_id}/policy" in paths
     assert "/chat/browser/sessions/{session_id}/detach" in paths
     assert "/chat/browser/sessions/{session_id}" in paths
-    viewer_paths = {route.path for route in v1_router.routes}
+    viewer_paths = _mounted_paths(v1_router)
     assert "/chat/browser/sessions/{session_id}/viewer" in viewer_paths
     assert "/chat/browser/sessions/{session_id}/screenshot" in viewer_paths
+
+
+def test_browser_environment_install_route_is_admin_only_and_streams_logs():
+    source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/browser.py").read_text(encoding="utf-8")
+    assert '"/environment/install/stream"' in source
+    assert "Depends(require_admin)" in source
+    assert "StreamingResponse" in source
+    assert "create_subprocess_exec" in source
+    assert "_browser_install_commands" in source
+    assert '"pip", "install", "--python"' in source
+    assert "shutil.which(\"uv\")" in source
+    assert '"-m", "playwright", "install", "chromium"' in source
+    assert '"text/event-stream"' in source
 
 
 def test_browser_public_response_models_do_not_expose_storage_or_token_fields():

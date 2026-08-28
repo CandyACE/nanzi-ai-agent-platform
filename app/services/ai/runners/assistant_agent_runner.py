@@ -2040,7 +2040,14 @@ class AssistantAgentRunner(BaseExecutor):
             provider=provider,
         )
         self._last_tool_resolution = resolved
-        return list(resolved.specs)
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            apply_configured_agent_tool_timeout,
+        )
+
+        return await apply_configured_agent_tool_timeout(
+            resolved.specs,
+            agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
+        )
 
     def _apply_knowledge_fallback_budget(
         self,

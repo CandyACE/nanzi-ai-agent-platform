@@ -35,6 +35,18 @@ const taskApprovalMode = ref<TaskApprovalMode>('allow')
 const taskResourceScope = ref<TaskResourceScope>(emptyResourceScope())
 const taskThinkingEnableOverride = ref<boolean | null>(null)
 const taskReasoningEffortOverride = ref<ReasoningEffort | null>(null)
+const taskMaxRetries = ref(0)
+const taskRetryDelayMinutes = ref(5)
+
+const MAX_TASK_RETRIES = 3
+const MIN_RETRY_DELAY_MINUTES = 1
+const MAX_RETRY_DELAY_MINUTES = 60
+
+const clampNumber = (value: unknown, fallback: number, minimum: number, maximum: number) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)))
+}
 
 const REASONING_EFFORT_VALUES = new Set<ReasoningEffort>([
   'none',
@@ -55,6 +67,11 @@ const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
   if (taskThinkingEnableOverride.value === false) taskReasoningEffortOverride.value = null
   const mode = String(cfg.approval_mode || 'allow').toLowerCase()
   taskApprovalMode.value = mode === 'ask' || mode === 'deny' || mode === 'allow' ? mode : 'allow'
+  taskMaxRetries.value = clampNumber(cfg.max_retries, 0, 0, MAX_TASK_RETRIES)
+  const retryDelaySeconds = Number(cfg.retry_delay_seconds)
+  taskRetryDelayMinutes.value = Number.isFinite(retryDelaySeconds)
+    ? clampNumber(Math.round(retryDelaySeconds / 60), 5, MIN_RETRY_DELAY_MINUTES, MAX_RETRY_DELAY_MINUTES)
+    : 5
   const scope = cfg.resource_scope && typeof cfg.resource_scope === 'object' ? cfg.resource_scope : {}
   taskResourceScope.value = {
     project_name: String(scope.project_name || ''),
@@ -695,6 +712,13 @@ const saveTask = async () => {
     } else {
       delete baseConfig.reasoning_effort
     }
+    baseConfig.max_retries = clampNumber(taskMaxRetries.value, 0, 0, MAX_TASK_RETRIES)
+    baseConfig.retry_delay_seconds = clampNumber(
+      taskRetryDelayMinutes.value,
+      5,
+      MIN_RETRY_DELAY_MINUTES,
+      MAX_RETRY_DELAY_MINUTES,
+    ) * 60
     const scope = taskResourceScope.value || emptyResourceScope()
     const hasScope = Boolean(
       (scope.datasets || []).length ||
@@ -1987,6 +2011,37 @@ onMounted(async () => {
             <div class="mt-2 p-2.5 bg-blue-50/50 rounded-xl flex items-start space-x-2 border border-blue-100/50">
               <span class="text-blue-500 text-xs mt-0.5 italic">Auto-Translate:</span>
               <p class="text-[11px] text-blue-700 font-bold leading-relaxed">{{ cronDescription }}</p>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">执行失败策略</label>
+            <div class="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label class="flex flex-col gap-1 text-xs font-bold text-gray-600">
+                  最大重试次数
+                  <select
+                    v-model.number="taskMaxRetries"
+                    class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm font-normal outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option v-for="count in [0, 1, 2, 3]" :key="count" :value="count">{{ count }} 次</option>
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1 text-xs font-bold text-gray-600">
+                  重试间隔（分钟）
+                  <input
+                    v-model.number="taskRetryDelayMinutes"
+                    type="number"
+                    min="1"
+                    max="60"
+                    step="1"
+                    class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm font-normal outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  />
+                </label>
+              </div>
+              <p class="text-[10px] leading-relaxed text-gray-400">
+                仅定时触发失败时自动重试；立即执行不自动重试。默认不重试，最多重试 3 次，间隔支持 1–60 分钟。
+              </p>
             </div>
           </div>
 

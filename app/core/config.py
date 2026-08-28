@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"  # Aligned with .env
     ALLOWED_ORIGINS: List[str] = ["*"]
     APP_PUBLIC_URL: Optional[str] = None
+    # 仅建议在一个节点开启，避免多节点部署重复启动 APScheduler。
+    TASK_SCHEDULER_ENABLED: bool = True
 
     # Main database type: mysql (default) / postgresql
     DATABASE_TYPE: str = "mysql"

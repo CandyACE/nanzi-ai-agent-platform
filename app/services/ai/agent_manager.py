@@ -445,6 +445,7 @@ class AgentManagerService:
                 synthesis_temperature=version.synthesis_temperature,
                 system_prompt=version.system_prompt,
                 tools=tools_list or [],
+                toolcall_timeout_seconds=getattr(version, "toolcall_timeout_seconds", None),
                 skills_custom=bool(getattr(version, "skills_custom", False)),
                 skills=AgentManagerService._normalize_skills_list(getattr(version, "skills", None)),
                 welcome_config=safe_welcome_config(getattr(version, "welcome_config", None)),
@@ -492,6 +493,7 @@ class AgentManagerService:
                     synthesis_temperature=version.synthesis_temperature,
                     system_prompt=version.system_prompt,
                     tools=tools_list or [],
+                    toolcall_timeout_seconds=getattr(version, "toolcall_timeout_seconds", None),
                     skills_custom=bool(getattr(version, "skills_custom", False)),
                     skills=AgentManagerService._normalize_skills_list(getattr(version, "skills", None)),
                     welcome_config=safe_welcome_config(getattr(version, "welcome_config", None)),
@@ -992,6 +994,7 @@ class AgentManagerService:
             synthesis_temperature=data.synthesis_temperature,
             system_prompt=data.system_prompt,
             tools=AgentManagerService._normalize_tools_for_db(data.tools),
+            toolcall_timeout_seconds=data.toolcall_timeout_seconds,
             skills_custom=skills_custom,
             skills=skills_list,
             welcome_config=normalize_welcome_config(getattr(data, "welcome_config", None)),
@@ -1046,6 +1049,9 @@ class AgentManagerService:
         version.synthesis_temperature = data.synthesis_temperature
         version.system_prompt = data.system_prompt
         version.tools = AgentManagerService._normalize_tools_for_db(data.tools)
+        # 新字段允许旧客户端省略；只有显式出现在请求中的 null 才代表清除版本级覆盖。
+        if "toolcall_timeout_seconds" in data.model_fields_set:
+            version.toolcall_timeout_seconds = data.toolcall_timeout_seconds
         version.skills_custom = skills_custom
         version.skills = skills_list
         # Keep an existing version setting when an older client omits this newly added field.

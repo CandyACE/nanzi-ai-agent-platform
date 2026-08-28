@@ -72,6 +72,7 @@ export interface AIAgentVersion {
   synthesis_temperature?: number
   system_prompt: string
   tools: Array<string | ToolConfigItem>
+  toolcall_timeout_seconds?: number | null
   skills_custom?: boolean
   skills?: string[]
   welcome_config?: WelcomeConfig
@@ -86,6 +87,9 @@ export interface WelcomeConfig { enabled: boolean; mode: 'manual' | 'ai'; genera
 export const agentApi = {
   // List all agents
   listAgents: () => axios.get<AIAgent[]>('/api/portal/agents/'),
+
+  // Read-only global tool-call timeout shown in the version editor
+  getGlobalToolcallTimeout: () => axios.get<{ seconds: number }>('/api/portal/agents/toolcall-timeout'),
   
   // Create agent
   createAgent: (data: Partial<AIAgent>) => axios.post<AIAgent>('/api/portal/agents/', data),

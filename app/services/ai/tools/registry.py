@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, List
 from dataclasses import replace
+import asyncio
 import inspect
 import re
 import time
@@ -696,7 +697,11 @@ class ToolRegistry:
         if hasattr(tool, "arun"):
             return await tool.arun(**payload)
         if callable(tool):
-            result = tool(**payload)
+            call_member = getattr(tool, "__call__", tool)
+            if inspect.iscoroutinefunction(tool) or inspect.iscoroutinefunction(call_member):
+                result = tool(**payload)
+            else:
+                result = await asyncio.to_thread(tool, **payload)
             if inspect.isawaitable(result):
                 return await result
             return result

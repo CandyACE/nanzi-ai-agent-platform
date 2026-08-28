@@ -189,7 +189,14 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             ),
         )
         self._last_tool_resolution = resolved
-        return list(resolved.specs)
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            apply_configured_agent_tool_timeout,
+        )
+
+        return await apply_configured_agent_tool_timeout(
+            resolved.specs,
+            agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
+        )
 
     async def _auto_invoke_search_knowledge_base(
         self,

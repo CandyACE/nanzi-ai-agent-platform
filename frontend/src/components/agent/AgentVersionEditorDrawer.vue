@@ -19,6 +19,7 @@ const props = defineProps<{
   agentForm: Partial<AIAgentBase>;
   canConfigureSystemAgent: boolean;
   versionForm: Partial<AIAgentVersion>;
+  globalAgentToolcallTimeout: number;
   selectedAgent: AIAgent | null;
   models: AIModel[];
   canEditVersion: boolean;
@@ -118,6 +119,55 @@ const canPublishLocalVersion = computed(() =>
   && props.canEditVersion
   && (!props.versionForm.id || props.versionForm.status === 'DRAFT')
 );
+
+const AGENT_VERSION_TOOLCALL_TIMEOUT_DEFAULT = 120;
+const AGENT_VERSION_TOOLCALL_TIMEOUT_MIN = 1;
+const AGENT_VERSION_TOOLCALL_TIMEOUT_MAX = 86400;
+const isAgentVersionToolcallTimeoutEnabled = computed(
+  () => props.versionForm.toolcall_timeout_seconds != null,
+);
+const getAgentVersionToolcallTimeoutValue = () => {
+  const value = Number(props.versionForm.toolcall_timeout_seconds);
+  return Number.isInteger(value)
+    && value >= AGENT_VERSION_TOOLCALL_TIMEOUT_MIN
+    && value <= AGENT_VERSION_TOOLCALL_TIMEOUT_MAX
+    ? value
+    : AGENT_VERSION_TOOLCALL_TIMEOUT_DEFAULT;
+};
+const setAgentVersionToolcallTimeoutEnabled = (enabled: boolean) => {
+  if (!props.canEditVersion) return;
+  props.versionForm.toolcall_timeout_seconds = enabled
+    ? getAgentVersionToolcallTimeoutValue()
+    : null;
+};
+const adjustAgentVersionToolcallTimeout = (delta: number) => {
+  if (!props.canEditVersion || !isAgentVersionToolcallTimeoutEnabled.value) return;
+  props.versionForm.toolcall_timeout_seconds = Math.min(
+    AGENT_VERSION_TOOLCALL_TIMEOUT_MAX,
+    Math.max(AGENT_VERSION_TOOLCALL_TIMEOUT_MIN, getAgentVersionToolcallTimeoutValue() + delta),
+  );
+};
+const handleAgentVersionToolcallTimeoutKeydown = (event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Enter', 'Escape'].includes(event.key)) return;
+  if (!/^\d$/.test(event.key)) event.preventDefault();
+};
+const handleAgentVersionToolcallTimeoutInput = (event: Event) => {
+  if (!props.canEditVersion || !isAgentVersionToolcallTimeoutEnabled.value) return;
+  const target = event.target as HTMLInputElement;
+  const digits = target.value.replace(/\D/g, '');
+  props.versionForm.toolcall_timeout_seconds = digits ? Number(digits) : null;
+  target.value = digits;
+};
+const normalizeAgentVersionToolcallTimeoutInput = () => {
+  if (!isAgentVersionToolcallTimeoutEnabled.value) return;
+  const raw = String(props.versionForm.toolcall_timeout_seconds ?? '').replace(/\D/g, '');
+  const value = Number(raw);
+  props.versionForm.toolcall_timeout_seconds = Number.isInteger(value)
+    && value >= AGENT_VERSION_TOOLCALL_TIMEOUT_MIN
+    ? Math.min(AGENT_VERSION_TOOLCALL_TIMEOUT_MAX, value)
+    : AGENT_VERSION_TOOLCALL_TIMEOUT_DEFAULT;
+};
 
 const mcpSubTab = ref<'global' | 'personal'>('global');
 
@@ -712,6 +762,71 @@ const externalCreationMissingFields = computed(() => {
                   去绑定知识库
                 </button>
               </div>
+            </div>
+            <div class="mb-4 flex-shrink-0 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm font-bold text-gray-800">智能体版本工具调用超时时间</div>
+                  <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
+                    默认使用全局配置；启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值。
+                  </p>
+                  <p class="mt-1 text-[11px] text-gray-400">当前全局配置：{{ globalAgentToolcallTimeout }} 秒（范围 1–3600）</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-medium text-gray-600">
+                    {{ isAgentVersionToolcallTimeoutEnabled ? '使用智能体专属配置' : '跟随全局配置' }}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    :aria-checked="isAgentVersionToolcallTimeoutEnabled"
+                    :disabled="!canEditVersion"
+                    @click="setAgentVersionToolcallTimeoutEnabled(!isAgentVersionToolcallTimeoutEnabled)"
+                    class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors"
+                    :class="[
+                      isAgentVersionToolcallTimeoutEnabled ? 'bg-primary' : 'bg-gray-300',
+                      canEditVersion ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                    ]"
+                  >
+                    <span
+                      class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition mt-0.5"
+                      :class="isAgentVersionToolcallTimeoutEnabled ? 'translate-x-5 ml-0.5' : 'translate-x-0.5'"
+                    />
+                  </button>
+                </div>
+              </div>
+              <div v-if="isAgentVersionToolcallTimeoutEnabled" class="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label="减少智能体工具调用超时时间"
+                  :disabled="!canEditVersion || getAgentVersionToolcallTimeoutValue() <= AGENT_VERSION_TOOLCALL_TIMEOUT_MIN"
+                  @click="adjustAgentVersionToolcallTimeout(-1)"
+                  class="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg leading-none text-gray-600 hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >−</button>
+                <input
+                  type="number"
+                  inputmode="numeric"
+                  min="1"
+                  max="86400"
+                  step="1"
+                  :value="versionForm.toolcall_timeout_seconds"
+                  :disabled="!canEditVersion"
+                  @keydown="handleAgentVersionToolcallTimeoutKeydown"
+                  @input="handleAgentVersionToolcallTimeoutInput"
+                  @blur="normalizeAgentVersionToolcallTimeoutInput"
+                  aria-label="智能体版本工具调用超时时间（秒）"
+                  class="h-8 w-32 rounded-lg border border-gray-200 bg-white px-3 text-center text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100"
+                />
+                <button
+                  type="button"
+                  aria-label="增加智能体工具调用超时时间"
+                  :disabled="!canEditVersion || getAgentVersionToolcallTimeoutValue() >= AGENT_VERSION_TOOLCALL_TIMEOUT_MAX"
+                  @click="adjustAgentVersionToolcallTimeout(1)"
+                  class="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg leading-none text-gray-600 hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >+</button>
+                <span class="text-xs text-gray-500">秒（范围 1–86400）</span>
+              </div>
+              <p v-else class="mt-2 text-[11px] text-gray-400">当前跟随全局配置（当前全局值 {{ globalAgentToolcallTimeout }} 秒）</p>
             </div>
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4 flex-shrink-0">
               <div class="flex items-center gap-2 flex-1 min-w-[200px]">

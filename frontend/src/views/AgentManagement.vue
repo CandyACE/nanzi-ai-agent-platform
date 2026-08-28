@@ -44,12 +44,25 @@ const currentToolConfig = ref<any>({});
 
 // Model Management
 const models = ref<AIModel[]>([]);
+const globalAgentToolcallTimeout = ref(120);
 const fetchModels = async () => {
   try {
     const res = await modelApi.list();
     models.value = res.data;
   } catch (error) {
     console.error("Failed to fetch models", error);
+  }
+};
+
+const fetchGlobalAgentToolcallTimeout = async () => {
+  try {
+    const res = await agentApi.getGlobalToolcallTimeout();
+    const value = Number(res.data.seconds);
+    if (Number.isInteger(value) && value >= 1 && value <= 3600) {
+      globalAgentToolcallTimeout.value = value;
+    }
+  } catch (error) {
+    console.warn("Failed to fetch global agent tool-call timeout", error);
   }
 };
 
@@ -491,6 +504,7 @@ const versionForm = ref<Partial<AIAgentVersion>>({
   synthesis_temperature: 0.7, // NEW
   system_prompt: "",
   tools: [],
+  toolcall_timeout_seconds: null,
   skills_custom: false,
   skills: [],
   comment: "",
@@ -1372,6 +1386,7 @@ const startAgentCreation = () => {
     synthesis_temperature: 0.7,
     system_prompt: "",
     tools: [],
+    toolcall_timeout_seconds: null,
     skills_custom: false,
     skills: [],
     comment: "Initial version",
@@ -1744,6 +1759,7 @@ const openVersionModal = (
       synthesis_temperature: 0.7,
       system_prompt: "",
       tools: [],
+      toolcall_timeout_seconds: null,
       skills_custom: false,
       skills: [],
       comment: "",
@@ -2563,6 +2579,7 @@ const closeCardMenus = () => {
 onMounted(() => {
   fetchAgents();
   fetchModels();
+  fetchGlobalAgentToolcallTimeout();
   fetchTools();
   const cached = localStorage.getItem("user_info");
   if (cached) userInfo.value = JSON.parse(cached);
@@ -4000,6 +4017,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :agent-form="agentForm"
       :can-configure-system-agent="userInfo?.role === 'admin'"
       :version-form="versionForm"
+      :global-agent-toolcall-timeout="globalAgentToolcallTimeout"
       :selected-agent="selectedAgent"
       :models="models"
       :can-edit-version="canEditVersion"

@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import sys
 import time
 import uuid
 from collections import deque
@@ -13,10 +15,10 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_api_key
+from app.core.dependencies import require_admin, require_api_key
 from app.core.orm import AsyncSessionLocal, get_db_session
 from app.schemas.browser import (
     BrowserPolicyUpdateRequest,
@@ -41,6 +43,21 @@ from app.services.ai.browser.browser_session_service import (
 router = APIRouter()
 viewer_router = APIRouter()
 logger = logging.getLogger(__name__)
+_browser_install_lock = asyncio.Lock()
+
+
+def _sse(data: dict[str, Any]) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _browser_install_commands() -> list[list[str]]:
+    """生成适配 uv 虚拟环境的固定安装命令，不依赖 shell 或用户输入。"""
+    uv = shutil.which("uv")
+    if uv:
+        dependency_command = [uv, "pip", "install", "--python", sys.executable, "playwright"]
+    else:
+        dependency_command = [sys.executable, "-m", "pip", "install", "playwright"]
+    return [dependency_command, [sys.executable, "-m", "playwright", "install", "chromium"]]
 
 
 def _user_id(user_info: dict[str, Any]) -> int:
@@ -63,6 +80,51 @@ async def get_browser_environment(
 ):
     """查询当前服务端的 Playwright 与 Chromium 运行环境状态、版本及路径。"""
     return await browser_runtime.check_environment()
+
+
+@router.post("/environment/install/stream")
+async def install_browser_environment(
+    user_info: dict[str, Any] = Depends(require_admin),
+):
+    """管理员在当前服务端运行环境安装 Playwright 与 Chromium，并实时返回日志。"""
+
+    async def stream_install() -> Any:
+        if _browser_install_lock.locked():
+            yield _sse({"type": "error", "message": "已有浏览器环境安装任务正在运行"})
+            return
+
+        async with _browser_install_lock:
+            yield _sse({"type": "status", "status": "running", "message": "开始安装服务端浏览器环境"})
+            commands = _browser_install_commands()
+            for index, command in enumerate(commands, start=1):
+                yield _sse({"type": "status", "status": "running", "step": index, "message": "执行：" + " ".join(command[1:])})
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *command,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    )
+                except Exception as exc:
+                    yield _sse({"type": "error", "message": f"无法启动安装进程：{exc}"})
+                    return
+
+                assert process.stdout is not None
+                async for raw_line in process.stdout:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        yield _sse({"type": "log", "line": line})
+                return_code = await process.wait()
+                if return_code != 0:
+                    yield _sse({"type": "error", "message": f"安装步骤失败，退出码：{return_code}"})
+                    return
+            yield _sse({"type": "done", "status": "success", "message": "服务端浏览器环境安装完成"})
+
+    return StreamingResponse(
+        stream_install(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/profiles", response_model=list[BrowserProfileResponse])
