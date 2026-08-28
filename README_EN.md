@@ -30,7 +30,7 @@ The platform revolves around the following core capability matrix:
 *   📚 **Knowledge Base Center (RAG & Knowledge Hub)**: Tree document management, recall testing, semantic merge; **Knowledge executor** auto-retrieves before ReAct with citation cards.
 *   🔌 **Open Plugin Ecosystem (MCP Integration)**: Fully compliant with Anthropic's Model Context Protocol to connect Jira, Email, GitLab, etc.
 *   🔌 **Flexible Embedded Integration**: Embed Chat SDK for enterprise portals with existing auth, tenant isolation, granular RBAC, and watermark compliance.
-*   ⏰ **Task Scheduler & Multi-Channel Notifications**: Distributed APScheduler + Redis scheduling under agent identities for Cron/periodic/one-off tasks; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**); auto-cleans thinking streams for clean deliveries with overflow protection and ChatBI golden report threshold alerts.
+*   ⏰ **Task Scheduler & Multi-Channel Notifications**: APScheduler with Redis execution locks and an environment-controlled scheduler node for Cron/periodic/one-off tasks under agent identities; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**); auto-cleans thinking streams for clean deliveries with overflow protection and ChatBI golden report threshold alerts.
 *   🛠️ **Debug & Trace**: Decision chains, tool calls, SQL plan cards; CSV/Excel export for structured query results.
 *   ⚙️ **Open Standard APIs**: Standard V1 API suite for third-party systems to trigger agent workflows and queries programmatically.
 *   🎯 **Prompt Factory**: System prompt versioning and drafts under `architech/prompts/`.
@@ -147,7 +147,7 @@ The platform revolves around the following core capability matrix:
 *   **RAGFlow managed path**: Optionally connect RAGFlow-hosted knowledge agents instead.
 
 ### 8. 🛠️ Enterprise Security, Audit & Utilities
-*   **Automated Task Center & Notifications**: Distributed APScheduler + Redis scheduling under agent identities for Cron/periodic/one-off tasks; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**) with thinking stream stripping and overflow protection.
+*   **Automated Task Center & Notifications**: APScheduler with Redis execution locks and an environment-controlled scheduler node for Cron/periodic/one-off tasks under agent identities; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**) with thinking stream stripping and overflow protection.
 *   **ChatBI Golden Report Alerts**: Scheduled report inspection with threshold-hit, deviation rate, consecutive hits, and no-data anomaly alerts.
 *   **Multi-Provider Model Registry**: Built-in presets for OpenAI, Azure, DeepSeek, Kimi, Zhipu GLM, SiliconFlow, Alibaba DashScope, Volcengine Ark (Doubao), Ollama with smart endpoint normalization.
 *   **Platform timezone**: System jobs and subscriptions without an explicit timezone use `platform_timezone` (default `Asia/Shanghai`).

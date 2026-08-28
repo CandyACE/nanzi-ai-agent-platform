@@ -36,7 +36,7 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 *   **平台主库（二选一）**：
     *   **MySQL**（建议 v8.0+）：必须支持 `utf8mb4` 字符集，用以存放平台系统级配置、角色权限、审计日志及智能体元数据。
     *   **PostgreSQL**（建议 v14+）：作为 MySQL 的替代主库；初始化脚本使用 PostgreSQL 原生方言和幂等迁移。
-*   **Redis**：**必须使用支持向量检索的 Redis Stack 版本**（例如 `redis/redis-stack-server:latest`），用以支持平台内部高并发缓存、长期记忆（LTM）向量检索、向量搜索诊断以及分布式异步调度队列（APScheduler）。
+*   **Redis**：**必须使用支持向量检索的 Redis Stack 版本**（例如 `redis/redis-stack-server:latest`），用以支持平台内部高并发缓存、长期记忆（LTM）向量检索、向量搜索诊断以及任务执行期锁与状态缓存（APScheduler 配合 Redis）。
 *   **RAGFlow 生态（若使用知识库和 ChatBI，则为必选）**：如需接入非结构化 SOP 知识库或使用 ChatBI 数据洞察功能，必须保证 RAGFlow 服务就绪并提供相应的 API URL 与 API Key。更多信息请参考 [RAGFlow 官网](https://ragflow.io/)。
 
 ---
@@ -316,6 +316,7 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
         ```
         *注：因容器是网络隔离的沙箱，主库 Host 和 `REDIS_HOST` 均严禁配置为 `localhost` 或 `127.0.0.1`。使用 MySQL 时填写 `MYSQL_HOST`，使用 PostgreSQL 时填写 `POSTGRES_HOST`，可设置为宿主机局域网 IP 或 `host.docker.internal`。*
         *   **`DATABASE_TYPE`（默认 `mysql`）**：选择平台主库类型。设置为 `mysql` 时使用 `MYSQL_*`，设置为 `postgresql` 时使用 `POSTGRES_*`。
+        *   **`TASK_SCHEDULER_ENABLED`（默认 `true`）**：控制当前容器是否启动定时任务调度器。单节点保持 `true`；多节点只给一个节点 `true`，其他 API 节点 `false`。所有节点必须共享同一主库和 Redis，修改后重启对应容器；滚动发布时避免两个节点短时间同时为 `true`。
         *   **`ENCRYPTION_KEY`（必填）**：用户 API Key 的 Fernet 对称加密密钥（用于加密入库 / 后台解密查看）。MySQL 的 `db-prod/INIT-USER-ADMIN.sql` 固定管理员 Key 只在保持 `env.example` 默认密钥时有效；PostgreSQL 不写入固定管理员凭证，会在初始化或手动创建时使用当前密钥生成管理员。生成新密钥示例：
             ```bash
             python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -383,11 +384,14 @@ Docker 打包与启动的完整执行日志，请参考：[start-logs.md](start-
 ```bash
 # 复制并编辑环境变量文件
 cp env.example .env
-# 编辑 .env：选择 MySQL 或 PostgreSQL，并配置 Redis、ENCRYPTION_KEY 等
+# 编辑 .env：选择 MySQL 或 PostgreSQL，并配置 Redis、ENCRYPTION_KEY、TASK_SCHEDULER_ENABLED 等
 
 # 确保数据库结构已经按上面的 MySQL/PostgreSQL 章节初始化
 # 确保本机已安装 Node.js/npm；dev.sh 会自动安装前端 npm 依赖
 ```
+
+源码多节点部署同样遵守调度器节点约束：`TASK_SCHEDULER_ENABLED` 未配置时默认为
+`true`；只保留一个源码进程为 `true`，其他 API 进程设置为 `false`。环境变量修改后需要重启对应进程，开启节点会约每 30 秒从共享任务库同步任务定义。
 
 首次运行需要联网下载 uv、Python 3.11 和 Python 依赖。若需要调整 PyPI 镜像，可设置
 `PYPI_INDEX_URL`；默认使用清华 PyPI 镜像。
@@ -516,3 +520,8 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
     # ./db-prod-pg/reset-admin-password.sh
     ```
     保存终端输出的新 API Key 后登录。若希望继续用初始化脚本里的默认 admin，请将 `ENCRYPTION_KEY` 保持为 `env.example` 中的默认值。
+
+### Q5: 多节点部署时如何避免定时任务重复执行？失败重试在哪里配置？
+*   **调度器节点**：`TASK_SCHEDULER_ENABLED` 未配置时默认为 `true`。多节点部署时只保留一个节点为 `true`，其他 API 节点设置为 `false`；关闭节点仍可提供 API、任务管理和「立即执行」，但不会启动 Cron 定时器。修改 Docker Compose、Kubernetes ConfigMap 或 `.env` 后必须重启对应服务。
+*   **重试配置**：进入 **任务中心 → 编辑定时任务 → 执行失败策略**，设置最大重试次数（`0–3`，默认 `0`）和重试间隔（`1–60` 分钟，默认 `5` 分钟）。该策略只对定时触发失败生效，「立即执行」不会自动重试。
+*   **排查顺序**：确认只有一个节点为 `true`、所有节点连接同一主库和 Redis，再检查任务是否启用、Cron 表达式和平台时区；任务定义修改后通常等待约 30 秒同步。

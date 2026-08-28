@@ -9,6 +9,10 @@ from app.core.orm import AsyncSessionLocal
 from app.core.redis import get_redis
 from app.core.config import settings
 from app.utils.env import get_env
+from app.services.ai.runtime.agentscope.tool_timeout import (
+    AGENT_MAX_TOOLCALL_TIMEOUT_KEY,
+    validate_agent_max_toolcall_timeout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,8 @@ def resolve_effective_sandbox_policy(
 
 def validate_config_update(key: str, value: str) -> None:
     """校验系统配置更新是否合法。"""
-    pass
+    if key == AGENT_MAX_TOOLCALL_TIMEOUT_KEY:
+        validate_agent_max_toolcall_timeout(value)
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",

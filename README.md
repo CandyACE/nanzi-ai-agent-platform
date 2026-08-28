@@ -32,7 +32,7 @@
 *   📚 **可视化知识库管理中心 (RAG & Knowledge Hub)**：非结构化文档树形管理、召回测试、语义合并；**Knowledge 执行器**在 ReAct 前自动检索并注入引用。
 *   🔌 **开放插件生态 (MCP Integration)**：遵循 Anthropic Model Context Protocol 标准，无缝连接 Jira、Email、GitLab 等外部生产力系统。
 *   🔌 **灵活的嵌入式 (Embed) 集成**：通过嵌入式 Chat SDK 快速集成至企业业务系统，对接现有鉴权体系，实现租户隔离、RBAC 权限与水印安全合规。
-*   ⏰ **自动化任务中心与多通道推送 (Task Scheduler & Notifications)**：APScheduler + Redis 分布式任务调度，模拟智能体身份自主执行周期（Cron）、定时与间隔任务；支持 **多通道智能触达**（企业微信、钉钉、飞书、邮件、自定义 Webhook 及站内信通知中心）；内置自动剥离思考过程（纯净业务摘要推送）、超长截断保护与黄金报表异常阈值告警。
+*   ⏰ **自动化任务中心与多通道推送 (Task Scheduler & Notifications)**：APScheduler + Redis 执行期锁，支持通过环境变量指定唯一调度节点，模拟智能体身份自主执行周期（Cron）、定时与间隔任务；支持 **多通道智能触达**（企业微信、钉钉、飞书、邮件、自定义 Webhook 及站内信通知中心）；内置自动剥离思考过程（纯净业务摘要推送）、超长截断保护与黄金报表异常阈值告警。
 *   🛠️ **全链路 Debug 与 Trace**：决策链、工具调用、SQL 计划卡片可视化；结构化查数结果 CSV/Excel 导出。
 *   ⚙️ **标准化 API 开放**：标准化 V1 API 接口，支持外部系统通过 API 直接调用智能体编排与执行能力。
 *   🎯 **提示词工厂 (Prompt Factory)**：系统提示词版本管理与草稿（`architech/prompts/`），生产行为可控可审计。
@@ -155,7 +155,7 @@
 *   **RAGFlow 托管路径**：亦可一键对接 RAGFlow 托管知识智能体，复用外部检索与流式底座。
 
 ### 8. 🛠️ 企业级配套与安全审计 (Enterprise Toolkit & RBAC)
-*   **自动化任务中心与多通道推送**：APScheduler + Redis 分布式调度，支持模拟智能体身份执行周期（Cron）与定时任务；支持**企微、钉钉、飞书、邮件、Webhook 与站内信 (Inbox)** 多通道智能触达，自带思考内容清洗（正文纯净推送）与超长截断保护。
+*   **自动化任务中心与多通道推送**：APScheduler + Redis 执行期锁，支持通过环境变量指定唯一调度节点，模拟智能体身份执行周期（Cron）与定时任务；支持**企微、钉钉、飞书、邮件、Webhook 与站内信 (Inbox)** 多通道智能触达，自带思考内容清洗（正文纯净推送）与超长截断保护。
 *   **黄金报表智能告警**：支持 ChatBI 报表定时巡检，配置阈值告警、变化率偏离、连续命中与无数据告警并自动推送通知。
 *   **多提供商模型管理**：内置 OpenAI, Azure, DeepSeek, Kimi, 智谱 AI, 硅基流动, 阿里云百炼, 火山引擎 (Ark/豆包), Ollama 等模型预设与 Endpoint 智能版本号规范化。
 *   **平台时区配置**：系统调度和未单独指定时区的订阅按 `platform_timezone` 解释时间，默认 `Asia/Shanghai`。
@@ -331,6 +331,7 @@ cd docker
 > 然后按需修改 `.env` 中的关键项：
 > - **数据库**：`DATABASE_TYPE`（`mysql` 默认 / `postgresql`），以及对应的 `MYSQL_*` 或 `POSTGRES_*` 主机、端口、库名、账号与密码；
 > - **Redis**：`REDIS_HOST`、`REDIS_PORT`、`REDIS_DB`、`REDIS_PASSWORD`（无密码时留空）；
+> - **任务调度**：`TASK_SCHEDULER_ENABLED`（默认 `true`）；多节点部署时只在一个节点开启，其他 API 节点设为 `false`；
 > - **加密密钥**：`ENCRYPTION_KEY`（API Key 的对称加密密钥，可保留模板默认值，生产环境务必更换为独立的 Fernet Key）；
 > - **可选集成**：SSO、RAGFlow、Jira 等信息按需填写。
 

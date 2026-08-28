@@ -30,6 +30,7 @@ async def resolve_runtime_tools_from_config(runner: Any) -> list[RuntimeToolSpec
         runner.config.tools,
         implicit_tools=system_tools,
         on_resolved=capture_resolution,
+        agent_timeout=getattr(runner.config, "toolcall_timeout_seconds", None),
     )
     return list(specs)
 

@@ -72,7 +72,10 @@ async def lifespan(app: FastAPI):
 
     # Start Task Scheduler
     from app.services.ai.scheduler_service import scheduler_service
-    await scheduler_service.start()
+    if settings.TASK_SCHEDULER_ENABLED:
+        await scheduler_service.start()
+    else:
+        logging.info("TASK_SCHEDULER_ENABLED 已关闭，当前节点不启动任务调度器")
 
     # local 元数据模式：启动时后台 ensure 索引 + 全量同步（不 DROP）
     import asyncio

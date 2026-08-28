@@ -13,6 +13,10 @@ from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.runtime.agentscope.errors import RuntimeToolError, RuntimeTimeoutError, ToolLoopFuseError
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
+from app.services.ai.runtime.agentscope.tool_timeout import (
+    DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT,
+    effective_tool_timeout,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -323,6 +327,87 @@ class RuntimeToolAuditEvent:
     error: str | None = None
 
 
+def _callable_is_async_generator(callable_obj: Callable[..., Any]) -> bool:
+    return inspect.isasyncgenfunction(callable_obj) or inspect.isasyncgenfunction(
+        getattr(callable_obj, "__call__", None)
+    )
+
+
+def _callable_is_coroutine(callable_obj: Callable[..., Any]) -> bool:
+    return inspect.iscoroutinefunction(callable_obj) or inspect.iscoroutinefunction(
+        getattr(callable_obj, "__call__", None)
+    )
+
+
+def _timeout_parameter_unit(
+    tool_name: str,
+    input_schema: Any,
+) -> str | None:
+    properties = input_schema.get("properties") if isinstance(input_schema, dict) else None
+    timeout_schema = properties.get("timeout") if isinstance(properties, dict) else None
+    if not isinstance(timeout_schema, dict):
+        return None
+    description = str(timeout_schema.get("description") or "").lower()
+    if tool_name == "Bash" or "millisecond" in description or "毫秒" in description:
+        return "milliseconds"
+    return "seconds"
+
+
+def _prepare_timeout_arguments(
+    tool_name: str,
+    arguments: dict[str, Any],
+    input_schema: Any,
+    timeout_seconds: float | None,
+) -> tuple[dict[str, Any], float]:
+    effective = effective_tool_timeout(
+        timeout_seconds or DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT
+    )
+    unit = _timeout_parameter_unit(tool_name, input_schema)
+    if unit is None:
+        return dict(arguments), effective
+
+    adjusted = dict(arguments)
+    multiplier = 1000.0 if unit == "milliseconds" else 1.0
+    adjusted["timeout"] = max(1, int(round(effective * multiplier)))
+    return adjusted, effective
+
+
+async def _invoke_callable_with_timeout(
+    callable_obj: Callable[..., Any],
+    arguments: dict[str, Any],
+    timeout_seconds: float,
+) -> Any:
+    """在统一 deadline 内执行同步/异步 callable。"""
+
+    async def run() -> Any:
+        if _callable_is_async_generator(callable_obj) or _callable_is_coroutine(callable_obj):
+            result = callable_obj(**arguments)
+        else:
+            result = await asyncio.to_thread(callable_obj, **arguments)
+        if inspect.isawaitable(result):
+            result = await result
+        if inspect.isasyncgen(result):
+            try:
+                return [item async for item in result]
+            finally:
+                await _close_async_generator(result)
+        return result
+
+    return await asyncio.wait_for(run(), timeout=timeout_seconds)
+
+
+async def _close_async_generator(generator: Any) -> None:
+    close = getattr(generator, "aclose", None)
+    if close is None:
+        return
+    try:
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        logger.debug("Failed to close timed-out async generator", exc_info=True)
+
+
 @dataclass(frozen=True)
 class RuntimeToolSpec:
     name: str
@@ -344,6 +429,12 @@ class RuntimeToolSpec:
 
     async def invoke(self, arguments: dict[str, Any] | None = None) -> Any:
         arguments = arguments or {}
+        call_arguments, timeout_seconds = _prepare_timeout_arguments(
+            self.name,
+            arguments,
+            self.parameters_schema,
+            self.timeout_seconds,
+        )
         audit_arguments = _redact_runtime_tool_arguments(self.name, arguments)
         start = time.perf_counter()
         await self._emit_audit(
@@ -356,12 +447,11 @@ class RuntimeToolSpec:
             )
         )
         try:
-            result = self.callable(**arguments)
-            if inspect.isawaitable(result):
-                if self.timeout_seconds:
-                    result = await asyncio.wait_for(result, timeout=self.timeout_seconds)
-                else:
-                    result = await result
+            result = await _invoke_callable_with_timeout(
+                self.callable,
+                call_arguments,
+                timeout_seconds,
+            )
             await self._emit_audit(
                 RuntimeToolAuditEvent(
                     tool_name=self.name,
@@ -384,7 +474,7 @@ class RuntimeToolSpec:
             wrapped = RuntimeTimeoutError(
                 f"Tool '{self.name}' timed out",
                 cause=exc,
-                details={"tool_name": self.name, "timeout_seconds": self.timeout_seconds},
+                details={"tool_name": self.name, "timeout_seconds": timeout_seconds},
             )
             await self._emit_error_audit(audit_arguments, start, wrapped)
             raise wrapped from exc
@@ -607,6 +697,9 @@ class AgentScopeNativeApprovalTool:
         user_id: int | str | None = None,
         evidence_types: frozenset[EvidenceType] = frozenset(),
         evidence_policy: str = "non_empty",
+        timeout_seconds: float | None = None,
+        source_type: ToolSourceType = "system",
+        audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None,
     ) -> None:
         self.native_tool = native_tool
         self.name = getattr(native_tool, "name", "")
@@ -619,6 +712,9 @@ class AgentScopeNativeApprovalTool:
         self.user_id = user_id
         self.evidence_types = evidence_types
         self.evidence_policy = evidence_policy
+        self.timeout_seconds = timeout_seconds or DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT
+        self.source_type = source_type
+        self.audit_callback = audit_callback
 
     def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
         if not self.loop_detector:
@@ -756,10 +852,45 @@ class AgentScopeNativeApprovalTool:
             )
 
         is_file_tool = self.name in (WORKSPACE_BUILTIN_TOOL_NAMES | {"read_file", "write_file", "edit_file", "glob_files", "search_text"})
+        call_arguments, timeout_seconds = _prepare_timeout_arguments(
+            self.name,
+            kwargs,
+            self.input_schema,
+            self.timeout_seconds,
+        )
+        audit_arguments = _redact_runtime_tool_arguments(self.name, kwargs)
+        start = time.perf_counter()
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="start",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=audit_arguments,
+            )
+        )
         try:
-            result = self.native_tool(**kwargs)
-            if inspect.isawaitable(result):
-                result = await result
+            async def invoke_native() -> Any:
+                if _callable_is_async_generator(self.native_tool) or _callable_is_coroutine(self.native_tool):
+                    result = self.native_tool(**call_arguments)
+                else:
+                    result = await asyncio.to_thread(self.native_tool, **call_arguments)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+
+            result = await asyncio.wait_for(
+                invoke_native(),
+                timeout=timeout_seconds,
+            )
+            if inspect.isasyncgen(result):
+                return self._stream_native_result(
+                    result,
+                    audit_arguments=audit_arguments,
+                    start=start,
+                    timeout_seconds=timeout_seconds,
+                    is_file_tool=is_file_tool,
+                )
         except Exception as exc:
             if isinstance(exc, PermissionError):
                 raise
@@ -774,10 +905,27 @@ class AgentScopeNativeApprovalTool:
                 pass
             if isinstance(exc, (ToolLoopFuseError, asyncio.CancelledError)):
                 raise
+            if isinstance(exc, TimeoutError):
+                wrapped = RuntimeTimeoutError(
+                    f"Tool '{self.name}' timed out",
+                    cause=exc,
+                    details={
+                        "tool_name": self.name,
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
+                await self._emit_error_audit(audit_arguments, start, wrapped)
+                return self._native_error_chunk(f"工具 [{self.name}] 调用超时: {wrapped}")
             from agentscope.message import TextBlock, ToolResultState
             from agentscope.tool import ToolChunk
 
             msg = enhance_workspace_error_message(exc) if is_file_tool else str(exc)
+            wrapped = RuntimeToolError(
+                f"Tool '{self.name}' failed: {msg}",
+                cause=exc,
+                details={"tool_name": self.name},
+            )
+            await self._emit_error_audit(audit_arguments, start, wrapped)
             logger.warning(
                 "[NativeTool] Tool '%s' execution failed gracefully: %s",
                 self.name,
@@ -797,7 +945,134 @@ class AgentScopeNativeApprovalTool:
             evidence_policy=self.evidence_policy,
             result=result,
         )
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="success",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=audit_arguments,
+                elapsed_ms=(time.perf_counter() - start) * 1000,
+                result_preview=_preview_result(result),
+            )
+        )
         return result
+
+    async def _stream_native_result(
+        self,
+        generator: Any,
+        *,
+        audit_arguments: dict[str, Any],
+        start: float,
+        timeout_seconds: float,
+        is_file_tool: bool,
+    ) -> Any:
+        chunks: list[Any] = []
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async for chunk in generator:
+                    chunks.append(chunk)
+                    yield chunk
+        except asyncio.CancelledError:
+            await _close_async_generator(generator)
+            raise
+        except Exception as exc:
+            await _close_async_generator(generator)
+            if isinstance(exc, PermissionError):
+                raise
+            from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
+
+            try:
+                from agentscope.exception import DeveloperOrientedException
+
+                if isinstance(exc, DeveloperOrientedException):
+                    raise
+            except ImportError:
+                pass
+            if isinstance(exc, ToolLoopFuseError):
+                raise
+            if isinstance(exc, TimeoutError):
+                wrapped = RuntimeTimeoutError(
+                    f"Tool '{self.name}' timed out",
+                    cause=exc,
+                    details={
+                        "tool_name": self.name,
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
+                await self._emit_error_audit(audit_arguments, start, wrapped)
+                yield self._native_error_chunk(f"工具 [{self.name}] 调用超时: {wrapped}")
+                return
+            from app.services.ai.runtime.agentscope.workspace import enhance_workspace_error_message
+
+            msg = enhance_workspace_error_message(exc) if is_file_tool else str(exc)
+            wrapped = RuntimeToolError(
+                f"Tool '{self.name}' failed: {msg}",
+                cause=exc,
+                details={"tool_name": self.name},
+            )
+            await self._emit_error_audit(audit_arguments, start, wrapped)
+            logger.warning(
+                "[NativeTool] Tool '%s' execution failed gracefully: %s",
+                self.name,
+                msg,
+            )
+            yield self._native_error_chunk(f"工具 [{self.name}] 调用发生异常: {msg}")
+            return
+
+        _record_evidence_result(
+            tool_name=self.name,
+            evidence_types=self.evidence_types,
+            evidence_policy=self.evidence_policy,
+            result=chunks,
+        )
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="success",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=audit_arguments,
+                elapsed_ms=(time.perf_counter() - start) * 1000,
+                result_preview=_preview_result(chunks),
+            )
+        )
+
+    @staticmethod
+    def _native_error_chunk(message: str) -> Any:
+        from agentscope.message import TextBlock, ToolResultState
+        from agentscope.tool import ToolChunk
+
+        return ToolChunk(
+            content=[TextBlock(text=message)],
+            state=ToolResultState.ERROR,
+            is_last=True,
+        )
+
+    async def _emit_error_audit(
+        self,
+        arguments: dict[str, Any],
+        start: float,
+        exc: Exception,
+    ) -> None:
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="error",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=arguments,
+                elapsed_ms=(time.perf_counter() - start) * 1000,
+                error=str(exc),
+            )
+        )
+
+    async def _emit_audit(self, event: RuntimeToolAuditEvent) -> None:
+        if not self.audit_callback:
+            return
+        result = self.audit_callback(event)
+        if inspect.isawaitable(result):
+            await result
 
 
 def _load_agentscope_toolkit():
@@ -846,6 +1121,9 @@ def runtime_tool_from_spec(
             user_id=user_id,
             evidence_types=spec.evidence_types,
             evidence_policy=spec.evidence_policy,
+            timeout_seconds=spec.timeout_seconds,
+            source_type=spec.source_type,
+            audit_callback=spec.audit_callback,
         )
     return AgentScopeRuntimeTool(
         spec,
@@ -860,6 +1138,7 @@ def runtime_tool_from_native(
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
     user_id: int | str | None = None,
+    timeout_seconds: float | None = None,
 ) -> Any:
     native_name = str(getattr(native_tool, "name", "") or "")
     evidence_types = NATIVE_TOOL_EVIDENCE_TYPES.get(
@@ -872,6 +1151,7 @@ def runtime_tool_from_native(
         user_id=user_id,
         evidence_types=evidence_types,
         evidence_policy=NATIVE_TOOL_EVIDENCE_POLICIES.get(native_name, "non_empty"),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -925,9 +1205,17 @@ def runtime_tool_spec_from_legacy_tool(
         if hasattr(tool, "arun"):
             return await tool.arun(**kwargs)
         if callable(tool):
-            result = tool(**kwargs)
+            if _callable_is_coroutine(tool) or _callable_is_async_generator(tool):
+                result = tool(**kwargs)
+            else:
+                result = await asyncio.to_thread(tool, **kwargs)
             if inspect.isawaitable(result):
                 return await result
+            if inspect.isasyncgen(result):
+                parts = []
+                async for chunk in result:
+                    parts.append(_tool_chunk_to_text(chunk))
+                return "".join(parts)
             return result
         raise TypeError(f"Tool {getattr(tool, 'name', repr(tool))} is not callable")
 

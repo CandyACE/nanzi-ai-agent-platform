@@ -2948,6 +2948,7 @@ async def build_workspace_toolkit(
     *,
     approval_mode: str | None = None,
     user_info: dict[str, Any] | None = None,
+    agent_timeout: Any = None,
 ):
     """显式合并 LocalWorkspace 内置文件工具与平台工具（Runner 默认不再调用）。
 
@@ -2960,8 +2961,20 @@ async def build_workspace_toolkit(
         runtime_tool_from_native,
         runtime_tool_from_spec,
     )
+    from app.services.ai.runtime.agentscope.tool_timeout import (
+        apply_agent_tool_timeout,
+        load_agent_max_toolcall_timeout,
+        resolve_agent_toolcall_timeout,
+    )
 
     toolkit_cls = _load_agentscope_toolkit()
+    global_tool_timeout = await load_agent_max_toolcall_timeout()
+    agent_tool_timeout = resolve_agent_toolcall_timeout(global_tool_timeout, agent_timeout)
+    tool_specs = apply_agent_tool_timeout(
+        tool_specs,
+        global_tool_timeout,
+        agent_timeout=agent_timeout,
+    )
     workspace_tools = await workspace.list_tools()
     workspace_names = {getattr(tool, "name", "") for tool in workspace_tools}
     if workspace_names != set(WORKSPACE_BUILTIN_TOOL_NAMES):
@@ -2992,7 +3005,11 @@ async def build_workspace_toolkit(
                 workspace_root=workspace_root,
             )
         runtime_workspace_tools.append(
-            runtime_tool_from_native(tool, approval_mode=approval_mode)
+            runtime_tool_from_native(
+                tool,
+                approval_mode=approval_mode,
+                timeout_seconds=agent_tool_timeout,
+            )
         )
     platform_tools = [
         runtime_tool_from_spec(

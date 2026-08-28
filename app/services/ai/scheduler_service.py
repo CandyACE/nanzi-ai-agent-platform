@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +67,7 @@ MAX_TASK_RETRIES = 3
 DEFAULT_TASK_RETRY_DELAY_SEC = 300
 MIN_TASK_RETRY_DELAY_SEC = 60
 MAX_TASK_RETRY_DELAY_SEC = 3600
+SCHEDULER_RECONCILE_INTERVAL_SEC = 30
 
 # 执行期互斥锁：执行期间持有、结束释放（不再是「同一分钟去重」），手动触发同样受锁保护
 _TASK_EXEC_LOCK_PREFIX = "lock:task_exec:"
@@ -109,6 +111,26 @@ def retry_policy_from_task_config(config: Optional[Dict[str, Any]]) -> tuple:
 
 def _task_execution_lock_key(task_id: int) -> str:
     return f"{_TASK_EXEC_LOCK_PREFIX}{task_id}"
+
+
+def _task_id_from_job_id(job_id: str) -> Optional[int]:
+    if not job_id.startswith("task_"):
+        return None
+    raw_id = job_id[len("task_"):].split("_retry_", 1)[0]
+    try:
+        return int(raw_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _saved_report_subscription_id_from_job_id(job_id: str) -> Optional[int]:
+    prefix = "saved_report_subscription_"
+    if not job_id.startswith(prefix):
+        return None
+    try:
+        return int(job_id[len(prefix):])
+    except (TypeError, ValueError):
+        return None
 
 
 async def _acquire_task_execution_lock(task_id: int, ttl_sec: int) -> Optional[str]:
@@ -851,6 +873,16 @@ async def _system_third_party_user_sync_job():
         logger.error(f"❌ Failed to run third-party user sync job: {e}", exc_info=True)
 
 
+async def _system_scheduler_reconcile_job():
+    """从共享任务库对账，接收关闭本地 scheduler 的 API 节点写入。"""
+    try:
+        await scheduler_service.reload_tasks()
+        await scheduler_service.reload_saved_report_subscriptions()
+        logger.info("🔄 Scheduler task definitions reconciled from database.")
+    except Exception as exc:
+        logger.warning("Failed to reconcile scheduler task definitions: %s", exc, exc_info=True)
+
+
 async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bool = False):
     from app.api.portal.endpoints.saved_reports import ExecuteReportRequest, _execute_saved_report_impl
     from app.services.portal_notification_service import PortalNotificationService
@@ -1056,6 +1088,17 @@ class TaskSchedulerService:
             replace_existing=True
         )
 
+        # API 节点可能关闭本地调度器；由唯一的启用节点定期从任务库对账，
+        # 让新增、修改、停用和删除在不重启调度节点的情况下最终生效。
+        self._scheduler.add_job(
+            _system_scheduler_reconcile_job,
+            IntervalTrigger(seconds=SCHEDULER_RECONCILE_INTERVAL_SEC, timezone=tz),
+            id="system_scheduler_reconcile",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
         await self.reschedule_third_party_user_sync()
 
         now = datetime.now(tz)
@@ -1118,37 +1161,61 @@ class TaskSchedulerService:
         await self.start()
 
     async def reload_tasks(self):
+        if not self._scheduler:
+            return
+
+        active_task_ids = set()
         async with AsyncSessionLocal() as session:
             stmt = select(AgentScheduledTask).where(AgentScheduledTask.status == 1)
             result = await session.execute(stmt)
             tasks = result.scalars().all()
             for task in tasks:
+                active_task_ids.add(task.id)
                 await self._add_job_to_memory(task)
+
+        for job in list(self._scheduler.get_jobs()):
+            task_id = _task_id_from_job_id(job.id)
+            if task_id is not None and task_id not in active_task_ids:
+                self._scheduler.remove_job(job.id)
         logger.info(f"Loaded {len(tasks)} active tasks into scheduler.")
 
     async def reload_saved_report_subscriptions(self):
+        if not self._scheduler:
+            return
+
+        active_subscription_ids = set()
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(PortalSavedReportSubscription).where(
                 PortalSavedReportSubscription.status == "active"
             ))
             subscriptions = result.scalars().all()
             for subscription in subscriptions:
+                active_subscription_ids.add(subscription.id)
                 await self.upsert_saved_report_subscription(subscription)
+
+        for job in list(self._scheduler.get_jobs()):
+            subscription_id = _saved_report_subscription_id_from_job_id(job.id)
+            if subscription_id is not None and subscription_id not in active_subscription_ids:
+                self._scheduler.remove_job(job.id)
         logger.info("Loaded %s active saved report subscriptions into scheduler.", len(subscriptions))
 
     async def upsert_saved_report_subscription(self, subscription: PortalSavedReportSubscription):
         if not self._scheduler:
             return
         job_id = f"saved_report_subscription_{subscription.id}"
-        if self._scheduler.get_job(job_id):
+        trigger = CronTrigger.from_crontab(
+            subscription.cron_expr,
+            timezone=subscription.timezone or get_cached_platform_timezone(),
+        )
+        existing_job = self._scheduler.get_job(job_id)
+        if existing_job and subscription.status == "active" and repr(existing_job.trigger) == repr(trigger):
+            return
+        if existing_job:
             self._scheduler.remove_job(job_id)
         if subscription.status == "active":
             self._scheduler.add_job(
                 _saved_report_subscription_wrapper,
-                CronTrigger.from_crontab(
-                    subscription.cron_expr,
-                    timezone=subscription.timezone or get_cached_platform_timezone(),
-                ),
+                trigger,
                 id=job_id, args=[subscription.id], replace_existing=True, misfire_grace_time=3600,
             )
 
@@ -1170,9 +1237,16 @@ class TaskSchedulerService:
             return
             
         job_id = f"task_{task.id}"
-        
+        trigger = CronTrigger.from_crontab(
+            task.cron_expr,
+            timezone=get_cached_platform_timezone(),
+        )
+        existing_job = self._scheduler.get_job(job_id)
+        if existing_job and repr(existing_job.trigger) == repr(trigger):
+            return
+
         # Defensive cleanup: remove if exists
-        if self._scheduler.get_job(job_id):
+        if existing_job:
             self._scheduler.remove_job(job_id)
             logger.info(f"Removed stale job {job_id} from memory")
 
@@ -1180,10 +1254,7 @@ class TaskSchedulerService:
             # Use top-level wrapper function
             self._scheduler.add_job(
                 _scheduled_task_wrapper,
-                CronTrigger.from_crontab(
-                    task.cron_expr,
-                    timezone=get_cached_platform_timezone(),
-                ),
+                trigger,
                 id=job_id,
                 args=[task.id],
                 replace_existing=True,

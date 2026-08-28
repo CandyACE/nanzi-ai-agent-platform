@@ -40,6 +40,7 @@ class AIAgentVersion(Base):
     synthesis_temperature = Column(Float, nullable=True)
     system_prompt = Column(Text, nullable=False)
     tools = Column(JSON) # List of tool names ["tool1", "tool2"]
+    toolcall_timeout_seconds = Column(Integer, nullable=True)  # 版本级工具调用超时；NULL 表示跟随全局
     skills_custom = Column(Boolean, default=False, nullable=False)  # 是否自定义公共 Skills
     skills = Column(JSON)  # 自定义公共技能 ID 列表 ["skill-id", ...]
     welcome_config = Column(JSON, nullable=True)  # 欢迎页三卡片配置（版本级）

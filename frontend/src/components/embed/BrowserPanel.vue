@@ -814,6 +814,16 @@
                     💡 Linux 生产环境若缺少系统底层依赖库，可补充执行：
                     <code class="font-mono font-bold">playwright install-deps chromium</code>
                   </div>
+
+                  <div v-if="installLogs.length" class="rounded-xl border border-slate-200 bg-slate-950 p-2.5 text-[10px] text-slate-200 dark:border-slate-700">
+                    <div class="mb-1 flex items-center justify-between font-semibold text-slate-300">
+                      <span>{{ browserInstallStatus === 'running' ? '安装日志（实时）' : '安装结果' }}</span>
+                      <span v-if="browserInstallStatus === 'running'" class="text-amber-300">安装中…</span>
+                      <span v-else-if="browserInstallStatus === 'success'" class="text-emerald-300">已完成</span>
+                      <span v-else class="text-red-300">失败</span>
+                    </div>
+                    <pre class="max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono leading-relaxed">{{ installLogs.join('\n') }}</pre>
+                  </div>
                 </div>
 
                 <div class="mt-4 flex justify-end gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
@@ -826,8 +836,16 @@
                   </button>
                   <button
                     type="button"
+                    class="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-1.5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                    :disabled="browserInstallStatus === 'running'"
+                    @click="installBrowserEnvironment"
+                  >
+                    {{ browserInstallStatus === 'running' ? '正在安装…' : '管理员一键安装' }}
+                  </button>
+                  <button
+                    type="button"
                     class="rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
-                    @click="reloadPage"
+                    @click="emit('retry')"
                   >
                     已安装，重试连接
                   </button>
@@ -1054,6 +1072,8 @@ const props = defineProps<{
   sessionId: string | null;
   viewerToken: string | null;
   approvalMode: ApprovalMode;
+  environmentError?: string | null;
+  authToken?: string;
 }>();
 
 const pinned = defineModel<boolean>('pinned', { default: true });
@@ -1062,6 +1082,7 @@ const panelWidth = defineModel<number>('panelWidth', { default: 520 });
 const emit = defineEmits<{
   (event: 'close'): void;
   (event: 'close-session', destroyProfile?: boolean): void;
+  (event: 'retry'): void;
   (event: 'update:approval-mode', mode: ApprovalMode): void;
   (event: 'ask-ai-crop', payload: { image: string; question: string }): void;
 }>();
@@ -1177,6 +1198,56 @@ const remoteFocusMessage = ref('');
 const controlOwner = ref<ControlOwner>('ai');
 
 const copiedCmd = ref<string | null>(null);
+const browserInstallStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle');
+const installLogs = ref<string[]>([]);
+
+const installBrowserEnvironment = async () => {
+  if (browserInstallStatus.value === 'running') return;
+  browserInstallStatus.value = 'running';
+  installLogs.value = [];
+  try {
+    const token = props.authToken || (typeof localStorage !== 'undefined'
+      ? localStorage.getItem('yovole_token') || localStorage.getItem('admin_token') || localStorage.getItem('token')
+      : '');
+    const response = await fetch('/api/v1/chat/browser/environment/install/stream', {
+      method: 'POST',
+      headers: {
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({})) as { detail?: string };
+      throw new Error(data.detail || `安装请求失败（HTTP ${response.status}）`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() || '';
+      for (const chunk of chunks) {
+        const line = chunk.split('\n').find((item) => item.startsWith('data: '));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(6)) as { type?: string; line?: string; message?: string; status?: string };
+        if (event.type === 'log' && event.line) installLogs.value.push(event.line);
+        else if (event.message) installLogs.value.push(event.message);
+        if (event.type === 'error') throw new Error(event.message || '安装失败');
+        if (event.type === 'done' && event.status === 'success') browserInstallStatus.value = 'success';
+      }
+      if (done) break;
+    }
+    if (browserInstallStatus.value !== 'success') throw new Error('安装任务未正常结束');
+    await fetchEnvironmentInfo(true);
+    emit('retry');
+  } catch (error: any) {
+    browserInstallStatus.value = 'error';
+    installLogs.value.push(error?.message || '安装失败');
+  }
+};
+
 const copyInstallCmd = async (cmd: string) => {
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -1192,8 +1263,10 @@ const copyInstallCmd = async (cmd: string) => {
 };
 
 const isEnvMissingError = computed(() => {
-  const msg = (errorMessage.value || '').toLowerCase();
+  const msg = `${errorMessage.value || ''} ${props.environmentError || ''}`.toLowerCase();
   return (
+    envInfo.value?.status === 'missing_driver' ||
+    envInfo.value?.status === 'missing_package' ||
     msg.includes('playwright') ||
     msg.includes('运行环境未就绪') ||
     msg.includes('chromium') ||
@@ -1218,7 +1291,9 @@ const envLoading = ref(false);
 const fetchEnvironmentInfo = async (manual = false) => {
   envLoading.value = true;
   try {
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : '';
+    const token = props.authToken || (typeof localStorage !== 'undefined'
+      ? localStorage.getItem('yovole_token') || localStorage.getItem('admin_token') || localStorage.getItem('token')
+      : '');
     const res = await fetch('/api/v1/chat/browser/environment', {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

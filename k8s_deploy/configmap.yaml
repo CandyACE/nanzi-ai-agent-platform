@@ -11,6 +11,8 @@ data:
   API_SERVICE_PORT: "8001"
   API_SERVICE_LOG_LEVEL: "INFO"
   LOG_LEVEL: "INFO"
+  # 多节点部署时只在 scheduler 节点设为 true，其他 API 节点设为 false。
+  TASK_SCHEDULER_ENABLED: "true"
 
   # 按实际部署域名修改；ALLOWED_ORIGINS 必须是 JSON 数组字符串。
   APP_PUBLIC_URL: "https://nanzi.example.com"

@@ -712,6 +712,35 @@ const isConfigItemDisabled = (_category: string, item: ConfigItem) => {
   if (item.key === 'third_party_user_sync_config') return true
   return !canSave
 }
+const getAgentToolcallTimeoutValue = (item: ConfigItem) => {
+  const value = Number(item.value)
+  if (Number.isInteger(value) && value >= 1 && value <= 3600) return value
+  return 120
+}
+const adjustAgentToolcallTimeout = (item: ConfigItem, delta: number) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const current = getAgentToolcallTimeoutValue(item)
+  item.value = String(Math.min(3600, Math.max(1, current + delta)))
+}
+const handleAgentToolcallTimeoutKeydown = (event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Enter', 'Escape'].includes(event.key)) return
+  if (!/^\d$/.test(event.key)) event.preventDefault()
+}
+const handleAgentToolcallTimeoutInput = (item: ConfigItem, event: Event) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const target = event.target as HTMLInputElement
+  const digits = target.value.replace(/\D/g, '')
+  item.value = digits
+  target.value = digits
+}
+const normalizeAgentToolcallTimeoutInput = (item: ConfigItem) => {
+  const digits = String(item.value ?? '').replace(/\D/g, '')
+  const value = Number(digits)
+  item.value = Number.isFinite(value) && Number.isInteger(value) && value >= 1
+    ? String(Math.min(3600, value))
+    : '120'
+}
 const parseJson = (val: string) => {
   try {
     return JSON.parse(val)
@@ -952,6 +981,9 @@ const fetchConfigs = async () => {
     originalConfigs.value = {}
     for (const cat in res.data) {
         res.data[cat].forEach((item: ConfigItem) => {
+            if (item.key === 'agent_max_toolcall_timeout') {
+              item.value = String(getAgentToolcallTimeoutValue(item))
+            }
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
               item.description = '第三方用户同步配置（数据源、表、字段映射、定时周期）'
@@ -1102,6 +1134,7 @@ const getCategoryTip = (key: string) => {
     'llm_temperature': '大模型温度系数，范围为 0.0 至 1.0。趋近于 0.0 表示回答更加确定、严谨和精准（适合数据查询与逻辑推理）；趋近于 1.0 表示回答更具创造力、发散性和随机性。',
     'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
+    'agent_max_toolcall_timeout': '单次 Agent 工具调用的全局超时时间（秒），默认 120 秒，范围 1-3600；版本级配置优先于全局配置。',
     'agent_max_context_turns': '智能体能够保留的最大历史上下文轮数。设置合理的值能防止发送给大模型的消息体过长，从而节约 Token 并加速模型响应。',
     'external_sql_api_url': '用于远程安全沙箱中执行生成 SQL 查询的 API 服务网关地址。直连物理执行模式（local）下此配置项将被忽略。',
     'external_sql_api_key': '用于调用远程安全 SQL 执行服务的身份验证 Token，请确保保密。',
@@ -1425,6 +1458,7 @@ const configShortDescriptions: Record<string, string> = {
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
+  agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 120 秒，范围 1-3600；版本级配置优先于全局配置。',
   agent_context_max_tokens: '上下文 Token 预算上限 (默认 64k，超过则从最早历史开始截断)。',
   agent_max_context_messages: '发送给 LLM 的最大历史消息条目数 (Token 预算优先，此处作为绝对兜底上限，默认 60)。',
   agent_context_compaction_enabled: '上下文超预算时，是否把早期对话压缩为摘录注入，避免丢失关键信息。',
@@ -1450,6 +1484,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   if (category === 'agent') {
     const order = [
       'agent_max_iterations',
+      'agent_max_toolcall_timeout',
       'llm_model_name',
       'multimodal_model_name',
       'llm_temperature',
@@ -3040,6 +3075,37 @@ onUnmounted(() => {
                                   {{ preset.label }}
                                 </button>
                              </div>
+                          </div>
+                          <div v-else-if="item.key === 'agent_max_toolcall_timeout'" class="flex items-center gap-2 max-w-xs">
+                             <button
+                               type="button"
+                               aria-label="减少工具调用超时时间"
+                               :disabled="isConfigItemDisabled(String(category), item) || getAgentToolcallTimeoutValue(item) <= 1"
+                               @click="adjustAgentToolcallTimeout(item, -1)"
+                               class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                             >−</button>
+                             <input
+                               type="number"
+                               inputmode="numeric"
+                               min="1"
+                               max="3600"
+                               step="1"
+                               :value="item.value"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               @keydown="handleAgentToolcallTimeoutKeydown"
+                               @input="handleAgentToolcallTimeoutInput(item, $event)"
+                               @blur="normalizeAgentToolcallTimeoutInput(item)"
+                               aria-label="Agent 工具调用最大超时时间（秒）"
+                               class="min-w-[5rem] rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
+                             />
+                             <button
+                               type="button"
+                               aria-label="增加工具调用超时时间"
+                               :disabled="isConfigItemDisabled(String(category), item) || getAgentToolcallTimeoutValue(item) >= 3600"
+                               @click="adjustAgentToolcallTimeout(item, 1)"
+                               class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                             >+</button>
+                             <span class="text-xs text-gray-500">秒</span>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
