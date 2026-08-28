@@ -39,3 +39,27 @@ def test_skill_flow_guide_banner_contract():
     assert "activeHelpTab" in view
     assert "技能工作台研发规范与全流程指引" in view
     assert "恢复顶部流程提示" in view
+
+
+def test_schema_help_preserves_detailed_third_party_install_guide():
+    view = _source("frontend/src/views/SkillsManagement.vue")
+
+    for marker in (
+        "什么是 Skills 技能",
+        "平台全局技能安装 (npx CLI)",
+        "npx skills add &lt;仓库地址&gt; --skill &lt;skill-id&gt;",
+        "~/.agents/skills",
+        "/app/data/skills",
+        "个人专属技能克隆 (Git clone)",
+        "data/agent_workspaces/{user_key}/skills/{skill_id}",
+        "压缩包导入规范",
+        "必须包含核心指令定义文件",
+        "覆盖模式与安全策略",
+        "安装前确认第三方来源和脚本内容",
+    ):
+        assert marker in view
+
+    assert "const copyCommand = async () =>" in view
+    assert "npx skills add https://github.com/vercel-labs/skills --skill find-skills" in view
+    assert "activeHelpTab = tab as any" in view
+    assert "/api/portal/skills/personal/import" in view
