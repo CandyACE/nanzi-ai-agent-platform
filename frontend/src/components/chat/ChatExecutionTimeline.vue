@@ -162,6 +162,9 @@
                   <div v-if="child.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
                     错误原因：{{ child.error_reason }}
                   </div>
+                  <div v-if="fileMetadataSummary(child.file_metadata)" class="ml-5 truncate text-[10px] text-gray-400 dark:text-gray-500">
+                    {{ fileMetadataSummary(child.file_metadata) }}
+                  </div>
                   <div v-if="child.details && child.isExpanded && !child.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                     <button
                       type="button"
@@ -306,6 +309,9 @@
             <div v-if="item.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
               错误原因：{{ item.error_reason }}
             </div>
+            <div v-if="fileMetadataSummary(item.file_metadata)" class="ml-5 truncate text-[10px] text-gray-400 dark:text-gray-500">
+              {{ fileMetadataSummary(item.file_metadata) }}
+            </div>
             <div v-if="item.details && item.isExpanded && !item.children?.length" class="group/details relative mt-1 border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
               <button
                 type="button"
@@ -443,6 +449,7 @@ import {
   resolveTimelineCurrentStep,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
+  type FileToolMetadata,
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
   type ProcessTimelineTextItem,
@@ -463,6 +470,7 @@ const props = withDefaults(defineProps<{
     category?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    file_metadata?: FileToolMetadata;
     subagent?: ProcessTimelineLogItem["subagent"];
   }>;
   reasoningContent?: string;
@@ -562,7 +570,43 @@ function preparationStatusLabel(item: ProcessTimelineLogItem): string {
 }
 
 function displayTimelineTitle(item: ProcessTimelineLogItem): string {
-  return formatTimelineTitle(item.title || item.tool_name || "执行步骤");
+  const baseTitle = formatTimelineTitle(item.title || item.tool_name || "执行步骤");
+  const metadata = item.file_metadata;
+  if (!metadata) return baseTitle;
+  if (metadata.document_type) {
+    const documentLabel = metadata.document_type === "excel" ? "Excel" : "Word";
+    const operationLabel = metadata.operation === "read" ? "读取" : "编辑";
+    return `${baseTitle} · ${operationLabel} ${documentLabel}`;
+  }
+  const operationLabels: Record<FileToolMetadata["operation"], string> = {
+    read: "读取文件",
+    write: "写入文件",
+    edit: "编辑文件",
+    search: "搜索文件",
+  };
+  return `${baseTitle} · ${operationLabels[metadata.operation]}`;
+}
+
+function fileMetadataSummary(metadata?: FileToolMetadata): string {
+  if (!metadata) return "";
+  const parts: string[] = [`路径：${metadata.path}`];
+  if (metadata.range) {
+    const start = metadata.range.start !== undefined ? `第 ${metadata.range.start} 行` : "指定范围";
+    parts.push(metadata.range.limit !== undefined ? `${start}起 ${metadata.range.limit} 行` : start);
+  }
+  if (metadata.paragraph_range) {
+    parts.push(`第 ${metadata.paragraph_range.start ?? 0} 段起 ${metadata.paragraph_range.limit ?? 0} 段`);
+  }
+  if (metadata.sheet_name) parts.push(`工作表：${metadata.sheet_name}`);
+  if (metadata.cell_range) parts.push(`范围：${metadata.cell_range}`);
+  if (metadata.pattern) parts.push(`关键词：${metadata.pattern}`);
+  if (metadata.glob) parts.push(`匹配：${metadata.glob}`);
+  if (metadata.size_bytes !== undefined) parts.push(`${Math.round(metadata.size_bytes / 1024)}KB`);
+  if (metadata.changes) {
+    const changes = Object.entries(metadata.changes).map(([key, value]) => `${key}：${String(value)}`);
+    if (changes.length) parts.push(changes.join(" · "));
+  }
+  return parts.join(" · ");
 }
 
 function isToolTimelineItem(item: ProcessTimelineLogItem): boolean {

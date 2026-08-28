@@ -182,6 +182,50 @@ def test_platform_prompt_requires_publishing_generated_files_for_download():
     assert "不得返回物理路径或臆造链接" in prompt
 
 
+def test_platform_prompt_describes_bound_office_read_write_tools():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={
+            "word_document_read",
+            "word_document_write",
+            "excel_document_read",
+            "excel_document_write",
+        },
+    )
+
+    assert "word_document_read" in prompt
+    assert "word_document_write" in prompt
+    assert "excel_document_read" in prompt
+    assert "excel_document_write" in prompt
+    assert "Word/Excel" in prompt
+    assert "artifact.download_url" in prompt
+    assert "必须优先调用对应的 *_read 工具" in prompt
+    assert "必须优先调用对应的 *_write 工具" in prompt
+
+
+def test_platform_prompt_does_not_claim_unbound_office_tools():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={"word_document_write"},
+    )
+
+    assert "word_document_write" in prompt
+    assert "excel_document_write" not in prompt
+    assert "excel_document_read" not in prompt
+    assert "Word/Excel" not in prompt
+    assert "Word 文件" in prompt
+
+
+def test_platform_prompt_office_write_does_not_require_duplicate_publish():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={"word_document_write", "publish_generated_file"},
+    )
+
+    assert "word_document_write" in prompt
+    assert "不要再次调用 publish_generated_file" in prompt
+
+
 def test_platform_prompt_inventory_uses_effective_runtime_tool_names():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,

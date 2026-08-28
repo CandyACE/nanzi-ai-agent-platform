@@ -6,6 +6,8 @@ import logging
 import re
 import asyncio
 import contextlib
+import os
+import posixpath
 from dataclasses import replace
 from typing import List, Dict, Any, AsyncGenerator, Optional, Set
 from datetime import datetime
@@ -111,6 +113,223 @@ from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
+
+
+_FILE_TOOL_OPERATIONS = {
+    "Read": "read",
+    "Write": "write",
+    "Edit": "edit",
+    "Glob": "search",
+    "Grep": "search",
+}
+
+
+def _extract_agentscope_tool_call_input(agent: Any, tool_id: str) -> Any:
+    """Read the final tool input saved in AgentScope's assistant context.
+
+    AgentScope 2.x streams tool arguments as deltas, but the authoritative
+    ``ToolCallBlock`` is also saved in ``agent.state.context`` before the tool
+    runs.  The context is a useful fallback when a provider emits an empty or
+    malformed argument delta while still executing the parsed tool call.
+    """
+    if agent is None or not tool_id:
+        return None
+    context = getattr(getattr(agent, "state", None), "context", None)
+    if not isinstance(context, (list, tuple)):
+        return None
+
+    for message in reversed(context):
+        blocks: Any = None
+        get_content_blocks = getattr(message, "get_content_blocks", None)
+        if callable(get_content_blocks):
+            try:
+                blocks = get_content_blocks("tool_call")
+            except Exception:
+                blocks = None
+        elif isinstance(message, dict):
+            blocks = message.get("content")
+        if not isinstance(blocks, (list, tuple)):
+            blocks = [blocks] if blocks is not None else []
+
+        for block in reversed(blocks):
+            block_id = (
+                block.get("id")
+                if isinstance(block, dict)
+                else getattr(block, "id", None)
+            )
+            if str(block_id or "") != str(tool_id):
+                continue
+            return (
+                block.get("input")
+                if isinstance(block, dict)
+                else getattr(block, "input", None)
+            )
+    return None
+
+
+def _parse_tool_args_object(value: Any) -> Dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _resolve_agentscope_tool_args(
+    agent: Any,
+    tool_id: str,
+    streamed_args: Any,
+) -> Dict[str, Any]:
+    """Resolve tool args without changing the model-facing tool contract."""
+    streamed = _parse_tool_args_object(streamed_args)
+    saved = _parse_tool_args_object(
+        _extract_agentscope_tool_call_input(agent, tool_id)
+    )
+    if streamed:
+        return streamed
+    if saved is not None:
+        return saved
+    if streamed is not None:
+        return streamed
+    return {"input": streamed_args} if streamed_args else {}
+
+
+def _logical_file_tool_path(raw_path: Any) -> str | None:
+    """Convert an authorized backend file-tool path to a safe logical path."""
+    raw = str(raw_path or "").strip().replace("\\", "/")
+    if not raw:
+        return None
+    normalized = posixpath.normpath(raw)
+    if normalized in {".", ".."} or normalized.startswith("../"):
+        return None
+    if normalized == "/workspace" or normalized.startswith("/workspace/"):
+        return normalized
+
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts:
+        return None
+
+    # Public docs/skills and user workspaces may arrive as backend-service
+    # paths (for example /app/data/docs or /app/data/agent_workspaces/<key>).
+    for index in range(len(parts) - 1):
+        if parts[index : index + 2] == ["data", "docs"]:
+            suffix = parts[index + 2 :]
+            return posixpath.join("/workspace/public/docs", *suffix) if suffix else "/workspace/public/docs"
+        if parts[index : index + 2] == ["data", "skills"]:
+            suffix = parts[index + 2 :]
+            return posixpath.join("/workspace/skills", *suffix) if suffix else "/workspace/skills"
+
+    if "agent_workspaces" in parts:
+        index = parts.index("agent_workspaces")
+        suffix = parts[index + 2 :]
+        allowed_roots = {"docs", "sessions", "uploads", "skills", ".trash"}
+        if not suffix:
+            return "/workspace"
+        if suffix[0] in allowed_roots:
+            return posixpath.join("/workspace", *suffix)
+        return None
+
+    # Relative file-tool arguments are relative to the user workspace. Keep
+    # them in the same logical namespace instead of dropping the metadata.
+    if not normalized.startswith("/"):
+        return posixpath.join("/workspace", normalized)
+
+    # Service-root help files are intentionally not mounted into Bash, but
+    # /app/<name>.md is the documented backend path for Read/Glob/Grep.
+    if normalized.startswith("/app/") and normalized.count("/") == 2 and normalized.endswith(".md"):
+        return normalized
+    return None
+
+
+def _build_file_tool_metadata(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    tool_output: Any = None,
+) -> Dict[str, Any] | None:
+    """Build safe, logical-path metadata for workspace file tools."""
+    tool_name = str(tool_name or "")
+    document_type = (
+        "word"
+        if tool_name.startswith("word_document_")
+        else "excel"
+        if tool_name.startswith("excel_document_")
+        else None
+    )
+    if document_type:
+        action = str(tool_args.get("action") or "")
+        raw_path = str(tool_args.get("output_filename") or tool_args.get("path") or "").strip()
+        if not raw_path:
+            return None
+        output = tool_output if isinstance(tool_output, dict) else {}
+        artifact = output.get("artifact") if isinstance(output.get("artifact"), dict) else {}
+        changes = output.get("changes") if isinstance(output.get("changes"), dict) else {}
+        metadata: Dict[str, Any] = {
+            "operation": "read" if tool_name.endswith("_read") else "write",
+            "document_type": document_type,
+            "action": action,
+            "target_type": "file",
+            "path": os.path.basename(raw_path),
+            "file_name": os.path.basename(raw_path),
+        }
+        extension = os.path.splitext(raw_path)[1]
+        if extension:
+            metadata["file_extension"] = extension
+        if document_type == "word" and tool_name.endswith("_read") and action == "read_content":
+            metadata["paragraph_range"] = {
+                "start": tool_args.get("start", 0),
+                "limit": tool_args.get("limit", 20),
+            }
+        if document_type == "excel":
+            if tool_args.get("sheet_name"):
+                metadata["sheet_name"] = str(tool_args["sheet_name"])
+            if tool_args.get("cell_range"):
+                metadata["cell_range"] = str(tool_args["cell_range"])
+        if changes:
+            metadata["changes"] = changes
+        if artifact.get("size") is not None:
+            metadata["size_bytes"] = artifact["size"]
+        if artifact.get("mime_type"):
+            metadata["mime_type"] = artifact["mime_type"]
+        return metadata
+
+    operation = _FILE_TOOL_OPERATIONS.get(tool_name)
+    if operation is None:
+        return None
+
+    path_key = "file_path" if tool_name in {"Read", "Write", "Edit"} else "path"
+    raw_path = _logical_file_tool_path(tool_args.get(path_key))
+    if raw_path is None:
+        return None
+
+    metadata: Dict[str, Any] = {
+        "operation": operation,
+        "path": raw_path,
+        "target_type": "file" if path_key == "file_path" else "directory",
+        "file_name": os.path.basename(raw_path) if path_key == "file_path" else None,
+    }
+    if path_key == "file_path":
+        extension = os.path.splitext(raw_path)[1]
+        if extension:
+            metadata["file_extension"] = extension
+        if tool_name == "Read":
+            offset = tool_args.get("offset")
+            limit = tool_args.get("limit")
+            if offset is not None or limit is not None:
+                metadata["range"] = {
+                    key: value
+                    for key, value in (("start", offset), ("limit", limit))
+                    if value is not None
+                }
+    else:
+        if tool_args.get("pattern"):
+            metadata["pattern"] = str(tool_args["pattern"])
+        if tool_args.get("glob"):
+            metadata["glob"] = str(tool_args["glob"])
+    return metadata
 
 
 def _is_grounding_bufferable_chunk(chunk: Dict[str, Any]) -> bool:
@@ -1517,11 +1736,8 @@ class AssistantAgentRunner(BaseExecutor):
                 }
                 return
 
-            raw_args = tool_args_text.get(tool_id, "") or "{}"
-            try:
-                tool_args = json.loads(raw_args)
-            except Exception:
-                tool_args = {"input": raw_args}
+            raw_args = tool_args_text.get(tool_id, "")
+            tool_args = _resolve_agentscope_tool_args(agent, tool_id, raw_args)
             if tool_name == "browser_fill" and isinstance(tool_args, dict):
                 from app.services.ai.browser.browser_policy import redact_browser_arguments
 
@@ -2401,6 +2617,9 @@ class AssistantAgentRunner(BaseExecutor):
             "model": t_model,
             "temperature": t_temp,
         }
+        file_metadata = _build_file_tool_metadata(tool_name, tool_args, tool_output)
+        if file_metadata:
+            log_event["file_metadata"] = file_metadata
         normalized_result_state = normalize_tool_result_state(tool_result_state)
         if normalized_result_state:
             log_event["tool_result_state"] = normalized_result_state

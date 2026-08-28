@@ -26,6 +26,156 @@ def _tool(name: str, description: str = ""):
     return SimpleNamespace(name=name, description=description)
 
 
+def _office_tools(*names):
+    descriptions = {
+        "word_document_read": "读取 Word 文档结构或内容",
+        "word_document_write": "创建或修改 Word 文档并生成可下载文件",
+        "excel_document_read": "读取 Excel 工作簿结构或单元格区域",
+        "excel_document_write": "创建或修改 Excel 副本并生成可下载文件",
+    }
+    return [_tool(name, descriptions[name]) for name in names]
+
+
+@pytest.mark.parametrize(
+    ("query", "tool_name"),
+    [
+        ("读取这个 Word 文档的内容", "word_document_read"),
+        ("帮我查看 Excel 的 A1:C10", "excel_document_read"),
+        ("把刚才内容保存为 Word 文档并给我下载地址", "word_document_write"),
+        ("把这些数据导出为 Excel 文件", "excel_document_write"),
+    ],
+)
+def test_office_nudge_uses_deterministic_chinese_intent(query, tool_name):
+    nudge = resolve_tool_nudge(query, _office_tools(
+        "word_document_read",
+        "word_document_write",
+        "excel_document_read",
+        "excel_document_write",
+    ))
+
+    assert nudge is not None
+    assert nudge.tool_name == tool_name
+    assert nudge.should_force_first_call is True
+
+
+def test_office_explicit_tool_name_keeps_original_tool_name():
+    nudge = resolve_tool_nudge(
+        "请调用 word_document_write 保存这份内容",
+        _office_tools("word_document_write"),
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "word_document_write"
+    assert "word_document_write" in nudge.message
+    assert nudge.should_force_first_call is True
+
+
+def test_office_nudge_requires_the_target_tool_to_be_mounted():
+    assert resolve_tool_nudge(
+        "把内容保存为 Word 文档",
+        _office_tools("excel_document_write"),
+    ) is None
+
+
+def test_existing_file_download_request_does_not_force_office_write():
+    assert resolve_tool_nudge(
+        "请给我这个已有 Word 文件的下载地址",
+        _office_tools("word_document_write"),
+    ) is None
+
+
+def test_office_type_ambiguity_does_not_force_a_tool():
+    assert resolve_tool_nudge(
+        "请把这份文档保存并提供下载地址",
+        _office_tools("word_document_write", "excel_document_write"),
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "无需调用 word_document_write",
+        "请勿调用 word_document_write",
+        "word_document_write 是什么工具？",
+        "word_document_read 和 word_document_write 有什么区别？",
+        "请处理这个 Word 文件",
+    ],
+)
+def test_office_nudge_does_not_force_non_execution_or_ambiguous_requests(query):
+    assert resolve_tool_nudge(
+        query,
+        _office_tools(
+            "word_document_read",
+            "word_document_write",
+            "excel_document_read",
+            "excel_document_write",
+        ),
+    ) is None
+
+
+def test_ambiguous_office_reference_keeps_unrelated_generic_tool_available():
+    nudge = resolve_tool_nudge(
+        "请搜索 Word 文件中的关键字",
+        _office_tools("word_document_write")
+        + [_tool("Grep", "在文件内容中搜索关键字")],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "Grep"
+
+
+def test_explicit_multiple_tool_names_do_not_fallback_to_bound_tool():
+    assert resolve_tool_nudge(
+        "请调用 word_document_write 和 excel_document_write",
+        _office_tools("word_document_write"),
+    ) is None
+
+
+def test_mixed_office_read_write_request_is_not_forced_without_todo():
+    assert resolve_tool_nudge(
+        "先读取 Word 文档，再保存为 Word 文档",
+        _office_tools("word_document_read", "word_document_write"),
+    ) is None
+
+
+def test_mixed_office_read_write_request_keeps_todo_priority_when_available():
+    nudge = resolve_tool_nudge(
+        "先读取 Word 文档，再保存为 Word 文档",
+        _office_tools("word_document_read", "word_document_write")
+        + [_tool("todo_write", "创建和更新任务清单")],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "todo_write"
+    assert nudge.should_force_first_call is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "不要保存为 Word 文档",
+        "不需要保存 Word 文档",
+        "无需生成 Excel 文件",
+    ],
+)
+def test_negated_office_write_request_does_not_force_write(query):
+    assert resolve_tool_nudge(
+        query,
+        _office_tools("word_document_write", "excel_document_write"),
+    ) is None
+
+
+def test_colloquial_read_request_selects_office_read_tool():
+    nudge = resolve_tool_nudge(
+        "帮我读一下这个 Excel 文件",
+        _office_tools("excel_document_read"),
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "excel_document_read"
+    assert nudge.should_force_first_call is True
+
+
 def test_nudges_tool_by_description_relevance():
     # 候选完全来自工具 name+description 与问题的字符重叠，不依赖写死的工具名/类别。
     tools = [

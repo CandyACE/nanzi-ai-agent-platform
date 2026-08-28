@@ -123,6 +123,8 @@ def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
         existing["category"] = chunk.get("category")
     if chunk.get("execution_time_ms") is not None:
         existing["execution_time_ms"] = chunk.get("execution_time_ms")
+    if "file_metadata" in chunk:
+        existing["file_metadata"] = chunk.get("file_metadata")
 
 
 def _next_id(items: List[Dict[str, Any]], prefix: str) -> str:
@@ -428,6 +430,7 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         "details": str(chunk.get("details") or ""),
         "status": str(chunk.get("status") or "success"),
         "category": chunk.get("category"),
+        "file_metadata": chunk.get("file_metadata"),
         "execution_time_ms": chunk.get("execution_time_ms"),
         "subagent": chunk.get("subagent"),
         "isExpanded": False,
@@ -489,6 +492,8 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
         copied["execution_time_ms"] = item.get("execution_time_ms")
     if item.get("subagent") is not None:
         copied["subagent"] = item.get("subagent")
+    if item.get("file_metadata") is not None:
+        copied["file_metadata"] = item.get("file_metadata")
     if item.get("children"):
         copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied

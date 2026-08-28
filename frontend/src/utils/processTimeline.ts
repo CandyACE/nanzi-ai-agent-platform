@@ -4,6 +4,25 @@ export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning";
 export type ToolResolutionStatus = "disabled" | "missing" | "filtered";
 export type ProcessTimelineTodoStatus = "pending" | "in_progress" | "completed";
 
+export type FileToolMetadata = {
+  operation: "read" | "write" | "edit" | "search";
+  path: string;
+  target_type: "file" | "directory";
+  document_type?: "word" | "excel";
+  action?: string;
+  file_name?: string | null;
+  file_extension?: string;
+  range?: { start?: number; limit?: number };
+  paragraph_range?: { start?: number; limit?: number };
+  sheet_name?: string;
+  cell_range?: string;
+  pattern?: string;
+  glob?: string;
+  changes?: Record<string, unknown>;
+  size_bytes?: number;
+  mime_type?: string;
+};
+
 export type ProcessTimelineTextItem = {
   kind: "text";
   id: string;
@@ -31,6 +50,7 @@ export type ProcessTimelineLogItem = {
   error_reason?: string;
   category?: string;
   tool_name?: string;
+  file_metadata?: FileToolMetadata;
   resolution_status?: ToolResolutionStatus;
   execution_time_ms?: number | null;
   started_at?: number | null;
@@ -492,6 +512,7 @@ export function upsertTimelineLog(
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
@@ -508,6 +529,7 @@ export function upsertTimelineLog(
     if (data.error_reason !== undefined) existing.error_reason = data.error_reason;
     if (data.category !== undefined) existing.category = data.category;
     if (data.tool_name !== undefined) existing.tool_name = data.tool_name;
+    if (data.file_metadata !== undefined) existing.file_metadata = data.file_metadata;
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
@@ -551,6 +573,7 @@ export function upsertTimelineLog(
     error_reason: data.error_reason,
     category: data.category,
     tool_name: data.tool_name,
+    file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     execution_time_ms: data.execution_time_ms,
     started_at: data.started_at,
@@ -614,6 +637,7 @@ export function mergeTimelineLogs(
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
@@ -643,6 +667,7 @@ export function mergeTimelineLogs(
         targetLog.error_reason = log.error_reason ?? targetLog.error_reason;
         targetLog.category = log.category ?? targetLog.category;
         targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
+        targetLog.file_metadata = log.file_metadata ?? targetLog.file_metadata;
         targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
         targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
         targetLog.started_at = log.started_at ?? targetLog.started_at;
@@ -744,6 +769,7 @@ export function buildLegacyProcessTimeline(input: {
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
