@@ -439,6 +439,18 @@ async def execute_sql_query_core(
             return f"Error: Dataset '{dataset_name}' not found. Please verify the dataset name."
 
     dialect = dialect_from_data_source(data_source)
+    if dialect == "postgres":
+        # PostgreSQL 数据源需要兼容历史业务指标中遗留的 ClickHouse 日期函数。
+        from app.services.data_adapter.postgresql import normalize_postgresql_sql
+
+        original_sql = sql
+        sql = normalize_postgresql_sql(sql)
+        if sql != original_sql:
+            logger.info(
+                "已为 PostgreSQL 查询应用 SQL 方言兼容转换: data_source=%s, dataset=%s",
+                data_source,
+                dataset_name or "未指定",
+            )
     if binding is not None:
         binding = await prepare_binding_for_execution(
             session,

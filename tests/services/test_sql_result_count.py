@@ -101,6 +101,33 @@ async def test_count_failure_keeps_detail_rows_without_claiming_exact_total():
 
 
 @pytest.mark.asyncio
+async def test_local_postgresql_execution_normalizes_legacy_metric_functions():
+    """验证统一 SQL 执行入口会在调用 PostgreSQL 适配器前转换历史指标函数。"""
+    adapter = MagicMock()
+    adapter.execute_sql = AsyncMock(
+        return_value={"columns": [{"name": "created_day"}], "items": [["2026-08-28"]]}
+    )
+
+    async def config_get(key, default=None):
+        return {"data_api_timeout_seconds": "60"}.get(key, default)
+
+    with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "local"}), \
+         patch("app.services.data_adapter.factory.get_adapter", return_value=adapter), \
+         patch("app.services.config_service.ConfigService.get", side_effect=config_get), \
+         patch("app.core.redis.get_redis", return_value=None):
+        result = await call_external_sql_api(
+            "SELECT toDate(parseDateTimeBestEffort(create_time)) AS created_day FROM orders",
+            data_source="postgresql_demo",
+        )
+
+    assert "created_day" in result
+    executed_sql = adapter.execute_sql.await_args.args[0]
+    assert "parseDateTimeBestEffort" not in executed_sql
+    assert "toDate(" not in executed_sql
+    assert "CAST(CAST(create_time AS TIMESTAMP) AS DATE)" in executed_sql
+
+
+@pytest.mark.asyncio
 async def test_remote_sql_result_contains_exact_total_and_keeps_detail_limit():
     count_response = MagicMock(is_error=False)
     count_response.json.return_value = {

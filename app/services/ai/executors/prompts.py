@@ -132,7 +132,10 @@ class DataQueryPrompts:
                 elif "oracle" in ds_type_lower:
                     dialect_note = "Oracle（请使用 Oracle 语法，例如 TRUNC(field) 而非 field::DATE）"
                 elif "postgresql" in ds_type_lower or "postgres" in ds_type_lower:
-                    dialect_note = "PostgreSQL（支持 field::DATE 转换语法）"
+                    dialect_note = (
+                        "PostgreSQL（请使用 CAST(field AS DATE/TIMESTAMP)、DATE_TRUNC、EXTRACT；"
+                        "禁止使用 ClickHouse 的 toDate、parseDateTimeBestEffort、toDateTime、toYYYYMM 等函数）"
+                    )
                 elif "sqlite" in ds_type_lower:
                     dialect_note = "SQLite（请使用 DATE(field) 函数）"
                 else:

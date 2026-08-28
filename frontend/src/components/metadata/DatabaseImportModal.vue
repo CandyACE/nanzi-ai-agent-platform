@@ -102,6 +102,7 @@ const fetchSavedConfigs = async () => {
 // ─── 数据库类型列表 ───────────────────────────────────────────────────────────
 const dbTypes = [
   { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306, disabled: false },
+  { id: 'postgresql', name: 'PostgreSQL', icon: '🐘', defaultPort: 5432, disabled: false },
   { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000, disabled: false },
   { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521, disabled: false },
   { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433, disabled: false },

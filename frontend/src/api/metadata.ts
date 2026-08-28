@@ -194,8 +194,12 @@ export const metadataApi = {
     axios.get<AllTablesDataset[]>(`${API_BASE}/all-tables`),
 
   // AI Assistant / Import (Mock for Phase 4)
-  analyzeDDL: (ddl: string) =>
-    axios.post(`${API_BASE}/tables/import`, { ddl }, { timeout: 300000 }),
+  analyzeDDL: (ddl: string, dataSource?: string) =>
+    axios.post(
+      `${API_BASE}/tables/import`,
+      { ddl, ...(dataSource ? { data_source: dataSource } : {}) },
+      { timeout: 300000 }
+    ),
   
   recommendMetrics: (datasetId: number, params?: { table_names?: string[]; user_prompt?: string }, signal?: AbortSignal) =>
     axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, params || {}, { timeout: 300000, signal }),
@@ -299,4 +303,3 @@ export const metadataApi = {
   toggleDbTableProfileIgnore: (configId: number, tableName: string, isIgnored: number) =>
     axios.put<any>(`${API_BASE}/db/connection-configs/${configId}/table-profiles/ignore`, { table_name: tableName, is_ignored: isIgnored }),
 };
-

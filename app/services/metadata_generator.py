@@ -141,7 +141,10 @@ class MetadataGeneratorService:
             logger.error(f"Failed to save trace log: {e}", exc_info=True)
 
     @staticmethod
-    async def generate_from_ddl(content: str) -> Dict[str, Any]:
+    async def generate_from_ddl(
+        content: str,
+        data_source: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         利用 LLM 对输入内容进行深度语义分析，提取并推断业务元数据。
         支持 DDL、Markdown 表格或自然语言描述。
@@ -155,7 +158,16 @@ class MetadataGeneratorService:
         
         try:
             # Step 1: Initialization
-            await MetadataGeneratorService._save_trace_log(trace_id, 1, "start", {"input_length": len(content), "preview": content[:200]})
+            await MetadataGeneratorService._save_trace_log(
+                trace_id,
+                1,
+                "start",
+                {
+                    "input_length": len(content),
+                    "preview": content[:200],
+                    "data_source": data_source or "default_clickhouse",
+                },
+            )
 
             # 1. 获取 LLM (适配 Model Management)
             from app.services.ai.config import AgentConfigProvider
@@ -191,6 +203,26 @@ class MetadataGeneratorService:
                 if "{format_instructions}" not in system_prompt_template:
                     system_prompt_template += "\n\n{format_instructions}"
 
+            from app.services.sql_query_execution_service import dialect_from_data_source
+
+            sql_dialect = dialect_from_data_source(data_source)
+            dialect_instruction = (
+                "PostgreSQL 标准 SQL（日期转换使用 CAST、DATE_TRUNC、EXTRACT，禁止使用 toDate、"
+                "parseDateTimeBestEffort、toDateTime、toYYYYMM 等 ClickHouse 函数）"
+                if sql_dialect == "postgres"
+                else f"{sql_dialect} 标准 SQL（禁止使用其他数据库的专有函数）"
+            )
+            # 将方言约束放入系统提示，避免数据库专属提示词覆盖用户消息中的兼容要求。
+            system_prompt_template = (
+                f"{system_prompt_template.rstrip()}\n\n"
+                f"【业务指标 SQL 方言要求】calculation_logic 必须使用{dialect_instruction}。"
+            )
+            logger.info(
+                "开始从 DDL 生成元数据: data_source=%s, sql_dialect=%s",
+                data_source or "default_clickhouse",
+                sql_dialect,
+            )
+
             logger.info(f"Generating metadata for content (first 100 chars): {content[:100]}...")
             
             
@@ -200,7 +232,7 @@ class MetadataGeneratorService:
                 llm,
                 ImportResult,
                 system_prompt_template,
-                f"请分析以下内容并生成元数据：\n\n{content}",
+                f"请分析以下内容并生成元数据。业务指标 calculation_logic 必须使用{dialect_instruction}。\n\n{content}",
             )
             
             duration_llm = (time.time() - start_llm) * 1000
@@ -231,6 +263,7 @@ class MetadataGeneratorService:
         schema_context: str,
         user_prompt: Optional[str] = None,
         existing_metrics: Optional[List[Any]] = None,
+        data_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         根据数据集 Schema 推荐业务指标，支持用户自定义需求与10分钟内防重复推荐
@@ -292,7 +325,41 @@ class MetadataGeneratorService:
             # Get configured LLM
             llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
 
-            # 4. 组装 Prompt
+            # 4. 根据数据集绑定的数据源生成方言约束，避免 PostgreSQL 误用 ClickHouse 函数。
+            from app.services.sql_query_execution_service import dialect_from_data_source
+
+            sql_dialect = dialect_from_data_source(data_source)
+            dialect_instructions = {
+                "postgres": (
+                    "目标数据源为 PostgreSQL。calculation_logic 必须使用 PostgreSQL 标准 SQL；"
+                    "日期转换使用 CAST(field AS DATE/TIMESTAMP)、DATE_TRUNC、EXTRACT，"
+                    "禁止使用 ClickHouse 的 toDate、parseDateTimeBestEffort、toDateTime、toYYYYMM 等函数。"
+                ),
+                "mysql": (
+                    "目标数据源为 MySQL。calculation_logic 必须使用 MySQL 标准 SQL；"
+                    "日期转换使用 DATE(field)、DATE_FORMAT 等函数，禁止使用 ClickHouse 专有函数。"
+                ),
+                "oracle": (
+                    "目标数据源为 Oracle。calculation_logic 必须使用 Oracle 标准 SQL；"
+                    "日期转换使用 TRUNC、TO_DATE、TO_CHAR 等函数，禁止使用 ClickHouse 专有函数。"
+                ),
+                "tsql": (
+                    "目标数据源为 SQL Server。calculation_logic 必须使用 SQL Server 标准 SQL；"
+                    "日期转换使用 CAST/CONVERT、DATEPART 等函数，禁止使用 ClickHouse 专有函数。"
+                ),
+            }
+            dialect_instruction = dialect_instructions.get(
+                sql_dialect,
+                "目标数据源为 ClickHouse。calculation_logic 可以使用 ClickHouse 标准 SQL 日期函数。",
+            )
+            logger.info(
+                "开始推荐业务指标: dataset_id=%s, data_source=%s, sql_dialect=%s",
+                dataset_id,
+                data_source or "未指定",
+                sql_dialect,
+            )
+
+            # 5. 组装 Prompt
             prompt_segments = [
                 "你是一个精通数据分析的 BI 专家。",
                 "请分析给定的数据库 Schema（包含表结构、字段含义），推荐 5-10 个**最有业务价值**的分析指标。",
@@ -301,7 +368,7 @@ class MetadataGeneratorService:
                 "2. **维度分布 (Dimension)**: 如按类别分组统计 (e.g., '各区域机房分布', '设备类型占比')。",
                 "3. **常用视图 (Data View)**: 常用查询字段组合 (e.g., '机房详细列表: 名称, 编码, 地址')。\n",
                 "对于 SQL (calculation_logic 字段)：",
-                "- 必须是合法的 ClickHouse SQL 表达式或完整 Query。",
+                f"- {dialect_instruction}",
                 "- 对于分布/视图类，请写出完整的 `SELECT ... FROM ... [GROUP BY ...]` 语句。",
                 "- 禁止使用中文别名。"
             ]
@@ -320,7 +387,7 @@ class MetadataGeneratorService:
             prompt_segments.append("{format_instructions}")
             system_prompt = "\n".join(prompt_segments)
             
-            # 5. Invoke LLM
+            # 6. Invoke LLM
             start_llm = time.time()
             result = await MetadataGeneratorService._invoke_json(
                 llm,
@@ -330,7 +397,7 @@ class MetadataGeneratorService:
             )
             duration_llm = (time.time() - start_llm) * 1000
 
-            # 6. 后置去重过滤与写入 Redis 10分钟缓存
+            # 7. 后置去重过滤与写入 Redis 10分钟缓存
             raw_metrics = result.get("metrics", []) if isinstance(result, dict) else (getattr(result, "metrics", []) if hasattr(result, "metrics") else [])
             filtered_metrics = []
             new_metric_names = []
@@ -364,7 +431,7 @@ class MetadataGeneratorService:
                 except Exception as ex:
                     logger.warning(f"Failed to save recommended metrics to Redis: {ex}")
             
-            # 7. Log Success
+            # 8. Log Success
             await MetadataGeneratorService._save_trace_log(trace_id, 4, "llm_success", result, execution_time=duration_llm)
                 
             return result

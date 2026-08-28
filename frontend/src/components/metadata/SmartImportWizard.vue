@@ -266,7 +266,9 @@ const handleAnalyze = async () => {
   startFakeProgress()
   
   try {
-    const res = await metadataApi.analyzeDDL(ddlText.value)
+    // 分析阶段即传递目标数据源，避免 PostgreSQL 导入指标先按 ClickHouse 生成。
+    const analysisDataSource = props.datasetDataSource || importDataSourceName.value || defaultDataSource.value
+    const res = await metadataApi.analyzeDDL(ddlText.value, analysisDataSource || undefined)
     
     // Capture Trace ID on success (if available)
     if (res.data?.data?._trace_id) {
