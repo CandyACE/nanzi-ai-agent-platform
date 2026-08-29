@@ -375,6 +375,46 @@ async def test_workspace_path_denial_does_not_raise_from_read_only_fast_path(tmp
 
 
 @pytest.mark.asyncio
+async def test_workspace_missing_file_tool_argument_reaches_tool_validation(tmp_path):
+    from agentscope.permission import PermissionBehavior
+
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+
+    class NativeRead:
+        name = "Read"
+        description = "Read"
+        input_schema = {"type": "object"}
+        is_read_only = True
+        called = False
+
+        async def __call__(self, **kwargs):
+            self.called = True
+            return "unexpected"
+
+    native = NativeRead()
+    wrapped = workspace_module._WorkspaceFileAccessNativeTool(
+        native,
+        user_info={"user_id": 1, "user_name": "alice", "role": "user"},
+        workspace_root=str(tmp_path / "workspace"),
+    )
+    approval_tool = AgentScopeNativeApprovalTool(
+        wrapped,
+        approval_mode="allow",
+        permission_scope="read",
+    )
+
+    wrapped.check_path_access({})
+    decision = await approval_tool.check_permissions({}, None)
+    result = await approval_tool()
+
+    assert decision.behavior == PermissionBehavior.ALLOW
+    assert result.state.name == "ERROR"
+    assert "file_path" in result.content[0].text
+    assert native.called is False
+
+
+@pytest.mark.asyncio
 async def test_host_file_tools_scan_only_direct_root_help_markdown(tmp_path, monkeypatch):
     from agentscope.message import ToolResultState
 

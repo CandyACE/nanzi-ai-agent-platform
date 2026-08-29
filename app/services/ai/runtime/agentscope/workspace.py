@@ -2788,6 +2788,21 @@ def _python_root_help_glob(tool_input: Mapping[str, Any]) -> Any:
     )
 
 
+def _missing_required_file_tool_argument(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+) -> str | None:
+    if tool_name in {"Read", "Write", "Edit"} and not str(
+        tool_input.get("file_path") or ""
+    ).strip():
+        return "file_path"
+    if tool_name in {"Glob", "Grep"} and not str(
+        tool_input.get("pattern") or ""
+    ).strip():
+        return "pattern"
+    return None
+
+
 class _WorkspaceFileAccessNativeTool:
     """Enforce public/private file boundaries around native workspace tools."""
 
@@ -2821,6 +2836,8 @@ class _WorkspaceFileAccessNativeTool:
 
     def check_path_access(self, tool_input: dict[str, Any]) -> None:
         """Expose the hard path guard to AgentScope's permission phase."""
+        if _missing_required_file_tool_argument(self.name, tool_input):
+            return
         self._map(tool_input)
 
     async def __call__(self, **kwargs: Any) -> Any:
@@ -2847,6 +2864,20 @@ class _WorkspaceFileAccessNativeTool:
         return result
 
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
+        missing_argument = _missing_required_file_tool_argument(self.name, tool_input)
+        if missing_argument:
+            try:
+                from agentscope.permission import PermissionBehavior, PermissionDecision
+            except Exception:
+                raise
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=(
+                    f"工具 [{self.name}] 缺少必填参数 {missing_argument}，"
+                    "将返回参数错误并允许模型修正后重试。"
+                ),
+                decision_reason="workspace_tool_missing_argument",
+            )
         try:
             mapped_input = self._map(tool_input)
         except (PermissionError, ValueError) as exc:
