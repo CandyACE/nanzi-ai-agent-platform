@@ -2241,6 +2241,10 @@ def _map_docker_workspace_path(
             raw == prefix or raw.startswith(f"{prefix}/")
             for prefix in DOCKER_CONTAINER_ONLY_PATH_PREFIXES
         ):
+            if raw == "/root" or raw.startswith("/root/"):
+                raise ValueError(
+                    "Docker 宿主机物理路径不能用于文件工具，只接受 /workspace 开头的路径或工作区相对路径"
+                )
             raise ValueError(
                 f"container-only path cannot be used by host file tools: {path}"
             )

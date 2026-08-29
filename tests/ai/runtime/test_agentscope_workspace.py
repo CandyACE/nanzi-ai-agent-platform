@@ -597,6 +597,16 @@ def test_docker_workspace_path_mapping_rejects_container_only_mount():
         )
 
 
+def test_docker_workspace_path_rejects_daemon_host_physical_path_with_namespace_hint():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    with pytest.raises(ValueError, match="只接受 /workspace"):
+        workspace_module._map_docker_workspace_path(
+            "/root/workspace/github/yunshu-ai-agent-platform/data/agent_workspaces/alice__1/docs/report.md",
+            "/srv/agent_workspaces/alice__1",
+        )
+
+
 def test_docker_file_tool_mount_mapping_has_public_docs_before_user_root(
     tmp_path,
     monkeypatch,

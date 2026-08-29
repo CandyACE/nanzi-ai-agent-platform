@@ -44,13 +44,13 @@ async def test_list_accessible_directories_normal_user_local_mode():
         user_ws = data["user_workspace"]
         assert user_ws["access"] == "read_write"
         assert "backend_service_root" in user_ws
-        assert "host_physical_root" in user_ws
+        assert "host_physical_root" not in user_ws
         subdirs = {d["directory_name"]: d for d in user_ws["subdirectories"]}
         
         assert "docs" in subdirs
         assert subdirs["docs"]["permission"] == "read_write"
         assert "backend_service_path" in subdirs["docs"]
-        assert "host_physical_path" in subdirs["docs"]
+        assert "host_physical_path" not in subdirs["docs"]
         assert "AI 产物落盘" in subdirs["docs"]["recommended_for"]
 
         assert "sessions/test-conv-12345" in subdirs
@@ -119,7 +119,7 @@ async def test_list_accessible_directories_docker_sandbox_mode():
             "bash": None,
             "file_tools": "backend_service",
         }
-        assert "/data/host_nanzi" in subdirs["docs"]["host_physical_path"]
+        assert "host_physical_path" not in subdirs["docs"]
         assert subdirs["docs"]["paths"]["bash"] == "/workspace/docs"
         assert subdirs["docs"]["paths"]["file_tools"] == "docs"
         assert subdirs["docs"]["path_namespace"] == {

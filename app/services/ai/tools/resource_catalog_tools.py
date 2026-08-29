@@ -221,23 +221,6 @@ async def list_accessible_directories() -> str:
         data_base = get_data_base_dir()
         is_container_env = data_base.startswith("/app/data") or os.path.exists("/.dockerenv")
 
-        host_data_dir = (
-            os.getenv("HOST_DATA_DIR", "").strip()
-            or os.getenv("AGENTSCOPE_WORKSPACE_HOST_ROOT", "").strip()
-        )
-
-        def _to_host_path(service_path: str) -> str:
-            """将服务容器内部路径转换为宿主机真实绝对物理路径（若配置了 HOST_DATA_DIR）。"""
-            abs_service = os.path.abspath(service_path)
-            if host_data_dir:
-                if abs_service.startswith("/app/data"):
-                    rel = os.path.relpath(abs_service, "/app/data")
-                    return os.path.join(host_data_dir, rel) if rel != "." else host_data_dir
-                if not abs_service.startswith(host_data_dir):
-                    rel = os.path.relpath(abs_service, data_base)
-                    return os.path.join(host_data_dir, rel) if rel != "." else host_data_dir
-            return abs_service
-
         def _tool_paths(
             *,
             container_path: str | None,
@@ -273,7 +256,6 @@ async def list_accessible_directories() -> str:
                 "directory_name": "docs",
                 "container_sandbox_path": "/workspace/docs" if is_docker_sandbox else docs_service_path,
                 "backend_service_path": docs_service_path,
-                "host_physical_path": _to_host_path(docs_service_path),
                 "paths": _tool_paths(
                     container_path="/workspace/docs" if is_docker_sandbox else None,
                     backend_path=docs_service_path,
@@ -310,7 +292,6 @@ async def list_accessible_directories() -> str:
                 "directory_name": f"sessions/{conversation_id}",
                 "container_sandbox_path": session_container_path if is_docker_sandbox else session_phys,
                 "backend_service_path": session_phys,
-                "host_physical_path": _to_host_path(session_phys),
                 "paths": _tool_paths(
                     container_path=(
                         session_container_path
@@ -332,7 +313,6 @@ async def list_accessible_directories() -> str:
                 "directory_name": "uploads",
                 "container_sandbox_path": "/workspace/uploads" if is_docker_sandbox else uploads_service_path,
                 "backend_service_path": uploads_service_path,
-                "host_physical_path": _to_host_path(uploads_service_path),
                 "paths": _tool_paths(
                     container_path="/workspace/uploads" if is_docker_sandbox else None,
                     backend_path=uploads_service_path,
@@ -352,7 +332,6 @@ async def list_accessible_directories() -> str:
                 # 不是用户私有 skills 源目录；宿主文件工具仍使用用户工作区下的 skills/。
                 "container_sandbox_path": None if is_docker_sandbox else skills_service_path,
                 "backend_service_path": skills_service_path,
-                "host_physical_path": _to_host_path(skills_service_path),
                 "paths": _tool_paths(
                     container_path=None,
                     backend_path=skills_service_path,
@@ -370,7 +349,6 @@ async def list_accessible_directories() -> str:
                 "directory_name": ".trash",
                 "container_sandbox_path": "/workspace/.trash" if is_docker_sandbox else trash_service_path,
                 "backend_service_path": trash_service_path,
-                "host_physical_path": _to_host_path(trash_service_path),
                 "paths": _tool_paths(
                     container_path="/workspace/.trash" if is_docker_sandbox else None,
                     backend_path=trash_service_path,
@@ -406,7 +384,6 @@ async def list_accessible_directories() -> str:
                     else global_docs_service_path
                 ),
                 "backend_service_path": global_docs_service_path,
-                "host_physical_path": _to_host_path(global_docs_service_path),
                 "paths": _tool_paths(
                     container_path=(
                         "/workspace/public/docs" if public_docs_mounted else None
@@ -440,7 +417,6 @@ async def list_accessible_directories() -> str:
                 "directory_name": "skills",
                 "container_sandbox_path": "/workspace/skills" if is_docker_sandbox else global_skills_service_path,
                 "backend_service_path": global_skills_service_path,
-                "host_physical_path": _to_host_path(global_skills_service_path),
                 "paths": _tool_paths(
                     container_path="/workspace/skills" if is_docker_sandbox else None,
                     backend_path=global_skills_service_path,
@@ -467,7 +443,6 @@ async def list_accessible_directories() -> str:
                     None if is_docker_sandbox else branding_service_path
                 ),
                 "backend_service_path": branding_service_path,
-                "host_physical_path": _to_host_path(branding_service_path),
                 "paths": _tool_paths(
                     container_path=None,
                     backend_path=branding_service_path,
@@ -490,7 +465,6 @@ async def list_accessible_directories() -> str:
                 "path": path,
                 "container_sandbox_path": None,
                 "backend_service_path": path,
-                "host_physical_path": path,
                 "paths": {
                     "bash": None,
                     "file_tools": path,
@@ -524,7 +498,6 @@ async def list_accessible_directories() -> str:
             "user_workspace": {
                 "container_sandbox_root": "/workspace" if is_docker_sandbox else user_host_workspace,
                 "backend_service_root": user_host_workspace,
-                "host_physical_root": _to_host_path(user_host_workspace),
                 "paths": {
                     "bash": "/workspace" if is_docker_sandbox else user_host_workspace,
                     "file_tools": ".",
