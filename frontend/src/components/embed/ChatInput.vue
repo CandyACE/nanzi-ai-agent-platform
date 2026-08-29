@@ -1901,7 +1901,7 @@ defineExpose({
                               ? 'bg-white text-primary shadow-sm dark:bg-gray-800 dark:text-primary'
                               : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
                             :disabled="isInteractionLocked || contextCompactionActionLoading"
-                            title="智能压缩会调用当前模型生成语义摘要"
+                            title="智能压缩会调用模型生成语义摘要"
                             @click.stop="contextCompactionMode = 'smart'"
                           >
                             智能 <span class="text-[8px] opacity-70">AI</span>
@@ -1934,7 +1934,7 @@ defineExpose({
                           {{ contextCompactionActionLoading ? '压缩中…' : contextCompactionMode === 'smart' ? '立即智能压缩' : '立即快速压缩' }}
                       </button>
                       <p v-if="contextCompactionMode === 'smart'" class="text-[9px] leading-4 text-primary/80">
-                        智能压缩会调用当前模型生成语义摘要，失败时自动回退为快速压缩。
+                        智能压缩会调用模型生成语义摘要，失败时自动回退为快速压缩。
                       </p>
                       <div v-if="latestContextCompactionSavings" class="text-[9px] text-emerald-600 dark:text-emerald-400">
                         {{ latestContextCompactionSavings }}
