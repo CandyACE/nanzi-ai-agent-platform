@@ -7,6 +7,7 @@ from app.services.data_adapter.factory import get_adapter
 from app.services.data_adapter.postgresql import (
     PostgreSQLAdapter,
     normalize_postgresql_identifiers,
+    normalize_postgresql_sql,
 )
 from app.services.db_import_service import DBImportService
 from app.services.db_profile_service import DbProfileService
@@ -46,6 +47,38 @@ def test_dialect_from_data_source_postgresql_aliases():
 )
 def test_normalize_postgresql_identifiers_only_converts_identifier_backticks(sql_text, expected):
     assert normalize_postgresql_identifiers(sql_text) == expected
+
+
+@pytest.mark.parametrize(
+    ("sql_text", "expected"),
+    [
+        (
+            "SELECT toDate(parseDateTimeBestEffort(create_time)) AS created_day FROM `public`.`orders`",
+            'SELECT CAST(CAST(create_time AS TIMESTAMP) AS DATE) AS created_day FROM "public"."orders"',
+        ),
+        (
+            "SELECT toYYYYMM(event_time) AS month_key FROM orders",
+            "SELECT ((CAST(EXTRACT(YEAR FROM event_time) AS INTEGER) * 100) + CAST(EXTRACT(MONTH FROM event_time) AS INTEGER)) AS month_key FROM orders",
+        ),
+        (
+            "SELECT toStartOfMonth(event_time), dateDiff('day', start_time, end_time) FROM orders",
+            "SELECT DATE_TRUNC('month', event_time), CAST((end_time)::date - (start_time)::date AS BIGINT) FROM orders",
+        ),
+        (
+            "SELECT toYear(event_time), toMonth(event_time), toDayOfWeek(event_time), toYYYYMMDD(event_time) FROM orders",
+            "SELECT CAST(EXTRACT(YEAR FROM event_time) AS INTEGER), CAST(EXTRACT(MONTH FROM event_time) AS INTEGER), CAST(EXTRACT(ISODOW FROM event_time) AS INTEGER), ((CAST(EXTRACT(YEAR FROM event_time) AS INTEGER) * 10000) + (CAST(EXTRACT(MONTH FROM event_time) AS INTEGER) * 100) + CAST(EXTRACT(DAY FROM event_time) AS INTEGER)) FROM orders",
+        ),
+        (
+            "SELECT 'toDate(event_time)' AS literal -- toDate(other_time)",
+            "SELECT 'toDate(event_time)' AS literal -- toDate(other_time)",
+        ),
+    ],
+)
+def test_normalize_postgresql_sql_converts_clickhouse_functions_without_touching_literals(
+    sql_text, expected
+):
+    """验证历史指标中的 ClickHouse 日期函数可转换为 PostgreSQL，字符串和注释保持不变。"""
+    assert normalize_postgresql_sql(sql_text) == expected
 
 
 @pytest.mark.asyncio
@@ -191,6 +224,42 @@ async def test_postgresql_adapter_preview_normalizes_backticks_for_total_count()
         'SELECT COUNT(*) FROM (SELECT * FROM "public"."ny_function") AS _preview_count',
         'SELECT * FROM (SELECT * FROM "public"."ny_function") AS _preview_sub LIMIT 10',
     ]
+
+
+@pytest.mark.asyncio
+async def test_postgresql_adapter_preview_converts_nested_metric_datetime_functions():
+    """验证业务指标预览的行查询和 COUNT 查询均使用 PostgreSQL 日期表达式。"""
+    adapter = PostgreSQLAdapter(source_id=11)
+    pool = MagicMock()
+    connection = MagicMock()
+    cursor = AsyncMock()
+    cursor.description = [("created_day", "date")]
+    cursor.fetchone.return_value = (1,)
+    cursor.fetchall.return_value = [("2026-08-28",)]
+    cursor_cm = MagicMock()
+    cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+    connection.cursor.return_value = cursor_cm
+    connection_cm = MagicMock()
+    connection_cm.__aenter__ = AsyncMock(return_value=connection)
+    pool.connection.return_value = connection_cm
+
+    with patch(
+        "app.services.pool_manager.DataSourcePoolManager.get_pool",
+        new_callable=AsyncMock,
+        return_value=pool,
+    ):
+        result = await adapter.preview(
+            "SELECT toDate(parseDateTimeBestEffort(create_time)) AS created_day FROM orders",
+            limit=10,
+            include_total=True,
+        )
+
+    assert result["total_count"] == 1
+    executed_sql = [call.args[0] for call in cursor.execute.await_args_list]
+    assert all("parseDateTimeBestEffort" not in sql for sql in executed_sql)
+    assert all("toDate(" not in sql for sql in executed_sql)
+    assert "CAST(CAST(create_time AS TIMESTAMP) AS DATE)" in executed_sql[0]
+    assert "CAST(CAST(create_time AS TIMESTAMP) AS DATE)" in executed_sql[1]
 
 
 def test_profile_import_preview_strips_postgresql_schema_from_physical_name():

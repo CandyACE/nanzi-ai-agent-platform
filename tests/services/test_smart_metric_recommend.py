@@ -103,6 +103,7 @@ async def test_recommend_metrics_deduplication_and_user_prompt():
             schema_context=schema_yaml,
             user_prompt=user_prompt,
             existing_metrics=[existing_metric],
+            data_source="postgresql_demo",
         )
 
         # 检查 Prompt 中是否注入了 user_prompt 和排除约束
@@ -112,6 +113,8 @@ async def test_recommend_metrics_deduplication_and_user_prompt():
         assert "重点分析机房电量消耗与 PUE 计算" in system_prompt
         assert "【去重与排除约束（严禁重复推荐）】" in system_prompt
         assert "总能耗" in system_prompt or "total_energy" in system_prompt
+        assert "目标数据源为 PostgreSQL" in system_prompt
+        assert "parseDateTimeBestEffort" in system_prompt
 
         # 检查后置去重：avg_pue / 平均PUE 应被过滤掉，只保留 monthly_power_trend
         assert len(result["metrics"]) == 1

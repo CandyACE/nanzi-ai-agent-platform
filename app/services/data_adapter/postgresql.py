@@ -193,6 +193,277 @@ def normalize_postgresql_identifiers(sql_text: str) -> str:
     return normalized
 
 
+# 业务指标历史上按 ClickHouse 方言生成；这些函数在 PostgreSQL 中需要显式改写。
+_CLICKHOUSE_POSTGRESQL_FUNCTIONS = frozenset(
+    {
+        "parsedatetimebesteffort",
+        "parsedatetimebesteffortorzero",
+        "parsedatetimebesteffortornull",
+        "todate",
+        "todateornull",
+        "todatetime",
+        "todatetime64",
+        "todatetimeornull",
+        "toyyyymm",
+        "toyyyymmdd",
+        "toyyyymmddhhmmss",
+        "toyear",
+        "toisoyear",
+        "toquarter",
+        "tomonth",
+        "toweek",
+        "todayofyear",
+        "todayofmonth",
+        "todayofweek",
+        "tohour",
+        "tominute",
+        "tosecond",
+        "tostartofday",
+        "tostartofhour",
+        "tostartofmonth",
+        "tostartofquarter",
+        "tostartofyear",
+        "tostartofweek",
+        "datediff",
+        "formatdatetime",
+        "today",
+    }
+)
+
+
+def _consume_sql_quoted_or_comment(source: str, index: int) -> Optional[int]:
+    """返回字符串、标识符、注释或 dollar-quote 的结束位置。"""
+    length = len(source)
+    current = source[index]
+    if current in ("'", '"', "`"):
+        quote = current
+        index += 1
+        while index < length:
+            if source[index] == quote:
+                if index + 1 < length and source[index + 1] == quote:
+                    index += 2
+                    continue
+                return index + 1
+            if source[index] == "\\" and quote == "'" and index + 1 < length:
+                index += 2
+                continue
+            index += 1
+        return length
+
+    if source.startswith("--", index):
+        end = source.find("\n", index + 2)
+        return length if end < 0 else end
+    if source.startswith("/*", index):
+        end = source.find("*/", index + 2)
+        return length if end < 0 else end + 2
+    if current == "$":
+        dollar_match = re.match(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$", source[index:])
+        if dollar_match:
+            delimiter = dollar_match.group(0)
+            end = source.find(delimiter, index + len(delimiter))
+            return length if end < 0 else end + len(delimiter)
+    return None
+
+
+def _find_matching_parenthesis(source: str, opening_index: int) -> int:
+    """查找函数调用右括号，忽略字符串和注释中的括号。"""
+    depth = 1
+    index = opening_index + 1
+    while index < len(source):
+        quoted_end = _consume_sql_quoted_or_comment(source, index)
+        if quoted_end is not None:
+            index = quoted_end
+            continue
+        current = source[index]
+        if current == "(":
+            depth += 1
+        elif current == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return -1
+
+
+def _split_function_arguments(arguments: str) -> List[str]:
+    """按顶层逗号拆分参数，保留参数内嵌套函数和字符串内容。"""
+    parts: List[str] = []
+    start = 0
+    depth = 0
+    index = 0
+    while index < len(arguments):
+        quoted_end = _consume_sql_quoted_or_comment(arguments, index)
+        if quoted_end is not None:
+            index = quoted_end
+            continue
+        current = arguments[index]
+        if current == "(":
+            depth += 1
+        elif current == ")":
+            depth = max(0, depth - 1)
+        elif current == "," and depth == 0:
+            parts.append(arguments[start:index].strip())
+            start = index + 1
+        index += 1
+    tail = arguments[start:].strip()
+    if tail or arguments.strip():
+        parts.append(tail)
+    return parts
+
+
+def _postgresql_extract_number(field: str, argument: str) -> str:
+    """生成 PostgreSQL 的数值型 EXTRACT 表达式，保持指标分组键为整数。"""
+    return f"CAST(EXTRACT({field} FROM {argument}) AS INTEGER)"
+
+
+def _convert_clickhouse_function_to_postgresql(name: str, arguments: List[str]) -> Optional[str]:
+    """将一个已拆分参数的 ClickHouse 函数转换为 PostgreSQL 表达式。"""
+    function_name = name.lower()
+    if function_name in {
+        "parsedatetimebesteffort",
+        "parsedatetimebesteffortorzero",
+        "parsedatetimebesteffortornull",
+        "todatetime",
+        "todatetime64",
+        "todatetimeornull",
+    } and arguments:
+        return f"CAST({arguments[0]} AS TIMESTAMP)"
+    if function_name in {"todate", "todateornull"} and arguments:
+        return f"CAST({arguments[0]} AS DATE)"
+    if function_name in {"toyear"} and arguments:
+        return _postgresql_extract_number("YEAR", arguments[0])
+    if function_name == "toisoyear" and arguments:
+        return _postgresql_extract_number("ISOYEAR", arguments[0])
+    if function_name == "toquarter" and arguments:
+        return _postgresql_extract_number("QUARTER", arguments[0])
+    if function_name == "tomonth" and arguments:
+        return _postgresql_extract_number("MONTH", arguments[0])
+    if function_name == "toweek" and arguments:
+        return _postgresql_extract_number("WEEK", arguments[0])
+    if function_name == "todayofyear" and arguments:
+        return _postgresql_extract_number("DOY", arguments[0])
+    if function_name == "todayofmonth" and arguments:
+        return _postgresql_extract_number("DAY", arguments[0])
+    if function_name == "todayofweek" and arguments:
+        return _postgresql_extract_number("ISODOW", arguments[0])
+    if function_name == "tohour" and arguments:
+        return _postgresql_extract_number("HOUR", arguments[0])
+    if function_name == "tominute" and arguments:
+        return _postgresql_extract_number("MINUTE", arguments[0])
+    if function_name == "tosecond" and arguments:
+        return _postgresql_extract_number("SECOND", arguments[0])
+    if function_name in {"tostartofday", "tostartofhour", "tostartofmonth", "tostartofquarter", "tostartofyear", "tostartofweek"} and arguments:
+        units = {
+            "tostartofday": "day",
+            "tostartofhour": "hour",
+            "tostartofmonth": "month",
+            "tostartofquarter": "quarter",
+            "tostartofyear": "year",
+            "tostartofweek": "week",
+        }
+        return f"DATE_TRUNC('{units[function_name]}', {arguments[0]})"
+    if function_name == "toyyyymm" and arguments:
+        year = _postgresql_extract_number("YEAR", arguments[0])
+        month = _postgresql_extract_number("MONTH", arguments[0])
+        return f"(({year} * 100) + {month})"
+    if function_name == "toyyyymmdd" and arguments:
+        year = _postgresql_extract_number("YEAR", arguments[0])
+        month = _postgresql_extract_number("MONTH", arguments[0])
+        day = _postgresql_extract_number("DAY", arguments[0])
+        return f"(({year} * 10000) + ({month} * 100) + {day})"
+    if function_name == "toyyyymmddhhmmss" and arguments:
+        year = _postgresql_extract_number("YEAR", arguments[0])
+        month = _postgresql_extract_number("MONTH", arguments[0])
+        day = _postgresql_extract_number("DAY", arguments[0])
+        hour = _postgresql_extract_number("HOUR", arguments[0])
+        minute = _postgresql_extract_number("MINUTE", arguments[0])
+        second = _postgresql_extract_number("SECOND", arguments[0])
+        return (
+            f"(({year} * 10000000000) + ({month} * 100000000) + ({day} * 1000000) + "
+            f"({hour} * 10000) + ({minute} * 100) + {second})"
+        )
+    if function_name == "today" and not arguments:
+        return "CURRENT_DATE"
+    if function_name == "formatdatetime" and len(arguments) >= 2:
+        format_text = arguments[1]
+        if len(format_text) >= 2 and format_text[0] == format_text[-1] == "'":
+            format_text = format_text[1:-1]
+            format_text = (
+                format_text.replace("%Y", "YYYY")
+                .replace("%m", "MM")
+                .replace("%d", "DD")
+                .replace("%H", "HH24")
+                .replace("%i", "MI")
+                .replace("%s", "SS")
+            )
+            format_text = "'" + format_text.replace("'", "''") + "'"
+        return f"TO_CHAR({arguments[0]}, {format_text})"
+    if function_name == "datediff" and len(arguments) >= 3:
+        unit = arguments[0].strip().strip("'\"").lower()
+        start, end = arguments[1], arguments[2]
+        if unit in {"day", "days"}:
+            return f"CAST(({end})::date - ({start})::date AS BIGINT)"
+        seconds_per_unit = {"second": 1, "seconds": 1, "minute": 60, "minutes": 60, "hour": 3600, "hours": 3600}
+        if unit in seconds_per_unit:
+            divisor = seconds_per_unit[unit]
+            return f"CAST(EXTRACT(EPOCH FROM (({end}) - ({start}))) / {divisor} AS BIGINT)"
+    return None
+
+
+def normalize_postgresql_sql(sql_text: str) -> str:
+    """统一转换 PostgreSQL SQL 中的标识符和常见 ClickHouse 日期函数。
+
+    转换器采用括号/字符串感知扫描，不会改写字面量、注释或双引号标识符；无法识别的函数保持原样，
+    以便将潜在的业务自定义函数交给数据库报错，并通过日志定位。
+    """
+    source = normalize_postgresql_identifiers(str(sql_text or ""))
+    marker_pattern = r"(?i)\b(?:" + "|".join(sorted(_CLICKHOUSE_POSTGRESQL_FUNCTIONS, key=len, reverse=True)) + r")\s*\("
+    if not re.search(marker_pattern, source):
+        return source
+
+    def normalize_fragment(fragment: str) -> str:
+        output: List[str] = []
+        index = 0
+        while index < len(fragment):
+            quoted_end = _consume_sql_quoted_or_comment(fragment, index)
+            if quoted_end is not None:
+                output.append(fragment[index:quoted_end])
+                index = quoted_end
+                continue
+            current = fragment[index]
+            if current.isalpha() or current == "_":
+                name_start = index
+                index += 1
+                while index < len(fragment) and (fragment[index].isalnum() or fragment[index] == "_"):
+                    index += 1
+                name = fragment[name_start:index]
+                opening = index
+                while opening < len(fragment) and fragment[opening].isspace():
+                    opening += 1
+                if opening < len(fragment) and fragment[opening] == "(":
+                    closing = _find_matching_parenthesis(fragment, opening)
+                    if closing >= 0:
+                        inner = normalize_fragment(fragment[opening + 1 : closing])
+                        arguments = _split_function_arguments(inner)
+                        converted = _convert_clickhouse_function_to_postgresql(name, arguments)
+                        if converted is not None:
+                            output.append(converted)
+                        else:
+                            output.append(fragment[name_start : opening + 1] + inner + ")")
+                        index = closing + 1
+                        continue
+                output.append(fragment[name_start:index])
+                continue
+            output.append(current)
+            index += 1
+        return "".join(output)
+
+    normalized = normalize_fragment(source)
+    if normalized != source:
+        logger.info("PostgreSQL SQL 已转换 ClickHouse 日期函数为兼容表达式")
+    return normalized
+
+
 class PostgreSQLAdapter(DataSourceAdapter):
     """PostgreSQL read-only adapter backed by psycopg's async connection pool."""
 
@@ -252,7 +523,8 @@ class PostgreSQLAdapter(DataSourceAdapter):
                 raw_sql = SQL_LAB_ENV.from_string(raw_sql).render(**(params or {}))
             except Exception:
                 pass
-            raw_sql = normalize_postgresql_identifiers(raw_sql)
+            # 字段探测也必须使用与正式执行相同的方言转换，避免保存前探测成功、预览时失败。
+            raw_sql = normalize_postgresql_sql(raw_sql)
             final_sql = f"SELECT * FROM ({raw_sql}) AS _pg_columns LIMIT 0"
             async with pool.connection() as connection:
                 async with connection.cursor() as cursor:
@@ -287,7 +559,8 @@ class PostgreSQLAdapter(DataSourceAdapter):
     async def execute_sql(self, sql_text: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         from app.services.pool_manager import DataSourcePoolManager
 
-        sql_text = normalize_postgresql_identifiers(sql_text)
+        # 直接执行入口覆盖历史指标 SQL，兼容 ClickHouse 日期函数和反引号标识符。
+        sql_text = normalize_postgresql_sql(sql_text)
         pool = await DataSourcePoolManager.get_pool(self.source_id)
         async with pool.connection() as connection:
             async with connection.cursor() as cursor:
@@ -324,7 +597,8 @@ class PostgreSQLAdapter(DataSourceAdapter):
             except Exception as exc:
                 raise ValueError(f"Jinja2 模板渲染失败: {exc}") from exc
 
-        clean_sql = normalize_postgresql_identifiers(rendered_sql.strip().rstrip(";"))
+        # 预览的 COUNT 包装与实际查询必须共享同一份已转换 SQL，否则 include_total 会单独报错。
+        clean_sql = normalize_postgresql_sql(rendered_sql.strip().rstrip(";"))
         limit_match = re.search(r"\bLIMIT\s+(\d+)", clean_sql, re.IGNORECASE)
         if limit_match:
             final_sql = (

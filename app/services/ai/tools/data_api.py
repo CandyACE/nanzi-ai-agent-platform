@@ -184,6 +184,17 @@ async def call_external_sql_api(
     if not data_source:
         data_source = await ConfigService.get("external_sql_data_source", default="default_clickhouse")
 
+    # 远程调用和本地适配器都统一接收 PostgreSQL 兼容 SQL，覆盖绕过 execute_sql_query_core 的历史调用方。
+    from app.services.sql_query_execution_service import dialect_from_data_source
+
+    if dialect_from_data_source(data_source) == "postgres":
+        from app.services.data_adapter.postgresql import normalize_postgresql_sql
+
+        original_sql = sql
+        sql = normalize_postgresql_sql(sql)
+        if sql != original_sql:
+            logger.info("[Agent SQL] 已在统一执行入口转换 PostgreSQL 指标 SQL 方言")
+
     # 1. 分流执行判定
     # 优先检测系统环境变量 SQL_EXECUTION_MODE (强制控制)
     env_mode = os.environ.get("SQL_EXECUTION_MODE", "").strip().lower()

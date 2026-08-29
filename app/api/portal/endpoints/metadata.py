@@ -583,6 +583,7 @@ async def recommend_metrics(
         schema_context=schema_yaml,
         user_prompt=req.user_prompt,
         existing_metrics=existing_metrics,
+        data_source=ds.data_source,
     )
     
     return {
@@ -683,7 +684,11 @@ async def import_ddl(ddl: dict): # Expects {"ddl": "..."}
     if not content:
         raise HTTPException(status_code=400, detail="DDL content cannot be empty")
         
-    result = await MetadataGeneratorService.generate_from_ddl(content)
+    # 将导入向导选定的数据源传给生成器，确保指标 SQL 使用目标数据库方言。
+    result = await MetadataGeneratorService.generate_from_ddl(
+        content,
+        data_source=ddl.get("data_source"),
+    )
     return {
         "code": 200,
         "message": "success",
@@ -1012,4 +1017,3 @@ async def toggle_table_profile_ignore(
     if not profile:
         raise HTTPException(status_code=404, detail="表画像不存在")
     return {"code": 200, "message": "修改成功", "data": {"is_ignored": profile.is_ignored}}
-
