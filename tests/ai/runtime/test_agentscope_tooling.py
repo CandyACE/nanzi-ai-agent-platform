@@ -29,6 +29,33 @@ async def test_native_file_tool_missing_pattern_returns_tool_error(tool_name):
 
 
 @pytest.mark.asyncio
+async def test_native_read_without_file_path_returns_tool_error_without_running_native_tool():
+    from agentscope.message import ToolResultState
+
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+
+    class NativeReadTool:
+        name = "Read"
+        description = "Read"
+        input_schema = {"type": "object", "properties": {"file_path": {"type": "string"}}}
+        is_read_only = True
+        called = False
+
+        async def __call__(self, **kwargs):
+            self.called = True
+            return "unexpected"
+
+    native = NativeReadTool()
+    wrapped = AgentScopeNativeApprovalTool(native, permission_scope="read")
+
+    result = await wrapped()
+
+    assert result.state == ToolResultState.ERROR
+    assert "file_path" in result.content[0].text
+    assert native.called is False
+
+
+@pytest.mark.asyncio
 async def test_runtime_tool_spec_executes_callable_and_records_metadata():
     from app.services.ai.runtime.agentscope.tools import RuntimeToolAuditEvent, RuntimeToolSpec
 
@@ -640,4 +667,3 @@ def test_unwrap_exception_message_unpacks_exception_group_and_cause():
 
     formatted = format_execution_error(exc_group)
     assert "知识库服务网络中断" in formatted
-

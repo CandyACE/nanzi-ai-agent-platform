@@ -834,7 +834,12 @@ class AgentScopeNativeApprovalTool:
             enhance_workspace_error_message,
         )
 
-        if self.name in {"Glob", "Grep"} and not str(kwargs.get("pattern") or "").strip():
+        required_argument = None
+        if self.name in {"Read", "Write", "Edit"} and not str(kwargs.get("file_path") or "").strip():
+            required_argument = "file_path"
+        elif self.name in {"Glob", "Grep"} and not str(kwargs.get("pattern") or "").strip():
+            required_argument = "pattern"
+        if required_argument:
             from agentscope.message import TextBlock, ToolResultState
             from agentscope.tool import ToolChunk
 
@@ -842,8 +847,12 @@ class AgentScopeNativeApprovalTool:
                 content=[
                     TextBlock(
                         text=(
-                            f"{self.name} 调用失败：缺少必填参数 pattern。"
-                            "请传入具体的文件匹配模式或搜索表达式。"
+                            f"{self.name} 调用失败：缺少必填参数 {required_argument}。"
+                            + (
+                                "请根据 paths.file_tools 传入目标文件路径。"
+                                if required_argument == "file_path"
+                                else "请传入具体的文件匹配模式或搜索表达式。"
+                            )
                         )
                     )
                 ],
