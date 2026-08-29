@@ -72,6 +72,22 @@ def test_normalize_postgresql_identifiers_only_converts_identifier_backticks(sql
             "SELECT 'toDate(event_time)' AS literal -- toDate(other_time)",
             "SELECT 'toDate(event_time)' AS literal -- toDate(other_time)",
         ),
+        (
+            "SELECT toDateOrNull(raw_date), parseDateTimeBestEffortOrNull(raw_time) FROM orders",
+            "SELECT CASE WHEN pg_input_is_valid(CAST(raw_date AS TEXT), 'date') THEN CAST(raw_date AS DATE) ELSE NULL END, CASE WHEN pg_input_is_valid(CAST(raw_time AS TEXT), 'timestamp') THEN CAST(raw_time AS TIMESTAMP) ELSE NULL END FROM orders",
+        ),
+        (
+            "SELECT dateDiff('hour', start_date, end_date) FROM orders",
+            "SELECT CAST(EXTRACT(EPOCH FROM ((end_date)::timestamp - (start_date)::timestamp)) / 3600 AS BIGINT) FROM orders",
+        ),
+        (
+            "SELECT formatDateTime(event_time, '%F %T %M') FROM orders",
+            "SELECT TO_CHAR(event_time, 'YYYY-MM-DD HH24:MI:SS MI') FROM orders",
+        ),
+        (
+            "SELECT toStartOfWeek(event_time), toStartOfWeek(event_time, 1) FROM orders",
+            "SELECT DATE_TRUNC('week', event_time) - INTERVAL '1 day', DATE_TRUNC('week', event_time) FROM orders",
+        ),
     ],
 )
 def test_normalize_postgresql_sql_converts_clickhouse_functions_without_touching_literals(
