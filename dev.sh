@@ -26,6 +26,9 @@ PID_FILE=".dev-server.pid"
 SERVER_LOG_FILE="server.log"
 HEALTH_PATH="/health"
 STOP_TIMEOUT_SECONDS=10
+NODE_MIN_VERSION="20.19.0"
+NODE_ALTERNATIVE_MIN_VERSION="22.12.0"
+NPM_MIN_VERSION="8.0.0"
 
 # 读取 .env 中的非敏感配置值。仅用于打印连接类型和地址，不读取密码字段。
 read_env_value() {
@@ -529,6 +532,99 @@ stop_previous_service() {
     stop_service
 }
 
+# 比较三段式版本号，避免依赖 GNU sort -V，兼容 macOS 和 Linux。
+version_at_least() {
+    version_to_check="${1#v}"
+    minimum_version="${2#v}"
+    old_ifs="$IFS"
+    IFS=.
+    set -- $version_to_check
+    check_major="${1:-0}"
+    check_minor="${2:-0}"
+    check_patch="${3:-0}"
+    set -- $minimum_version
+    minimum_major="${1:-0}"
+    minimum_minor="${2:-0}"
+    minimum_patch="${3:-0}"
+    IFS="$old_ifs"
+
+    case "$check_major.$check_minor.$check_patch" in
+        *[!0-9.]*|*.*.*.*) return 1 ;;
+    esac
+
+    if [ "$check_major" -gt "$minimum_major" ]; then
+        return 0
+    elif [ "$check_major" -lt "$minimum_major" ]; then
+        return 1
+    fi
+    if [ "$check_minor" -gt "$minimum_minor" ]; then
+        return 0
+    elif [ "$check_minor" -lt "$minimum_minor" ]; then
+        return 1
+    fi
+    [ "$check_patch" -ge "$minimum_patch" ]
+}
+
+print_node_install_guidance() {
+    echo -e "${YELLOW}💡 Node.js 会同时提供 npm，建议安装 Node.js 22 LTS：${NC}" >&2
+    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+        echo -e "${BLUE}   brew install node@22${NC}" >&2
+        echo -e "${BLUE}   brew link --overwrite --force node@22${NC}" >&2
+    elif command -v nvm >/dev/null 2>&1; then
+        echo -e "${BLUE}   nvm install 22 && nvm use 22${NC}" >&2
+    else
+        echo -e "${BLUE}   安装 nvm 后执行：nvm install 22 && nvm use 22${NC}" >&2
+        echo -e "${BLUE}   nvm 安装说明：https://github.com/nvm-sh/nvm#installing-and-updating${NC}" >&2
+        echo -e "${BLUE}   或从 https://nodejs.org/ 下载 Node.js 22 LTS 安装包${NC}" >&2
+    fi
+}
+
+node_version_supported() {
+    node_major="${1#v}"
+    node_major="${node_major%%.*}"
+    case "$node_major" in
+        ''|*[!0-9]*) return 1 ;;
+        20) version_at_least "$1" "$NODE_MIN_VERSION" ;;
+        *)
+            if [ "$node_major" -ge 22 ]; then
+                version_at_least "$1" "$NODE_ALTERNATIVE_MIN_VERSION"
+            else
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# Vite 7 要求 Node.js ^20.19.0 或 >=22.12.0；npm 需要至少 8.x。
+# 这里只做检测和安装引导，不自动修改系统 Node.js/npm。
+check_node_environment() {
+    if ! command -v node >/dev/null 2>&1; then
+        echo -e "${RED}❌ 未找到 Node.js，前端构建无法继续${NC}" >&2
+        print_node_install_guidance
+        return 1
+    fi
+    NODE_VERSION=$(node --version 2>/dev/null || true)
+    if ! node_version_supported "$NODE_VERSION"; then
+        echo -e "${RED}❌ Node.js 版本不满足要求：当前 ${NODE_VERSION:-未知}，需要 >=${NODE_MIN_VERSION} 或 >=${NODE_ALTERNATIVE_MIN_VERSION}${NC}" >&2
+        print_node_install_guidance
+        return 1
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo -e "${RED}❌ 未找到 npm，请重新安装 Node.js（Node.js 会同时安装 npm）${NC}" >&2
+        print_node_install_guidance
+        return 1
+    fi
+    NPM_VERSION=$(npm --version 2>/dev/null || true)
+    if ! version_at_least "$NPM_VERSION" "$NPM_MIN_VERSION"; then
+        echo -e "${RED}❌ npm 版本不满足要求：当前 ${NPM_VERSION:-未知}，需要 >=${NPM_MIN_VERSION}${NC}" >&2
+        print_node_install_guidance
+        return 1
+    fi
+
+    return 0
+}
+
 # 查找已安装的 uv。官方安装器默认路径不一定已进入当前 shell 的 PATH，
 # 因此额外检查常见的用户级安装目录。
 find_uv() {
@@ -654,6 +750,8 @@ if [ "$COMMAND" = "stop" ]; then
     exit $?
 fi
 
+check_node_environment || exit 1
+
 echo -e "${BLUE}==================================================${NC}"
 echo -e "${BLUE}       NanZi AI 开源智能体平台 · 本地开发启动工具         ${NC}"
 echo -e "${BLUE}       用法: ./dev.sh (前台) | ./dev.sh -d (后台) | status | stop ${NC}"
@@ -666,6 +764,8 @@ else
     UV_VERSION="未安装（启动时自动安装）"
 fi
 echo -e "${BLUE}       ➜ uv: ${UV_VERSION}${NC}"
+echo -e "${BLUE}       ➜ Node.js: ${NODE_VERSION}${NC}"
+echo -e "${BLUE}       ➜ npm: ${NPM_VERSION}${NC}"
 echo -e "${BLUE}       ➜ Python 目标版本: ${PYTHON_VERSION}${NC}"
 echo -e "${BLUE}       ➜ 虚拟环境: ${VENV_DIR}${NC}"
 echo -e "${BLUE}       ➜ PyPI 镜像: $(redact_url "$PYPI_INDEX_URL")${NC}"

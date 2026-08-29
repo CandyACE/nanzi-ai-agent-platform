@@ -39,7 +39,14 @@ def _prepare_fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     return repo, fake_bin, home
 
 
-def _install_fake_commands(fake_bin: Path, home: Path, *, uv_in_path: bool) -> None:
+def _install_fake_commands(
+    fake_bin: Path,
+    home: Path,
+    *,
+    uv_in_path: bool,
+    node_version: str = "22.12.0",
+    npm_version: str = "10.9.0",
+) -> None:
     uv_source = fake_bin / "uv-source"
     _write_executable(
         uv_source,
@@ -93,7 +100,21 @@ printf '%s\\n' 'mkdir -p "$HOME/.local/bin"' \
   'chmod +x "$HOME/.local/bin/uv"'
 """,
     )
-    _write_executable(fake_bin / "npm", """#!/bin/sh
+    _write_executable(
+        fake_bin / "node",
+        f"""#!/bin/sh
+if [ "${{1:-}}" = "--version" ] || [ "${{1:-}}" = "-v" ]; then
+printf '%s\\n' 'v{node_version}'
+exit 0
+fi
+exit 0
+""",
+    )
+    _write_executable(fake_bin / "npm", f"""#!/bin/sh
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-v" ]; then
+printf '%s\\n' '{npm_version}'
+exit 0
+fi
 printf '%s\\n' npm >> "$HOME/npm.log"
 exit 0
 """)
@@ -153,6 +174,44 @@ def test_dev_sh_bootstraps_uv_python_and_requirements_on_first_run(tmp_path: Pat
     assert "数据库地址: pg.example.internal:5432/nanzi_test" in result.stdout
     assert "Redis 地址: redis.example.internal:6380/4" in result.stdout
     assert "[1/4]" in result.stdout
+
+
+def test_dev_sh_rejects_unsupported_node_before_uv_bootstrap(tmp_path: Path):
+    repo, fake_bin, home = _prepare_fake_repo(tmp_path)
+    _install_fake_commands(fake_bin, home, uv_in_path=False, node_version="18.20.0")
+
+    result = _run_dev(repo, fake_bin, home)
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "Node.js 版本不满足要求" in output
+    assert "20.19.0" in output
+    assert not (home / "uv.log").exists()
+    assert "正在准备 uv" not in output
+
+
+def test_dev_sh_rejects_node_21_between_supported_vite_ranges(tmp_path: Path):
+    repo, fake_bin, home = _prepare_fake_repo(tmp_path)
+    _install_fake_commands(fake_bin, home, uv_in_path=False, node_version="21.7.3")
+
+    result = _run_dev(repo, fake_bin, home)
+
+    assert result.returncode != 0
+    assert "Node.js 版本不满足要求" in result.stdout + result.stderr
+    assert not (home / "uv.log").exists()
+
+
+def test_dev_sh_rejects_unsupported_npm_before_uv_bootstrap(tmp_path: Path):
+    repo, fake_bin, home = _prepare_fake_repo(tmp_path)
+    _install_fake_commands(fake_bin, home, uv_in_path=False, npm_version="7.24.2")
+
+    result = _run_dev(repo, fake_bin, home)
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "npm 版本不满足要求" in output
+    assert "8.0.0" in output
+    assert not (home / "uv.log").exists()
 
 
 def test_dev_sh_skips_python_install_when_requirements_are_unchanged(tmp_path: Path):
