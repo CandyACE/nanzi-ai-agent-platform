@@ -65,7 +65,7 @@ def test_chat_input_compaction_card_has_clear_hierarchy_and_primary_color():
     assert 'data-testid="context-compaction-mode-fast"' in block
     assert 'data-testid="context-compaction-mode-smart"' in block
     assert "立即智能压缩" in block
-    assert "智能压缩会调用当前模型" in block
+    assert "智能压缩会调用模型" in block
     assert "bg-primary" in block
     assert "text-emerald" in block
     assert "violet" not in block

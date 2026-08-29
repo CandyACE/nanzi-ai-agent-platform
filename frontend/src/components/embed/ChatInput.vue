@@ -2088,7 +2088,7 @@ defineExpose({
                   role="dialog"
                   aria-label="上下文压缩记录"
                   aria-live="polite"
-                  class="absolute right-0 z-40 h-[min(70vh,32rem)] w-[min(90vw,30rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-violet-100 bg-white/95 text-[10px] shadow-xl dark:border-violet-900/60 dark:bg-gray-800/95"
+                  class="absolute right-0 z-40 h-[min(70vh,32rem)] w-[min(94vw,42rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-violet-100 bg-white/95 text-[10px] shadow-xl dark:border-violet-900/60 dark:bg-gray-800/95"
                   :class="contextCompactionDetailsPlacement === 'above'
                     ? 'bottom-[calc(100%+0.5rem)]'
                     : 'top-[calc(100%+0.5rem)]'"
