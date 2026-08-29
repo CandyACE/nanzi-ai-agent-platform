@@ -115,6 +115,27 @@ def test_tool_details_are_truncated_and_empty_snapshot_is_omitted():
     assert finalize_process_timeline([{"kind": "text", "textKind": "narration", "pending": True, "content": "候选"}]) is None
 
 
+def test_file_metadata_survives_process_timeline_persistence():
+    metadata = {
+        "operation": "read",
+        "path": "/workspace/docs/report.md",
+        "target_type": "file",
+    }
+    items = _run([
+        {
+            "type": "log",
+            "id": "tool_file",
+            "title": "工具完成: Read",
+            "details": "正文",
+            "status": "success",
+            "category": "tool",
+            "file_metadata": metadata,
+        }
+    ])
+
+    assert items[0]["file_metadata"] == metadata
+
+
 def test_model_call_start_and_end_merge_into_one_timeline_step():
     items = _run(
         [

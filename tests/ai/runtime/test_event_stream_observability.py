@@ -101,6 +101,32 @@ async def test_map_standard_agentscope_event_records_tool_result_state():
 
 
 @pytest.mark.asyncio
+async def test_tool_call_start_preserves_inline_arguments_for_completion_metadata():
+    state = new_native_stream_state()
+    event = SimpleNamespace(
+        type="TOOL_CALL_START",
+        tool_call_id="read-1",
+        tool_call_name="Read",
+        arguments={"file_path": "/workspace/docs/report.md"},
+    )
+
+    async for _ in map_standard_agentscope_event(event, state=state):
+        pass
+
+    async for _ in map_standard_agentscope_event(
+        SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="read-1",
+            delta='{"file_path": "/workspace/other.txt"}',
+        ),
+        state=state,
+    ):
+        pass
+
+    assert state["tool_args_text"]["read-1"] == '{"file_path": "/workspace/docs/report.md"}'
+
+
+@pytest.mark.asyncio
 async def test_custom_state_updated_emits_context_update():
     state = new_native_stream_state()
     event = SimpleNamespace(

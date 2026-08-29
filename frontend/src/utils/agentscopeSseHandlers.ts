@@ -99,6 +99,7 @@ export interface AgentStreamLog {
   isExpanded?: boolean;
   category?: string;
   tool_name?: string;
+  file_metadata?: import("./processTimeline").FileToolMetadata;
   resolution_status?: "disabled" | "missing" | "filtered";
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
@@ -732,6 +733,7 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     error_reason: data.error_reason === undefined ? undefined : String(data.error_reason),
     category: category || (data.category ? String(data.category) : undefined),
     tool_name: data.tool_name === undefined ? undefined : String(data.tool_name),
+    file_metadata: data.file_metadata as import("./processTimeline").FileToolMetadata | undefined,
     resolution_status: data.resolution_status as "disabled" | "missing" | "filtered" | undefined,
     execution_time_ms:
       data.execution_time_ms === undefined ? undefined : Number(data.execution_time_ms),

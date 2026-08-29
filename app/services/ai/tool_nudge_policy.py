@@ -38,6 +38,49 @@ _NUDGE_EXCLUDED_TOOLS = frozenset({
     "update_dashboard_context",
 })
 
+_OFFICE_TOOL_NAMES = frozenset({
+    "word_document_read",
+    "word_document_write",
+    "excel_document_read",
+    "excel_document_write",
+})
+_OFFICE_EXPLICIT_TOOL_NAMES = (
+    "word_document_read",
+    "word_document_write",
+    "excel_document_read",
+    "excel_document_write",
+)
+_OFFICE_WORD_TERMS = ("word", "docx", "word文档", "文字文档")
+_OFFICE_EXCEL_TERMS = ("excel", "xlsx", "excel表格", "电子表格", "工作簿")
+_OFFICE_READ_TERMS = (
+    "读取", "查看", "看看", "打开", "解析", "检查结构", "查看内容",
+    "读取段落", "读取单元格", "查看工作表", "读一下", "读下", "读读",
+    "读一读", "帮我读", "读这个",
+)
+_OFFICE_WRITE_TERMS = (
+    "生成", "创建", "制作", "保存", "导出", "转成", "转换为",
+    "修改", "替换", "追加", "整理成", "编辑",
+)
+_OFFICE_DOWNLOAD_TERMS = ("给我下载地址", "提供下载", "下载链接", "下载地址")
+_OFFICE_NEGATION_TERMS = (
+    "不要调用", "别调用", "不用调用", "不调用", "无需调用", "请勿调用",
+    "不必调用", "不需要调用", "不要使用", "禁止调用", "无需使用",
+    "请勿使用", "不必使用", "不需要使用",
+)
+_OFFICE_WRITE_NEGATION_TERMS = (
+    "不要保存", "别保存", "不用保存", "无需保存", "不必保存", "不需要保存",
+    "不要生成", "别生成", "无需生成", "不必生成", "不需要生成",
+    "不要创建", "别创建", "无需创建", "不必创建", "不需要创建",
+    "不要导出", "别导出", "无需导出", "不必导出", "不需要导出",
+    "不要修改", "别修改", "无需修改", "不必修改", "不需要修改",
+    "不要写入", "别写入", "无需写入", "不必写入", "不需要写入",
+)
+_OFFICE_INVOCATION_TERMS = ("调用", "使用", "执行", "运行", "触发")
+_OFFICE_EXPLANATION_TERMS = (
+    "是什么", "什么工具", "有什么区别", "区别", "支持", "能做什么",
+    "功能", "作用", "说明", "介绍", "怎么用",
+)
+
 # 用户明确要求进入“你问我答/逐步引导”流程时，不应再等待模型自行判断
 # 当前任务是否已经阻塞。该信号只负责提升 ask_user_question，否定表达优先排除。
 _EXPLICIT_USER_QUESTION_REQUEST_TERMS = (
@@ -300,6 +343,142 @@ def _resolve_explicit_user_question_nudge(
         ),
         force_first_call=True,
         metadata=resolve_tool_metadata(question_tool),
+    )
+
+
+def _build_office_tool_nudge(
+    tool_name: str,
+    tool: Any,
+    *,
+    score: float,
+    explicit: bool,
+    metadata_by_name: Optional[Mapping[str, ToolMetadata]] = None,
+) -> ToolNudge:
+    is_write = tool_name.endswith("_write")
+    family = "Word" if tool_name.startswith("word_") else "Excel"
+    if explicit:
+        prefix = f"用户明确指定调用「{tool_name}」"
+    elif is_write:
+        prefix = f"用户明确提出{family}文件生成、保存、导出或修改请求"
+    else:
+        prefix = f"用户明确提出{family}文件读取或查看请求"
+
+    if is_write:
+        suffix = (
+            "写入工具仍需遵循现有权限确认；只有工具成功返回 artifact.download_url 后，"
+            "才能声称文件已生成并提供下载地址。"
+        )
+    else:
+        suffix = "必须以工具返回的真实文件内容为准，不要只输出未执行的文字承诺。"
+    return ToolNudge(
+        tool_name=tool_name,
+        score=score,
+        message=(
+            f"【Office 工具优先】{prefix}。本轮必须优先调用已绑定工具「{tool_name}」；"
+            + suffix
+        ),
+        force_first_call=True,
+        metadata=resolve_tool_metadata(tool, metadata_by_name=metadata_by_name),
+    )
+
+
+def _contains_office_type(normalized_query: str, terms: Sequence[str]) -> bool:
+    for term in terms:
+        if term in {"word", "docx", "excel", "xlsx"}:
+            if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", normalized_query):
+                return True
+        elif term in normalized_query:
+            return True
+    return False
+
+
+def _has_office_reference(normalized_query: str) -> bool:
+    return (
+        any(name in normalized_query for name in _OFFICE_EXPLICIT_TOOL_NAMES)
+        or _contains_office_type(normalized_query, _OFFICE_WORD_TERMS)
+        or _contains_office_type(normalized_query, _OFFICE_EXCEL_TERMS)
+    )
+
+
+def _resolve_office_tool_nudge(
+    query: str,
+    tools: List[Any],
+    *,
+    metadata_by_name: Optional[Mapping[str, ToolMetadata]] = None,
+    explicit_only: bool = False,
+) -> Optional[ToolNudge]:
+    """按已绑定的四个 Office 工具解析显式工具名和中文读写意图。"""
+    normalized = _normalize(query)
+    available = {
+        str(getattr(tool, "name", "") or "").strip(): tool
+        for tool in tools or []
+        if str(getattr(tool, "name", "") or "").strip() in _OFFICE_TOOL_NAMES
+    }
+    if not available:
+        return None
+    if _contains_any(normalized, _OFFICE_NEGATION_TERMS):
+        return None
+
+    mentioned_explicit_names = [
+        name
+        for name in _OFFICE_EXPLICIT_TOOL_NAMES
+        if name in normalized
+    ]
+    if len(mentioned_explicit_names) > 1:
+        return None
+    explicit_name = (
+        mentioned_explicit_names[0]
+        if mentioned_explicit_names and mentioned_explicit_names[0] in available
+        else None
+    )
+    if explicit_name is not None:
+        if _contains_any(normalized, _OFFICE_INVOCATION_TERMS):
+            return _build_office_tool_nudge(
+                explicit_name,
+                available[explicit_name],
+                score=1.0,
+                explicit=True,
+                metadata_by_name=metadata_by_name,
+            )
+        if _contains_any(normalized, _OFFICE_EXPLANATION_TERMS):
+            return None
+    if explicit_only:
+        return None
+
+    has_word_type = _contains_office_type(normalized, _OFFICE_WORD_TERMS)
+    has_excel_type = _contains_office_type(normalized, _OFFICE_EXCEL_TERMS)
+    if has_word_type == has_excel_type:
+        return None
+
+    family = "word" if has_word_type else "excel"
+    has_read = any(term in normalized for term in _OFFICE_READ_TERMS)
+    has_write = any(term in normalized for term in _OFFICE_WRITE_TERMS)
+    has_download = any(term in normalized for term in _OFFICE_DOWNLOAD_TERMS)
+    if _contains_any(normalized, _OFFICE_WRITE_NEGATION_TERMS):
+        has_write = False
+
+    # 单独索要已有文件下载地址不是 Office 写入请求；需要生成/保存/导出/修改
+    # 等动作词时，才允许选择 *_write。
+    if has_download and not has_write:
+        return None
+    # 同时要求读取和写入时，首步顺序不能由 Office 单工具规则猜测；有
+    # todo_write 时前面的多步骤规则已经先行接管。
+    if has_read and has_write:
+        return None
+    if not has_read and not has_write:
+        return None
+
+    operation = "write" if has_write else "read"
+    tool_name = f"{family}_document_{operation}"
+    tool = available.get(tool_name)
+    if tool is None:
+        return None
+    return _build_office_tool_nudge(
+        tool_name,
+        tool,
+        score=1.0,
+        explicit=False,
+        metadata_by_name=metadata_by_name,
     )
 
 
@@ -729,6 +908,17 @@ def resolve_tool_nudge(
         if explicit_question_nudge is not None:
             return explicit_question_nudge
 
+    # 明确写出 Office 原始工具名时，不能被通用元操作门禁拦截；仍只接受
+    # 当前运行时实际已绑定的目标工具。
+    explicit_office_nudge = _resolve_office_tool_nudge(
+        query,
+        tools,
+        metadata_by_name=tool_metadata,
+        explicit_only=True,
+    )
+    if explicit_office_nudge is not None:
+        return explicit_office_nudge
+
     if not should_consider_tool_nudge(query):
         return None
 
@@ -912,6 +1102,15 @@ def resolve_tool_nudge(
     if catalog_nudge is not None:
         return _attach_tool_metadata(catalog_nudge, tools, tool_metadata)
 
+    office_nudge = _resolve_office_tool_nudge(
+        query,
+        tools,
+        metadata_by_name=tool_metadata,
+    )
+    if office_nudge is not None:
+        return office_nudge
+
+    office_reference_in_query = _has_office_reference(_normalize(query))
     signals = _query_signals(query)
     if len(signals) < 2:
         return None
@@ -927,6 +1126,8 @@ def resolve_tool_nudge(
     for tool in tools or []:
         name = str(getattr(tool, "name", "") or "")
         if not name or name in excluded:
+            continue
+        if office_reference_in_query and name in _OFFICE_TOOL_NAMES:
             continue
         score = relevance_score(signals, _tool_text(tool))
         if score > best_score:

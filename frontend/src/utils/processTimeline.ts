@@ -4,6 +4,25 @@ export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning";
 export type ToolResolutionStatus = "disabled" | "missing" | "filtered";
 export type ProcessTimelineTodoStatus = "pending" | "in_progress" | "completed";
 
+export type FileToolMetadata = {
+  operation: "read" | "write" | "edit" | "search";
+  path: string;
+  target_type: "file" | "directory";
+  document_type?: "word" | "excel";
+  action?: string;
+  file_name?: string | null;
+  file_extension?: string;
+  range?: { start?: number; limit?: number };
+  paragraph_range?: { start?: number; limit?: number };
+  sheet_name?: string;
+  cell_range?: string;
+  pattern?: string;
+  glob?: string;
+  changes?: Record<string, unknown>;
+  size_bytes?: number;
+  mime_type?: string;
+};
+
 export type ProcessTimelineTextItem = {
   kind: "text";
   id: string;
@@ -31,6 +50,7 @@ export type ProcessTimelineLogItem = {
   error_reason?: string;
   category?: string;
   tool_name?: string;
+  file_metadata?: FileToolMetadata;
   resolution_status?: ToolResolutionStatus;
   execution_time_ms?: number | null;
   started_at?: number | null;
@@ -54,6 +74,12 @@ export type ProcessTimelineTodoItem = {
 };
 
 export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem | ProcessTimelineTodoItem;
+
+export const PREPARATION_TIMELINE_PARENT_ID = "preparation:auth_context_capability";
+
+export function defaultChildrenExpandedForLog(id: string | number | undefined): boolean {
+  return String(id) !== PREPARATION_TIMELINE_PARENT_ID;
+}
 
 /** 将底层事件名转换为思考卡片中的用户语言，原始详情仍保留在展开内容中。 */
 export function formatTimelineTitle(title: unknown): string {
@@ -486,6 +512,7 @@ export function upsertTimelineLog(
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
@@ -502,6 +529,7 @@ export function upsertTimelineLog(
     if (data.error_reason !== undefined) existing.error_reason = data.error_reason;
     if (data.category !== undefined) existing.category = data.category;
     if (data.tool_name !== undefined) existing.tool_name = data.tool_name;
+    if (data.file_metadata !== undefined) existing.file_metadata = data.file_metadata;
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
@@ -545,13 +573,14 @@ export function upsertTimelineLog(
     error_reason: data.error_reason,
     category: data.category,
     tool_name: data.tool_name,
+    file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     execution_time_ms: data.execution_time_ms,
     started_at: data.started_at,
     subagent: data.subagent,
     isExpanded: false,
     children: [],
-    childrenExpanded: true,
+    childrenExpanded: defaultChildrenExpandedForLog(data.id),
   };
 
   if (data.parent_id !== undefined && data.parent_id !== null && data.parent_id !== data.id) {
@@ -559,7 +588,7 @@ export function upsertTimelineLog(
     if (parent) {
       parent.children ||= [];
       parent.children.push(log);
-      parent.childrenExpanded ??= true;
+      parent.childrenExpanded ??= defaultChildrenExpandedForLog(parent.id);
       return;
     }
   }
@@ -571,7 +600,7 @@ export function upsertTimelineLog(
     if (subagentContainer) {
       subagentContainer.children ||= [];
       subagentContainer.children.push(log);
-      subagentContainer.childrenExpanded ??= true;
+      subagentContainer.childrenExpanded ??= defaultChildrenExpandedForLog(subagentContainer.id);
       return;
     }
   }
@@ -585,7 +614,7 @@ export function upsertTimelineLog(
   if (parent) {
     parent.children ||= [];
     parent.children.push(log);
-    parent.childrenExpanded ??= true;
+    parent.childrenExpanded ??= defaultChildrenExpandedForLog(parent.id);
     return;
   }
   target.processTimeline.push(log);
@@ -608,6 +637,7 @@ export function mergeTimelineLogs(
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
@@ -637,6 +667,7 @@ export function mergeTimelineLogs(
         targetLog.error_reason = log.error_reason ?? targetLog.error_reason;
         targetLog.category = log.category ?? targetLog.category;
         targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
+        targetLog.file_metadata = log.file_metadata ?? targetLog.file_metadata;
         targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
         targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
         targetLog.started_at = log.started_at ?? targetLog.started_at;
@@ -738,6 +769,7 @@ export function buildLegacyProcessTimeline(input: {
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
@@ -751,7 +783,13 @@ export function buildLegacyProcessTimeline(input: {
   // 历史消息没有事件序列，只能保留旧页面的兼容顺序：步骤日志在前，
   // 过程/思考文本在后。新消息会直接走 processTimeline，具备精确顺序。
   for (const log of input.logs || []) {
-    items.push({ kind: "log", ...log, isExpanded: false, children: [], childrenExpanded: true });
+    items.push({
+      kind: "log",
+      ...log,
+      isExpanded: false,
+      children: [],
+      childrenExpanded: defaultChildrenExpandedForLog(log.id),
+    });
   }
   if (input.processNarration) {
     items.push({
@@ -892,7 +930,7 @@ export function hydrateHistoryProcessTimeline(
   const mapLog = (log: ProcessTimelineLogItem): ProcessTimelineLogItem => ({
     ...log,
     isExpanded: false,
-    childrenExpanded: true,
+    childrenExpanded: defaultChildrenExpandedForLog(log.id),
     children: (log.children || []).map(mapLog),
   });
 

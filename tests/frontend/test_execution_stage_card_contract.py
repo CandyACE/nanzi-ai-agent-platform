@@ -65,7 +65,7 @@ def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     assert 'return "🛡️"' in timeline
 
 
-def test_thinking_card_keeps_preparation_expanded_after_completion():
+def test_preparation_children_are_collapsed_by_default_but_can_be_reopened():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     header = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
     timeline_utils = _read("frontend/src/utils/processTimeline.ts")
@@ -75,15 +75,51 @@ def test_thinking_card_keeps_preparation_expanded_after_completion():
     assert "bg-sky-50" not in timeline
     assert "border-sky-200" not in timeline
     assert "displayTimelineTitle" in timeline
-    assert "collapseCompletedPreparation" not in timeline
-    assert "preparationCollapseState" not in timeline
-    assert "watch(items" not in timeline
+    assert "toggleTimelineItem" in timeline
+    assert "PREPARATION_TIMELINE_PARENT_ID" in timeline_utils
+    assert "defaultChildrenExpandedForLog" in timeline_utils
+    assert "defaultChildrenExpandedForLog(data.id)" in timeline_utils
+    assert "defaultChildrenExpandedForLog(log.id)" in timeline_utils
     assert "childrenExpanded = false" not in timeline
     assert "主专家开始处理" in timeline_utils
     assert "工具可用性检查" in timeline_utils
     assert "模型调用 ·" in timeline_utils
     assert "#0ea5e9" in timeline
     assert "#0ea5e9" in header
+
+
+def test_file_tool_metadata_is_available_for_timeline_display():
+    runner = _read("app/services/ai/runners/assistant_agent_runner.py")
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+    process = _read("frontend/src/utils/processTimeline.ts")
+
+    assert '"file_metadata"' in runner
+    assert "file_metadata?:" in timeline
+    assert "file_metadata?:" in process
+    assert "metadata.path" in timeline
+    assert "metadata.operation" in timeline
+    assert "metadata.pattern" in timeline
+    assert "const baseTitle = formatTimelineTitle(item.title || item.tool_name || \"执行步骤\")" in timeline
+    assert "operationLabels" in timeline
+    assert "路径：" in timeline
+    assert "关键词：" in timeline
+    assert "工作表：" in timeline
+    assert "范围：" in timeline
+    assert "metadata.changes" in timeline
+
+
+def test_sse_handler_forwards_file_metadata_into_process_timeline():
+    handlers = _read("frontend/src/utils/agentscopeSseHandlers.ts")
+    snapshot = _read("app/services/ai/runtime/agentscope/process_timeline_snapshot.py")
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    assert "file_metadata: data.file_metadata" in handlers
+    assert "syncProcessTimelineLog" in handlers
+    assert '"file_metadata"' in snapshot
+    assert "file_metadata" in embed
+    assert "file_metadata" in debug
+    assert "file_metadata" in handlers
 
 
 def test_tool_permission_card_exposes_decision_context_and_accessible_actions():

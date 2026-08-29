@@ -2208,6 +2208,7 @@ interface LogEntry {
   isRouter?: boolean;
   category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'system' | 'default';
   tool_name?: string;
+  file_metadata?: import("@/utils/processTimeline").FileToolMetadata;
   resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
@@ -7171,6 +7172,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
         ? normalizeSubagentTraceMeta(data.subagent)
         : currentLog.subagent,
       tool_name: data.tool_name ?? currentLog.tool_name,
+      file_metadata: data.file_metadata ?? currentLog.file_metadata,
       resolution_status: data.resolution_status ?? currentLog.resolution_status,
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,
     };
@@ -7197,6 +7199,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
     subagent: normalizeSubagentTraceMeta(data.subagent),
     tool_name: data.tool_name,
+    file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     rowFilterApplied: data.row_filter_applied === true,
   });

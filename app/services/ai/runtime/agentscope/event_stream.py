@@ -66,6 +66,7 @@ def new_native_stream_state(
         "tool_outputs": {},
         "tool_result_states": {},
         "tool_data": {},
+        "inline_tool_argument_ids": {},
         "tool_started_at": {},
         "content_emitted": False,
         "used_tools": False,
@@ -488,6 +489,23 @@ async def map_standard_agentscope_event(
         tool_id = getattr(event, "tool_call_id", "")
         tool_name = getattr(event, "tool_call_name", "")
         tool_names = state.setdefault("tool_names", {})
+        inline_arguments = getattr(event, "arguments", None)
+        if inline_arguments is None:
+            inline_arguments = getattr(event, "input", None)
+        if inline_arguments is not None:
+            state.setdefault("tool_args_text", {})[tool_id] = (
+                json.dumps(inline_arguments, ensure_ascii=False)
+                if isinstance(inline_arguments, (dict, list))
+                else str(inline_arguments)
+            )
+            inline_argument_ids = state.get("inline_tool_argument_ids")
+            if not isinstance(inline_argument_ids, dict):
+                inline_argument_ids = {
+                    str(item): True
+                    for item in inline_argument_ids
+                } if isinstance(inline_argument_ids, (list, tuple, set)) else {}
+                state["inline_tool_argument_ids"] = inline_argument_ids
+            inline_argument_ids[tool_id] = True
         tool_started_at = state.setdefault("tool_started_at", {})
         tool_names[tool_id] = tool_name
         tool_started_at[tool_id] = time.time()
@@ -531,6 +549,15 @@ async def map_standard_agentscope_event(
 
     if event_type == "TOOL_CALL_DELTA":
         tool_id = getattr(event, "tool_call_id", "")
+        inline_argument_ids = state.get("inline_tool_argument_ids") or {}
+        if (
+            isinstance(inline_argument_ids, dict)
+            and inline_argument_ids.get(tool_id)
+        ) or (
+            isinstance(inline_argument_ids, (list, tuple, set))
+            and tool_id in inline_argument_ids
+        ):
+            return
         tool_args_text = state.setdefault("tool_args_text", {})
         tool_args_text[tool_id] = tool_args_text.get(tool_id, "") + str(getattr(event, "delta", ""))
         return

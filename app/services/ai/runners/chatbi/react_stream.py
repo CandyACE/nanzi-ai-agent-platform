@@ -20,6 +20,10 @@ from app.services.ai.runtime.agentscope.tool_result import (
 )
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_display
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+from app.services.ai.runners.assistant_agent_runner import (
+    _build_file_tool_metadata,
+    _resolve_agentscope_tool_args,
+)
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.sql_result_compact import (
     mark_successful_nonempty_sql,
@@ -70,11 +74,8 @@ async def stream_agentscope_events(
     async def on_tool_result_end(event: Any) -> AsyncGenerator[Dict[str, Any], None]:
         tool_id = getattr(event, "tool_call_id", "")
         tool_name = state.tool_names.get(tool_id, "")
-        raw_args = state.tool_args_text.get(tool_id, "") or "{}"
-        try:
-            tool_args = json.loads(raw_args)
-        except Exception:
-            tool_args = {"input": raw_args}
+        raw_args = state.tool_args_text.get(tool_id, "")
+        tool_args = _resolve_agentscope_tool_args(agent, tool_id, raw_args)
         output = state.tool_outputs.get(tool_id, "")
         duration_ms = (time.time() - state.tool_started_at.get(tool_id, time.time())) * 1000
         if tool_name == "get_dataset_schema":
@@ -351,6 +352,9 @@ async def stream_agentscope_events(
         )
         if error_reason:
             log_payload["error_reason"] = error_reason
+        file_metadata = _build_file_tool_metadata(tool_name, tool_args, output)
+        if file_metadata:
+            log_payload["file_metadata"] = file_metadata
         if (
             tool_name == "execute_sql_query"
             and isinstance(notice, dict)

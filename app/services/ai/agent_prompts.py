@@ -473,6 +473,40 @@ class AgentServicePrompts:
 
         # 3. 记忆与知识对照表（动态构建表格）
         table_rows = []
+        office_read_tools = {
+            name for name in ("word_document_read", "excel_document_read")
+            if name in tool_names
+        }
+        office_write_tools = {
+            name for name in ("word_document_write", "excel_document_write")
+            if name in tool_names
+        }
+        office_read_label = "/".join(
+            label for label, tool_name in (
+                ("Word", "word_document_read"),
+                ("Excel", "excel_document_read"),
+            ) if tool_name in office_read_tools
+        )
+        office_write_label = "/".join(
+            label for label, tool_name in (
+                ("Word", "word_document_write"),
+                ("Excel", "excel_document_write"),
+            ) if tool_name in office_write_tools
+        )
+
+        if office_read_tools:
+            table_rows.append(
+                f"| 用户要求读取、查看或解析 {office_read_label} 文件 | "
+                "必须优先调用对应的 *_read 工具获取真实内容（仅限本轮已绑定工具）；"
+                "不要仅凭模型记忆或普通文字承诺已读取 |"
+            )
+        if office_write_tools:
+            table_rows.append(
+                f"| 用户要求生成、创建、保存、导出或修改 {office_write_label} 文件 | "
+                "必须优先调用对应的 *_write 工具（仅限本轮已绑定工具）；"
+                "写入仍需遵循工具权限确认，成功后以工具返回的 `artifact.download_url` 为准 |"
+            )
+
         if "sub_agent_call" in tool_names:
             table_rows.append("| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |")
 
@@ -483,7 +517,10 @@ class AgentServicePrompts:
             table_rows.append("| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |")
 
         if "publish_generated_file" in tool_names:
-            table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
+            if office_write_tools:
+                table_rows.append(f"| 用户要求保存、交付、导出或下载已生成文件 | 普通文件工具生成文件后才调用 `publish_generated_file(path=...)`；{office_write_label} 的 `*_write` 已经登记 artifact 并返回 `artifact.download_url`，不要再次调用 publish_generated_file；只有拿到真实 `download_url` 才能向用户提供下载地址 |")
+            else:
+                table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
 
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")

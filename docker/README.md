@@ -68,6 +68,10 @@ REDIS_ENABLE=true
 # 安全配置 (必须配置)
 API_SERVICE_API_KEY_HASH_ALGORITHM=sha256
 ENCRYPTION_KEY=your-fernet-key-here  # 使用 Fernet.generate_key() 生成
+
+# DooD Docker 沙箱（平台运行在容器内且启用 sandbox_policy=docker 时必填）
+# 必须是 Docker daemon 所在宿主机上的绝对路径，不是平台容器内的 /app/data
+HOST_DATA_DIR=/data/yunshu-aiagent/data
 ```
 
 > **注意**: 
@@ -115,6 +119,49 @@ cd docker
 - 镜像导出（可用于离线部署）
 
 ### 3. 启动服务
+
+#### Docker 沙箱 / DooD 工作区挂载配置
+
+如果平台自身运行在 Docker 容器内，并且系统配置选择 `docker` 沙箱策略，Compose 必须同时挂载 Docker Socket，并向平台容器传入宿主机数据目录：
+
+```yaml
+volumes:
+  - /data/yunshu-aiagent/data:/app/data
+  - /var/run/docker.sock:/var/run/docker.sock
+environment:
+  - HOST_DATA_DIR=/data/yunshu-aiagent/data
+```
+
+三层路径关系如下：
+
+| 层级 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| Docker daemon 所在宿主机 | `/data/yunshu-aiagent/data/agent_workspaces/{user_key}` | 用户持久化工作区真实目录 |
+| 平台 API 容器 | `/app/data/agent_workspaces/{user_key}` | 由 Compose 映射到同一宿主机目录 |
+| 用户 Docker 沙箱容器 | `/workspace` | 由宿主 Docker daemon bind mount 到同一用户目录 |
+
+其中 `{user_key}` 通常是 `用户名__用户ID`，例如 `admin__1`。用户目录下常见结构为 `docs/`、`uploads/`、`sessions/{conversation_id}/`、`sandbox/` 和 `skills/`。`/workspace/sessions` 应能看到平台容器已经创建的会话目录。
+
+`HOST_DATA_DIR` 必须是 Docker daemon 所在机器可访问的宿主机绝对路径。只配置 `/data/...:/app/data` 而不配置 `HOST_DATA_DIR` 时，平台容器虽然能看到文件，但通过 Docker Socket 创建的沙箱可能会尝试挂载宿主机上的 `/app/data/...`，从而出现沙箱 `/workspace/sessions` 为空。
+
+启动或修改配置后，用以下命令核对：
+
+```bash
+# 平台容器必须拿到宿主机路径
+docker exec nanzi-ai-agent sh -lc 'echo "HOST_DATA_DIR=$HOST_DATA_DIR"'
+
+# 沙箱实际挂载源必须是宿主机真实路径
+docker inspect as_ws_<用户名>__<用户ID> \
+  --format '{{range .Mounts}}{{println .Source " -> " .Destination}}{{end}}'
+```
+
+期望看到类似：
+
+```text
+/data/yunshu-aiagent/data/agent_workspaces/admin__1 -> /workspace
+```
+
+修改 `HOST_DATA_DIR` 后必须重新创建平台容器；已有的 `as_ws_<user_key>` 沙箱也必须停止并重新创建，旧容器的挂载不会自动更新。
 
 #### 方式一：使用一键启动脚本(推荐)
 
