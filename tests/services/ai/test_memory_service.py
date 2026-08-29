@@ -203,6 +203,8 @@ async def test_memory_service_clear_history(mock_redis):
         assert {
             "conversation:u1:c1:data_result_stack_v1",
             "conversation:u1:c1:session_tool_artifact_v1",
+            "conversation:u1:c1:reusable_result_v1:current",
+            "conversation:u1:c1:reusable_result_v1:stack",
         }.issubset(deleted_keys)
 
 

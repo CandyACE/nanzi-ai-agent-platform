@@ -68,6 +68,36 @@ async def test_resolve_knowledge_tools_keeps_explicit_search_tool():
     assert tools == [explicit_search]
 
 
+def test_selected_reusable_result_failure_does_not_skip_knowledge_prefetch():
+    config = ChatConfig(
+        agent_id="kb-agent",
+        agent_name="知识库助手",
+        model_name="test",
+        temperature=0.0,
+        system_prompt="kb",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+    )
+    runner = KnowledgeAgentRunner(config=config, trace_id="t-selected-miss", trace_buffer=[])
+
+    decision = type(
+        "Decision",
+        (),
+        {"mode": "fallback", "reason": "selected_result_missing"},
+    )()
+
+    assert runner._should_skip_knowledge_prefetch(
+        is_catalog_query=False,
+        reusable_decision=decision,
+        reusable_knowledge_result=False,
+        user_question="总结上面内容",
+        history=[
+            {"role": "user", "content": "上一轮问题"},
+            {"role": "assistant", "content": "上一轮回答"},
+        ],
+    ) is False
+
+
 @pytest.mark.asyncio
 async def test_resolve_knowledge_tools_keeps_all_implicit_tools():
     config = ChatConfig(

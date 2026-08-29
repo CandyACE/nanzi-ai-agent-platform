@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.ai.runtime.agentscope.stream_reconcile import (
+    build_tool_review_lines,
     collapse_repeated_reply,
     compute_stream_reconcile_gap,
     needs_tool_synthesis_fallback,
@@ -61,6 +62,33 @@ def test_needs_synthesis_when_tools_returned_but_no_reply_exists():
         tool_outputs={"search": "结果"},
         min_complete_chars=32,
     )
+
+
+def test_todo_write_is_not_a_synthesis_data_source():
+    assert not needs_tool_synthesis_fallback(
+        "",
+        "",
+        used_tools=True,
+        tool_names={"todo-1": "todo_write"},
+        tool_outputs={"todo-1": '{"todos":[{"content":"整理报告","status":"completed"}]}'},
+    )
+
+
+def test_business_tool_still_triggers_synthesis_when_todo_also_ran():
+    assert needs_tool_synthesis_fallback(
+        "",
+        "",
+        used_tools=True,
+        tool_names={"todo-1": "todo_write", "search-1": "browser_read_visible"},
+        tool_outputs={"todo-1": '{"todos":[]}', "search-1": "北京天气：晴"},
+    )
+
+
+def test_tool_review_lines_exclude_todo_write_output():
+    assert build_tool_review_lines(
+        {"todo-1": "todo_write", "search-1": "browser_read_visible"},
+        {"todo-1": '{"todos":[]}', "search-1": "北京天气：晴"},
+    ) == ["- browser_read_visible: 北京天气：晴"]
 
 
 def test_no_synthesis_without_tools():

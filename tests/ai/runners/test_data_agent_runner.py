@@ -360,6 +360,55 @@ async def test_data_agent_runner_skips_schema_prefetch_for_context_action(data_c
 
 
 @pytest.mark.asyncio
+async def test_data_agent_runner_strips_clicked_reply_before_fallback_query(data_config, monkeypatch):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    seen: dict[str, str] = {}
+    classification = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.NEW_DATA_QUERY,
+        reasoning="测试：缓存失效后回退查数",
+        requires_fresh_data=True,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(user_query, *args, **kwargs):
+        seen["classifier_query"] = user_query
+        return classification, None, 0.0
+
+    async def empty_agent_turn(*args, **kwargs):
+        seen["native_query"] = kwargs["user_question"]
+        if False:
+            yield {}
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.DataAgentRunner._run_native_agent_turn",
+        empty_agent_turn,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-click-fallback", trace_buffer=[])
+    clicked_query = "查询本月销售额\n\n---\n\n【被点击的 AI 回复】\n上一轮查询结果：统计了销售额"
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": clicked_query}]):
+        events.append(chunk)
+
+    assert seen == {
+        "classifier_query": "查询本月销售额",
+        "native_query": "查询本月销售额",
+    }
+
+
+@pytest.mark.asyncio
 async def test_data_agent_runner_builds_chatbi_toolkit_without_workspace_file_tools(
     data_config, monkeypatch
 ):

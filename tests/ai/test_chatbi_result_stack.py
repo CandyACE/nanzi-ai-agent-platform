@@ -82,12 +82,14 @@ def test_descriptive_reference_can_select_unique_result():
 class _FakeRedis:
     def __init__(self):
         self.values = {}
+        self.expires = {}
 
     async def get(self, key):
         return self.values.get(key)
 
     async def set(self, key, value, ex=None):
         self.values[key] = value
+        self.expires[key] = ex
 
     async def delete(self, key):
         self.values.pop(key, None)
@@ -110,13 +112,72 @@ async def test_memory_service_result_stack_is_isolated_and_prefers_current(monke
 
 
 @pytest.mark.asyncio
+async def test_reusable_result_current_and_stack_use_user_conversation_scope(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr("app.services.ai.memory_service.get_redis", AsyncMock(return_value=redis))
+    service = MemoryService()
+    first = {"result_id": "r1", "result_type": "generic", "status": "completed"}
+    second = {"result_id": "r2", "result_type": "file", "status": "completed"}
+
+    await service.set_reusable_result("u1", "c1", first)
+    await service.push_reusable_result("u1", "c1", second)
+
+    assert (await service.get_reusable_result("u1", "c1"))["result_id"] == "r2"
+    assert [item["result_id"] for item in await service.get_reusable_result_stack("u1", "c1")] == [
+        "r1",
+        "r2",
+    ]
+    assert "conversation:u1:c1:reusable_result_v1:current" in redis.values
+    assert "conversation:u1:c1:reusable_result_v1:stack" in redis.values
+    assert redis.expires["conversation:u1:c1:reusable_result_v1:current"] == service.ttl
+    assert redis.expires["conversation:u1:c1:reusable_result_v1:stack"] == service.ttl
+
+
+@pytest.mark.asyncio
+async def test_reusable_result_push_is_idempotent_and_cleanup_removes_both_keys(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr("app.services.ai.memory_service.get_redis", AsyncMock(return_value=redis))
+    service = MemoryService()
+    result = {"result_id": "same", "result_type": "generic", "status": "completed"}
+
+    await service.push_reusable_result("u1", "c1", result)
+    await service.push_reusable_result("u1", "c1", result)
+    await service.clear_history("u1", "c1")
+
+    assert "conversation:u1:c1:reusable_result_v1:current" not in redis.values
+    assert "conversation:u1:c1:reusable_result_v1:stack" not in redis.values
+
+
+@pytest.mark.asyncio
+async def test_reusable_result_stack_keeps_ten_newest_entries(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr("app.services.ai.memory_service.get_redis", AsyncMock(return_value=redis))
+    service = MemoryService()
+
+    for index in range(12):
+        await service.push_reusable_result(
+            "u1",
+            "c1",
+            {"result_id": f"r{index}", "result_type": "generic", "status": "completed"},
+        )
+
+    stack = await service.get_reusable_result_stack("u1", "c1")
+    assert [item["result_id"] for item in stack] == [f"r{index}" for index in range(2, 12)]
+    assert (await service.get_reusable_result("u1", "c1"))["result_id"] == "r11"
+
+
+@pytest.mark.asyncio
 async def test_followup_save_dual_writes_legacy_and_structured_result(monkeypatch):
     from app.services.ai.data_query_semantic_intent import DataQuerySemanticIntent
     from app.services.ai.runners.chatbi.followup_data import save_last_data_result_for_followups
 
     legacy = AsyncMock()
+    unified = AsyncMock()
+    unified_stack = AsyncMock()
     push = AsyncMock()
     monkeypatch.setattr("app.services.ai.memory_service.memory_service.set_last_data_result", legacy)
+    monkeypatch.setattr("app.services.ai.memory_service.memory_service.set_reusable_result", unified)
+    monkeypatch.setattr("app.services.ai.memory_service.memory_service.push_reusable_result", unified_stack)
     monkeypatch.setattr(
         "app.services.ai.memory_service.memory_service.get_data_result_stack",
         AsyncMock(return_value=[{"result_id": "parent"}]),
@@ -135,13 +196,20 @@ async def test_followup_save_dual_writes_legacy_and_structured_result(monkeypatc
         ),
         _last_run_state=SimpleNamespace(followup_data_saved=False),
     )
-    await save_last_data_result_for_followups(
+    result_summary = await save_last_data_result_for_followups(
         runner,
         {"sql": "SELECT region, SUM(amount) FROM sales", "dataset_name": "sales"},
         {"rows": [{"region": "华东", "amount": 10}]},
     )
 
     legacy.assert_awaited_once()
+    unified.assert_not_awaited()
+    unified_stack.assert_awaited_once()
+    unified_payload = unified_stack.await_args.args[2]
+    assert unified_payload["result_type"] == "data"
+    assert unified_payload["rows"] == {"rows": [{"region": "华东", "amount": 10}]}
+    assert unified_payload["saved_at"].endswith("+00:00")
+    assert unified_payload["status"] == "completed"
     payload = push.await_args.args[2]
     assert payload["parent_result_id"] == "parent"
     assert payload["analysis_context"]["metrics"] == ["销售额"]
@@ -151,3 +219,228 @@ async def test_followup_save_dual_writes_legacy_and_structured_result(monkeypatc
     assert payload["observed_at"]
     assert payload["result_status"] == "success_non_empty"
     assert runner._last_run_state.followup_data_saved is True
+    assert result_summary["result_id"] == unified_payload["result_id"]
+    assert result_summary["result_type"] == "data"
+
+
+@pytest.mark.asyncio
+async def test_followup_save_does_not_report_saved_when_unified_write_fails(monkeypatch):
+    from app.services.ai.runners.chatbi.followup_data import save_last_data_result_for_followups
+
+    legacy = AsyncMock()
+    unified_stack = AsyncMock(return_value=False)
+    monkeypatch.setattr("app.services.ai.memory_service.memory_service.set_last_data_result", legacy)
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.push_reusable_result",
+        unified_stack,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_data_result_stack",
+        AsyncMock(return_value=[]),
+    )
+    data_stack = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.push_data_result_ref",
+        data_stack,
+    )
+    runner = SimpleNamespace(
+        conversation_id="conv-1",
+        trace_id="trace-fail",
+        _current_user_id=lambda: 7,
+        _standalone_query="查询销售额",
+        _semantic_intent=None,
+        _last_run_state=SimpleNamespace(followup_data_saved=False),
+    )
+
+    result = await save_last_data_result_for_followups(
+        runner,
+        {"sql": "SELECT amount FROM sales"},
+        {"rows": [{"amount": 10}]},
+    )
+
+    assert result is None
+    data_stack.assert_not_awaited()
+    assert runner._last_run_state.followup_data_saved is False
+
+
+@pytest.mark.asyncio
+async def test_followup_save_skips_empty_result_for_reusable_cache(monkeypatch):
+    from app.services.ai.runners.chatbi.followup_data import save_last_data_result_for_followups
+
+    legacy = AsyncMock()
+    unified = AsyncMock()
+    unified_stack = AsyncMock()
+    monkeypatch.setattr("app.services.ai.memory_service.memory_service.set_last_data_result", legacy)
+    monkeypatch.setattr("app.services.ai.memory_service.memory_service.set_reusable_result", unified)
+    monkeypatch.setattr("app.services.ai.memory_service.memory_service.push_reusable_result", unified_stack)
+    runner = SimpleNamespace(
+        conversation_id="conv-1",
+        trace_id="trace-empty",
+        _current_user_id=lambda: 7,
+        _standalone_query="查询不存在的数据",
+        _semantic_intent=None,
+        _last_run_state=SimpleNamespace(followup_data_saved=False),
+    )
+
+    await save_last_data_result_for_followups(
+        runner,
+        {"sql": "SELECT * FROM demo"},
+        {"rows": []},
+    )
+
+    legacy.assert_not_awaited()
+    unified.assert_not_awaited()
+    unified_stack.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chatbi_followup_loader_prefers_unified_data_result(monkeypatch):
+    from app.services.ai.runners.chatbi.followup_data import load_last_data_result
+
+    unified = {
+        "result_id": "unified-1",
+        "result_type": "data",
+        "structured": {"rows": [{"value": 7}]},
+    }
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result",
+        AsyncMock(return_value=unified),
+    )
+    legacy = AsyncMock(return_value={"rows": [{"value": 1}]})
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_current_data_result",
+        legacy,
+    )
+    runner = SimpleNamespace(
+        conversation_id="conv-1",
+        _current_user_id=lambda: 7,
+    )
+
+    result = await load_last_data_result(runner)
+
+    assert result["result_id"] == "unified-1"
+    assert result["rows"] == {"rows": [{"value": 7}]}
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chatbi_followup_loader_falls_back_to_unified_stack_when_current_is_empty(monkeypatch):
+    from app.services.ai.runners.chatbi.followup_data import load_last_data_result
+
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result",
+        AsyncMock(
+            return_value={
+                "result_id": "empty-current",
+                "result_type": "data",
+                "result_status": "success_empty",
+                "rows": {"rows": []},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result_stack",
+        AsyncMock(
+            return_value=[
+                {
+                    "result_id": "stacked-data",
+                    "result_type": "data",
+                    "rows": {"rows": [{"value": 9}]},
+                    "structured": {"rows": [{"value": 9}]},
+                }
+            ]
+        ),
+    )
+    legacy = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_current_data_result",
+        legacy,
+    )
+    runner = SimpleNamespace(
+        conversation_id="conv-1",
+        _current_user_id=lambda: 7,
+    )
+
+    result = await load_last_data_result(runner)
+
+    assert result["result_id"] == "stacked-data"
+    assert result["rows"] == {"rows": [{"value": 9}]}
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chatbi_followup_loader_prefers_selected_stack_item(monkeypatch):
+    from app.services.ai.runners.chatbi.followup_data import load_last_data_result
+
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result",
+        AsyncMock(
+            return_value={
+                "result_id": "current-data",
+                "result_type": "data",
+                "structured": {"rows": [{"value": 1}]},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result_stack",
+        AsyncMock(
+            return_value=[
+                {
+                    "result_id": "selected-data",
+                    "result_type": "data",
+                    "rows": {"rows": [{"value": 9}]},
+                    "structured": {"rows": [{"value": 9}]},
+                }
+            ]
+        ),
+    )
+    legacy = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_current_data_result",
+        legacy,
+    )
+    runner = SimpleNamespace(
+        conversation_id="conv-1",
+        _current_user_id=lambda: 7,
+    )
+
+    result = await load_last_data_result(runner, preferred_result_id="selected-data")
+
+    assert result["result_id"] == "selected-data"
+    assert result["rows"] == {"rows": [{"value": 9}]}
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chatbi_followup_loader_does_not_fall_back_to_current_for_missing_selection(monkeypatch):
+    from app.services.ai.runners.chatbi.followup_data import load_last_data_result
+
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result",
+        AsyncMock(
+            return_value={
+                "result_id": "current-data",
+                "result_type": "data",
+                "structured": {"rows": [{"value": 1}]},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result_stack",
+        AsyncMock(return_value=[]),
+    )
+    legacy = AsyncMock(return_value={"rows": [{"value": 2}]})
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_current_data_result",
+        legacy,
+    )
+    runner = SimpleNamespace(
+        conversation_id="conv-1",
+        _current_user_id=lambda: 7,
+    )
+
+    result = await load_last_data_result(runner, preferred_result_id="missing-data")
+
+    assert result is None
+    legacy.assert_not_awaited()
