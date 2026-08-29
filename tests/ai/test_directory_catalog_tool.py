@@ -133,7 +133,7 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         }
         assert public_dirs["docs"]["container_sandbox_path"] == "/workspace/public/docs"
         assert public_dirs["docs"]["paths"]["bash"] == "/workspace/public/docs"
-        assert public_dirs["docs"]["paths"]["file_tools"] == public_dirs["docs"]["backend_service_path"]
+        assert public_dirs["docs"]["paths"]["file_tools"] == "/workspace/public/docs"
         assert public_dirs["docs"]["path_namespace"] == {
             "bash": "docker_sandbox",
             "file_tools": "backend_service",

@@ -389,7 +389,16 @@ async def list_accessible_directories() -> str:
                         "/workspace/public/docs" if public_docs_mounted else None
                     ),
                     backend_path=global_docs_service_path,
-                    file_tool_path=global_docs_service_path,
+                    # When the read-only Docker mount exists, expose the same
+                    # logical namespace to Read/Glob/Grep. The workspace
+                    # adapter maps it to the backend docs root; leaking the
+                    # backend absolute path makes the model confuse it with a
+                    # host physical path.
+                    file_tool_path=(
+                        "/workspace/public/docs"
+                        if public_docs_mounted
+                        else global_docs_service_path
+                    ),
                 ),
                 "path_namespace": _path_namespace(
                     "/workspace/public/docs" if public_docs_mounted else None,
@@ -526,7 +535,12 @@ async def list_accessible_directories() -> str:
                     if is_docker_sandbox
                     else "5. 公共 docs 通过宿主文件工具只读访问；"
                 )
-                + "文件工具使用 paths.file_tools 对应的后端 data/docs 路径；未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
+                + (
+                    "Read/Glob/Grep 也使用 paths.file_tools=/workspace/public/docs，系统会自动映射到后端公共 docs；"
+                    if public_docs_mounted
+                    else "文件工具使用 paths.file_tools 对应的后端 data/docs 路径；"
+                )
+                + "未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
             ],
         }
