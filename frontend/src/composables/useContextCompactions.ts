@@ -8,6 +8,7 @@ export interface RefreshContextCompactionsOptions {
 
 export interface ManualContextCompactionOptions extends RefreshContextCompactionsOptions {
   retainRatio?: 0.25 | 0.5 | 0.75;
+  mode?: "fast" | "smart";
 }
 
 /**
@@ -86,6 +87,7 @@ export function useContextCompactions() {
       const response = await agentApi.manualContextCompaction(
         conversationId,
         options.retainRatio ?? 0.5,
+        options.mode ?? "fast",
         { headers: options.headers },
       );
       await refreshContextCompactions(options, true);

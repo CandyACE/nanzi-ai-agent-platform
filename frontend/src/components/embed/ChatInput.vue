@@ -255,6 +255,19 @@ const sessionContextBreakdownItems = computed(() => {
   ];
 });
 
+const latestContextCompaction = computed(() => {
+  return [...(props.contextCompactionRecords || [])]
+    .filter((record) => record.event_type === "context_summarized" || record.event_type === "context_compression")
+    .sort((left, right) => String(right.occurred_at).localeCompare(String(left.occurred_at)))[0] || null;
+});
+
+const latestContextCompactionSavings = computed(() => {
+  const record = latestContextCompaction.value;
+  if (!record || record.saved_tokens == null) return "";
+  const savedPercent = record.saved_percent == null ? "" : ` · ${Number(record.saved_percent)}%`;
+  return `本次节省 ${formatContextTokens(record.saved_tokens)}${savedPercent}`;
+});
+
 const contextBreakdownSegmentWidth = (value: number) => {
   const total = Number(sessionContextBreakdown.value?.total_tokens || 0);
   if (!total) return "0%";
@@ -289,7 +302,7 @@ const emit = defineEmits<{
   (e: 'ignore-ltm'): void;
   (e: 'dismiss-ltm'): void;
   (e: 'refresh-context-compactions'): void;
-  (e: 'manual-context-compaction', retainRatio: 0.25 | 0.5 | 0.75): void;
+  (e: 'manual-context-compaction', retainRatio: 0.25 | 0.5 | 0.75, mode: "fast" | "smart"): void;
   (e: 'start-docker-workspace'): void;
   (e: 'refresh-docker-workspace', manualFeedback?: boolean): void;
   (e: 'stop-docker-workspace'): void;
@@ -926,6 +939,7 @@ const contextCompactionDetailsPlacement = ref<'above' | 'below'>('above');
 
 const contextCompactionCount = computed(() => Math.max(0, Number(props.contextCompactionCount || 0)));
 const contextCompactionRetainRatio = ref<0.25 | 0.5 | 0.75>(0.5);
+const contextCompactionMode = ref<"fast" | "smart">("fast");
 
 const closeContextUsageDetails = () => {
   showContextUsageDetails.value = false;
@@ -1801,10 +1815,10 @@ defineExpose({
                           <span
                             class="flex cursor-help items-center gap-1.5"
                             title="达到此水位后，系统会整理较早对话，优先压缩成摘要。"
-                            aria-label="自动整理线：达到此水位后，系统会整理较早对话，优先压缩成摘要。"
+                            aria-label="自动压缩触发线：达到此水位后，系统会整理较早对话，优先压缩成摘要。"
                           >
                             <span class="h-1.5 w-1.5 rounded-full bg-rose-400" aria-hidden="true" />
-                            <span>自动整理线</span>
+                            <span>自动压缩触发线</span>
                           </span>
                           <span class="font-mono tabular-nums">{{ formatContextTokens(contextUsage.history_budget) }}</span>
                         </div>
@@ -1842,29 +1856,17 @@ defineExpose({
                     </div>
                     <div
                       v-if="contextCompactionEnabled"
-                      class="mt-2 flex items-center justify-between gap-3 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
+                      class="mt-2 space-y-2 border-t border-gray-100 pt-2 text-gray-500 dark:border-gray-700 dark:text-gray-400"
                     >
-                        <span class="flex items-center gap-1.5">
-                          <span class="h-1.5 w-1.5 rounded-full bg-violet-400" aria-hidden="true" />
-                          <span>上下文压缩</span>
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="flex min-w-0 items-center gap-1.5">
+                          <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden="true" />
+                          <span class="truncate font-medium text-gray-600 dark:text-gray-300">上下文压缩</span>
                         </span>
-                        <select
-                          v-model.number="contextCompactionRetainRatio"
-                          data-testid="context-compaction-retain-ratio"
-                          class="rounded-full border border-violet-200 bg-white px-2 py-1 text-[9px] text-violet-700 outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-50 dark:border-violet-800/70 dark:bg-gray-800 dark:text-violet-300"
-                          :disabled="isInteractionLocked || contextCompactionActionLoading"
-                          aria-label="上下文压缩保留比例"
-                          title="选择压缩强度"
-                          @click.stop
-                        >
-                          <option :value="0.75">轻度 · 保留 75%</option>
-                          <option :value="0.5">标准 · 保留 50%</option>
-                          <option :value="0.25">深度 · 保留 25%</option>
-                        </select>
                         <button
                           type="button"
                           data-testid="context-compaction-indicator"
-                          class="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-mono text-[9px] font-medium text-violet-700 transition-colors hover:bg-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-800/70 dark:bg-violet-950/30 dark:text-violet-300 dark:hover:bg-violet-950/50"
+                          class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-mono text-[9px] font-medium text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-primary"
                           :aria-expanded="showContextCompactionDetails"
                           aria-haspopup="dialog"
                           aria-controls="context-compaction-details"
@@ -1873,19 +1875,70 @@ defineExpose({
                           :disabled="isInteractionLocked"
                           @click.stop="toggleContextCompactionDetails"
                         >
-                          压缩 {{ contextCompactionCount }} 次
+                          {{ contextCompactionCount }} 次记录
                         </button>
-                        <button
+                      </div>
+                      <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-[9px]">
+                        <span class="text-gray-400 dark:text-gray-500">压缩方式</span>
+                        <div class="flex min-w-0 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-700/70" role="group" aria-label="上下文压缩方式">
+                          <button
+                            type="button"
+                            data-testid="context-compaction-mode-fast"
+                            class="min-w-0 flex-1 rounded-md px-2 py-1 font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+                            :class="contextCompactionMode === 'fast'
+                              ? 'bg-white text-primary shadow-sm dark:bg-gray-800 dark:text-primary'
+                              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                            :disabled="isInteractionLocked || contextCompactionActionLoading"
+                            @click.stop="contextCompactionMode = 'fast'"
+                          >
+                            快速
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="context-compaction-mode-smart"
+                            class="min-w-0 flex-1 rounded-md px-2 py-1 font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+                            :class="contextCompactionMode === 'smart'
+                              ? 'bg-white text-primary shadow-sm dark:bg-gray-800 dark:text-primary'
+                              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                            :disabled="isInteractionLocked || contextCompactionActionLoading"
+                            title="智能压缩会调用当前模型生成语义摘要"
+                            @click.stop="contextCompactionMode = 'smart'"
+                          >
+                            智能 <span class="text-[8px] opacity-70">AI</span>
+                          </button>
+                        </div>
+                        <span class="text-gray-400 dark:text-gray-500">保留比例</span>
+                        <select
+                          v-model.number="contextCompactionRetainRatio"
+                          data-testid="context-compaction-retain-ratio"
+                          class="min-w-0 w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-gray-700 outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                          :disabled="isInteractionLocked || contextCompactionActionLoading"
+                          aria-label="上下文压缩保留比例"
+                          title="选择压缩强度"
+                          @click.stop
+                        >
+                          <option :value="0.75">轻度 75%</option>
+                          <option :value="0.5">标准 50%</option>
+                          <option :value="0.25">深度 25%</option>
+                        </select>
+                      </div>
+                      <button
                           type="button"
                           data-testid="context-compaction-manual"
-                          class="inline-flex items-center rounded-full border border-violet-200 px-2 py-1 text-[9px] font-medium text-violet-700 transition-colors hover:bg-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-800/70 dark:text-violet-300 dark:hover:bg-violet-950/50"
+                          class="flex w-full items-center justify-center rounded-lg bg-primary px-3 py-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
                           :disabled="isInteractionLocked || contextCompactionActionLoading"
                           title="立即压缩上下文"
                           aria-label="立即压缩上下文"
-                          @click.stop="emit('manual-context-compaction', contextCompactionRetainRatio)"
+                          @click.stop="emit('manual-context-compaction', contextCompactionRetainRatio, contextCompactionMode)"
                         >
-                          {{ contextCompactionActionLoading ? '压缩中…' : '立即压缩' }}
-                        </button>
+                          {{ contextCompactionActionLoading ? '压缩中…' : contextCompactionMode === 'smart' ? '立即智能压缩' : '立即快速压缩' }}
+                      </button>
+                      <p v-if="contextCompactionMode === 'smart'" class="text-[9px] leading-4 text-primary/80">
+                        智能压缩会调用当前模型生成语义摘要，失败时自动回退为快速压缩。
+                      </p>
+                      <div v-if="latestContextCompactionSavings" class="text-[9px] text-emerald-600 dark:text-emerald-400">
+                        {{ latestContextCompactionSavings }}
+                      </div>
                     </div>
                     <div
                       v-if="sandboxPolicyLabel"

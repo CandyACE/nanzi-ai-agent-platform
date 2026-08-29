@@ -6,7 +6,7 @@ import re
 import asyncio
 import secrets
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, AsyncGenerator, Dict, Any, Union
+from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
@@ -996,6 +996,8 @@ class ContextCompactionRecord(BaseModel):
     overhead_reservation_tokens: Optional[int] = None
     prompt_overhead_reservation_tokens: Optional[int] = None
     summary_chars: Optional[int] = None
+    saved_tokens: Optional[int] = None
+    saved_percent: Optional[float] = None
 
 
 class ContextCompactionsResponse(BaseModel):
@@ -1006,6 +1008,7 @@ class ContextCompactionsResponse(BaseModel):
 
 class ManualContextCompactionRequest(BaseModel):
     retain_ratio: float = Field(0.5, description="保留最近历史比例，仅支持 0.25、0.5、0.75")
+    mode: Literal["fast", "smart"] = Field("fast", description="快速压缩或调用模型进行智能摘要")
 
 
 @router.get(
@@ -1055,7 +1058,7 @@ async def manual_context_compaction(
     user_id = _require_chat_user_id(user_info)
     try:
         result = await agent_service.manual_compact_conversation(
-            user_id, conversation_id, retain_ratio=request.retain_ratio
+            user_id, conversation_id, retain_ratio=request.retain_ratio, mode=request.mode
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

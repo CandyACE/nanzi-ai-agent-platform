@@ -110,9 +110,9 @@ def test_context_compaction_control_is_user_triggered_on_both_chat_surfaces():
     assert "立即压缩上下文" in input_source
     assert "context-compaction-manual" in input_source
     assert "contextCompactionRetainRatio" in input_source
-    assert "保留 75%" in input_source
-    assert "保留 50%" in input_source
-    assert "保留 25%" in input_source
+    assert "轻度 75%" in input_source
+    assert "标准 50%" in input_source
+    assert "深度 25%" in input_source
 
     for relative_path in ("frontend/src/views/EmbedChat.vue", "frontend/src/views/AgentDebug.vue"):
         source = (ROOT / relative_path).read_text(encoding="utf-8")

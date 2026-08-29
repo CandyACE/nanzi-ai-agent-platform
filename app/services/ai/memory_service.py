@@ -66,10 +66,10 @@ class MemoryService:
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.CONTEXT_SNAPSHOT_SUFFIX}"
 
     async def get_context_snapshot(self, user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
-        redis = await get_redis()
-        if not redis:
-            return None
         try:
+            redis = await get_redis()
+            if not redis:
+                return None
             raw = await redis.get(self._get_context_snapshot_key(user_id, conversation_id))
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
@@ -456,6 +456,39 @@ class MemoryService:
                 logger.error(f"Failed to parse history item: {item}. Error: {e}")
 
         return history
+
+    @staticmethod
+    def merge_context_snapshot(
+        history: List[Dict[str, Any]],
+        snapshot: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """将压缩快照与快照创建后的新消息合并。"""
+        if not isinstance(snapshot, dict):
+            return history
+        compacted = snapshot.get("messages")
+        if not isinstance(compacted, list):
+            return history
+        try:
+            source_seq = int(snapshot.get("source_seq") or 0)
+        except (TypeError, ValueError):
+            source_seq = 0
+        if source_seq <= 0:
+            return history
+        newer = [
+            message for message in history
+            if isinstance(message, dict) and int(message.get("seq") or 0) > source_seq
+        ]
+        return [*compacted, *newer]
+
+    async def get_effective_context_history(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> List[Dict[str, Any]]:
+        """读取实际供后续请求使用的历史（压缩快照加新增消息）。"""
+        history = await self.get_history(user_id, conversation_id)
+        snapshot = await self.get_context_snapshot(user_id, conversation_id)
+        return self.merge_context_snapshot(history, snapshot)
 
     async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None):
         """

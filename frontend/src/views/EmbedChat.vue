@@ -4144,9 +4144,9 @@ const refreshEmbedContextCompactions = (force = false) => refreshContextCompacti
   conversationId: conversationId.value,
   headers: embedAuthHeaders(),
 }, force);
-const manualCompactEmbedContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5) => {
+const manualCompactEmbedContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, mode: "fast" | "smart" = "fast") => {
   try {
-    const result = await manuallyCompactContext({ conversationId: conversationId.value, headers: embedAuthHeaders(), retainRatio });
+    const result = await manuallyCompactContext({ conversationId: conversationId.value, headers: embedAuthHeaders(), retainRatio, mode });
     await refreshContextUsage({ conversationId: conversationId.value, modelId: config.overrideModel || undefined, headers: embedAuthHeaders() });
     showToast(result?.compacted ? `上下文已压缩，预计节省 ${Number(result.saved_percent || 0)}%` : "当前没有可压缩的历史内容", result?.compacted ? "success" : "info");
   } catch {

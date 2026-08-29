@@ -154,10 +154,10 @@ export const agentApi = {
       config,
     ),
 
-  manualContextCompaction: (conversationId: string, retainRatio: 0.25 | 0.5 | 0.75, config?: { headers?: Record<string, string> }) =>
+  manualContextCompaction: (conversationId: string, retainRatio: 0.25 | 0.5 | 0.75, mode: 'fast' | 'smart' = 'fast', config?: { headers?: Record<string, string> }) =>
     axios.post<StandardResponse<Record<string, unknown>>>(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId)}/context_compactions/manual`,
-      { retain_ratio: retainRatio },
+      { retain_ratio: retainRatio, mode },
       config,
     ),
 }
@@ -211,6 +211,8 @@ export interface ContextCompactionRecord {
   overhead_reservation_tokens?: number | null
   prompt_overhead_reservation_tokens?: number | null
   summary_chars?: number | null
+  saved_tokens?: number | null
+  saved_percent?: number | null
 }
 
 export interface ContextCompactionsResponse {

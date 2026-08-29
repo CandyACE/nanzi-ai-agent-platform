@@ -371,20 +371,7 @@ async def _apply_context_snapshot(
     snapshot = await memory_service.get_context_snapshot(user_id, conversation_id)
     if not isinstance(snapshot, dict):
         return history
-    compacted = snapshot.get("messages")
-    if not isinstance(compacted, list):
-        return history
-    try:
-        source_seq = int(snapshot.get("source_seq") or 0)
-    except (TypeError, ValueError):
-        source_seq = 0
-    if source_seq <= 0:
-        return history
-    newer = [
-        message for message in history
-        if isinstance(message, dict) and int(message.get("seq") or 0) > source_seq
-    ]
-    return [*compacted, *newer]
+    return memory_service.merge_context_snapshot(history, snapshot)
 
 
 def _regular_completion_history(
@@ -2235,11 +2222,14 @@ class AgentService:
         conversation_id: str,
         *,
         retain_ratio: float = 0.5,
+        mode: str = "fast",
     ) -> Dict[str, Any]:
-        """由用户显式触发一次确定性上下文压缩，不调用模型且不改写原始历史。"""
+        """由用户显式触发上下文压缩；默认快速模式，不改写原始历史。"""
         retain_ratio = float(retain_ratio)
         if retain_ratio not in {0.25, 0.5, 0.75}:
             raise ValueError("retain_ratio 只能是 0.25、0.5 或 0.75")
+        if mode not in {"fast", "smart"}:
+            raise ValueError("mode 只能是 fast 或 smart")
         history = await memory_service.get_history(user_id, conversation_id)
         history = await _apply_context_snapshot(
             history or [], user_id=user_id, conversation_id=conversation_id
@@ -2282,6 +2272,16 @@ class AgentService:
         if not event:
             return {"compacted": False, "reason": "no_compactable_history", "dropped": 0, "kept": len(full_history)}
 
+        if mode == "smart":
+            smart_digest = await self._try_llm_overflow_digest(
+                full_history,
+                window,
+                prev_digest=None,
+            )
+            if smart_digest and smart_digest.get("content"):
+                compacted = [smart_digest, *window]
+                event["origin"] = "llm"
+
         source_seq = max((int(message.get("seq") or 0) for message in history), default=0)
         await memory_service.set_context_snapshot(
             user_id,
@@ -2294,6 +2294,10 @@ class AgentService:
         )
         event = dict(event)
         event["type"] = "context_summarized"
+        event["saved_tokens"] = max(0, before_tokens - after_tokens)
+        event["saved_percent"] = round(
+            max(0, before_tokens - after_tokens) / before_tokens * 100, 1
+        ) if before_tokens else 0
         await self._persist_context_compaction_event(
             event,
             user_id=user_id,
@@ -2313,6 +2317,7 @@ class AgentService:
             "saved_tokens": max(0, before_tokens - after_tokens),
             "saved_percent": round(max(0, before_tokens - after_tokens) / before_tokens * 100, 1) if before_tokens else 0,
             "retain_ratio": retain_ratio,
+            "mode": mode,
         }
 
     @staticmethod
