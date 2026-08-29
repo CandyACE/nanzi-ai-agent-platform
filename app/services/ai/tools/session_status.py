@@ -362,20 +362,47 @@ def _attachments_summary(context: Any) -> dict[str, Any]:
 
 
 def _resource_summary(context: Any) -> dict[str, Any]:
+    capabilities = list(getattr(context, "runtime_tool_capabilities", []) or []) if context else []
+    mcp_tools = [
+        {"name": item.get("name"), "source_type": item.get("source_type"), "status": "mounted"}
+        for item in capabilities
+        if isinstance(item, dict) and item.get("source_type") == "mcp" and item.get("name")
+    ]
     if context is None:
         return {
             "dataset_ids": [],
             "knowledge_dataset_ids": [],
             "metadata_dataset_ids": [],
             "active_skills": [],
-            "mcp_tools": None,
+            "mcp_tools": [],
         }
     return {
         "dataset_ids": list(getattr(context, "dataset_ids", []) or []),
         "knowledge_dataset_ids": list(getattr(context, "knowledge_dataset_ids", []) or []),
         "metadata_dataset_ids": list(getattr(context, "metadata_dataset_ids", []) or []),
         "active_skills": list(getattr(context, "skills", []) or []),
-        "mcp_tools": None,
+        "mcp_tools": mcp_tools,
+    }
+
+
+def runtime_tool_capability_from_spec(spec: Any) -> dict[str, Any]:
+    """Build a safe capability record from an already resolved runtime spec."""
+    from app.services.ai.tool_policy import resolve_tool_metadata
+
+    metadata = resolve_tool_metadata(spec)
+    return {
+        "name": str(getattr(spec, "name", "") or ""),
+        "description": str(getattr(spec, "description", "") or ""),
+        "source_type": str(getattr(spec, "source_type", "unknown") or "unknown"),
+        "permission_scope": str(getattr(spec, "permission_scope", "unknown") or "unknown"),
+        "is_read_only": bool(getattr(spec, "is_read_only", False)),
+        "capability": metadata.capability,
+        "source": metadata.source,
+        "side_effect": metadata.side_effect,
+        "confirmation": metadata.confirmation,
+        "freshness": metadata.freshness,
+        "idempotent": metadata.idempotent,
+        "nudge_mode": metadata.nudge_mode,
     }
 
 
@@ -386,6 +413,9 @@ async def session_status() -> str:
     当不确定会话、设备、模型上下文窗口、工作区、文档目录、用户身份、最近
     Token 统计或运行环境（容器 / 宿主机、Python 与系统版本）时调用；这些信息
     不可用时返回 null 或限制说明，不要猜测。不接受参数，不修改任何会话状态。
+    context_usage 包含 physical_window、history_budget、completion_reserve_tokens
+    和 request_input_budget 等上下文预算字段（JSON keys: "physical_window",
+    "history_budget", "completion_reserve_tokens", "request_input_budget"）。
     """
     context = get_current_agent_context()
     workspace, workspace_limitations = await _workspace_summary(context)
@@ -398,7 +428,7 @@ async def session_status() -> str:
         "Token 使用量仅代表最近一次已完成模型调用的统计",
         "estimated_* 为全量历史基于 estimate_text_tokens 的粗略估算",
         "当前上下文 Token 和剩余容量没有可靠实时估算时返回 null",
-        "当前 AgentContext 未保存已绑定 MCP 工具列表",
+        "MCP 工具列表仅代表本次运行时实际解析并挂载的工具",
         "runtime_env 描述的是后端进程所在机器/容器，可能与用户客户端环境不同",
         *workspace_limitations,
     ]
@@ -423,5 +453,22 @@ async def session_status() -> str:
         "resources": _resource_summary(context),
         "attachments": _attachments_summary(context),
         "limitations": limitations,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@tool
+async def get_runtime_capabilities() -> str:
+    """读取当前运行时实际挂载的系统、配置和 MCP 工具能力。"""
+    context = get_current_agent_context()
+    capabilities = list(getattr(context, "runtime_tool_capabilities", []) or []) if context else []
+    payload = {
+        "schema_version": 1,
+        "scope": "current_runtime",
+        "tools": capabilities,
+        "limitations": [
+            "这里只报告当前运行时已经解析并挂载的工具，不代表所有已注册工具",
+            "工具能力描述不授予权限，实际调用仍受服务端权限、工具门禁、路径和数据授权约束",
+        ],
     }
     return json.dumps(payload, ensure_ascii=False)

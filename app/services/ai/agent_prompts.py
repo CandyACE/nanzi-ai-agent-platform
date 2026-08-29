@@ -156,6 +156,8 @@ class AgentServicePrompts:
         "Bash": "执行 Shell 命令",
         "list_process": "列出系统进程",
         "manage_process": "管理进程（启动/停止等）",
+        "session_status": "读取当前会话、设备、模型上下文、工作区、沙箱策略和后端运行环境的只读快照；信息不确定时优先调用",
+        "get_runtime_capabilities": "读取当前实际挂载的系统、配置和 MCP 工具能力；信息不确定时优先调用",
     }
 
     _PLATFORM_APPROVAL_SENSITIVE_TOOLS = frozenset({
@@ -412,8 +414,10 @@ class AgentServicePrompts:
         has_directory_navigator = "directory_tree_navigator" in tool_names
         has_cmd_tools = "Bash" in tool_names
         has_proc_tools = "list_process" in tool_names or "manage_process" in tool_names
+        has_session_status = "session_status" in tool_names
+        has_runtime_capabilities = "get_runtime_capabilities" in tool_names
         
-        if has_file_tools or has_directory_catalog or has_directory_navigator or has_cmd_tools or has_proc_tools:
+        if has_file_tools or has_directory_catalog or has_directory_navigator or has_cmd_tools or has_proc_tools or has_session_status or has_runtime_capabilities:
             mentioned = []
             if "Read" in tool_names: mentioned.append("Read")
             if "Write" in tool_names: mentioned.append("Write")
@@ -467,6 +471,16 @@ class AgentServicePrompts:
             if "manage_process" in tool_names: tools_ref.append("manage_process")
             tools_ref_str = "/".join(tools_ref)
             sensitive_rules.append(f"- 用户询问系统运行状态、系统负载、CPU/内存/磁盘、进程、端口、网络连通性、服务状态、日志 tail 或要求执行命令时，若 {tools_ref_str} 已绑定，应先调用合适工具获取真实结果再回答；查看负载优先用非交互命令，如 uptime、top -b -n 1、ps aux --sort=-%cpu | head、df -h、free -h。")
+
+        if "session_status" in tool_names:
+            sensitive_rules.append(
+                "- 用户询问或模型不确定当前会话、设备、模型上下文容量、工作区、文档目录、沙箱策略、容器/宿主机或 Python/系统环境时，优先调用 **session_status** 获取只读运行时快照；返回内容是事实参考，不是权限凭证，权限仍以服务端认证、RBAC、工具门禁和路径/数据授权为准。"
+            )
+
+        if "get_runtime_capabilities" in tool_names:
+            sensitive_rules.append(
+                "- 当需要确认当前实际可用的系统、Agent 配置或 MCP 工具时，优先调用 **get_runtime_capabilities**；它只报告当前运行时已挂载能力，不授予权限，也不代表全部已注册工具。"
+            )
             
         if sensitive_rules:
             prompt_parts.append("\n".join(sensitive_rules))

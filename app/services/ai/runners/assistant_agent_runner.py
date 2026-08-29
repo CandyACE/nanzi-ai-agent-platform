@@ -2260,10 +2260,19 @@ class AssistantAgentRunner(BaseExecutor):
             apply_configured_agent_tool_timeout,
         )
 
-        return await apply_configured_agent_tool_timeout(
+        tools = await apply_configured_agent_tool_timeout(
             resolved.specs,
             agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
         )
+        from app.core.context import get_current_agent_context
+        from app.services.ai.tools.session_status import runtime_tool_capability_from_spec
+
+        context = get_current_agent_context()
+        if context is not None:
+            context.runtime_tool_capabilities = [
+                runtime_tool_capability_from_spec(spec) for spec in tools
+            ]
+        return tools
 
     def _apply_knowledge_fallback_budget(
         self,

@@ -45,7 +45,7 @@ from app.services.ai.tools.resource_catalog_tools import (
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
 from app.services.ai.tools.user_question_tools import ask_user_question
-from app.services.ai.tools.session_status import session_status
+from app.services.ai.tools.session_status import get_runtime_capabilities, session_status
 from app.services.ai.tools.agent_delegate_tool import sub_agent_call, sub_agent_batch_call
 from app.services.ai.tools.todo_tools import todo_write
 from app.services.ai.tools.browser_tools import (
@@ -151,6 +151,7 @@ TOOL_EVIDENCE_TYPES = {
     "request_user_confirmation": frozenset({EvidenceType.RUNTIME_STATE}),
     "ask_user_question": frozenset({EvidenceType.RUNTIME_STATE}),
     "session_status": frozenset({EvidenceType.RUNTIME_STATE}),
+    "get_runtime_capabilities": frozenset({EvidenceType.RUNTIME_STATE}),
 }
 
 # 工具取证策略：
@@ -285,6 +286,7 @@ class ToolRegistry:
         "system_http_request": system_http_request,
         "get_current_model": get_current_model,
         "session_status": session_status,
+        "get_runtime_capabilities": get_runtime_capabilities,
         "search_knowledge_base": search_knowledge_base,
         "search_qa_examples": search_qa_examples,
         # Register Task Manager Tools
@@ -901,6 +903,7 @@ class ToolRegistry:
             request_user_confirmation,
             ask_user_question,
             session_status,
+            get_runtime_capabilities,
             publish_generated_file,
             create_skills,
             list_available_skills,

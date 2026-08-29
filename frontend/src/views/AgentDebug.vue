@@ -552,6 +552,13 @@ const refreshCurrentRunStatus = () => (
     : Promise.resolve(false)
 );
 
+const focusChatInputWhenReady = () => {
+  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  nextTick(() => chatInputRef.value?.focus());
+};
+
+watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
+
 watch(conversationId, () => {
   void refreshCurrentRunStatus();
 }, { immediate: true });
@@ -3499,9 +3506,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     void refreshCurrentRunStatus();
     void refreshDebugContextUsage();
     void refreshDebugContextCompactions(true);
-    nextTick(() => {
-      if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
-    });
   }
 };
 
@@ -3911,9 +3915,6 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
         }
       });
     }
-    nextTick(() => {
-      if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
-    });
   }
 };
 
