@@ -145,7 +145,7 @@ const recordCountLabel = computed(() => `${props.records.length} 条记录`);
             </div>
             <div v-if="record.token_used != null || record.token_budget != null" class="rounded-lg border border-gray-100 bg-white px-2.5 py-2">
               <div class="text-gray-400">Token 使用</div>
-              <div class="mt-0.5 font-mono font-semibold text-gray-700">{{ record.token_used ?? "-" }} / {{ record.token_budget ?? "-" }}</div>
+              <div class="mt-0.5 whitespace-nowrap font-mono font-semibold text-gray-700">{{ record.token_used ?? "-" }} / {{ record.token_budget ?? "-" }}</div>
             </div>
             <div v-if="record.summary_chars != null" class="rounded-lg border border-gray-100 bg-white px-2.5 py-2">
               <div class="text-gray-400">摘要长度</div>

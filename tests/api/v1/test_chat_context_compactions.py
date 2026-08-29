@@ -76,3 +76,26 @@ async def test_context_compactions_skips_invalid_record_without_failing_timeline
 
     assert response.data.count == 1
     assert response.data.records[0].event_id == "valid"
+
+
+@pytest.mark.asyncio
+async def test_manual_context_compaction_uses_authenticated_user_and_returns_result():
+    result = {
+        "compacted": True,
+        "dropped": 4,
+        "kept": 6,
+        "count": 1,
+    }
+    with patch(
+        "app.api.v1.endpoints.chat.agent_service.manual_compact_conversation",
+        new_callable=AsyncMock,
+        return_value=result,
+    ) as compact:
+        response = await chat_endpoint.manual_context_compaction(
+            conversation_id="conversation-1",
+            user_info={"user_id": 7, "id": 999},
+            request=chat_endpoint.ManualContextCompactionRequest(retain_ratio=0.5, mode="smart"),
+        )
+
+    compact.assert_awaited_once_with("7", "conversation-1", retain_ratio=0.5, mode="smart")
+    assert response.data == result

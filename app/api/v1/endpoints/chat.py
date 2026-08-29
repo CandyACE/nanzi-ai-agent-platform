@@ -6,7 +6,7 @@ import re
 import asyncio
 import secrets
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, AsyncGenerator, Dict, Any, Union
+from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
@@ -996,12 +996,19 @@ class ContextCompactionRecord(BaseModel):
     overhead_reservation_tokens: Optional[int] = None
     prompt_overhead_reservation_tokens: Optional[int] = None
     summary_chars: Optional[int] = None
+    saved_tokens: Optional[int] = None
+    saved_percent: Optional[float] = None
 
 
 class ContextCompactionsResponse(BaseModel):
     records: List[ContextCompactionRecord] = Field(default_factory=list)
     count: int = 0
     retention_seconds: int = context_compaction_log_service.TTL_SECONDS
+
+
+class ManualContextCompactionRequest(BaseModel):
+    retain_ratio: float = Field(0.5, description="保留最近历史比例，仅支持 0.25、0.5、0.75")
+    mode: Literal["fast", "smart"] = Field("fast", description="快速压缩或调用模型进行智能摘要")
 
 
 @router.get(
@@ -1035,6 +1042,27 @@ async def get_context_compactions(
             count=len(records),
         )
     )
+
+
+@router.post(
+    "/conversation/{conversation_id}/context_compactions/manual",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="手动压缩会话上下文",
+    description="由当前用户手动触发一次上下文压缩；保留原始历史，仅更新可供后续请求使用的摘要。",
+)
+async def manual_context_compaction(
+    conversation_id: str,
+    request: ManualContextCompactionRequest = ManualContextCompactionRequest(),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    user_id = _require_chat_user_id(user_info)
+    try:
+        result = await agent_service.manual_compact_conversation(
+            user_id, conversation_id, retain_ratio=request.retain_ratio, mode=request.mode
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StandardResponse(data=result)
 
 
 @router.get("/conversation/{conversation_id}/model_calls",

@@ -43,7 +43,7 @@ def test_chat_input_exposes_context_usage_indicator_and_both_chat_surfaces_refre
     assert "使用正常" in chat_input
     assert "接近上限" in chat_input
     assert "已达输入上限" in chat_input
-    assert "自动整理线" in chat_input
+    assert "自动压缩触发线" in chat_input
     assert "达到此水位后，系统会整理较早对话，优先压缩成摘要。" in chat_input
     assert "border-slate-200/80" in chat_input
     assert "bg-slate-50/80" in chat_input

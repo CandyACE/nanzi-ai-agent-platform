@@ -102,6 +102,8 @@ class ContextCompactionLogService:
             "overhead_reservation_tokens",
             "prompt_overhead_reservation_tokens",
             "summary_chars",
+            "saved_tokens",
+            "saved_percent",
         ):
             if field in event and event[field] is not None:
                 record[field] = event[field]

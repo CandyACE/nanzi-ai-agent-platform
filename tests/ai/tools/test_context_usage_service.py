@@ -124,3 +124,47 @@ async def test_context_usage_aggregates_session_breakdown_without_repeating_runt
         "estimated": True,
         "source": "session_history_plus_latest_runtime_context",
     }
+
+
+@pytest.mark.asyncio
+async def test_context_usage_reads_effective_history_after_manual_compaction(monkeypatch):
+    from app.services.ai.context_usage import estimate_context_usage
+
+    async def fail_get_history(*args, **kwargs):
+        raise AssertionError("统计不应直接读取未压缩的原始历史")
+
+    async def fake_get_effective_history(user_id, conversation_id):
+        assert (user_id, conversation_id) == ("user-1", "conversation-1")
+        return [{"role": "user", "content": "压缩后的内容"}]
+
+    async def fake_config_get(key, default=None):
+        return {
+            "agent_context_max_tokens": "100",
+            "agent_context_overhead_headroom_tokens": "20",
+        }.get(key, default)
+
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.memory_service.get_history",
+        fail_get_history,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.memory_service.get_effective_context_history",
+        fake_get_effective_history,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.estimate_text_tokens",
+        lambda value: 12 if value == "压缩后的内容" else 0,
+    )
+
+    usage = await estimate_context_usage(
+        user_id="user-1",
+        conversation_id="conversation-1",
+        runtime_model_info={"context_size": 100, "completion_reserve_tokens": 20},
+    )
+
+    assert usage["estimated_current_tokens"] == 12
+    assert usage["context_messages"] == 1

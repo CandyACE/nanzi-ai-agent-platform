@@ -79,6 +79,7 @@ class AgentContext(BaseModel):
 
     # Non-sensitive model identity for runtime diagnostics/tools.
     runtime_model_info: Dict[str, Any] = Field(default_factory=dict)
+    runtime_tool_capabilities: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Queue for streaming sub-agent log/progress chunks back to client
     event_queue: Optional[Any] = None

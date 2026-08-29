@@ -22,6 +22,7 @@ class MemoryService:
     DATA_RESULT_SUFFIX = "last_data_result"
     DATA_RESULT_STACK_SUFFIX = "data_result_stack_v1"
     SESSION_TOOL_ARTIFACT_SUFFIX = "session_tool_artifact_v1"
+    CONTEXT_SNAPSHOT_SUFFIX = "context_snapshot_v1"
     
     def __init__(self, max_history_turns: int = 50, ttl: int = 2592000):
         """
@@ -59,6 +60,44 @@ class MemoryService:
         """
         uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:digest"
+
+    def _get_context_snapshot_key(self, user_id: str, conversation_id: str) -> str:
+        uid = require_user_id(user_id)
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.CONTEXT_SNAPSHOT_SUFFIX}"
+
+    async def get_context_snapshot(self, user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            redis = await get_redis()
+            if not redis:
+                return None
+            raw = await redis.get(self._get_context_snapshot_key(user_id, conversation_id))
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            value = json.loads(raw) if raw else None
+            return value if isinstance(value, dict) else None
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to get context snapshot: %s", exc)
+            return None
+
+    async def set_context_snapshot(
+        self,
+        user_id: str,
+        conversation_id: str,
+        snapshot: Dict[str, Any],
+    ) -> bool:
+        redis = await get_redis()
+        if not redis or not isinstance(snapshot, dict):
+            return False
+        try:
+            await redis.set(
+                self._get_context_snapshot_key(user_id, conversation_id),
+                json.dumps(snapshot, ensure_ascii=False),
+                ex=self.ttl,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to set context snapshot: %s", exc)
+            return False
 
     def _get_digest_meta_key(
         self,
@@ -417,6 +456,39 @@ class MemoryService:
                 logger.error(f"Failed to parse history item: {item}. Error: {e}")
 
         return history
+
+    @staticmethod
+    def merge_context_snapshot(
+        history: List[Dict[str, Any]],
+        snapshot: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """将压缩快照与快照创建后的新消息合并。"""
+        if not isinstance(snapshot, dict):
+            return history
+        compacted = snapshot.get("messages")
+        if not isinstance(compacted, list):
+            return history
+        try:
+            source_seq = int(snapshot.get("source_seq") or 0)
+        except (TypeError, ValueError):
+            source_seq = 0
+        if source_seq <= 0:
+            return history
+        newer = [
+            message for message in history
+            if isinstance(message, dict) and int(message.get("seq") or 0) > source_seq
+        ]
+        return [*compacted, *newer]
+
+    async def get_effective_context_history(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> List[Dict[str, Any]]:
+        """读取实际供后续请求使用的历史（压缩快照加新增消息）。"""
+        history = await self.get_history(user_id, conversation_id)
+        snapshot = await self.get_context_snapshot(user_id, conversation_id)
+        return self.merge_context_snapshot(history, snapshot)
 
     async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None):
         """

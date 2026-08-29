@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.context import AgentContext, set_agent_context, set_debug_context
+from app.core.context import AgentContext, get_current_agent_context, set_agent_context, set_debug_context
 from app.services.ai.tools.registry import ToolRegistry
 
 
@@ -36,6 +36,12 @@ _DEFAULT_RUNTIME_MODEL_INFO = {
 def _session_status_tool():
     tool = ToolRegistry._registry.get("session_status")
     assert tool is not None, "session_status must be registered before it can be invoked"
+    return tool
+
+
+def _runtime_capabilities_tool():
+    tool = ToolRegistry._registry.get("get_runtime_capabilities")
+    assert tool is not None, "get_runtime_capabilities must be registered before it can be invoked"
     return tool
 
 
@@ -133,6 +139,9 @@ def _install_workspace_redis_mocks(tmp_path, monkeypatch, *, redis=None):
 
 def test_session_status_returns_safe_current_context_snapshot(tmp_path: Path, monkeypatch):
     _install_context()
+    get_current_agent_context().runtime_tool_capabilities = [
+        {"name": "mcp_sales_search", "source_type": "mcp"}
+    ]
     module = importlib.import_module("app.services.ai.tools.session_status")
 
     user_root = tmp_path / "alice__123"
@@ -199,6 +208,9 @@ def test_session_status_returns_safe_current_context_snapshot(tmp_path: Path, mo
         "current_turn_count": 1,
         "filenames": ["sales.xlsx"],
     }
+    assert payload["resources"]["mcp_tools"] == [
+        {"name": "mcp_sales_search", "source_type": "mcp", "status": "mounted"}
+    ]
     # 没有配置 memory 历史 => 估算路径返回 None 占位（不抛错）
     assert payload["context_usage"]["estimated_current_tokens"] is None
     assert payload["context_usage"]["estimated_remaining_tokens"] is None
@@ -413,3 +425,50 @@ async def test_session_status_is_read_only_runtime_state_tool():
     assert spec.is_read_only is True
     assert spec.evidence_types == frozenset({EvidenceType.RUNTIME_STATE})
     assert "不要猜测" in spec.description
+
+
+def test_runtime_capabilities_reports_only_currently_mounted_tools():
+    _install_context()
+    context = get_current_agent_context()
+    context.runtime_tool_capabilities = [
+        {
+            "name": "session_status",
+            "source_type": "system",
+            "permission_scope": "read",
+            "capability": "session_status",
+            "source": "runtime_environment",
+            "side_effect": "read",
+            "confirmation": "none",
+        },
+        {
+            "name": "mcp_sales_search",
+            "source_type": "mcp",
+            "permission_scope": "read",
+            "capability": "unknown",
+            "source": "mcp",
+            "side_effect": "read",
+            "confirmation": "unknown",
+        },
+    ]
+
+    payload = json.loads(_runtime_capabilities_tool().invoke({}))
+
+    assert payload["scope"] == "current_runtime"
+    assert [item["name"] for item in payload["tools"]] == [
+        "session_status",
+        "mcp_sales_search",
+    ]
+    assert payload["tools"][1]["source_type"] == "mcp"
+    assert payload["tools"][1]["permission_scope"] == "read"
+    assert "不代表所有已注册工具" in payload["limitations"][0]
+
+
+@pytest.mark.asyncio
+async def test_runtime_capabilities_is_read_only_system_tool():
+    from app.services.ai.grounding.models import EvidenceType
+
+    spec = await ToolRegistry.get_runtime_tool("get_runtime_capabilities")
+
+    assert spec.permission_scope == "read"
+    assert spec.is_read_only is True
+    assert spec.evidence_types == frozenset({EvidenceType.RUNTIME_STATE})

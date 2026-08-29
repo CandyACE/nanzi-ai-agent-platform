@@ -101,7 +101,7 @@ async def estimate_context_usage(
 
     try:
         if history is None:
-            history = await memory_service.get_history(user_id, conversation_id)
+            history = await memory_service.get_effective_context_history(user_id, conversation_id)
         if not history and not empty_history_is_zero:
             return empty
 

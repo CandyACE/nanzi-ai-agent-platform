@@ -57,6 +57,7 @@ RuntimeEvidencePolicy = Literal["non_empty", "structured_success", "allow_empty_
 READ_ONLY_TOOL_NAMES = {
     "get_current_model",
     "session_status",
+    "get_runtime_capabilities",
     "get_current_time",
     "resolve_relative_dates",
     "get_dataset_schema",

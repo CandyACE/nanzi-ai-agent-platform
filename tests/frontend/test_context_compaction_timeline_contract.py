@@ -31,3 +31,12 @@ def test_shared_context_compaction_timeline_covers_all_record_states_and_metrics
     assert "v-html" not in component
     assert "ContextCompactionTimeline" in chat_logs
     assert "activeDetailTab === 'context'" in chat_logs
+
+
+def test_context_compaction_timeline_keeps_token_metric_on_one_line():
+    source = (ROOT / "frontend/src/components/chat/ContextCompactionTimeline.vue").read_text(
+        encoding="utf-8",
+    )
+
+    assert "whitespace-nowrap" in source
+    assert "sm:grid-cols-4" in source

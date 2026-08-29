@@ -104,6 +104,15 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="yes",
         nudge_mode="evidence",
     ),
+    "get_runtime_capabilities": ToolMetadata(
+        capability="runtime_capabilities",
+        source="runtime_environment",
+        freshness="realtime",
+        side_effect="read",
+        confirmation="none",
+        idempotent="yes",
+        nudge_mode="evidence",
+    ),
     "search_knowledge_base": ToolMetadata(
         capability="knowledge_search",
         source="internal_docs",

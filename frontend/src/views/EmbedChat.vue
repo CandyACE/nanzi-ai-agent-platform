@@ -1111,6 +1111,7 @@
         :context-compaction-records="contextCompactions"
         :context-compaction-loading="contextCompactionsLoading"
         :context-compaction-error="contextCompactionsError"
+        :context-compaction-action-loading="contextCompactionActionLoading"
         :thinking-enable-override="thinkingEnableOverride"
         :reasoning-effort-override="reasoningEffortOverride"
         :active-ltm-preference="activeLtmPreference"
@@ -1136,6 +1137,7 @@
         @update:reasoning-effort-override="reasoningEffortOverride = $event"
         @send="sendMessage"
         @refresh-context-compactions="refreshEmbedContextCompactions(true)"
+        @manual-context-compaction="manualCompactEmbedContext"
         @stop="stopGeneration"
         @toggle-shortcuts="toggleShortcuts"
         @open-command-manager="showAddModal = true"
@@ -3882,6 +3884,13 @@ const refreshCurrentRunStatus = () => (
     : Promise.resolve(false)
 );
 
+const focusChatInputWhenReady = () => {
+  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  nextTick(() => chatInputRef.value?.focus());
+};
+
+watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
+
 watch(conversationId, () => {
   void refreshCurrentRunStatus();
 }, { immediate: true });
@@ -4122,6 +4131,8 @@ const {
   contextCompactionCount,
   contextCompactionsLoading,
   contextCompactionsError,
+  contextCompactionActionLoading,
+  manuallyCompactContext,
   refreshContextCompactions,
 } = useContextCompactions();
 const refreshEmbedContextUsage = () => refreshContextUsage({
@@ -4133,6 +4144,15 @@ const refreshEmbedContextCompactions = (force = false) => refreshContextCompacti
   conversationId: conversationId.value,
   headers: embedAuthHeaders(),
 }, force);
+const manualCompactEmbedContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, mode: "fast" | "smart" = "fast") => {
+  try {
+    const result = await manuallyCompactContext({ conversationId: conversationId.value, headers: embedAuthHeaders(), retainRatio, mode });
+    await refreshContextUsage({ conversationId: conversationId.value, modelId: config.overrideModel || undefined, headers: embedAuthHeaders() });
+    showToast(result?.compacted ? `上下文已压缩，预计节省 ${Number(result.saved_percent || 0)}%` : "当前没有可压缩的历史内容", result?.compacted ? "success" : "info");
+  } catch {
+    showToast("上下文压缩失败，请稍后重试", "error");
+  }
+};
 
 watch(
   [conversationId, () => config.overrideModel, () => config.token],
@@ -4564,6 +4584,7 @@ const SYSTEM_SLASH_COMMANDS = [
   { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
   { id: MY_ARTIFACTS_SYSTEM_COMMAND_ID, command: MY_ARTIFACTS_SLASH_COMMAND, label: "📄 我的产出", sort_order: -33.5 },
   { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
+  { id: "sys_compact", command: "/compact", label: "🧹 压缩上下文", sort_order: -17 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
 ];
 const showCommandMenu = ref(false);
@@ -6501,6 +6522,10 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
       userInput.value = "";
       await showQuotaStatusInChat();
       return true;
+    case "/compact":
+      userInput.value = "";
+      await manualCompactEmbedContext();
+      return true;
     case "/new":
     case "/clear": // legacy alias
       userInput.value = "";
@@ -7858,11 +7883,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // Final cleanup: stop any remaining log spinners
     finalizeAllPendingStreamLogs(agentMsg.value);
     scrollToBottom();
-    nextTick(() => {
-      if (!isMobile.value) {
-        chatInputRef.value?.focus();
-      }
-    });
   }
 };
 

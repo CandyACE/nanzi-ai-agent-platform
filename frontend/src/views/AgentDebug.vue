@@ -397,6 +397,7 @@ const SYSTEM_SLASH_COMMANDS = [
   { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
   { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
   { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
+  { id: "sys_compact", command: "/compact", label: "🧹 压缩上下文", sort_order: -17 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
 ];
 const isKnowledgeEnabled = ref(true);
@@ -551,6 +552,13 @@ const refreshCurrentRunStatus = () => (
     ? refreshRemoteRunStatus(conversationId.value)
     : Promise.resolve(false)
 );
+
+const focusChatInputWhenReady = () => {
+  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  nextTick(() => chatInputRef.value?.focus());
+};
+
+watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
 
 watch(conversationId, () => {
   void refreshCurrentRunStatus();
@@ -1416,6 +1424,8 @@ const {
   contextCompactionCount,
   contextCompactionsLoading,
   contextCompactionsError,
+  contextCompactionActionLoading,
+  manuallyCompactContext,
   refreshContextCompactions,
 } = useContextCompactions();
 const refreshDebugContextUsage = () => refreshContextUsage({
@@ -1427,6 +1437,15 @@ const refreshDebugContextCompactions = (force = false) => refreshContextCompacti
   conversationId: conversationId.value,
   headers: debugAuthHeaders(),
 }, force);
+const manualCompactDebugContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, mode: "fast" | "smart" = "fast") => {
+  try {
+    const result = await manuallyCompactContext({ conversationId: conversationId.value, headers: debugAuthHeaders(), retainRatio, mode });
+    await refreshContextUsage({ conversationId: conversationId.value, modelId: debugConfig.model || undefined, headers: debugAuthHeaders() });
+    showToast(result?.compacted ? `上下文已压缩，预计节省 ${Number(result.saved_percent || 0)}%` : "当前没有可压缩的历史内容", result?.compacted ? "success" : "info");
+  } catch {
+    showToast("上下文压缩失败，请稍后重试", "error");
+  }
+};
 
 watch(
   [conversationId, () => debugConfig.model],
@@ -2383,6 +2402,10 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     case "/tokens":
       userInput.value = "";
       await showQuotaStatusInChat();
+      return true;
+    case "/compact":
+      userInput.value = "";
+      await manualCompactDebugContext();
       return true;
     case "/new":
     case "/clear":
@@ -3499,9 +3522,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     void refreshCurrentRunStatus();
     void refreshDebugContextUsage();
     void refreshDebugContextCompactions(true);
-    nextTick(() => {
-      if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
-    });
   }
 };
 
@@ -3911,9 +3931,6 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
         }
       });
     }
-    nextTick(() => {
-      if (!isMobile.value && chatInputRef.value) chatInputRef.value.focus();
-    });
   }
 };
 
@@ -5065,6 +5082,7 @@ onUnmounted(() => {
           :context-compaction-records="contextCompactions"
           :context-compaction-loading="contextCompactionsLoading"
           :context-compaction-error="contextCompactionsError"
+          :context-compaction-action-loading="contextCompactionActionLoading"
           :thinking-enable-override="debugConfig.thinkingEnableOverride"
           :reasoning-effort-override="debugConfig.reasoningEffortOverride"
           @update:approval-mode="debugConfig.approvalMode = $event"
@@ -5073,6 +5091,7 @@ onUnmounted(() => {
           @update:reasoning-effort-override="debugConfig.reasoningEffortOverride = $event"
           @send="sendMessage"
           @refresh-context-compactions="refreshDebugContextCompactions(true)"
+          @manual-context-compaction="manualCompactDebugContext"
           @stop="stopGeneration"
           @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
           @open-command-manager="openCommandManager"

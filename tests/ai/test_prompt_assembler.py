@@ -248,6 +248,28 @@ def test_platform_prompt_inventory_keeps_configured_knowledge_tool_for_knowledge
     assert "- search_knowledge_base:" in prompt
 
 
+def test_session_status_prompt_explains_runtime_snapshot_trigger():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={"session_status"},
+    )
+
+    assert "session_status" in prompt
+    assert "会话、设备、模型上下文、工作区、沙箱策略和后端运行环境" in prompt
+    assert "只读" in prompt
+    assert "优先调用 **session_status**" in prompt
+
+
+def test_session_status_prompt_guidance_is_absent_when_tool_is_unavailable():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={"get_current_model"},
+    )
+
+    assert "会话、设备、模型上下文、工作区、沙箱策略和后端运行环境" not in prompt
+    assert "优先调用 **session_status**" not in prompt
+
+
 def test_effective_prompt_tool_names_uses_configured_tools_and_enabled_flag():
     config = SimpleNamespace(
         agent_name="TestAgent",

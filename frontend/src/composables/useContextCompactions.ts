@@ -6,6 +6,11 @@ export interface RefreshContextCompactionsOptions {
   headers?: Record<string, string>;
 }
 
+export interface ManualContextCompactionOptions extends RefreshContextCompactionsOptions {
+  retainRatio?: 0.25 | 0.5 | 0.75;
+  mode?: "fast" | "smart";
+}
+
 /**
  * 读取当前会话的上下文压缩记录。
  *
@@ -16,6 +21,7 @@ export function useContextCompactions() {
   const contextCompactions = ref<ContextCompactionRecord[]>([]);
   const contextCompactionsLoading = ref(false);
   const contextCompactionsError = ref(false);
+  const contextCompactionActionLoading = ref(false);
   const contextCompactionsLoadedFor = ref("");
   let latestRequestId = 0;
 
@@ -73,11 +79,31 @@ export function useContextCompactions() {
     }
   };
 
+  const manuallyCompactContext = async (options: ManualContextCompactionOptions = {}) => {
+    const conversationId = String(options.conversationId || "").trim();
+    if (!conversationId || contextCompactionActionLoading.value) return null;
+    contextCompactionActionLoading.value = true;
+    try {
+      const response = await agentApi.manualContextCompaction(
+        conversationId,
+        options.retainRatio ?? 0.5,
+        options.mode ?? "fast",
+        { headers: options.headers },
+      );
+      await refreshContextCompactions(options, true);
+      return response.data?.data || null;
+    } finally {
+      contextCompactionActionLoading.value = false;
+    }
+  };
+
   return {
     contextCompactions,
     contextCompactionCount,
     contextCompactionsLoading,
     contextCompactionsError,
     refreshContextCompactions,
+    contextCompactionActionLoading,
+    manuallyCompactContext,
   };
 }

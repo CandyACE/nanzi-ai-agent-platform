@@ -3,6 +3,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.ai.agent_service import AgentService
+from app.services.ai.agent_service import _apply_context_snapshot
 from app.services.ai.context_compaction import (
     COMPACTION_MARKER,
     apply_context_compaction,
@@ -32,6 +33,33 @@ def test_build_overflow_digest_returns_system_message():
     assert "查一下机房列表" in digest["content"]
 
 
+@pytest.mark.asyncio
+async def test_manual_context_snapshot_keeps_digest_and_only_appends_new_messages(monkeypatch):
+    snapshot = {
+        "source_seq": 2,
+        "messages": [
+            {"role": "system", "content": "[早前对话摘录]"},
+            {"role": "assistant", "content": "最近回答", "seq": 2},
+        ],
+    }
+    monkeypatch.setattr(
+        "app.services.ai.agent_service.memory_service.get_context_snapshot",
+        AsyncMock(return_value=snapshot),
+    )
+
+    result = await _apply_context_snapshot(
+        [
+            {"role": "user", "content": "旧问题", "seq": 1},
+            {"role": "assistant", "content": "最近回答", "seq": 2},
+            {"role": "user", "content": "新问题", "seq": 3},
+        ],
+        user_id="7",
+        conversation_id="c1",
+    )
+
+    assert result == snapshot["messages"] + [
+        {"role": "user", "content": "新问题", "seq": 3}
+    ]
 def test_build_overflow_digest_marks_old_tasks_as_non_executable_history():
     digest = build_overflow_digest(
         [{"role": "user", "content": "分析国产算力芯片投资机会"}]
