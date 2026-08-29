@@ -316,19 +316,31 @@ def _postgresql_extract_number(field: str, argument: str) -> str:
     return f"CAST(EXTRACT({field} FROM {argument}) AS INTEGER)"
 
 
+def _postgresql_safe_cast(argument: str, target_type: str) -> str:
+    """模拟 ClickHouse OrNull 转换：非法输入返回 NULL，而不是让查询失败。"""
+    normalized_type = target_type.upper()
+    return (
+        f"CASE WHEN pg_input_is_valid(CAST({argument} AS TEXT), '{target_type}') "
+        f"THEN CAST({argument} AS {normalized_type}) ELSE NULL END"
+    )
+
+
 def _convert_clickhouse_function_to_postgresql(name: str, arguments: List[str]) -> Optional[str]:
     """将一个已拆分参数的 ClickHouse 函数转换为 PostgreSQL 表达式。"""
     function_name = name.lower()
+    if function_name == "parsedatetimebesteffortornull" and arguments:
+        return _postgresql_safe_cast(arguments[0], "timestamp")
     if function_name in {
         "parsedatetimebesteffort",
         "parsedatetimebesteffortorzero",
-        "parsedatetimebesteffortornull",
         "todatetime",
         "todatetime64",
         "todatetimeornull",
     } and arguments:
         return f"CAST({arguments[0]} AS TIMESTAMP)"
-    if function_name in {"todate", "todateornull"} and arguments:
+    if function_name == "todateornull" and arguments:
+        return _postgresql_safe_cast(arguments[0], "date")
+    if function_name == "todate" and arguments:
         return f"CAST({arguments[0]} AS DATE)"
     if function_name in {"toyear"} and arguments:
         return _postgresql_extract_number("YEAR", arguments[0])
@@ -361,6 +373,11 @@ def _convert_clickhouse_function_to_postgresql(name: str, arguments: List[str]) 
             "tostartofyear": "year",
             "tostartofweek": "week",
         }
+        if function_name == "tostartofweek":
+            mode = arguments[1].strip().strip("'\"") if len(arguments) > 1 else "0"
+            if mode == "1":
+                return f"DATE_TRUNC('week', {arguments[0]})"
+            return f"DATE_TRUNC('week', {arguments[0]}) - INTERVAL '1 day'"
         return f"DATE_TRUNC('{units[function_name]}', {arguments[0]})"
     if function_name == "toyyyymm" and arguments:
         year = _postgresql_extract_number("YEAR", arguments[0])
@@ -388,14 +405,26 @@ def _convert_clickhouse_function_to_postgresql(name: str, arguments: List[str]) 
         format_text = arguments[1]
         if len(format_text) >= 2 and format_text[0] == format_text[-1] == "'":
             format_text = format_text[1:-1]
-            format_text = (
-                format_text.replace("%Y", "YYYY")
-                .replace("%m", "MM")
-                .replace("%d", "DD")
-                .replace("%H", "HH24")
-                .replace("%i", "MI")
-                .replace("%s", "SS")
-            )
+            format_tokens = {
+                "%Y": "YYYY",
+                "%m": "MM",
+                "%d": "DD",
+                "%H": "HH24",
+                "%i": "MI",
+                "%s": "SS",
+                "%F": "YYYY-MM-DD",
+                "%T": "HH24:MI:SS",
+                "%M": "MI",
+                "%j": "DDD",
+                "%u": "ID",
+                "%V": "IW",
+                "%G": "IYYY",
+                "%r": "HH12:MI:SS AM",
+            }
+            for source_token, target_token in format_tokens.items():
+                format_text = format_text.replace(source_token, target_token)
+            if re.search(r"%[A-Za-z]", format_text):
+                return None
             format_text = "'" + format_text.replace("'", "''") + "'"
         return f"TO_CHAR({arguments[0]}, {format_text})"
     if function_name == "datediff" and len(arguments) >= 3:
@@ -406,7 +435,7 @@ def _convert_clickhouse_function_to_postgresql(name: str, arguments: List[str]) 
         seconds_per_unit = {"second": 1, "seconds": 1, "minute": 60, "minutes": 60, "hour": 3600, "hours": 3600}
         if unit in seconds_per_unit:
             divisor = seconds_per_unit[unit]
-            return f"CAST(EXTRACT(EPOCH FROM (({end}) - ({start}))) / {divisor} AS BIGINT)"
+            return f"CAST(EXTRACT(EPOCH FROM (({end})::timestamp - ({start})::timestamp)) / {divisor} AS BIGINT)"
     return None
 
 
