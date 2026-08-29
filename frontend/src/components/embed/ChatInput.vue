@@ -94,6 +94,7 @@ const props = defineProps<{
   contextCompactionCount?: number;
   contextCompactionLoading?: boolean;
   contextCompactionError?: boolean;
+  contextCompactionActionLoading?: boolean;
   thinkingEnableOverride?: boolean | null;
   reasoningEffortOverride?: ReasoningEffort | null;
   activeLtmPreference?: any;
@@ -288,6 +289,7 @@ const emit = defineEmits<{
   (e: 'ignore-ltm'): void;
   (e: 'dismiss-ltm'): void;
   (e: 'refresh-context-compactions'): void;
+  (e: 'manual-context-compaction', retainRatio: 0.25 | 0.5 | 0.75): void;
   (e: 'start-docker-workspace'): void;
   (e: 'refresh-docker-workspace', manualFeedback?: boolean): void;
   (e: 'stop-docker-workspace'): void;
@@ -923,6 +925,7 @@ const contextCompactionDetailsRef = ref<HTMLElement | null>(null);
 const contextCompactionDetailsPlacement = ref<'above' | 'below'>('above');
 
 const contextCompactionCount = computed(() => Math.max(0, Number(props.contextCompactionCount || 0)));
+const contextCompactionRetainRatio = ref<0.25 | 0.5 | 0.75>(0.5);
 
 const closeContextUsageDetails = () => {
   showContextUsageDetails.value = false;
@@ -1845,6 +1848,19 @@ defineExpose({
                           <span class="h-1.5 w-1.5 rounded-full bg-violet-400" aria-hidden="true" />
                           <span>上下文压缩</span>
                         </span>
+                        <select
+                          v-model.number="contextCompactionRetainRatio"
+                          data-testid="context-compaction-retain-ratio"
+                          class="rounded-full border border-violet-200 bg-white px-2 py-1 text-[9px] text-violet-700 outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-50 dark:border-violet-800/70 dark:bg-gray-800 dark:text-violet-300"
+                          :disabled="isInteractionLocked || contextCompactionActionLoading"
+                          aria-label="上下文压缩保留比例"
+                          title="选择压缩强度"
+                          @click.stop
+                        >
+                          <option :value="0.75">轻度 · 保留 75%</option>
+                          <option :value="0.5">标准 · 保留 50%</option>
+                          <option :value="0.25">深度 · 保留 25%</option>
+                        </select>
                         <button
                           type="button"
                           data-testid="context-compaction-indicator"
@@ -1858,6 +1874,17 @@ defineExpose({
                           @click.stop="toggleContextCompactionDetails"
                         >
                           压缩 {{ contextCompactionCount }} 次
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="context-compaction-manual"
+                          class="inline-flex items-center rounded-full border border-violet-200 px-2 py-1 text-[9px] font-medium text-violet-700 transition-colors hover:bg-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-800/70 dark:text-violet-300 dark:hover:bg-violet-950/50"
+                          :disabled="isInteractionLocked || contextCompactionActionLoading"
+                          title="立即压缩上下文"
+                          aria-label="立即压缩上下文"
+                          @click.stop="emit('manual-context-compaction', contextCompactionRetainRatio)"
+                        >
+                          {{ contextCompactionActionLoading ? '压缩中…' : '立即压缩' }}
                         </button>
                     </div>
                     <div

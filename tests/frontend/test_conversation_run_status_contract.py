@@ -102,3 +102,26 @@ def test_agent_debug_focuses_desktop_input_only_after_all_busy_states_clear():
 
     completion_block = source[source.index("isProcessing.value = false;", source.index("const sendMessageInternal")):source.index("const addRealLog")]
     assert "chatInputRef.value?.focus()" not in completion_block
+
+
+def test_context_compaction_control_is_user_triggered_on_both_chat_surfaces():
+    input_source = (ROOT / "frontend/src/components/embed/ChatInput.vue").read_text(encoding="utf-8")
+    assert "manual-context-compaction" in input_source
+    assert "立即压缩上下文" in input_source
+    assert "context-compaction-manual" in input_source
+    assert "contextCompactionRetainRatio" in input_source
+    assert "保留 75%" in input_source
+    assert "保留 50%" in input_source
+    assert "保留 25%" in input_source
+
+    for relative_path in ("frontend/src/views/EmbedChat.vue", "frontend/src/views/AgentDebug.vue"):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "@manual-context-compaction" in source
+        assert "manualCompact" in source
+        assert "contextCompactionActionLoading" in source
+        manual_start = source.index("const manualCompact")
+        manual_end = source.index("};", manual_start) + 2
+        assert "refreshContextUsage" in source[manual_start:manual_end]
+
+    api_source = (ROOT / "frontend/src/api/agent.ts").read_text(encoding="utf-8")
+    assert "context_compactions/manual" in api_source

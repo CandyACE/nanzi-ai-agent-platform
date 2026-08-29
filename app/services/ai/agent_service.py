@@ -361,6 +361,32 @@ def _client_prefix_history_len(messages: List[Dict[str, Any]]) -> int:
     )
 
 
+async def _apply_context_snapshot(
+    history: List[Dict[str, Any]],
+    *,
+    user_id: str,
+    conversation_id: str,
+) -> List[Dict[str, Any]]:
+    """将手动压缩快照与快照创建后的新消息合并，原始历史保持不变。"""
+    snapshot = await memory_service.get_context_snapshot(user_id, conversation_id)
+    if not isinstance(snapshot, dict):
+        return history
+    compacted = snapshot.get("messages")
+    if not isinstance(compacted, list):
+        return history
+    try:
+        source_seq = int(snapshot.get("source_seq") or 0)
+    except (TypeError, ValueError):
+        source_seq = 0
+    if source_seq <= 0:
+        return history
+    newer = [
+        message for message in history
+        if isinstance(message, dict) and int(message.get("seq") or 0) > source_seq
+    ]
+    return [*compacted, *newer]
+
+
 def _regular_completion_history(
     server_history: Optional[List[Dict[str, Any]]],
     _client_messages: List[Dict[str, Any]],
@@ -1367,6 +1393,9 @@ class AgentService:
                         await memory_service.get_history(u_id, conversation_id),
                         messages,
                     )
+                    server_history = await _apply_context_snapshot(
+                        server_history, user_id=u_id, conversation_id=conversation_id
+                    )
                     context_source_history_count = len(
                         _history_messages_for_context(server_history)
                     )
@@ -2199,6 +2228,92 @@ class AgentService:
         except Exception as exc:
             logger.warning("[Compaction] Failed to compact overflow history: %s", exc)
             return window
+
+    async def manual_compact_conversation(
+        self,
+        user_id: str,
+        conversation_id: str,
+        *,
+        retain_ratio: float = 0.5,
+    ) -> Dict[str, Any]:
+        """由用户显式触发一次确定性上下文压缩，不调用模型且不改写原始历史。"""
+        retain_ratio = float(retain_ratio)
+        if retain_ratio not in {0.25, 0.5, 0.75}:
+            raise ValueError("retain_ratio 只能是 0.25、0.5 或 0.75")
+        history = await memory_service.get_history(user_id, conversation_id)
+        history = await _apply_context_snapshot(
+            history or [], user_id=user_id, conversation_id=conversation_id
+        )
+        full_history = _history_messages_for_context(history or [])
+        if len(full_history) < 2:
+            return {"compacted": False, "reason": "history_too_short", "dropped": 0, "kept": len(full_history)}
+
+        from app.services.config_service import ConfigService
+
+        max_context_raw = await ConfigService.get("agent_max_context_messages", "60")
+        try:
+            max_context = max(1, int(max_context_raw))
+        except (TypeError, ValueError):
+            max_context = 60
+        runtime_budget = await self._resolve_pre_route_context_budget()
+        history_budget = await self._resolve_history_context_budget(runtime_budget)
+        keep_count = max(1, int(len(full_history) * retain_ratio))
+        automatic_window = _window_for_context(full_history, max_context, history_budget)
+        window = full_history[-keep_count:]
+        if len(automatic_window) < len(window):
+            window = automatic_window
+
+        before_tokens = sum(
+            estimate_text_tokens(str(message.get("content") or "") + str(message.get("tool_run_text") or ""))
+            for message in full_history
+        )
+
+        event: Dict[str, Any] = {}
+        compacted = await self._maybe_compact_overflow(
+            full_history,
+            window,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            out=event,
+            token_budget=history_budget,
+            enable_llm_summary=False,
+            physical_window=runtime_budget,
+        )
+        if not event:
+            return {"compacted": False, "reason": "no_compactable_history", "dropped": 0, "kept": len(full_history)}
+
+        source_seq = max((int(message.get("seq") or 0) for message in history), default=0)
+        await memory_service.set_context_snapshot(
+            user_id,
+            conversation_id,
+            {"schema_version": 1, "source_seq": source_seq, "messages": compacted},
+        )
+        after_tokens = sum(
+            estimate_text_tokens(str(message.get("content") or "") + str(message.get("tool_run_text") or ""))
+            for message in compacted
+        )
+        event = dict(event)
+        event["type"] = "context_summarized"
+        await self._persist_context_compaction_event(
+            event,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            trace_id=f"manual-{uuid.uuid4().hex}",
+            source="platform",
+            stage="manual",
+        )
+        return {
+            "compacted": True,
+            "dropped": int(event.get("dropped") or 0),
+            "kept": int(event.get("kept") or len(window)),
+            "origin": event.get("origin") or "deterministic",
+            "preview": event.get("preview") or "",
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "saved_tokens": max(0, before_tokens - after_tokens),
+            "saved_percent": round(max(0, before_tokens - after_tokens) / before_tokens * 100, 1) if before_tokens else 0,
+            "retain_ratio": retain_ratio,
+        }
 
     @staticmethod
     def _emit_compaction_card(

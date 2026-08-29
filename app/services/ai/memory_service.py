@@ -22,6 +22,7 @@ class MemoryService:
     DATA_RESULT_SUFFIX = "last_data_result"
     DATA_RESULT_STACK_SUFFIX = "data_result_stack_v1"
     SESSION_TOOL_ARTIFACT_SUFFIX = "session_tool_artifact_v1"
+    CONTEXT_SNAPSHOT_SUFFIX = "context_snapshot_v1"
     
     def __init__(self, max_history_turns: int = 50, ttl: int = 2592000):
         """
@@ -59,6 +60,44 @@ class MemoryService:
         """
         uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:digest"
+
+    def _get_context_snapshot_key(self, user_id: str, conversation_id: str) -> str:
+        uid = require_user_id(user_id)
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.CONTEXT_SNAPSHOT_SUFFIX}"
+
+    async def get_context_snapshot(self, user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+        redis = await get_redis()
+        if not redis:
+            return None
+        try:
+            raw = await redis.get(self._get_context_snapshot_key(user_id, conversation_id))
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            value = json.loads(raw) if raw else None
+            return value if isinstance(value, dict) else None
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to get context snapshot: %s", exc)
+            return None
+
+    async def set_context_snapshot(
+        self,
+        user_id: str,
+        conversation_id: str,
+        snapshot: Dict[str, Any],
+    ) -> bool:
+        redis = await get_redis()
+        if not redis or not isinstance(snapshot, dict):
+            return False
+        try:
+            await redis.set(
+                self._get_context_snapshot_key(user_id, conversation_id),
+                json.dumps(snapshot, ensure_ascii=False),
+                ex=self.ttl,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to set context snapshot: %s", exc)
+            return False
 
     def _get_digest_meta_key(
         self,

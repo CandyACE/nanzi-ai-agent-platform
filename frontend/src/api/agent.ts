@@ -153,6 +153,13 @@ export const agentApi = {
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId)}/context_compactions`,
       config,
     ),
+
+  manualContextCompaction: (conversationId: string, retainRatio: 0.25 | 0.5 | 0.75, config?: { headers?: Record<string, string> }) =>
+    axios.post<StandardResponse<Record<string, unknown>>>(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId)}/context_compactions/manual`,
+      { retain_ratio: retainRatio },
+      config,
+    ),
 }
 
 export interface AgentExecutionHistoryListResponse {
