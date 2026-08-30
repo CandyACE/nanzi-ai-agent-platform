@@ -29,6 +29,7 @@ export type ProcessTimelineTextItem = {
   textKind: "narration" | "reasoning";
   content: string;
   pending: boolean;
+  interrupted?: boolean;
   started_at?: number | null;
   execution_time_ms?: number | null;
   children?: ProcessTimelineLogItem[];

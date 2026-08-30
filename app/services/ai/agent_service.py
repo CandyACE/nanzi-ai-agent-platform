@@ -58,7 +58,6 @@ from app.services.schema_chunk_format import estimate_text_tokens
 logger = logging.getLogger(__name__)
 
 _LLM_DIGEST_TASKS: set[asyncio.Task] = set()
-_POST_PROCESS_TASKS: set[asyncio.Task] = set()
 
 AWAITING_RESUME_STATUSES = frozenset(
     {"awaiting_permission", "awaiting_external_execution", "awaiting_user"}
@@ -177,13 +176,6 @@ async def _persist_assistant_message_and_summary(
             logger.warning("[AgentService] Session summary task failed: %s", exc)
 
 
-def _schedule_post_process(coro: Any) -> asyncio.Task:
-    task = asyncio.create_task(coro)
-    _POST_PROCESS_TASKS.add(task)
-    task.add_done_callback(_POST_PROCESS_TASKS.discard)
-    return task
-
-
 def _public_agent_type(agent_config: Any) -> str:
     """Return a JSON-safe primary type, including compatibility for test/runtime shims."""
     raw_type = getattr(agent_config, "agent_type", AgentType.GENERAL)
@@ -244,6 +236,19 @@ def _final_process_timeline(state: Optional[List[Dict[str, Any]]]):
     from app.services.ai.runtime.agentscope.process_timeline_snapshot import finalize_process_timeline
 
     return finalize_process_timeline(state)
+
+
+def _should_persist_turn_history(
+    content: Optional[str],
+    process_timeline: Optional[List[Dict[str, Any]]],
+    reasoning_content: Optional[str] = None,
+) -> bool:
+    """只要本轮产生正文、推理或思考卡片，就保留本轮历史。"""
+    return bool(
+        str(content or "").strip()
+        or process_timeline
+        or str(reasoning_content or "").strip()
+    )
 
 
 def _finalize_todo_success(
@@ -4223,32 +4228,35 @@ class AgentService:
             if has_data_output and execution_status == "success":
                 yield {"type": "meta", "has_data_output": True}
 
-            if conversation_id and full_response_content:
+            final_process_timeline = _final_process_timeline(
+                (shared_state or {}).get("process_timeline")
+            )
+            if conversation_id and _should_persist_turn_history(
+                full_response_content,
+                final_process_timeline,
+                full_reasoning_content,
+            ):
                 u_id = require_user_id(user_info)
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
-                _schedule_post_process(
-                    _persist_assistant_message_and_summary(
-                        user_id=u_id,
-                        conversation_id=conversation_id,
-                        content=full_response_content,
-                        trace_id=trace_id,
-                        agent_name=handled_by,
-                        agent_type=_public_agent_type(agent_config),
-                        agent_display_name=(
-                            getattr(agent_config, "agent_display_name", None) or None
-                        ),
-                        prompt_tokens=p_tokens,
-                        completion_tokens=c_tokens,
-                        total_tokens=t_tokens,
-                        has_data_output=has_data_output or None,
-                        reasoning_content=full_reasoning_content or None,
-                        process_timeline=_final_process_timeline(
-                            (shared_state or {}).get("process_timeline")
-                        ),
-                        tool_run_text=tool_run_text,
-                        merge_summary=execution_status == "success",
-                        status=execution_status,
-                    )
+                await _persist_assistant_message_and_summary(
+                    user_id=u_id,
+                    conversation_id=conversation_id,
+                    content=full_response_content,
+                    trace_id=trace_id,
+                    agent_name=handled_by,
+                    agent_type=_public_agent_type(agent_config),
+                    agent_display_name=(
+                        getattr(agent_config, "agent_display_name", None) or None
+                    ),
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens,
+                    total_tokens=t_tokens,
+                    has_data_output=has_data_output or None,
+                    reasoning_content=full_reasoning_content or None,
+                    process_timeline=final_process_timeline,
+                    tool_run_text=tool_run_text,
+                    merge_summary=execution_status == "success",
+                    status=execution_status,
                 )
 
         except asyncio.CancelledError:
@@ -4532,7 +4540,12 @@ class AgentService:
         conversation_id = runner.conversation_id or pending.snapshot.conversation_id
         user_query = (pending.state or {}).get("user_query") or ""
 
-        if conversation_id and full_response_content:
+        final_process_timeline = _final_process_timeline(process_timeline_state)
+        if conversation_id and _should_persist_turn_history(
+            full_response_content,
+            final_process_timeline,
+            full_reasoning_content,
+        ):
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
             resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
@@ -4541,30 +4554,28 @@ class AgentService:
                 if callable(resolve_tool_run_text)
                 else None
             )
-            _schedule_post_process(
-                _persist_assistant_message_and_summary(
-                    user_id=u_id,
-                    conversation_id=conversation_id,
-                    content=full_response_content,
-                    trace_id=pending.trace_id,
-                    agent_name=handled_by,
-                    agent_type=_public_agent_type(agent_config),
-                    agent_display_name=(
-                        getattr(agent_config, "agent_display_name", None) or handled_by
-                    ),
-                    prompt_tokens=p_tokens,
-                    completion_tokens=c_tokens,
-                    total_tokens=t_tokens,
-                    reasoning_content=full_reasoning_content or None,
-                    process_timeline=_final_process_timeline(process_timeline_state),
-                    tool_run_text=tool_run_text,
-                    merge_summary=execution_status == "success",
-                    status=execution_status,
-                )
+            await _persist_assistant_message_and_summary(
+                user_id=u_id,
+                conversation_id=conversation_id,
+                content=full_response_content,
+                trace_id=pending.trace_id,
+                agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(
+                    getattr(agent_config, "agent_display_name", None) or handled_by
+                ),
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                total_tokens=t_tokens,
+                reasoning_content=full_reasoning_content or None,
+                process_timeline=final_process_timeline,
+                tool_run_text=tool_run_text,
+                merge_summary=execution_status == "success",
+                status=execution_status,
             )
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
-        asyncio.create_task(AuditManager.log_transaction(
+        await AuditManager.log_transaction(
             pending.trace_id,
             agent_config,
             user_query,
@@ -4576,7 +4587,7 @@ class AgentService:
             conversation_id=conversation_id,
             reasoning_content=full_reasoning_content or None,
             process_timeline=_final_process_timeline(process_timeline_state),
-        ))
+        )
 
     async def _restore_runner_execution_context(
         self,
@@ -4810,7 +4821,12 @@ class AgentService:
         conversation_id = runner.conversation_id or pending.snapshot.conversation_id
         user_query = (pending.state or {}).get("user_query") or ""
 
-        if conversation_id and full_response_content:
+        final_process_timeline = _final_process_timeline(process_timeline_state)
+        if conversation_id and _should_persist_turn_history(
+            full_response_content,
+            final_process_timeline,
+            full_reasoning_content,
+        ):
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
             resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
@@ -4819,30 +4835,28 @@ class AgentService:
                 if callable(resolve_tool_run_text)
                 else None
             )
-            _schedule_post_process(
-                _persist_assistant_message_and_summary(
-                    user_id=u_id,
-                    conversation_id=conversation_id,
-                    content=full_response_content,
-                    trace_id=pending.trace_id,
-                    agent_name=handled_by,
-                    agent_type=_public_agent_type(agent_config),
-                    agent_display_name=(
-                        getattr(agent_config, "agent_display_name", None) or handled_by
-                    ),
-                    prompt_tokens=p_tokens,
-                    completion_tokens=c_tokens,
-                    total_tokens=t_tokens,
-                    reasoning_content=full_reasoning_content or None,
-                    process_timeline=_final_process_timeline(process_timeline_state),
-                    tool_run_text=tool_run_text,
-                    merge_summary=execution_status == "success",
-                    status=execution_status,
-                )
+            await _persist_assistant_message_and_summary(
+                user_id=u_id,
+                conversation_id=conversation_id,
+                content=full_response_content,
+                trace_id=pending.trace_id,
+                agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(
+                    getattr(agent_config, "agent_display_name", None) or handled_by
+                ),
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                total_tokens=t_tokens,
+                reasoning_content=full_reasoning_content or None,
+                process_timeline=final_process_timeline,
+                tool_run_text=tool_run_text,
+                merge_summary=execution_status == "success",
+                status=execution_status,
             )
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
-        asyncio.create_task(AuditManager.log_transaction(
+        await AuditManager.log_transaction(
             pending.trace_id,
             agent_config,
             user_query,
@@ -4854,7 +4868,7 @@ class AgentService:
             conversation_id=conversation_id,
             reasoning_content=full_reasoning_content or None,
             process_timeline=_final_process_timeline(process_timeline_state),
-        ))
+        )
 
     async def _execute_multi_agent(
         self,

@@ -7,6 +7,7 @@ from app.services.ai.agent_service import (
     _accumulate_stream_content,
     _finalize_todo_success,
     _final_process_timeline,
+    _should_persist_turn_history,
     _restore_todo_snapshot_from_pending,
     _track_process_timeline,
 )
@@ -14,6 +15,12 @@ from app.services.ai.runtime.agentscope.event_stream import _sync_todo_snapshot_
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_turn_with_only_thinking_timeline_is_persisted():
+    assert _should_persist_turn_history("", [{"kind": "log", "id": "tool_1"}]) is True
+    assert _should_persist_turn_history("", None) is False
+    assert _should_persist_turn_history("最终回答", None) is True
 
 
 def test_accumulate_stream_content_excludes_typed_reasoning_events():
