@@ -56,6 +56,10 @@ def test_reusable_result_status_is_compact_and_supports_count():
     assert "· 查看可复用结果" not in status_source
     assert "reusableResultCount" in embed_source
     assert ":count=\"reusableResultCount\"" in embed_source
+    assert "本次复用" in LIST.read_text(encoding="utf-8")
+    assert ":reused-result-id=\"props.reusedResultId\"" in DRAWER.read_text(encoding="utf-8")
+    assert "reusedReusableResultId" in embed_source
+    assert ':reused-result-id="reusedReusableResultId"' in embed_source
 
 
 def test_chat_views_handle_server_terminal_status_before_done():

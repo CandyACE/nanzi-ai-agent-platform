@@ -9,9 +9,11 @@ const props = withDefaults(defineProps<{
   conversationId: string
   selectedResultId?: string | null
   focusedResultId?: string | null
+  reusedResultId?: string | null
 }>(), {
   selectedResultId: null,
   focusedResultId: null,
+  reusedResultId: null,
 })
 
 const emit = defineEmits<{
@@ -141,6 +143,7 @@ onMounted(() => void load())
             <span class="min-w-0 flex-1">
               <span class="flex items-center gap-1.5">
                 <span class="truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{{ item.origin_name || '未知来源' }}</span>
+                <span v-if="item.result_id === props.reusedResultId" class="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">本次复用</span>
                 <span v-if="item.is_current" class="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">当前</span>
               </span>
               <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">

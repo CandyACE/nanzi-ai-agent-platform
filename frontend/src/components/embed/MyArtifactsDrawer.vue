@@ -14,11 +14,13 @@ const props = withDefaults(defineProps<{
   initialTab?: 'files' | 'reusable'
   selectedResultId?: string | null
   focusedResultId?: string | null
+  reusedResultId?: string | null
 }>(), {
   conversationId: null,
   initialTab: 'files',
   selectedResultId: null,
   focusedResultId: null,
+  reusedResultId: null,
 })
 
 const emit = defineEmits<{
@@ -294,6 +296,7 @@ onUnmounted(() => {
                 :conversation-id="props.conversationId || ''"
                 :selected-result-id="props.selectedResultId"
                 :focused-result-id="props.focusedResultId"
+                :reused-result-id="props.reusedResultId"
                 @select="selectReusableResult"
               />
 

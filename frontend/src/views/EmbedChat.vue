@@ -1304,6 +1304,7 @@
       :initial-tab="myArtifactsInitialTab"
       :selected-result-id="selectedReusableResultId"
       :focused-result-id="focusedReusableResultId"
+      :reused-result-id="reusedReusableResultId"
       @select-reusable-result="selectReusableResult"
     />
 
@@ -2545,6 +2546,7 @@ const showMyArtifactsDrawer = ref(false);
 const myArtifactsInitialTab = ref<"files" | "reusable">("files");
 const selectedReusableResultId = ref<string | null>(null);
 const focusedReusableResultId = ref<string | null>(null);
+const reusedReusableResultId = ref<string | null>(null);
 const reusableResultCount = ref<number | null>(null);
 const workspaceDrawerRef = ref<{ refreshDirectory: (path?: string) => Promise<void> } | null>(null);
 
@@ -3355,6 +3357,7 @@ const loadArtifactCounts = async () => {
 watch(conversationId, () => {
   selectedReusableResultId.value = null;
   focusedReusableResultId.value = null;
+  reusedReusableResultId.value = null;
   reusableResultCount.value = null;
   void loadArtifactCounts();
   void refreshReusableResultCount();
@@ -7331,6 +7334,9 @@ const applyReusableResultStatusEvent = (msg: Message, data: any): boolean => {
     resultId: data.result_id ? String(data.result_id) : null,
     originName: data.origin_name ? String(data.origin_name) : null,
   };
+  if (data.status === "reused") {
+    reusedReusableResultId.value = data.result_id ? String(data.result_id) : null;
+  }
   void refreshReusableResultCount();
   return true;
 };
