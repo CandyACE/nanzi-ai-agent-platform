@@ -78,6 +78,7 @@ def new_native_stream_state(
         "process_narration": "",
         "reply_phase": "before_tool",
         "current_reply_used_tools": False,
+        "current_reply_tool_names": [],
         "start_synthesis": time.time(),
         "synthesis_recorded": False,
         "system_content": system_content,

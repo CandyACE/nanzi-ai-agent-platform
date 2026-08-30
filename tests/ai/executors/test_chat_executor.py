@@ -668,7 +668,7 @@ async def test_general_runner_todo_only_result_keeps_reply_visible_without_synth
 
 @pytest.mark.asyncio
 async def test_general_runner_preserves_answer_before_final_todo_write(chat_config):
-    """最终正文后只更新任务清单时，正文不能被 todo 的工具边界吞掉。"""
+    """模型先结束、随后执行 todo_write 时，前面的最终正文不能变成过程消息。"""
     from agentscope.state import AgentState
 
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
@@ -689,13 +689,20 @@ async def test_general_runner_preserves_answer_before_final_todo_write(chat_conf
             tool_call_id="todo-1",
             tool_call_name="todo_write",
         )
+        # AgentScope 的模型调用在工具真正执行前已经结束。
+        yield SimpleNamespace(type="MODEL_CALL_END", reply_id="r1")
         yield SimpleNamespace(
             type="TOOL_RESULT_TEXT_DELTA",
             tool_call_id="todo-1",
             delta='{"todos":[{"content":"整理报告","status":"completed"}]}',
         )
         yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="todo-1")
-        yield SimpleNamespace(type="MODEL_CALL_END", reply_id="r1")
+        yield SimpleNamespace(type="MODEL_CALL_START", reply_id="r2")
+        yield SimpleNamespace(
+            type="TEXT_BLOCK_DELTA",
+            delta="报告已完成。",
+        )
+        yield SimpleNamespace(type="MODEL_CALL_END", reply_id="r2")
         yield SimpleNamespace(type="REPLY_END", reply_id="r1", session_id="s1")
 
     runner = AssistantAgentRunner(
@@ -720,6 +727,8 @@ async def test_general_runner_preserves_answer_before_final_todo_write(chat_conf
     for chunk in chunks:
         visible = _accumulate_stream_content(visible, chunk)
     assert "这是已经生成的完整最终正文。" in visible
+    assert "整理报告" not in visible
+    assert "todos" not in visible
     assert any(
         chunk.get("type") == "process_narration_promote"
         for chunk in chunks

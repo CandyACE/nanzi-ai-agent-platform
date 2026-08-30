@@ -40,6 +40,16 @@ def _commit_pending_as_narration(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return events
 
 
+def _current_model_uses_only_bookkeeping_tools(state: Dict[str, Any]) -> bool:
+    tool_names = state.get("current_reply_tool_names")
+    if not isinstance(tool_names, list) or not tool_names:
+        return False
+    return all(
+        str(tool_name or "").strip().casefold() in BOOKKEEPING_TOOL_NAMES
+        for tool_name in tool_names
+    )
+
+
 def _get_repetition_detector(state: Dict[str, Any]):
     detector = state.get("repetition_detector")
     if detector is None:
@@ -56,6 +66,7 @@ def on_model_call_start(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     state["pending_reply_text"] = ""
     state["pending_reply_emitted"] = False
     state["current_reply_used_tools"] = False
+    state["current_reply_tool_names"] = []
     detector = state.get("repetition_detector")
     if detector is not None:
         detector.reset()
@@ -99,6 +110,11 @@ def on_tool_call_start(
 ) -> List[Dict[str, Any]]:
     state["used_tools"] = True
     state["current_reply_used_tools"] = True
+    tool_names = state.setdefault("current_reply_tool_names", [])
+    if not isinstance(tool_names, list):
+        tool_names = []
+        state["current_reply_tool_names"] = tool_names
+    tool_names.append(str(tool_name or "").strip())
     state["reply_phase"] = "tool_running"
     detector = state.get("repetition_detector")
     if detector is not None:
@@ -125,7 +141,10 @@ def on_model_call_end(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     pending = _pending_text(state)
     if not pending:
         return []
-    if state.get("current_reply_used_tools"):
+    if (
+        state.get("current_reply_used_tools")
+        and not _current_model_uses_only_bookkeeping_tools(state)
+    ):
         return _commit_pending_as_narration(state)
 
     # No tool appeared in this model turn. The candidate was shown as
