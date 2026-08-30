@@ -867,16 +867,16 @@
                 :can-regenerate="msg === lastAgentMessage && !isProcessing"
                 @regenerate="regenerate"
               />
-              <MessageActionMenus
-                mode="data"
-                :has-data-output="Boolean(msg.hasDataOutput)"
-                :has-trace="Boolean(msg.trace_id)"
-                :reusable-count="msg.reusableResultStatus?.status === 'saved' || msg.reusableResultStatus?.status === 'reused' || msg.hasDataOutput ? 1 : 0"
-                :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
-                @export-data="msg.trace_id && exportData(msg.trace_id, 'xlsx')"
-                @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId)"
-                @open-artifacts="toggleMessageArtifacts(String(msg.id))"
-              />
+              <div class="hidden sm:block">
+                <MessageActionMenus
+                  mode="data"
+                  :has-data-output="Boolean(msg.hasDataOutput)"
+                  :reusable-count="msg.reusableResultStatus?.status === 'saved' || msg.reusableResultStatus?.status === 'reused' || msg.hasDataOutput ? 1 : 0"
+                  :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
+                  @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId)"
+                  @open-artifacts="toggleMessageArtifacts(String(msg.id))"
+                />
+              </div>
               <!-- Token 消耗：移动端仅 icon，桌面端展示 in/out 明细 -->
               <button
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
@@ -969,10 +969,17 @@
                 />
                 <MessageActionMenus
                   mode="more"
+                  :show-data-on-mobile="true"
+                  :has-data-output="Boolean(msg.hasDataOutput)"
                   :can-export="Boolean(msg.trace_id)"
                   :has-trace="Boolean(msg.trace_id)"
+                  :reusable-count="msg.reusableResultStatus?.status === 'saved' || msg.reusableResultStatus?.status === 'reused' || msg.hasDataOutput ? 1 : 0"
+                  :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
                   :has-token-stats="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
                   :can-save-report="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
+                  @export-data="msg.trace_id && exportData(msg.trace_id, 'xlsx')"
+                  @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId)"
+                  @open-artifacts="toggleMessageArtifacts(String(msg.id))"
                   @open-trace="msg.trace_id && openEmbedTrace(msg.trace_id)"
                   @open-stats="openModelCallStats(msg)"
                   @save-report="handleSaveReportFromMessage(msg)"

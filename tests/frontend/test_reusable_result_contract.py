@@ -80,6 +80,8 @@ def test_message_action_menus_group_data_file_and_low_frequency_actions():
     assert 'class="rounded-md border border-gray-200 px-2 py-1 text-[10px]' not in source
     assert source.index('openMenu === \'more\'') < source.index("导出数据（Excel）")
     assert "props.canExport" in source
+    assert "showDataOnMobile?: boolean" in source
+    assert "sm:hidden" in source
 
 
 def test_continue_analysis_buttons_use_neutral_visual_treatment():
@@ -133,6 +135,8 @@ def test_embed_chat_wires_status_event_selection_and_one_shot_request_id():
     assert 'mode="more"' in source
     more_component = source[source.index('mode="more"'):]
     assert ':can-export="Boolean(msg.trace_id)"' in more_component
+    assert ':show-data-on-mobile="true"' in more_component
+    assert '<div class="hidden sm:block">' in source
     action_source = source[source.index("<!-- Agent Message Actions"):]
     more_pos = action_source.index('mode="more"')
     regenerate_pos = action_source.index('mode="regenerate"')
