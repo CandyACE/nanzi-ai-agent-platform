@@ -6,7 +6,7 @@ import pytest
 from agentscope.permission import PermissionBehavior
 
 from app.core import context as core_context
-from app.schemas.browser import BrowserElement, BrowserSnapshot
+from app.schemas.browser import BrowserElement, BrowserSnapshot, BrowserToolResult
 from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runtime.agentscope.tools import _browser_permission_decision
@@ -324,6 +324,88 @@ async def test_browser_press_tool_persists_latest_page_info(monkeypatch):
     persist.assert_awaited_once()
     assert persist.await_args.args[0].user_id == 1
     assert persist.await_args.args[1] is result
+
+
+@pytest.mark.asyncio
+async def test_browser_click_tool_persists_latest_page_info(monkeypatch):
+    class FakeContext:
+        user_id = 1
+        browser_session_id = "bs-1"
+
+    class DbContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def commit(self):
+            return None
+
+    result = BrowserToolResult(
+        session_id="bs-1",
+        action="click",
+        url="https://example.com/next",
+        title="Next",
+    )
+    session = SimpleNamespace(approval_mode="autopilot")
+    service = SimpleNamespace(get_owned_session=AsyncMock(return_value=session))
+    persist = AsyncMock()
+    monkeypatch.setattr(browser_tools_module, "get_current_agent_context", lambda: FakeContext())
+    monkeypatch.setattr(browser_tools_module, "AsyncSessionLocal", DbContext)
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_session_service.BrowserSessionService",
+        lambda _db: service,
+    )
+    monkeypatch.setattr(browser_tools_module.browser_runtime, "click", AsyncMock(return_value=result))
+    monkeypatch.setattr(browser_tools_module, "_persist_browser_result", persist)
+
+    await browser_click.ainvoke({"target_ref": "e1", "snapshot_id": "snap-1"})
+
+    persist.assert_awaited_once()
+    assert persist.await_args.args[0].user_id == 1
+    assert persist.await_args.args[1] is result
+
+
+@pytest.mark.asyncio
+async def test_persist_browser_result_commits_session_state(monkeypatch):
+    class FakeContext:
+        user_id = 1
+        browser_session_id = "bs-1"
+
+    class DbContext:
+        def __init__(self):
+            self.commit_count = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def commit(self):
+            self.commit_count += 1
+
+    db = DbContext()
+    service = SimpleNamespace(update_state=AsyncMock())
+    monkeypatch.setattr(browser_tools_module, "AsyncSessionLocal", lambda: db)
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_session_service.BrowserSessionService",
+        lambda _db: service,
+    )
+
+    await browser_tools_module._persist_browser_result(
+        FakeContext(),
+        SimpleNamespace(url="https://example.com/next", title="Next"),
+    )
+
+    service.update_state.assert_awaited_once_with(
+        user_id=1,
+        session_id="bs-1",
+        url="https://example.com/next",
+        title="Next",
+    )
+    assert db.commit_count == 1
 
 
 @pytest.mark.asyncio

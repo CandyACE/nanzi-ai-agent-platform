@@ -50,6 +50,7 @@ async def _persist_browser_result(context: Any, result: Any) -> None:
             url=getattr(result, "url", None),
             title=getattr(result, "title", None),
         )
+        await db.commit()
 
 
 async def _browser_result_json(context: Any, result: Any) -> str:
@@ -378,10 +379,7 @@ async def browser_click(
             # confirmed 不暴露给模型，避免模型参数绕过 guarded 模式。
             confirmed=True,
         )
-        session.current_url = result.url
-        session.page_title = result.title
-        await db.commit()
-    return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+    return await _browser_result_json(context, result)
 
 
 @tool

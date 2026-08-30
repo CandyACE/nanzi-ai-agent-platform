@@ -74,6 +74,11 @@ def test_browser_viewer_reports_manual_input_focus_after_click():
     assert '"type": "focus"' in source
 
 
+def test_browser_viewer_updates_session_activity_for_semantic_actions():
+    source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/browser.py").read_text(encoding="utf-8")
+    assert source.count("session.updated_at = datetime.now()") >= 2
+
+
 def test_browser_viewer_exposes_human_control_handoff_and_captcha_events():
     source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/browser.py").read_text(encoding="utf-8")
     assert "control_state" in source

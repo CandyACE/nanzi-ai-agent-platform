@@ -118,6 +118,25 @@ class BrowserSessionService:
         )
         return list(result.scalars().all())
 
+    async def update_state(
+        self,
+        *,
+        user_id: int,
+        session_id: str,
+        url: str | None = None,
+        title: str | None = None,
+    ) -> BrowserSession:
+        session = await self.get_owned_session(user_id=user_id, session_id=session_id)
+        if url is not None:
+            session.current_url = url
+        if title is not None:
+            session.page_title = title
+        now = datetime.now()
+        session.last_seen_at = now
+        session.updated_at = now
+        await self.db.flush()
+        return session
+
     async def set_approval_mode(
         self,
         *,
