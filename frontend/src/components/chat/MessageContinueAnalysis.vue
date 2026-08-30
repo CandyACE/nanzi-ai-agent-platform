@@ -9,7 +9,7 @@
   >
     <button
       type="button"
-      class="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-gray-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:text-gray-400 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-300"
+      class="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
       :aria-expanded="open"
       aria-haspopup="menu"
       @click="open = true"
@@ -35,8 +35,8 @@
             </button>
           </div>
           <div class="space-y-1">
-            <button v-for="action in actions" :key="action.id" type="button" class="group w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-indigo-50 dark:hover:bg-indigo-950/30" @click="selectAction(action)">
-              <div class="text-sm font-semibold text-gray-700 group-hover:text-indigo-700 dark:text-gray-200 dark:group-hover:text-indigo-300">{{ action.label }}</div>
+            <button v-for="action in actions" :key="action.id" type="button" class="group w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100 dark:hover:bg-gray-800" @click="selectAction(action)">
+              <div class="text-sm font-semibold text-gray-700 group-hover:text-gray-900 dark:text-gray-200 dark:group-hover:text-gray-100">{{ action.label }}</div>
               <div class="mt-0.5 text-xs leading-relaxed text-gray-400">{{ action.description }}</div>
             </button>
           </div>
@@ -54,10 +54,10 @@
           </button>
         </div>
         <div class="space-y-0.5 p-1.5">
-          <button v-for="action in actions" :key="action.id" type="button" class="group flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none dark:hover:bg-indigo-950/30 dark:focus:bg-indigo-950/30" role="menuitem" @click="selectAction(action)">
-            <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 text-[11px] text-gray-500 group-hover:bg-indigo-100 group-hover:text-indigo-600 dark:bg-gray-800 dark:text-gray-400 dark:group-hover:bg-indigo-950 dark:group-hover:text-indigo-300">{{ actionIcon(action.id) }}</span>
+          <button v-for="action in actions" :key="action.id" type="button" class="group flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none dark:hover:bg-gray-800 dark:focus:bg-gray-800" role="menuitem" @click="selectAction(action)">
+            <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 text-[11px] text-gray-500 group-hover:bg-gray-200 group-hover:text-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:group-hover:bg-gray-700 dark:group-hover:text-gray-200">{{ actionIcon(action.id) }}</span>
             <span class="min-w-0">
-              <span class="block text-xs font-semibold text-gray-700 group-hover:text-indigo-700 dark:text-gray-200 dark:group-hover:text-indigo-300">{{ action.label }}</span>
+              <span class="block text-xs font-semibold text-gray-700 group-hover:text-gray-900 dark:text-gray-200 dark:group-hover:text-gray-100">{{ action.label }}</span>
               <span class="mt-0.5 block truncate text-[10px] text-gray-400">{{ action.description }}</span>
             </span>
           </button>

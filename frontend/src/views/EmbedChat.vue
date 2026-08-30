@@ -839,6 +839,8 @@
               v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"
               class="flex flex-nowrap items-center space-x-2 mt-3"
             >
+              <!-- Time -->
+              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
               <button
                 @click="copyMessage(visibleStreamBody(msg))"
                 class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -860,75 +862,21 @@
                 </svg>
                 <span class="hidden sm:inline">复制</span>
               </button>
-              <!-- Export Data Button -->
-              <button
-                v-if="msg.trace_id"
-                @click="exportData(msg.trace_id, 'xlsx')"
-                class="hidden sm:flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
-                title="导出数据 (Excel)"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span>导出</span>
-              </button>
-              <!-- Artifacts Button -->
-              <button
-                v-if="msg.trace_id && hasArtifacts(msg.trace_id)"
-                @click="toggleMessageArtifacts(String(msg.id))"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="[
-                  windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5',
-                  artifactsOpenMsgId === String(msg.id) ? 'text-primary bg-gray-100 dark:bg-gray-800' : '',
-                ]"
-                title="查看该消息产生的文件产物"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span>产物</span>
-                <span
-                  v-if="artifactCount(msg.trace_id) > 0"
-                  class="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-semibold leading-none text-white bg-primary"
-                >{{ artifactCount(msg.trace_id) }}</span>
-              </button>
-              <!-- Time -->
-              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
-              <button
-                v-if="msg === lastAgentMessage && !isProcessing"
-                @click="regenerate"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
-                title="重新生成"
-              >
-                <svg
-                  class="w-3 h-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-                <span class="hidden sm:inline">重新生成</span>
-              </button>
-              <button
-                v-if="msg.trace_id"
-                @click="openEmbedTrace(msg.trace_id)"
-                class="hidden md:flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
-                title="链路"
-              >
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                <span>链路</span>
-              </button>
+              <MessageActionMenus
+                mode="regenerate"
+                :can-regenerate="msg === lastAgentMessage && !isProcessing"
+                @regenerate="regenerate"
+              />
+              <MessageActionMenus
+                mode="data"
+                :has-data-output="Boolean(msg.hasDataOutput)"
+                :has-trace="Boolean(msg.trace_id)"
+                :reusable-count="msg.reusableResultStatus?.status === 'saved' || msg.reusableResultStatus?.status === 'reused' || msg.hasDataOutput ? 1 : 0"
+                :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
+                @export-data="msg.trace_id && exportData(msg.trace_id, 'xlsx')"
+                @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId)"
+                @open-artifacts="toggleMessageArtifacts(String(msg.id))"
+              />
               <!-- Token 消耗：移动端仅 icon，桌面端展示 in/out 明细 -->
               <button
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
@@ -1006,14 +954,6 @@
                   </svg>
                 </button>
                 </template>
-                <ReusableResultStatus
-                  v-if="msg.reusableResultStatus && !msg.isThinking"
-                  :status="msg.reusableResultStatus.status"
-                  :result-id="msg.reusableResultStatus.resultId"
-                  :origin-name="msg.reusableResultStatus.originName"
-                  :count="reusableResultCount"
-                  @open="openReusableResults(msg.reusableResultStatus.resultId)"
-                />
                 <ChatBIContinueAnalysis
                   v-if="msg.chatbiInsight?.actions?.length && checkRole(msg, 'agent') && !msg.isThinking"
                   :actions="msg.chatbiInsight.actions"
@@ -1027,19 +967,16 @@
                   :is-mobile="isMobile"
                   @select="(query) => handleQuickQuestion(query, 'send', visibleStreamBody(msg))"
                 />
-                <button
-                  v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
-                  type="button"
-                  @click="handleSaveReportFromMessage(msg)"
-                  class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                  :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
-                  title="将本轮成功查数的 SQL 沉淀为固化报表"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                  </svg>
-                  <span class="hidden sm:inline">添加固化报表</span>
-                </button>
+                <MessageActionMenus
+                  mode="more"
+                  :can-export="Boolean(msg.trace_id)"
+                  :has-trace="Boolean(msg.trace_id)"
+                  :has-token-stats="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
+                  :can-save-report="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
+                  @open-trace="msg.trace_id && openEmbedTrace(msg.trace_id)"
+                  @open-stats="openModelCallStats(msg)"
+                  @save-report="handleSaveReportFromMessage(msg)"
+                />
               </div>
             </div>
             </div>
@@ -2098,7 +2035,7 @@ import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
-import ReusableResultStatus from "@/components/chat/ReusableResultStatus.vue";
+import MessageActionMenus from "@/components/chat/MessageActionMenus.vue";
 import ReusableResultNotice from "@/components/chat/ReusableResultNotice.vue";
 import ErrorDetailCard from "@/components/chat/ErrorDetailCard.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
@@ -2547,7 +2484,6 @@ const myArtifactsInitialTab = ref<"files" | "reusable">("files");
 const selectedReusableResultId = ref<string | null>(null);
 const focusedReusableResultId = ref<string | null>(null);
 const reusedReusableResultId = ref<string | null>(null);
-const reusableResultCount = ref<number | null>(null);
 const workspaceDrawerRef = ref<{ refreshDirectory: (path?: string) => Promise<void> } | null>(null);
 
 const readStoredBoolean = (key: string, defaultWhenUnset: boolean) => {
@@ -2603,7 +2539,6 @@ const toggleMyArtifactsDrawer = () => {
 };
 
 const openReusableResults = (resultId?: string | null) => {
-  void refreshReusableResultCount();
   myArtifactsInitialTab.value = "reusable";
   focusedReusableResultId.value = resultId || null;
   showMyArtifactsDrawer.value = true;
@@ -3321,25 +3256,6 @@ const artifactsOpenMsgId = ref<string>("");
 const artifactCountByTrace = ref<Record<string, number>>({});
 /** 某 trace 对应的产物数量（无则 0） */
 const artifactCount = (traceId: string): number => artifactCountByTrace.value[traceId] || 0;
-/** 该消息是否真有产物（据此才显示「产物」按钮） */
-const hasArtifacts = (traceId: string): boolean => artifactCount(traceId) > 0;
-const refreshReusableResultCount = async () => {
-  const cid = conversationId.value;
-  if (!cid) {
-    reusableResultCount.value = null;
-    return;
-  }
-  try {
-    const res = await artifactApi.reusableResults(cid);
-    if (conversationId.value !== cid) return;
-    const data = res.data?.data;
-    reusableResultCount.value = typeof data?.total === "number"
-      ? data.total
-      : Array.isArray(data?.items) ? data.items.length : null;
-  } catch (e) {
-    console.warn("[ReusableResults] 获取数量失败", e);
-  }
-};
 /** 拉取本会话各 trace_id 的产物数量（新会话/切会话/流式结束有新增产物时调用） */
 const loadArtifactCounts = async () => {
   const cid = conversationId.value;
@@ -3358,9 +3274,7 @@ watch(conversationId, () => {
   selectedReusableResultId.value = null;
   focusedReusableResultId.value = null;
   reusedReusableResultId.value = null;
-  reusableResultCount.value = null;
   void loadArtifactCounts();
-  void refreshReusableResultCount();
 });
 /** 当前展开「产物」面板对应消息的 trace_id */
 const activeArtifactsTraceId = computed(() => {
@@ -7337,7 +7251,6 @@ const applyReusableResultStatusEvent = (msg: Message, data: any): boolean => {
   if (data.status === "reused") {
     reusedReusableResultId.value = data.result_id ? String(data.result_id) : null;
   }
-  void refreshReusableResultCount();
   return true;
 };
 
