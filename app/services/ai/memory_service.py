@@ -581,7 +581,7 @@ class MemoryService:
         snapshot = await self.get_context_snapshot(user_id, conversation_id)
         return self.merge_context_snapshot(history, snapshot)
 
-    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None, status: Optional[str] = None):
+    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reusable_result_id: Optional[str] = None, reusable_result_status: Optional[str] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None, status: Optional[str] = None):
         """
         Append a single message to the conversation history.
         Now supports trace_id, attachment files, and token usage values.
@@ -627,6 +627,11 @@ class MemoryService:
         message["completion_tokens"] = _completion_tokens
         message["total_tokens"] = int(total_tokens or (_prompt_tokens + _completion_tokens))
         message["has_data_output"] = bool(has_data_output or False)
+        if role == "assistant":
+            if reusable_result_id:
+                message["reusable_result_id"] = str(reusable_result_id)
+            if reusable_result_status:
+                message["reusable_result_status"] = str(reusable_result_status)
         if tool_run_text:
             message["tool_run_text"] = tool_run_text
 

@@ -20,6 +20,8 @@ export interface ArtifactListParams {
   page?: number
   page_size?: number
   artifact_type?: string
+  /** 按会话过滤产物 */
+  conversation_id?: string
   /** 按生成该产物的 AI 消息 trace_id 过滤 */
   trace_id?: string
 }
@@ -27,6 +29,7 @@ export interface ArtifactListParams {
 /** 会话内可复用结果的安全摘要，不包含工具参数、凭证或完整原始 payload。 */
 export interface ReusableResultListItem {
   result_id: string
+  trace_id?: string | null
   result_type: string
   origin_type: string
   origin_name: string

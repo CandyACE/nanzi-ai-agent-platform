@@ -128,6 +128,8 @@ async def _persist_assistant_message_and_summary(
     completion_tokens: int = 0,
     total_tokens: int = 0,
     has_data_output: Optional[bool] = None,
+    reusable_result_id: Optional[str] = None,
+    reusable_result_status: Optional[str] = None,
     reasoning_content: Optional[str] = None,
     process_timeline: Optional[List[Dict[str, Any]]] = None,
     tool_run_text: Optional[str] = None,
@@ -155,6 +157,8 @@ async def _persist_assistant_message_and_summary(
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             has_data_output=has_data_output,
+            reusable_result_id=reusable_result_id,
+            reusable_result_status=reusable_result_status,
             reasoning_content=reasoning_content,
             process_timeline=process_timeline,
             tool_run_text=tool_run_text,
@@ -3671,6 +3675,24 @@ class AgentService:
                     }
                 )
 
+            def _record_reusable_result_status(chunk: Any) -> None:
+                """把本轮复用/生成结果关系带入历史，供刷新后恢复当前消息标记。"""
+                if not shared_state or not isinstance(chunk, dict):
+                    return
+                if chunk.get("type") != "reusable_result_status":
+                    return
+                status = str(chunk.get("status") or "")
+                result_id = str(chunk.get("result_id") or "").strip()
+                if status not in {"saved", "reused"} or not result_id:
+                    return
+                existing = shared_state.get("reusable_result_status")
+                if isinstance(existing, dict) and existing.get("status") == "reused" and status == "saved":
+                    return
+                shared_state["reusable_result_status"] = {
+                    "status": status,
+                    "result_id": result_id,
+                }
+
             if shared_state is not None:
                 shared_state["reusable_result_decision"] = {
                     "mode": reusable_result_decision.mode,
@@ -3681,6 +3703,11 @@ class AgentService:
                     ),
                     "reason": reusable_result_decision.reason,
                 }
+                if reusable_result_decision.mode == "reuse" and runner_reusable_result_id:
+                    shared_state["reusable_result_status"] = {
+                        "status": "reused",
+                        "result_id": runner_reusable_result_id,
+                    }
             if reusable_result_decision.mode == "reuse":
                 yield build_reusable_result_status_event(
                     status="reused",
@@ -4133,6 +4160,7 @@ class AgentService:
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
+                    _record_reusable_result_status(chunk)
                     yield chunk
                 performance_tracker.mark("executor_finish")
             else:
@@ -4166,6 +4194,7 @@ class AgentService:
                     full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     full_reasoning_content = _accumulate_reasoning_content(full_reasoning_content, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
+                    _record_reusable_result_status(chunk)
                     yield chunk
                 performance_tracker.mark("executor_finish")
 
@@ -4273,6 +4302,8 @@ class AgentService:
                     completion_tokens=c_tokens,
                     total_tokens=t_tokens,
                     has_data_output=has_data_output or None,
+                    reusable_result_id=(shared_state or {}).get("reusable_result_status", {}).get("result_id"),
+                    reusable_result_status=(shared_state or {}).get("reusable_result_status", {}).get("status"),
                     reasoning_content=full_reasoning_content or None,
                     process_timeline=final_process_timeline,
                     tool_run_text=tool_run_text,

@@ -870,11 +870,16 @@
               <div class="hidden sm:block">
                 <MessageActionMenus
                   mode="data"
-                  :has-data-output="Boolean(msg.hasDataOutput)"
-                  :reusable-count="msg.reusableResultStatus?.status === 'saved' || msg.reusableResultStatus?.status === 'reused' || msg.hasDataOutput ? 1 : 0"
+                  :has-conversation-data-file="hasConversationDataFile"
+                  :reusable-result-id="msg.reusableResultStatus?.resultId"
+                  :has-conversation-reusable-result="hasConversationReusableResult"
+                  :has-conversation-artifact="hasConversationArtifact"
+                  :conversation-reusable-count="conversationReusableResultCount"
+                  :conversation-artifact-count="conversationArtifactCount"
+                  :reusable-count="currentMessageReusableCount(msg)"
                   :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
-                  @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId)"
-                  @open-artifacts="toggleMessageArtifacts(String(msg.id))"
+                  @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId, msg.trace_id, msg.reusableResultStatus?.status)"
+                  @open-artifacts="openMessageArtifacts(msg.trace_id)"
                 />
               </div>
               <!-- Token 消耗：移动端仅 icon，桌面端展示 in/out 明细 -->
@@ -970,16 +975,21 @@
                 <MessageActionMenus
                   mode="more"
                   :show-data-on-mobile="true"
-                  :has-data-output="Boolean(msg.hasDataOutput)"
+                  :has-conversation-data-file="hasConversationDataFile"
+                  :reusable-result-id="msg.reusableResultStatus?.resultId"
+                  :has-conversation-reusable-result="hasConversationReusableResult"
+                  :has-conversation-artifact="hasConversationArtifact"
+                  :conversation-reusable-count="conversationReusableResultCount"
+                  :conversation-artifact-count="conversationArtifactCount"
                   :can-export="Boolean(msg.trace_id)"
                   :has-trace="Boolean(msg.trace_id)"
-                  :reusable-count="msg.reusableResultStatus?.status === 'saved' || msg.reusableResultStatus?.status === 'reused' || msg.hasDataOutput ? 1 : 0"
+                  :reusable-count="currentMessageReusableCount(msg)"
                   :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
                   :has-token-stats="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
                   :can-save-report="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
                   @export-data="msg.trace_id && exportData(msg.trace_id, 'xlsx')"
-                  @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId)"
-                  @open-artifacts="toggleMessageArtifacts(String(msg.id))"
+                  @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId, msg.trace_id, msg.reusableResultStatus?.status)"
+                  @open-artifacts="openMessageArtifacts(msg.trace_id)"
                   @open-trace="msg.trace_id && openEmbedTrace(msg.trace_id)"
                   @open-stats="openModelCallStats(msg)"
                   @save-report="handleSaveReportFromMessage(msg)"
@@ -1245,17 +1255,12 @@
     <MyArtifactsDrawer
       v-model="showMyArtifactsDrawer"
       :conversation-id="conversationId"
+      :trace-id="focusedOutputTraceId"
       :initial-tab="myArtifactsInitialTab"
       :selected-result-id="selectedReusableResultId"
       :focused-result-id="focusedReusableResultId"
       :reused-result-id="reusedReusableResultId"
       @select-reusable-result="selectReusableResult"
-    />
-
-    <MessageArtifactsDrawer
-      v-if="activeArtifactsTraceId"
-      :trace-id="activeArtifactsTraceId"
-      @close="closeMessageArtifacts"
     />
 
     <MemoryBrowserDrawer
@@ -2079,7 +2084,6 @@ import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vu
 import PortalNotificationBell from "@/components/PortalNotificationBell.vue";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MyArtifactsDrawer from "@/components/embed/MyArtifactsDrawer.vue";
-import MessageArtifactsDrawer from "@/components/embed/MessageArtifactsDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome";
 import { resolveGeneratedFileHref } from "@/utils/generatedFileUrl";
@@ -2342,6 +2346,16 @@ const isAgentTimelineMessage = (msg: Message): boolean => {
   return role === "agent" || role === "assistant";
 };
 
+const reusableResultCountByTrace = ref<Record<string, number>>({});
+const currentMessageReusableCount = (msg: Message): number => {
+  const status = msg.reusableResultStatus?.status;
+  const traceResultCount = msg.trace_id ? reusableResultCountByTrace.value[msg.trace_id] || 0 : 0;
+  return Math.max(traceResultCount, msg.hasDataOutput || (
+    Boolean(msg.reusableResultStatus?.resultId)
+    && (status === "saved" || status === "reused")
+  ) ? 1 : 0);
+};
+
 // Helper: Check Role
 const checkRole = (msg: Message, role: string): boolean => {
   return msg.role === role;
@@ -2490,6 +2504,7 @@ const showMyArtifactsDrawer = ref(false);
 const myArtifactsInitialTab = ref<"files" | "reusable">("files");
 const selectedReusableResultId = ref<string | null>(null);
 const focusedReusableResultId = ref<string | null>(null);
+const focusedOutputTraceId = ref<string | null>(null);
 const reusedReusableResultId = ref<string | null>(null);
 const workspaceDrawerRef = ref<{ refreshDirectory: (path?: string) => Promise<void> } | null>(null);
 
@@ -2541,13 +2556,24 @@ const toggleMyArtifactsDrawer = () => {
   if (!showMyArtifactsDrawer.value) {
     myArtifactsInitialTab.value = "files";
     focusedReusableResultId.value = null;
+    focusedOutputTraceId.value = null;
   }
   showMyArtifactsDrawer.value = !showMyArtifactsDrawer.value;
 };
 
-const openReusableResults = (resultId?: string | null) => {
+const openReusableResults = (resultId?: string | null, traceId?: string | null, status?: string | null) => {
   myArtifactsInitialTab.value = "reusable";
   focusedReusableResultId.value = resultId || null;
+  focusedOutputTraceId.value = traceId || null;
+  reusedReusableResultId.value = status === "reused" && resultId ? resultId : null;
+  showMyArtifactsDrawer.value = true;
+};
+
+const openMessageArtifacts = (traceId?: string | null) => {
+  myArtifactsInitialTab.value = "files";
+  focusedReusableResultId.value = null;
+  focusedOutputTraceId.value = traceId || null;
+  reusedReusableResultId.value = null;
   showMyArtifactsDrawer.value = true;
 };
 
@@ -2764,14 +2790,6 @@ const showEmbedTrace = ref(false);
 const openEmbedTrace = (traceId: string) => {
   embedTraceId.value = traceId;
   showEmbedTrace.value = true;
-};
-/** 切换某条 AI 消息的「产物」面板（单开：同一条收起、其它条自动切换） */
-const toggleMessageArtifacts = (msgId: string) => {
-  artifactsOpenMsgId.value = artifactsOpenMsgId.value === msgId ? "" : msgId;
-};
-/** 关闭「产物」面板 */
-const closeMessageArtifacts = () => {
-  artifactsOpenMsgId.value = "";
 };
 const isProcessing = ref(false);
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
@@ -3257,16 +3275,61 @@ const onModeChange = (mode: string) => {
     }
 };
 const conversationId = ref("");
-/** 当前展开「产物」面板的 AI 消息 id（为空表示无展开）。单开，点击其它消息的「产物」会切换。 */
-const artifactsOpenMsgId = ref<string>("");
 /** 会话内各 trace_id → 产物数量 的缓存（后端 /artifacts/counts 返回），驱动「产物」按钮显示与数量角标 */
 const artifactCountByTrace = ref<Record<string, number>>({});
 /** 某 trace 对应的产物数量（无则 0） */
 const artifactCount = (traceId: string): number => artifactCountByTrace.value[traceId] || 0;
+/** 会话内可复用结果数量；只用于入口可用性，不改变当前消息角标口径。 */
+const conversationReusableResultCount = ref(0);
+/** 会话内是否存在可复用结果；只用于入口可用性，不改变当前消息角标口径。 */
+const hasConversationReusableResult = computed(() => Boolean(
+  conversationReusableResultCount.value > 0
+  || messages.value.some((msg) => currentMessageReusableCount(msg) > 0),
+));
+/** 会话内是否存在文件产物；只用于入口可用性，不改变当前消息角标口径。 */
+const hasConversationArtifact = computed(() => Object.values(artifactCountByTrace.value).some((count) => count > 0));
+/** 会话内文件产物总数；用于弹出菜单右侧的会话总数，不改变当前消息角标口径。 */
+const conversationArtifactCount = computed(() => Object.values(artifactCountByTrace.value).reduce((total, count) => total + count, 0));
+/** “数据 / 文件”入口按整个会话的产出物判断是否可用。 */
+const hasConversationDataFile = computed(() => Boolean(
+  hasConversationReusableResult.value
+  || hasConversationArtifact.value
+  || messages.value.some((msg) => Boolean(msg.hasDataOutput)),
+));
+/** 拉取本会话可复用结果数量，保证刷新后入口仍能展示正确的查看项。 */
+const loadReusableResultAvailability = async () => {
+  const cid = conversationId.value;
+  if (!cid) {
+    conversationReusableResultCount.value = 0;
+    reusableResultCountByTrace.value = {};
+    return;
+  }
+  try {
+    const res = await artifactApi.reusableResults(cid);
+    if (conversationId.value !== cid) return;
+    const items = res.data?.data?.items ?? [];
+    const counts: Record<string, number> = {};
+    for (const item of items) {
+      const traceId = String(item.trace_id || '').trim();
+      if (traceId) counts[traceId] = (counts[traceId] || 0) + 1;
+    }
+    conversationReusableResultCount.value = items.length;
+    reusableResultCountByTrace.value = counts;
+  } catch (e) {
+    console.warn("[ReusableResults] 拉取会话结果数量失败", e);
+    if (conversationId.value === cid) {
+      conversationReusableResultCount.value = 0;
+      reusableResultCountByTrace.value = {};
+    }
+  }
+};
 /** 拉取本会话各 trace_id 的产物数量（新会话/切会话/流式结束有新增产物时调用） */
 const loadArtifactCounts = async () => {
   const cid = conversationId.value;
-  if (!cid) return;
+  if (!cid) {
+    artifactCountByTrace.value = {};
+    return;
+  }
   try {
     const res = await artifactApi.countsByTrace(cid);
     // 仅在会话未切换时写入，避免旧会话的统计覆盖新会话
@@ -3274,20 +3337,22 @@ const loadArtifactCounts = async () => {
     artifactCountByTrace.value = res.data?.data?.counts ?? {};
   } catch (e) {
     console.warn("[Artifacts] 拉取产物数量失败", e);
+    if (conversationId.value === cid) {
+      artifactCountByTrace.value = {};
+    }
   }
 };
 // 会话切换 / 首次挂载 → 刷新产物数量
 watch(conversationId, () => {
   selectedReusableResultId.value = null;
   focusedReusableResultId.value = null;
+  focusedOutputTraceId.value = null;
   reusedReusableResultId.value = null;
+  artifactCountByTrace.value = {};
+  reusableResultCountByTrace.value = {};
+  conversationReusableResultCount.value = 0;
+  void loadReusableResultAvailability();
   void loadArtifactCounts();
-});
-/** 当前展开「产物」面板对应消息的 trace_id */
-const activeArtifactsTraceId = computed(() => {
-  if (!artifactsOpenMsgId.value) return "";
-  const msg = messages.value.find((m) => String(m.id) === artifactsOpenMsgId.value);
-  return msg?.trace_id || "";
 });
 const showResourceScopeModal = ref(false);
 const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[], mcp_tools: [] as any[] });
@@ -6378,6 +6443,13 @@ const fetchConversationHistory = async (
                   prompt_tokens: item.prompt_tokens ?? undefined,
                   completion_tokens: item.completion_tokens ?? undefined,
                   total_tokens: item.total_tokens ?? undefined,
+                  hasDataOutput: Boolean(item.has_data_output),
+                  reusableResultStatus: item.reusable_result_id
+                    ? {
+                        status: item.reusable_result_status || "saved",
+                        resultId: String(item.reusable_result_id),
+                      }
+                    : undefined,
                   timestamp: item.created_at
               });
           }
@@ -7920,6 +7992,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     void refreshCurrentRunStatus();
     agentMsg.value.isThinking = false;
     void refreshQuota();
+    void loadReusableResultAvailability(); // 刷新会话可复用结果入口
     void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
     clearStallTimer();
     clearStalePendingTimer();

@@ -579,6 +579,7 @@ def build_reusable_result_client_summary(
         "status": str(data.get("status") or "success"),
         "text_excerpt": _client_excerpt(data.get("text_excerpt") or data.get("content")),
         "structured_preview": _client_structured_preview(data.get("structured")),
+        "trace_id": str(data.get("trace_id") or "").strip() or None,
         "created_at": data.get("created_at") or data.get("saved_at"),
         "expires_at": data.get("expires_at"),
         "is_current": bool(is_current),

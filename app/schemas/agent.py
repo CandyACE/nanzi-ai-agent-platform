@@ -186,6 +186,9 @@ class AgentExecutionHistoryResponse(BaseModel):
     prompt_tokens: Optional[int] = 0
     completion_tokens: Optional[int] = 0
     total_tokens: Optional[int] = 0
+    has_data_output: bool = False
+    reusable_result_id: Optional[str] = None
+    reusable_result_status: Optional[str] = None
     turn_count: Optional[int] = None # 新增：对话轮数
     created_at: datetime
     agent_name: Optional[str] = None

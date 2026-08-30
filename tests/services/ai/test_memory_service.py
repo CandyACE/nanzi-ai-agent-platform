@@ -96,6 +96,8 @@ async def test_memory_service_add_message(mock_redis):
             "回答",
             reasoning_content="模型推理",
             process_timeline=[{"kind": "log", "title": "调用工具: search", "status": "success"}],
+            reusable_result_id="rr-1",
+            reusable_result_status="reused",
             status="cancelled",
         )
         
@@ -114,6 +116,8 @@ async def test_memory_service_add_message(mock_redis):
         assistant_data = json.loads(assistant_val)
         assert assistant_data["reasoning_content"] == "模型推理"
         assert assistant_data["process_timeline"][0]["title"] == "调用工具: search"
+        assert assistant_data["reusable_result_id"] == "rr-1"
+        assert assistant_data["reusable_result_status"] == "reused"
         assert assistant_data["status"] == "cancelled"
         
         # 验证 LTRIM 和 EXPIRE 也在 Pipeline 中被调用

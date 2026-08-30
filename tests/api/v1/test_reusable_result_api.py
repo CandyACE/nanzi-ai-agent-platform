@@ -1,5 +1,6 @@
 """可复用结果列表接口的安全契约测试。"""
 
+import inspect
 from unittest.mock import AsyncMock
 
 import pytest
@@ -7,12 +8,26 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.api.v1.endpoints import chat as chat_endpoint
+from app.api.v1.endpoints.chat import (
+    _history_reusable_metadata_window,
+    _should_enrich_history_reusable_metadata,
+)
 from app.api.v1.endpoints.chat import ChatCompletionRequest
+from app.schemas.agent import AgentExecutionHistoryResponse
 from app.services.ai.memory_service import memory_service
 from app.core.orm import get_db_session
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_artifact_list_supports_conversation_and_trace_scope():
+    source = inspect.getsource(chat_endpoint.list_artifacts)
+
+    assert "conversation_id: Optional[str] = Query(None" in source
+    assert "trace_id: Optional[str] = Query(None" in source
+    assert "AiArtifact.conversation_id == conversation_id" in source
+    assert "AiArtifact.trace_id == trace_id" in source
 
 
 def _fake_require_api_key(user_info):
@@ -59,6 +74,7 @@ async def test_list_reusable_results_returns_current_and_deduplicated_stack(monk
             "result_type": "data",
             "status": "success",
             "text_excerpt": "new result",
+            "trace_id": "trace-2",
         }),
     )
     monkeypatch.setattr(
@@ -70,12 +86,14 @@ async def test_list_reusable_results_returns_current_and_deduplicated_stack(monk
                 "result_type": "data",
                 "status": "success",
                 "text_excerpt": "old result",
+                "trace_id": "trace-1",
             },
             {
                 "result_id": "rr_2",
                 "result_type": "data",
                 "status": "success",
                 "text_excerpt": "new result",
+                "trace_id": "trace-2",
             },
         ]),
     )
@@ -99,6 +117,8 @@ async def test_list_reusable_results_returns_current_and_deduplicated_stack(monk
     items = response.json()["data"]["items"]
     assert [item["result_id"] for item in items] == ["rr_2", "rr_1"]
     assert items[0]["is_current"] is True
+    assert items[0]["trace_id"] == "trace-2"
+    assert items[1]["trace_id"] == "trace-1"
     assert all("tool_args" not in item for item in items)
 
 
@@ -196,3 +216,29 @@ def test_chat_completion_request_rejects_overlong_reusable_result_id():
             messages=[{"role": "user", "content": "继续分析"}],
             reusable_result_id="r" * 129,
         )
+
+
+def test_history_response_exposes_output_metadata_for_refresh_recovery():
+    fields = AgentExecutionHistoryResponse.model_fields
+
+    assert "has_data_output" in fields
+    assert "reusable_result_id" in fields
+    assert "reusable_result_status" in fields
+
+
+def test_history_endpoint_enriches_reusable_metadata_from_redis_history():
+    source = inspect.getsource(chat_endpoint.get_history)
+
+    assert "memory_service.get_history" in source
+    assert "reusable_result_id" in source
+    assert "reusable_result_status" in source
+
+
+def test_history_reusable_metadata_skips_admin_cross_user_queries():
+    assert _should_enrich_history_reusable_metadata({"role": "admin", "user_id": 1}) is False
+    assert _should_enrich_history_reusable_metadata({"role": "user", "user_id": 1}) is True
+
+
+def test_history_reusable_metadata_reads_only_the_requested_page_window():
+    assert _history_reusable_metadata_window(1, 20) == {"limit": 40, "offset": 0}
+    assert _history_reusable_metadata_window(2, 20) == {"limit": 40, "offset": 40}

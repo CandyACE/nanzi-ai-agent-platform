@@ -150,6 +150,7 @@ async def list_artifacts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     artifact_type: Optional[str] = Query(None, description="按产物类型过滤：word / excel / export"),
+    conversation_id: Optional[str] = Query(None, description="按会话过滤产物"),
     trace_id: Optional[str] = Query(None, description="按 trace_id 过滤（用于查看某条 AI 消息产生的产物）"),
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
@@ -168,6 +169,8 @@ async def list_artifacts(
     filters = [AiArtifact.owner_user_id == user_id]
     if artifact_type:
         filters.append(AiArtifact.artifact_type == artifact_type)
+    if conversation_id:
+        filters.append(AiArtifact.conversation_id == conversation_id)
     if trace_id:
         filters.append(AiArtifact.trace_id == trace_id)
     total = await db.scalar(
@@ -269,6 +272,7 @@ async def count_artifacts_by_trace(
 
 class ReusableResultListItem(BaseModel):
     result_id: str
+    trace_id: Optional[str] = None
     result_type: str
     origin_type: str
     origin_name: str
@@ -279,6 +283,19 @@ class ReusableResultListItem(BaseModel):
     created_at: Optional[Any] = None
     expires_at: Optional[Any] = None
     is_current: bool = False
+
+
+def _should_enrich_history_reusable_metadata(user_info: Dict[str, Any]) -> bool:
+    """仅为普通用户读取其自身 Redis 会话，避免管理员串用 Redis 身份。"""
+    return (user_info or {}).get("role") != "admin"
+
+
+def _history_reusable_metadata_window(page: int, page_size: int) -> Dict[str, int]:
+    """按 DB 历史页换算 Redis 的 user/assistant 双消息读取窗口。"""
+    safe_page = max(1, int(page or 1))
+    safe_page_size = max(1, int(page_size or 20))
+    window = safe_page_size * 2
+    return {"limit": window, "offset": (safe_page - 1) * window}
 
 
 @router.get(
@@ -899,6 +916,7 @@ async def get_conversation_history(
                     "timestamp": record.created_at.isoformat() if record.created_at else None,
                     "trace_id": record.trace_id,
                     "status": record.status,
+                    "has_data_output": bool(getattr(record, "has_data_output", 0) or False),
                 },
             })
         history = _merge_latest_audit_assistant(history, audit_messages)
@@ -1796,6 +1814,34 @@ async def get_history(
         logger.warning(f"[History API] Failed to fetch active agents mapping: {e}")
         agent_map = {}
 
+    # /history is DB-backed, while reusable-result metadata is also persisted in
+    # Redis history. Merge it by assistant trace_id so a refreshed conversation
+    # can restore both the data badge and the generated/reused relation.
+    reusable_metadata_by_trace: Dict[str, Dict[str, Any]] = {}
+    if conversation_id and _should_enrich_history_reusable_metadata(user_info):
+        try:
+            redis_window = _history_reusable_metadata_window(page, page_size)
+            redis_history = await memory_service.get_history(
+                _require_chat_user_id(user_info),
+                conversation_id,
+                **redis_window,
+            )
+            for message in redis_history:
+                if message.get("role") != "assistant" or not message.get("trace_id"):
+                    continue
+                metadata: Dict[str, Any] = {}
+                # 旧 Redis 消息可能没有该字段；不要用默认 false 覆盖数据库里
+                # 已经保存的 has_data_output=true。
+                if message.get("has_data_output"):
+                    metadata["has_data_output"] = True
+                if message.get("reusable_result_id"):
+                    metadata["reusable_result_id"] = str(message["reusable_result_id"])
+                if message.get("reusable_result_status"):
+                    metadata["reusable_result_status"] = str(message["reusable_result_status"])
+                reusable_metadata_by_trace[str(message["trace_id"])] = metadata
+        except Exception as exc:
+            logger.debug("[History API] Failed to enrich output metadata from Redis: %s", exc)
+
     items = []
     if group_by_conversation:
         rows = result.all()
@@ -1816,6 +1862,7 @@ async def get_history(
             scope_key = lambda item: item.conversation_id
         for row_obj, turn_count in rows:
             item = AgentExecutionHistoryResponse.from_orm(row_obj)
+            item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
             item.turn_count = turn_count
             if item.agent_id in agent_map:
                 item.agent_name = agent_map[item.agent_id][0]
@@ -1843,6 +1890,7 @@ async def get_history(
             scope_key = lambda item: item.conversation_id
         for row in rows:
             item = AgentExecutionHistoryResponse.from_orm(row)
+            item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
             if item.agent_id in agent_map:
                 item.agent_name = agent_map[item.agent_id][0]
                 item.agent_display_name = agent_map[item.agent_id][1]

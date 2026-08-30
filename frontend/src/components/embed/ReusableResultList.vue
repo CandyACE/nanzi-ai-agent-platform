@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   artifactApi,
   type ReusableResultListItem,
@@ -7,10 +7,14 @@ import {
 
 const props = withDefaults(defineProps<{
   conversationId: string
+  traceId?: string | null
+  scope?: 'conversation' | 'message'
   selectedResultId?: string | null
   focusedResultId?: string | null
   reusedResultId?: string | null
 }>(), {
+  traceId: null,
+  scope: 'conversation',
   selectedResultId: null,
   focusedResultId: null,
   reusedResultId: null,
@@ -23,6 +27,37 @@ const emit = defineEmits<{
 const items = ref<ReusableResultListItem[]>([])
 const loading = ref(false)
 const error = ref('')
+
+const messageItems = computed(() => {
+  if (!props.traceId) return []
+  return items.value.filter((item) => (
+    item.trace_id === props.traceId || item.result_id === props.focusedResultId
+  ))
+})
+
+const displayedItems = computed(() => {
+  if (props.scope === 'message' && props.traceId) return messageItems.value
+  return items.value
+})
+
+const isCurrentMessageResult = (item: ReusableResultListItem) => Boolean(
+  item.result_id === props.focusedResultId
+  || (!props.focusedResultId && item.trace_id === props.traceId),
+)
+const formatTraceId = (traceId?: string | null) => {
+  const value = String(traceId || '').trim()
+  if (!value) return ''
+  return value.length <= 12 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`
+}
+const resultTraceLabel = (item: ReusableResultListItem) => {
+  const traceId = String(item.trace_id || '').trim()
+  if (!traceId) return '未关联消息'
+  return traceId === props.traceId ? '当前消息' : `来源消息 · ${formatTraceId(traceId)}`
+}
+const resultTraceTitle = (traceId?: string | null) => {
+  const value = String(traceId || '').trim()
+  return value ? `trace_id：${value}` : '该结果未关联消息'
+}
 
 const formatTime = (iso?: string | null) => {
   if (!iso) return ''
@@ -81,7 +116,10 @@ const selectResult = (item: ReusableResultListItem) => {
 }
 
 watch(() => props.conversationId, () => void load())
-watch(() => props.focusedResultId, () => void nextTick(focusSelectedResult))
+watch(
+  () => [props.focusedResultId, props.traceId, props.scope],
+  () => void nextTick(focusSelectedResult),
+)
 onMounted(() => void load())
 </script>
 
@@ -115,13 +153,13 @@ onMounted(() => void load())
       <button type="button" class="mt-2 font-semibold underline" @click="load">重试</button>
     </div>
 
-    <div v-else-if="items.length === 0" class="rounded-xl border border-dashed border-gray-200 px-3 py-10 text-center text-xs text-gray-400 dark:border-gray-700">
-      本会话暂无可复用结果
+    <div v-else-if="displayedItems.length === 0" class="rounded-xl border border-dashed border-gray-200 px-3 py-10 text-center text-xs text-gray-400 dark:border-gray-700">
+      {{ props.scope === 'message' ? '本次暂无可复用结果' : '本会话暂无可复用结果' }}
     </div>
 
     <ul v-else class="flex flex-col gap-2">
       <li
-        v-for="item in items"
+        v-for="item in displayedItems"
         :key="item.result_id"
         :data-reusable-result-id="item.result_id"
       >
@@ -143,11 +181,12 @@ onMounted(() => void load())
             <span class="min-w-0 flex-1">
               <span class="flex items-center gap-1.5">
                 <span class="truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{{ item.origin_name || '未知来源' }}</span>
-                <span v-if="item.result_id === props.reusedResultId" class="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">本次复用</span>
-                <span v-if="item.is_current" class="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">当前</span>
+                <span v-if="isCurrentMessageResult(item)" class="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">{{ item.result_id === props.reusedResultId ? '本次复用' : '本次生成' }}</span>
+                <span v-else-if="item.is_current" class="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">当前</span>
               </span>
               <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">
                 <span class="rounded bg-gray-100 px-1.5 py-0.5 font-semibold dark:bg-gray-800">{{ resultTypeLabel(item.result_type) }}</span>
+                <span class="rounded bg-gray-100 px-1.5 py-0.5 font-semibold dark:bg-gray-800" :title="resultTraceTitle(item.trace_id)">{{ resultTraceLabel(item) }}</span>
                 <span v-if="formatTime(item.created_at)">{{ formatTime(item.created_at) }}</span>
                 <span v-if="item.expires_at">· {{ formatTime(item.expires_at) }} 过期</span>
               </span>

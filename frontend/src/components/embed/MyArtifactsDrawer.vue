@@ -11,12 +11,14 @@ const modelValue = defineModel<boolean>({ default: false })
 
 const props = withDefaults(defineProps<{
   conversationId?: string | null
+  traceId?: string | null
   initialTab?: 'files' | 'reusable'
   selectedResultId?: string | null
   focusedResultId?: string | null
   reusedResultId?: string | null
 }>(), {
   conversationId: null,
+  traceId: null,
   initialTab: 'files',
   selectedResultId: null,
   focusedResultId: null,
@@ -33,6 +35,7 @@ const ARTIFACT_TYPES = [
   { value: '', label: '全部' },
   { value: 'word', label: 'Word' },
   { value: 'excel', label: 'Excel' },
+  { value: 'markdown', label: 'Markdown' },
   { value: 'export', label: '导出' },
 ]
 const PAGE_SIZE = 50
@@ -44,10 +47,25 @@ const loading = ref(false)
 const error = ref('')
 const activeType = ref('')
 const activeTab = ref<'files' | 'reusable'>('files')
+const outputScope = ref<'conversation' | 'message'>('conversation')
 const bodyRef = ref<HTMLElement | null>(null)
 
 const typeLabel = (t: string) =>
   ARTIFACT_TYPES.find((x) => x.value === t)?.label || t || '未知'
+const formatTraceId = (traceId?: string | null) => {
+  const value = String(traceId || '').trim()
+  if (!value) return ''
+  return value.length <= 12 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`
+}
+const artifactTraceLabel = (item: ArtifactListItem) => {
+  const traceId = String(item.trace_id || '').trim()
+  if (!traceId) return '未关联消息'
+  return traceId === props.traceId ? '当前消息' : `来源消息 · ${formatTraceId(traceId)}`
+}
+const artifactTraceTitle = (traceId?: string | null) => {
+  const value = String(traceId || '').trim()
+  return value ? `trace_id：${value}` : '该产物未关联消息'
+}
 const formatSize = (size: number) => {
   if (!size) return '—'
   const units = ['B', 'KB', 'MB', 'GB']
@@ -80,6 +98,11 @@ const isMobile = ref(
 )
 
 const load = async () => {
+  if (!props.conversationId) {
+    items.value = []
+    total.value = 0
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -87,6 +110,8 @@ const load = async () => {
       page: page.value,
       page_size: PAGE_SIZE,
       artifact_type: activeType.value || undefined,
+      conversation_id: props.conversationId || undefined,
+      trace_id: outputScope.value === 'message' ? props.traceId || undefined : undefined,
     })
     const data = res.data?.data
     items.value = data?.items ?? []
@@ -109,6 +134,12 @@ const changeType = (val: string) => {
   refresh()
 }
 
+const changeScope = (scope: 'conversation' | 'message') => {
+  if (outputScope.value === scope) return
+  outputScope.value = scope
+  if (activeTab.value === 'files') refresh()
+}
+
 const scrollHandler = () => {
   const el = bodyRef.value
   if (!el || loading.value) return
@@ -127,6 +158,8 @@ const loadMore = async () => {
       page: page.value,
       page_size: PAGE_SIZE,
       artifact_type: activeType.value || undefined,
+      conversation_id: props.conversationId || undefined,
+      trace_id: outputScope.value === 'message' ? props.traceId || undefined : undefined,
     })
     const data = res.data?.data
     const more = data?.items ?? []
@@ -159,12 +192,19 @@ const keyHandler = (e: KeyboardEvent) => {
 watch(modelValue, (open) => {
   if (open) {
     activeTab.value = props.initialTab
+    outputScope.value = 'conversation'
     if (activeTab.value === 'files') refresh()
   }
 })
 
 watch(() => props.initialTab, (tab) => {
   if (modelValue.value) activeTab.value = tab
+})
+
+watch(() => props.traceId, (traceId, previousTraceId) => {
+  if (!modelValue.value || traceId === previousTraceId) return
+  outputScope.value = 'conversation'
+  if (activeTab.value === 'files') refresh()
 })
 
 const selectReusableResult = (result: ReusableResultListItem) => {
@@ -267,6 +307,27 @@ onUnmounted(() => {
               </button>
             </div>
 
+            <!-- Output scope -->
+            <div v-if="props.traceId" class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900/40 flex-shrink-0">
+              <span class="mr-1 text-[11px] text-gray-400 dark:text-gray-500">查看范围</span>
+              <button
+                type="button"
+                class="rounded-lg px-2.5 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
+                :class="outputScope === 'conversation' ? 'bg-primary/10 text-primary' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                @click="changeScope('conversation')"
+              >
+                本会话全部
+              </button>
+              <button
+                type="button"
+                class="rounded-lg px-2.5 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
+                :class="outputScope === 'message' ? 'bg-primary/10 text-primary' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                @click="changeScope('message')"
+              >
+                本次消息
+              </button>
+            </div>
+
             <!-- File type filter -->
             <div v-if="activeTab === 'files'" class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900/40 flex-shrink-0 overflow-x-auto no-scrollbar">
               <button
@@ -294,6 +355,8 @@ onUnmounted(() => {
               <ReusableResultList
                 v-if="activeTab === 'reusable'"
                 :conversation-id="props.conversationId || ''"
+                :trace-id="props.traceId"
+                :scope="outputScope"
                 :selected-result-id="props.selectedResultId"
                 :focused-result-id="props.focusedResultId"
                 :reused-result-id="props.reusedResultId"
@@ -354,10 +417,17 @@ onUnmounted(() => {
                       <span class="block text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">
                         {{ it.filename }}
                       </span>
-                      <span class="block text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 flex items-center gap-1.5">
+                      <span class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
                         <span class="px-1 py-px rounded bg-gray-100 dark:bg-gray-800 text-[10px] font-semibold">{{ typeLabel(it.artifact_type) }}</span>
                         <span>{{ formatSize(it.size) }}</span>
                         <span v-if="formatTime(it.created_at)">{{ formatTime(it.created_at) }}</span>
+                        <span
+                          class="rounded px-1 py-px text-[10px] font-semibold"
+                          :class="it.trace_id === props.traceId ? 'bg-primary/10 text-primary' : 'bg-gray-100 dark:bg-gray-800'"
+                          :title="artifactTraceTitle(it.trace_id)"
+                        >
+                          {{ artifactTraceLabel(it) }}
+                        </span>
                         <svg class="h-3 w-3 text-gray-300 dark:text-gray-600 group-hover:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                         </svg>

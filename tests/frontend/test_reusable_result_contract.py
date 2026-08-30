@@ -17,11 +17,13 @@ ACTION_MENU = ROOT / "frontend/src/components/chat/MessageActionMenus.vue"
 def test_reusable_result_api_exposes_conversation_scoped_safe_list():
     source = API.read_text(encoding="utf-8")
 
+    assert "conversation_id?: string" in source
     assert "ReusableResultListItem" in source
     assert "reusableResults" in source
     assert "/api/v1/chat/reusable-results" in source
     assert "conversation_id" in source
     assert "result_id" in source
+    assert "trace_id?: string | null" in source
 
 
 def test_artifacts_drawer_has_files_and_reusable_result_tabs():
@@ -32,6 +34,16 @@ def test_artifacts_drawer_has_files_and_reusable_result_tabs():
     assert "ReusableResultList" in source
     assert "select-reusable-result" in source
     assert "conversationId" in source
+    assert "traceId?: string | null" in source
+    assert ':trace-id="props.traceId"' in source
+    assert "outputScope" in source
+    assert "conversation" in source
+    assert "message" in source
+    assert "conversation_id: props.conversationId" in source
+    assert "trace_id: outputScope.value === 'message'" in source
+    assert "本会话全部" in source
+    assert "本次消息" in source
+    assert ':scope="outputScope"' in source
 
 
 def test_reusable_result_components_expose_selection_and_status_entry():
@@ -60,7 +72,8 @@ def test_reusable_result_status_uses_user_facing_copy_with_parenthesized_session
     assert "· {{ count }}" not in status_source
     assert "({{ count }})" in status_source
     assert "· 查看可复用结果" not in status_source
-    assert "reusableResultCount" not in embed_source
+    assert "reusableResultCountByTrace" in embed_source
+    assert "traceResultCount" in embed_source
     assert ":reusable-count=" in embed_source
     assert "本次复用" in LIST.read_text(encoding="utf-8")
     assert ":reused-result-id=\"props.reusedResultId\"" in DRAWER.read_text(encoding="utf-8")
@@ -81,7 +94,35 @@ def test_message_action_menus_group_data_file_and_low_frequency_actions():
     assert source.index('openMenu === \'more\'') < source.index("导出数据（Excel）")
     assert "props.canExport" in source
     assert "showDataOnMobile?: boolean" in source
+    assert "reusableResultId?: string | null" in source
+    assert "hasConversationDataFile?: boolean" in source
     assert "sm:hidden" in source
+    assert 'v-if="(mode === \'data\' || mode === \'both\')"' in source
+    assert 'v-if="(mode === \'data\' || mode === \'both\') && hasDataFile"' not in source
+    assert "const hasDataFile = computed(() => Boolean(props.hasConversationDataFile))" in source
+    assert ':disabled="!hasDataFile"' in source
+    assert "本会话暂无数据或文件" in source
+    assert "@click=\"hasDataFile && toggle('data')\"" in source
+    embed_source = EMBED.read_text(encoding="utf-8")
+    assert "const currentMessageReusableCount = (msg: Message): number =>" in embed_source
+    assert "return Math.max(traceResultCount," in embed_source
+    assert "msg.hasDataOutput" in embed_source
+    assert "const hasDesktopMore = computed(() => Boolean(" in source
+    assert "'sm:hidden': showDataOnMobile && !hasDesktopMore" in source
+    assert "props.showDataOnMobile && (hasDataFile.value || props.canExport)" in source
+
+
+def test_message_action_menu_shows_conversation_totals_inside_resource_menu():
+    menu_source = ACTION_MENU.read_text(encoding="utf-8")
+    embed_source = EMBED.read_text(encoding="utf-8")
+
+    assert "conversationReusableCount?: number" in menu_source
+    assert "conversationArtifactCount?: number" in menu_source
+    assert "{{ conversationReusableCount }} 条" in menu_source
+    assert "{{ conversationArtifactCount }} 个" in menu_source
+    assert "const conversationArtifactCount = computed(() =>" in embed_source
+    assert ":conversation-reusable-count=" in embed_source
+    assert ":conversation-artifact-count=" in embed_source
 
 
 def test_continue_analysis_buttons_use_neutral_visual_treatment():
@@ -136,6 +177,20 @@ def test_embed_chat_wires_status_event_selection_and_one_shot_request_id():
     more_component = source[source.index('mode="more"'):]
     assert ':can-export="Boolean(msg.trace_id)"' in more_component
     assert ':show-data-on-mobile="true"' in more_component
+    assert ':reusable-result-id="msg.reusableResultStatus?.resultId"' in more_component
+    assert ':reusable-count="currentMessageReusableCount(msg)"' in more_component
+    assert ':has-conversation-data-file="hasConversationDataFile"' in more_component
+    assert ':trace-id="focusedOutputTraceId"' in source
+    assert 'openReusableResults(msg.reusableResultStatus?.resultId, msg.trace_id, msg.reusableResultStatus?.status)' in source
+    assert '@open-artifacts="openMessageArtifacts(msg.trace_id)"' in source
+    assert "const openMessageArtifacts = (traceId?: string | null) =>" in source
+    assert "MessageArtifactsDrawer" not in source
+    assert "const hasConversationDataFile = computed(() =>" in source
+    assert "Object.values(artifactCountByTrace.value).some" in source
+    assert "hasDataOutput: Boolean(item.has_data_output)" in source
+    assert "reusable_result_id" in source
+    assert "reusable_result_status" in source
+    assert "conversationReusableResultCount" in source
     assert '<div class="hidden sm:block">' in source
     action_source = source[source.index("<!-- Agent Message Actions"):]
     more_pos = action_source.index('mode="more"')
@@ -150,6 +205,68 @@ def test_embed_chat_wires_status_event_selection_and_one_shot_request_id():
     assert "openReusableResults(" in source
     assert "<ReusableResultNotice" in source
     assert "msg.reusableResultStatus?.status === 'reused'" in source
+
+
+def test_reusable_result_details_are_limited_to_the_current_message_round():
+    source = LIST.read_text(encoding="utf-8")
+
+    assert "scope?: 'conversation' | 'message'" in source
+    assert "props.scope === 'message'" in source
+    assert "traceId?: string | null" in source
+    assert "messageItems" in source
+    assert "displayedItems" in source
+    assert "item.trace_id === props.traceId" in source
+    assert "item.result_id === props.focusedResultId" in source
+    assert "本次生成" in source
+    assert "本次复用" in source
+    drawer_source = DRAWER.read_text(encoding="utf-8")
+    assert "本会话全部" in drawer_source
+    assert "本次消息" in drawer_source
+    assert "查看本会话全部" not in source
+
+
+def test_file_details_are_loaded_by_selected_output_scope():
+    source = DRAWER.read_text(encoding="utf-8")
+
+    assert "conversation_id: props.conversationId" in source
+    assert "trace_id: outputScope.value === 'message' ? props.traceId || undefined : undefined" in source
+    assert "本次消息" in source
+
+
+def test_file_type_filter_includes_markdown_artifacts():
+    source = DRAWER.read_text(encoding="utf-8")
+
+    assert "{ value: 'markdown', label: 'Markdown' }" in source
+    assert "artifact_type: activeType.value || undefined" in source
+
+
+def test_output_lists_show_source_trace_for_conversation_scope():
+    drawer_source = DRAWER.read_text(encoding="utf-8")
+    result_source = LIST.read_text(encoding="utf-8")
+
+    for source in (drawer_source, result_source):
+        assert "formatTraceId" in source
+        assert "来源消息" in source
+        assert "trace_id" in source
+        assert "当前消息" in source
+
+
+def test_history_reload_restores_reusable_result_count_by_trace():
+    source = EMBED.read_text(encoding="utf-8")
+
+    assert "reusableResultCountByTrace" in source
+    assert "traceResultCount" in source
+    assert "counts[traceId]" in source
+    assert "conversationReusableResultCount.value = items.length" in source
+
+
+def test_output_availability_failures_clear_stale_session_counts():
+    source = EMBED.read_text(encoding="utf-8")
+
+    assert "conversationReusableResultCount.value = 0" in source
+    assert "reusableResultCountByTrace.value = {}" in source
+    assert "artifactCountByTrace.value = {}" in source
+    assert "if (conversationId.value === cid)" in source
 
 
 def test_embed_chat_clears_selection_after_request_snapshot_is_captured():
