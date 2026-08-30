@@ -5,6 +5,9 @@ import re
 from typing import Any, Dict, List
 
 
+BOOKKEEPING_TOOL_NAMES = frozenset({"todo_write"})
+
+
 def _pending_text(state: Dict[str, Any]) -> str:
     return str(state.get("pending_reply_text") or "")
 
@@ -89,13 +92,22 @@ def on_text_delta(state: Dict[str, Any], delta: str) -> List[Dict[str, Any]]:
     return [{"type": "process_narration", "content": text}]
 
 
-def on_tool_call_start(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def on_tool_call_start(
+    state: Dict[str, Any],
+    *,
+    tool_name: str | None = None,
+) -> List[Dict[str, Any]]:
     state["used_tools"] = True
     state["current_reply_used_tools"] = True
     state["reply_phase"] = "tool_running"
     detector = state.get("repetition_detector")
     if detector is not None:
         detector.reset()
+    if str(tool_name or "").strip().casefold() in BOOKKEEPING_TOOL_NAMES:
+        # todo_write 只更新任务清单，不代表正文开始进入工具前旁白阶段。
+        # 保留 pending_reply_text，使“正文 -> 最后一次 todo_write -> 结束”
+        # 能在 model_call_end 时正常提升为最终正文。
+        return []
     return _commit_pending_as_narration(state)
 
 

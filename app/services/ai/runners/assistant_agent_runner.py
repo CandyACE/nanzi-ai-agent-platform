@@ -1859,7 +1859,10 @@ class AssistantAgentRunner(BaseExecutor):
                     async for item in self._yield_process_narration_chunk(state, chunk):
                         yield item
             elif event_type == "TOOL_CALL_START":
-                for chunk in process_narration_events.on_tool_call_start(state):
+                for chunk in process_narration_events.on_tool_call_start(
+                    state,
+                    tool_name=getattr(event, "tool_call_name", None),
+                ):
                     yield chunk
             elif event_type == "MODEL_CALL_END":
                 self._record_agent_scope_model_call(

@@ -667,6 +667,66 @@ async def test_general_runner_todo_only_result_keeps_reply_visible_without_synth
 
 
 @pytest.mark.asyncio
+async def test_general_runner_preserves_answer_before_final_todo_write(chat_config):
+    """最终正文后只更新任务清单时，正文不能被 todo 的工具边界吞掉。"""
+    from agentscope.state import AgentState
+
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
+
+    class FakeAgent:
+        def __init__(self):
+            self.state = AgentState(session_id="s1", reply_id="r1", context=[])
+
+    async def fake_event_stream():
+        yield SimpleNamespace(type="MODEL_CALL_START", reply_id="r1")
+        yield SimpleNamespace(
+            type="TEXT_BLOCK_DELTA",
+            delta="这是已经生成的完整最终正文。",
+        )
+        yield SimpleNamespace(
+            type="TOOL_CALL_START",
+            tool_call_id="todo-1",
+            tool_call_name="todo_write",
+        )
+        yield SimpleNamespace(
+            type="TOOL_RESULT_TEXT_DELTA",
+            tool_call_id="todo-1",
+            delta='{"todos":[{"content":"整理报告","status":"completed"}]}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="todo-1")
+        yield SimpleNamespace(type="MODEL_CALL_END", reply_id="r1")
+        yield SimpleNamespace(type="REPLY_END", reply_id="r1", session_id="s1")
+
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-answer-before-final-todo",
+        trace_buffer=[],
+    )
+    state = new_native_stream_state()
+    chunks = []
+    async for chunk in runner._stream_agentscope_native_events(
+        event_stream=fake_event_stream(),
+        agent=FakeAgent(),
+        tools=[],
+        native_model=SimpleNamespace(model="qwen-test"),
+        state=state,
+    ):
+        chunks.append(chunk)
+
+    from app.services.ai.agent_service import _accumulate_stream_content
+
+    visible = ""
+    for chunk in chunks:
+        visible = _accumulate_stream_content(visible, chunk)
+    assert "这是已经生成的完整最终正文。" in visible
+    assert any(
+        chunk.get("type") == "process_narration_promote"
+        for chunk in chunks
+    )
+
+
+@pytest.mark.asyncio
 async def test_general_runner_synthesis_after_transitional_text_and_more_tools(chat_config):
     """过渡语后又调工具、再无正文时，应触发 synthesis 而非因 partial 跳过兜底。"""
     from agentscope.state import AgentState
