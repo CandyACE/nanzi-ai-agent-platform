@@ -243,7 +243,14 @@ async def stream_agentscope_events(
                 state.tool_outputs[tool_id] = output
                 state.last_successful_sql_output = output
                 mark_successful_nonempty_sql(state, tool_name=tool_name)
-                await runner._save_last_data_result_for_followups(tool_args, parsed_output)
+                saved_meta = await runner._save_last_data_result_for_followups(tool_args, parsed_output)
+                if saved_meta:
+                    from app.services.ai.reusable_result import build_reusable_result_status_event
+
+                    yield build_reusable_result_status_event(
+                        status="saved",
+                        payload=saved_meta,
+                    )
                 if enrichment_result is not None and getattr(enrichment_result, "applied", False):
                     runner._increment_step()
                     enrichment_details = "\n".join(getattr(enrichment_result, "logs", []) or [])

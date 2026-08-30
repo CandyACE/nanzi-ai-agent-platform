@@ -8,7 +8,10 @@ from app.services.ai.reusable_result import (
     build_reusable_result_client_summary,
     build_reusable_result_status_event,
     is_reusable_result_candidate,
+    normalize_legacy_data_result,
+    normalize_legacy_reusable_result,
     resolve_reusable_result,
+    sanitize_reusable_result_payload,
 )
 
 
@@ -56,6 +59,82 @@ def test_build_reusable_result_keeps_origin_and_safe_content():
     assert result_with_datetime["structured"] == {
         "updated_at": "2026-08-29 00:00:00+00:00"
     }
+
+
+def test_build_reusable_result_redacts_sensitive_tool_output_before_persistence():
+    result = build_reusable_result(
+        tool_name="browser_read_visible",
+        tool_output={
+            "text": "Authorization: Bearer top-secret-token",
+            "access_token": "nested-secret",
+            "rows": [{"cookie": "session=private-cookie", "amount": 10}],
+        },
+        source_type="mcp",
+        tool_args={},
+        user_question="读取页面",
+        trace_id="trace-sensitive-output",
+    )
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert "top-secret-token" not in serialized
+    assert "nested-secret" not in serialized
+    assert "private-cookie" not in serialized
+    assert "[redacted]" in serialized
+
+
+def test_sanitize_reusable_result_payload_cleans_unknown_extension_fields():
+    payload = sanitize_reusable_result_payload({
+        "result_id": "rr-unknown-fields",
+        "result_type": "generic",
+        "status": "completed",
+        "output": {
+            "privateKey": "private-key-value",
+            "access_key": "access-key-value",
+            "auth": "auth-value",
+            "api key": "api-key-value",
+            "token_count": 3,
+            "message": "Authorization: Bearer text-secret",
+        },
+        "metadata": ["client_secret=metadata-secret", "eyJheader123.payload123.signature123"],
+    })
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "private-key-value" not in serialized
+    assert "access-key-value" not in serialized
+    assert "auth-value" not in serialized
+    assert "api-key-value" not in serialized
+    assert "text-secret" not in serialized
+    assert "metadata-secret" not in serialized
+    assert "eyJheader123.payload123.signature123" not in serialized
+    assert payload["output"]["token_count"] == 3
+
+
+def test_normalize_legacy_data_result_adds_canonical_fields():
+    result = normalize_legacy_data_result({
+        "sql": "SELECT 1",
+        "dataset_name": "sales",
+        "rows": {"rows": [{"region": "华东", "amount": 10}]},
+        "saved_at": "2026-08-30T10:00:00+00:00",
+    })
+
+    assert result["result_type"] == "data"
+    assert result["status"] == "completed"
+    assert result["result_id"].startswith("legacy_data_")
+    assert result["structured"] == result["rows"]
+    assert result["content"]
+    assert result["saved_at"] == "2026-08-30T10:00:00+00:00"
+
+
+def test_normalize_legacy_reusable_result_infers_non_data_type():
+    result = normalize_legacy_reusable_result({
+        "tool_name": "browser_read_visible",
+        "source_type": "mcp",
+        "text_excerpt": "页面正文",
+    })
+
+    assert result["result_type"] == "web"
+    assert result["origin_name"] == "browser_read_visible"
+    assert result["result_id"].startswith("legacy_result_")
 
 
 def test_reuse_decision_prefers_existing_result_but_allows_fallback_when_missing():

@@ -45,11 +45,31 @@ logger = logging.getLogger(__name__)
 class KnowledgeAgentRunner(AssistantAgentRunner):
     """知识库问答 Runner：自动检索 + AgentScope ReAct，可扩展挂载业务工具。"""
 
+    _REUSABLE_RESULT_BLOCKING_REASONS = frozenset(
+        {
+            "freshness_requested",
+            "selected_result_missing",
+            "selected_result_invalid",
+            "selected_result_incompatible_type",
+            "incompatible_result_type",
+        }
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._valid_citation_ids: Set[str] = set()
         self._rag_empty = False
         self._knowledge_retrieval_succeeded = False
+
+    @staticmethod
+    def _is_knowledge_reusable_result(result: Any) -> bool:
+        """仅允许明确标记为知识结果的快照进入知识库免检索短路。"""
+        if not isinstance(result, dict):
+            return False
+        result_type = str(result.get("result_type") or "").strip().lower()
+        if result_type:
+            return result_type == "knowledge"
+        return str(result.get("source_type") or "").strip().lower() == "knowledge"
 
     @staticmethod
     def _sanitize_knowledge_tool_binding_notice(
@@ -143,6 +163,26 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         is_ref_match = any(ref in q for ref in vague_refs)
         is_action_match = any(act in q for act in followup_actions)
         return is_ref_match or is_action_match or (len(q) < 8 and is_action_match)
+
+    def _should_skip_knowledge_prefetch(
+        self,
+        *,
+        is_catalog_query: bool,
+        reusable_decision: Any,
+        reusable_knowledge_result: bool,
+        user_question: str,
+        history: List[Dict[str, str]],
+    ) -> bool:
+        """判断是否可以跳过知识库预检索，避免复用失败时误走历史追问短路。"""
+        if is_catalog_query:
+            return False
+        if reusable_knowledge_result:
+            return True
+        if reusable_decision.mode == "reuse":
+            return False
+        if reusable_decision.reason in self._REUSABLE_RESULT_BLOCKING_REASONS:
+            return False
+        return self._looks_like_rag_followup(user_question, history)
 
     def _build_synthesis_user_message(self, user_query: str, execution_review: str) -> str:
         return KnowledgeChatPrompts.synthesis_user_message(user_query, execution_review)
@@ -444,6 +484,32 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         self,
         history: List[Dict[str, str]],
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.reusable_result import (
+            CLICKED_REPLY_MARKER,
+            prepare_reusable_route_input,
+        )
+
+        raw_current_question = str(self.current_user_query or "")
+        raw_history_question = next(
+            (
+                str(message.get("content") or "")
+                for message in reversed(history or [])
+                if isinstance(message, dict)
+                and str(message.get("role") or "").lower() == "user"
+            ),
+            "",
+        )
+        route_source_question = (
+            raw_history_question
+            if CLICKED_REPLY_MARKER.lower() in raw_history_question.lower()
+            else raw_current_question or raw_history_question
+        )
+        history, cleaned_question = prepare_reusable_route_input(
+            history,
+            route_source_question,
+        )
+        if CLICKED_REPLY_MARKER.lower() in raw_current_question.lower():
+            self.current_user_query = cleaned_question
         from app.services.ai.multimodal_support import (
             resolve_runtime_model_name,
             run_multimodal_gate,
@@ -474,16 +540,50 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         tools = await self._resolve_knowledge_tools()
         for event in self._tool_resolution_log_events():
             yield event
-        if not tools_include_named(tools, "search_knowledge_base"):
+
+        raw_user_question = self._current_user_query(history).strip()
+        from app.services.ai.reusable_result import (
+            extract_reusable_action_query,
+            resolve_reusable_result,
+        )
+        from app.services.ai.session_tool_artifact import (
+            build_session_tool_artifact_context_message,
+            filter_tools_for_reusable_result,
+            insert_session_tool_artifact_context,
+            load_session_tool_artifact,
+        )
+
+        preferred_reusable_result_id = str(
+            getattr(self.turn_decision, "reusable_result_id", None) or ""
+        ).strip() or None
+        reusable_artifact = await load_session_tool_artifact(
+            self._runtime_user_id(),
+            self.conversation_id,
+            preferred_result_id=preferred_reusable_result_id,
+        )
+        reusable_decision = resolve_reusable_result(
+            raw_user_question,
+            current=reusable_artifact,
+            stack=[],
+            preferred_result_id=preferred_reusable_result_id,
+            allowed_result_types={"knowledge"},
+        )
+        user_question = (
+            extract_reusable_action_query(raw_user_question)
+            if "【被点击的 AI 回复】" in raw_user_question
+            else raw_user_question
+        )
+        reusable_knowledge_result = (
+            reusable_decision.mode == "reuse"
+            and self._is_knowledge_reusable_result(reusable_decision.result)
+        )
+        if not tools_include_named(tools, "search_knowledge_base") and not reusable_knowledge_result:
             yield {
                 "type": "error",
                 "status": "error",
                 "content": "知识库工具 search_knowledge_base 不可用，无法执行知识库问答。",
             }
             return
-
-        user_question = self._current_user_query(history).strip()
-
         # 从 debug_options 读取会话级反幻觉开关（与模型覆盖等参数同通道）
         hallucination_check_enabled = bool(self.debug_options.get("hallucination_check", False))
         grounding_enabled = self._grounding_enabled()
@@ -495,12 +595,32 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         )
         if decision_context:
             system_content = f"{decision_context}\n\n{system_content}"
+        if reusable_knowledge_result and reusable_decision.result:
+            session_artifact_context = build_session_tool_artifact_context_message(
+                reusable_decision.result,
+                user_question=raw_user_question,
+                force_reuse=preferred_reusable_result_id is not None,
+            )
+            tools = filter_tools_for_reusable_result(
+                tools,
+                user_question=raw_user_question,
+                artifact=reusable_decision.result,
+                force_reuse=preferred_reusable_result_id is not None,
+            )
+        else:
+            session_artifact_context = None
 
         # RAG 分类与复用决策
         from app.services.ai.intent_service import looks_like_accessible_resource_catalog_query
 
         is_catalog_query = looks_like_accessible_resource_catalog_query(user_question)
-        is_followup = (not is_catalog_query) and self._looks_like_rag_followup(user_question, history)
+        is_followup = self._should_skip_knowledge_prefetch(
+            is_catalog_query=is_catalog_query,
+            reusable_decision=reusable_decision,
+            reusable_knowledge_result=reusable_knowledge_result,
+            user_question=user_question,
+            history=history,
+        )
         prefetched_knowledge_output: str | None = None
         prefetched_citations_raw: list | None = None
         knowledge_service_unavailable = False
@@ -630,6 +750,11 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         # 知识库 runner 不能再次按固定条数截断，避免丢掉平台摘要。
         runtime_messages = [SystemMessage(content=system_content)]
         runtime_messages.extend(convert_history_to_messages(history, strip_thought=True))
+        if session_artifact_context:
+            runtime_messages = insert_session_tool_artifact_context(
+                runtime_messages,
+                HumanMessage(content=session_artifact_context),
+            )
         runtime_messages = normalize_messages_for_llm(runtime_messages)
 
         max_steps_str = await ConfigService.get("agent_max_iterations")

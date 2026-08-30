@@ -24,6 +24,26 @@ export interface ArtifactListParams {
   trace_id?: string
 }
 
+/** 会话内可复用结果的安全摘要，不包含工具参数、凭证或完整原始 payload。 */
+export interface ReusableResultListItem {
+  result_id: string
+  result_type: string
+  origin_type: string
+  origin_name: string
+  source_type: string
+  status: string
+  text_excerpt: string
+  structured_preview?: {
+    row_count?: number
+    total_row_count?: number
+    item_count?: number
+    columns?: string[]
+  } | null
+  created_at?: string | null
+  expires_at?: string | null
+  is_current?: boolean
+}
+
 export const artifactApi = {
   list: (params: ArtifactListParams = {}) =>
     axios.get<StandardResponse<ListResponse<ArtifactListItem>>>(
@@ -34,6 +54,11 @@ export const artifactApi = {
   countsByTrace: (conversationId: string) =>
     axios.get<StandardResponse<{ counts: Record<string, number> }>>(
       '/api/v1/chat/artifacts/counts',
+      { params: { conversation_id: conversationId } },
+    ),
+  reusableResults: (conversationId: string) =>
+    axios.get<StandardResponse<ListResponse<ReusableResultListItem>>>(
+      '/api/v1/chat/reusable-results',
       { params: { conversation_id: conversationId } },
     ),
 }

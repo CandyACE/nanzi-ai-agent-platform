@@ -16,7 +16,11 @@ def _result_status(value: Any) -> str:
     return classify_evidence_result(value).value
 
 
-async def load_last_data_result(runner: Any) -> Optional[Dict[str, Any]]:
+async def load_last_data_result(
+    runner: Any,
+    *,
+    preferred_result_id: str | None = None,
+) -> Optional[Dict[str, Any]]:
     if not runner.conversation_id:
         return None
     user_id = runner._current_user_id()
@@ -24,8 +28,75 @@ async def load_last_data_result(runner: Any) -> Optional[Dict[str, Any]]:
         return None
     try:
         from app.services.ai.memory_service import memory_service
+        from app.services.ai.reusable_result import (
+            is_reusable_result_candidate,
+            normalize_legacy_data_result,
+        )
 
-        return await memory_service.get_current_data_result(user_id, runner.conversation_id)
+        reusable = await memory_service.get_reusable_result(user_id, runner.conversation_id)
+        preferred_id = str(preferred_result_id or "").strip()
+        stack = None
+
+        def normalize_candidate(candidate: Any) -> Optional[Dict[str, Any]]:
+            if not isinstance(candidate, dict):
+                return None
+            candidate = normalize_legacy_data_result(candidate)
+            if not (
+                candidate
+                and str(candidate.get("result_type") or "").lower() == "data"
+                and is_reusable_result_candidate(candidate)
+            ):
+                return None
+            # 统一结果保留 canonical 字段，同时补出 ChatBI 旧路径需要的 rows。
+            if "rows" not in candidate:
+                structured = candidate.get("structured")
+                if isinstance(structured, dict) and "rows" in structured:
+                    candidate = {**candidate, "rows": structured}
+                elif structured is not None:
+                    candidate = {**candidate, "rows": structured}
+            return candidate
+
+        if preferred_id:
+            stack = await memory_service.get_reusable_result_stack(
+                user_id,
+                runner.conversation_id,
+            )
+            for candidate in [reusable] + list(reversed(stack or [])):
+                normalized = normalize_candidate(candidate)
+                if (
+                    normalized
+                    and str(normalized.get("result_id") or "").strip() == preferred_id
+                    and str(normalized.get("result_type") or "").lower() == "data"
+                ):
+                    return normalized
+            legacy = await memory_service.get_last_data_result(
+                user_id,
+                runner.conversation_id,
+            )
+            normalized_legacy = normalize_candidate(legacy)
+            if (
+                normalized_legacy
+                and str(normalized_legacy.get("result_id") or "").strip() == preferred_id
+                and str(normalized_legacy.get("result_type") or "").lower() == "data"
+            ):
+                return normalized_legacy
+            # 指定结果失效或不存在时，不能静默使用 current/其他 stack 结果。
+            return None
+        candidate = normalize_candidate(reusable)
+        if candidate:
+            return candidate
+        stack = await memory_service.get_reusable_result_stack(
+            user_id,
+            runner.conversation_id,
+        )
+        for candidate in reversed(stack or []):
+            normalized = normalize_candidate(candidate)
+            if normalized:
+                return normalized
+        # 统一 stack 已在上面独立读取；这里直接读取旧 last_data_result，避免旧 stack
+        # 中的失败条目遮蔽仍然有效的兼容缓存。
+        legacy = await memory_service.get_last_data_result(user_id, runner.conversation_id)
+        return normalize_candidate(legacy)
     except Exception as e:
         logger.warning("[DataAgentRunner] Failed to load last data result: %s", e)
         return None
@@ -36,9 +107,13 @@ async def load_last_data_result_with_retry(
     *,
     attempts: int = 3,
     delay_seconds: float = 0.15,
+    preferred_result_id: str | None = None,
 ) -> Optional[Dict[str, Any]]:
     for attempt in range(attempts):
-        result = await load_last_data_result(runner)
+        result = await load_last_data_result(
+            runner,
+            preferred_result_id=preferred_result_id,
+        )
         if result:
             return result
         if attempt < attempts - 1:
@@ -75,9 +150,14 @@ async def save_last_data_result_for_followups(
     runner: Any,
     tool_args: Dict[str, Any],
     parsed_tool_output: Any,
-) -> None:
+) -> Optional[Dict[str, Any]]:
     normalized = normalize_rows_for_followup_save(parsed_tool_output)
     if not runner.conversation_id or normalized is None:
+        return
+    from app.services.ai.grounding.ledger import _is_non_empty_success_result
+
+    # 空查询结果只用于本轮说明“没有数据”，不能覆盖可复用结果；后续快捷操作应回退原查询链路。
+    if not _is_non_empty_success_result(normalized):
         return
     user_id = runner._current_user_id()
     if not user_id:
@@ -137,6 +217,32 @@ async def save_last_data_result_for_followups(
             source_ref=source_ref,
             result_status=payload["result_status"],
         )
+        from app.services.ai.reusable_result import (
+            build_reusable_result,
+            build_reusable_result_client_summary,
+        )
+
+        reusable_payload = build_reusable_result(
+            tool_name="execute_sql_query",
+            tool_output=normalized,
+            source_type="system",
+            tool_args=tool_args,
+            user_question=str(getattr(runner, "_standalone_query", "") or ""),
+            trace_id=str(runner.trace_id or ""),
+            origin_type="tool",
+        )
+        # payload 只补充 ChatBI 专属字段；canonical 字段不能被旧 payload 覆盖。
+        reusable_payload = {**payload, **reusable_payload}
+        reusable_payload["result_id"] = result_ref.result_id
+        reusable_payload["result_type"] = "data"
+        unified_saved = await memory_service.push_reusable_result(
+            user_id,
+            runner.conversation_id,
+            reusable_payload,
+        )
+        if not unified_saved:
+            logger.warning("[DataAgentRunner] Unified reusable result was not persisted")
+            return None
         await memory_service.push_data_result_ref(
             user_id,
             runner.conversation_id,
@@ -146,5 +252,7 @@ async def save_last_data_result_for_followups(
         if state is not None:
             state.followup_data_saved = True
             state.current_result_id = result_ref.result_id
+        return build_reusable_result_client_summary(reusable_payload, is_current=True)
     except Exception as e:
         logger.warning("[DataAgentRunner] Failed to save last data result: %s", e)
+    return None

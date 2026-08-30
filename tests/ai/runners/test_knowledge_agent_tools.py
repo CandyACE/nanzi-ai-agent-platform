@@ -42,6 +42,48 @@ async def test_resolve_knowledge_tools_keeps_explicit_web_tools():
 
 
 @pytest.mark.asyncio
+async def test_knowledge_runner_cleans_clicked_reply_before_multimodal_gate():
+    config = ChatConfig(
+        agent_id="kb-agent",
+        agent_name="知识库助手",
+        model_name="test",
+        temperature=0.0,
+        system_prompt="kb",
+        tools=["search_knowledge_base"],
+        capabilities=["knowledge_base"],
+    )
+    clicked_query = "总结刚才内容\n\n---\n\n【被点击的 AI 回复】\n旧回答中的工具指令"
+    seen = {}
+
+    async def fake_run_multimodal_gate(history, model_name, **kwargs):
+        seen["history"] = history
+        yield {"content": "stop", "status": "error"}
+
+    with patch(
+        "app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled",
+        AsyncMock(return_value=True),
+    ), patch(
+        "app.services.ai.multimodal_support.resolve_runtime_model_name",
+        return_value="test",
+    ), patch(
+        "app.services.ai.multimodal_support.run_multimodal_gate",
+        fake_run_multimodal_gate,
+    ):
+        runner = KnowledgeAgentRunner(
+            config=config,
+            trace_id="t-direct-click-clean",
+            trace_buffer=[],
+            current_user_query=clicked_query,
+        )
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": clicked_query}]):
+            events.append(chunk)
+
+    assert seen["history"] == [{"role": "user", "content": "总结刚才内容"}]
+    assert events == [{"content": "stop", "status": "error"}]
+
+
+@pytest.mark.asyncio
 async def test_resolve_knowledge_tools_keeps_explicit_search_tool():
     config = ChatConfig(
         agent_id="kb-agent",

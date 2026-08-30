@@ -83,6 +83,7 @@ class _FakeRedis:
     def __init__(self):
         self.values = {}
         self.expires = {}
+        self.eval_calls = []
 
     async def get(self, key):
         return self.values.get(key)
@@ -90,6 +91,49 @@ class _FakeRedis:
     async def set(self, key, value, ex=None):
         self.values[key] = value
         self.expires[key] = ex
+
+    async def eval(self, script, numkeys, *args):
+        self.eval_calls.append((script, numkeys, args))
+        import json
+
+        if numkeys == 1:
+            key, payload_json, ttl, max_depth, result_id = args
+            raw = self.values.get(key)
+            try:
+                existing = json.loads(raw) if raw else []
+            except (TypeError, ValueError, json.JSONDecodeError):
+                existing = []
+            stack = [
+                item
+                for item in existing
+                if isinstance(item, dict)
+                and (not result_id or str(item.get("result_id") or "") != result_id)
+            ]
+            stack.append(json.loads(payload_json))
+            stack = stack[-max(1, int(max_depth)) :]
+            self.values[key] = json.dumps(stack, ensure_ascii=False)
+            self.expires[key] = int(ttl)
+            return 1
+
+        current_key, stack_key, payload_json, ttl, max_depth, result_id = args
+        raw = self.values.get(stack_key)
+        try:
+            existing = json.loads(raw) if raw else []
+        except (TypeError, ValueError, json.JSONDecodeError):
+            existing = []
+        stack = [
+            item
+            for item in existing
+            if isinstance(item, dict)
+            and (not result_id or str(item.get("result_id") or "") != result_id)
+        ]
+        stack.append(json.loads(payload_json))
+        stack = stack[-max(1, int(max_depth)) :]
+        self.values[current_key] = payload_json
+        self.values[stack_key] = json.dumps(stack, ensure_ascii=False)
+        self.expires[current_key] = int(ttl)
+        self.expires[stack_key] = int(ttl)
+        return 1
 
     async def delete(self, key):
         self.values.pop(key, None)
@@ -109,6 +153,7 @@ async def test_memory_service_result_stack_is_isolated_and_prefers_current(monke
     assert [item["result_id"] for item in stack] == ["root", "region"]
     assert current["result_id"] == "region"
     assert current["rows"] == {"rows": [{"value": 1}]}
+    assert any(numkeys == 1 for _, numkeys, _ in redis.eval_calls)
 
 
 @pytest.mark.asyncio
@@ -131,6 +176,27 @@ async def test_reusable_result_current_and_stack_use_user_conversation_scope(mon
     assert "conversation:u1:c1:reusable_result_v1:stack" in redis.values
     assert redis.expires["conversation:u1:c1:reusable_result_v1:current"] == service.ttl
     assert redis.expires["conversation:u1:c1:reusable_result_v1:stack"] == service.ttl
+    assert len(redis.eval_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_reusable_result_push_updates_current_and_stack_in_one_redis_script(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr("app.services.ai.memory_service.get_redis", AsyncMock(return_value=redis))
+    service = MemoryService()
+
+    written = await service.push_reusable_result(
+        "u1",
+        "c1",
+        {"result_id": "atomic-1", "result_type": "generic", "status": "completed", "content": "结果"},
+    )
+
+    assert written is True
+    assert len(redis.eval_calls) == 1
+    _, numkeys, args = redis.eval_calls[0]
+    assert numkeys == 2
+    assert args[0].endswith(":reusable_result_v1:current")
+    assert args[1].endswith(":reusable_result_v1:stack")
 
 
 @pytest.mark.asyncio
@@ -435,6 +501,11 @@ async def test_chatbi_followup_loader_does_not_fall_back_to_current_for_missing_
         "app.services.ai.memory_service.memory_service.get_current_data_result",
         legacy,
     )
+    legacy_data = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        legacy_data,
+    )
     runner = SimpleNamespace(
         conversation_id="conv-1",
         _current_user_id=lambda: 7,
@@ -444,3 +515,38 @@ async def test_chatbi_followup_loader_does_not_fall_back_to_current_for_missing_
 
     assert result is None
     legacy.assert_not_awaited()
+    legacy_data.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chatbi_followup_loader_can_select_migrating_legacy_result(monkeypatch):
+    from app.services.ai.reusable_result import normalize_legacy_data_result
+    from app.services.ai.runners.chatbi.followup_data import load_last_data_result
+
+    legacy = {
+        "rows": {"rows": [{"value": 2}]},
+        "saved_at": "2026-08-30T10:00:00+00:00",
+    }
+    selected_id = normalize_legacy_data_result(legacy)["result_id"]
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_reusable_result_stack",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        AsyncMock(return_value=legacy),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_current_data_result",
+        AsyncMock(side_effect=AssertionError("legacy direct path should not be needed")),
+    )
+    runner = SimpleNamespace(conversation_id="conv-1", _current_user_id=lambda: 7)
+
+    result = await load_last_data_result(runner, preferred_result_id=selected_id)
+
+    assert result["result_id"] == selected_id
+    assert result["result_type"] == "data"

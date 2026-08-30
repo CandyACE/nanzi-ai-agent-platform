@@ -46,8 +46,11 @@ def result_dict_to_json(
     *,
     max_chars: Optional[int] = None,
 ) -> str:
+    from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+    safe_result = sanitize_reusable_result_payload(result) or {}
     text = json.dumps(
-        truncate_result_dict_for_synthesis(result),
+        truncate_result_dict_for_synthesis(safe_result),
         ensure_ascii=False,
         indent=2,
         default=str,

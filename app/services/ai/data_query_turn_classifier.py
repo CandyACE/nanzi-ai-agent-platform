@@ -21,6 +21,11 @@ from app.services.ai.intent_service import (
     looks_like_pure_result_followup,
     looks_like_skill_execution,
 )
+from app.services.ai.reusable_result import (
+    CLICKED_REPLY_MARKER,
+    extract_reusable_action_query,
+    normalize_legacy_data_result,
+)
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import system_user_prompt_messages
 logger = logging.getLogger(__name__)
@@ -43,7 +48,9 @@ async def load_last_data_result(
     try:
         from app.services.ai.memory_service import memory_service
 
-        return await memory_service.get_last_data_result(user_id, conversation_id)
+        return normalize_legacy_data_result(
+            await memory_service.get_last_data_result(user_id, conversation_id)
+        )
     except Exception as e:
         logger.warning("[DataQueryTurnClassifier] Failed to load last data result: %s", e)
         return None
@@ -782,7 +789,47 @@ async def resolve_data_query_turn_classification(
         has_last_data_result = await load_last_data_result(user_info, conversation_id) is not None
     has_last_data_result = bool(has_last_data_result)
 
-    q = (user_query or "").strip()
+    raw_q = (user_query or "").strip()
+    clicked_reply = CLICKED_REPLY_MARKER.lower() in raw_q.lower()
+    # EmbedChat 的快捷按钮会把整段旧回复拼到当前问题后面。旧回复中的“查询/统计”等
+    # 词不能被当作本轮新查数信号，否则明明有缓存也会再次进入 Schema/SQL 链路。
+    q = extract_reusable_action_query(raw_q)
+
+    if clicked_reply and not has_last_data_result:
+        # 缓存缺失/过期时遵循既定回退策略：把快捷操作当作新请求交给原有查数链路，
+        # 不在这里澄清或直接报“缺数据”。
+        classification = _classification_for_turn_type(
+            DataQueryTurnType.NEW_DATA_QUERY,
+            "快捷操作对应的上一轮结果不可复用，回退到现有新数据查询链路",
+            skip_intent_llm=True,
+        )
+        intent_info = IntentResponse(
+            intent=IntentType.DATA_QUERY,
+            confidence=1.0,
+            reasoning=classification.reasoning,
+            entities=[],
+        )
+        return classification, intent_info, 0.0
+
+    if clicked_reply and has_last_data_result and any(
+        keyword in q.lower()
+        for keyword in (
+            "导出", "下载", "保存", "发送", "发给", "分享", "订阅", "监控", "告警",
+            "提醒", "简报", "汇报材料", "汇报稿", "export", "download", "save",
+        )
+    ):
+        classification = _classification_for_turn_type(
+            DataQueryTurnType.RESULT_ACTION,
+            "快捷操作命中上一轮结构化结果，直接进入结果交付动作，不重新查数",
+            skip_intent_llm=True,
+        )
+        intent_info = IntentResponse(
+            intent=IntentType.DATA_QUERY,
+            confidence=1.0,
+            reasoning=classification.reasoning,
+            entities=[],
+        )
+        return classification, intent_info, 0.0
     if looks_like_metadata_query(q):
         classification = _classification_for_turn_type(
             DataQueryTurnType.METADATA_QUERY,

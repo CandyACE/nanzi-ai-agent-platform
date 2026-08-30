@@ -7,6 +7,7 @@ import re
 DEFAULT_MIN_COMPLETE_CHARS = 32
 DEFAULT_TOOL_OUTPUT_MAX_LEN = 4000
 DEFAULT_TOOL_LOG_MAX_LEN = 500
+BOOKKEEPING_TOOL_NAMES = frozenset({"todo_write"})
 
 
 def truncate_for_context(text: str, *, max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LEN) -> str:
@@ -24,6 +25,26 @@ def truncate_for_display(text: str, *, max_len: int = DEFAULT_TOOL_LOG_MAX_LEN) 
     if len(raw) <= max_len:
         return raw
     return raw[:max_len] + "\n… [日志预览已截断]"
+
+
+def build_tool_review_lines(
+    tool_names: dict | None,
+    tool_outputs: dict | None,
+    *,
+    max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LEN,
+) -> list[str]:
+    """构造兜底合成输入，排除仅用于编排状态的工具结果。"""
+
+    names = tool_names or {}
+    outputs = tool_outputs or {}
+    lines: list[str] = []
+    for tool_id, output in outputs.items():
+        tool_name = str(names.get(tool_id) or tool_id or "").strip()
+        if not tool_name or tool_name.casefold() in BOOKKEEPING_TOOL_NAMES:
+            continue
+        if str(output or "").strip():
+            lines.append(f"- {tool_name}: {truncate_for_context(output, max_len=max_len)}")
+    return lines
 
 
 _SUBSTANTIAL_OVERLAP_CHARS = 64
@@ -134,6 +155,7 @@ def needs_tool_synthesis_fallback(
     agent_text: str,
     *,
     used_tools: bool,
+    tool_names: dict | None = None,
     tool_outputs: dict | None = None,
     min_complete_chars: int = DEFAULT_MIN_COMPLETE_CHARS,
 ) -> bool:
@@ -142,7 +164,7 @@ def needs_tool_synthesis_fallback(
         return False
     if (streamed or "").strip() or (agent_text or "").strip():
         return False
-    return any(str(value or "").strip() for value in (tool_outputs or {}).values())
+    return bool(build_tool_review_lines(tool_names, tool_outputs))
 
 
 GENERIC_SYNTHESIS_EMPTY_FALLBACK = (

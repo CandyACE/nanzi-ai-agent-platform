@@ -622,6 +622,10 @@
                   : 'min-h-0 bg-transparent',
               ]"
             >
+              <ReusableResultNotice
+                v-if="msg.reusableResultStatus?.status === 'reused'"
+                :origin-name="msg.reusableResultStatus.originName"
+              />
               <ChatExecutionTimeline
                 v-model="msg.isThoughtExpanded"
                 :timeline="msg.processTimeline"
@@ -1002,6 +1006,13 @@
                   </svg>
                 </button>
                 </template>
+                <ReusableResultStatus
+                  v-if="msg.reusableResultStatus && !msg.isThinking"
+                  :status="msg.reusableResultStatus.status"
+                  :result-id="msg.reusableResultStatus.resultId"
+                  :origin-name="msg.reusableResultStatus.originName"
+                  @open="openReusableResults(msg.reusableResultStatus.resultId)"
+                />
                 <ChatBIContinueAnalysis
                   v-if="msg.chatbiInsight?.actions?.length && checkRole(msg, 'agent') && !msg.isThinking"
                   :actions="msg.chatbiInsight.actions"
@@ -1159,6 +1170,19 @@
       >
         <template #banner>
           <div class="mx-3 mt-2">
+            <div
+              v-if="selectedReusableResultId"
+              class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary dark:bg-primary/10"
+            >
+              <span class="truncate">已选择可复用结果，发送后将优先使用上一轮数据</span>
+              <button
+                type="button"
+                class="shrink-0 font-semibold hover:underline"
+                @click="selectedReusableResultId = null"
+              >
+                取消
+              </button>
+            </div>
             <div v-if="activeTodoTimeline">
               <ChatTodoCard :timeline="activeTodoTimeline" />
             </div>
@@ -1273,7 +1297,14 @@
       @preview="handleWorkspaceFilePreview"
     />
 
-    <MyArtifactsDrawer v-model="showMyArtifactsDrawer" />
+    <MyArtifactsDrawer
+      v-model="showMyArtifactsDrawer"
+      :conversation-id="conversationId"
+      :initial-tab="myArtifactsInitialTab"
+      :selected-result-id="selectedReusableResultId"
+      :focused-result-id="focusedReusableResultId"
+      @select-reusable-result="selectReusableResult"
+    />
 
     <MessageArtifactsDrawer
       v-if="activeArtifactsTraceId"
@@ -2065,6 +2096,8 @@ import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
+import ReusableResultStatus from "@/components/chat/ReusableResultStatus.vue";
+import ReusableResultNotice from "@/components/chat/ReusableResultNotice.vue";
 import ErrorDetailCard from "@/components/chat/ErrorDetailCard.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import BrowserPanel from "@/components/embed/BrowserPanel.vue";
@@ -2259,6 +2292,7 @@ interface ChatSendSnapshot {
   files: ChatFile[];
   clientRequestId: string;
   groundingAction?: Record<string, unknown>;
+  reusableResultId?: string | null;
 }
 
 interface ChatSendOverrides {
@@ -2266,6 +2300,7 @@ interface ChatSendOverrides {
   files?: ChatFile[];
   clientRequestId?: string;
   groundingAction?: Record<string, unknown>;
+  reusableResultId?: string | null;
 }
 interface DatasetCapabilityQuestion {
   label: string;
@@ -2346,6 +2381,11 @@ interface Message {
   datasetNavigation?: DatasetNavigationPayload;
   permissionNotice?: PermissionNotice;
   groundingBlocked?: GroundingBlockedPayload;
+  reusableResultStatus?: {
+    status: "saved" | "reused" | "fallback" | string;
+    resultId?: string | null;
+    originName?: string | null;
+  };
   businessConfirmation?: BusinessConfirmationState;
   userQuestion?: UserQuestionState;
   _hasSilentlyRefreshed?: boolean;
@@ -2501,6 +2541,9 @@ const chatInputRef = ref<any>(null);
 const userInput = ref("");
 const showWorkspaceDrawer = ref(false);
 const showMyArtifactsDrawer = ref(false);
+const myArtifactsInitialTab = ref<"files" | "reusable">("files");
+const selectedReusableResultId = ref<string | null>(null);
+const focusedReusableResultId = ref<string | null>(null);
 const workspaceDrawerRef = ref<{ refreshDirectory: (path?: string) => Promise<void> } | null>(null);
 
 const readStoredBoolean = (key: string, defaultWhenUnset: boolean) => {
@@ -2548,7 +2591,27 @@ const toggleWorkspaceDrawer = () => {
 };
 
 const toggleMyArtifactsDrawer = () => {
+  if (!showMyArtifactsDrawer.value) {
+    myArtifactsInitialTab.value = "files";
+    focusedReusableResultId.value = null;
+  }
   showMyArtifactsDrawer.value = !showMyArtifactsDrawer.value;
+};
+
+const openReusableResults = (resultId?: string | null) => {
+  myArtifactsInitialTab.value = "reusable";
+  focusedReusableResultId.value = resultId || null;
+  showMyArtifactsDrawer.value = true;
+};
+
+const selectReusableResult = (result: { result_id: string; origin_name?: string }) => {
+  selectedReusableResultId.value = result.result_id;
+  focusedReusableResultId.value = result.result_id;
+  showMyArtifactsDrawer.value = false;
+  showToast(
+    `已选择${result.origin_name ? `「${result.origin_name}」` : "该结果"}，下一轮将优先复用`,
+    "success",
+  );
 };
 
 const showMemoryDrawer = ref(false);
@@ -3269,7 +3332,11 @@ const loadArtifactCounts = async () => {
   }
 };
 // 会话切换 / 首次挂载 → 刷新产物数量
-watch(conversationId, () => void loadArtifactCounts());
+watch(conversationId, () => {
+  selectedReusableResultId.value = null;
+  focusedReusableResultId.value = null;
+  void loadArtifactCounts();
+});
 /** 当前展开「产物」面板对应消息的 trace_id */
 const activeArtifactsTraceId = computed(() => {
   if (!artifactsOpenMsgId.value) return "";
@@ -6611,7 +6678,7 @@ const regenerate = async () => {
     const clientRequestId = createClientRequestId();
     if (!(await truncateServerHistory(keepCount))) return null;
     messages.value = remainingMessages;
-    return { content, files, clientRequestId };
+    return { content, files, clientRequestId, reusableResultId: null };
   });
 };
 const handleFeedback = async (msg: Message, type: "up" | "down") => {
@@ -7231,10 +7298,25 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);
 };
 
+const applyReusableResultStatusEvent = (msg: Message, data: any): boolean => {
+  if (data?.type !== "reusable_result_status") return false;
+  // 复用本轮结束时可能还会保存一个新的结果；不能让 saved 覆盖 reused，
+  // 否则顶部“引用提示”会在回答完成后消失。
+  if (data.status === "saved" && msg.reusableResultStatus?.status === "reused") return true;
+  msg.reusableResultStatus = {
+    status: String(data.status || "fallback"),
+    resultId: data.result_id ? String(data.result_id) : null,
+    originName: data.origin_name ? String(data.origin_name) : null,
+  };
+  return true;
+};
+
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
   applyStreamTraceId(msg, data);
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
+
+  if (applyReusableResultStatusEvent(msg, data)) return;
 
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
@@ -7549,6 +7631,9 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
         .map((file) => ({ ...file })),
   clientRequestId: overrides.clientRequestId || createClientRequestId(),
   groundingAction: overrides.groundingAction ? { ...overrides.groundingAction } : undefined,
+  reusableResultId: overrides.reusableResultId !== undefined
+    ? (overrides.reusableResultId || undefined)
+    : (selectedReusableResultId.value || undefined),
 });
 
 const sendPreparedMessage = async (
@@ -7686,7 +7771,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       body.metadata_dataset_ids = turnMetadataDatasetIds;
     }
     if (snapshot.groundingAction) body.grounding_action = snapshot.groundingAction;
+    if (snapshot.reusableResultId) body.reusable_result_id = snapshot.reusableResultId;
     body.client_request_id = snapshot.clientRequestId;
+    // 结果选择是一次性的：请求体已经捕获后立即消费，避免下一轮普通提问误带旧 ID。
+    if (snapshot.reusableResultId) selectedReusableResultId.value = null;
     const headers: any = {
       "Content-Type": "application/json",
     };
@@ -7741,6 +7829,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             if (String(data.session_id || "") === String(browserSessionId.value || "")) {
               browserRefreshSignal.value += 1;
             }
+          } else if (applyReusableResultStatusEvent(agentMsg.value, data)) {
+            // 结果保存/复用状态只更新消息元数据，不改变回答正文。
           } else if (data.type === "log") {
             if (agentMsg.value.isThinking && data.title) {
               agentMsg.value.thinkingText = `正在${data.title}...`;
@@ -7852,6 +7942,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       try {
         const data = JSON.parse(dataStr);
         applyStreamTraceId(agentMsg.value, data);
+        if (applyReusableResultStatusEvent(agentMsg.value, data)) continue;
         if (data.type === "log") addEmbedLogFromStream(agentMsg.value, data);
         else if (mergeStreamCitations(agentMsg.value, data)) continue;
         else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) continue;
