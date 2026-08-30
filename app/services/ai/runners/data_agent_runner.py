@@ -370,11 +370,29 @@ class DataAgentRunner(BaseExecutor):
         raw_max = int(max_steps_str) if max_steps_str else 6
         return min(raw_max, DATA_QUERY_MAX_STEPS_CAP)
 
-    async def _load_last_data_result(self) -> Optional[Dict[str, Any]]:
-        return await chatbi_followup_data.load_last_data_result(self)
+    async def _load_last_data_result(
+        self,
+        *,
+        preferred_result_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await chatbi_followup_data.load_last_data_result(
+            self,
+            preferred_result_id=preferred_result_id,
+        )
 
-    async def _load_last_data_result_with_retry(self, *, attempts: int=3, delay_seconds: float=0.15) -> Optional[Dict[str, Any]]:
-        return await chatbi_followup_data.load_last_data_result_with_retry(self, attempts=attempts, delay_seconds=delay_seconds)
+    async def _load_last_data_result_with_retry(
+        self,
+        *,
+        attempts: int = 3,
+        delay_seconds: float = 0.15,
+        preferred_result_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await chatbi_followup_data.load_last_data_result_with_retry(
+            self,
+            attempts=attempts,
+            delay_seconds=delay_seconds,
+            preferred_result_id=preferred_result_id,
+        )
 
     @staticmethod
     def _normalize_rows_for_followup_save(parsed_tool_output: Any) -> Any:
@@ -384,7 +402,7 @@ class DataAgentRunner(BaseExecutor):
     def _latest_data_assistant_excerpt(history: List[Dict[str, str]], *, max_chars: int=12000) -> str:
         return chatbi_followup_data.latest_data_assistant_excerpt(history, max_chars=max_chars)
 
-    async def _save_last_data_result_for_followups(self, tool_args: Dict[str, Any], parsed_tool_output: Any) -> None:
+    async def _save_last_data_result_for_followups(self, tool_args: Dict[str, Any], parsed_tool_output: Any) -> Optional[Dict[str, Any]]:
         return await chatbi_followup_data.save_last_data_result_for_followups(self, tool_args, parsed_tool_output)
 
     async def _maybe_enrich_sql_tool_result(self, *, tool_args: dict[str, Any], output: Any, parsed_output: Any) -> tuple[Any, Any, Any | None]:
@@ -587,6 +605,32 @@ class DataAgentRunner(BaseExecutor):
                 yield chunk
 
     async def _execute_raw(self, history: List[Dict[str, str]]) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.reusable_result import (
+            CLICKED_REPLY_MARKER,
+            prepare_reusable_route_input,
+        )
+
+        raw_current_question = str(self.current_user_query or "")
+        raw_history_question = next(
+            (
+                str(message.get("content") or "")
+                for message in reversed(history or [])
+                if isinstance(message, dict)
+                and str(message.get("role") or "").lower() == "user"
+            ),
+            "",
+        )
+        route_source_question = (
+            raw_history_question
+            if CLICKED_REPLY_MARKER.lower() in raw_history_question.lower()
+            else raw_current_question or raw_history_question
+        )
+        history, cleaned_question = prepare_reusable_route_input(
+            history,
+            route_source_question,
+        )
+        if CLICKED_REPLY_MARKER.lower() in raw_current_question.lower():
+            self.current_user_query = cleaned_question
         self._ensure_grounding_ledger()
         self._active_history = list(history or [])
         model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
@@ -600,11 +644,18 @@ class DataAgentRunner(BaseExecutor):
             if chunk.get("status") == "error" and not chunk.get("type"):
                 return
         runtime_messages = [message for message in normalize_messages_for_llm(convert_history_to_messages(history, strip_thought=True)) if not isinstance(message, SystemMessage)]
-        user_question = (
+        raw_user_question = (
             str(self.current_user_query)
             if self.current_user_query is not None
             else next((str(getattr(message, 'content', '')) for message in reversed(runtime_messages)), '')
         ).strip()
+        from app.services.ai.reusable_result import CLICKED_REPLY_MARKER, extract_reusable_action_query
+
+        user_question = (
+            extract_reusable_action_query(raw_user_question)
+            if CLICKED_REPLY_MARKER.lower() in raw_user_question.lower()
+            else raw_user_question
+        )
         if not self._mixed_task_plan_active:
             from app.services.ai.chatbi_task_plan import (
                 ChatBITaskStatus,
@@ -656,7 +707,12 @@ class DataAgentRunner(BaseExecutor):
                 finally:
                     self._mixed_task_plan_active = False
                 return
-        last_data_result_for_turn = await self._load_last_data_result_with_retry()
+        preferred_reusable_result_id = str(
+            getattr(self.turn_decision, "reusable_result_id", None) or ""
+        ).strip() or None
+        last_data_result_for_turn = await self._load_last_data_result_with_retry(
+            preferred_result_id=preferred_reusable_result_id,
+        )
         turn_cls, turn_intent_info, turn_elapsed_ms = await resolve_data_query_turn_classification(user_question, history, user_info=self.user_info, conversation_id=self.conversation_id, has_last_data_result=last_data_result_for_turn is not None)
         if turn_cls.turn_type == DataQueryTurnType.NON_DATA_REQUEST and last_data_result_for_turn:
             from app.services.ai.runners.chatbi.non_data_policy import (
@@ -705,6 +761,17 @@ class DataAgentRunner(BaseExecutor):
         if turn_cls.requires_fresh_data:
             self._standalone_query = await chatbi_schema_prefetch.resolve_standalone_query_for_new_data_query(self, user_question, runtime_messages)
         system_content = await chatbi_system_prompt.build_system_content(self, context_action_result=last_data_result_for_turn if not turn_cls.requires_fresh_data else None, include_context_action=not turn_cls.requires_fresh_data)
+        context_action_message = None
+        if not turn_cls.requires_fresh_data and last_data_result_for_turn:
+            from app.services.ai.runners.chatbi.system_prompt import build_context_action_result_message
+            from app.services.ai.session_tool_artifact import insert_session_tool_artifact_context
+
+            context_action_message = build_context_action_result_message(last_data_result_for_turn)
+            if context_action_message:
+                runtime_messages = insert_session_tool_artifact_context(
+                    runtime_messages,
+                    HumanMessage(content=context_action_message),
+                )
         if (
             turn_cls.turn_type == DataQueryTurnType.DATA_FOLLOWUP_QUERY
             and last_data_result_for_turn

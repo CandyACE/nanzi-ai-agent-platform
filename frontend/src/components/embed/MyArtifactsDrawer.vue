@@ -4,8 +4,26 @@ import { artifactApi, type ArtifactListItem } from '@/api/artifact'
 import { resolveGeneratedFileHref } from '@/utils/generatedFileUrl'
 import { resolveFileTypeVisual } from '@/utils/fileTypeVisual'
 import { useToast } from '@/composables/useToast'
+import ReusableResultList from '@/components/embed/ReusableResultList.vue'
+import type { ReusableResultListItem } from '@/api/artifact'
 
 const modelValue = defineModel<boolean>({ default: false })
+
+const props = withDefaults(defineProps<{
+  conversationId?: string | null
+  initialTab?: 'files' | 'reusable'
+  selectedResultId?: string | null
+  focusedResultId?: string | null
+}>(), {
+  conversationId: null,
+  initialTab: 'files',
+  selectedResultId: null,
+  focusedResultId: null,
+})
+
+const emit = defineEmits<{
+  'select-reusable-result': [result: ReusableResultListItem]
+}>()
 
 const { showToast } = useToast()
 
@@ -23,6 +41,7 @@ const page = ref(1)
 const loading = ref(false)
 const error = ref('')
 const activeType = ref('')
+const activeTab = ref<'files' | 'reusable'>('files')
 const bodyRef = ref<HTMLElement | null>(null)
 
 const typeLabel = (t: string) =>
@@ -136,8 +155,19 @@ const keyHandler = (e: KeyboardEvent) => {
 }
 
 watch(modelValue, (open) => {
-  if (open) refresh()
+  if (open) {
+    activeTab.value = props.initialTab
+    if (activeTab.value === 'files') refresh()
+  }
 })
+
+watch(() => props.initialTab, (tab) => {
+  if (modelValue.value) activeTab.value = tab
+})
+
+const selectReusableResult = (result: ReusableResultListItem) => {
+  emit('select-reusable-result', result)
+}
 
 onMounted(() => {
   window.addEventListener('keydown', keyHandler)
@@ -197,8 +227,8 @@ onUnmounted(() => {
                 <svg class="h-5 w-5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <h3 class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">我的产出</h3>
-                <span v-if="total > 0" class="text-[10px] text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0">
+                <h3 class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">{{ activeTab === 'files' ? '我的产出' : '可复用结果' }}</h3>
+                <span v-if="activeTab === 'files' && total > 0" class="text-[10px] text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0">
                   {{ total }}
                 </span>
               </div>
@@ -215,8 +245,28 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <!-- Type filter -->
+            <!-- Output tabs -->
             <div class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900/40 flex-shrink-0 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                class="px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors"
+                :class="activeTab === 'files' ? 'bg-primary/10 text-primary' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                @click="activeTab = 'files'; refresh()"
+              >
+                文件产物
+              </button>
+              <button
+                type="button"
+                class="px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors"
+                :class="activeTab === 'reusable' ? 'bg-primary/10 text-primary' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                @click="activeTab = 'reusable'"
+              >
+                可复用结果
+              </button>
+            </div>
+
+            <!-- File type filter -->
+            <div v-if="activeTab === 'files'" class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900/40 flex-shrink-0 overflow-x-auto no-scrollbar">
               <button
                 v-for="t in ARTIFACT_TYPES"
                 :key="t.value"
@@ -239,6 +289,15 @@ onUnmounted(() => {
               class="flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 bg-white dark:bg-gray-900/60 min-h-0 touch-pan-y"
               @scroll.passive="scrollHandler"
             >
+              <ReusableResultList
+                v-if="activeTab === 'reusable'"
+                :conversation-id="props.conversationId || ''"
+                :selected-result-id="props.selectedResultId"
+                :focused-result-id="props.focusedResultId"
+                @select="selectReusableResult"
+              />
+
+              <template v-else>
               <!-- Loading -->
               <div v-if="loading && items.length === 0" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
                 <svg class="h-6 w-6 text-primary animate-spin" fill="none" viewBox="0 0 24 24">
@@ -310,6 +369,7 @@ onUnmounted(() => {
                   </svg>
                 </li>
               </ul>
+              </template>
             </div>
           </div>
         </div>

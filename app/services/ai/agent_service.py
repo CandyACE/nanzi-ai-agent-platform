@@ -3,7 +3,7 @@ import time
 import uuid
 import asyncio
 from datetime import datetime
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Collection
 
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.agent_manager import AgentManagerService
@@ -1195,6 +1195,7 @@ class AgentService:
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
+        reusable_result_id: Optional[str] = None,
         request_observability: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -1275,8 +1276,24 @@ class AgentService:
                         "execution_time_ms": max(1.0, queue_elapsed_ms),
                     }
                 from app.services.ai.executors.common import sanitize_client_messages_for_identity
+                from app.services.ai.reusable_result import (
+                    CLICKED_REPLY_MARKER,
+                    prepare_reusable_route_input,
+                )
 
                 messages = sanitize_client_messages_for_identity(messages)
+                # 快捷按钮会把被点击的整段 AI 回复附在当前 user content 后面。
+                # 这段内容只用于客户端展示/定位，不能进入历史、附件授权、技能注入或执行器。
+                if messages:
+                    raw_latest_user_content = str(
+                        messages[-1].get("content") or ""
+                    ) if isinstance(messages[-1], dict) else ""
+                    messages, cleaned_user_query = prepare_reusable_route_input(
+                        messages,
+                        raw_latest_user_content,
+                    )
+                    if CLICKED_REPLY_MARKER.lower() in raw_latest_user_content.lower():
+                        shared_state["clicked_reusable_reply"] = True
 
                 # AI 提问卡的回执必须先由服务端按 user/conversation/question 校验，
                 # 不能把客户端拼接的选项直接交给模型自行解释。
@@ -1603,6 +1620,7 @@ class AgentService:
                     permission_options=permission_options,
                     knowledge_dataset_ids=knowledge_dataset_ids,
                     metadata_dataset_ids=metadata_dataset_ids,
+                    reusable_result_id=reusable_result_id,
                     request_observability=request_observability,
                     trace_id=trace_id,
                     trace_buffer=trace_buffer,
@@ -3301,6 +3319,45 @@ class AgentService:
         )
         return executor
 
+    async def _resolve_reusable_result_decision(
+        self,
+        *,
+        user_info: Optional[Dict[str, Any]],
+        conversation_id: Optional[str],
+        user_query: str,
+        preferred_result_id: Optional[str] = None,
+        allowed_result_types: Collection[str] | None = None,
+    ) -> Any:
+        """在进入路由/执行器前读取会话结果，Redis 故障时无感降级。"""
+        if not user_info or not conversation_id:
+            from app.services.ai.reusable_result import ReusableResultDecision
+
+            return ReusableResultDecision(mode="none")
+        raw_user_id = user_info.get("user_id") or user_info.get("id")
+        if not raw_user_id:
+            from app.services.ai.reusable_result import ReusableResultDecision
+
+            return ReusableResultDecision(mode="none")
+        try:
+            from app.services.ai.reusable_result import resolve_reusable_result
+
+            current, stack = await asyncio.gather(
+                memory_service.get_reusable_result(str(raw_user_id), conversation_id),
+                memory_service.get_reusable_result_stack(str(raw_user_id), conversation_id),
+            )
+            return resolve_reusable_result(
+                user_query,
+                current=current,
+                stack=stack,
+                preferred_result_id=preferred_result_id,
+                allowed_result_types=allowed_result_types,
+            )
+        except Exception as exc:
+            logger.warning("[ReusableResult] pre-route resolve failed: %s", exc)
+            from app.services.ai.reusable_result import ReusableResultDecision
+
+            return ReusableResultDecision(mode="none", reason="resolver_unavailable")
+
 
     async def _run_chat_turn_stream(
         self,
@@ -3318,11 +3375,12 @@ class AgentService:
         permission_options: Optional[Dict[str, Any]],
         knowledge_dataset_ids: Optional[List[str]],
         metadata_dataset_ids: Optional[List[str]],
-        request_observability: Optional[Dict[str, Any]],
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
         start_time: float,
         shared_state: Optional[Dict[str, Any]] = None,
+        reusable_result_id: Optional[str] = None,
+        request_observability: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Internal turn runner; must be called inside conversation run lane when enabled."""
         agent_config = None
@@ -3336,19 +3394,42 @@ class AgentService:
         performance_tracker = ExecutionPerformanceTracker()
 
         try:
+            reusable_decision_query = user_query
+            if (shared_state or {}).get("clicked_reusable_reply"):
+                # 正文和执行器只接收清理后的动作文本；这个内部标记仅用于保留
+                # “点击旧回复”带来的复用意图，不会被送入模型上下文。
+                from app.services.ai.reusable_result import CLICKED_REPLY_MARKER
+
+                reusable_decision_query = f"{user_query}\n{CLICKED_REPLY_MARKER}"
+            reusable_result_decision = await self._resolve_reusable_result_decision(
+                user_info=user_info,
+                conversation_id=conversation_id,
+                user_query=reusable_decision_query,
+                preferred_result_id=reusable_result_id,
+            )
+            from app.services.ai.reusable_result import (
+                build_reusable_result_status_event,
+                prepare_reusable_route_input,
+            )
+
+            route_messages, route_user_query = prepare_reusable_route_input(
+                messages,
+                user_query,
+            )
+
             # 1. Resolve and Verify Agent Configuration and Permissions
             route_events: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
             resolve_task = self._start_route_resolution(
                 route_events=route_events,
                 resolve_kwargs={
-                    "messages": messages,
+                    "messages": route_messages,
                     "agent_id": agent_id,
                     "agent_name": agent_name,
                     "version_id": version_id,
                     "enable_multi_agent": enable_multi_agent,
                     "user_info": user_info,
                     "trace_buffer": trace_buffer,
-                    "user_query": user_query,
+                    "user_query": route_user_query,
                     "conversation_id": conversation_id,
                 },
             )
@@ -3524,6 +3605,59 @@ class AgentService:
                     provenance="router_failure",
                     stage_timings_ms={"route_resolution": route_elapsed_ms},
                 )
+
+            # 路由完成后才知道本轮 Runner 的事实域。专用路径只接收自己的结果类型；
+            # 通用 Assistant 保留跨类型加工能力（例如数据转图、网页转 Markdown）。
+            allowed_reusable_result_types: Collection[str] | None = None
+            if turn_decision.turn_kind == "knowledge":
+                allowed_reusable_result_types = {"knowledge"}
+            elif turn_decision.turn_kind == "data_query":
+                allowed_reusable_result_types = {"data"}
+            if allowed_reusable_result_types is not None:
+                reusable_result_decision = await self._resolve_reusable_result_decision(
+                    user_info=user_info,
+                    conversation_id=conversation_id,
+                    user_query=reusable_decision_query,
+                    preferred_result_id=reusable_result_id,
+                    allowed_result_types=allowed_reusable_result_types,
+                )
+
+            runner_reusable_result_id: str | None = None
+            if reusable_result_decision.mode != "none":
+                runner_reusable_result_id = (
+                    str(reusable_result_decision.result.get("result_id") or "")
+                    if reusable_result_decision.result
+                    else (
+                        str(reusable_result_id or "").strip()
+                        if reusable_result_decision.reason.startswith("selected_result_")
+                        else None
+                    )
+                ) or None
+                turn_decision = turn_decision.model_copy(
+                    update={
+                        "reusable_result_mode": reusable_result_decision.mode,
+                        "reusable_result_id": runner_reusable_result_id,
+                        "reusable_result_reason": reusable_result_decision.reason,
+                    }
+                )
+
+            if shared_state is not None:
+                shared_state["reusable_result_decision"] = {
+                    "mode": reusable_result_decision.mode,
+                    "result_id": (
+                        str(reusable_result_decision.result.get("result_id") or "")
+                        if reusable_result_decision.result
+                        else runner_reusable_result_id
+                    ),
+                    "reason": reusable_result_decision.reason,
+                }
+            if reusable_result_decision.mode == "reuse":
+                yield build_reusable_result_status_event(
+                    status="reused",
+                    payload=reusable_result_decision.result,
+                )
+            elif reusable_result_decision.mode == "fallback":
+                yield build_reusable_result_status_event(status="fallback")
 
             if route_details and route_details.provenance == "router":
                 r_thought = getattr(route_details, "reasoning", "No reasoning")
@@ -4185,6 +4319,7 @@ class AgentService:
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
+        reusable_result_id: Optional[str] = None,
         request_observability: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -4210,6 +4345,7 @@ class AgentService:
             permission_options=permission_options,
             knowledge_dataset_ids=knowledge_dataset_ids,
             metadata_dataset_ids=metadata_dataset_ids,
+            reusable_result_id=reusable_result_id,
             request_observability=request_observability,
         ):
             if "trace_id" in chunk and chunk.get("status") == "init":

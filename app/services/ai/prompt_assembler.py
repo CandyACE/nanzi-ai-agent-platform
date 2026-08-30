@@ -106,7 +106,12 @@ async def resolve_effective_prompt_tool_names_for_turn(
     turn_decision: TurnDecision,
 ) -> set[str]:
     """Resolve prompt names for the turn directly from configured and implicit tools."""
-    return resolve_effective_prompt_tool_names(agent_config)
+    names = resolve_effective_prompt_tool_names(agent_config)
+    if str(getattr(turn_decision, "reusable_result_mode", "none") or "none").strip().lower() == "reuse":
+        from app.services.ai.session_tool_artifact import REUSABLE_RESULT_ACQUISITION_TOOLS
+
+        names.difference_update(REUSABLE_RESULT_ACQUISITION_TOOLS)
+    return names
 
 
 def _prepend_block(current: str, block: Optional[str]) -> str:

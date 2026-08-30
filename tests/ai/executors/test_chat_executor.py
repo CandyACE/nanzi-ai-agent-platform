@@ -620,6 +620,53 @@ async def test_general_runner_synthesis_fallback_when_no_text_and_no_context(cha
 
 
 @pytest.mark.asyncio
+async def test_general_runner_todo_only_result_keeps_reply_visible_without_synthesis(chat_config):
+    """仅更新任务清单且没有业务结果时，返回安全提示而不是把 todo 当答案。"""
+    from agentscope.state import AgentState
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
+
+    class FakeAgent:
+        def __init__(self):
+            self.state = AgentState(session_id="s1", reply_id="r1", context=[])
+
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-todo-only-reconcile",
+        trace_buffer=[],
+    )
+    state = new_native_stream_state()
+    state["used_tools"] = True
+    state["tool_names"] = {"todo-1": "todo_write"}
+    state["tool_outputs"] = {
+        "todo-1": '{"todos":[{"content":"整理报告","status":"completed"}]}'
+    }
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
+        new_callable=AsyncMock,
+    ) as get_synthesis_llm:
+        chunks = []
+        async for chunk in runner._reconcile_reply_after_stream(
+            agent=FakeAgent(),
+            state=state,
+            native_model=SimpleNamespace(model="qwen-test"),
+        ):
+            chunks.append(chunk)
+
+    content = "".join(
+        str(chunk.get("content") or "")
+        for chunk in chunks
+        if chunk.get("type") == "answer_delta"
+    )
+    assert "未能生成完整回答" in content
+    assert "todo_write" not in content
+    get_synthesis_llm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_general_runner_synthesis_after_transitional_text_and_more_tools(chat_config):
     """过渡语后又调工具、再无正文时，应触发 synthesis 而非因 partial 跳过兜底。"""
     from agentscope.state import AgentState
@@ -1507,6 +1554,147 @@ async def test_knowledge_runner_uses_agentscope_native_agent(chat_config):
     assert "knowledge final" in "".join(
         e["content"] for e in events if "content" in e and "type" not in e
     )
+
+
+@pytest.mark.asyncio
+async def test_knowledge_runner_reuses_cached_result_without_search_tool(chat_config):
+    from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
+
+    async def no_multimodal_gate(*args, **kwargs):
+        if False:
+            yield {}
+
+    async def cached_native_turn(self, **kwargs):
+        yield {"content": "cached knowledge final"}
+
+    runner = KnowledgeAgentRunner(
+        config=chat_config,
+        trace_id="trace-cached-kb",
+        trace_buffer=[],
+        debug_options={"grounding_enabled": False},
+        user_info={"user_id": "42"},
+        conversation_id="conv-cached-kb",
+        turn_decision=TurnDecision(
+            reusable_result_mode="reuse",
+            reusable_result_id="kb-result-1",
+        ),
+        current_user_query="继续总结\n\n---\n\n【被点击的 AI 回复】\n上一轮知识库结果",
+    )
+    cached_result = {
+        "result_id": "kb-result-1",
+        "result_type": "knowledge",
+        "status": "completed",
+        "content": "上一轮知识库结果正文",
+        "text_excerpt": "上一轮知识库结果正文",
+        "structured": {"answer": "上一轮知识库结果正文"},
+    }
+
+    with patch(
+        "app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled",
+        AsyncMock(return_value=True),
+    ), patch(
+        "app.services.ai.multimodal_support.run_multimodal_gate",
+        new=no_multimodal_gate,
+    ), patch.object(
+        runner,
+        "_resolve_knowledge_tools",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "app.services.ai.session_tool_artifact.load_session_tool_artifact",
+        AsyncMock(return_value=cached_result),
+    ), patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=SimpleNamespace(native_model=object())),
+    ), patch(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="5"),
+    ), patch.object(
+        KnowledgeAgentRunner,
+        "_execute_with_agentscope_native_agent",
+        new=cached_native_turn,
+    ), patch(
+        "app.services.ai.runtime.agentscope.workspace.append_session_workspace_sandbox_to_system_prompt",
+        AsyncMock(side_effect=lambda content, **kwargs: content),
+    ):
+        events = []
+        async for chunk in runner.execute([
+            {
+                "role": "user",
+                "content": runner.current_user_query,
+            }
+        ]):
+            events.append(chunk)
+
+    assert not any("search_knowledge_base 不可用" in str(event.get("content", "")) for event in events)
+    assert "cached knowledge final" in "".join(
+        event["content"] for event in events if "content" in event and "type" not in event
+    )
+
+
+def test_knowledge_runner_only_reuses_knowledge_results():
+    from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
+
+    assert KnowledgeAgentRunner._is_knowledge_reusable_result(
+        {"result_type": "knowledge", "content": "知识库结果"}
+    ) is True
+    assert KnowledgeAgentRunner._is_knowledge_reusable_result(
+        {"result_type": "data", "content": "数据查询结果"}
+    ) is False
+    assert KnowledgeAgentRunner._is_knowledge_reusable_result(
+        {"result_type": "web", "content": "网页结果"}
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_knowledge_runner_does_not_bypass_search_for_data_result(chat_config):
+    from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
+
+    async def no_multimodal_gate(*args, **kwargs):
+        if False:
+            yield {}
+
+    runner = KnowledgeAgentRunner(
+        config=chat_config,
+        trace_id="trace-data-cache-in-kb",
+        trace_buffer=[],
+        user_info={"user_id": "42"},
+        conversation_id="conv-data-cache-in-kb",
+        turn_decision=TurnDecision(
+            reusable_result_mode="reuse",
+            reusable_result_id="data-result-1",
+        ),
+        current_user_query="请回答知识库问题",
+    )
+
+    with patch(
+        "app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled",
+        AsyncMock(return_value=True),
+    ), patch(
+        "app.services.ai.multimodal_support.run_multimodal_gate",
+        new=no_multimodal_gate,
+    ), patch.object(
+        runner,
+        "_resolve_knowledge_tools",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "app.services.ai.session_tool_artifact.load_session_tool_artifact",
+        AsyncMock(
+            return_value={
+                "result_id": "data-result-1",
+                "result_type": "data",
+                "status": "completed",
+                "content": "上一轮数据查询结果",
+            }
+        ),
+    ):
+        events = []
+        async for chunk in runner.execute(
+            [{"role": "user", "content": "请回答知识库问题"}]
+        ):
+            events.append(chunk)
+
+    assert any("search_knowledge_base 不可用" in str(event.get("content", "")) for event in events)
+    assert not any(event.get("title") == "自动复用知识库" for event in events)
 
 
 @pytest.mark.asyncio

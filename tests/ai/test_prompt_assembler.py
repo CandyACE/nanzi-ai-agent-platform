@@ -296,6 +296,28 @@ def test_effective_prompt_tool_names_exposes_configured_tools():
     assert "Bash" in names
 
 
+@pytest.mark.asyncio
+async def test_effective_prompt_tool_names_filters_acquisition_tools_on_reuse():
+    config = SimpleNamespace(
+        agent_name="TestAgent",
+        tools=["sub_agent_call", "execute_sql_query", "write_file"],
+    )
+    decision = TurnDecision(
+        reusable_result_mode="reuse",
+        reusable_result_id="result-1",
+    )
+
+    names = await resolve_effective_prompt_tool_names_for_turn(
+        config,
+        current_user_query="生成分析报告",
+        turn_decision=decision,
+    )
+
+    assert "write_file" in names
+    assert "sub_agent_call" not in names
+    assert "execute_sql_query" not in names
+
+
 def test_platform_prompt_prefers_mermaid_for_structural_diagrams_only():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,

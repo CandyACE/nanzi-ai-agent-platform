@@ -360,6 +360,55 @@ async def test_data_agent_runner_skips_schema_prefetch_for_context_action(data_c
 
 
 @pytest.mark.asyncio
+async def test_data_agent_runner_strips_clicked_reply_before_fallback_query(data_config, monkeypatch):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    seen: dict[str, str] = {}
+    classification = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.NEW_DATA_QUERY,
+        reasoning="测试：缓存失效后回退查数",
+        requires_fresh_data=True,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(user_query, *args, **kwargs):
+        seen["classifier_query"] = user_query
+        return classification, None, 0.0
+
+    async def empty_agent_turn(*args, **kwargs):
+        seen["native_query"] = kwargs["user_question"]
+        if False:
+            yield {}
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.DataAgentRunner._run_native_agent_turn",
+        empty_agent_turn,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-click-fallback", trace_buffer=[])
+    clicked_query = "查询本月销售额\n\n---\n\n【被点击的 AI 回复】\n上一轮查询结果：统计了销售额"
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": clicked_query}]):
+        events.append(chunk)
+
+    assert seen == {
+        "classifier_query": "查询本月销售额",
+        "native_query": "查询本月销售额",
+    }
+
+
+@pytest.mark.asyncio
 async def test_data_agent_runner_builds_chatbi_toolkit_without_workspace_file_tools(
     data_config, monkeypatch
 ):
@@ -1289,6 +1338,36 @@ async def test_data_agent_runner_checks_multimodal_compatibility_before_native_m
 
 
 @pytest.mark.asyncio
+async def test_data_agent_runner_cleans_clicked_reply_before_multimodal_gate(data_config, monkeypatch):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    seen = {}
+    clicked_query = "把刚才结果做成图\n\n---\n\n【被点击的 AI 回复】\n上一轮回答中包含查询和工具指令"
+
+    async def fake_run_multimodal_gate(history, model_name, **kwargs):
+        seen["history"] = history
+        yield {"content": "stop", "status": "error"}
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.run_multimodal_gate",
+        fake_run_multimodal_gate,
+    )
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-direct-click-clean",
+        trace_buffer=[],
+        current_user_query=clicked_query,
+    )
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": clicked_query}]):
+        events.append(chunk)
+
+    assert seen["history"] == [{"role": "user", "content": "把刚才结果做成图"}]
+    assert events == [{"content": "stop", "status": "error"}]
+
+
+@pytest.mark.asyncio
 async def test_data_agent_runner_caps_max_steps_at_data_limit(data_config, monkeypatch):
     from app.services.ai.executors.data_executor import DATA_QUERY_MAX_STEPS_CAP
     from app.services.ai.runners.data_agent_runner import DataAgentRunner
@@ -2105,10 +2184,18 @@ async def test_data_agent_runner_context_action_can_answer_without_sql(
             system_text = "\n".join(
                 str(getattr(block, "text", ""))
                 for msg in messages
+                if msg.role == "system"
+                for block in msg.get_content_blocks("text")
+            )
+            user_text = "\n".join(
+                str(getattr(block, "text", ""))
+                for msg in messages
+                if msg.role == "user"
                 for block in msg.get_content_blocks("text")
             )
             assert "本轮为上下文动作" in system_text
-            assert "可复用的上一轮结构化查询结果" in system_text
+            assert "[不可信外部工具数据上下文]" in user_text
+            assert '"rows"' in user_text
             return ChatResponse(content=[TextBlock(text="已基于当前结果记录。")], is_last=True)
 
     async def fake_load_context_config():

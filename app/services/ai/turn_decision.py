@@ -128,6 +128,9 @@ class TurnDecision(BaseModel):
     knowledge_catalog_match_ids: list[str] = Field(default_factory=list)
     knowledge_catalog_match_confidence: str = "none"
     knowledge_fallback_allowed: bool = False
+    reusable_result_mode: str = "none"
+    reusable_result_id: Optional[str] = None
+    reusable_result_reason: Optional[str] = None
     accessible_resources: Optional[str] = None
     turn_labels: list[str] = Field(default_factory=list)
     relation_to_previous: str = "unknown"
@@ -426,6 +429,9 @@ class TurnDecision(BaseModel):
             "knowledge_catalog_match_confidence": self.knowledge_catalog_match_confidence,
             "knowledge_catalog_match_ids": list(self.knowledge_catalog_match_ids),
             "knowledge_fallback_allowed": bool(self.knowledge_fallback_allowed),
+            "reusable_result_mode": self.reusable_result_mode,
+            "reusable_result_id": self.reusable_result_id,
+            "reusable_result_reason": self.reusable_result_reason,
             "evidence": list(self.evidence),
             "stage_timings_ms": timings,
         }

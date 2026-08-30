@@ -79,6 +79,7 @@ from app.services.ai.runtime.agentscope.tool_result import (
 from app.services.ai.runtime.agentscope import process_narration as process_narration_events
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.stream_reconcile import (
+    build_tool_review_lines,
     GENERIC_SYNTHESIS_EMPTY_FALLBACK,
     compute_stream_reconcile_gap,
     needs_tool_synthesis_fallback,
@@ -1055,19 +1056,37 @@ class AssistantAgentRunner(BaseExecutor):
             system_content = f"{route_hint}\n\n{system_content}"
 
         from app.services.ai.session_tool_artifact import (
-            append_session_tool_artifact_to_system_prompt,
+            build_session_tool_artifact_context_message,
+            filter_tools_for_reusable_result,
+            insert_session_tool_artifact_context,
             load_session_tool_artifact,
         )
 
         _user_q_for_artifact = user_query
+        _preferred_reusable_result_id = str(
+            getattr(self.turn_decision, "reusable_result_id", None) or ""
+        ).strip() or None
+        _force_reuse = (
+            str(getattr(self.turn_decision, "reusable_result_mode", "none") or "none")
+            .strip()
+            .lower()
+            == "reuse"
+        )
         _session_artifact = await load_session_tool_artifact(
             self._runtime_user_id(),
             self.conversation_id,
+            preferred_result_id=_preferred_reusable_result_id,
         )
-        system_content = append_session_tool_artifact_to_system_prompt(
-            system_content,
-            _user_q_for_artifact,
+        session_artifact_context = build_session_tool_artifact_context_message(
             _session_artifact,
+            user_question=_user_q_for_artifact,
+            force_reuse=_force_reuse,
+        )
+        tools = filter_tools_for_reusable_result(
+            tools,
+            user_question=_user_q_for_artifact,
+            artifact=_session_artifact,
+            force_reuse=_force_reuse,
         )
 
         from app.services.ai.time_anchor import append_time_anchor_for_user_question
@@ -1086,6 +1105,11 @@ class AssistantAgentRunner(BaseExecutor):
             pruned_history = history
             runtime_messages = [SystemMessage(content=system_content)]
             runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
+            if session_artifact_context:
+                runtime_messages = insert_session_tool_artifact_context(
+                    runtime_messages,
+                    HumanMessage(content=session_artifact_context),
+                )
             runtime_messages = normalize_messages_for_llm(runtime_messages)
 
             start_synthesis = time.time()
@@ -1173,6 +1197,11 @@ class AssistantAgentRunner(BaseExecutor):
         pruned_history = history
         runtime_messages = [SystemMessage(content=system_content)]
         runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
+        if session_artifact_context:
+            runtime_messages = insert_session_tool_artifact_context(
+                runtime_messages,
+                HumanMessage(content=session_artifact_context),
+            )
         runtime_messages = normalize_messages_for_llm(runtime_messages)
 
         # --- ReAct Mode (With Tools) ---
@@ -1596,13 +1625,19 @@ class AssistantAgentRunner(BaseExecutor):
 
                 if self.conversation_id:
                     from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
+                    from app.services.ai.reusable_result import build_reusable_result_status_event
 
-                    await persist_turn_artifact_candidate(
+                    saved_meta = await persist_turn_artifact_candidate(
                         user_id=self._runtime_user_id(),
                         conversation_id=self.conversation_id,
                         turn_state=getattr(self, "_session_artifact_turn", None),
                         clear_if_empty=not interrupted,
                     )
+                    if saved_meta:
+                        yield build_reusable_result_status_event(
+                            status="saved",
+                            payload=saved_meta,
+                        )
                 if not interrupted and self.conversation_id:
                     await agent_state_store.save(
                         user_id=self._runtime_user_id(),
@@ -1688,10 +1723,14 @@ class AssistantAgentRunner(BaseExecutor):
     def _latest_user_runtime_messages(
         runtime_messages: List[BaseMessage],
     ) -> List[BaseMessage]:
+        latest: List[BaseMessage] = []
         for message in reversed(runtime_messages):
             if isinstance(message, HumanMessage):
-                return [message]
-        return []
+                latest.append(message)
+                continue
+            if latest:
+                break
+        return list(reversed(latest))
 
     async def _stream_agentscope_native_events(
         self,
@@ -1982,9 +2021,22 @@ class AssistantAgentRunner(BaseExecutor):
             streamed,
             synthesis_agent_text,
             used_tools=bool(state.get("used_tools")),
+            tool_names=state.get("tool_names"),
             tool_outputs=state.get("tool_outputs"),
         ):
             if not streamed.strip() and not agent_text.strip():
+                if (
+                    state.get("used_tools")
+                    and not build_tool_review_lines(
+                        state.get("tool_names"),
+                        state.get("tool_outputs"),
+                    )
+                ):
+                    async for chunk in self._stream_general_synthesis_fallback(
+                        state=state,
+                        native_model=native_model,
+                    ):
+                        yield chunk
                 logger.warning(
                     "[AssistantAgentRunner] Reply ended without assistant text"
                 )
@@ -2019,11 +2071,7 @@ class AssistantAgentRunner(BaseExecutor):
         }
         tool_names: Dict[str, str] = state.get("tool_names", {})
         tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
-        review_lines = [
-            f"- {tool_names[tool_id]}: {truncate_for_context(tool_outputs.get(tool_id, ''))}"
-            for tool_id in tool_names
-            if tool_names.get(tool_id)
-        ]
+        review_lines = build_tool_review_lines(tool_names, tool_outputs)
         constraint = (
             "【系统约束·工具循环熔断】禁止再调用任何工具。"
             "请仅使用系统提示（含时间锚点，若有）与下列已有执行结果直接回答用户；"
@@ -2101,10 +2149,7 @@ class AssistantAgentRunner(BaseExecutor):
             return
         tool_names: Dict[str, str] = state.get("tool_names", {})
         tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
-        review_lines = [
-            f"- {tool_names[tool_id]}: {truncate_for_context(tool_outputs.get(tool_id, ''))}"
-            for tool_id in tool_names
-        ]
+        review_lines = build_tool_review_lines(tool_names, tool_outputs)
         if not review_lines:
             logger.warning("[AssistantAgentRunner] Synthesis skipped: no tool review lines")
             state["full_content"] = (state.get("full_content") or "") + GENERIC_SYNTHESIS_EMPTY_FALLBACK
@@ -2493,13 +2538,19 @@ class AssistantAgentRunner(BaseExecutor):
 
                 if self.conversation_id:
                     from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
+                    from app.services.ai.reusable_result import build_reusable_result_status_event
 
-                    await persist_turn_artifact_candidate(
+                    saved_meta = await persist_turn_artifact_candidate(
                         user_id=self._runtime_user_id(),
                         conversation_id=self.conversation_id,
                         turn_state=getattr(self, "_session_artifact_turn", None),
                         clear_if_empty=not interrupted,
                     )
+                    if saved_meta:
+                        yield build_reusable_result_status_event(
+                            status="saved",
+                            payload=saved_meta,
+                        )
                 if not interrupted and self.conversation_id:
                     tools_fingerprint = build_tools_fingerprint(self.config, tools)
                     await agent_state_store.save(

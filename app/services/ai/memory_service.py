@@ -10,6 +10,67 @@ from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
+_PERSIST_REUSABLE_RESULT_SCRIPT = """
+local stack_key = KEYS[2]
+local existing = {}
+local raw = redis.call('GET', stack_key)
+if raw then
+    local ok, decoded = pcall(cjson.decode, raw)
+    if ok and type(decoded) == 'table' then
+        existing = decoded
+    end
+end
+
+local result_id = ARGV[4]
+local next_stack = {}
+for _, item in ipairs(existing) do
+    if type(item) == 'table' and
+       (result_id == '' or tostring(item['result_id'] or '') ~= result_id) then
+        table.insert(next_stack, item)
+    end
+end
+
+table.insert(next_stack, cjson.decode(ARGV[1]))
+local max_depth = math.max(1, tonumber(ARGV[3]) or 10)
+while #next_stack > max_depth do
+    table.remove(next_stack, 1)
+end
+
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('SET', stack_key, cjson.encode(next_stack), 'EX', ARGV[2])
+return 1
+"""
+
+_PERSIST_DATA_RESULT_STACK_SCRIPT = """
+local stack_key = KEYS[1]
+local existing = {}
+local raw = redis.call('GET', stack_key)
+if raw then
+    local ok, decoded = pcall(cjson.decode, raw)
+    if ok and type(decoded) == 'table' then
+        existing = decoded
+    end
+end
+
+local result_id = ARGV[4]
+local next_stack = {}
+for _, item in ipairs(existing) do
+    if type(item) == 'table' and
+       (result_id == '' or tostring(item['result_id'] or '') ~= result_id) then
+        table.insert(next_stack, item)
+    end
+end
+
+table.insert(next_stack, cjson.decode(ARGV[1]))
+local max_depth = math.max(1, tonumber(ARGV[3]) or 10)
+while #next_stack > max_depth do
+    table.remove(next_stack, 1)
+end
+
+redis.call('SET', stack_key, cjson.encode(next_stack), 'EX', ARGV[2])
+return 1
+"""
+
 class MemoryService:
     """
     Manages conversation history in Redis.
@@ -22,6 +83,7 @@ class MemoryService:
     DATA_RESULT_SUFFIX = "last_data_result"
     DATA_RESULT_STACK_SUFFIX = "data_result_stack_v1"
     SESSION_TOOL_ARTIFACT_SUFFIX = "session_tool_artifact_v1"
+    REUSABLE_RESULT_SUFFIX = "reusable_result_v1"
     CONTEXT_SNAPSHOT_SUFFIX = "context_snapshot_v1"
     
     def __init__(self, max_history_turns: int = 50, ttl: int = 2592000):
@@ -51,6 +113,14 @@ class MemoryService:
     def _get_session_tool_artifact_key(self, user_id: str, conversation_id: str) -> str:
         uid = require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.SESSION_TOOL_ARTIFACT_SUFFIX}"
+
+    def _get_reusable_result_key(self, user_id: str, conversation_id: str) -> str:
+        uid = require_user_id(user_id)
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.REUSABLE_RESULT_SUFFIX}:current"
+
+    def _get_reusable_result_stack_key(self, user_id: str, conversation_id: str) -> str:
+        uid = require_user_id(user_id)
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.REUSABLE_RESULT_SUFFIX}:stack"
 
     def _get_digest_key(self, user_id: str, conversation_id: str) -> str:
         """跨轮溢出摘录（digest）的独立 Redis key。
@@ -139,7 +209,17 @@ class MemoryService:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             parsed = json.loads(raw)
-            return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            safe_items = []
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if not isinstance(item, dict):
+                        continue
+                    safe_item = sanitize_reusable_result_payload(item)
+                    if safe_item:
+                        safe_items.append(safe_item)
+            return safe_items
         except Exception as e:
             logger.error("[MemoryService] Failed to get data result stack from key %s: %s", key, e)
             return []
@@ -152,20 +232,31 @@ class MemoryService:
         *,
         max_depth: int = 10,
     ) -> None:
-        from app.services.ai.chatbi_result_stack import ChatBIResultRef, push_result_ref
+        from app.services.ai.chatbi_result_stack import ChatBIResultRef
 
         redis = await get_redis()
         if not redis:
             logger.warning("[MemoryService] Redis client not available for push_data_result_ref")
             return
-        current = [ChatBIResultRef.from_dict(item) for item in await self.get_data_result_stack(user_id, conversation_id)]
-        stack = push_result_ref(current, ChatBIResultRef.from_dict(payload), max_depth=max_depth)
         key = self._get_data_result_stack_key(user_id, conversation_id)
         try:
-            await redis.set(
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            result_ref = ChatBIResultRef.from_dict(payload)
+            safe_payload = sanitize_reusable_result_payload(result_ref.to_dict()) or {}
+            result_id = str(safe_payload.get("result_id") or "")
+            eval_script = getattr(redis, "eval", None)
+            if not callable(eval_script):
+                logger.error("[MemoryService] Redis client does not support EVAL for data result stack")
+                return
+            await eval_script(
+                _PERSIST_DATA_RESULT_STACK_SCRIPT,
+                1,
                 key,
-                json.dumps([item.to_dict() for item in stack], ensure_ascii=False),
-                ex=self.ttl,
+                json.dumps(safe_payload, ensure_ascii=False),
+                str(self.ttl),
+                str(max(1, int(max_depth or 10))),
+                result_id,
             )
         except Exception as e:
             logger.error("[MemoryService] Failed to push data result stack key %s: %s", key, e)
@@ -630,7 +721,9 @@ class MemoryService:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else None
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            return sanitize_reusable_result_payload(parsed)
         except Exception as e:
             logger.error(f"[MemoryService] Failed to get last data result from key {key}: {e}")
             return None
@@ -646,7 +739,10 @@ class MemoryService:
 
         key = self._get_data_result_key(user_id, conversation_id)
         try:
-            await redis.set(key, json.dumps(payload, ensure_ascii=False), ex=self.ttl)
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            safe_payload = sanitize_reusable_result_payload(payload) or {}
+            await redis.set(key, json.dumps(safe_payload, ensure_ascii=False), ex=self.ttl)
             logger.info(f"[MemoryService] Stored last data result for key: {key}")
         except Exception as e:
             logger.error(f"[MemoryService] Failed to set last data result for key {key}: {e}")
@@ -668,7 +764,9 @@ class MemoryService:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else None
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            return sanitize_reusable_result_payload(parsed)
         except Exception as e:
             logger.error("[MemoryService] Failed to get session tool artifact %s: %s", key, e)
             return None
@@ -685,10 +783,153 @@ class MemoryService:
             return
         key = self._get_session_tool_artifact_key(user_id, conversation_id)
         try:
-            await redis.set(key, json.dumps(payload, ensure_ascii=False), ex=self.ttl)
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            safe_payload = sanitize_reusable_result_payload(payload) or {}
+            await redis.set(key, json.dumps(safe_payload, ensure_ascii=False), ex=self.ttl)
             logger.info("[MemoryService] Stored session tool artifact for key: %s", key)
         except Exception as e:
             logger.error("[MemoryService] Failed to set session tool artifact %s: %s", key, e)
+
+    async def get_reusable_result(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """读取当前会话的统一可复用结果。"""
+        try:
+            redis = await get_redis()
+            if not redis:
+                return None
+            key = self._get_reusable_result_key(user_id, conversation_id)
+            raw = await redis.get(key)
+            if not raw:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            parsed = json.loads(raw)
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            return sanitize_reusable_result_payload(parsed)
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to get reusable result: %s", exc)
+            return None
+
+    async def get_reusable_result_stack(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> List[Dict[str, Any]]:
+        """读取当前会话最近的统一可复用结果，旧结果在列表前面。"""
+        try:
+            redis = await get_redis()
+            if not redis:
+                return []
+            key = self._get_reusable_result_stack_key(user_id, conversation_id)
+            raw = await redis.get(key)
+            if not raw:
+                return []
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            parsed = json.loads(raw)
+            from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+            safe_items = []
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if not isinstance(item, dict):
+                        continue
+                    safe_item = sanitize_reusable_result_payload(item)
+                    if safe_item:
+                        safe_items.append(safe_item)
+            return safe_items
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to get reusable result stack: %s", exc)
+            return []
+
+    async def _persist_reusable_result_atomic(
+        self,
+        redis: Any,
+        user_id: str,
+        conversation_id: str,
+        payload: Dict[str, Any],
+        *,
+        max_depth: int = 10,
+    ) -> bool:
+        """原子写入 current 和 stack，避免并发读改写丢失结果。"""
+        eval_script = getattr(redis, "eval", None)
+        if not callable(eval_script):
+            logger.error("[MemoryService] Redis client does not support EVAL")
+            return False
+
+        from app.services.ai.reusable_result import sanitize_reusable_result_payload
+
+        safe_payload = sanitize_reusable_result_payload(payload) or {}
+        current_key = self._get_reusable_result_key(user_id, conversation_id)
+        stack_key = self._get_reusable_result_stack_key(user_id, conversation_id)
+        payload_json = json.dumps(safe_payload, ensure_ascii=False)
+        result_id = str(safe_payload.get("result_id") or "")
+        depth = max(1, int(max_depth or 10))
+        result = await eval_script(
+            _PERSIST_REUSABLE_RESULT_SCRIPT,
+            2,
+            current_key,
+            stack_key,
+            payload_json,
+            str(self.ttl),
+            str(depth),
+            result_id,
+        )
+        return bool(result)
+
+    async def set_reusable_result(
+        self,
+        user_id: str,
+        conversation_id: str,
+        payload: Dict[str, Any],
+    ) -> bool:
+        """写入 current，并将结果幂等加入 stack。"""
+        if not isinstance(payload, dict):
+            return False
+        try:
+            redis = await get_redis()
+            if not redis:
+                return False
+            return await self._persist_reusable_result_atomic(
+                redis,
+                user_id,
+                conversation_id,
+                payload,
+            )
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to set reusable result: %s", exc)
+            return False
+
+    async def push_reusable_result(
+        self,
+        user_id: str,
+        conversation_id: str,
+        payload: Dict[str, Any],
+        *,
+        max_depth: int = 10,
+    ) -> bool:
+        """将结果追加到 stack 并同步更新 current；相同 result_id 只保留最新一份。"""
+        if not isinstance(payload, dict):
+            return False
+        try:
+            redis = await get_redis()
+            if not redis:
+                return False
+            return await self._persist_reusable_result_atomic(
+                redis,
+                user_id,
+                conversation_id,
+                payload,
+                max_depth=max_depth,
+            )
+        except Exception as exc:
+            logger.warning("[MemoryService] Failed to push reusable result: %s", exc)
+            return False
 
     async def clear_history(self, user_id: str, conversation_id: str):
         """
@@ -705,6 +946,8 @@ class MemoryService:
         await redis.delete(self._get_data_result_key(user_id, conversation_id))
         await redis.delete(self._get_data_result_stack_key(user_id, conversation_id))
         await redis.delete(self._get_session_tool_artifact_key(user_id, conversation_id))
+        await redis.delete(self._get_reusable_result_key(user_id, conversation_id))
+        await redis.delete(self._get_reusable_result_stack_key(user_id, conversation_id))
         await self.reset_context_state(user_id, conversation_id)
 
     async def delete_session_memory(

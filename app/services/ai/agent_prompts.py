@@ -317,6 +317,17 @@ class AgentServicePrompts:
             f"- 参考模式：{_text(getattr(decision, 'reference_mode', None))}",
             f"- 新鲜度要求：{_text(getattr(decision, 'freshness_requirement', None))}",
         ]
+        reusable_mode = _text(getattr(decision, "reusable_result_mode", None), "none")
+        if reusable_mode != "none":
+            lines.append(
+                f"- 可复用结果决策：{reusable_mode}"
+                f"（{_text(getattr(decision, 'reusable_result_reason', None))}）"
+            )
+            if reusable_mode == "reuse":
+                lines.append(
+                    "- 服务端已找到本会话可复用结果；对分析、总结、改写、导出或可视化应优先使用该结果，"
+                    "除非用户明确要求最新/刷新，否则不要重新获取同一事实。"
+                )
         if bool(getattr(decision, "needs_fresh_data", False)):
             lines.append("- 本轮需要基于可验证的最新事实，不要用记忆或常识替代工具结果。")
         if bool(getattr(decision, "requires_knowledge_search", False)):

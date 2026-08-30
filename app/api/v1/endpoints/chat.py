@@ -27,6 +27,11 @@ from app.services.conversation_resource_service import ConversationResourceServi
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
 from app.services.ai.business_context import sanitize_injected_context
 from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
+from app.services.ai.memory_service import memory_service
+from app.services.ai.reusable_result import (
+    build_reusable_result_client_summary,
+    normalize_legacy_data_result,
+)
 from app.utils.env import get_env
 import logging
 
@@ -79,6 +84,27 @@ def _require_numeric_chat_user_id(user_info: Optional[Dict[str, Any]]) -> int:
         return int(stable_user_id)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="当前用户身份格式无效") from exc
+
+
+async def _conversation_belongs_to_user(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: str,
+) -> bool:
+    """仅允许读取已有且明确归属于当前用户的会话结果。"""
+    from sqlalchemy import select
+    from app.models.audit import AgentExecutionHistory
+
+    statement = (
+        select(AgentExecutionHistory.id)
+        .where(
+            AgentExecutionHistory.conversation_id == conversation_id,
+            AgentExecutionHistory.user_id == user_id,
+        )
+        .limit(1)
+    )
+    result = await db.execute(statement)
+    return result.scalar_one_or_none() is not None
 
 
 @public_router.get("/generated-files/{artifact_id}")
@@ -240,6 +266,82 @@ async def count_artifacts_by_trace(
             counts[trace_id] = int(cnt)
     return StandardResponse(data=ArtifactCountsByTrace(counts=counts))
 
+
+class ReusableResultListItem(BaseModel):
+    result_id: str
+    result_type: str
+    origin_type: str
+    origin_name: str
+    source_type: str
+    status: str
+    text_excerpt: str
+    structured_preview: Optional[Dict[str, Any]] = None
+    created_at: Optional[Any] = None
+    expires_at: Optional[Any] = None
+    is_current: bool = False
+
+
+@router.get(
+    "/reusable-results",
+    response_model=StandardResponse[ListResponse[ReusableResultListItem]],
+    summary="当前会话可复用结果列表",
+    description="列出当前用户当前会话中仍可复用的结果摘要，不返回完整 payload、工具参数或凭证。",
+)
+async def list_reusable_results(
+    conversation_id: str = Query(..., min_length=1, description="会话 id"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = _require_chat_user_id(user_info)
+    if not await _conversation_belongs_to_user(db, user_id, conversation_id):
+        raise HTTPException(status_code=404, detail="会话不存在")
+    try:
+        current, stack, legacy = await asyncio.gather(
+            memory_service.get_reusable_result(user_id, conversation_id),
+            memory_service.get_reusable_result_stack(user_id, conversation_id),
+            memory_service.get_last_data_result(user_id, conversation_id),
+        )
+    except Exception as exc:
+        logger.warning("[ChatAPI] Failed to load reusable result list: %s", exc)
+        return StandardResponse(
+            data=ListResponse(items=[], total=0, page=1, page_size=10)
+        )
+
+    items: List[ReusableResultListItem] = []
+    seen: set[str] = set()
+    candidates = [(current, True)] + [
+        (item, False) for item in reversed(stack or [])
+    ]
+    for payload, is_current in candidates:
+        summary = build_reusable_result_client_summary(
+            payload,
+            is_current=is_current,
+        )
+        result_id = str(summary.get("result_id") or "") if summary else ""
+        if not summary or not result_id or result_id in seen:
+            continue
+        seen.add(result_id)
+        items.append(ReusableResultListItem(**summary))
+        if len(items) >= 10:
+            break
+    if not items:
+        summary = build_reusable_result_client_summary(
+            normalize_legacy_data_result(legacy),
+            is_current=True,
+        )
+        result_id = str(summary.get("result_id") or "") if summary else ""
+        if summary and result_id:
+            items.append(ReusableResultListItem(**summary))
+
+    return StandardResponse(
+        data=ListResponse(
+            items=items,
+            total=len(items),
+            page=1,
+            page_size=10,
+        )
+    )
+
 class SkillMeta(BaseModel):
     id: Optional[str] = Field(default=None, description="技能 ID")
     name: Optional[str] = Field(default=None, description="SKILL.md Frontmatter name")
@@ -287,6 +389,11 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         max_length=128,
         description="客户端一次发送意图的幂等 ID；网络重试应复用同一 ID",
+    )
+    reusable_result_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="用户明确选择用于下一轮分析的会话结果 ID",
     )
 
 
@@ -1302,6 +1409,7 @@ async def create_chat_completion(
                     permission_options=completion_request.permission_options,
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
                     metadata_dataset_ids=effective_metadata_dataset_ids,
+                    reusable_result_id=completion_request.reusable_result_id,
                     request_observability=request_observability,
                 ):
                     if isinstance(chunk, dict):
@@ -1429,6 +1537,7 @@ async def create_chat_completion(
                 permission_options=completion_request.permission_options,
                 knowledge_dataset_ids=effective_knowledge_dataset_ids,
                 metadata_dataset_ids=effective_metadata_dataset_ids,
+                reusable_result_id=completion_request.reusable_result_id,
                 request_observability=request_observability,
             )
         except Exception:
