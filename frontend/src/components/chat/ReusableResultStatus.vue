@@ -3,10 +3,12 @@ withDefaults(defineProps<{
   status?: 'saved' | 'reused' | 'fallback' | string | null
   resultId?: string | null
   originName?: string | null
+  count?: number | null
 }>(), {
   status: null,
   resultId: null,
   originName: null,
+  count: null,
 })
 
 const emit = defineEmits<{
@@ -24,10 +26,10 @@ const emit = defineEmits<{
   >
     <span class="shrink-0" aria-hidden="true">{{ status === 'saved' ? '▣' : status === 'reused' ? '↻' : '↗' }}</span>
     <span class="truncate">
-      <template v-if="status === 'saved'">已保存可复用结果</template>
-      <template v-else-if="status === 'reused'">已复用上一轮结果</template>
-      <template v-else>未命中结果，已回退查询</template>
+      <template v-if="status === 'saved'">已保存</template>
+      <template v-else-if="status === 'reused'">已复用</template>
+      <template v-else>已回退</template>
     </span>
-    <span v-if="status !== 'fallback'" class="shrink-0 text-gray-300 dark:text-gray-600">· 查看可复用结果</span>
+    <span v-if="count && count > 0" class="shrink-0">· {{ count }}</span>
   </button>
 </template>

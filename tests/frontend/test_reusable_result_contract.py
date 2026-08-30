@@ -42,9 +42,36 @@ def test_reusable_result_components_expose_selection_and_status_entry():
     assert "选择用于下一轮" in list_source
     assert "过期" in list_source
     assert "defineEmits" in status_source
-    assert "已保存可复用结果" in status_source
-    assert "已复用上一轮结果" in status_source
-    assert "查看可复用结果" in status_source
+    assert "已保存" in status_source
+    assert "已复用" in status_source
+    assert "@click=\"emit('open')\"" in status_source
+
+
+def test_reusable_result_status_is_compact_and_supports_count():
+    status_source = STATUS.read_text(encoding="utf-8")
+    embed_source = EMBED.read_text(encoding="utf-8")
+
+    assert "count?: number | null" in status_source
+    assert "已保存" in status_source
+    assert "· 查看可复用结果" not in status_source
+    assert "reusableResultCount" in embed_source
+    assert ":count=\"reusableResultCount\"" in embed_source
+
+
+def test_chat_views_handle_server_terminal_status_before_done():
+    for source_path in (EMBED, ROOT / "frontend/src/views/AgentDebug.vue"):
+        source = source_path.read_text(encoding="utf-8")
+        assert 'data.type === "run_status"' in source
+        assert "data.status === \"success\"" in source
+        assert "markOutputCompleted()" in source
+
+
+def test_run_status_allows_followup_input_while_backend_finishes_persistence():
+    source = (ROOT / "frontend/src/composables/chat/useConversationRunStatus.ts").read_text(encoding="utf-8")
+    assert "let outputCompleted = false" in source
+    assert "const markOutputCompleted = () =>" in source
+    assert "nextStatus.active && !outputCompleted" in source
+    assert "status.value.active" in source
 
 
 def test_reusable_result_notice_explains_reused_previous_result():

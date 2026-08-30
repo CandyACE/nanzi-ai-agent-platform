@@ -132,12 +132,14 @@ async def _persist_assistant_message_and_summary(
     process_timeline: Optional[List[Dict[str, Any]]] = None,
     tool_run_text: Optional[str] = None,
     merge_summary: bool = False,
+    defer_summary: bool = False,
     status: Optional[str] = None,
 ) -> None:
-    """按顺序持久化 assistant，再异步合并摘要。
+    """按顺序持久化 assistant，并按需合并摘要。
 
     摘要不能和 assistant 写入并发启动，否则 merge 可能读取不到本轮回答，
-    或在多次恢复请求之间以旧游标覆盖新状态。
+    或在多次恢复请求之间以旧游标覆盖新状态。聊天主链路可通过
+    ``defer_summary`` 在 assistant 写入后立即返回，把摘要放到后台执行。
     """
     try:
         await memory_service.add_message(
@@ -166,14 +168,25 @@ async def _persist_assistant_message_and_summary(
         return
 
     if merge_summary and user_id and content:
-        try:
-            from app.services.ai.session_summary_service import SessionSummaryService
+        from app.services.ai.session_summary_service import SessionSummaryService
 
-            await SessionSummaryService.merge_session_summary(
-                str(user_id), conversation_id, content
+        async def _merge_summary() -> None:
+            try:
+                await SessionSummaryService.merge_session_summary(
+                    str(user_id), conversation_id, content
+                )
+            except Exception as exc:
+                logger.warning("[AgentService] Session summary task failed: %s", exc)
+
+        if defer_summary:
+            from app.core.cancellation import spawn_detached
+
+            spawn_detached(
+                _merge_summary(),
+                name=f"merge-session-summary-{conversation_id}",
             )
-        except Exception as exc:
-            logger.warning("[AgentService] Session summary task failed: %s", exc)
+        else:
+            await _merge_summary()
 
 
 def _public_agent_type(agent_config: Any) -> str:
@@ -4231,11 +4244,19 @@ class AgentService:
             final_process_timeline = _final_process_timeline(
                 (shared_state or {}).get("process_timeline")
             )
-            if conversation_id and _should_persist_turn_history(
+            should_persist_history = bool(conversation_id and _should_persist_turn_history(
                 full_response_content,
                 final_process_timeline,
                 full_reasoning_content,
-            ):
+            ))
+            # 先通知客户端模型输出已结束，再等待 Redis/摘要持久化，避免 UI 一直显示“思考中”。
+            yield {
+                "type": "run_status",
+                "status": execution_status,
+                "trace_id": trace_id,
+                "persisting": should_persist_history,
+            }
+            if should_persist_history:
                 u_id = require_user_id(user_info)
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
                 await _persist_assistant_message_and_summary(
@@ -4256,6 +4277,7 @@ class AgentService:
                     process_timeline=final_process_timeline,
                     tool_run_text=tool_run_text,
                     merge_summary=execution_status == "success",
+                    defer_summary=True,
                     status=execution_status,
                 )
 
@@ -4317,6 +4339,7 @@ class AgentService:
                                 (shared_state or {}).get("process_timeline")
                             ),
                             merge_summary=False,
+                            defer_summary=True,
                             status=execution_status,
                         ),
                         name=f"persist-cancelled-run-{trace_id}",
@@ -4574,11 +4597,18 @@ class AgentService:
         user_query = (pending.state or {}).get("user_query") or ""
 
         final_process_timeline = _final_process_timeline(process_timeline_state)
-        if conversation_id and _should_persist_turn_history(
+        should_persist_history = bool(conversation_id and _should_persist_turn_history(
             full_response_content,
             final_process_timeline,
             full_reasoning_content,
-        ):
+        ))
+        yield {
+            "type": "run_status",
+            "status": execution_status,
+            "trace_id": pending.trace_id,
+            "persisting": should_persist_history,
+        }
+        if should_persist_history:
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
             resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
@@ -4604,6 +4634,7 @@ class AgentService:
                 process_timeline=final_process_timeline,
                 tool_run_text=tool_run_text,
                 merge_summary=execution_status == "success",
+                defer_summary=True,
                 status=execution_status,
             )
 
@@ -4855,11 +4886,18 @@ class AgentService:
         user_query = (pending.state or {}).get("user_query") or ""
 
         final_process_timeline = _final_process_timeline(process_timeline_state)
-        if conversation_id and _should_persist_turn_history(
+        should_persist_history = bool(conversation_id and _should_persist_turn_history(
             full_response_content,
             final_process_timeline,
             full_reasoning_content,
-        ):
+        ))
+        yield {
+            "type": "run_status",
+            "status": execution_status,
+            "trace_id": pending.trace_id,
+            "persisting": should_persist_history,
+        }
+        if should_persist_history:
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
             resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
@@ -4885,6 +4923,7 @@ class AgentService:
                 process_timeline=final_process_timeline,
                 tool_run_text=tool_run_text,
                 merge_summary=execution_status == "success",
+                defer_summary=True,
                 status=execution_status,
             )
 

@@ -33,6 +33,27 @@ def test_cancelled_turn_has_a_detached_history_persistence_path():
     assert "_persist_assistant_message_and_summary(" in source
 
 
+def test_chat_stream_emits_terminal_status_before_waiting_for_history_persistence():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "app/services/ai/agent_service.py").read_text(
+        encoding="utf-8"
+    )
+    status_index = source.index('"type": "run_status"')
+    persist_index = source.index("await _persist_assistant_message_and_summary(")
+    assert status_index < persist_index
+
+    endpoint_source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/chat.py").read_text(
+        encoding="utf-8"
+    )
+    terminal_index = endpoint_source.index('chunk.get("type") == "run_status"')
+    done_index = endpoint_source.index('await queue.put(("done", None))', terminal_index)
+    assert terminal_index < done_index
+    assert "defer_summary: bool = False" in source
+    assert "if defer_summary:" in source
+    assert 'name=f"merge-session-summary-{conversation_id}"' in source
+
+
 def test_accumulate_stream_content_excludes_typed_reasoning_events():
     content = _accumulate_stream_content("回答", {
         "type": "reasoning_content",

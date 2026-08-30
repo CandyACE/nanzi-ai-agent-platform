@@ -1457,6 +1457,7 @@ async def create_chat_completion(
 
         async def _producer_task() -> None:
             nonlocal claim_trace_id, claim_status
+            terminal_enqueued = False
             try:
                 async for chunk in agent_service.chat_completion_stream(
                     history,
@@ -1480,7 +1481,17 @@ async def create_chat_completion(
                             claim_status = "failed"
                     if not client_disconnected_event.is_set():
                         await queue.put(("chunk", chunk))
-                if not client_disconnected_event.is_set():
+                    # run_status 表示模型输出已完成。提前结束 SSE 响应，producer
+                    # 仍继续消费生成器，以便在后台完成 Redis/摘要持久化和会话收尾。
+                    if (
+                        isinstance(chunk, dict)
+                        and chunk.get("type") == "run_status"
+                        and not terminal_enqueued
+                        and not client_disconnected_event.is_set()
+                    ):
+                        await queue.put(("done", None))
+                        terminal_enqueued = True
+                if not terminal_enqueued and not client_disconnected_event.is_set():
                     await queue.put(("done", None))
                 if request_claim is not None:
                     from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency

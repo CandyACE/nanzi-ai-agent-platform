@@ -1011,6 +1011,7 @@
                   :status="msg.reusableResultStatus.status"
                   :result-id="msg.reusableResultStatus.resultId"
                   :origin-name="msg.reusableResultStatus.originName"
+                  :count="reusableResultCount"
                   @open="openReusableResults(msg.reusableResultStatus.resultId)"
                 />
                 <ChatBIContinueAnalysis
@@ -2544,6 +2545,7 @@ const showMyArtifactsDrawer = ref(false);
 const myArtifactsInitialTab = ref<"files" | "reusable">("files");
 const selectedReusableResultId = ref<string | null>(null);
 const focusedReusableResultId = ref<string | null>(null);
+const reusableResultCount = ref<number | null>(null);
 const workspaceDrawerRef = ref<{ refreshDirectory: (path?: string) => Promise<void> } | null>(null);
 
 const readStoredBoolean = (key: string, defaultWhenUnset: boolean) => {
@@ -2599,6 +2601,7 @@ const toggleMyArtifactsDrawer = () => {
 };
 
 const openReusableResults = (resultId?: string | null) => {
+  void refreshReusableResultCount();
   myArtifactsInitialTab.value = "reusable";
   focusedReusableResultId.value = resultId || null;
   showMyArtifactsDrawer.value = true;
@@ -3318,6 +3321,23 @@ const artifactCountByTrace = ref<Record<string, number>>({});
 const artifactCount = (traceId: string): number => artifactCountByTrace.value[traceId] || 0;
 /** 该消息是否真有产物（据此才显示「产物」按钮） */
 const hasArtifacts = (traceId: string): boolean => artifactCount(traceId) > 0;
+const refreshReusableResultCount = async () => {
+  const cid = conversationId.value;
+  if (!cid) {
+    reusableResultCount.value = null;
+    return;
+  }
+  try {
+    const res = await artifactApi.reusableResults(cid);
+    if (conversationId.value !== cid) return;
+    const data = res.data?.data;
+    reusableResultCount.value = typeof data?.total === "number"
+      ? data.total
+      : Array.isArray(data?.items) ? data.items.length : null;
+  } catch (e) {
+    console.warn("[ReusableResults] 获取数量失败", e);
+  }
+};
 /** 拉取本会话各 trace_id 的产物数量（新会话/切会话/流式结束有新增产物时调用） */
 const loadArtifactCounts = async () => {
   const cid = conversationId.value;
@@ -3335,7 +3355,9 @@ const loadArtifactCounts = async () => {
 watch(conversationId, () => {
   selectedReusableResultId.value = null;
   focusedReusableResultId.value = null;
+  reusableResultCount.value = null;
   void loadArtifactCounts();
+  void refreshReusableResultCount();
 });
 /** 当前展开「产物」面板对应消息的 trace_id */
 const activeArtifactsTraceId = computed(() => {
@@ -3937,6 +3959,7 @@ const {
   remoteRunActive,
   refresh: refreshRemoteRunStatus,
   stopPolling: stopRemoteRunPolling,
+  markOutputCompleted,
 } = useConversationRunStatus(async (cid) => {
   const response = await axios.get(
     `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
@@ -7308,6 +7331,7 @@ const applyReusableResultStatusEvent = (msg: Message, data: any): boolean => {
     resultId: data.result_id ? String(data.result_id) : null,
     originName: data.origin_name ? String(data.origin_name) : null,
   };
+  void refreshReusableResultCount();
   return true;
 };
 
@@ -7818,6 +7842,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
             remoteRunActive.value = true;
             void refreshCurrentRunStatus();
+          } else if (data.type === "run_status") {
+            agentMsg.value.isThinking = false;
+            markOutputCompleted();
+            if (data.status === "success") {
+              (agentMsg.value as any).status = "success";
+            }
           } else if (data.type === "browser_session") {
             const openingGeneration = browserOpenGeneration;
             void attachBrowserSession(
