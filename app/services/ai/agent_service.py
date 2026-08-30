@@ -4290,6 +4290,39 @@ class AgentService:
             is_scheduled_task = bool(user_info and user_info.get("is_scheduled_task"))
             audit_completed = False
             try:
+                if (
+                    execution_status == "cancelled"
+                    and conversation_id
+                    and _should_persist_turn_history(
+                        full_response_content,
+                        _final_process_timeline((shared_state or {}).get("process_timeline")),
+                        full_reasoning_content,
+                    )
+                ):
+                    from app.core.cancellation import spawn_detached
+
+                    persistence_task = spawn_detached(
+                        _persist_assistant_message_and_summary(
+                            user_id=require_user_id(user_info),
+                            conversation_id=conversation_id,
+                            content=full_response_content,
+                            trace_id=trace_id,
+                            agent_name=(getattr(agent_config, "agent_name", None) if agent_config else None),
+                            agent_type=_public_agent_type(agent_config),
+                            agent_display_name=(
+                                getattr(agent_config, "agent_display_name", None) or None
+                            ),
+                            reasoning_content=full_reasoning_content or None,
+                            process_timeline=_final_process_timeline(
+                                (shared_state or {}).get("process_timeline")
+                            ),
+                            merge_summary=False,
+                            status=execution_status,
+                        ),
+                        name=f"persist-cancelled-run-{trace_id}",
+                    )
+                    if run_handle is not None:
+                        run_handle.persistence_task = persistence_task
                 if execution_status not in AWAITING_RESUME_STATUSES or is_scheduled_task:
                     from app.core.cancellation import await_unless_cancelling
 

@@ -23,6 +23,16 @@ def test_turn_with_only_thinking_timeline_is_persisted():
     assert _should_persist_turn_history("最终回答", None) is True
 
 
+def test_cancelled_turn_has_a_detached_history_persistence_path():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "app/services/ai/agent_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert "spawn_detached(" in source
+    assert "_persist_assistant_message_and_summary(" in source
+
+
 def test_accumulate_stream_content_excludes_typed_reasoning_events():
     content = _accumulate_stream_content("回答", {
         "type": "reasoning_content",

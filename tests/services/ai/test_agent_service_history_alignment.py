@@ -234,3 +234,21 @@ async def test_clicked_reply_is_sanitized_before_history_and_context_setup():
     assert setup_kwargs["current_turn_attachment_paths"] == []
     skill_messages = inject_skills.await_args.kwargs["messages"]
     assert skill_messages[-1]["content"] == "生成可视化分析报告"
+from app.api.v1.endpoints.chat import _merge_latest_audit_assistant
+
+
+def test_partial_redis_history_is_completed_from_latest_matching_audit_record():
+    history = [{"role": "user", "content": "今天天气"}]
+    audit_messages = [{
+        "query": "今天天气",
+        "assistant": {
+            "role": "assistant",
+            "content": "北京今天晴。",
+            "trace_id": "trace-weather",
+        },
+    }]
+
+    merged = _merge_latest_audit_assistant(history, audit_messages)
+
+    assert merged[-1]["trace_id"] == "trace-weather"
+    assert merged[-1]["content"] == "北京今天晴。"

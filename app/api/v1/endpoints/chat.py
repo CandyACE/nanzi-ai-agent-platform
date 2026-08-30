@@ -824,6 +824,31 @@ async def get_conversation_run_status(
     summary="获取会话历史",
     description="从服务端内存 (Redis) 获取指定会话的历史记录，若缓存失效则自动从数据库持久化记录中回退恢复。"
 )
+def _merge_latest_audit_assistant(
+    history: list[dict[str, Any]],
+    audit_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """仅补齐 Redis 尾部 user 对应的缺失 assistant，避免重复整段历史。"""
+    if not history or history[-1].get("role") != "user":
+        return history
+    latest_content = str(history[-1].get("content") or "")
+    existing_trace_ids = {
+        str(message.get("trace_id"))
+        for message in history
+        if message.get("trace_id")
+    }
+    for item in audit_messages:
+        assistant = item.get("assistant")
+        if (
+            str(item.get("query") or "") == latest_content
+            and isinstance(assistant, dict)
+            and assistant.get("trace_id")
+            and str(assistant["trace_id"]) not in existing_trace_ids
+        ):
+            return [*history, assistant]
+    return history
+
+
 async def get_conversation_history(
     conversation_id: str,
     limit: Optional[int] = 50,
@@ -841,6 +866,42 @@ async def get_conversation_history(
     from app.services.ai.memory_service import memory_service
     
     history = await memory_service.get_history(user_id, conversation_id, limit=limit, offset=offset)
+
+    # Redis 可能已写入当前 user，但 assistant 仍在取消/收尾过程中；此时不能因为
+    # history 非空就跳过数据库恢复，否则刷新会话会停在最后一条 user 消息。
+    if history and history[-1].get("role") == "user":
+        from app.models.audit import AgentExecutionHistory
+        from sqlalchemy import select
+
+        latest_user_content = str(history[-1].get("content") or "")
+        stmt = (
+            select(AgentExecutionHistory)
+            .where(
+                AgentExecutionHistory.conversation_id == conversation_id,
+                AgentExecutionHistory.user_id == user_id,
+                AgentExecutionHistory.query == latest_user_content,
+            )
+            .order_by(AgentExecutionHistory.created_at.desc())
+            .limit(5)
+        )
+        db_res = await db.execute(stmt)
+        audit_messages = []
+        for record in db_res.scalars().all():
+            if not (record.summary or record.process_timeline or record.reasoning_content):
+                continue
+            audit_messages.append({
+                "query": record.query,
+                "assistant": {
+                    "role": "assistant",
+                    "content": record.summary or "",
+                    "reasoning_content": record.reasoning_content,
+                    "process_timeline": record.process_timeline,
+                    "timestamp": record.created_at.isoformat() if record.created_at else None,
+                    "trace_id": record.trace_id,
+                    "status": record.status,
+                },
+            })
+        history = _merge_latest_audit_assistant(history, audit_messages)
 
     # Enrich Redis-backed assistant messages so the frontend can keep the same
     # message actions available after a page reload. agent_type / agent_display_name
@@ -913,10 +974,10 @@ async def get_conversation_history(
                     "content": r.query,
                     "timestamp": r.created_at.isoformat() if r.created_at else None
                 })
-            if r.summary:
+            if r.summary or r.process_timeline or r.reasoning_content:
                 fallback_history.append({
                     "role": "assistant",
-                    "content": r.summary,
+                    "content": r.summary or "",
                     "reasoning_content": r.reasoning_content,
                     "process_timeline": r.process_timeline,
                     "timestamp": r.created_at.isoformat() if r.created_at else None,

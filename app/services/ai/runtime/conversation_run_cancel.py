@@ -71,6 +71,10 @@ async def cancel_conversation_run(
         user_id=user_id,
         conversation_id=conversation_id,
     )
+    if run_cancelled:
+        handle = conversation_run_registry.get(user_id, conversation_id)
+        if handle is not None:
+            await handle.wait_finished()
     canvas_stopped = 0
     try:
         from app.services.ai.code_execution_service import (

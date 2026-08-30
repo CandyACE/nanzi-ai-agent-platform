@@ -6414,7 +6414,7 @@ const fetchConversationHistory = async (
                   timestamp: item.created_at
               });
           }
-          if (item.summary) {
+          if (item.summary || item.process_timeline || item.reasoning_content) {
               newHistoryBatch.push({
                   id: Date.now() + idx * 2 + 1 + offset,
                   trace_id: item.trace_id,

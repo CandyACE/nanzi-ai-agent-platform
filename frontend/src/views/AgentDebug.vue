@@ -600,7 +600,10 @@ const loadSessionHistory = async (id: string) => {
           const curr = rawMessages[i];
           // Simple deduplication check
           if (
-            curr.role === prev.role &&
+            curr.role === "assistant" &&
+            prev.role === "assistant" &&
+            curr.trace_id &&
+            curr.trace_id === prev.trace_id &&
             curr.content === prev.content &&
             curr.reasoning_content === prev.reasoning_content
           ) {
