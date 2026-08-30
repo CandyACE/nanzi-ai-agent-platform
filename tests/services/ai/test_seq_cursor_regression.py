@@ -652,3 +652,20 @@ class TestAssistantPersistenceOrdering:
             )
 
         assert events == ["message", "summary"]
+
+    async def test_cancelled_assistant_persistence_includes_cancelled_status(self):
+        from app.services.ai.agent_service import _persist_assistant_message_and_summary
+
+        add_message = AsyncMock()
+        with patch(
+            "app.services.ai.agent_service.memory_service.add_message",
+            new=add_message,
+        ):
+            await _persist_assistant_message_and_summary(
+                user_id="u1",
+                conversation_id="c1",
+                content="半截回答",
+                status="cancelled",
+            )
+
+        assert add_message.await_args.kwargs["status"] == "cancelled"

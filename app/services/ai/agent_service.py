@@ -133,6 +133,7 @@ async def _persist_assistant_message_and_summary(
     process_timeline: Optional[List[Dict[str, Any]]] = None,
     tool_run_text: Optional[str] = None,
     merge_summary: bool = False,
+    status: Optional[str] = None,
 ) -> None:
     """按顺序持久化 assistant，再异步合并摘要。
 
@@ -156,6 +157,7 @@ async def _persist_assistant_message_and_summary(
             reasoning_content=reasoning_content,
             process_timeline=process_timeline,
             tool_run_text=tool_run_text,
+            status=status,
         )
     except Exception as exc:
         logger.warning(
@@ -297,11 +299,21 @@ def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[st
         "tool_run_text",
         "seq",
     )
-    return [
-        {key: message[key] for key in allowed_keys if key in message}
-        for message in history
-        if isinstance(message, dict)
-    ]
+    context_messages: List[Dict[str, Any]] = []
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        if (
+            message.get("role") == "assistant"
+            and str(message.get("status") or "").lower() in {"cancelled", "interrupted"}
+        ):
+            # 终止轮的 user/assistant 对仍保留在展示历史中，但不能让模型把半截
+            # assistant 回复当成正常上下文继续完成。
+            if context_messages and context_messages[-1].get("role") == "user":
+                context_messages.pop()
+            continue
+        context_messages.append({key: message[key] for key in allowed_keys if key in message})
+    return context_messages
 
 
 def _window_for_context(
@@ -4235,6 +4247,7 @@ class AgentService:
                         ),
                         tool_run_text=tool_run_text,
                         merge_summary=execution_status == "success",
+                        status=execution_status,
                     )
                 )
 
@@ -4546,6 +4559,7 @@ class AgentService:
                     process_timeline=_final_process_timeline(process_timeline_state),
                     tool_run_text=tool_run_text,
                     merge_summary=execution_status == "success",
+                    status=execution_status,
                 )
             )
 
@@ -4823,6 +4837,7 @@ class AgentService:
                     process_timeline=_final_process_timeline(process_timeline_state),
                     tool_run_text=tool_run_text,
                     merge_summary=execution_status == "success",
+                    status=execution_status,
                 )
             )
 
