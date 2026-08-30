@@ -539,6 +539,7 @@ const {
   remoteRunActive,
   refresh: refreshRemoteRunStatus,
   stopPolling: stopRemoteRunPolling,
+  markOutputCompleted,
 } = useConversationRunStatus(async (cid) => {
   const response = await axios.get(
     `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
@@ -600,7 +601,10 @@ const loadSessionHistory = async (id: string) => {
           const curr = rawMessages[i];
           // Simple deduplication check
           if (
-            curr.role === prev.role &&
+            curr.role === "assistant" &&
+            prev.role === "assistant" &&
+            curr.trace_id &&
+            curr.trace_id === prev.trace_id &&
             curr.content === prev.content &&
             curr.reasoning_content === prev.reasoning_content
           ) {
@@ -3349,6 +3353,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
               remoteRunActive.value = true;
               void refreshCurrentRunStatus();
+            } else if (data.type === "run_status") {
+              agentMsg.value.isThinking = false;
+              markOutputCompleted();
+              if (data.status === "success") {
+                (agentMsg.value as any).status = "success";
+              }
             } else if (data.type === "log") {
               addRealLog(agentMsg.value, data);
             }

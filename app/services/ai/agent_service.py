@@ -58,7 +58,6 @@ from app.services.schema_chunk_format import estimate_text_tokens
 logger = logging.getLogger(__name__)
 
 _LLM_DIGEST_TASKS: set[asyncio.Task] = set()
-_POST_PROCESS_TASKS: set[asyncio.Task] = set()
 
 AWAITING_RESUME_STATUSES = frozenset(
     {"awaiting_permission", "awaiting_external_execution", "awaiting_user"}
@@ -133,11 +132,14 @@ async def _persist_assistant_message_and_summary(
     process_timeline: Optional[List[Dict[str, Any]]] = None,
     tool_run_text: Optional[str] = None,
     merge_summary: bool = False,
+    defer_summary: bool = False,
+    status: Optional[str] = None,
 ) -> None:
-    """按顺序持久化 assistant，再异步合并摘要。
+    """按顺序持久化 assistant，并按需合并摘要。
 
     摘要不能和 assistant 写入并发启动，否则 merge 可能读取不到本轮回答，
-    或在多次恢复请求之间以旧游标覆盖新状态。
+    或在多次恢复请求之间以旧游标覆盖新状态。聊天主链路可通过
+    ``defer_summary`` 在 assistant 写入后立即返回，把摘要放到后台执行。
     """
     try:
         await memory_service.add_message(
@@ -156,6 +158,7 @@ async def _persist_assistant_message_and_summary(
             reasoning_content=reasoning_content,
             process_timeline=process_timeline,
             tool_run_text=tool_run_text,
+            status=status,
         )
     except Exception as exc:
         logger.warning(
@@ -165,21 +168,25 @@ async def _persist_assistant_message_and_summary(
         return
 
     if merge_summary and user_id and content:
-        try:
-            from app.services.ai.session_summary_service import SessionSummaryService
+        from app.services.ai.session_summary_service import SessionSummaryService
 
-            await SessionSummaryService.merge_session_summary(
-                str(user_id), conversation_id, content
+        async def _merge_summary() -> None:
+            try:
+                await SessionSummaryService.merge_session_summary(
+                    str(user_id), conversation_id, content
+                )
+            except Exception as exc:
+                logger.warning("[AgentService] Session summary task failed: %s", exc)
+
+        if defer_summary:
+            from app.core.cancellation import spawn_detached
+
+            spawn_detached(
+                _merge_summary(),
+                name=f"merge-session-summary-{conversation_id}",
             )
-        except Exception as exc:
-            logger.warning("[AgentService] Session summary task failed: %s", exc)
-
-
-def _schedule_post_process(coro: Any) -> asyncio.Task:
-    task = asyncio.create_task(coro)
-    _POST_PROCESS_TASKS.add(task)
-    task.add_done_callback(_POST_PROCESS_TASKS.discard)
-    return task
+        else:
+            await _merge_summary()
 
 
 def _public_agent_type(agent_config: Any) -> str:
@@ -244,6 +251,19 @@ def _final_process_timeline(state: Optional[List[Dict[str, Any]]]):
     return finalize_process_timeline(state)
 
 
+def _should_persist_turn_history(
+    content: Optional[str],
+    process_timeline: Optional[List[Dict[str, Any]]],
+    reasoning_content: Optional[str] = None,
+) -> bool:
+    """只要本轮产生正文、推理或思考卡片，就保留本轮历史。"""
+    return bool(
+        str(content or "").strip()
+        or process_timeline
+        or str(reasoning_content or "").strip()
+    )
+
+
 def _finalize_todo_success(
     state: Optional[List[Dict[str, Any]]],
     *,
@@ -297,11 +317,21 @@ def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[st
         "tool_run_text",
         "seq",
     )
-    return [
-        {key: message[key] for key in allowed_keys if key in message}
-        for message in history
-        if isinstance(message, dict)
-    ]
+    context_messages: List[Dict[str, Any]] = []
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        if (
+            message.get("role") == "assistant"
+            and str(message.get("status") or "").lower() in {"cancelled", "interrupted"}
+        ):
+            # 终止轮的 user/assistant 对仍保留在展示历史中，但不能让模型把半截
+            # assistant 回复当成正常上下文继续完成。
+            if context_messages and context_messages[-1].get("role") == "user":
+                context_messages.pop()
+            continue
+        context_messages.append({key: message[key] for key in allowed_keys if key in message})
+    return context_messages
 
 
 def _window_for_context(
@@ -4211,31 +4241,44 @@ class AgentService:
             if has_data_output and execution_status == "success":
                 yield {"type": "meta", "has_data_output": True}
 
-            if conversation_id and full_response_content:
+            final_process_timeline = _final_process_timeline(
+                (shared_state or {}).get("process_timeline")
+            )
+            should_persist_history = bool(conversation_id and _should_persist_turn_history(
+                full_response_content,
+                final_process_timeline,
+                full_reasoning_content,
+            ))
+            # 先通知客户端模型输出已结束，再等待 Redis/摘要持久化，避免 UI 一直显示“思考中”。
+            yield {
+                "type": "run_status",
+                "status": execution_status,
+                "trace_id": trace_id,
+                "persisting": should_persist_history,
+            }
+            if should_persist_history:
                 u_id = require_user_id(user_info)
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
-                _schedule_post_process(
-                    _persist_assistant_message_and_summary(
-                        user_id=u_id,
-                        conversation_id=conversation_id,
-                        content=full_response_content,
-                        trace_id=trace_id,
-                        agent_name=handled_by,
-                        agent_type=_public_agent_type(agent_config),
-                        agent_display_name=(
-                            getattr(agent_config, "agent_display_name", None) or None
-                        ),
-                        prompt_tokens=p_tokens,
-                        completion_tokens=c_tokens,
-                        total_tokens=t_tokens,
-                        has_data_output=has_data_output or None,
-                        reasoning_content=full_reasoning_content or None,
-                        process_timeline=_final_process_timeline(
-                            (shared_state or {}).get("process_timeline")
-                        ),
-                        tool_run_text=tool_run_text,
-                        merge_summary=execution_status == "success",
-                    )
+                await _persist_assistant_message_and_summary(
+                    user_id=u_id,
+                    conversation_id=conversation_id,
+                    content=full_response_content,
+                    trace_id=trace_id,
+                    agent_name=handled_by,
+                    agent_type=_public_agent_type(agent_config),
+                    agent_display_name=(
+                        getattr(agent_config, "agent_display_name", None) or None
+                    ),
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens,
+                    total_tokens=t_tokens,
+                    has_data_output=has_data_output or None,
+                    reasoning_content=full_reasoning_content or None,
+                    process_timeline=final_process_timeline,
+                    tool_run_text=tool_run_text,
+                    merge_summary=execution_status == "success",
+                    defer_summary=True,
+                    status=execution_status,
                 )
 
         except asyncio.CancelledError:
@@ -4269,6 +4312,40 @@ class AgentService:
             is_scheduled_task = bool(user_info and user_info.get("is_scheduled_task"))
             audit_completed = False
             try:
+                if (
+                    execution_status == "cancelled"
+                    and conversation_id
+                    and _should_persist_turn_history(
+                        full_response_content,
+                        _final_process_timeline((shared_state or {}).get("process_timeline")),
+                        full_reasoning_content,
+                    )
+                ):
+                    from app.core.cancellation import spawn_detached
+
+                    persistence_task = spawn_detached(
+                        _persist_assistant_message_and_summary(
+                            user_id=require_user_id(user_info),
+                            conversation_id=conversation_id,
+                            content=full_response_content,
+                            trace_id=trace_id,
+                            agent_name=(getattr(agent_config, "agent_name", None) if agent_config else None),
+                            agent_type=_public_agent_type(agent_config),
+                            agent_display_name=(
+                                getattr(agent_config, "agent_display_name", None) or None
+                            ),
+                            reasoning_content=full_reasoning_content or None,
+                            process_timeline=_final_process_timeline(
+                                (shared_state or {}).get("process_timeline")
+                            ),
+                            merge_summary=False,
+                            defer_summary=True,
+                            status=execution_status,
+                        ),
+                        name=f"persist-cancelled-run-{trace_id}",
+                    )
+                    if run_handle is not None:
+                        run_handle.persistence_task = persistence_task
                 if execution_status not in AWAITING_RESUME_STATUSES or is_scheduled_task:
                     from app.core.cancellation import await_unless_cancelling
 
@@ -4519,7 +4596,19 @@ class AgentService:
         conversation_id = runner.conversation_id or pending.snapshot.conversation_id
         user_query = (pending.state or {}).get("user_query") or ""
 
-        if conversation_id and full_response_content:
+        final_process_timeline = _final_process_timeline(process_timeline_state)
+        should_persist_history = bool(conversation_id and _should_persist_turn_history(
+            full_response_content,
+            final_process_timeline,
+            full_reasoning_content,
+        ))
+        yield {
+            "type": "run_status",
+            "status": execution_status,
+            "trace_id": pending.trace_id,
+            "persisting": should_persist_history,
+        }
+        if should_persist_history:
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
             resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
@@ -4528,29 +4617,29 @@ class AgentService:
                 if callable(resolve_tool_run_text)
                 else None
             )
-            _schedule_post_process(
-                _persist_assistant_message_and_summary(
-                    user_id=u_id,
-                    conversation_id=conversation_id,
-                    content=full_response_content,
-                    trace_id=pending.trace_id,
-                    agent_name=handled_by,
-                    agent_type=_public_agent_type(agent_config),
-                    agent_display_name=(
-                        getattr(agent_config, "agent_display_name", None) or handled_by
-                    ),
-                    prompt_tokens=p_tokens,
-                    completion_tokens=c_tokens,
-                    total_tokens=t_tokens,
-                    reasoning_content=full_reasoning_content or None,
-                    process_timeline=_final_process_timeline(process_timeline_state),
-                    tool_run_text=tool_run_text,
-                    merge_summary=execution_status == "success",
-                )
+            await _persist_assistant_message_and_summary(
+                user_id=u_id,
+                conversation_id=conversation_id,
+                content=full_response_content,
+                trace_id=pending.trace_id,
+                agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(
+                    getattr(agent_config, "agent_display_name", None) or handled_by
+                ),
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                total_tokens=t_tokens,
+                reasoning_content=full_reasoning_content or None,
+                process_timeline=final_process_timeline,
+                tool_run_text=tool_run_text,
+                merge_summary=execution_status == "success",
+                defer_summary=True,
+                status=execution_status,
             )
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
-        asyncio.create_task(AuditManager.log_transaction(
+        await AuditManager.log_transaction(
             pending.trace_id,
             agent_config,
             user_query,
@@ -4562,7 +4651,7 @@ class AgentService:
             conversation_id=conversation_id,
             reasoning_content=full_reasoning_content or None,
             process_timeline=_final_process_timeline(process_timeline_state),
-        ))
+        )
 
     async def _restore_runner_execution_context(
         self,
@@ -4796,7 +4885,19 @@ class AgentService:
         conversation_id = runner.conversation_id or pending.snapshot.conversation_id
         user_query = (pending.state or {}).get("user_query") or ""
 
-        if conversation_id and full_response_content:
+        final_process_timeline = _final_process_timeline(process_timeline_state)
+        should_persist_history = bool(conversation_id and _should_persist_turn_history(
+            full_response_content,
+            final_process_timeline,
+            full_reasoning_content,
+        ))
+        yield {
+            "type": "run_status",
+            "status": execution_status,
+            "trace_id": pending.trace_id,
+            "persisting": should_persist_history,
+        }
+        if should_persist_history:
             u_id = user_info.get("user_id") if user_info else pending.user_id
             handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
             resolve_tool_run_text = getattr(runner, "resolve_tool_run_text", None)
@@ -4805,29 +4906,29 @@ class AgentService:
                 if callable(resolve_tool_run_text)
                 else None
             )
-            _schedule_post_process(
-                _persist_assistant_message_and_summary(
-                    user_id=u_id,
-                    conversation_id=conversation_id,
-                    content=full_response_content,
-                    trace_id=pending.trace_id,
-                    agent_name=handled_by,
-                    agent_type=_public_agent_type(agent_config),
-                    agent_display_name=(
-                        getattr(agent_config, "agent_display_name", None) or handled_by
-                    ),
-                    prompt_tokens=p_tokens,
-                    completion_tokens=c_tokens,
-                    total_tokens=t_tokens,
-                    reasoning_content=full_reasoning_content or None,
-                    process_timeline=_final_process_timeline(process_timeline_state),
-                    tool_run_text=tool_run_text,
-                    merge_summary=execution_status == "success",
-                )
+            await _persist_assistant_message_and_summary(
+                user_id=u_id,
+                conversation_id=conversation_id,
+                content=full_response_content,
+                trace_id=pending.trace_id,
+                agent_name=handled_by,
+                agent_type=_public_agent_type(agent_config),
+                agent_display_name=(
+                    getattr(agent_config, "agent_display_name", None) or handled_by
+                ),
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                total_tokens=t_tokens,
+                reasoning_content=full_reasoning_content or None,
+                process_timeline=final_process_timeline,
+                tool_run_text=tool_run_text,
+                merge_summary=execution_status == "success",
+                defer_summary=True,
+                status=execution_status,
             )
 
         duration = (asyncio.get_running_loop().time() - start_time) * 1000
-        asyncio.create_task(AuditManager.log_transaction(
+        await AuditManager.log_transaction(
             pending.trace_id,
             agent_config,
             user_query,
@@ -4839,7 +4940,7 @@ class AgentService:
             conversation_id=conversation_id,
             reasoning_content=full_reasoning_content or None,
             process_timeline=_final_process_timeline(process_timeline_state),
-        ))
+        )
 
     async def _execute_multi_agent(
         self,

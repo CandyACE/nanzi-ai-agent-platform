@@ -581,7 +581,7 @@ class MemoryService:
         snapshot = await self.get_context_snapshot(user_id, conversation_id)
         return self.merge_context_snapshot(history, snapshot)
 
-    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None):
+    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, agent_type: Optional[str] = None, agent_display_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0, total_tokens: Optional[int] = None, has_data_output: Optional[bool] = None, reasoning_content: Optional[str] = None, process_timeline: Optional[List[Dict[str, Any]]] = None, tool_run_text: Optional[str] = None, status: Optional[str] = None):
         """
         Append a single message to the conversation history.
         Now supports trace_id, attachment files, and token usage values.
@@ -615,6 +615,8 @@ class MemoryService:
             message["agent_type"] = agent_type or "GENERAL"
             if agent_display_name:
                 message["agent_display_name"] = agent_display_name
+            if status:
+                message["status"] = status
         if reasoning_content:
             message["reasoning_content"] = reasoning_content
         if process_timeline:

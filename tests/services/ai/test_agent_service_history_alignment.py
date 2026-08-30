@@ -34,6 +34,22 @@ def test_regular_completion_history_policy_does_not_truncate_server_history():
     assert agent_service._regular_completion_history(server_history, incoming_messages) == server_history
 
 
+def test_context_excludes_interrupted_turn_but_keeps_completed_history():
+    history = [
+        {"role": "user", "content": "已完成的问题"},
+        {"role": "assistant", "content": "已完成的回答", "status": "success"},
+        {"role": "user", "content": "被终止的问题"},
+        {"role": "assistant", "content": "被终止的半截回答", "status": "cancelled"},
+    ]
+
+    context = agent_service._history_messages_for_context(history)
+
+    assert context == [
+        {"role": "user", "content": "已完成的问题"},
+        {"role": "assistant", "content": "已完成的回答"},
+    ]
+
+
 def test_chat_history_boundary_prompt_marks_only_latest_user_as_current():
     prompt = agent_service.build_chat_history_boundary_prompt("原有系统提示")
 
@@ -218,3 +234,21 @@ async def test_clicked_reply_is_sanitized_before_history_and_context_setup():
     assert setup_kwargs["current_turn_attachment_paths"] == []
     skill_messages = inject_skills.await_args.kwargs["messages"]
     assert skill_messages[-1]["content"] == "生成可视化分析报告"
+from app.api.v1.endpoints.chat import _merge_latest_audit_assistant
+
+
+def test_partial_redis_history_is_completed_from_latest_matching_audit_record():
+    history = [{"role": "user", "content": "今天天气"}]
+    audit_messages = [{
+        "query": "今天天气",
+        "assistant": {
+            "role": "assistant",
+            "content": "北京今天晴。",
+            "trace_id": "trace-weather",
+        },
+    }]
+
+    merged = _merge_latest_audit_assistant(history, audit_messages)
+
+    assert merged[-1]["trace_id"] == "trace-weather"
+    assert merged[-1]["content"] == "北京今天晴。"

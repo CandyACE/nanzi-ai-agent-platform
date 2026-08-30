@@ -648,6 +648,8 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         )
                         session.current_url = result.url
                         session.page_title = result.title
+                        session.last_seen_at = datetime.now()
+                        session.updated_at = datetime.now()
                         await db.commit()
                         snapshot = await browser_runtime.snapshot(session.id)
                     elif event == "semantic_fill":
@@ -660,6 +662,8 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         )
                         session.current_url = result.url
                         session.page_title = result.title
+                        session.last_seen_at = datetime.now()
+                        session.updated_at = datetime.now()
                         await db.commit()
                         snapshot = await browser_runtime.snapshot(session.id)
                     else:

@@ -34,6 +34,8 @@ export function createConversationRunStatusController(
 ) {
   const remoteRunActive = ref(false);
   const status = ref<ConversationRunStatus>({ ...EMPTY_STATUS });
+  // 输出已结束但后台仍可能在做历史持久化时，允许前端准备下一轮输入。
+  let outputCompleted = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let requestSequence = 0;
   let currentConversationId = "";
@@ -47,7 +49,7 @@ export function createConversationRunStatusController(
   };
 
   const scheduleNextPoll = (conversationId: string) => {
-    if (timer || !remoteRunActive.value || conversationId !== currentConversationId) return;
+    if (timer || !status.value.active || conversationId !== currentConversationId) return;
     timer = setTimeout(() => {
       timer = null;
       void refresh(conversationId);
@@ -71,7 +73,8 @@ export function createConversationRunStatusController(
         return remoteRunActive.value;
       }
       status.value = nextStatus;
-      remoteRunActive.value = nextStatus.active;
+      if (!nextStatus.active) outputCompleted = false;
+      remoteRunActive.value = nextStatus.active && !outputCompleted;
       if (nextStatus.active) scheduleNextPoll(normalizedConversationId);
       else stopPolling();
       return nextStatus.active;
@@ -87,7 +90,13 @@ export function createConversationRunStatusController(
 
   const startPolling = (conversationId: string) => {
     stopPolling();
+    outputCompleted = false;
     void refresh(conversationId);
+  };
+
+  const markOutputCompleted = () => {
+    outputCompleted = true;
+    remoteRunActive.value = false;
   };
 
   const isPolling = () => timer !== null;
@@ -97,6 +106,7 @@ export function createConversationRunStatusController(
     status,
     refresh,
     startPolling,
+    markOutputCompleted,
     stopPolling,
     isPolling,
   };

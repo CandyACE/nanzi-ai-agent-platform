@@ -504,6 +504,19 @@ def finalize_process_timeline(state: Optional[List[Dict[str, Any]]]) -> Optional
     items: List[Dict[str, Any]] = []
     for item in list(state or []):
         if item.get("kind") == "text" and item.get("textKind") == "narration" and item.get("pending"):
+            copied_pending = {
+                "kind": "text",
+                "id": item.get("id"),
+                "textKind": "narration",
+                "content": str(item.get("content") or ""),
+                "pending": False,
+                "interrupted": True,
+                "children": [_finalize_log(child) for child in (item.get("children") or [])],
+            }
+            if item.get("sourceId"):
+                copied_pending["sourceId"] = item.get("sourceId")
+                copied_pending["sourceLabel"] = item.get("sourceLabel") or item.get("sourceId")
+            items.append(copied_pending)
             continue
         if item.get("kind") == "log":
             copied = _finalize_log(item)

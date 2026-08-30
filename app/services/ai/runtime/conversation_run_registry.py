@@ -75,6 +75,8 @@ class ConversationRunHandle:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[Any] | None = None
     _processes: set[Any] = field(default_factory=set)
+    persistence_task: asyncio.Task[Any] | None = None
+    finished: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
     def cancelled(self) -> bool:
@@ -104,6 +106,16 @@ class ConversationRunHandle:
         current = asyncio.current_task()
         if task is not current:
             task.cancel()
+
+    async def wait_finished(self, timeout: float = 10.0) -> None:
+        """等待取消任务完成收尾，尤其是后台历史持久化。"""
+        try:
+            await asyncio.wait_for(self.finished.wait(), timeout=max(0.1, timeout))
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[ConversationRunRegistry] timed out waiting for run finalization conversation=%s",
+                self.conversation_id,
+            )
 
 
 class ConversationRunRegistry:
@@ -186,6 +198,18 @@ async def track_conversation_run(
         yield handle
     finally:
         _current_run.reset(token)
+        if handle.persistence_task is not None:
+            try:
+                await asyncio.shield(handle.persistence_task)
+            except asyncio.CancelledError:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.shield(handle.persistence_task)
+            except Exception:
+                logger.exception(
+                    "[ConversationRunRegistry] persistence finalization failed conversation=%s",
+                    handle.conversation_id,
+                )
         with contextlib.suppress(Exception):
             await handle.stop_children()
+        handle.finished.set()
         conversation_run_registry.unregister(handle)

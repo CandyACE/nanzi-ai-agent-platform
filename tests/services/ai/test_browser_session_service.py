@@ -26,6 +26,7 @@ class FakeResult:
 class InMemorySession:
     def __init__(self):
         self.rows = []
+        self.commit_count = 0
 
     async def execute(self, statement):
         entity = statement.column_descriptions[0]["entity"]
@@ -51,7 +52,7 @@ class InMemorySession:
         return None
 
     async def commit(self):
-        return None
+        self.commit_count += 1
 
 
 class RacingSession(InMemorySession):
@@ -183,3 +184,57 @@ async def test_viewer_token_is_opaque_and_resolves_to_owned_session():
     assert expires_at > session.created_at
     assert resolved.id == session.id
     assert token != session.viewer_token_hash
+
+
+@pytest.mark.asyncio
+async def test_update_state_persists_latest_page_information_for_owned_session():
+    db = InMemorySession()
+    service = BrowserSessionService(
+        db,
+        profile_root="/tmp/nanzi-browser-test",
+        url_validator=lambda url: url,
+    )
+    session = await service.open_or_resume(
+        user_id=1001,
+        conversation_id="conv-a",
+        url="https://www.baidu.com/",
+        profile_id=None,
+    )
+    old_last_seen = session.last_seen_at
+
+    updated = await service.update_state(
+        user_id=1001,
+        session_id=session.id,
+        url="https://www.baidu.com/s?wd=test",
+        title="百度一下",
+    )
+
+    assert updated is session
+    assert session.current_url == "https://www.baidu.com/s?wd=test"
+    assert session.page_title == "百度一下"
+    assert session.last_seen_at >= old_last_seen
+    assert session.updated_at >= old_last_seen
+
+
+@pytest.mark.asyncio
+async def test_update_state_rejects_session_owned_by_another_user():
+    db = InMemorySession()
+    service = BrowserSessionService(
+        db,
+        profile_root="/tmp/nanzi-browser-test",
+        url_validator=lambda url: url,
+    )
+    session = await service.open_or_resume(
+        user_id=1001,
+        conversation_id="conv-a",
+        url="https://www.baidu.com/",
+        profile_id=None,
+    )
+
+    with pytest.raises(BrowserAccessDenied):
+        await service.update_state(
+            user_id=2002,
+            session_id=session.id,
+            url="https://evil.example/",
+            title="不应写入",
+        )

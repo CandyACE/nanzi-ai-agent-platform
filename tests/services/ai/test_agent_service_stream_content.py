@@ -7,6 +7,7 @@ from app.services.ai.agent_service import (
     _accumulate_stream_content,
     _finalize_todo_success,
     _final_process_timeline,
+    _should_persist_turn_history,
     _restore_todo_snapshot_from_pending,
     _track_process_timeline,
 )
@@ -14,6 +15,43 @@ from app.services.ai.runtime.agentscope.event_stream import _sync_todo_snapshot_
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_turn_with_only_thinking_timeline_is_persisted():
+    assert _should_persist_turn_history("", [{"kind": "log", "id": "tool_1"}]) is True
+    assert _should_persist_turn_history("", None) is False
+    assert _should_persist_turn_history("最终回答", None) is True
+
+
+def test_cancelled_turn_has_a_detached_history_persistence_path():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "app/services/ai/agent_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert "spawn_detached(" in source
+    assert "_persist_assistant_message_and_summary(" in source
+
+
+def test_chat_stream_emits_terminal_status_before_waiting_for_history_persistence():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "app/services/ai/agent_service.py").read_text(
+        encoding="utf-8"
+    )
+    status_index = source.index('"type": "run_status"')
+    persist_index = source.index("await _persist_assistant_message_and_summary(")
+    assert status_index < persist_index
+
+    endpoint_source = (Path(__file__).resolve().parents[3] / "app/api/v1/endpoints/chat.py").read_text(
+        encoding="utf-8"
+    )
+    terminal_index = endpoint_source.index('chunk.get("type") == "run_status"')
+    done_index = endpoint_source.index('await queue.put(("done", None))', terminal_index)
+    assert terminal_index < done_index
+    assert "defer_summary: bool = False" in source
+    assert "if defer_summary:" in source
+    assert 'name=f"merge-session-summary-{conversation_id}"' in source
 
 
 def test_accumulate_stream_content_excludes_typed_reasoning_events():

@@ -44,6 +44,20 @@ def test_committed_narration_and_tool_are_kept_promoted_candidate_is_dropped():
     assert "# 最终报告" not in str(items)
 
 
+def test_interrupted_narration_is_kept_as_finalized_history_item():
+    items = _run([{"type": "process_narration", "content": "正在查询天气"}])
+
+    assert items == [{
+        "kind": "text",
+        "id": "narration_1",
+        "textKind": "narration",
+        "content": "正在查询天气",
+        "pending": False,
+        "interrupted": True,
+        "children": [],
+    }]
+
+
 def test_router_log_becomes_intent_style_step_without_raw_event_fields():
     items = _run(
         [
@@ -112,7 +126,8 @@ def test_tool_details_are_truncated_and_empty_snapshot_is_omitted():
     assert len(items[0]["details"]) < len(huge)
     assert items[0]["details"].endswith("…")
     assert finalize_process_timeline([]) is None
-    assert finalize_process_timeline([{"kind": "text", "textKind": "narration", "pending": True, "content": "候选"}]) is None
+    interrupted = finalize_process_timeline([{"kind": "text", "id": "n", "textKind": "narration", "pending": True, "content": "候选"}])
+    assert interrupted[0]["interrupted"] is True
 
 
 def test_file_metadata_survives_process_timeline_persistence():
