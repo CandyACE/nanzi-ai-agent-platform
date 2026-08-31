@@ -27,3 +27,9 @@ def test_agent_management_header_keeps_title_single_line_and_limits_search_width
 
     assert 'class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl"' in view
     assert "sm:w-52 lg:w-56" in view
+
+
+def test_agent_management_hides_dragging_hint_when_main_is_fixed():
+    view = VIEW.read_text(encoding="utf-8")
+
+    assert "拖动卡片或列表行可调整排序" not in view
