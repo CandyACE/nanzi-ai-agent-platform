@@ -201,6 +201,21 @@ async def test_resolver_skips_disabled_items_preserves_order_and_deduplicates_im
 
 
 @pytest.mark.asyncio
+async def test_resolver_drops_tool_names_not_accepted_by_openai_compatible_models():
+    from app.services.ai.tool_capability import resolve_tool_capabilities
+
+    resolved = await resolve_tool_capabilities(
+        ["valid_tool", "invalid.tool"],
+        provider=FakeProvider([_spec("valid_tool"), _spec("invalid.tool")]),
+    )
+
+    assert list(resolved.names) == ["valid_tool"]
+    assert [(item.name, item.status) for item in resolved.diagnostics] == [
+        ("invalid.tool", "invalid")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resolver_applies_one_allowlist_to_visible_and_executable_specs():
     from app.services.ai.tool_capability import resolve_tool_capabilities
 

@@ -1421,7 +1421,7 @@ INSERT INTO "ai_agents" (
     "id", "name", "display_name", "description", "capabilities", "agent_type", "is_system", "is_enabled"
 ) VALUES
     ('sys-agent-chatbi', 'chat-bi', '数据智能助手', '专注于数据查询、SQL 生成与报表分析。', '["data_query", "sql_generation", "reporting"]'::jsonb, 'CHATBI', TRUE, TRUE),
-    ('sys-agent-metadata', 'metadata-specialist', '元数据专家', '专注于数据库 DDL 解析与元数据治理。', '["metadata_parsing", "ddl_analysis", "schema_governance"]'::jsonb, 'GENERAL', TRUE, TRUE),
+    ('sys-agent-metadata', 'metadata-specialist', '元数据专家', '专注于数据库 DDL 解析与元数据治理。', '["metadata_parsing", "ddl_analysis", "schema_governance"]'::jsonb, 'GENERAL', TRUE, FALSE),
     ('sys-agent-kb', 'knowledge-base', '知识库助手', '专注于企业知识库检索问答。', '["knowledge_retrieval", "document_search", "qa"]'::jsonb, 'KNOWLEDGE_BASE', TRUE, TRUE),
     ('sys-agent-chat', 'main', '主助手(Main)', '处理通用问答、代码辅助和无法明确分类的请求。', '["general_chat", "coding", "creative_writing"]'::jsonb, 'GENERAL', TRUE, TRUE)
 ON CONFLICT ("id") DO NOTHING;

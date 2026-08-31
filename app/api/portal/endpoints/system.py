@@ -145,8 +145,8 @@ async def test_connection(
             log(f"API URL: {test_url}")
             log(f"Model Name: {test_model}")
             
-            if not test_url or not test_key:
-                raise Exception("Embedding API URL 或 Key 为空，未完成配置。")
+            if not test_url:
+                raise Exception("Embedding API URL 为空，未完成配置。")
 
             from app.utils.model_providers import normalize_embedding_endpoint
 
@@ -155,7 +155,9 @@ async def test_connection(
             log(f"Sending test vector request to: {url}")
             
             import httpx
-            headers = {"Authorization": f"Bearer {test_key}", "Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json"}
+            if test_key:
+                headers["Authorization"] = f"Bearer {test_key}"
             payload_data = {"model": test_model, "input": "hello"}
             
             async with httpx.AsyncClient(timeout=10.0) as client:

@@ -16,6 +16,7 @@ from app.services.ai.runtime.agentscope.tools import (
     ToolSourceType,
     apply_delegation_tool_filter,
     build_toolkit,
+    is_valid_runtime_tool_name,
     runtime_tool_spec_from_legacy_tool,
 )
 from app.services.ai.tool_policy import ToolMetadata, resolve_tool_metadata
@@ -48,7 +49,7 @@ class ResolvedToolBinding:
     spec: RuntimeToolSpec
 
 
-ToolResolutionStatus = Literal["disabled", "missing", "filtered"]
+ToolResolutionStatus = Literal["disabled", "missing", "filtered", "invalid"]
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ def build_tool_resolution_log_events(
         "disabled": "工具未启用",
         "filtered": "工具已被当前权限范围过滤",
         "missing": "必需工具缺失",
+        "invalid": "工具名称不合法，已跳过",
     }
     events: list[dict[str, Any]] = []
     for index, diagnostic in enumerate(resolved.diagnostics):
@@ -264,6 +266,15 @@ async def resolve_tool_capabilities(
     ordered_specs: list[RuntimeToolSpec] = []
     seen: set[str] = set()
     for spec in configured_specs:
+        if not is_valid_runtime_tool_name(spec.name):
+            diagnostics.append(
+                ToolResolutionDiagnostic(
+                    name=str(spec.name),
+                    status="invalid",
+                    reason="工具名称只能包含字母、数字、下划线和连字符，已从模型工具列表中剔除",
+                )
+            )
+            continue
         if spec.name in seen:
             continue
         ordered_specs.append(spec)
@@ -271,6 +282,15 @@ async def resolve_tool_capabilities(
 
     for tool in implicit_tools or ():
         spec = resolver.resolve_implicit(tool)
+        if not is_valid_runtime_tool_name(spec.name):
+            diagnostics.append(
+                ToolResolutionDiagnostic(
+                    name=str(spec.name),
+                    status="invalid",
+                    reason="工具名称只能包含字母、数字、下划线和连字符，已从模型工具列表中剔除",
+                )
+            )
+            continue
         if spec.name in seen:
             continue
         ordered_specs.append(spec)

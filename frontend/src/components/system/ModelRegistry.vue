@@ -224,15 +224,10 @@ const providerBaseUrlHint = computed(() => {
 
 const canDiscoverModels = computed(() => {
     const provider = String(modelForm.value.provider || '')
-    const hasConfiguredApiKey = Boolean(
-        String(modelForm.value.api_key || '').trim() ||
-        (isEditingModel.value && modelForm.value.has_api_key)
-    )
     return Boolean(
         provider &&
         provider !== 'azure' &&
-        String(modelForm.value.api_base_url || '').trim() &&
-        hasConfiguredApiKey
+        String(modelForm.value.api_base_url || '').trim()
     )
 })
 
@@ -779,7 +774,7 @@ onBeforeUnmount(() => {
                   <div>
                      <div class="flex items-center justify-between">
                          <label class="block text-sm font-medium text-gray-700">模型 ID (API)</label>
-                         <button type="button" class="discover-model-button" :class="{ 'discover-model-button-disabled': !canDiscoverModels }" :disabled="loadingDiscoveredModels || !canDiscoverModels" :title="canDiscoverModels ? '加载当前供应商模型列表' : (isEditingModel && modelForm.has_api_key ? '请先填写 API Base URL' : '请先填写 API Base URL 和 API Key')" @click="discoverProviderModels">
+                         <button type="button" class="discover-model-button" :class="{ 'discover-model-button-disabled': !canDiscoverModels }" :disabled="loadingDiscoveredModels || !canDiscoverModels" :title="canDiscoverModels ? '加载当前供应商模型列表' : (String(modelForm.provider) === 'azure' ? 'Azure OpenAI 请手工填写部署名称' : '请先填写 API Base URL')" @click="discoverProviderModels">
                              <svg v-if="loadingDiscoveredModels" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
                              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" /></svg>
                              {{ loadingDiscoveredModels ? '加载中' : '加载模型列表' }}
