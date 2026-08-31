@@ -112,6 +112,13 @@ def test_message_action_menus_group_data_file_and_low_frequency_actions():
     assert "props.showDataOnMobile && (hasDataFile.value || props.canExport)" in source
 
 
+def test_message_action_menu_hides_desktop_export_entry_on_mobile():
+    source = ACTION_MENU.read_text(encoding="utf-8")
+
+    assert 'class="menu-item desktop-export-item"' in source
+    assert "@media (min-width: 640px)" in source
+
+
 def test_message_action_menu_shows_conversation_totals_inside_resource_menu():
     menu_source = ACTION_MENU.read_text(encoding="utf-8")
     embed_source = EMBED.read_text(encoding="utf-8")

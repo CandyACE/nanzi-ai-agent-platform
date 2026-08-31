@@ -191,7 +191,7 @@ onUnmounted(() => {
             <button v-if="hasArtifactEntry" type="button" class="menu-item" role="menuitem" @click="run(() => emit('openArtifacts'))">▣ 查看文件产物 <span v-if="conversationArtifactCount > 0" class="float-right text-[10px] text-gray-400">{{ conversationArtifactCount }} 个</span></button>
             <div v-if="hasTrace || hasTokenStats || canSaveReport" class="my-1 border-t border-gray-100 dark:border-gray-800" />
           </div>
-          <button v-if="canExport" type="button" class="menu-item hidden sm:block" role="menuitem" @click="run(() => emit('exportData'))">↓ 导出数据（Excel）</button>
+          <button v-if="canExport" type="button" class="menu-item desktop-export-item" role="menuitem" @click="run(() => emit('exportData'))">↓ 导出数据（Excel）</button>
           <button v-if="hasTrace" type="button" class="menu-item flex items-center gap-1.5 whitespace-nowrap" role="menuitem" @click="run(() => emit('openTrace'))"><ShareIcon class="h-4 w-4 shrink-0 text-gray-500" /> 查看执行链路</button>
           <button v-if="hasTokenStats" type="button" class="menu-item" role="menuitem" @click="run(() => emit('openStats'))">▤ 查看调用详情</button>
           <button v-if="canSaveReport" type="button" class="menu-item" role="menuitem" @click="run(() => emit('saveReport'))">☆ 添加固化报表</button>
@@ -212,6 +212,10 @@ onUnmounted(() => {
   text-align: left;
   font-size: 0.75rem;
   color: rgb(75 85 99);
+}
+.desktop-export-item { display: none; }
+@media (min-width: 640px) {
+  .desktop-export-item { display: flex; }
 }
 .menu-item:hover { background: rgb(249 250 251); }
 :global(.dark) .menu-item { color: rgb(209 213 219); }
