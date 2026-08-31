@@ -31,7 +31,8 @@ def test_example_flow_guide_banner_contract():
     assert "nanzi_example_flow_guide_dismissed" in view
     assert "showExampleFlowGuide" in view
     assert "restoreExampleFlowGuide" in view
-    assert "显示流程指引" in view
+    assert "显示指引" in view
+    assert "whitespace-nowrap" in view
 
     # 4. 验证 ? 号规范弹窗中的全流程指引与恢复按钮
     assert "showHelp" in view

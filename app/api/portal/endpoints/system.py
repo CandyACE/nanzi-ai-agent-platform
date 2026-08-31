@@ -13,6 +13,7 @@ import asyncio
 import traceback
 import os
 import time
+import json
 
 router = APIRouter()
 
@@ -535,6 +536,79 @@ class ConfigItem(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     updates: List[ConfigItem]
+
+
+DEPLOYMENT_CHECKLIST_KEY = "deployment_setup_checklist"
+DEPLOYMENT_CHECKLIST_VERSION = "post_install_v2"
+DEPLOYMENT_CHECKLIST_ITEMS = (
+    "model_config",
+    "knowledge_environment",
+    "system_config",
+    "agent_config",
+)
+
+
+class DeploymentChecklistUpdate(BaseModel):
+    item_id: str
+    completed: bool = True
+
+
+def _default_deployment_checklist() -> Dict[str, Any]:
+    return {
+        "version": DEPLOYMENT_CHECKLIST_VERSION,
+        "completed": {item_id: False for item_id in DEPLOYMENT_CHECKLIST_ITEMS},
+    }
+
+
+async def _get_deployment_checklist() -> Dict[str, Any]:
+    default = _default_deployment_checklist()
+    raw = await ConfigService.get(DEPLOYMENT_CHECKLIST_KEY)
+    if not raw:
+        return default
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return default
+    if not isinstance(value, dict) or value.get("version") != DEPLOYMENT_CHECKLIST_VERSION:
+        return default
+    completed = value.get("completed")
+    if not isinstance(completed, dict):
+        return default
+    return {
+        "version": DEPLOYMENT_CHECKLIST_VERSION,
+        "completed": {
+            item_id: bool(completed.get(item_id, False))
+            for item_id in DEPLOYMENT_CHECKLIST_ITEMS
+        },
+    }
+
+
+@router.get("/setup-checklist")
+async def get_deployment_checklist(user: Dict = Depends(require_admin)):
+    """Return the deployment checklist; only administrators can see it."""
+    return await _get_deployment_checklist()
+
+
+@router.put("/setup-checklist")
+async def update_deployment_checklist(
+    request: DeploymentChecklistUpdate,
+    user: Dict = Depends(require_admin),
+):
+    """Update one deployment checklist item for the whole installation."""
+    if request.item_id not in DEPLOYMENT_CHECKLIST_ITEMS:
+        raise HTTPException(status_code=400, detail="Invalid deployment checklist item")
+    checklist = await _get_deployment_checklist()
+    checklist["completed"][request.item_id] = request.completed
+    await ConfigService.set_config(
+        DEPLOYMENT_CHECKLIST_KEY,
+        json.dumps(checklist, ensure_ascii=False, separators=(",", ":")),
+        description="首次部署后的管理员检查清单状态",
+        category="internal",
+        is_secret=False,
+        changed_by=user.get("user_name", "admin"),
+        change_reason="Update deployment setup checklist",
+    )
+    return checklist
 
 @router.get("/configs", response_model=Dict[str, List[Dict[str, Any]]])
 async def get_system_configs(
