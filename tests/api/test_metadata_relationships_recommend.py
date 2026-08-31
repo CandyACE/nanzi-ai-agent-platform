@@ -165,6 +165,42 @@ async def test_recommend_relationships_cancels_generator_after_client_disconnect
 
 
 @pytest.mark.asyncio
+async def test_metadata_recommendation_sse_emits_progress_and_completed_result():
+    """SSE 适配器应按顺序输出 started、progress 和 completed 终态。"""
+    from unittest.mock import AsyncMock
+    from app.api.portal.endpoints import metadata as endpoint_module
+
+    mock_request = AsyncMock()
+    mock_request.is_disconnected = AsyncMock(return_value=False)
+
+    async def worker(progress_callback):
+        await progress_callback({
+            "phase": "scanning",
+            "message": "正在扫描",
+            "percent": 50,
+            "remaining_units": 2,
+        })
+        return {"relationships": [], "_trace_id": "rel-rec-sse-test"}
+
+    response = await endpoint_module._stream_metadata_recommendation(
+        mock_request,
+        dataset_id=1,
+        recommendation_type="relationships",
+        worker=worker,
+    )
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+    body = "".join(chunks)
+
+    assert "event: started" in body
+    assert "event: progress" in body
+    assert '"remaining_units": 2' in body
+    assert "event: completed" in body
+    assert "rel-rec-sse-test" in body
+
+
+@pytest.mark.asyncio
 async def test_recommendation_schema_enforces_confidence_bounds():
     """RelationshipRecommendation 的 confidence 字段必须约束在 0~1 之间。"""
     from pydantic import ValidationError

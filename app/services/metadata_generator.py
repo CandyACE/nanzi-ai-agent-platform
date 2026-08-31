@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional
+from typing import Awaitable, Callable, Dict, Any, List, Optional
 import logging
 import json
 import re
@@ -9,6 +9,8 @@ from app.services.ai.config import AgentConfigProvider
 from app.core.orm import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None]]]
 
 class ColumnMetadata(BaseModel):
     physical_name: str = Field(description="数据库物理列名")
@@ -74,6 +76,24 @@ class DatasetEnhanceResult(BaseModel):
     tags: List[str] = Field(description="数据集的标签列表，如 ['财务', '生产', '核心数据']")
 
 class MetadataGeneratorService:
+    @staticmethod
+    async def _emit_progress(
+        progress_callback: ProgressCallback,
+        **payload: Any,
+    ) -> None:
+        """发送生成进度；进度通道异常不能打断主推荐任务。"""
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(payload)
+        except Exception as exc:
+            logger.warning(
+                "元数据 AI 进度回调失败: phase=%s, error=%s",
+                payload.get("phase"),
+                exc,
+                exc_info=True,
+            )
+
     @staticmethod
     def _extract_schema_table_names(schema_context: str) -> List[str]:
         """从导出的 Schema 文本中提取物理表名，用于驱动逐表关系扫描。"""
@@ -392,6 +412,7 @@ class MetadataGeneratorService:
         user_prompt: Optional[str] = None,
         existing_metrics: Optional[List[Any]] = None,
         data_source: Optional[str] = None,
+        progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """
         根据数据集 Schema 推荐业务指标，支持用户自定义需求与10分钟内防重复推荐
@@ -407,6 +428,17 @@ class MetadataGeneratorService:
         start_total = time.time()
         
         try:
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="initializing",
+                message="正在初始化业务指标推荐任务",
+                percent=5,
+                trace_id=trace_id,
+                completed_units=0,
+                total_units=5,
+                remaining_units=5,
+                unit_label="阶段",
+            )
             # 1. Log Start
             await MetadataGeneratorService._save_trace_log(
                 trace_id, 1, "start_recommendation",
@@ -439,6 +471,17 @@ class MetadataGeneratorService:
                         db_existing_names.add(str(display_name).strip())
 
             all_excluded_names = db_existing_names.union(recent_names)
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="deduplicating",
+                message=f"已加载 {len(all_excluded_names)} 个已有或近期指标用于去重",
+                percent=20,
+                trace_id=trace_id,
+                completed_units=1,
+                total_units=5,
+                remaining_units=4,
+                unit_label="阶段",
+            )
 
             # 3. Get Agent Config
             async with AsyncSessionLocal() as session:
@@ -452,6 +495,17 @@ class MetadataGeneratorService:
 
             # Get configured LLM
             llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="model_ready",
+                message="AI 模型已就绪，正在准备指标生成提示词",
+                percent=35,
+                trace_id=trace_id,
+                completed_units=2,
+                total_units=5,
+                remaining_units=3,
+                unit_label="阶段",
+            )
 
             # 4. 根据数据集绑定的数据源生成方言约束，避免 PostgreSQL 误用 ClickHouse 函数。
             from app.services.sql_query_execution_service import dialect_from_data_source
@@ -517,6 +571,17 @@ class MetadataGeneratorService:
             
             # 6. Invoke LLM
             start_llm = time.time()
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="generating",
+                message="AI 正在分析字段语义并生成指标与 SQL",
+                percent=45,
+                trace_id=trace_id,
+                completed_units=2,
+                total_units=5,
+                remaining_units=3,
+                unit_label="阶段",
+            )
             result = await MetadataGeneratorService._invoke_json(
                 llm,
                 MetricRecommendationResult,
@@ -527,6 +592,18 @@ class MetadataGeneratorService:
 
             # 7. 后置去重过滤与写入 Redis 10分钟缓存
             raw_metrics = result.get("metrics", []) if isinstance(result, dict) else (getattr(result, "metrics", []) if hasattr(result, "metrics") else [])
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="validating",
+                message=f"模型已返回 {len(raw_metrics)} 个候选指标，正在校验并去重",
+                percent=85,
+                trace_id=trace_id,
+                completed_units=4,
+                total_units=5,
+                remaining_units=1,
+                unit_label="阶段",
+                result_count=len(raw_metrics),
+            )
             filtered_metrics = []
             new_metric_names = []
 
@@ -561,6 +638,18 @@ class MetadataGeneratorService:
             
             # 8. Log Success
             await MetadataGeneratorService._save_trace_log(trace_id, 4, "llm_success", result, execution_time=duration_llm)
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="completed",
+                message=f"业务指标推荐完成，共生成 {len(result.get('metrics', []))} 个指标",
+                percent=100,
+                trace_id=trace_id,
+                completed_units=5,
+                total_units=5,
+                remaining_units=0,
+                unit_label="阶段",
+                result_count=len(result.get("metrics", [])),
+            )
                 
             return result
 
@@ -575,7 +664,8 @@ class MetadataGeneratorService:
         dataset_id: int,
         schema_context: str,
         user_prompt: Optional[str] = None,
-        existing_relationships: Optional[List[str]] = None
+        existing_relationships: Optional[List[str]] = None,
+        progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """
         根据数据集 Schema 智能推荐实体（表）之间的关联关系。
@@ -590,6 +680,19 @@ class MetadataGeneratorService:
 
         trace_id = f"rel-rec-{str(uuid.uuid4())}"
         start_total = time.time()
+        await MetadataGeneratorService._emit_progress(
+            progress_callback,
+            phase="initializing",
+            message="正在初始化实体关系推荐任务",
+            percent=3,
+            trace_id=trace_id,
+            completed_units=0,
+            total_units=0,
+            remaining_units=0,
+            unit_label="张表",
+            batch_count=0,
+            result_count=0,
+        )
 
         # 1. 查询近 10 分钟已推荐的关联关系缓存（避免短期内频繁推荐相同关联）
         recent_recommended_keys = set()
@@ -611,6 +714,20 @@ class MetadataGeneratorService:
                         recent_recommended_items.append(item)
         except Exception as e:
             logger.warning(f"Failed to read recent relationship recommendations from Redis: {e}")
+
+        await MetadataGeneratorService._emit_progress(
+            progress_callback,
+            phase="deduplicating",
+            message=f"已加载 {len(recent_recommended_keys)} 条近期关系用于去重",
+            percent=7,
+            trace_id=trace_id,
+            completed_units=0,
+            total_units=0,
+            remaining_units=0,
+            unit_label="张表",
+            batch_count=0,
+            result_count=0,
+        )
 
         # 整理负向排除清单（既有关系 + 近期推荐关系）
         exclude_descriptions = []
@@ -688,32 +805,87 @@ class MetadataGeneratorService:
                 "{format_instructions}"
             )
 
-            # 4. 逐表锚定 + 分批调用，避免模型全局只给一条关系后提前结束。
+            # 4. 逐表锚定 + 分批调用；每对表只在前向锚点分析一次，避免对称重复扫描。
             start_llm = time.time()
             batch_size = 10
-            max_pages_per_anchor = 20
+            max_pages_per_anchor = 5
+            max_stagnant_pages = 2
             batch_number = 0
             collected_relationships = []
             collected_keys = set(recent_recommended_keys)
             new_cache_items = []
             stop_reason = "unknown"
             debug_batches = []
+            processed_anchor_count = 0
             schema_table_names = MetadataGeneratorService._extract_schema_table_names(schema_context)
             anchor_table_names = schema_table_names or [""]
+            total_anchors = len(anchor_table_names)
             logger.warning(
                 "关系推荐逐表扫描启动: trace_id=%s, dataset_id=%s, schema_len=%s, "
-                "table_count=%s, cached_exclusions=%s",
+                "table_count=%s, cached_exclusions=%s, max_pages_per_anchor=%s",
                 trace_id,
                 dataset_id,
                 len(schema_context),
                 len(schema_table_names),
                 len(recent_recommended_keys),
+                max_pages_per_anchor,
+            )
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="scanning",
+                message=f"开始逐表扫描，共 {total_anchors} 张表",
+                percent=10,
+                trace_id=trace_id,
+                completed_units=0,
+                total_units=total_anchors,
+                remaining_units=total_anchors,
+                unit_label="张表",
+                batch_count=0,
+                result_count=0,
             )
 
-            for anchor_table in anchor_table_names:
+            for anchor_index, anchor_table in enumerate(anchor_table_names, start=1):
                 anchor_stop_reason = "unknown"
                 page_number = 0
+                stagnant_pages = 0
+                # 只分析当前锚定表与其后续表，防止 A->B 完成后再次扫描 B->A。
+                candidate_target_names = (
+                    schema_table_names[anchor_index:]
+                    if anchor_table and schema_table_names
+                    else []
+                )
+                progress_percent = 10 + int(85 * (anchor_index - 1) / max(total_anchors, 1))
+                await MetadataGeneratorService._emit_progress(
+                    progress_callback,
+                    phase="scanning",
+                    message=f"正在扫描表 {anchor_table or '全部表'}",
+                    percent=progress_percent,
+                    trace_id=trace_id,
+                    completed_units=anchor_index - 1,
+                    total_units=total_anchors,
+                    remaining_units=total_anchors - anchor_index + 1,
+                    unit_label="张表",
+                    current_item=anchor_table or "全部表",
+                    current_page=0,
+                    batch_count=batch_number,
+                    result_count=len(collected_relationships),
+                )
+
+                if anchor_table and schema_table_names and not candidate_target_names:
+                    anchor_stop_reason = "no_remaining_target"
+                    logger.warning(
+                        "关系推荐锚定表无需重复扫描: trace_id=%s, dataset_id=%s, "
+                        "anchor=%s, anchor_index=%s, total_anchors=%s",
+                        trace_id,
+                        dataset_id,
+                        anchor_table,
+                        anchor_index,
+                        total_anchors,
+                    )
+
                 while True:
+                    if anchor_stop_reason != "unknown":
+                        break
                     page_number += 1
                     batch_number += 1
                     generated_exclusions = []
@@ -727,9 +899,16 @@ class MetadataGeneratorService:
                     if anchor_table:
                         batch_user_prompt += (
                             f"\n\n【当前锚定表】{anchor_table}\n"
-                            "请优先、尽可能完整地发现该锚定表与当前 Schema 内其它表之间的关系；"
-                            "source_table 或 target_table 至少一个必须是当前锚定表。"
+                            "请尽可能完整地发现该锚定表的关系；source_table 或 target_table "
+                            "至少一个必须是当前锚定表。"
                         )
+                        if candidate_target_names:
+                            batch_user_prompt += (
+                                "\n【本锚点允许关联的其它表】\n- "
+                                + "\n- ".join(candidate_target_names)
+                                + "\n除当前锚定表自身关系外，另一端必须来自以上列表；"
+                                "严禁输出已完成锚点方向的关系。"
+                            )
                     if generated_exclusions:
                         batch_user_prompt += (
                             "\n\n【本次任务已输出关系，下一批严禁重复】\n"
@@ -811,6 +990,14 @@ class MetadataGeneratorService:
                             if anchor_table not in {src, tgt}:
                                 batch_off_anchor_count += 1
                                 continue
+                            other_table = tgt if src == anchor_table else src
+                            if (
+                                candidate_target_names
+                                and other_table != anchor_table
+                                and other_table not in candidate_target_names
+                            ):
+                                batch_off_anchor_count += 1
+                                continue
                         if pair_key in collected_keys:
                             batch_duplicate_count += 1
                             continue
@@ -825,12 +1012,20 @@ class MetadataGeneratorService:
                         })
                         batch_new_count += 1
 
-                    # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一页，直到空批次或无新增。
+                    # 连续两页新增不超过 1 条时认为结果已收敛，避免模型用重复项维持 has_more。
+                    if batch_new_count <= 1:
+                        stagnant_pages += 1
+                    else:
+                        stagnant_pages = 0
+
+                    # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一页，直到空批次或收敛。
                     should_continue = has_more or len(raw_relationships) >= batch_size
                     if not raw_relationships:
                         anchor_stop_reason = "empty_batch"
                     elif batch_new_count == 0:
                         anchor_stop_reason = "no_new_relationship"
+                    elif stagnant_pages >= max_stagnant_pages:
+                        anchor_stop_reason = "low_yield_converged"
                     elif not should_continue:
                         anchor_stop_reason = "has_more_false"
                     elif page_number >= max_pages_per_anchor:
@@ -847,6 +1042,7 @@ class MetadataGeneratorService:
                         "off_anchor_count": batch_off_anchor_count,
                         "has_more": has_more,
                         "should_continue": should_continue,
+                        "stagnant_pages": stagnant_pages,
                         "stop_reason": anchor_stop_reason,
                     })
                     logger.warning(
@@ -869,12 +1065,69 @@ class MetadataGeneratorService:
                         should_continue,
                         anchor_stop_reason,
                     )
+                    elapsed_seconds = max(time.time() - start_llm, 0.001)
+                    completed_for_eta = max(anchor_index - 1, 1)
+                    estimated_remaining_seconds = int(
+                        elapsed_seconds / completed_for_eta * (total_anchors - anchor_index + 1)
+                    )
+                    await MetadataGeneratorService._emit_progress(
+                        progress_callback,
+                        phase="scanning",
+                        message=(
+                            f"表 {anchor_table or '全部表'} 第 {page_number} 页完成，"
+                            f"本页新增 {batch_new_count} 条"
+                        ),
+                        percent=progress_percent,
+                        trace_id=trace_id,
+                        completed_units=anchor_index - 1,
+                        total_units=total_anchors,
+                        remaining_units=total_anchors - anchor_index + 1,
+                        unit_label="张表",
+                        current_item=anchor_table or "全部表",
+                        current_page=page_number,
+                        batch_count=batch_number,
+                        result_count=len(collected_relationships),
+                        estimated_remaining_seconds=estimated_remaining_seconds,
+                        stop_reason=(
+                            anchor_stop_reason
+                            if anchor_stop_reason != "unknown"
+                            else None
+                        ),
+                    )
 
                     if anchor_stop_reason != "unknown":
                         break
 
                 if stop_reason == "partial_batch_error":
                     break
+
+                completed_anchors = anchor_index
+                processed_anchor_count = completed_anchors
+                remaining_anchors = total_anchors - completed_anchors
+                elapsed_seconds = max(time.time() - start_llm, 0.001)
+                estimated_remaining_seconds = int(
+                    elapsed_seconds / max(completed_anchors, 1) * remaining_anchors
+                )
+                await MetadataGeneratorService._emit_progress(
+                    progress_callback,
+                    phase="anchor_completed",
+                    message=(
+                        f"已完成表 {anchor_table or '全部表'}，"
+                        f"还剩 {remaining_anchors} 张表"
+                    ),
+                    percent=10 + int(85 * completed_anchors / max(total_anchors, 1)),
+                    trace_id=trace_id,
+                    completed_units=completed_anchors,
+                    total_units=total_anchors,
+                    remaining_units=remaining_anchors,
+                    unit_label="张表",
+                    current_item=anchor_table or "全部表",
+                    current_page=page_number,
+                    batch_count=batch_number,
+                    result_count=len(collected_relationships),
+                    estimated_remaining_seconds=estimated_remaining_seconds,
+                    stop_reason=anchor_stop_reason,
+                )
 
             if stop_reason == "unknown":
                 stop_reason = "all_anchors_scanned"
@@ -896,6 +1149,8 @@ class MetadataGeneratorService:
                     "schema_table_names_preview": schema_table_names[:30],
                     "batch_size": batch_size,
                     "batch_count": batch_number,
+                    "completed_anchor_count": processed_anchor_count,
+                    "remaining_anchor_count": total_anchors - processed_anchor_count,
                     "stop_reason": stop_reason,
                     "batches": debug_batches[-200:],
                 },
@@ -925,6 +1180,34 @@ class MetadataGeneratorService:
             )
             await MetadataGeneratorService._save_trace_log(
                 trace_id, 4, "llm_success", result, execution_time=duration_llm
+            )
+            partial_interruption = stop_reason == "partial_batch_error"
+            await MetadataGeneratorService._emit_progress(
+                progress_callback,
+                phase="interrupted" if partial_interruption else "completed",
+                message=(
+                    f"实体关系推荐中断，已保留 {len(filtered_relationships)} 条关系"
+                    if partial_interruption
+                    else f"实体关系推荐完成，共生成 {len(filtered_relationships)} 条关系"
+                ),
+                percent=(
+                    10 + int(85 * processed_anchor_count / max(total_anchors, 1))
+                    if partial_interruption
+                    else 100
+                ),
+                trace_id=trace_id,
+                completed_units=(processed_anchor_count if partial_interruption else total_anchors),
+                total_units=total_anchors,
+                remaining_units=(
+                    total_anchors - processed_anchor_count
+                    if partial_interruption
+                    else 0
+                ),
+                unit_label="张表",
+                batch_count=batch_number,
+                result_count=len(filtered_relationships),
+                estimated_remaining_seconds=(None if partial_interruption else 0),
+                stop_reason=stop_reason,
             )
 
             return result

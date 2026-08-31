@@ -132,6 +132,137 @@ export interface RelationshipRecommendationResult {
   };
 }
 
+export type MetadataAiRunStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "interrupted"
+  | "error";
+
+export interface MetadataAiProgress {
+  status: MetadataAiRunStatus;
+  recommendation_type?: "metrics" | "relationships";
+  phase: string;
+  message: string;
+  percent: number;
+  trace_id?: string;
+  completed_units?: number;
+  total_units?: number;
+  remaining_units?: number;
+  unit_label?: string;
+  current_item?: string;
+  current_page?: number;
+  batch_count?: number;
+  result_count?: number;
+  estimated_remaining_seconds?: number;
+  stop_reason?: string | null;
+}
+
+export interface MetricRecommendationResult {
+  metrics: Metric[];
+  _trace_id?: string;
+}
+
+interface MetadataAiStreamEvent<T> {
+  event: "started" | "progress" | "completed" | "interrupted" | "error" | string;
+  data: MetadataAiProgress & { result?: T };
+}
+
+const metadataStreamAuthHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  const apiKey = localStorage.getItem("api_key");
+  const token = localStorage.getItem("yovole_token") || localStorage.getItem("admin_token");
+  if (apiKey) headers["X-API-Key"] = apiKey;
+  // 与 Axios 拦截器保持一致：API Key 优先，只有缺少 API Key 时才使用 JWT。
+  if (!apiKey && token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+};
+
+const parseMetadataSseBlock = <T>(block: string): MetadataAiStreamEvent<T> | null => {
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+  if (!dataLines.length) return null;
+  try {
+    return {
+      event,
+      data: JSON.parse(dataLines.join("\n")),
+    } as MetadataAiStreamEvent<T>;
+  } catch (error) {
+    console.error("元数据 AI SSE 事件解析失败", { event, block, error });
+    throw new Error("元数据 AI 进度事件格式无效");
+  }
+};
+
+/**
+ * 读取 POST SSE 流。POST 用于携带表范围与提示词，completed 事件携带最终推荐结果。
+ */
+export async function streamMetadataRecommendation<T>(
+  url: string,
+  params: { table_names?: string[]; user_prompt?: string },
+  signal: AbortSignal,
+  onEvent: (event: MetadataAiStreamEvent<T>) => void,
+): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: metadataStreamAuthHeaders(),
+    credentials: "include",
+    body: JSON.stringify(params || {}),
+    signal,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || `请求失败（HTTP ${response.status}）`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("当前浏览器不支持 AI 实时进度流");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completedResult: T | undefined;
+  let terminalEvent = false;
+
+  const handleBlock = (block: string) => {
+    const streamEvent = parseMetadataSseBlock<T>(block);
+    if (!streamEvent) return;
+    console.info("元数据 AI SSE 事件", streamEvent.event, streamEvent.data);
+    onEvent(streamEvent);
+    if (
+      (streamEvent.event === "completed" || streamEvent.event === "interrupted")
+      && streamEvent.data.result !== undefined
+    ) {
+      completedResult = streamEvent.data.result;
+      terminalEvent = true;
+    } else if (streamEvent.event === "error" || streamEvent.event === "interrupted") {
+      terminalEvent = true;
+      throw new Error(streamEvent.data.message || "AI 推荐任务已中断");
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      handleBlock(block);
+    }
+    if (terminalEvent || done) break;
+  }
+  if (buffer.trim() && !terminalEvent) handleBlock(buffer);
+  if (completedResult === undefined) {
+    throw new Error("AI 推荐进度流意外中断，未收到完成结果");
+  }
+  return completedResult;
+}
+
 export const metadataApi = {
   // Datasets
   getDatasets: () => axios.get<Dataset[]>(`${API_BASE}/datasets`),
@@ -215,6 +346,18 @@ export const metadataApi = {
   recommendMetrics: (datasetId: number, params?: { table_names?: string[]; user_prompt?: string }, signal?: AbortSignal) =>
     axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, params || {}, { timeout: 300000, signal }),
 
+  recommendMetricsStream: (
+    datasetId: number,
+    params: { table_names?: string[]; user_prompt?: string },
+    signal: AbortSignal,
+    onEvent: (event: MetadataAiStreamEvent<MetricRecommendationResult>) => void,
+  ) => streamMetadataRecommendation<MetricRecommendationResult>(
+    `${API_BASE}/datasets/${datasetId}/metrics/recommend/stream`,
+    params,
+    signal,
+    onEvent,
+  ),
+
   // 逐表关系扫描会串行执行多次模型请求，耗时取决于表数量；仅由调用方的 AbortSignal 主动取消。
   recommendRelationships: (
     datasetId: number,
@@ -226,6 +369,18 @@ export const metadataApi = {
       message?: string;
       data: RelationshipRecommendationResult;
     }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, params || {}, { timeout: 0, signal }),
+
+  recommendRelationshipsStream: (
+    datasetId: number,
+    params: { table_names?: string[]; user_prompt?: string },
+    signal: AbortSignal,
+    onEvent: (event: MetadataAiStreamEvent<RelationshipRecommendationResult>) => void,
+  ) => streamMetadataRecommendation<RelationshipRecommendationResult>(
+    `${API_BASE}/datasets/${datasetId}/relationships/recommend/stream`,
+    params,
+    signal,
+    onEvent,
+  ),
 
   enhanceDatasetMetadata: (datasetId: number) =>
     axios.post<{ code: number; message?: string; data: { description: string; tags: string[] } }>(

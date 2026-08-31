@@ -135,7 +135,7 @@ async def test_recommend_relationships_merges_multiple_batches_without_total_lim
     assert mock_invoke.await_count == 2
     assert "本次任务已输出关系" in mock_invoke.await_args_list[1].args[3]
     assert result["_batch_count"] == 2
-    assert result["_stop_reason"] == "has_more_false"
+    assert result["_stop_reason"] == "all_anchors_scanned"
 
 
 @pytest.mark.asyncio
@@ -175,13 +175,13 @@ async def test_recommend_relationships_continues_when_full_batch_omits_has_more(
 
     assert len(result["relationships"]) == 10
     assert result["_batch_count"] == 2
-    assert result["_stop_reason"] == "empty_batch"
+    assert result["_stop_reason"] == "all_anchors_scanned"
     assert mock_invoke.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_recommend_relationships_scans_each_schema_table_anchor():
-    """即使单个锚定表只返回少量关系，也应继续扫描其它表。"""
+    """逐表扫描应推送剩余表进度，并跳过没有前向目标的最后锚点。"""
     dataset_id = 1003
     schema_yaml = """--- [Schema:1] type=table dataset=demo table=orders ---
 table_name: orders
@@ -224,6 +224,10 @@ table_name: payments
 
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
+    progress_events = []
+
+    async def collect_progress(payload):
+        progress_events.append(payload)
 
     with patch("app.core.redis.get_redis", return_value=mock_redis), \
          patch("app.services.metadata_generator.MetadataGeneratorService._save_trace_log", new_callable=AsyncMock), \
@@ -236,15 +240,24 @@ table_name: payments
         result = await MetadataGeneratorService.recommend_relationships(
             dataset_id=dataset_id,
             schema_context=schema_yaml,
+            progress_callback=collect_progress,
         )
 
     assert len(result["relationships"]) == 2
     assert result["_debug"]["schema_table_count"] == 3
-    assert result["_batch_count"] == 3
-    assert mock_invoke.await_count == 3
+    assert result["_batch_count"] == 2
+    assert mock_invoke.await_count == 2
     assert "【当前锚定表】orders" in mock_invoke.await_args_list[0].args[3]
     assert "【当前锚定表】users" in mock_invoke.await_args_list[1].args[3]
-    assert "【当前锚定表】payments" in mock_invoke.await_args_list[2].args[3]
+    assert "【本锚点允许关联的其它表】" in mock_invoke.await_args_list[0].args[3]
+    assert "payments" in mock_invoke.await_args_list[1].args[3]
+    assert progress_events[-1]["phase"] == "completed"
+    assert progress_events[-1]["remaining_units"] == 0
+    assert any(
+        event.get("remaining_units") == 1
+        and event.get("phase") == "anchor_completed"
+        for event in progress_events
+    )
 
 
 @pytest.mark.asyncio

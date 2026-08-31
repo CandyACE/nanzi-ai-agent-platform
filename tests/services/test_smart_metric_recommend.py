@@ -68,6 +68,10 @@ async def test_recommend_metrics_deduplication_and_user_prompt():
     mock_redis.smembers.return_value = {b"avg_pue", "平均PUE".encode("utf-8")}
     mock_redis.sadd = AsyncMock()
     mock_redis.expire = AsyncMock()
+    progress_events = []
+
+    async def collect_progress(payload):
+        progress_events.append(payload)
 
     # Mock LLM generation output (contains 1 duplicate and 1 new metric)
     mock_llm_result = {
@@ -104,6 +108,7 @@ async def test_recommend_metrics_deduplication_and_user_prompt():
             user_prompt=user_prompt,
             existing_metrics=[existing_metric],
             data_source="postgresql_demo",
+            progress_callback=collect_progress,
         )
 
         # 检查 Prompt 中是否注入了 user_prompt 和排除约束
@@ -123,3 +128,14 @@ async def test_recommend_metrics_deduplication_and_user_prompt():
         # 检查新生成的指标是否写入 Redis 并设置 600s 过期
         mock_redis.sadd.assert_called_once()
         mock_redis.expire.assert_called_once_with(f"metadata:metric_rec:recent:{dataset_id}", 600)
+        assert [event["phase"] for event in progress_events] == [
+            "initializing",
+            "deduplicating",
+            "model_ready",
+            "generating",
+            "validating",
+            "completed",
+        ]
+        assert progress_events[-1]["percent"] == 100
+        assert progress_events[-1]["remaining_units"] == 0
+        assert progress_events[-1]["result_count"] == 1

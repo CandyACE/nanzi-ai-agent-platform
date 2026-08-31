@@ -48,9 +48,15 @@ def test_smart_relationship_modal_contract():
     assert "SmartRelationshipModal" in list_content
     assert "showSmartRelModal" in list_content
 
-    # 关系推荐可能逐表执行较长时间，不能被固定的 5 分钟客户端超时误判为失败。
+    # 关系推荐通过 SSE 返回逐表进度，不能被固定的客户端超时误判为失败。
     api_path = Path("frontend/src/api/metadata.ts")
     api_content = api_path.read_text(encoding="utf-8")
-    assert "relationships/recommend" in api_content
-    assert "{ timeout: 0, signal }" in api_content
+    assert "recommendRelationshipsStream" in api_content
+    assert "relationships/recommend/stream" in api_content
     assert "关系推荐请求失败" in content
+    assert "remaining_units" in content
+    assert "batch_count" in content
+    assert "estimatedRemainingText" in content
+    assert "上次扫描已中断" in content
+    assert "生成中断，以下为已完成结果" in content
+    assert 'v-if="runStatus === \'interrupted\'"' in content
