@@ -87,6 +87,11 @@ class AgentContext(BaseModel):
     # Latest current-turn Todo snapshot for pending confirmation/external resume.
     todo_snapshot: Optional[Dict[str, Any]] = None
 
+    # Current-turn generated-file download URLs that were actually issued by a tool.
+    # This list is shared with delegated agent contexts and is used by the final
+    # response guard to reject model-invented artifact links.
+    published_download_urls: List[str] = Field(default_factory=list)
+
 agent_context: ContextVar[Optional[AgentContext]] = ContextVar("agent_context", default=None)
 
 def get_current_agent_context() -> Optional[AgentContext]:

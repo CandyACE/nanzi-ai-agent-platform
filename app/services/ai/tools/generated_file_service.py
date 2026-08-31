@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import mimetypes
+import re
 import secrets
 import shutil
 import uuid
@@ -23,6 +24,14 @@ from app.utils.fs_paths import get_data_base_dir
 logger = logging.getLogger(__name__)
 
 DEFAULT_TTL = timedelta(days=30)
+
+_GENERATED_DOWNLOAD_URL_RE = re.compile(
+    r"(?P<url>(?:https?://[^\s<>\"'`]+)?/api/v1/chat/generated-files/"
+    r"[0-9a-f]{32}\?token=[A-Za-z0-9_-]+"
+    r"(?:#[A-Za-z0-9._~-]+)?)",
+    re.IGNORECASE,
+)
+_UNTRUSTED_DOWNLOAD_URL_MESSAGE = "下载地址未通过文件工具确认"
 
 _OFFICE_MIME_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -110,6 +119,52 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def record_published_download_url(download_url: str) -> None:
+    """Record a URL issued by a successful artifact publication in the current turn."""
+    url = str(download_url or "").strip()
+    if not url or _GENERATED_DOWNLOAD_URL_RE.fullmatch(url) is None:
+        return
+
+    from app.core.context import get_current_agent_context
+
+    context = get_current_agent_context()
+    if context is None:
+        return
+    urls = getattr(context, "published_download_urls", None)
+    if not isinstance(urls, list):
+        context.published_download_urls = []
+        urls = context.published_download_urls
+    if url not in urls:
+        urls.append(url)
+
+
+def filter_untrusted_download_urls(
+    text: str,
+    *,
+    allowed_urls: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> str:
+    """Keep only generated-file URLs issued by the current execution chain.
+
+    Ordinary external URLs are deliberately untouched. Only URLs matching the
+    platform's generated-file endpoint are subject to the allowlist.
+    """
+    if not text:
+        return text
+
+    if allowed_urls is None:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+        allowed_urls = getattr(context, "published_download_urls", []) if context else []
+    allowed = {str(url).strip() for url in allowed_urls if str(url).strip()}
+
+    def replace(match: re.Match[str]) -> str:
+        url = match.group("url")
+        return url if url in allowed else _UNTRUSTED_DOWNLOAD_URL_MESSAGE
+
+    return _GENERATED_DOWNLOAD_URL_RE.sub(replace, str(text))
+
+
 def _manifest_path(artifact_id: str) -> Path:
     return generated_files_root() / artifact_id / "manifest.json"
 
@@ -167,9 +222,9 @@ async def register_artifact(
 ) -> PublishedArtifact:
     """登记一个已落在用户工作区内的产物到 ai_artifacts，不复制文件。
 
-    与旧版同步 publish() 的区别：产物内容本身已存在于用户工作区目录，
-    这里只写一条指向该文件的元信息（storage_path），由下载端点校验归属后
-    直接以 FileResponse 返回原文件，避免重复占用磁盘。
+    产物内容本身已存在于用户工作区目录，这里只写一条指向该文件的元信息
+    （storage_path），由下载端点校验归属后直接以 FileResponse 返回原文件，
+    避免重复占用磁盘。
 
     用于 Word/Excel 生成文件与导出数据（artifact_type 取 word/excel/export）。
     """
@@ -209,7 +264,7 @@ async def register_artifact(
         await session.commit()
 
     public_base_url = await get_download_url_prefix()
-    return PublishedArtifact(
+    published = PublishedArtifact(
         artifact_id=artifact.id,
         token=token,
         filename=display_name,
@@ -218,14 +273,28 @@ async def register_artifact(
         expires_at=expires_at,
         public_base_url=public_base_url,
     )
+    record_published_download_url(published.download_url)
+    return published
 
 
-def publish(
+async def publish(
     source_path: str | Path,
     filename: str,
     *,
+    owner_user_id: int | str | None = None,
+    user_name: str | None = None,
+    conversation_id: str | None = None,
+    trace_id: str | None = None,
+    artifact_type: str = "document",
     ttl: timedelta = DEFAULT_TTL,
 ) -> PublishedArtifact:
+    """Copy an external generated file into the user's workspace and register it.
+
+    This is the compatibility entry point for browser/PDF/brief producers whose
+    source file is created outside ``agent_workspaces``. It intentionally shares
+    the DB artifact path with ``register_artifact`` instead of creating a second
+    manifest-based download protocol.
+    """
     source = Path(source_path).resolve()
     if not source.is_file():
         raise ValueError("待发布文件不存在")
@@ -234,36 +303,37 @@ def publish(
     if not display_name or display_name in {".", ".."}:
         raise ValueError("生成文件名无效")
 
-    root = generated_files_root()
-    root.mkdir(parents=True, exist_ok=True)
-    _purge_expired()
-    artifact_id = uuid.uuid4().hex
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + ttl
-    artifact_dir = root / artifact_id
-    artifact_dir.mkdir(mode=0o700)
-    destination = artifact_dir / display_name
-    shutil.copy2(source, destination)
-    manifest = {
-        "artifact_id": artifact_id,
-        "filename": display_name,
-        "mime_type": _mime_type_for(display_name),
-        "size": destination.stat().st_size,
-        "token_hash": _token_hash(token),
-        "expires_at": expires_at.isoformat(),
-    }
-    (artifact_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    if owner_user_id is None:
+        raise ValueError("统一登记下载文件需要 owner_user_id")
+
+    workspace_root = await _workspace_root()
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_user_key
+
+    user_key = resolve_workspace_user_key(
+        user_id=owner_user_id,
+        user_name=user_name,
     )
-    return PublishedArtifact(
-        artifact_id=artifact_id,
-        token=token,
-        filename=display_name,
-        mime_type=manifest["mime_type"],
-        size=manifest["size"],
-        expires_at=expires_at,
-        public_base_url=_normalize_public_base_url(settings.APP_PUBLIC_URL),
-    )
+    publish_dir = workspace_root / user_key / "generated"
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = publish_dir / f"{uuid.uuid4().hex}_{display_name}"
+    shutil.copy2(source, staged_path)
+
+    try:
+        return await register_artifact(
+            source_path=staged_path,
+            filename=display_name,
+            owner_user_id=owner_user_id,
+            artifact_type=artifact_type,
+            conversation_id=conversation_id,
+            trace_id=trace_id,
+            ttl=ttl,
+        )
+    except Exception:
+        try:
+            staged_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to remove staged generated file %s", staged_path)
+        raise
 
 
 def resolve_for_download(artifact_id: str, token: str) -> GeneratedFile | None:

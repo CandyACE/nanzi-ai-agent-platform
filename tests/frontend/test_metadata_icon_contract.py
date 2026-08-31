@@ -46,5 +46,8 @@ def test_message_action_bar_does_not_clip_desktop_menus() -> None:
 
 def test_message_action_menu_uses_svg_for_trace_icon() -> None:
     source = _read("frontend/src/components/chat/MessageActionMenus.vue")
-    assert "BoltIcon" in source
+    assert "ShareIcon" in source
+    assert "QueueListIcon" not in source
+    assert "BoltIcon" not in source
+    assert "whitespace-nowrap" in source
     assert "⚡ 查看执行链路" not in source
