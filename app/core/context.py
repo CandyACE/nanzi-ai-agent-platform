@@ -60,6 +60,7 @@ class AgentContext(BaseModel):
     # Execution details for tracing (displayed in frontend)
     trace_id: Optional[str] = None
     parent_trace_id: Optional[str] = None
+    agent_max_toolcall_timeout_seconds: Optional[float] = None
     trace_logs: List[str] = Field(default_factory=list)
     trace_buffer: List[Any] = Field(default_factory=list, description="物理执行步骤审计 buffer 引用")
 

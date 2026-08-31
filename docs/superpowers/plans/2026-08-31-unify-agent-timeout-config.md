@@ -251,7 +251,7 @@ return { consumed, timeout: msg.agentMaxToolcallTimeoutSeconds };
     assert result == {"consumed": True, "timeout": 300}
 ```
 
-再增加看门狗行为测试：同一条 pending 日志在 300 秒前保持 pending，达到 300 秒后才变为 error；无快照时 120 秒兼容兜底仍有效。
+再增加看门狗行为测试：同一条 pending 日志在 300 秒前保持 pending，达到 300 秒后才变为 error；无快照时 180 秒兼容兜底仍有效。
 
 在 `test_agent_timeout_watchdog_contract.py` 增加源码契约断言，确认不再存在 `staleMs = 120_000`，且 `markStalePendingStreamLogs` 会读取消息超时字段。
 
@@ -263,7 +263,7 @@ Run:
 python3 -m pytest tests/frontend/test_chat_shared_helpers_behavior.py tests/frontend/test_agent_timeout_watchdog_contract.py -q
 ```
 
-Expected: FAIL because `AgentStreamMessage` 没有超时快照字段，事件处理器不会消费 `run_config`，看门狗仍使用固定 120 秒。
+Expected: FAIL because `AgentStreamMessage` 没有超时快照字段，事件处理器不会消费 `run_config`，看门狗仍使用固定 180 秒。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -276,7 +276,7 @@ agentMaxToolcallTimeoutSeconds?: number;
 增加安全归一化和默认值：
 
 ```ts
-export const DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT_SECONDS = 120;
+export const DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT_SECONDS = 180;
 
 export function resolveAgentMaxToolcallTimeoutMs(
   msg: AgentStreamMessage,
@@ -344,4 +344,3 @@ git status --short
 - [ ] **Step 4: Request code review**
 
 完成测试后，基于本次实现提交前后的 commit 范围请求代码审查，重点检查：配置快照是否越过用户输入边界、前端看门狗是否仍有隐藏固定阈值、超时是否误取消后台任务、以及旧 SSE 事件兼容性。
-

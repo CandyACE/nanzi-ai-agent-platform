@@ -32,6 +32,7 @@ from app.services.ai.reusable_result import (
     build_reusable_result_client_summary,
     normalize_legacy_data_result,
 )
+from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
 from app.utils.env import get_env
 import logging
 
@@ -1428,6 +1429,7 @@ async def create_chat_completion(
     except Exception as exc:  # 目录统计只用于可观测性，不能阻断聊天请求
         logger.warning("Failed to load authorized resource counts for trace: %s", exc)
 
+    agent_max_toolcall_timeout_seconds = await load_agent_max_toolcall_timeout()
     request_observability = {
         "authenticated": True,
         "parameters_validated": True,
@@ -1453,6 +1455,7 @@ async def create_chat_completion(
             }),
         },
         "authorized_resource_scope": authorized_resource_scope,
+        "agent_max_toolcall_timeout": int(agent_max_toolcall_timeout_seconds),
     }
 
     # Convert Pydantic models to dicts for the service
@@ -1560,6 +1563,14 @@ async def create_chat_completion(
         async def sse_generator() -> AsyncGenerator[str, None]:
             client_disconnected = False
             try:
+                run_config_payload = json.dumps(
+                    {
+                        "type": "run_config",
+                        "agent_max_toolcall_timeout": int(agent_max_toolcall_timeout_seconds),
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"data: {run_config_payload}\n\n"
                 while True:
                     if not client_disconnected and await request.is_disconnected():
                         client_disconnected = True
