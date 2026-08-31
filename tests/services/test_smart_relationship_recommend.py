@@ -68,6 +68,8 @@ tables:
         system_prompt = call_args[0][2]
         assert "重点分析订单与支付流水的核销关联" in system_prompt
         assert "orders <-> order_items" in system_prompt
+        assert "不设置数量上限" in system_prompt
+        assert "最多推荐 30 条" not in system_prompt
 
         # 验证后置过滤：orders <-> users 被 Redis 缓存去重剔除，仅保留 orders <-> payments
         rels = result.get("relationships", [])

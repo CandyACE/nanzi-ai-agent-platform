@@ -177,7 +177,7 @@ class MetadataGeneratorService:
                 f"{system_prompt}\n\n"
                 "【结构化输出重试要求】上一次输出未通过 JSON 或 Schema 校验。"
                 "请重新生成完整结果：只返回一个可被 json.loads 解析的 JSON 对象，"
-                "不要 Markdown、不要解释文字；控制条目数量和描述长度，确保所有字符串、"
+                "不要 Markdown、不要解释文字；保持描述简洁、避免重复关系，确保所有字符串、"
                 "数组及对象都完整闭合。"
             )
             retry_response = await llm.ainvoke(
@@ -633,8 +633,8 @@ class MetadataGeneratorService:
 
             system_prompt += (
                 "输出要求：\n"
-                "- 根据给定的 Schema 规模，最多推荐 30 条高置信度且有实际业务价值的关联关系；"
-                "表较多时优先输出最可靠的关系，不要为了全面而输出过多内容。\n"
+                "- 根据给定的 Schema 规模，尽可能多地输出所有合理且有实际业务价值的关联关系，"
+                "不设置数量上限；表较多时优先输出高置信度关系，并确保 JSON 完整闭合。\n"
                 "- condition 使用 '物理表别名1.字段 = 物理表别名2.字段' 形式，例如 't1.order_id = t2.id'。\n"
                 "- relation_type 取值：one_to_one / one_to_many / many_to_one。\n"
                 "- confidence 是 0~1 之间的小数，表示你对该关联关系成立的自信心（优先输出高置信度的关系）。\n"
