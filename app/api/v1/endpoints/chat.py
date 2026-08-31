@@ -1,8 +1,6 @@
 import json
 import os
 import time
-import uuid
-import re
 import asyncio
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -21,7 +19,7 @@ from app.core.context import set_debug_context
 from app.core.dependencies import require_api_key
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
-from app.utils.fs_access import get_user_uploads_dir
+from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
 from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
@@ -32,6 +30,7 @@ from app.services.ai.reusable_result import (
     build_reusable_result_client_summary,
     normalize_legacy_data_result,
 )
+from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
 from app.utils.env import get_env
 import logging
 
@@ -1428,6 +1427,7 @@ async def create_chat_completion(
     except Exception as exc:  # 目录统计只用于可观测性，不能阻断聊天请求
         logger.warning("Failed to load authorized resource counts for trace: %s", exc)
 
+    agent_max_toolcall_timeout_seconds = await load_agent_max_toolcall_timeout()
     request_observability = {
         "authenticated": True,
         "parameters_validated": True,
@@ -1453,6 +1453,7 @@ async def create_chat_completion(
             }),
         },
         "authorized_resource_scope": authorized_resource_scope,
+        "agent_max_toolcall_timeout": int(agent_max_toolcall_timeout_seconds),
     }
 
     # Convert Pydantic models to dicts for the service
@@ -1560,6 +1561,14 @@ async def create_chat_completion(
         async def sse_generator() -> AsyncGenerator[str, None]:
             client_disconnected = False
             try:
+                run_config_payload = json.dumps(
+                    {
+                        "type": "run_config",
+                        "agent_max_toolcall_timeout": int(agent_max_toolcall_timeout_seconds),
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"data: {run_config_payload}\n\n"
                 while True:
                     if not client_disconnected and await request.is_disconnected():
                         client_disconnected = True
@@ -2279,20 +2288,14 @@ async def upload_chat_file(
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
         
     # 3. 文件名清洗与混淆命名防冲突
-    clean_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file.filename or "")
-    if not clean_name or clean_name.startswith('.'):
-        clean_name = f"attachment{ext}"
-        
-    unique_name = f"{int(time.time())}_{uuid.uuid4().hex[:12]}_{clean_name}"
-    
     upload_dir = get_user_uploads_dir(user_info)
     if not upload_dir:
         raise HTTPException(status_code=403, detail="无法解析用户工作目录，上传失败。")
     os.makedirs(upload_dir, exist_ok=True)
     
-    file_path = os.path.normpath(os.path.join(upload_dir, unique_name))
     try:
-        with open(file_path, "wb") as f:
+        file_path, handle = open_upload_storage_file(upload_dir, file.filename)
+        with handle as f:
             f.write(contents)
     except Exception as e:
         logger.error(f"Failed to save uploaded file: {e}")
@@ -2300,7 +2303,7 @@ async def upload_chat_file(
         
     return StandardResponse(data=UploadResponse(
         url=file_path,
-        filename=file.filename or unique_name,
+        filename=file.filename or os.path.basename(file_path),
         size=len(contents),
         ext=ext.replace(".", "")
     ))

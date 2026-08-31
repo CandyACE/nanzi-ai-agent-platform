@@ -22,6 +22,7 @@ from app.utils.fs_access import (
     get_user_private_workspace_root,
     get_user_sessions_dir,
     get_user_uploads_dir,
+    open_upload_storage_file,
     is_session_workdir_path,
     is_fs_admin,
     is_fs_virtual_root,
@@ -928,15 +929,11 @@ async def upload_to_workspace(
     if ext in FORBIDDEN_UPLOAD_EXTENSIONS:
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
 
-    clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "")
-    if not clean_name or clean_name.startswith("."):
-        clean_name = f"upload{ext or '.bin'}"
-    unique_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{clean_name}"
-    target = os.path.normpath(os.path.join(parent, unique_name))
-
     try:
-        with open(target, "wb") as handle:
+        target, handle = open_upload_storage_file(parent, file.filename)
+        with handle:
             handle.write(contents)
+        unique_name = os.path.basename(target)
         stat = os.stat(target)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"上传失败: {exc}") from exc

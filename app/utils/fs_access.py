@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
+import uuid
+from typing import Any, BinaryIO
 
 from fastapi import HTTPException
 
@@ -16,6 +17,31 @@ SESSION_DIR_NAME_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+UPLOAD_NAME_ALLOCATION_ATTEMPTS = 100
+
+
+def build_upload_storage_name(filename: str | None, suffix: str | None = None) -> str:
+    """保留可读原名，仅清理路径/控制字符，并追加短唯一后缀。"""
+    raw_name = str(filename or "").replace("/", "_").replace("\\", "_")
+    clean_name = re.sub(r"[\x00-\x1f\x7f]", "_", raw_name).strip()
+    if not clean_name:
+        clean_name = "upload"
+
+    stem, extension = os.path.splitext(clean_name)
+    short_suffix = (suffix or uuid.uuid4().hex[:4]).strip()
+    return f"{stem}_{short_suffix}{extension}"
+
+
+def open_upload_storage_file(directory: str, filename: str | None) -> tuple[str, BinaryIO]:
+    """原子地分配上传文件名，避免短后缀碰撞覆盖已有文件。"""
+    for _ in range(UPLOAD_NAME_ALLOCATION_ATTEMPTS):
+        storage_name = build_upload_storage_name(filename)
+        path = os.path.normpath(os.path.join(directory, storage_name))
+        try:
+            return path, open(path, "xb")
+        except FileExistsError:
+            continue
+    raise FileExistsError("无法为上传文件分配唯一存储名")
 
 
 def get_platform_skills_root() -> str | None:

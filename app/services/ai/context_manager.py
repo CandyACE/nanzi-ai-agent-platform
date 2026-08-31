@@ -178,6 +178,7 @@ class AgentContextManager:
         trace_buffer: Optional[List[Any]] = None,
         runtime_model_info: Optional[Dict[str, Any]] = None,
         published_download_urls: Optional[List[str]] = None,
+        agent_max_toolcall_timeout_seconds: Optional[float] = None,
     ):
         """
         Setup the execution context (debug options + agent config).
@@ -308,6 +309,7 @@ class AgentContextManager:
             user_dimensions=user_dims,
             authorized_attachment_paths=list(authorized_attachment_paths or []),
             current_turn_attachment_paths=list(current_turn_attachment_paths or []),
+            agent_max_toolcall_timeout_seconds=agent_max_toolcall_timeout_seconds,
             trace_buffer=trace_buffer or [],
             skills_custom=bool(getattr(config, "skills_custom", False)),
             skills=list(getattr(config, "skills", None) or []),

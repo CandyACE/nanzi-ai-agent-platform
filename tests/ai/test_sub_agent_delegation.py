@@ -82,6 +82,53 @@ def test_apply_delegation_tool_filter_empty_allowlist_hides_all_specs():
     assert apply_delegation_tool_filter(tools, []) == []
 
 
+def test_agent_context_keeps_agent_toolcall_timeout_snapshot():
+    context = AgentContext(
+        agent_id="main-agent-id",
+        agent_name="MainAgent",
+        agent_max_toolcall_timeout_seconds=300.0,
+    )
+
+    assert context.agent_max_toolcall_timeout_seconds == 300.0
+
+
+@pytest.mark.asyncio
+async def test_resolve_delegation_timeout_uses_global_agent_toolcall_config(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.ai.tools.agent_delegate_tool.get_current_agent_context",
+        lambda: None,
+    )
+    loader = AsyncMock(return_value=300.0)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.tool_timeout.load_agent_max_toolcall_timeout",
+        loader,
+    )
+
+    assert await delegation_tool._resolve_delegation_timeout_seconds() == 300.0
+    loader.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resolve_delegation_timeout_prefers_current_run_snapshot(monkeypatch):
+    set_agent_context(
+        AgentContext(
+            agent_id="main-agent-id",
+            agent_name="MainAgent",
+            agent_max_toolcall_timeout_seconds=300.0,
+        )
+    )
+    loader = AsyncMock(side_effect=AssertionError("should use run snapshot"))
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.tool_timeout.load_agent_max_toolcall_timeout",
+        loader,
+    )
+
+    try:
+        assert await delegation_tool._resolve_delegation_timeout_seconds() == 300.0
+    finally:
+        set_agent_context(None)
+
+
 @contextmanager
 def _mock_delegation_runtime_config():
     with patch(

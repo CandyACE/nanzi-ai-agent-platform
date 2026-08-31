@@ -128,6 +128,74 @@ return { consumed, content: msg.content, isThinking: msg.isThinking };
     }
 
 
+def test_run_config_event_sets_message_timeout_snapshot():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '' };
+const consumed = api.dispatchAgentscopeStreamEvent(
+  msg,
+  { type: 'run_config', agent_max_toolcall_timeout: 300 },
+  () => {}
+);
+return { consumed, timeout: msg.agentMaxToolcallTimeoutSeconds };
+""",
+    )
+
+    assert result == {"consumed": True, "timeout": 300}
+
+
+def test_stale_pending_watchdog_uses_message_timeout_snapshot():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const makeMessage = () => ({
+  content: '',
+  agentMaxToolcallTimeoutSeconds: 300,
+  logs: [{ id: 'agent-1', title: '主 Agent', details: '', status: 'pending', category: 'agent', started_at: 1000 }],
+});
+const before = makeMessage();
+const beforeChanged = api.markStalePendingStreamLogs(before, 300999);
+const after = makeMessage();
+const afterChanged = api.markStalePendingStreamLogs(after, 301000);
+return {
+  beforeChanged,
+  beforeStatus: before.logs[0].status,
+  afterChanged,
+  afterStatus: after.logs[0].status,
+};
+""",
+    )
+
+    assert result == {
+        "beforeChanged": False,
+        "beforeStatus": "pending",
+        "afterChanged": True,
+        "afterStatus": "error",
+    }
+
+
+def test_stale_pending_watchdog_falls_back_to_180_seconds_without_snapshot():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = {
+  content: '',
+  logs: [{ id: 'agent-1', title: '主 Agent', details: '', status: 'pending', category: 'agent', started_at: 1000 }],
+};
+const beforeChanged = api.markStalePendingStreamLogs(msg, 180999);
+const afterChanged = api.markStalePendingStreamLogs(msg, 181000);
+return { beforeChanged, afterChanged, status: msg.logs[0].status };
+""",
+    )
+
+    assert result == {
+        "beforeChanged": False,
+        "afterChanged": True,
+        "status": "error",
+    }
+
+
 def test_agentscope_stream_dispatcher_keeps_todo_as_a_timeline_sibling():
     result = _run_typescript(
         "frontend/src/utils/agentscopeSseHandlers.ts",
