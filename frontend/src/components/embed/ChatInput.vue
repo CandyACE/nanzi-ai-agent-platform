@@ -14,14 +14,25 @@ import { formatContextTokens, type ContextUsage } from "@/composables/useContext
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
 import {
+  ArchiveBoxIcon,
   ArrowPathIcon,
+  BoltIcon,
+  BookOpenIcon,
+  ChartBarIcon,
+  ChatBubbleLeftRightIcon,
   ChevronDownIcon,
   ClockIcon,
   CloudIcon,
   CommandLineIcon,
   ComputerDesktopIcon,
+  Cog6ToothIcon,
   CubeIcon,
+  CpuChipIcon,
+  DocumentTextIcon,
+  FolderIcon,
+  PhotoIcon,
   PowerIcon,
+  PuzzlePieceIcon,
   ServerIcon,
   XMarkIcon,
 } from "@heroicons/vue/24/outline";
@@ -507,6 +518,21 @@ const filteredCommands = computed(() => {
 
 const filteredUserCommands = computed(() => filteredCommands.value.filter(c => !String(c.id).startsWith('sys_')));
 const filteredSystemCommands = computed(() => filteredCommands.value.filter(c => String(c.id).startsWith('sys_')));
+
+const systemCommandIconById: Record<string, any> = {
+  sys_clear: ChatBubbleLeftRightIcon,
+  sys_project: FolderIcon,
+  sys_history: ClockIcon,
+  [DATASET_PORTAL_SYSTEM_COMMAND_ID]: ChartBarIcon,
+  sys_knowledge_portal: BookOpenIcon,
+  sys_workspace: ComputerDesktopIcon,
+  sys_my_artifacts: DocumentTextIcon,
+  sys_quota: ChartBarIcon,
+  sys_compact: ArchiveBoxIcon,
+  sys_settings: Cog6ToothIcon,
+};
+
+const getSystemCommandIcon = (cmd: any) => systemCommandIconById[String(cmd?.id || '')] || null;
 
 /** 与 AgentDebug 快捷指令管理一致：本人创建或 admin 可删（不含内置 sys_ 虚拟指令） */
 const canDeleteCommand = (cmd: { id?: unknown; created_by?: string }) => {
@@ -1541,7 +1567,8 @@ defineExpose({
         >
             <!-- 1. Left Toggle Button (Visible on all devices now) -->
             <div @click="emit('toggle-shortcuts')" class="flex items-center space-x-1 cursor-pointer select-none group flex-shrink-0 bg-white dark:bg-gray-900 pr-2 z-10">
-                <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">⚡️ 快捷指令</span>
+                <CommandLineIcon class="h-3.5 w-3.5 shrink-0 text-gray-400 group-hover:text-primary" aria-hidden="true" />
+                <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">快捷指令</span>
                 <svg class="w-3 h-3 text-gray-300 group-hover:text-primary transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
             </div>
 
@@ -1560,14 +1587,14 @@ defineExpose({
                                           :ref="setNewConversationMenuRef"
                                           class="relative flex items-center shrink-0"
                                         >
-                                          <button :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-l-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">{{ cmd.label }}</button>
+                                          <button :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-l-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"><component :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                           <button type="button" @mousedown.stop @click.stop="toggleNewConversationMenu" class="px-1.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-r-full border-l border-white/70 dark:border-gray-700 hover:bg-gray-200" title="选择会话类型">⌄</button>
                                         </div>
-                                        <button v-else :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-100">{{ cmd.label }}</button>
+                                        <button v-else :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-100"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                     </template>
                                     <div v-if="showShortcutDivider" class="w-px h-3 bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
                                     <template v-for="cmd in visibleRowUserCommands" :key="'row-user-'+cmd.id">
-                                        <button @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors flex-shrink-0">{{ cmd.label }}</button>
+                                        <button @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors flex-shrink-0"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                     </template>
                                 </div>
                             </div>
@@ -1700,7 +1727,8 @@ defineExpose({
                 >
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center space-x-2">
-                      <span class="truncate text-sm font-bold text-gray-900 dark:text-gray-100" :class="[index === activeCommandIndex && !cmd.disabled ? 'text-primary' : '', cmd.disabled ? 'text-gray-400 dark:text-gray-500' : '']">
+                      <span class="flex items-center gap-1.5 truncate text-sm font-bold text-gray-900 dark:text-gray-100" :class="[index === activeCommandIndex && !cmd.disabled ? 'text-primary' : '', cmd.disabled ? 'text-gray-400 dark:text-gray-500' : '']">
+                        <component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-4 w-4 shrink-0" aria-hidden="true" />
                         {{ cmd.label }}
                       </span>
                       <span v-if="cmd.disabled" class="rounded border border-yellow-200 bg-yellow-50 px-1 py-0.5 text-[8px] font-bold text-yellow-600 dark:border-yellow-900/30 dark:bg-yellow-950/20">功能未启用</span>
@@ -2150,7 +2178,7 @@ defineExpose({
                                       @click="openDataPortalFromPlusMenu"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
-                                        <span class="text-lg">📊</span>
+                                        <ChartBarIcon class="h-5 w-5 shrink-0 text-blue-500" aria-hidden="true" />
                                         <span class="font-medium text-left">打开数据门户</span>
                                     </button>
 
@@ -2163,7 +2191,7 @@ defineExpose({
                                       class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                                     >
                                         <div class="flex items-center space-x-3">
-                                            <span class="text-lg">📚</span>
+                                            <BookOpenIcon class="h-5 w-5 shrink-0 text-emerald-500" aria-hidden="true" />
                                             <span class="font-medium text-left">打开知识库中心</span>
                                         </div>
                                     </button>
@@ -2174,7 +2202,7 @@ defineExpose({
                                       @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('select-local-fs');"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
-                                        <span class="text-lg">💻</span>
+                                        <ComputerDesktopIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
                                         <span class="font-medium text-left">浏览工作空间</span>
                                     </button>
 
@@ -2184,7 +2212,7 @@ defineExpose({
                                       @click="triggerFileInput"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
-                                        <span class="text-lg">📁</span>
+                                        <FolderIcon class="h-5 w-5 shrink-0 text-amber-500" aria-hidden="true" />
                                         <span class="font-medium text-left">上传本地文件</span>
                                     </button>
 
@@ -2194,7 +2222,7 @@ defineExpose({
                                       @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('select-memory');"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
-                                        <span class="text-lg">🧠</span>
+                                        <CpuChipIcon class="h-5 w-5 shrink-0 text-violet-500" aria-hidden="true" />
                                         <span class="font-medium text-left">选择记忆记录</span>
                                     </button>
 
@@ -2209,7 +2237,7 @@ defineExpose({
                                       @click.stop="openSkillCascade"
                                     >
                                         <div class="flex items-center space-x-3">
-                                            <span class="text-lg">⚙️</span>
+                                            <Cog6ToothIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
                                             <span class="font-medium text-left">技能中心</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2228,7 +2256,7 @@ defineExpose({
                                       @click.stop="openMcpCascade"
                                     >
                                         <div class="flex items-center space-x-3">
-                                            <span class="text-lg">🔌</span>
+                                            <PuzzlePieceIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
                                             <span class="font-medium text-left">MCP 工具</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2248,7 +2276,7 @@ defineExpose({
                                       @click.stop="openExpertCascade"
                                     >
                                         <div class="flex items-center space-x-3">
-                                            <span class="text-lg">🤖</span>
+                                            <ChatBubbleLeftRightIcon class="h-5 w-5 shrink-0 text-indigo-500" aria-hidden="true" />
                                             <span class="font-medium text-left">专家中心</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2264,7 +2292,7 @@ defineExpose({
                                           @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/new');"
                                           class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                         >
-                                            <span class="text-lg">💬</span>
+                                            <ChatBubbleLeftRightIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
                                             <span class="font-medium text-left">新会话</span>
                                         </button>
                                         <button
@@ -2273,7 +2301,7 @@ defineExpose({
                                           @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/history');"
                                           class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                         >
-                                            <span class="text-lg">🕒</span>
+                                            <ClockIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
                                             <span class="font-medium text-left">历史</span>
                                         </button>
                                     </template>
@@ -2494,16 +2522,11 @@ defineExpose({
                         >
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                         </svg>
-                        <svg
+                        <BoltIcon
                           v-else
                           class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
                           aria-hidden="true"
-                        >
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
+                        />
                         <span class="truncate">{{ expertCapsuleLabel }}</span>
                         <svg
                           class="hidden sm:block h-3 w-3 flex-shrink-0 opacity-60 transition-transform"
@@ -2766,7 +2789,7 @@ defineExpose({
                       class="relative flex h-7 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(46vw,10.5rem)] sm:max-w-[280px]"
                       :title="selectedModel ? `覆盖模型: ${modelLabel}${thinkingSummaryLabel ? ` · ${thinkingSummaryLabel}` : ''}` : '使用智能体默认模型'"
                     >
-                        <span v-if="isSelectedModelMultimodal" class="pointer-events-none hidden sm:inline select-none text-[11px] text-purple-500">🖼️</span>
+                        <PhotoIcon v-if="isSelectedModelMultimodal" class="pointer-events-none hidden h-3.5 w-3.5 shrink-0 text-purple-500 sm:inline" aria-hidden="true" />
                         <span class="pointer-events-none truncate flex-1 min-w-0 text-left">{{ modelLabel }}</span>
                         <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-violet-50 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ thinkingSummaryLabel }}</span>
                         <svg class="pointer-events-none h-3 w-3 sm:h-3.5 sm:w-3.5 flex-shrink-0 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': showModelDropdown }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2837,7 +2860,7 @@ defineExpose({
                                   @click="selectModel(model)"
                                 >
                                     <div class="flex items-center space-x-1.5 min-w-0 flex-1">
-                                        <span v-if="model.type === 'multimodal'" class="text-[10px] text-purple-500 flex-shrink-0" title="多模态">🖼️</span>
+                                        <PhotoIcon v-if="model.type === 'multimodal'" class="h-3.5 w-3.5 shrink-0 text-purple-500" title="多模态" aria-hidden="true" />
                                         <span class="truncate">{{ model.name || model.model_id }}</span>
                                     </div>
                                     <div class="ml-1 flex flex-shrink-0 items-center gap-1">
@@ -3033,7 +3056,7 @@ defineExpose({
                 <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'grid-sys-'+cmd.id" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-50/50">
-                    <div class="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate">{{ cmd.label }}</div>
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-4 w-4 shrink-0" aria-hidden="true" />{{ cmd.label }}</div>
                     <div class="text-[9px] text-gray-400/60 truncate font-mono">{{ cmd.command }}</div>
                   </button>
                 </div>
@@ -3056,8 +3079,8 @@ defineExpose({
           @mousedown.stop
           @click.stop
         >
-          <button type="button" class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/new')">💬 新建普通会话</button>
-          <button type="button" class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/project')">📁 新建项目会话</button>
+          <button type="button" class="w-full inline-flex items-center gap-1.5 text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/new')"><ChatBubbleLeftRightIcon class="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />新建普通会话</button>
+          <button type="button" class="w-full inline-flex items-center gap-1.5 text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/project')"><FolderIcon class="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />新建项目会话</button>
         </div>
       </Teleport>
 
@@ -3108,7 +3131,7 @@ defineExpose({
                 <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
                 <div class="grid grid-cols-2 gap-3">
                   <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'mobile-sys-'+cmd.id" @click="cmd.disabled ? null : (handleShortcutClick(cmd), closeCommandDrawer());" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-50/50">
-                    <div class="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate">{{ cmd.label }}</div>
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-4 w-4 shrink-0" aria-hidden="true" />{{ cmd.label }}</div>
                     <div class="text-[9px] text-gray-400/60 truncate font-mono">{{ cmd.command }}</div>
                   </button>
                 </div>

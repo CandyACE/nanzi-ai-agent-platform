@@ -9,9 +9,13 @@ from app.services.ai.agent_service import (
     _final_process_timeline,
     _should_persist_turn_history,
     _restore_todo_snapshot_from_pending,
+    _restore_published_download_urls_from_pending,
     _track_process_timeline,
 )
-from app.services.ai.runtime.agentscope.event_stream import _sync_todo_snapshot_from_context
+from app.services.ai.runtime.agentscope.event_stream import (
+    _sync_published_download_urls_from_context,
+    _sync_todo_snapshot_from_context,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -52,6 +56,19 @@ def test_chat_stream_emits_terminal_status_before_waiting_for_history_persistenc
     assert "defer_summary: bool = False" in source
     assert "if defer_summary:" in source
     assert 'name=f"merge-session-summary-{conversation_id}"' in source
+
+
+def test_final_download_url_guard_retracts_before_terminal_status_and_persistence():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "app/services/ai/agent_service.py").read_text(
+        encoding="utf-8"
+    )
+    guard_index = source.index("guarded_response_content = _filter_current_turn_download_urls")
+    status_index = source.index('"type": "run_status"', guard_index)
+    persist_index = source.index("await _persist_assistant_message_and_summary(", guard_index)
+    assert guard_index < status_index < persist_index
+    assert '"type": "retraction"' in source[guard_index:status_index]
 
 
 def test_accumulate_stream_content_excludes_typed_reasoning_events():
@@ -244,6 +261,26 @@ def test_todo_snapshot_is_copied_from_agent_context_before_pending_registration(
     _sync_todo_snapshot_from_context(stream_state, context)
 
     assert stream_state["todo_snapshot"] == context.todo_snapshot
+
+
+def test_published_download_urls_are_copied_before_pending_registration():
+    stream_state = {}
+    context = SimpleNamespace(published_download_urls=["/api/v1/chat/generated-files/a?token=t"])
+
+    _sync_published_download_urls_from_context(stream_state, context)
+
+    assert stream_state["published_download_urls"] == context.published_download_urls
+
+
+def test_published_download_urls_are_restored_when_a_pending_execution_resumes():
+    pending = SimpleNamespace(
+        state={"published_download_urls": ["/api/v1/chat/generated-files/b?token=t"]},
+        snapshot=SimpleNamespace(stream_state={}),
+    )
+
+    assert _restore_published_download_urls_from_pending(pending) == [
+        "/api/v1/chat/generated-files/b?token=t"
+    ]
 
 
 def test_runner_does_not_reference_unscoped_core_stream_state_for_todo_events():

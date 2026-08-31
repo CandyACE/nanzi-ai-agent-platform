@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 import { copyToClipboard } from '@/utils/clipboard'
+import { CpuChipIcon } from '@heroicons/vue/24/outline'
 
 const modelValue = defineModel<boolean>({ default: false })
 const keepOpenOnSelect = defineModel<boolean>('keepOpenOnSelect', { default: false })
@@ -312,7 +313,7 @@ onUnmounted(() => {
               class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
             >
               <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
-                <span class="text-base flex-shrink-0" aria-hidden="true">🧠</span>
+                <CpuChipIcon class="h-5 w-5 flex-shrink-0 text-violet-500" aria-hidden="true" />
                 <span class="truncate">选择记忆记录</span>
                 <span
                   v-if="attachedCount > 0"
@@ -423,7 +424,7 @@ onUnmounted(() => {
                 </div>
 
                 <div v-else-if="filteredMemoryList.length === 0" class="text-center py-12">
-                  <span class="text-2xl opacity-40">🧠</span>
+                  <CpuChipIcon class="h-9 w-9 text-violet-300 opacity-60" aria-hidden="true" />
                   <p class="text-xs text-gray-400 mt-2 font-bold">暂无可用的记忆记录</p>
                   <p class="text-[10px] text-gray-400/70 mt-1">与 AI 对话后系统会自动生成记忆摘要</p>
                 </div>
@@ -443,7 +444,7 @@ onUnmounted(() => {
                       ? 'bg-gray-200 dark:bg-gray-700 text-gray-500'
                       : 'bg-primary/10 dark:bg-primary/20 text-primary'"
                   >
-                    🧠
+                    <CpuChipIcon class="h-5 w-5" aria-hidden="true" />
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between mb-1">
@@ -513,7 +514,7 @@ onUnmounted(() => {
       <div class="bg-white/95 dark:bg-gray-800/95 border border-gray-200/50 dark:border-gray-700/50 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50 flex-shrink-0">
           <div class="flex items-center space-x-2">
-            <span class="text-lg">🧠</span>
+            <CpuChipIcon class="h-5 w-5 text-violet-500" aria-hidden="true" />
             <h3 class="text-base font-bold text-gray-800 dark:text-gray-100">记忆详情</h3>
           </div>
           <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" @click="showMemoryDetailModal = false">

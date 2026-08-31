@@ -111,9 +111,7 @@
                   :class="{ 'text-primary bg-primary/10': showShortcutsHint }"
                   :title="isMobile ? '快捷指令' : '显示快捷指令'"
               >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 2L4 14h7l-1 8 10-13h-7l1-7z" />
-                  </svg>
+                  <CommandLineIcon class="h-4 w-4" aria-hidden="true" />
               </button>
 
               <!-- 折叠快捷指令后的右上角气泡引导提示 -->
@@ -132,7 +130,7 @@
                   <!-- 顶部小尖角 -->
                   <div class="absolute -top-1.5 right-3 h-3 w-3 rotate-45 border-l border-t border-primary/20 bg-primary/95 dark:border-slate-700/60 dark:bg-slate-900/95" />
 
-                  <span class="text-sm shrink-0" aria-hidden="true">⚡️</span>
+                  <CommandLineIcon class="h-4 w-4 shrink-0 text-white" aria-hidden="true" />
                   <div class="flex flex-col text-left">
                     <span class="font-bold leading-tight">已折叠快捷指令</span>
                     <span class="text-[11px] text-white/85 dark:text-slate-300 leading-tight mt-0.5">下次点这里重新打开</span>
@@ -837,18 +835,18 @@
             <ChatBIMetadataGuide v-if="msg.chatbiMetadataGuide" :guide="msg.chatbiMetadataGuide" @select="handleQuickQuestion" />
             <div
               v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"
-              class="flex flex-nowrap items-center space-x-2 mt-3"
+              class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto sm:overflow-x-visible mt-1 scrollbar-hide"
             >
               <!-- Time -->
               <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
               <button
                 @click="copyMessage(visibleStreamBody(msg))"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
+                class="flex min-h-8 shrink-0 items-center space-x-1 text-[11px] text-gray-500 hover:text-primary transition-colors rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+                :class="windowWidth < 640 ? 'p-2.5' : 'px-2 py-1'"
                 title="复制"
               >
                 <svg
-                  class="w-3 h-3"
+                  class="w-3.5 h-3.5"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -917,12 +915,12 @@
                   class="rounded transition-colors hover:bg-green-50 dark:hover:bg-green-900/20 text-gray-400 hover:text-green-500"
                   :class="[
                     msg.feedback === 'up' ? 'text-green-500 bg-green-50 dark:bg-green-900/20' : '',
-                    windowWidth < 640 ? 'p-2.5' : 'p-1 px-1.5'
+                    windowWidth < 640 ? 'p-2.5' : 'p-2'
                   ]"
                   title="很有帮助"
                 >
                   <svg
-                    class="w-3 h-3"
+                    class="w-4 h-4"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -940,12 +938,12 @@
                   class="rounded transition-colors hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500"
                   :class="[
                     msg.feedback === 'down' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : '',
-                    windowWidth < 640 ? 'p-2.5' : 'p-1 px-1.5'
+                    windowWidth < 640 ? 'p-2.5' : 'p-2'
                   ]"
                   title="回答不准确"
                 >
                   <svg
-                    class="w-3 h-3"
+                    class="w-4 h-4"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -1985,6 +1983,7 @@
 </template>
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed, triggerRef } from "vue";
+import { CommandLineIcon } from "@heroicons/vue/24/outline";
 import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
@@ -4655,16 +4654,16 @@ const resetStallTimer = () => {
 };
 // Slash Commands
 const SYSTEM_SLASH_COMMANDS = [
-  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -40 },
-  { id: "sys_project", command: "/project", label: "📁 新建项目会话", sort_order: -39.5 },
-  { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -39 },
-  { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📊 数据门户", sort_order: -35 },
-  { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
-  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
-  { id: MY_ARTIFACTS_SYSTEM_COMMAND_ID, command: MY_ARTIFACTS_SLASH_COMMAND, label: "📄 我的产出", sort_order: -33.5 },
-  { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
-  { id: "sys_compact", command: "/compact", label: "🧹 压缩上下文", sort_order: -17 },
-  { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
+  { id: "sys_clear", command: "/new", label: "新会话", sort_order: -40 },
+  { id: "sys_project", command: "/project", label: "新建项目会话", sort_order: -39.5 },
+  { id: "sys_history", command: "/history", label: "历史", sort_order: -39 },
+  { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "数据门户", sort_order: -35 },
+  { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "知识库中心", sort_order: -34.5 },
+  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "工作空间", sort_order: -34 },
+  { id: MY_ARTIFACTS_SYSTEM_COMMAND_ID, command: MY_ARTIFACTS_SLASH_COMMAND, label: "我的产出", sort_order: -33.5 },
+  { id: "sys_quota", command: "/quota", label: "我的额度", sort_order: -18 },
+  { id: "sys_compact", command: "/compact", label: "压缩上下文", sort_order: -17 },
+  { id: "sys_settings", command: "/settings", label: "设置", sort_order: -15 },
 ];
 const showCommandMenu = ref(false);
 const isKnowledgeEnabled = ref(true);
@@ -5275,6 +5274,7 @@ const openEditReportModal = (report: any) => {
     description: report.description || '',
     sql_content: report.sql_content || '',
     dataset_id: report.dataset_id ?? null,
+    dataset_name: report.dataset_name || '',
     data_source: report.data_source || 'default_clickhouse',
     original_query: report.original_query || '',
     mode: report.mode || 'static_sql',

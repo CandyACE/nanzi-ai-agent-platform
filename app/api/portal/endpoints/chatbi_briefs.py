@@ -62,7 +62,14 @@ async def create_chatbi_brief(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     artifact_payload = None
     if body.export_word:
-        artifact_payload = publish_business_brief_docx(brief).to_tool_payload()
+        artifact_payload = (
+            await publish_business_brief_docx(
+                brief,
+                owner_user_id=user_id,
+                user_name=user_info.get("user_name") or user_info.get("username"),
+                conversation_id=body.conversation_id,
+            )
+        ).to_tool_payload()
     brief_id = f"brief_{uuid.uuid4().hex}"
     row = ChatBIBrief(
         id=brief_id,

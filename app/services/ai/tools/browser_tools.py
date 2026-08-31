@@ -350,7 +350,15 @@ async def browser_download(target_ref: str, snapshot_id: str) -> str:
         raise RuntimeError("浏览器下载结果缺少文件")
     from app.services.ai.tools.generated_file_service import publish
 
-    artifact = publish(download_path, filename)
+    artifact = await publish(
+        download_path,
+        filename,
+        owner_user_id=context.user_id,
+        user_name=(context.user_dimensions or {}).get("user_name"),
+        conversation_id=context.conversation_id,
+        trace_id=context.trace_id,
+        artifact_type="browser_download",
+    )
     payload = result.model_dump(mode="json")
     payload["data"] = artifact.to_tool_payload()
     return json.dumps(payload, ensure_ascii=False)
@@ -422,7 +430,15 @@ async def browser_export_pdf(
         raise RuntimeError("浏览器 PDF 导出失败")
     from app.services.ai.tools.generated_file_service import publish
 
-    artifact = publish(pdf_path, pdf_name)
+    artifact = await publish(
+        pdf_path,
+        pdf_name,
+        owner_user_id=context.user_id,
+        user_name=(context.user_dimensions or {}).get("user_name"),
+        conversation_id=context.conversation_id,
+        trace_id=context.trace_id,
+        artifact_type="pdf",
+    )
     payload = result.model_dump(mode="json")
     payload["data"] = artifact.to_tool_payload()
     return json.dumps(payload, ensure_ascii=False)

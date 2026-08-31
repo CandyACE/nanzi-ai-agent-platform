@@ -554,13 +554,6 @@ const refreshCurrentRunStatus = () => (
     : Promise.resolve(false)
 );
 
-const focusChatInputWhenReady = () => {
-  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
-  nextTick(() => chatInputRef.value?.focus());
-};
-
-watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
-
 watch(conversationId, () => {
   void refreshCurrentRunStatus();
 }, { immediate: true });
@@ -870,6 +863,7 @@ const openEditReportModal = (report: any) => {
     description: report.description || '',
     sql_content: report.sql_content || '',
     dataset_id: report.dataset_id ?? null,
+    dataset_name: report.dataset_name || '',
     data_source: report.data_source || 'default_clickhouse',
     original_query: report.original_query || '',
     mode: report.mode || 'static_sql',
@@ -2285,6 +2279,13 @@ const enterFullScreenFromTip = () => {
 const userInput = ref("");
 const isProcessing = ref(false);
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
+const focusChatInputWhenReady = () => {
+  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  nextTick(() => chatInputRef.value?.focus());
+};
+
+watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
+
 const activeTodoTimeline = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const msg = messages.value[i];

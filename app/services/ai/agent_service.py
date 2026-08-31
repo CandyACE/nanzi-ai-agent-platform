@@ -241,6 +241,16 @@ def _accumulate_reasoning_content(full: str, chunk: Dict[str, Any]) -> str:
     return full
 
 
+def _filter_current_turn_download_urls(content: str) -> str:
+    """Remove generated-file URLs that were not issued by this execution chain."""
+    from app.core.context import get_current_agent_context
+    from app.services.ai.tools.generated_file_service import filter_untrusted_download_urls
+
+    context = get_current_agent_context()
+    allowed_urls = getattr(context, "published_download_urls", []) if context else []
+    return filter_untrusted_download_urls(content, allowed_urls=set(allowed_urls))
+
+
 def _track_process_timeline(state: Optional[List[Dict[str, Any]]], chunk: Dict[str, Any]) -> None:
     if state is None or not isinstance(chunk, dict):
         return
@@ -301,6 +311,19 @@ def _restore_todo_snapshot_from_pending(
         if isinstance(todo_snapshot, dict):
             _track_process_timeline(process_timeline_state, todo_snapshot)
             return
+
+
+def _restore_published_download_urls_from_pending(pending: Any) -> List[str]:
+    """Restore tool-issued download URLs from an in-process or serialized pending run."""
+    pending_state = getattr(pending, "state", None)
+    snapshot_state = getattr(getattr(pending, "snapshot", None), "stream_state", None)
+    for candidate in (pending_state, snapshot_state):
+        if not isinstance(candidate, dict):
+            continue
+        urls = candidate.get("published_download_urls")
+        if isinstance(urls, list):
+            return [str(url) for url in urls if str(url).strip()]
+    return []
 
 
 def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -3424,6 +3447,7 @@ class AgentService:
         has_data_output = False
         executor = None
         tool_run_text = None
+        published_download_urls: List[str] = []
         lane_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
         performance_tracker = ExecutionPerformanceTracker()
 
@@ -3819,6 +3843,7 @@ class AgentService:
                 current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                 trace_buffer=trace_buffer,
                 runtime_model_info=runtime_context_metadata,
+                published_download_urls=published_download_urls,
             )
             performance_tracker.mark("context_setup")
 
@@ -3868,6 +3893,7 @@ class AgentService:
                     require_explicit_dataset=True,
                     trace_buffer=trace_buffer,
                     runtime_model_info=runtime_context_metadata,
+                    published_download_urls=published_download_urls,
                 )
                 performance_tracker.mark("knowledge_context_setup")
 
@@ -4245,6 +4271,18 @@ class AgentService:
                 }, config=agent_config, model_name=getattr(agent_config, "model_name", None))
                 yield no_tool_error
 
+            guarded_response_content = _filter_current_turn_download_urls(
+                full_response_content
+            )
+            if guarded_response_content != full_response_content:
+                full_response_content = guarded_response_content
+                # The response may already have streamed speculative text. Replace
+                # the visible body so the client and persisted history converge.
+                yield {
+                    "type": "retraction",
+                    "content": full_response_content,
+                }
+
             todo_completion = _finalize_todo_success(
                 (shared_state or {}).get("process_timeline"),
                 execution_status=execution_status,
@@ -4352,6 +4390,9 @@ class AgentService:
                         full_reasoning_content,
                     )
                 ):
+                    full_response_content = _filter_current_turn_download_urls(
+                        full_response_content
+                    )
                     from app.core.cancellation import spawn_detached
 
                     persistence_task = spawn_detached(
@@ -4600,6 +4641,16 @@ class AgentService:
             }
             return
 
+        guarded_response_content = _filter_current_turn_download_urls(
+            full_response_content
+        )
+        if guarded_response_content != full_response_content:
+            full_response_content = guarded_response_content
+            yield {
+                "type": "retraction",
+                "content": full_response_content,
+            }
+
         todo_completion = _finalize_todo_success(
             process_timeline_state,
             execution_status=execution_status,
@@ -4714,10 +4765,14 @@ class AgentService:
                 ),
                 trace_buffer=getattr(runner, "trace_buffer", None) or [],
                 runtime_model_info=runtime_context_metadata,
+                published_download_urls=_restore_published_download_urls_from_pending(pending),
             )
             return
         if hasattr(runner, "_ensure_agent_context"):
-            runner._ensure_agent_context()
+            context = runner._ensure_agent_context()
+            restored_urls = _restore_published_download_urls_from_pending(pending)
+            if restored_urls:
+                context.published_download_urls = restored_urls
 
     def _build_agentscope_runner_from_pending(
         self,
@@ -4888,6 +4943,16 @@ class AgentService:
                 "content": "当前会话正在处理中，请稍后再试。",
             }
             return
+
+        guarded_response_content = _filter_current_turn_download_urls(
+            full_response_content
+        )
+        if guarded_response_content != full_response_content:
+            full_response_content = guarded_response_content
+            yield {
+                "type": "retraction",
+                "content": full_response_content,
+            }
 
         todo_completion = _finalize_todo_success(
             process_timeline_state,

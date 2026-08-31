@@ -28,6 +28,13 @@ import type { MarkdownTheme } from "@/types/markdownTheme";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
 import { copyToClipboard } from "../utils/clipboard";
+import {
+  BookOpenIcon,
+  ChartBarIcon,
+  ChatBubbleLeftRightIcon,
+  CpuChipIcon,
+  UserCircleIcon,
+} from "@heroicons/vue/24/outline";
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -380,6 +387,7 @@ const filteredAgents = computed(() => {
 
   // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
   return result.sort((a, b) => {
+    if (isMainAgent(a) !== isMainAgent(b)) return isMainAgent(a) ? -1 : 1;
     // Primary sort: sort_order (descending)
     if (a.sort_order !== b.sort_order) {
       return (b.sort_order || 0) - (a.sort_order || 0);
@@ -443,7 +451,7 @@ const persistAgentOrder = async (updates: { id: string; sort_order: number }[]) 
 };
 
 const handleAgentDragStart = (event: DragEvent, agentId: string) => {
-  if (!canDragAgents.value) return;
+  if (!canDragAgents.value || isMainAgent(agentId)) return;
   dragSourceId.value = agentId;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = "move";
@@ -452,7 +460,7 @@ const handleAgentDragStart = (event: DragEvent, agentId: string) => {
 };
 
 const handleAgentDragOver = (event: DragEvent, agentId: string) => {
-  if (!canDragAgents.value) return;
+  if (!canDragAgents.value || isMainAgent(agentId)) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   if (agentId !== dragSourceId.value) dragOverId.value = agentId;
@@ -469,7 +477,7 @@ const handleAgentDrop = (event: DragEvent, targetId: string) => {
   dragOverId.value = null;
   const sourceId = dragSourceId.value;
   dragSourceId.value = null;
-  if (!canDragAgents.value || !sourceId || sourceId === targetId) return;
+  if (!canDragAgents.value || !sourceId || sourceId === targetId || isMainAgent(sourceId) || isMainAgent(targetId)) return;
 
   const currentOrder = filteredAgents.value.map((agent) => agent.id);
   const sourceIdx = currentOrder.indexOf(sourceId);
@@ -2372,24 +2380,18 @@ const copyText = async (text: string, label: string = "内容") => {
   }
 };
 
-const getAgentEmoji = (agent: AIAgent) => {
-  if (agent.avatar_url) return "";
-  const emojiMap: Record<string, string> = {
-    "chat-bi": "📊",
-    "metadata-specialist": "💎",
-    "knowledge-base": "📚",
-    "main": "💬",
-    "general-chat": "💬",
+const getAgentIcon = (agent: AIAgent) => {
+  const iconMap: Record<string, any> = {
+    main: ChatBubbleLeftRightIcon,
+    "general-chat": ChatBubbleLeftRightIcon,
+    "chat-bi": ChartBarIcon,
+    "knowledge-base": BookOpenIcon,
+    nanzi_faq: UserCircleIcon,
   };
-  if (emojiMap[agent.name]) return emojiMap[agent.name];
-
-  const emojis = ["🤖", "🧙", "🕵️", "👩‍🔬", "👨‍💻", "🧚", "🧞", "🧟", "👾"];
-  let hash = 0;
-  const str = agent.name || agent.id;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return emojis[Math.abs(hash) % emojis.length];
+  if (iconMap[agent.name]) return iconMap[agent.name];
+  if (agent.agent_type === "CHATBI") return ChartBarIcon;
+  if (agent.agent_type === "KNOWLEDGE_BASE") return BookOpenIcon;
+  return CpuChipIcon;
 };
 
 const getAgentColorTheme = (agent: AIAgent) => {
@@ -2432,9 +2434,11 @@ const getAgentTypeBadgeClass = (agent: AIAgent) => {
   return 'border-slate-200 bg-slate-100 text-slate-700'
 }
 
-const isMainAgent = (agent: AIAgent) =>
-  agent.id === 'sys-agent-chat' ||
-  ['main', 'assistant', 'general-chat'].includes(String(agent.name || '').trim().toLowerCase())
+const isMainAgent = (agent: AIAgent | string) => {
+  if (typeof agent === 'string') return agent === 'sys-agent-chat' || agent === 'main'
+  return agent.id === 'sys-agent-chat' ||
+    ['main', 'assistant', 'general-chat'].includes(String(agent.name || '').trim().toLowerCase())
+}
 
 const READINESS_MISSING_LABELS: Record<string, string> = {
   published_version: '发布版本',
@@ -2635,7 +2639,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
     <!-- Header：标题一行；筛选/操作在窄屏压缩为搜索 + 双列筛选 + 新建 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
-        <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
+        <h1 class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
         <button
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
@@ -2654,12 +2658,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <span>显示流程指引</span>
+          <span class="whitespace-nowrap">显示指引</span>
         </button>
       </div>
 
       <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
-        <div class="relative w-full sm:w-56 lg:w-64">
+        <div class="relative w-full sm:w-52 lg:w-56">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -2785,13 +2789,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </div>
 
-    <p
-      v-if="canDragAgents && !isMobile"
-      class="text-[11px] text-gray-400 -mt-2"
-    >
-      拖动卡片或列表行可调整排序
-    </p>
-
     <!-- 智能体 5 步全流程指引横幅 -->
     <AgentFlowGuideBanner
       v-if="showAgentFlowGuide"
@@ -2882,7 +2879,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             dragSourceId === agent.id ? 'opacity-50' : '',
             savingAgentOrder ? 'pointer-events-none' : '',
           ]"
-          :draggable="canDragAgents && !batchMode"
+          :draggable="canDragAgents && !batchMode && !isMainAgent(agent)"
           @dragstart="handleAgentDragStart($event, agent.id)"
           @dragover="handleAgentDragOver($event, agent.id)"
           @dragleave="handleAgentDragLeave($event)"
@@ -2928,7 +2925,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 :src="agent.avatar_url"
                 class="w-full h-full object-cover"
               />
-              <span v-else>{{ getAgentEmoji(agent) }}</span>
+              <component v-else :is="getAgentIcon(agent)" class="h-6 w-6" :class="getAgentColorTheme(agent).text" aria-hidden="true" />
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 min-w-0">
@@ -3185,7 +3182,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   dragSourceId === agent.id ? 'opacity-50' : '',
                   savingAgentOrder ? 'pointer-events-none' : '',
                 ]"
-                :draggable="canDragAgents && !batchMode"
+                :draggable="canDragAgents && !batchMode && !isMainAgent(agent)"
                 @dragstart="handleAgentDragStart($event, agent.id)"
                 @dragover="handleAgentDragOver($event, agent.id)"
                 @dragleave="handleAgentDragLeave($event)"
@@ -3216,7 +3213,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     :class="[getAgentColorTheme(agent).bg, getAgentColorTheme(agent).border]"
                   >
                     <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover rounded-lg" />
-                    <span v-else class="text-sm">{{ getAgentEmoji(agent) }}</span>
+                    <component v-else :is="getAgentIcon(agent)" class="h-5 w-5" :class="getAgentColorTheme(agent).text" aria-hidden="true" />
                   </div>
                 </td>
                 <td class="px-6 py-4">

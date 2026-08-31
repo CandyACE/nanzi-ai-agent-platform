@@ -3,6 +3,7 @@ import { ref, onMounted, watch, computed } from 'vue'
 import { metadataApi } from '../../api/metadata'
 import type { Metric } from '../../api/metadata'
 import { useUser } from '../../composables/useUser'
+import { SparklesIcon } from '@heroicons/vue/24/outline'
 
 const { isAdmin: _isAdmin, hasPermission } = useUser()
 
@@ -245,7 +246,7 @@ defineExpose({ fetchMetrics })
             class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3.5 py-2 rounded-lg transition-all flex items-center gap-2 text-xs font-bold shadow-sm h-9"
           >
             <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            ✨ 智能发现指标
+            <SparklesIcon class="w-4 h-4" /> 智能发现指标
           </button>
           <button 
             @click="openCreate"

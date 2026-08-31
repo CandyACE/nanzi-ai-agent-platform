@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
 import ModelRegistry from '../components/system/ModelRegistry.vue'
+import DeploymentChecklist from '../components/system/DeploymentChecklist.vue'
 import ToolRegistry from '../components/system/ToolRegistry.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -1840,6 +1841,10 @@ onMounted(async () => {
     router.replace('/dashboard/mcp')
     return
   }
+  const requestedTab = route.query.tab
+  if (requestedTab === 'models' || requestedTab === 'tools' || requestedTab === 'configs' || requestedTab === 'branding' || requestedTab === 'diagnostics' || requestedTab === 'logs') {
+    activeTab.value = requestedTab
+  }
   await fetchConfigs()
   fetchBrandingConfig()
   fetchModelsForConfigs()
@@ -1860,6 +1865,7 @@ onUnmounted(() => {
   <div class="flex h-full min-h-0 flex-col gap-4 sm:gap-6">
     <div class="flex flex-shrink-0 flex-col gap-3">
       <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">系统配置与诊断</h1>
+      <DeploymentChecklist v-if="userInfo?.role === 'admin'" compact />
       <!-- Tabs：窄屏横向滚动，避免文字被挤成竖排 -->
       <div
         class="-mx-1 overflow-x-auto px-1"
@@ -2526,7 +2532,7 @@ onUnmounted(() => {
                           知识库功能已<strong>关闭</strong>。开启「knowledge_base_enabled」后将显示 RAGFlow 连接与检索参数，并启用知识库管理、检索测试与智能体知识库检索工具。
                        </div>
                     </div>
-                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="['embed_api_url', 'embed_api_key', 'embed_model_name', 'embed_dimensions'].includes(item.key) ? 'embed-config-group bg-indigo-50/30 rounded-lg px-4 py-3 -mx-4 border border-indigo-100/70' : ''">
                       <div class="md:col-span-1 pt-2">
                          <label class="block text-sm font-medium text-gray-700 flex items-center gap-1.5">
                             <span>{{ item.key }}</span>
@@ -2713,7 +2719,7 @@ onUnmounted(() => {
                                密码认证使用 sshpass 连接；私钥认证使用下方私钥内容，切换方式只隐藏另一字段，不会自动清空已保存内容。
                              </p>
                           </div>
-                          <div v-else-if="item.is_secret" class="relative">
+                          <div v-else-if="item.is_secret && item.key !== 'embed_api_key'" class="relative">
                              <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
                              <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
                                 <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
@@ -2850,6 +2856,10 @@ onUnmounted(() => {
                                </div>
                           </div>
                           <div v-else-if="item.key === 'embed_api_url'">
+                              <div class="mb-3 rounded-md border border-indigo-100 bg-white/80 px-3 py-2 text-xs text-indigo-900">
+                                <div class="font-semibold">向量模式配置</div>
+                                <div class="mt-0.5 text-indigo-700/80">用于会话记忆向量化以及 Redis 模式下元数据向量化</div>
+                              </div>
                               <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                                   <select
                                     v-model="selectedEmbedModelId"
@@ -2883,16 +2893,33 @@ onUnmounted(() => {
                               </p>
                               <div class="flex items-center space-x-2">
                                   <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
-                                  <button
-                                      @click="testGlobalEmbed"
-                                      :disabled="globalEmbedTesting"
-                                      class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50 shrink-0"
-                                  >
-                                      <PlayIcon v-if="!globalEmbedTesting" class="h-4 w-4 mr-1.5 text-gray-500" />
-                                      <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-primary border-t-transparent rounded-full"></span>
-                                      测试
-                                  </button>
                               </div>
+                          </div>
+                          <div v-else-if="item.key === 'embed_api_key'">
+                              <div class="relative">
+                                  <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                                  <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
+                                      <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
+                                      <EyeSlashIcon v-else class="h-5 w-5" />
+                                  </div>
+                              </div>
+                              <p class="mt-1.5 text-[11px] text-gray-500">API Key 可留空；若供应商需要鉴权，测试时会返回对应错误。</p>
+                          </div>
+                          <div v-else-if="item.key === 'embed_model_name'">
+                              <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+                          </div>
+                          <div v-else-if="item.key === 'embed_dimensions'">
+                              <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+                              <button
+                                  type="button"
+                                  @click="testGlobalEmbed"
+                                  :disabled="globalEmbedTesting"
+                                  class="mt-3 inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50"
+                              >
+                                  <PlayIcon v-if="!globalEmbedTesting" class="h-4 w-4 mr-1.5 text-gray-500" />
+                                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-primary border-t-transparent rounded-full"></span>
+                                  测试 Embedding 连接
+                              </button>
                           </div>
                           <div v-else-if="['ragflow_similarity_threshold', 'ragflow_vector_weight', 'chatbi_sample_similarity_threshold', 'chatbi_sample_vector_similarity_weight', 'knowledge_ragflow_similarity_threshold', 'knowledge_ragflow_vector_weight', 'llm_temperature'].includes(item.key)">
                               <div class="flex items-center space-x-4">
@@ -3172,7 +3199,7 @@ onUnmounted(() => {
                              >+</button>
                              <span class="text-xs text-gray-500">次</span>
                           </div>
-                          <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
+                          <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
                           <div v-else-if="item.key === 'sandbox_docker_base_image'" class="space-y-2.5">

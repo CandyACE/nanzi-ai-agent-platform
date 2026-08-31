@@ -7,6 +7,7 @@ import {
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, uploadToWorkspaceDir, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
+import { ComputerDesktopIcon, FolderIcon } from '@heroicons/vue/24/outline'
 
 const LEGACY_RECENT_FILES_KEY = 'workspace_recent_files_v1'
 const LEGACY_BROWSER_PREFS_KEY = 'workspace_browser_prefs_v1'
@@ -959,7 +960,7 @@ const getRowVisual = (item: { name: string; is_dir: boolean; path: string }) => 
   return getItemVisual(item)
 }
 
-const scopedHomeCrumbName = () => '🏠 工作空间'
+const scopedHomeCrumbName = () => '工作空间'
 
 const userHomeCrumbLabel = () => {
   const root = userWorkspaceRoot.value
@@ -1528,7 +1529,7 @@ onUnmounted(() => {
               class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
             >
               <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
-                <span class="text-base flex-shrink-0" aria-hidden="true">💻</span>
+                <ComputerDesktopIcon class="h-5 w-5 flex-shrink-0 text-blue-500" aria-hidden="true" />
                 <span class="truncate">浏览工作空间</span>
                 <span
                   v-if="pinned"
@@ -2222,7 +2223,7 @@ onUnmounted(() => {
     >
       <template v-if="canCreateInPath(contextMenu.parentPath)">
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startCreateEntry('file')">📄 新建文件</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startCreateEntry('dir')">📁 新建文件夹</button>
+        <button type="button" class="w-full inline-flex items-center gap-1.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startCreateEntry('dir')"><FolderIcon class="h-4 w-4 text-amber-500" aria-hidden="true" />新建文件夹</button>
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="openUploadPicker(contextMenu.parentPath); closeContextMenu()">⬆️ 上传到此目录</button>
       </template>
       <template v-if="contextMenu.item && isTrashRootItem(contextMenu.item)">

@@ -169,6 +169,19 @@ def _sync_todo_snapshot_from_context(state: Dict[str, Any], context: Any) -> Non
         state["todo_snapshot"] = dict(snapshot)
 
 
+def _sync_published_download_urls_from_context(state: Dict[str, Any], context: Any) -> None:
+    """Copy issued download URLs into a pending snapshot before an interrupt."""
+    urls = getattr(context, "published_download_urls", None) if context is not None else None
+    if not isinstance(urls, list):
+        return
+    existing = state.get("published_download_urls")
+    combined = list(existing) if isinstance(existing, list) else []
+    for url in urls:
+        if str(url) and url not in combined:
+            combined.append(url)
+    state["published_download_urls"] = combined
+
+
 async def stream_pending_tool_interrupt(
     *,
     event: Any,
@@ -201,6 +214,7 @@ async def stream_pending_tool_interrupt(
 
             tool_args = redact_browser_arguments({**tool_args, "sensitive": True})
         _sync_todo_snapshot_from_context(state, get_current_agent_context())
+        _sync_published_download_urls_from_context(state, get_current_agent_context())
         pending = await pending_agentscope_confirmations.register(
             kind=kind,
             agent=agent,

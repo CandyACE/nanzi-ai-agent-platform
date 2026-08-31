@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { metadataApi, type DbConnectionConfig } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
+import { CircleStackIcon, ClockIcon, CpuChipIcon, ExclamationTriangleIcon, ServerIcon } from '@heroicons/vue/24/outline'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -101,14 +102,14 @@ const fetchSavedConfigs = async () => {
 
 // ─── 数据库类型列表 ───────────────────────────────────────────────────────────
 const dbTypes = [
-  { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306, disabled: false },
-  { id: 'postgresql', name: 'PostgreSQL', icon: '🐘', defaultPort: 5432, disabled: false },
-  { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000, disabled: false },
-  { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521, disabled: false },
-  { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433, disabled: false },
+  { id: 'mysql', name: 'MySQL', icon: CircleStackIcon, defaultPort: 3306, disabled: false },
+  { id: 'postgresql', name: 'PostgreSQL', icon: ServerIcon, defaultPort: 5432, disabled: false },
+  { id: 'clickhouse', name: 'ClickHouse', icon: CircleStackIcon, defaultPort: 9000, disabled: false },
+  { id: 'oracle', name: 'Oracle', icon: ServerIcon, defaultPort: 1521, disabled: false },
+  { id: 'sqlserver', name: 'SQL Server', icon: ServerIcon, defaultPort: 1433, disabled: false },
 ]
 
-const dbTypeIcon = (type: string) => dbTypes.find((item) => item.id === type)?.icon || '🗄️'
+const dbTypeIcon = (type: string) => dbTypes.find((item) => item.id === type)?.icon || CircleStackIcon
 
 // ─── 从数据源填充导入连接 ────────────────────────────────────────────────────────
 const applyDataSource = (c: DbConnectionConfig) => {
@@ -787,7 +788,7 @@ const dbTypeColor = (type: string) => {
                 :class="selectedConfigId === c.id ? 'border-primary bg-primary/5 shadow-sm' : 'border-gray-100 bg-white hover:border-gray-200 hover:bg-gray-50'"
               >
                 <div class="w-10 h-10 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-lg shrink-0">
-                  {{ dbTypeIcon(c.db_type) }}
+                  <component :is="dbTypeIcon(c.db_type)" class="w-5 h-5 text-slate-600" />
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
@@ -842,7 +843,7 @@ const dbTypeColor = (type: string) => {
           </div>
 
           <div v-if="connError" class="p-3 bg-red-50 border border-red-100 rounded-lg text-xs text-red-600 leading-relaxed font-mono">
-            ⚠️ {{ connError }}
+            <ExclamationTriangleIcon class="w-4 h-4 inline-block mr-1" />{{ connError }}
           </div>
         </div>
 
@@ -864,7 +865,7 @@ const dbTypeColor = (type: string) => {
             class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 shrink-0 text-[11px] min-w-0"
             title="追加导入仅允许从该数据源选表，不可切换其他数据源"
           >
-            <span class="text-sm shrink-0 leading-none">{{ dbTypeIcon(lockedConfig?.db_type || config.type) }}</span>
+            <component :is="dbTypeIcon(lockedConfig?.db_type || config.type)" class="w-4 h-4 text-slate-600 shrink-0" />
             <span class="font-bold text-blue-800 shrink-0">数据源已锁定</span>
             <span class="text-blue-200 shrink-0">|</span>
             <span class="font-mono font-bold text-blue-900 shrink-0">{{ lockedDataSourceName }}</span>
@@ -898,7 +899,7 @@ const dbTypeColor = (type: string) => {
               :class="['px-4 py-2 font-bold transition-all border-b-2 flex items-center gap-1.5', activeTab === 'profile' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700']"
               @click="activeTab = 'profile'"
             >
-              <span>🤖 智能摸排浏览</span>
+              <span class="flex items-center gap-1"><CpuChipIcon class="w-4 h-4" /> 智能摸排浏览</span>
               <span
                 v-if="profileTabBadgeText"
                 class="px-1.5 py-0.5 text-[10px] bg-primary/10 text-primary rounded-full font-bold"
@@ -914,7 +915,7 @@ const dbTypeColor = (type: string) => {
             class="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500 px-1 shrink-0"
           >
             <template v-if="lastProfiledAtText">
-              <span>🕐</span>
+              <ClockIcon class="w-3.5 h-3.5" />
               <span>{{ lastProfiledAtText }}</span>
               <span class="text-gray-300">·</span>
             </template>

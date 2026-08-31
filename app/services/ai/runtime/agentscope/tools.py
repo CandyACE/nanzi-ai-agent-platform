@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import shlex
 import time
 from dataclasses import dataclass
@@ -30,6 +31,13 @@ _TOOL_LOOP_MODEL_GUIDANCE = (
     "请停止继续调用任何工具，基于已经获得的结果直接回答用户；"
     "如果现有信息不足，请明确说明限制，不要再次尝试工具调用。"
 )
+
+VALID_RUNTIME_TOOL_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def is_valid_runtime_tool_name(name: str | None) -> bool:
+    """Return whether a tool name is accepted by OpenAI-compatible APIs."""
+    return bool(VALID_RUNTIME_TOOL_NAME_RE.fullmatch(str(name or "")))
 
 
 def _tool_loop_fuse_message(reason: str) -> str:
@@ -528,6 +536,23 @@ def apply_delegation_tool_filter(
         return list(tools)
     allowed = {str(name) for name in allowed_names}
     return [tool for tool in tools if str(tool.name) in allowed]
+
+
+def filter_valid_runtime_tool_specs(
+    tools: list[RuntimeToolSpec] | tuple[RuntimeToolSpec, ...] | None,
+) -> list[RuntimeToolSpec]:
+    """Drop tool specs whose names would make an OpenAI-compatible request invalid."""
+    valid: list[RuntimeToolSpec] = []
+    for tool in tools or ():
+        if is_valid_runtime_tool_name(tool.name):
+            valid.append(tool)
+        else:
+            logger.warning(
+                "Dropping runtime tool with invalid model name %r (source=%s)",
+                tool.name,
+                tool.source_type,
+            )
+    return valid
 
 
 class AgentScopeRuntimeTool:
@@ -1173,6 +1198,7 @@ def build_toolkit(
     user_id: int | str | None = None,
 ):
     toolkit_cls = _load_agentscope_toolkit()
+    tool_specs = filter_valid_runtime_tool_specs(tool_specs)
     tools = [
         runtime_tool_from_spec(spec, approval_mode=approval_mode, loop_detector=loop_detector, user_id=user_id)
         for spec in tool_specs

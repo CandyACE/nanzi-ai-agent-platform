@@ -4,6 +4,7 @@ import { metadataApi } from '../../api/metadata'
 import type { MetadataAiProgress, MetadataAiRunStatus, Metric } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
 import TraceLogViewer from '../TraceLogViewer.vue'
+import { LightBulbIcon, PencilIcon, SparklesIcon } from '@heroicons/vue/24/outline'
 
 interface TableItem {
   id?: number
@@ -441,7 +442,7 @@ const handleClose = () => {
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-lg font-bold text-gray-900">✨ 智能指标发现</h2>
+              <h2 class="text-lg font-bold text-gray-900 flex items-center gap-1.5"><SparklesIcon class="w-5 h-5 text-indigo-600" /> 智能指标发现</h2>
               <span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-semibold rounded-full">AI 自动生成</span>
             </div>
             <p class="text-xs text-gray-500 mt-0.5">深度分析数据 Schema、字段语义与聚合潜力，自动推荐高价值业务指标与 SQL</p>
@@ -912,7 +913,7 @@ const handleClose = () => {
         <!-- 2. 怎么填？四段式万能填法 -->
         <div class="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
           <div class="font-bold text-gray-900 flex items-center gap-1.5">
-            <span>✍️</span> 怎么填？通用的「四段式填法结构」
+            <PencilIcon class="w-4 h-4 text-gray-500" /> 怎么填？通用的「四段式填法结构」
           </div>
           <p class="text-[11px] text-gray-500">
             无论面对什么类型的数据表（订单、日志、设备、用户、财务等），您只需在输入框中组合以下 2~3 个要素：
@@ -941,7 +942,7 @@ const handleClose = () => {
         <div>
           <h4 class="font-bold text-gray-800 mb-2.5 flex items-center justify-between">
             <span class="flex items-center gap-1.5">
-              <span>💡</span> 全行业通用场景示例
+              <LightBulbIcon class="w-4 h-4 text-amber-500" /> 全行业通用场景示例
             </span>
             <span class="text-[11px] font-normal text-gray-400">点击卡片可直接一键填入输入框</span>
           </h4>

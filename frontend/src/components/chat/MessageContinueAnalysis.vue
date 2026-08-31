@@ -14,7 +14,6 @@
       aria-haspopup="menu"
       @click="open = true"
     >
-      <span aria-hidden="true">✨</span>
       <span>继续分析</span>
       <svg class="h-3 w-3 transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 9 6 6 6-6" />
