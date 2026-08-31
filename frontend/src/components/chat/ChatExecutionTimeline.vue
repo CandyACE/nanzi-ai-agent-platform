@@ -34,7 +34,7 @@
           v-if="skillBadges.length"
           class="flex flex-wrap items-center gap-1 rounded-md border border-purple-100/70 bg-purple-50/70 px-1.5 py-1 text-[11px] font-semibold text-purple-700 dark:border-purple-900/30 dark:bg-purple-950/20 dark:text-purple-300"
         >
-          <span aria-hidden="true">⚡</span>
+          <SparklesIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{{ skillNoticeLabel }}</span>
           <span
             v-for="skill in skillBadges"
@@ -55,7 +55,7 @@
           >
             <div class="flex gap-2">
               <span v-if="item.pending" class="thought-status-dot mt-1 shrink-0" aria-label="进行中" title="进行中" />
-              <span v-if="item.textKind !== 'reasoning'" class="mt-0.5 shrink-0" aria-hidden="true">✨</span>
+              <SparklesIcon v-if="item.textKind !== 'reasoning'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span
                 v-if="item.sourceLabel && item.textKind !== 'reasoning'"
                 class="mt-0.5 shrink-0 text-[10px] font-semibold text-gray-400 dark:text-gray-500"
@@ -68,7 +68,7 @@
                   :aria-expanded="isReasoningBodyOpen(item)"
                   @click="item.contentExpanded = isReasoningBodyOpen(item) ? false : true"
                 >
-                  <span aria-hidden="true">💭</span>
+                  <CpuChipIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span class="min-w-0 flex-1">深度思考</span>
                   <span v-if="formatDuration(item.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(item.execution_time_ms) }}</span>
                   <svg class="h-3 w-3 shrink-0 transition-transform" :class="{ 'rotate-180': isReasoningBodyOpen(item) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -138,7 +138,7 @@
                       class="h-3.5 w-3.5 shrink-0"
                       aria-hidden="true"
                     />
-                    <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(child) }}</span>
+                    <component v-else :is="timelineIconFor(child)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(child)">
                       <span
                         v-if="child.subagent && !child.children?.length"
@@ -207,7 +207,7 @@
                           class="h-3.5 w-3.5 shrink-0"
                           aria-hidden="true"
                         />
-                        <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
+                        <component v-else :is="timelineIconFor(subStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                         <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
                         <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                         <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
@@ -263,7 +263,7 @@
                 class="h-3.5 w-3.5 shrink-0"
                 aria-hidden="true"
               />
-              <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(item) }}</span>
+              <component v-else :is="timelineIconFor(item)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(item)">
                 <span
                   v-if="item.subagent && !item.children?.length"
@@ -354,7 +354,7 @@
                     class="h-3.5 w-3.5 shrink-0"
                     aria-hidden="true"
                   />
-                  <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(subStep) }}</span>
+                  <component v-else :is="timelineIconFor(subStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                   <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
@@ -402,7 +402,7 @@
                         class="h-3.5 w-3.5 shrink-0"
                         aria-hidden="true"
                       />
-                      <span v-else class="inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" aria-hidden="true">{{ iconFor(nestedStep) }}</span>
+                      <component v-else :is="timelineIconFor(nestedStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                       <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(nestedStep)">{{ displayTimelineTitle(nestedStep) }}</span>
                       <span v-if="nestedStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                       <span v-if="formatTimelineDuration(nestedStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(nestedStep)">{{ formatTimelineDuration(nestedStep) }}</span>
@@ -432,7 +432,23 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
-import { WrenchScrewdriverIcon } from "@heroicons/vue/24/outline";
+import {
+  BookOpenIcon,
+  ChatBubbleLeftRightIcon,
+  ClipboardDocumentListIcon,
+  ClockIcon,
+  Cog6ToothIcon,
+  CpuChipIcon,
+  ExclamationTriangleIcon,
+  FolderOpenIcon,
+  LockClosedIcon,
+  MapIcon,
+  PuzzlePieceIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
+  UserGroupIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/vue/24/outline";
 import { copyToClipboard } from "@/utils/clipboard";
 import {
   skillFlowNoticeLabel,
@@ -506,8 +522,10 @@ const props = withDefaults(defineProps<{
 const expanded = defineModel<boolean>("expanded", { default: false });
 const routeGroupExpanded = ref(true);
 
+function suppressPermissionLogs(items: ProcessTimelineLogItem[]): ProcessTimelineLogItem[];
+function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[] {
-  return items.flatMap((item) => {
+  return items.flatMap((item): ProcessTimelineItem[] => {
     if (item.kind === "log") {
       if (item.category === "permission") return [];
       return item.children?.length
@@ -570,7 +588,7 @@ function preparationStatusLabel(item: ProcessTimelineLogItem): string {
 }
 
 function displayTimelineTitle(item: ProcessTimelineLogItem): string {
-  const baseTitle = formatTimelineTitle(item.title || item.tool_name || "执行步骤");
+  const baseTitle = formatTimelineTitle(item.title || item.tool_name || "执行步骤").replace(/^✨\s*/, "");
   const metadata = item.file_metadata;
   if (!metadata) return baseTitle;
   if (metadata.document_type) {
@@ -657,6 +675,25 @@ function iconFor(item: ProcessTimelineLogItem): string {
   ) return "🧠";
   if (item.category === "permission") return "🔒";
   return "•";
+}
+
+function timelineIconFor(item: ProcessTimelineLogItem): any {
+  if (item.category === "tool_resolution") return item.status === "error" ? ExclamationTriangleIcon : MapIcon;
+  if (item.status === "error") return ExclamationTriangleIcon;
+  if (item.title.includes("鉴权及上下文与能力准备") || item.title.includes("请求校验")) return ShieldCheckIcon;
+  if (item.title.includes("会话上下文")) return FolderOpenIcon;
+  if (item.title.includes("知识库和专家清单加载") || item.title.includes("获取可用专家")) return BookOpenIcon;
+  if (item.title.includes("Prompt 组装")) return PuzzlePieceIcon;
+  if (item.title.includes("准备知识资源范围") || item.category === "context_summarized" || item.title.includes("平台摘录")) return ClipboardDocumentListIcon;
+  if (item.title.includes("加载入口专家配置") || item.title.includes("加载目标专家配置")) return Cog6ToothIcon;
+  if (item.title.includes("校验入口专家权限") || item.title.includes("校验目标专家权限")) return LockClosedIcon;
+  if (item.title.includes("判断并匹配目标专家") || item.title.includes("匹配目标专家") || item.category === "router" || item.category === "intent") return CpuChipIcon;
+  if (item.title.includes("等待上一次会话") || item.title.includes("排队")) return ClockIcon;
+  if (item.subagent || item.category === "agent") return UserGroupIcon;
+  if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return WrenchScrewdriverIcon;
+  if (item.category === "model" || item.title.includes("模型")) return SparklesIcon;
+  if (item.category === "permission") return LockClosedIcon;
+  return ChatBubbleLeftRightIcon;
 }
 
 function subagentStatusLabel(status: ProcessTimelineLogItem["status"]): string {

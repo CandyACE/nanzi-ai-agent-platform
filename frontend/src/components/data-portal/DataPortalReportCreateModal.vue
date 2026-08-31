@@ -627,9 +627,10 @@ const loadDataSourcesAndDatasets = async () => {
           .filter(Boolean)
           .some((value) => String(value).trim().toLowerCase() === normalizedPendingDataset),
       )
-      if (matchedDatasets.length === 1) {
+      const matchedDataset = matchedDatasets[0]
+      if (matchedDataset) {
         form.value.sourceType = 'dataset'
-        form.value.datasetId = matchedDatasets[0].id
+        form.value.datasetId = matchedDataset.id
         sourceError.value = ''
       } else if (matchedDatasets.length === 0) {
         form.value.sourceType = 'dataset'
