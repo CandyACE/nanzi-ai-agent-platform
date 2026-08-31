@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from typing import Any
 
 from fastapi import HTTPException
@@ -16,6 +17,18 @@ SESSION_DIR_NAME_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+
+def build_upload_storage_name(filename: str | None, suffix: str | None = None) -> str:
+    """保留可读原名，仅清理路径/控制字符，并追加短唯一后缀。"""
+    raw_name = str(filename or "").replace("/", "_").replace("\\", "_")
+    clean_name = re.sub(r"[\x00-\x1f\x7f]", "_", raw_name).strip()
+    if not clean_name:
+        clean_name = "upload"
+
+    stem, extension = os.path.splitext(clean_name)
+    short_suffix = (suffix or uuid.uuid4().hex[:4]).strip()
+    return f"{stem}_{short_suffix}{extension}"
 
 
 def get_platform_skills_root() -> str | None:

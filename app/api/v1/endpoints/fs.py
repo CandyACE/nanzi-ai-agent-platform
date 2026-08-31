@@ -17,6 +17,7 @@ from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 from app.utils.fs_access import (
     assert_path_allowed,
     assert_path_writable,
+    build_upload_storage_name,
     get_allowed_fs_roots,
     get_user_docs_dir,
     get_user_private_workspace_root,
@@ -928,10 +929,7 @@ async def upload_to_workspace(
     if ext in FORBIDDEN_UPLOAD_EXTENSIONS:
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
 
-    clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "")
-    if not clean_name or clean_name.startswith("."):
-        clean_name = f"upload{ext or '.bin'}"
-    unique_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{clean_name}"
+    unique_name = build_upload_storage_name(file.filename, suffix=uuid.uuid4().hex[:4])
     target = os.path.normpath(os.path.join(parent, unique_name))
 
     try:

@@ -2,7 +2,6 @@ import json
 import os
 import time
 import uuid
-import re
 import asyncio
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -21,7 +20,7 @@ from app.core.context import set_debug_context
 from app.core.dependencies import require_api_key
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
-from app.utils.fs_access import get_user_uploads_dir
+from app.utils.fs_access import build_upload_storage_name, get_user_uploads_dir
 from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
@@ -2290,11 +2289,7 @@ async def upload_chat_file(
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
         
     # 3. 文件名清洗与混淆命名防冲突
-    clean_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file.filename or "")
-    if not clean_name or clean_name.startswith('.'):
-        clean_name = f"attachment{ext}"
-        
-    unique_name = f"{int(time.time())}_{uuid.uuid4().hex[:12]}_{clean_name}"
+    unique_name = build_upload_storage_name(file.filename, suffix=uuid.uuid4().hex[:4])
     
     upload_dir = get_user_uploads_dir(user_info)
     if not upload_dir:
