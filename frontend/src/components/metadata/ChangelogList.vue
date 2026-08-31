@@ -4,6 +4,7 @@ import { diffLines } from 'diff'
 import { changelogApi } from '../../api/changelog'
 import type { ChangelogResponse, ChangeDiffResponse } from '../../api/changelog'
 import { useToast } from '../../composables/useToast'
+import { LightBulbIcon } from '@heroicons/vue/24/outline'
 
 interface Props {
   datasetId: number
@@ -377,7 +378,7 @@ onMounted(() => {
 
             <!-- 变更原因说明 -->
             <div v-if="log.reason" class="mt-2.5 text-xs text-gray-600 bg-white p-2 rounded-lg border border-gray-200/70 flex items-start gap-1.5">
-              <span class="text-amber-500 font-bold shrink-0">💡</span>
+              <LightBulbIcon class="w-4 h-4 text-amber-500 shrink-0" />
               <span class="leading-relaxed">{{ log.reason }}</span>
             </div>
 

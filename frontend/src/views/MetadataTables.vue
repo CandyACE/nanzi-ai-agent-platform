@@ -16,6 +16,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
+import { CircleStackIcon, KeyIcon, MagnifyingGlassIcon, UserIcon } from '@heroicons/vue/24/outline'
 
 const { isAdmin: _isAdmin, hasPermission } = useUser()
 const { showToast } = useToast()
@@ -400,15 +401,7 @@ const exportMarkdown = () => {
   URL.revokeObjectURL(url)
 }
 
-const getDatasetEmoji = (name: string) => {
-  const emojis = ['📊', '📈', '💿', '🗄️', '🧠', '🧊', '🌊', '⚡', '📅', '🛒', '👥', '🔗', '📦', '🏷️', '💎']
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const index = Math.abs(hash) % emojis.length
-  return emojis[index]
-}
+const getDatasetIcon = (_name: string) => CircleStackIcon
 
 const syncingId = ref<number | null>(null)
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null)
@@ -594,7 +587,7 @@ defineExpose({ fetchMetrics })
       <div v-if="isHeaderCollapsed" class="flex flex-wrap justify-between items-center gap-3 relative z-10">
         <div class="flex items-center gap-3 min-w-0">
           <div class="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center text-xl shadow-inner border border-gray-100 shrink-0">
-            {{ dataset?.name ? getDatasetEmoji(dataset.name) : '📂' }}
+            <component :is="dataset?.name ? getDatasetIcon(dataset.name) : CircleStackIcon" class="w-7 h-7 text-blue-600" />
           </div>
           <div class="flex items-center gap-2.5 min-w-0">
             <h1 class="text-lg font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
@@ -651,7 +644,7 @@ defineExpose({ fetchMetrics })
         <div class="flex items-start gap-4 relative min-w-0 flex-1">
           <!-- Emoji -->
           <div class="w-14 h-14 rounded-xl bg-gray-50 flex items-center justify-center text-3xl shadow-inner border border-gray-100 shrink-0">
-            {{ dataset?.name ? getDatasetEmoji(dataset.name) : '📂' }}
+            <component :is="dataset?.name ? getDatasetIcon(dataset.name) : CircleStackIcon" class="w-7 h-7 text-blue-600" />
           </div>
           
           <div class="max-w-2xl min-w-0 flex-1">
@@ -877,7 +870,7 @@ defineExpose({ fetchMetrics })
       
       <div v-else class="grid grid-cols-1 gap-4">
          <div v-if="filteredTables.length === 0" class="text-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-            <div class="text-4xl mb-3 grayscale opacity-30">🔍</div>
+            <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-3 text-gray-300" />
             <p class="text-gray-400 font-mono text-sm">未找到相关数据表。</p>
             <button v-if="searchQuery" @click="searchQuery = ''" class="mt-2 text-primary text-xs font-medium hover:underline">清除搜索</button>
             <button v-else @click="showImportModal = true" class="mt-4 text-primary text-sm font-medium hover:underline">立即导入</button>
@@ -942,7 +935,7 @@ defineExpose({ fetchMetrics })
               
               <div v-if="!expandedTables[table.physical_name]" class="flex flex-wrap gap-1.5">
                 <div v-for="col in table.columns.slice(0, 10)" :key="col.physical_name" class="flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-md text-[10px] font-mono group/col">
-                  <span class="text-amber-500" v-if="col.is_primary" title="Primary Key">🔑</span>
+                  <KeyIcon v-if="col.is_primary" class="w-3.5 h-3.5 text-amber-500" title="Primary Key" />
                   <span class="text-slate-600 font-bold">{{ col.physical_name }}</span>
                   <span class="text-slate-300">/</span>
                   <span class="text-blue-500">{{ col.term || '?' }}</span>
@@ -979,7 +972,7 @@ defineExpose({ fetchMetrics })
                   <tbody class="divide-y divide-gray-100 text-gray-700">
                     <tr v-for="col in table.columns" :key="col.physical_name" class="hover:bg-gray-50">
                       <td class="px-4 py-2 border-r border-gray-100 font-mono font-bold">
-                        <span v-if="col.is_primary" class="text-amber-500 mr-1" title="Primary Key">🔑</span>
+                        <KeyIcon v-if="col.is_primary" class="w-3.5 h-3.5 text-amber-500 mr-1 inline-block" title="Primary Key" />
                         {{ col.physical_name }}
                       </td>
                       <td class="px-4 py-2 border-r border-gray-100 text-gray-500">{{ col.type || '-' }}</td>
@@ -1045,7 +1038,7 @@ defineExpose({ fetchMetrics })
         <div class="space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1 select-none">
-              🔑 已授权角色 ({{ datasetPermissions.roles.length }})
+              <KeyIcon class="w-3.5 h-3.5" /> 已授权角色 ({{ datasetPermissions.roles.length }})
             </h3>
           </div>
           
@@ -1085,7 +1078,7 @@ defineExpose({ fetchMetrics })
         <div class="space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1 select-none">
-              👤 已授权用户 ({{ datasetPermissions.users.length }})
+              <UserIcon class="w-3.5 h-3.5" /> 已授权用户 ({{ datasetPermissions.users.length }})
             </h3>
           </div>
           

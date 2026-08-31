@@ -835,7 +835,7 @@
             <ChatBIMetadataGuide v-if="msg.chatbiMetadataGuide" :guide="msg.chatbiMetadataGuide" @select="handleQuickQuestion" />
             <div
               v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"
-              class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto mt-1 scrollbar-hide"
+              class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto sm:overflow-x-visible mt-1 scrollbar-hide"
             >
               <!-- Time -->
               <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
