@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import {
+  BookOpenIcon,
+  ChartBarIcon,
+  ChatBubbleLeftRightIcon,
+  ComputerDesktopIcon,
+  DocumentTextIcon,
+  ExclamationTriangleIcon,
+} from '@heroicons/vue/24/outline';
 import { useBranding } from '@/composables/useBranding';
 import WorkbenchPersonalResources from '@/components/workbench/WorkbenchPersonalResources.vue';
 import type { WorkbenchPersonalResource } from '@/types/workbench';
@@ -33,19 +41,19 @@ const capabilities: Array<{
   action: CapabilityAction;
 }> = [
   {
-    icon: '📊',
+    icon: 'chart',
     title: '自然语言查数',
     desc: '用中文询问机房 PUE、负载等业务指标。',
     action: 'data-portal',
   },
   {
-    icon: '📚',
+    icon: 'knowledge',
     title: '智能知识检索',
     desc: '查询企业 SOP、运维手册和内部规范文档。',
     action: 'knowledge-base',
   },
   {
-    icon: '💻',
+    icon: 'workspace',
     title: '管理工作空间',
     desc: '浏览、上传和整理您的 AI 工作目录文件。',
     action: 'workspace',
@@ -65,8 +73,13 @@ const handleCapabilityClick = (action: CapabilityAction) => {
 };
 
 const welcomeCardIcon = (icon: string) => ({
-  chart: '📊', knowledge: '📚', workspace: '💻', report: '📄', alert: '⚠️', chat: '💬',
-}[icon] || '💬');
+  chart: ChartBarIcon,
+  knowledge: BookOpenIcon,
+  workspace: ComputerDesktopIcon,
+  report: DocumentTextIcon,
+  alert: ExclamationTriangleIcon,
+  chat: ChatBubbleLeftRightIcon,
+}[icon] || ChatBubbleLeftRightIcon);
 
 const welcomeCardSetKey = computed(() => {
   if (props.welcomeCards?.length === 3) {
@@ -161,7 +174,7 @@ const recommendedPrompts = computed(() => {
             class="welcome-card-item p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
             @click="emit('quick-question', card.prompt)"
           >
-            <div class="text-2xl mb-2 group-hover:scale-110 transition-transform">{{ welcomeCardIcon(card.icon) }}</div>
+            <div class="mb-2 text-primary group-hover:scale-110 transition-transform"><component :is="welcomeCardIcon(card.icon)" class="h-7 w-7" aria-hidden="true" /></div>
             <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ card.title }}</h3>
             <p class="text-[10px] text-gray-400 leading-normal">{{ card.subtitle }}</p>
           </button>
@@ -176,7 +189,7 @@ const recommendedPrompts = computed(() => {
             :aria-label="cap.title"
             @click="handleCapabilityClick(cap.action)"
           >
-            <div class="text-2xl mb-2 group-hover:scale-110 transition-transform">{{ cap.icon }}</div>
+            <div class="mb-2 text-primary group-hover:scale-110 transition-transform"><component :is="welcomeCardIcon(cap.icon)" class="h-7 w-7" aria-hidden="true" /></div>
             <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
             <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
           </button>

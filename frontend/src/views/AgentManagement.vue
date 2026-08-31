@@ -28,6 +28,13 @@ import type { MarkdownTheme } from "@/types/markdownTheme";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
 import { copyToClipboard } from "../utils/clipboard";
+import {
+  BookOpenIcon,
+  ChartBarIcon,
+  ChatBubbleLeftRightIcon,
+  CpuChipIcon,
+  UserCircleIcon,
+} from "@heroicons/vue/24/outline";
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -2373,24 +2380,18 @@ const copyText = async (text: string, label: string = "内容") => {
   }
 };
 
-const getAgentEmoji = (agent: AIAgent) => {
-  if (agent.avatar_url) return "";
-  const emojiMap: Record<string, string> = {
-    "chat-bi": "📊",
-    "metadata-specialist": "💎",
-    "knowledge-base": "📚",
-    "main": "💬",
-    "general-chat": "💬",
+const getAgentIcon = (agent: AIAgent) => {
+  const iconMap: Record<string, any> = {
+    main: ChatBubbleLeftRightIcon,
+    "general-chat": ChatBubbleLeftRightIcon,
+    "chat-bi": ChartBarIcon,
+    "knowledge-base": BookOpenIcon,
+    nanzi_faq: UserCircleIcon,
   };
-  if (emojiMap[agent.name]) return emojiMap[agent.name];
-
-  const emojis = ["🤖", "🧙", "🕵️", "👩‍🔬", "👨‍💻", "🧚", "🧞", "🧟", "👾"];
-  let hash = 0;
-  const str = agent.name || agent.id;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return emojis[Math.abs(hash) % emojis.length];
+  if (iconMap[agent.name]) return iconMap[agent.name];
+  if (agent.agent_type === "CHATBI") return ChartBarIcon;
+  if (agent.agent_type === "KNOWLEDGE_BASE") return BookOpenIcon;
+  return CpuChipIcon;
 };
 
 const getAgentColorTheme = (agent: AIAgent) => {
@@ -2931,7 +2932,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 :src="agent.avatar_url"
                 class="w-full h-full object-cover"
               />
-              <span v-else>{{ getAgentEmoji(agent) }}</span>
+              <component v-else :is="getAgentIcon(agent)" class="h-6 w-6" :class="getAgentColorTheme(agent).text" aria-hidden="true" />
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 min-w-0">
@@ -3219,7 +3220,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     :class="[getAgentColorTheme(agent).bg, getAgentColorTheme(agent).border]"
                   >
                     <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover rounded-lg" />
-                    <span v-else class="text-sm">{{ getAgentEmoji(agent) }}</span>
+                    <component v-else :is="getAgentIcon(agent)" class="h-5 w-5" :class="getAgentColorTheme(agent).text" aria-hidden="true" />
                   </div>
                 </td>
                 <td class="px-6 py-4">

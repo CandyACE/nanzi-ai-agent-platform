@@ -132,7 +132,7 @@
                   <!-- 顶部小尖角 -->
                   <div class="absolute -top-1.5 right-3 h-3 w-3 rotate-45 border-l border-t border-primary/20 bg-primary/95 dark:border-slate-700/60 dark:bg-slate-900/95" />
 
-                  <span class="text-sm shrink-0" aria-hidden="true">⚡️</span>
+                  <BoltIcon class="h-4 w-4 shrink-0 text-yellow-300" aria-hidden="true" />
                   <div class="flex flex-col text-left">
                     <span class="font-bold leading-tight">已折叠快捷指令</span>
                     <span class="text-[11px] text-white/85 dark:text-slate-300 leading-tight mt-0.5">下次点这里重新打开</span>
@@ -1985,6 +1985,7 @@
 </template>
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed, triggerRef } from "vue";
+import { BoltIcon } from "@heroicons/vue/24/outline";
 import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
@@ -4655,16 +4656,16 @@ const resetStallTimer = () => {
 };
 // Slash Commands
 const SYSTEM_SLASH_COMMANDS = [
-  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -40 },
-  { id: "sys_project", command: "/project", label: "📁 新建项目会话", sort_order: -39.5 },
-  { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -39 },
-  { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📊 数据门户", sort_order: -35 },
-  { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
-  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
-  { id: MY_ARTIFACTS_SYSTEM_COMMAND_ID, command: MY_ARTIFACTS_SLASH_COMMAND, label: "📄 我的产出", sort_order: -33.5 },
-  { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
-  { id: "sys_compact", command: "/compact", label: "🧹 压缩上下文", sort_order: -17 },
-  { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
+  { id: "sys_clear", command: "/new", label: "新会话", sort_order: -40 },
+  { id: "sys_project", command: "/project", label: "新建项目会话", sort_order: -39.5 },
+  { id: "sys_history", command: "/history", label: "历史", sort_order: -39 },
+  { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "数据门户", sort_order: -35 },
+  { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "知识库中心", sort_order: -34.5 },
+  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "工作空间", sort_order: -34 },
+  { id: MY_ARTIFACTS_SYSTEM_COMMAND_ID, command: MY_ARTIFACTS_SLASH_COMMAND, label: "我的产出", sort_order: -33.5 },
+  { id: "sys_quota", command: "/quota", label: "我的额度", sort_order: -18 },
+  { id: "sys_compact", command: "/compact", label: "压缩上下文", sort_order: -17 },
+  { id: "sys_settings", command: "/settings", label: "设置", sort_order: -15 },
 ];
 const showCommandMenu = ref(false);
 const isKnowledgeEnabled = ref(true);
@@ -5275,6 +5276,7 @@ const openEditReportModal = (report: any) => {
     description: report.description || '',
     sql_content: report.sql_content || '',
     dataset_id: report.dataset_id ?? null,
+    dataset_name: report.dataset_name || '',
     data_source: report.data_source || 'default_clickhouse',
     original_query: report.original_query || '',
     mode: report.mode || 'static_sql',

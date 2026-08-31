@@ -1,6 +1,6 @@
 <template>
   <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5">
-    <div class="flex items-center gap-3.5">
+    <div class="flex items-start gap-3.5">
       <div
         class="flex-shrink-0 rounded-xl p-2.5"
         :class="bgClass"

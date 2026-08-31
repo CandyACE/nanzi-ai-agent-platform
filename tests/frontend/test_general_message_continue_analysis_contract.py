@@ -17,6 +17,7 @@ CHAT_ENDPOINT = ROOT / "app/api/v1/endpoints/chat.py"
 def test_generic_continue_analysis_contains_asset_prompts_and_emits_queries():
     source = COMPONENT.read_text(encoding="utf-8")
 
+    assert '<span aria-hidden="true">✨</span>' not in source
     for label in ("生成可视化分析报告", "保存为 Markdown", "保存为 Word", "提炼生成 Skill"):
         assert label in source
     assert 'emit("select", action.query)' in source
