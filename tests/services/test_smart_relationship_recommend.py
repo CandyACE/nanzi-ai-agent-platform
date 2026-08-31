@@ -133,7 +133,7 @@ async def test_recommend_relationships_merges_multiple_batches_without_total_lim
 
     assert len(result["relationships"]) == 2
     assert mock_invoke.await_count == 2
-    assert "本次任务已输出关系" in mock_invoke.await_args_list[1].args[0][3]
+    assert "本次任务已输出关系" in mock_invoke.await_args_list[1].args[3]
     assert result["_batch_count"] == 2
     assert result["_stop_reason"] == "has_more_false"
 
@@ -177,6 +177,74 @@ async def test_recommend_relationships_continues_when_full_batch_omits_has_more(
     assert result["_batch_count"] == 2
     assert result["_stop_reason"] == "empty_batch"
     assert mock_invoke.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_recommend_relationships_scans_each_schema_table_anchor():
+    """即使单个锚定表只返回少量关系，也应继续扫描其它表。"""
+    dataset_id = 1003
+    schema_yaml = """--- [Schema:1] type=table dataset=demo table=orders ---
+table_name: orders
+
+--- [Schema:2] type=table dataset=demo table=users ---
+table_name: users
+
+--- [Schema:3] type=table dataset=demo table=payments ---
+table_name: payments
+"""
+    batches = [
+        {
+            "relationships": [
+                {
+                    "source_table": "orders",
+                    "target_table": "users",
+                    "condition": "orders.user_id = users.id",
+                    "relation_type": "many_to_one",
+                    "confidence": 0.95,
+                    "description": "订单关联用户",
+                }
+            ],
+            "has_more": False,
+        },
+        {
+            "relationships": [
+                {
+                    "source_table": "users",
+                    "target_table": "payments",
+                    "condition": "users.id = payments.user_id",
+                    "relation_type": "many_to_one",
+                    "confidence": 0.9,
+                    "description": "用户关联支付流水",
+                }
+            ],
+            "has_more": False,
+        },
+        {"relationships": [], "has_more": False},
+    ]
+
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None
+
+    with patch("app.core.redis.get_redis", return_value=mock_redis), \
+         patch("app.services.metadata_generator.MetadataGeneratorService._save_trace_log", new_callable=AsyncMock), \
+         patch("app.services.metadata_generator.AgentConfigProvider.get_configured_llm", new_callable=AsyncMock), \
+         patch(
+             "app.services.metadata_generator.MetadataGeneratorService._invoke_json",
+             new_callable=AsyncMock,
+             side_effect=batches,
+         ) as mock_invoke:
+        result = await MetadataGeneratorService.recommend_relationships(
+            dataset_id=dataset_id,
+            schema_context=schema_yaml,
+        )
+
+    assert len(result["relationships"]) == 2
+    assert result["_debug"]["schema_table_count"] == 3
+    assert result["_batch_count"] == 3
+    assert mock_invoke.await_count == 3
+    assert "【当前锚定表】orders" in mock_invoke.await_args_list[0].args[3]
+    assert "【当前锚定表】users" in mock_invoke.await_args_list[1].args[3]
+    assert "【当前锚定表】payments" in mock_invoke.await_args_list[2].args[3]
 
 
 @pytest.mark.asyncio

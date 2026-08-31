@@ -37,6 +37,21 @@ def test_extract_json_does_not_return_nested_object_after_outer_truncation():
         )
 
 
+def test_extract_schema_table_names_from_schema_chunks():
+    """应从 Schema 分块头和 YAML table_name 中提取所有物理表名。"""
+    schema = """--- [Schema:1] type=table dataset=demo table=orders ---
+table_name: orders
+
+--- [Schema:2] type=table dataset=demo table=users ---
+table_name: users
+"""
+
+    assert MetadataGeneratorService._extract_schema_table_names(schema) == [
+        "orders",
+        "users",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_invoke_json_retries_after_truncated_output():
     """首次输出被截断时，应重试并返回第二次完整结果。"""

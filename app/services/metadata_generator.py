@@ -75,6 +75,35 @@ class DatasetEnhanceResult(BaseModel):
 
 class MetadataGeneratorService:
     @staticmethod
+    def _extract_schema_table_names(schema_context: str) -> List[str]:
+        """从导出的 Schema 文本中提取物理表名，用于驱动逐表关系扫描。"""
+        text = str(schema_context or "")
+        names: List[str] = []
+        seen = set()
+        patterns = [
+            r"---\s*\[Schema:\d+\][^\n]*\btype=table\b[^\n]*\btable=([^\s]+)",
+            r"^table_name:\s*([^\s]+)\s*$",
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE | re.MULTILINE):
+                name = str(match.group(1) or "").strip().strip("'\"")
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _relationship_pair_key(rel: Dict[str, Any]) -> Optional[tuple[str, str, str]]:
+        """构建关系去重键，源/目标表无序，condition 参与区分不同连接条件。"""
+        src = (rel.get("source_table") or "").strip().lower()
+        tgt = (rel.get("target_table") or "").strip().lower()
+        cond = (rel.get("condition") or "").strip().lower()
+        if not src or not tgt:
+            return None
+        return tuple(sorted([src, tgt])) + (cond,)
+
+    @staticmethod
     def _format_instructions(model_cls: type[BaseModel]) -> str:
         schema = json.dumps(model_cls.model_json_schema(), ensure_ascii=False)
         return (
@@ -659,161 +688,196 @@ class MetadataGeneratorService:
                 "{format_instructions}"
             )
 
-            # 4. 分批调用，单次响应保持可解析，最终结果不设置业务数量上限。
+            # 4. 逐表锚定 + 分批调用，避免模型全局只给一条关系后提前结束。
             start_llm = time.time()
             batch_size = 10
-            max_batches = 100
+            max_pages_per_anchor = 20
             batch_number = 0
             collected_relationships = []
             collected_keys = set(recent_recommended_keys)
             new_cache_items = []
             stop_reason = "unknown"
+            debug_batches = []
+            schema_table_names = MetadataGeneratorService._extract_schema_table_names(schema_context)
+            anchor_table_names = schema_table_names or [""]
+            logger.warning(
+                "关系推荐逐表扫描启动: trace_id=%s, dataset_id=%s, schema_len=%s, "
+                "table_count=%s, cached_exclusions=%s",
+                trace_id,
+                dataset_id,
+                len(schema_context),
+                len(schema_table_names),
+                len(recent_recommended_keys),
+            )
 
-            while True:
-                batch_number += 1
-                generated_exclusions = []
-                for rel in collected_relationships[-200:]:
-                    generated_exclusions.append(
-                        f"- 已输出关系: {rel.get('source_table')} -> "
-                        f"{rel.get('target_table')} ({rel.get('condition')})"
-                    )
-
-                batch_user_prompt = f"Schema 定义如下：\n\n{schema_context}"
-                if generated_exclusions:
-                    batch_user_prompt += (
-                        "\n\n【本次任务已输出关系，下一批严禁重复】\n"
-                        + "\n".join(generated_exclusions)
-                    )
-                batch_user_prompt += (
-                    "\n\n请输出当前尚未覆盖的一批关系。"
-                    f"本批最多 {batch_size} 条；如果还有下一批，请将 has_more 设为 true。"
-                )
-                logger.info(
-                    "关系推荐开始请求批次: trace_id=%s, dataset_id=%s, batch=%s, "
-                    "schema_len=%s, prompt_len=%s, cached_exclusions=%s, collected=%s",
-                    trace_id,
-                    dataset_id,
-                    batch_number,
-                    len(schema_context),
-                    len(batch_user_prompt),
-                    len(recent_recommended_keys),
-                    len(collected_relationships),
-                )
-
-                try:
-                    batch_result = await MetadataGeneratorService._invoke_json(
-                        llm,
-                        RelationshipRecommendationBatchResult,
-                        system_prompt,
-                        batch_user_prompt,
-                    )
-                except Exception as exc:
-                    # 已经拿到部分结果时返回部分成功，避免后续某一批异常导致全部结果丢失。
-                    if collected_relationships:
-                        stop_reason = "partial_batch_error"
-                        logger.warning(
-                            "关系推荐第 %s 批解析失败，返回已汇总结果: error=%s",
-                            batch_number,
-                            exc,
-                            exc_info=True,
+            for anchor_table in anchor_table_names:
+                anchor_stop_reason = "unknown"
+                page_number = 0
+                while True:
+                    page_number += 1
+                    batch_number += 1
+                    generated_exclusions = []
+                    for rel in collected_relationships[-200:]:
+                        generated_exclusions.append(
+                            f"- 已输出关系: {rel.get('source_table')} -> "
+                            f"{rel.get('target_table')} ({rel.get('condition')})"
                         )
-                        break
-                    raise
 
-                raw_relationships = (
-                    batch_result.get("relationships", [])
-                    if isinstance(batch_result, dict)
-                    else []
-                )
-                has_more = bool(batch_result.get("has_more")) if isinstance(batch_result, dict) else False
-                logger.info(
-                    "关系推荐收到批次结果: trace_id=%s, dataset_id=%s, batch=%s, "
-                    "raw_count=%s, has_more=%s",
-                    trace_id,
-                    dataset_id,
-                    batch_number,
-                    len(raw_relationships),
-                    has_more,
-                )
-                if not raw_relationships:
-                    stop_reason = "empty_batch"
-                    logger.info(
-                        "关系推荐收到空批次，停止继续请求: trace_id=%s, dataset_id=%s, batch=%s, total=%s",
+                    batch_user_prompt = f"Schema 定义如下：\n\n{schema_context}"
+                    if anchor_table:
+                        batch_user_prompt += (
+                            f"\n\n【当前锚定表】{anchor_table}\n"
+                            "请优先、尽可能完整地发现该锚定表与当前 Schema 内其它表之间的关系；"
+                            "source_table 或 target_table 至少一个必须是当前锚定表。"
+                        )
+                    if generated_exclusions:
+                        batch_user_prompt += (
+                            "\n\n【本次任务已输出关系，下一批严禁重复】\n"
+                            + "\n".join(generated_exclusions)
+                        )
+                    batch_user_prompt += (
+                        "\n\n请输出当前尚未覆盖的一批关系。"
+                        f"本批最多 {batch_size} 条；如果当前锚定表还有下一批，请将 has_more 设为 true。"
+                    )
+                    logger.warning(
+                        "关系推荐开始请求批次: trace_id=%s, dataset_id=%s, anchor=%s, "
+                        "page=%s, batch=%s, schema_len=%s, prompt_len=%s, "
+                        "cached_exclusions=%s, collected=%s",
                         trace_id,
                         dataset_id,
+                        anchor_table or "__all__",
+                        page_number,
                         batch_number,
+                        len(schema_context),
+                        len(batch_user_prompt),
+                        len(recent_recommended_keys),
                         len(collected_relationships),
                     )
-                    break
 
-                batch_new_count = 0
-                batch_duplicate_count = 0
-                batch_invalid_count = 0
-                for rel in raw_relationships:
-                    src = (rel.get("source_table") or "").strip().lower()
-                    tgt = (rel.get("target_table") or "").strip().lower()
-                    cond = (rel.get("condition") or "").strip().lower()
-                    if not src or not tgt:
-                        batch_invalid_count += 1
-                        continue
+                    try:
+                        batch_result = await MetadataGeneratorService._invoke_json(
+                            llm,
+                            RelationshipRecommendationBatchResult,
+                            system_prompt,
+                            batch_user_prompt,
+                        )
+                    except Exception as exc:
+                        # 已经拿到部分结果时返回部分成功，避免后续某一批异常导致全部结果丢失。
+                        if collected_relationships:
+                            stop_reason = "partial_batch_error"
+                            anchor_stop_reason = "partial_batch_error"
+                            logger.warning(
+                                "关系推荐第 %s 批解析失败，返回已汇总结果: trace_id=%s, "
+                                "anchor=%s, error=%s",
+                                batch_number,
+                                trace_id,
+                                anchor_table or "__all__",
+                                exc,
+                                exc_info=True,
+                            )
+                            break
+                        raise
 
-                    pair_key = tuple(sorted([src, tgt])) + (cond,)
-                    if pair_key in collected_keys:
-                        batch_duplicate_count += 1
-                        continue
-
-                    collected_keys.add(pair_key)
-                    collected_relationships.append(rel)
-                    new_cache_items.append({
-                        "source_table": rel.get("source_table"),
-                        "target_table": rel.get("target_table"),
-                        "condition": rel.get("condition"),
-                        "ts": time.time()
-                    })
-                    batch_new_count += 1
-
-                # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一批，直到空批次或无新增。
-                should_continue = has_more or len(raw_relationships) >= batch_size
-                logger.info(
-                    "关系推荐批次完成: dataset_id=%s, batch=%s, batch_raw=%s, "
-                    "batch_new=%s, batch_duplicate=%s, batch_invalid=%s, total=%s, "
-                    "has_more=%s, should_continue=%s",
-                    dataset_id,
-                    batch_number,
-                    len(raw_relationships),
-                    batch_new_count,
-                    batch_duplicate_count,
-                    batch_invalid_count,
-                    len(collected_relationships),
-                    has_more,
-                    should_continue,
-                )
-
-                if batch_new_count == 0:
-                    stop_reason = "no_new_relationship"
-                    logger.info(
-                        "关系推荐本批无新增关系，停止继续请求: trace_id=%s, dataset_id=%s, "
-                        "batch=%s, duplicate=%s, invalid=%s",
+                    raw_relationships = (
+                        batch_result.get("relationships", [])
+                        if isinstance(batch_result, dict)
+                        else []
+                    )
+                    has_more = bool(batch_result.get("has_more")) if isinstance(batch_result, dict) else False
+                    logger.warning(
+                        "关系推荐收到批次结果: trace_id=%s, dataset_id=%s, anchor=%s, "
+                        "page=%s, batch=%s, raw_count=%s, has_more=%s",
                         trace_id,
                         dataset_id,
+                        anchor_table or "__all__",
+                        page_number,
                         batch_number,
+                        len(raw_relationships),
+                        has_more,
+                    )
+
+                    batch_new_count = 0
+                    batch_duplicate_count = 0
+                    batch_invalid_count = 0
+                    batch_off_anchor_count = 0
+                    for rel in raw_relationships:
+                        pair_key = MetadataGeneratorService._relationship_pair_key(rel)
+                        if pair_key is None:
+                            batch_invalid_count += 1
+                            continue
+                        if anchor_table:
+                            src = (rel.get("source_table") or "").strip()
+                            tgt = (rel.get("target_table") or "").strip()
+                            if anchor_table not in {src, tgt}:
+                                batch_off_anchor_count += 1
+                                continue
+                        if pair_key in collected_keys:
+                            batch_duplicate_count += 1
+                            continue
+
+                        collected_keys.add(pair_key)
+                        collected_relationships.append(rel)
+                        new_cache_items.append({
+                            "source_table": rel.get("source_table"),
+                            "target_table": rel.get("target_table"),
+                            "condition": rel.get("condition"),
+                            "ts": time.time()
+                        })
+                        batch_new_count += 1
+
+                    # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一页，直到空批次或无新增。
+                    should_continue = has_more or len(raw_relationships) >= batch_size
+                    if not raw_relationships:
+                        anchor_stop_reason = "empty_batch"
+                    elif batch_new_count == 0:
+                        anchor_stop_reason = "no_new_relationship"
+                    elif not should_continue:
+                        anchor_stop_reason = "has_more_false"
+                    elif page_number >= max_pages_per_anchor:
+                        anchor_stop_reason = "max_pages_per_anchor_reached"
+
+                    debug_batches.append({
+                        "anchor": anchor_table or "__all__",
+                        "page": page_number,
+                        "batch": batch_number,
+                        "raw_count": len(raw_relationships),
+                        "new_count": batch_new_count,
+                        "duplicate_count": batch_duplicate_count,
+                        "invalid_count": batch_invalid_count,
+                        "off_anchor_count": batch_off_anchor_count,
+                        "has_more": has_more,
+                        "should_continue": should_continue,
+                        "stop_reason": anchor_stop_reason,
+                    })
+                    logger.warning(
+                        "关系推荐批次完成: trace_id=%s, dataset_id=%s, anchor=%s, "
+                        "page=%s, batch=%s, batch_raw=%s, batch_new=%s, duplicate=%s, "
+                        "invalid=%s, off_anchor=%s, total=%s, has_more=%s, "
+                        "should_continue=%s, stop_reason=%s",
+                        trace_id,
+                        dataset_id,
+                        anchor_table or "__all__",
+                        page_number,
+                        batch_number,
+                        len(raw_relationships),
+                        batch_new_count,
                         batch_duplicate_count,
                         batch_invalid_count,
-                    )
-                    break
-                if not should_continue:
-                    stop_reason = "has_more_false"
-                    break
-                if batch_number >= max_batches:
-                    stop_reason = "max_batches_reached"
-                    logger.warning(
-                        "关系推荐达到批次保护上限，停止继续请求: trace_id=%s, dataset_id=%s, max_batches=%s, total=%s",
-                        trace_id,
-                        dataset_id,
-                        max_batches,
+                        batch_off_anchor_count,
                         len(collected_relationships),
+                        has_more,
+                        should_continue,
+                        anchor_stop_reason,
                     )
+
+                    if anchor_stop_reason != "unknown":
+                        break
+
+                if stop_reason == "partial_batch_error":
                     break
+
+            if stop_reason == "unknown":
+                stop_reason = "all_anchors_scanned"
 
             duration_llm = (time.time() - start_llm) * 1000
 
@@ -826,6 +890,15 @@ class MetadataGeneratorService:
                 "_trace_id": trace_id,
                 "_batch_count": batch_number,
                 "_stop_reason": stop_reason,
+                "_debug": {
+                    "schema_len": len(schema_context),
+                    "schema_table_count": len(schema_table_names),
+                    "schema_table_names_preview": schema_table_names[:30],
+                    "batch_size": batch_size,
+                    "batch_count": batch_number,
+                    "stop_reason": stop_reason,
+                    "batches": debug_batches[-200:],
+                },
             }
 
             if redis_client and new_cache_items:
@@ -839,13 +912,14 @@ class MetadataGeneratorService:
                     logger.warning(f"Failed to cache recent relationship recommendations to Redis: {ex}")
 
             # 6. Log Success
-            logger.info(
+            logger.warning(
                 "关系推荐完成: trace_id=%s, dataset_id=%s, total=%s, batches=%s, "
-                "stop_reason=%s, execution_time_ms=%.2f",
+                "anchors=%s, stop_reason=%s, execution_time_ms=%.2f",
                 trace_id,
                 dataset_id,
                 len(filtered_relationships),
                 batch_number,
+                len(anchor_table_names),
                 stop_reason,
                 duration_llm,
             )

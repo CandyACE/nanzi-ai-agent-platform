@@ -119,6 +119,17 @@ export interface RelationshipRecommendation {
 export interface RelationshipRecommendationResult {
   relationships: RelationshipRecommendation[];
   _trace_id?: string;
+  _batch_count?: number;
+  _stop_reason?: string;
+  _debug?: {
+    schema_len?: number;
+    schema_table_count?: number;
+    schema_table_names_preview?: string[];
+    batch_size?: number;
+    batch_count?: number;
+    stop_reason?: string;
+    batches?: Array<Record<string, unknown>>;
+  };
 }
 
 export const metadataApi = {

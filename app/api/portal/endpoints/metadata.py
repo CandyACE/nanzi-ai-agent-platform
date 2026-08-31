@@ -595,7 +595,7 @@ async def recommend_metrics(
 @router.post("/datasets/{dataset_id}/relationships/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def recommend_relationships(
     dataset_id: int,
-    req: Optional[RelationshipRecommendRequest] = None,
+    req: RelationshipRecommendRequest = Body(default_factory=RelationshipRecommendRequest),
     conn: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -624,6 +624,16 @@ async def recommend_relationships(
             existing_rel_strs.append(f"{src} <-> {tgt} ({cond})")
 
     schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id, table_names=table_names)
+    schema_table_names = MetadataGeneratorService._extract_schema_table_names(schema_yaml)
+    logger.warning(
+        "关系推荐请求入口: dataset_id=%s, requested_table_count=%s, schema_table_count=%s, "
+        "schema_len=%s, user_prompt=%s",
+        dataset_id,
+        len(table_names or []),
+        len(schema_table_names),
+        len(schema_yaml),
+        bool(user_prompt),
+    )
 
     # Call Generator
     result = await MetadataGeneratorService.recommend_relationships(
