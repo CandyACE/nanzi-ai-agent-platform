@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
+import { ShareIcon } from "@heroicons/vue/24/outline"
 
 const props = withDefaults(defineProps<{
   mode?: "data" | "regenerate" | "more" | "both"
@@ -148,7 +149,7 @@ onUnmounted(() => {
             <div v-if="hasTrace || hasTokenStats || canSaveReport" class="my-1 border-t border-gray-100 dark:border-gray-800" />
           </div>
           <button v-if="canExport" type="button" class="menu-item hidden sm:block" role="menuitem" @click="run(() => emit('exportData'))">↓ 导出数据（Excel）</button>
-          <button v-if="hasTrace" type="button" class="menu-item" role="menuitem" @click="run(() => emit('openTrace'))">⚡ 查看执行链路</button>
+          <button v-if="hasTrace" type="button" class="menu-item flex items-center gap-1.5 whitespace-nowrap" role="menuitem" @click="run(() => emit('openTrace'))"><ShareIcon class="h-4 w-4 shrink-0 text-gray-500" /> 查看执行链路</button>
           <button v-if="hasTokenStats" type="button" class="menu-item" role="menuitem" @click="run(() => emit('openStats'))">▤ 查看调用详情</button>
           <button v-if="canSaveReport" type="button" class="menu-item" role="menuitem" @click="run(() => emit('saveReport'))">☆ 添加固化报表</button>
         </div>
@@ -159,7 +160,8 @@ onUnmounted(() => {
 
 <style scoped>
 .menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   border-radius: 0.5rem;
   padding: 0.5rem 0.625rem;

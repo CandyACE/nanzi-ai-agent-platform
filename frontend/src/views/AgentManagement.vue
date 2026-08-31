@@ -2789,13 +2789,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </div>
 
-    <p
-      v-if="canDragAgents && !isMobile"
-      class="text-[11px] text-gray-400 -mt-2"
-    >
-      拖动卡片或列表行可调整排序
-    </p>
-
     <!-- 智能体 5 步全流程指引横幅 -->
     <AgentFlowGuideBanner
       v-if="showAgentFlowGuide"

@@ -7,6 +7,7 @@ import type {
   AllTablesDataset,
 } from "../../api/metadata";
 import { useUser } from "../../composables/useUser";
+import { CircleStackIcon, KeyIcon, LightBulbIcon, LinkIcon } from "@heroicons/vue/24/outline";
 import { formatRelationshipJoinTypeLabel, normalizeRelationshipJoinType } from "../../utils/relationshipJoinType";
 import SmartRelationshipModal from "./SmartRelationshipModal.vue";
 import * as echarts from "echarts/core";
@@ -723,7 +724,7 @@ onUnmounted(() => {
         <div class="px-5 py-3.5 bg-gradient-to-r from-purple-50/60 via-indigo-50/40 to-white border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-3">
             <div class="w-8 h-8 rounded-lg bg-white border border-purple-100 shadow-2xs flex items-center justify-center text-purple-600 font-mono font-bold text-sm">
-              🗄️
+              <CircleStackIcon class="w-4 h-4" />
             </div>
             <div>
               <div class="flex items-center gap-2">
@@ -775,7 +776,7 @@ onUnmounted(() => {
               <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <!-- Source Field -->
                 <div class="px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-100 text-purple-800 font-mono text-xs font-bold flex items-center gap-1.5 shrink-0">
-                  <span class="text-purple-400 text-[10px]">🔑</span>
+                  <KeyIcon class="w-3 h-3 text-purple-400" />
                   <span>{{ parseJoinFields(r.join_condition).sourceField || '字段' }}</span>
                 </div>
 
@@ -790,7 +791,7 @@ onUnmounted(() => {
 
                 <!-- Target Table & Field -->
                 <div class="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-800 font-mono text-xs font-bold flex items-center gap-1.5 shrink-0 max-w-full md:max-w-md truncate">
-                  <span class="text-emerald-500 text-xs">🔗</span>
+                  <LinkIcon class="w-3 h-3 text-emerald-500" />
                   <span class="truncate">{{ getTableMeta(r.target_table_id).physical_name }}</span>
                   <span v-if="getTableMeta(r.target_table_id).term" class="text-emerald-600 text-[11px] font-normal truncate">
                     ({{ getTableMeta(r.target_table_id).term }})
@@ -871,7 +872,7 @@ onUnmounted(() => {
               </td>
               <td class="py-2.5 px-4 font-mono">
                 <div class="flex items-start gap-1.5">
-                  <span class="text-blue-500 shrink-0 mt-0.5">🗄️</span>
+                  <CircleStackIcon class="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
                   <div class="min-w-0">
                     <div class="font-bold text-gray-900 leading-snug">
                       {{ getTableMeta(r.source_table_id).physical_name }}
@@ -889,7 +890,7 @@ onUnmounted(() => {
               </td>
               <td class="py-2.5 px-4 font-mono">
                 <div class="flex items-start gap-1.5">
-                  <span class="text-emerald-500 shrink-0 mt-0.5">🔗</span>
+                  <LinkIcon class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-1.5">
                       <span class="font-bold text-gray-900 leading-snug">
@@ -950,7 +951,7 @@ onUnmounted(() => {
           <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> 维度表 (dim_*)</span>
           <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> 跨库关联表</span>
         </div>
-        <span class="text-gray-400">💡 拖拽节点可调整布局，点击关系连线可直接编辑</span>
+        <span class="text-gray-400 flex items-center gap-1"><LightBulbIcon class="w-3.5 h-3.5" /> 拖拽节点可调整布局，点击关系连线可直接编辑</span>
       </div>
       <div ref="chartContainer" class="w-full h-[540px] rounded-lg bg-gray-50/40"></div>
     </div>

@@ -177,6 +177,7 @@ class AgentContextManager:
         require_explicit_dataset: bool = False,
         trace_buffer: Optional[List[Any]] = None,
         runtime_model_info: Optional[Dict[str, Any]] = None,
+        published_download_urls: Optional[List[str]] = None,
     ):
         """
         Setup the execution context (debug options + agent config).
@@ -311,4 +312,9 @@ class AgentContextManager:
             skills_custom=bool(getattr(config, "skills_custom", False)),
             skills=list(getattr(config, "skills", None) or []),
             runtime_model_info=dict(runtime_model_info or {}),
+            published_download_urls=(
+                published_download_urls
+                if published_download_urls is not None
+                else []
+            ),
         ))

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { metadataApi, type DbConnectionConfig } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
+import { CpuChipIcon } from '@heroicons/vue/24/outline'
 
 export type ProfilingTaskInfo = {
   status: number
@@ -404,7 +405,7 @@ defineExpose({ refresh })
       <!-- Header -->
       <div class="px-5 py-3 border-b flex items-center justify-between shrink-0 bg-gradient-to-r from-primary/5 to-white">
         <div class="flex items-center gap-2.5 min-w-0">
-          <div class="p-1.5 rounded-lg bg-primary text-white shrink-0 text-sm">🤖</div>
+          <div class="p-1.5 rounded-lg bg-primary text-white shrink-0"><CpuChipIcon class="w-4 h-4" /></div>
           <div class="min-w-0">
             <h3 class="font-bold text-gray-900 text-sm truncate">数据源摸排资产：{{ config.name }}</h3>
             <p class="text-[10px] text-gray-500">业务备注 · 字段画像 · 数据预览</p>

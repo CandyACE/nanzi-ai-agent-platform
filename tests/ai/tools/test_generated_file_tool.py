@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.context import AgentContext, set_agent_context
+from app.core.context import AgentContext, get_current_agent_context, set_agent_context
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -75,6 +75,7 @@ async def test_publish_generated_file_returns_download_url_for_docker_path(publi
     assert result["download_url"].startswith("/api/v1/chat/generated-files/")
     assert "token=" in result["download_url"]
     assert result["expires_at"]
+    assert result["download_url"] in get_current_agent_context().published_download_urls
     assert Path(root / "7" / "docs" / "report.md").read_text(encoding="utf-8") == "# report"
 
 
@@ -89,6 +90,29 @@ async def test_publish_generated_file_rejects_another_users_workspace(publish_en
 
     with pytest.raises(ValueError, match="当前用户工作区"):
         await publish_generated_file.ainvoke({"path": str(secret)})
+
+
+@pytest.mark.asyncio
+async def test_publish_generated_file_failure_does_not_register_download_url(
+    publish_env,
+    monkeypatch,
+):
+    from app.services.ai.tools import generated_file_tool as generated_file_tool_module
+    from app.services.ai.tools.generated_file_tool import publish_generated_file
+
+    _, docs_dir = publish_env
+    source = docs_dir / "failed.md"
+    source.write_text("# failed", encoding="utf-8")
+
+    async def fail_register(**kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(generated_file_tool_module, "register_artifact", fail_register)
+
+    with pytest.raises(ValueError, match="下载地址登记失败"):
+        await publish_generated_file.ainvoke({"path": "/workspace/docs/failed.md"})
+
+    assert get_current_agent_context().published_download_urls == []
 
 
 def test_publish_generated_file_is_system_implicit():

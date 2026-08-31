@@ -295,8 +295,14 @@ async def build_business_brief_async(
     return brief
 
 
-def publish_business_brief_docx(brief: Mapping[str, Any]):
-    """Create a private 24-hour Word artifact from brief Markdown."""
+async def publish_business_brief_docx(
+    brief: Mapping[str, Any],
+    *,
+    owner_user_id: int | str,
+    user_name: str | None = None,
+    conversation_id: str | None = None,
+):
+    """Create a private Word artifact from brief Markdown."""
     from app.services.ai.tools.generated_file_service import publish
 
     safe_title = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(brief.get("title") or "业务简报"))[:60]
@@ -321,4 +327,11 @@ def publish_business_brief_docx(brief: Mapping[str, Any]):
             elif line.strip():
                 document.add_paragraph(line)
         document.save(path)
-        return publish(path, path.name)
+        return await publish(
+            path,
+            path.name,
+            owner_user_id=owner_user_id,
+            user_name=user_name,
+            conversation_id=conversation_id,
+            artifact_type="word",
+        )

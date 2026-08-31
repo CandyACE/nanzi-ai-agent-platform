@@ -4,6 +4,7 @@ import { metadataApi } from '../../api/metadata'
 import type { RelationshipRecommendation } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
 import TraceLogViewer from '../TraceLogViewer.vue'
+import { ExclamationTriangleIcon, KeyIcon, LightBulbIcon, LinkIcon, PencilIcon, SparklesIcon } from '@heroicons/vue/24/outline'
 import * as echarts from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { GraphChart } from 'echarts/charts'
@@ -583,7 +584,7 @@ const handleBackToConfig = () => {
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-lg font-bold text-gray-900">✨ 实体关系智能发现</h2>
+              <h2 class="text-lg font-bold text-gray-900 flex items-center gap-1.5"><SparklesIcon class="w-5 h-5 text-emerald-600" /> 实体关系智能发现</h2>
               <span class="px-2 py-0.5 text-[11px] font-bold bg-emerald-100 text-emerald-700 rounded-full">AI 智能推导</span>
             </div>
             <p class="text-xs text-gray-500 mt-0.5">跨表 Schema 语义匹配与主外键关联发现，自动推导 Join 条件与置信度</p>
@@ -618,7 +619,7 @@ const handleBackToConfig = () => {
                   已选 {{ selectedTableNames.length }} / {{ internalTables.length }} 张表
                 </span>
                 <span v-if="selectedTableNames.length < 2" class="text-[11px] text-amber-600 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                  ⚠️ 需至少选择 2 张表
+                  <ExclamationTriangleIcon class="w-3.5 h-3.5 inline-block mr-1" />需至少选择 2 张表
                 </span>
               </div>
 
@@ -889,7 +890,7 @@ const handleBackToConfig = () => {
 
               <!-- ER图模式下的提示 -->
               <div v-else class="text-[11px] text-gray-400 flex items-center gap-1">
-                <span>💡 滚轮缩放 · 拖拽平移 · 点击连线切换勾选</span>
+                <span class="flex items-center gap-1"><LightBulbIcon class="w-3.5 h-3.5" /> 滚轮缩放 · 拖拽平移 · 点击连线切换勾选</span>
               </div>
 
               <div class="h-3 w-px bg-gray-200"></div>
@@ -931,7 +932,7 @@ const handleBackToConfig = () => {
                   <div class="flex flex-wrap items-center gap-2">
                     <!-- 源表 -->
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-100 text-purple-800 font-mono text-xs font-bold shrink-0">
-                      <span class="text-purple-400 text-[10px]">🔑</span>
+                      <KeyIcon class="w-3 h-3 text-purple-400" />
                       <span>{{ item.source_table }}</span>
                     </span>
 
@@ -944,7 +945,7 @@ const handleBackToConfig = () => {
 
                     <!-- 目标表 -->
                     <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-800 font-mono text-xs font-bold shrink-0">
-                      <span class="text-emerald-500 text-[10px]">🔗</span>
+                      <LinkIcon class="w-3 h-3 text-emerald-500" />
                       <span>{{ item.target_table }}</span>
                     </span>
 
@@ -1095,7 +1096,7 @@ const handleBackToConfig = () => {
         <!-- 2. 怎么填？ -->
         <div class="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
           <div class="font-bold text-gray-900 flex items-center gap-1.5">
-            <span>✍️</span> 怎么填？推荐关联描述句式
+            <PencilIcon class="w-4 h-4 text-gray-500" /> 怎么填？推荐关联描述句式
           </div>
           <p class="text-[11px] text-gray-500">
             您可以描述具体的业务流转场景，例如：
@@ -1110,7 +1111,7 @@ const handleBackToConfig = () => {
         <div>
           <h4 class="font-bold text-gray-800 mb-2.5 flex items-center justify-between">
             <span class="flex items-center gap-1.5">
-              <span>💡</span> 常用关联模式示例
+              <LightBulbIcon class="w-4 h-4 text-amber-500" /> 常用关联模式示例
             </span>
             <span class="text-[11px] font-normal text-gray-400">点击卡片可直接一键填入输入框</span>
           </h4>

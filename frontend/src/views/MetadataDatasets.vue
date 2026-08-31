@@ -12,6 +12,16 @@ import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBan
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
+import {
+  CircleStackIcon,
+  CpuChipIcon,
+  ExclamationTriangleIcon,
+  FolderIcon,
+  InformationCircleIcon,
+  LockOpenIcon,
+  MagnifyingGlassIcon,
+  UserIcon,
+} from '@heroicons/vue/24/outline'
 
 const { isAdmin, hasPermission } = useUser()
 
@@ -946,15 +956,7 @@ const handleTestRetrieval = async () => {
   }
 }
 
-const getDatasetEmoji = (name: string) => {
-  const emojis = ['📊', '📈', '💿', '🗄️', '🧠', '🧊', '🌊', '⚡', '📅', '🛒', '👥', '🔗', '📦', '🏷️', '💎']
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const index = Math.abs(hash) % emojis.length
-  return emojis[index]
-}
+const getDatasetIcon = (_name: string) => CircleStackIcon
 // --- RAGFlow 连通性探测及配置 ---
 type RagFlowConfigSummary = {
   api_url: string
@@ -1316,7 +1318,7 @@ onMounted(async () => {
         <div class="p-4 flex-1 min-w-0">
           <div class="flex items-start gap-3 pr-10">
             <div class="w-9 h-9 rounded-lg bg-gray-50 flex-shrink-0 flex items-center justify-center text-lg border border-gray-100">
-              {{ getDatasetEmoji(ds.name) }}
+              <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
             </div>
             <div class="flex-1 min-w-0">
               <h3 class="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors truncate">
@@ -1494,7 +1496,7 @@ onMounted(async () => {
              <!-- Name & Meta -->
              <div class="col-span-3 flex items-center gap-3">
                 <div class="w-10 h-10 rounded-lg bg-gray-50 flex-shrink-0 flex items-center justify-center text-xl border border-gray-100">
-                   {{ getDatasetEmoji(ds.name) }}
+                   <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
                 </div>
                 <div class="min-w-0">
                    <div class="flex items-center gap-2">
@@ -2134,7 +2136,7 @@ relationships:
            <!-- Tab 4: Practice -->
            <div v-else-if="activeSpecTab === 'practice'" class="max-w-4xl mx-auto space-y-8">
               <section>
-                 <h3 class="text-lg font-bold text-gray-900 mb-3">📂 文件组织策略</h3>
+                 <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><FolderIcon class="w-5 h-5 text-gray-500" /> 文件组织策略</h3>
                  <div class="bg-white p-5 rounded-xl border border-gray-200">
                     <p class="text-sm text-gray-600 mb-4">
                        建议采用 <b>按业务域 (Domain-Driven)</b> 分组的策略。将逻辑紧密相关的表定义在同一个 YAML 文件中。
@@ -2160,7 +2162,7 @@ relationships:
               </section>
 
               <section>
-                 <h3 class="text-lg font-bold text-gray-900 mb-3">🤖 RAG 检索策略</h3>
+                 <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><CpuChipIcon class="w-5 h-5 text-indigo-600" /> RAG 检索策略</h3>
                  <div class="bg-indigo-50 p-5 rounded-xl border border-indigo-100">
                     <ol class="relative border-l border-indigo-200 ml-3 space-y-6">
                        <li class="ml-6">
@@ -2366,7 +2368,7 @@ relationships:
 
     <!-- Empty State -->
     <div v-if="!loading && datasets.length === 0" class="text-center py-24 bg-white rounded-xl border border-dashed border-gray-300">
-      <div class="text-5xl mb-4 grayscale">📂</div>
+      <FolderIcon class="w-12 h-12 mx-auto mb-4 text-gray-300" />
       <h3 class="text-lg font-medium text-gray-900">暂无数据集</h3>
       <p class="text-gray-500 mt-1 mb-6">创建一个新的数据集来开始管理元数据。</p>
       <button v-if="hasPermission('element:metadata:edit')" @click="showCreateModal = true" class="text-primary font-medium hover:underline flex items-center justify-center gap-1 mx-auto">
@@ -2540,7 +2542,7 @@ relationships:
                       </div>
                     </div>
                     <div v-else class="text-center py-8">
-                      <div class="text-4xl mb-4 opacity-30">👤</div>
+                      <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
                       <p class="text-gray-500 font-medium">暂无用户例外策略</p>
                       <button @click="visualRules.user_overrides['new_user'] = [{ condition: '', _builder_table: '', _builder_field: '', _builder_op: '', _builder_val: '' }]; visualRules = {...visualRules}" class="text-amber-600 hover:text-amber-700 font-medium mt-2">
                         + 添加用户例外
@@ -2556,7 +2558,7 @@ relationships:
                     <div class="flex items-center justify-between">
                       <span class="text-sm text-gray-700">校验当前配置</span>
                       <button @click="validateRules" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-md">
-                        🔍 校验规则
+                        <MagnifyingGlassIcon class="w-4 h-4 inline-block mr-1" /> 校验规则
                       </button>
                     </div>
                     <div v-if="validationResult" class="mt-3 p-3 rounded-lg" :class="validationResult.isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
@@ -2576,7 +2578,8 @@ relationships:
                         <div class="space-y-1">
                           <div v-for="(detail, idx) in validationResult.details" :key="idx" class="flex items-center gap-2 text-xs p-2 bg-gray-50 rounded">
                             <span :class="detail.type === 'error' ? 'text-red-600' : detail.type === 'warning' ? 'text-yellow-600' : 'text-blue-600'">
-                              {{ detail.type === 'error' ? '❌' : detail.type === 'warning' ? '⚠️' : 'ℹ️' }}
+                              <ExclamationTriangleIcon v-if="detail.type === 'error' || detail.type === 'warning'" class="w-4 h-4" />
+                              <InformationCircleIcon v-else class="w-4 h-4" />
                             </span>
                             <span class="flex-1">{{ detail.message }}</span>
                           </div>
@@ -2895,7 +2898,7 @@ relationships:
            </div>
            
            <div v-else class="py-12 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-              <div class="text-3xl mb-2 opacity-30">🔓</div>
+              <LockOpenIcon class="w-8 h-8 mx-auto mb-2 text-gray-300" />
               <p class="text-sm text-gray-400 font-medium">当前数据集未启用权限校验，所有授权用户可查询全量数据。</p>
            </div>
         </div>
@@ -3102,12 +3105,12 @@ relationships:
             </button>
           </div>
           <div v-else-if="roleSearchQuery && filteredRoles.length === 0" class="text-center py-12">
-            <div class="text-4xl mb-4 opacity-30">🔍</div>
+            <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
             <p class="text-gray-500 font-medium">未找到匹配的角色</p>
             <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
           </div>
           <div v-else class="text-center py-12">
-            <div class="text-4xl mb-4 opacity-30">👥</div>
+            <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
             <p class="text-gray-500 font-medium">暂无角色数据</p>
             <p class="text-gray-400 text-sm mt-1">请先在系统中添加角色</p>
           </div>
@@ -3182,12 +3185,12 @@ relationships:
             </button>
           </div>
           <div v-else-if="userSearchQuery && filteredUsers.length === 0" class="text-center py-12">
-            <div class="text-4xl mb-4 opacity-30">🔍</div>
+            <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
             <p class="text-gray-500 font-medium">未找到匹配的用户</p>
             <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
           </div>
           <div v-else class="text-center py-12">
-            <div class="text-4xl mb-4 opacity-30">👥</div>
+            <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
             <p class="text-gray-500 font-medium">暂无用户数据</p>
             <p class="text-gray-400 text-sm mt-1">请先在系统中添加用户</p>
           </div>
