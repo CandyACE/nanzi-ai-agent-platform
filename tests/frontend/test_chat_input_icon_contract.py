@@ -7,6 +7,7 @@ AGENT_MANAGEMENT = Path(__file__).parents[2] / "frontend/src/views/AgentManageme
 STATS_CARD = Path(__file__).parents[2] / "frontend/src/components/dashboard/StatsCard.vue"
 WELCOME_DASHBOARD = Path(__file__).parents[2] / "frontend/src/components/embed/WelcomeDashboard.vue"
 EXECUTION_TIMELINE = Path(__file__).parents[2] / "frontend/src/components/chat/ChatExecutionTimeline.vue"
+MESSAGE_ACTION_MENUS = Path(__file__).parents[2] / "frontend/src/components/chat/MessageActionMenus.vue"
 
 
 def test_plus_menu_uses_consistent_outline_icons_instead_of_emoji() -> None:
@@ -54,8 +55,9 @@ def test_system_shortcuts_render_icons_separately_from_labels() -> None:
 def test_collapsed_shortcuts_hint_uses_svg_lightning_icon() -> None:
     source = EMBED_CHAT.read_text(encoding="utf-8")
 
-    assert "import { BoltIcon } from \"@heroicons/vue/24/outline\";" in source
-    assert '<BoltIcon class="h-4 w-4 shrink-0 text-yellow-300"' in source
+    assert "import { CommandLineIcon } from \"@heroicons/vue/24/outline\";" in source
+    assert '<CommandLineIcon class="h-4 w-4 shrink-0 text-white"' in source
+    assert "<BoltIcon" not in source
     assert 'aria-hidden="true">⚡️</span>' not in source
 
 
@@ -72,6 +74,7 @@ def test_stats_card_aligns_icon_and_content_to_the_top() -> None:
     source = STATS_CARD.read_text(encoding="utf-8")
 
     assert "class=\"flex items-start gap-3.5\"" in source
+    assert "text-[15px] font-semibold text-gray-600" in source
 
 
 def test_welcome_entry_cards_render_svg_icons() -> None:
@@ -114,6 +117,17 @@ def test_multimodal_model_badges_use_svg_icons() -> None:
     assert "PhotoIcon" in source
     assert "<PhotoIcon" in source
     assert "🖼️" not in source
+
+
+def test_ai_message_actions_have_larger_desktop_hit_areas() -> None:
+    source = MESSAGE_ACTION_MENUS.read_text(encoding="utf-8")
+    embed_chat = EMBED_CHAT.read_text(encoding="utf-8")
+
+    assert "class=\"flex items-center gap-1.5\"" in source
+    assert "min-h-8" in source
+    assert "text-[11px]" in source
+    assert "class=\"w-3.5 h-3.5\"" in embed_chat
+    assert "'p-2'" in embed_chat
 
 
 def test_timeline_permission_filter_preserves_union_item_type() -> None:

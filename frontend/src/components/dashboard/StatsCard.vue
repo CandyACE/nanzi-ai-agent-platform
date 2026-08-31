@@ -8,7 +8,7 @@
         <slot name="icon"></slot>
       </div>
       <div class="min-w-0 flex-1">
-        <p class="text-xs font-medium text-gray-500 truncate">
+        <p class="text-[15px] font-semibold text-gray-600 truncate">
           {{ title }}
         </p>
         <p

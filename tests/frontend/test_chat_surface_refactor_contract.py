@@ -241,9 +241,9 @@ def test_agent_message_actions_wait_until_stream_finishes():
     debug = _read("frontend/src/views/AgentDebug.vue")
 
     assert 'v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"' in embed
-    assert "flex flex-nowrap items-center space-x-2 mt-3" in embed
+    assert "flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto mt-1 scrollbar-hide" in embed
     assert embed.index('v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"') < embed.index(
-        "flex flex-nowrap items-center space-x-2 mt-3"
+        "flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto mt-1 scrollbar-hide"
     )
     assert "!(isProcessing && messages.indexOf(msg) === messages.length - 1)" in debug
     assert "title=\"复制\"" in embed
