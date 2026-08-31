@@ -105,7 +105,7 @@ const handleCancelRecommend = () => {
     ...progress.value,
     status: 'interrupted',
     phase: 'interrupted',
-    message: '用户已取消，后端关系扫描正在中断',
+    message: '用户已取消，后端关系推导正在中断',
   }
   console.warn('关系推荐已由用户中断', {
     datasetId: props.datasetId,
@@ -724,7 +724,7 @@ const handleBackToConfig = () => {
           >
             <span class="mt-0.5 h-2 w-2 flex-shrink-0 rounded-full" :class="runStatus === 'interrupted' ? 'bg-amber-500' : 'bg-red-500'"></span>
             <div class="min-w-0">
-              <div class="text-xs font-bold">{{ runStatus === 'interrupted' ? '上次扫描已中断' : '上次扫描失败' }}</div>
+              <div class="text-xs font-bold">{{ runStatus === 'interrupted' ? '上次推导已中断' : '上次推导失败' }}</div>
               <div class="mt-0.5 break-words text-[11px]">{{ progress.message }}</div>
             </div>
           </div>
@@ -913,7 +913,7 @@ const handleBackToConfig = () => {
 
         </div>
 
-        <!-- Analyzing State：展示逐表扫描、剩余表数、累计批次和结果。 -->
+        <!-- Analyzing State：展示逐表元数据分析、剩余表数、累计批次和结果。 -->
         <div v-else-if="analyzing" class="min-h-96 flex flex-col items-center justify-center text-center p-6 space-y-5">
           <div class="relative w-20 h-20 flex items-center justify-center">
             <div class="absolute inset-0 border-4 border-emerald-100 rounded-full"></div>
@@ -929,7 +929,7 @@ const handleBackToConfig = () => {
               <div class="min-w-0">
                 <div class="font-bold text-gray-800">{{ progress.message }}</div>
                 <div v-if="progress.current_item" class="mt-0.5 truncate font-mono text-[11px] text-emerald-700">
-                  当前表：{{ progress.current_item }}<span v-if="progress.current_page"> · 第 {{ progress.current_page }} 页</span>
+                  当前表：{{ progress.current_item }}<span v-if="progress.current_page"> · 第 {{ progress.current_page }} 批 AI 推导</span>
                 </div>
               </div>
               <span class="flex-shrink-0 font-mono text-emerald-700">{{ progressPercent }}%</span>
@@ -939,7 +939,7 @@ const handleBackToConfig = () => {
             </div>
             <div class="grid grid-cols-2 gap-2 sm:grid-cols-5 text-center text-[11px]">
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">扫描进度</div>
+                <div class="text-gray-400">表结构进度</div>
                 <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_units || 0 }} / {{ progress.total_units || selectedTableNames.length }}</div>
               </div>
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
@@ -947,7 +947,7 @@ const handleBackToConfig = () => {
                 <div class="mt-0.5 font-bold text-gray-800">{{ progress.remaining_units ?? selectedTableNames.length }}</div>
               </div>
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">已完成批次</div>
+                <div class="text-gray-400">累计推导批次</div>
                 <div class="mt-0.5 font-bold text-gray-800">{{ progress.batch_count || 0 }}</div>
               </div>
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
@@ -962,7 +962,7 @@ const handleBackToConfig = () => {
           </div>
 
           <div class="max-w-2xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
-            每对表仅分析一次；当前表连续低新增或达到单表收敛阈值后会自动进入下一张表。页面将持续显示剩余表数量，请耐心等待。
+            仅分析表结构与字段元数据，不查询或逐页读取业务数据行。“AI 推导批次”表示模型分批返回候选关系；当前表结果收敛后会自动进入下一张表。
           </div>
 
           <!-- Cancel Action Button -->
@@ -1008,7 +1008,7 @@ const handleBackToConfig = () => {
               <span class="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold border border-emerald-200/60 hidden sm:inline-block">
                 已完成去重
               </span>
-              <!-- 部分批次失败时保留已生成结果，并明确提示结果并非完整扫描。 -->
+              <!-- 部分批次失败时保留已生成结果，并明确提示结果并非完整推导。 -->
               <span
                 v-if="runStatus === 'interrupted'"
                 class="text-[11px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full font-bold border border-amber-200"
@@ -1239,7 +1239,7 @@ const handleBackToConfig = () => {
                 留空（不填）时
               </div>
               <ul class="text-[11px] text-gray-600 list-disc list-inside space-y-0.5">
-                <li><strong>全局 Schema 扫描</strong>：AI 将自动比对所选所有表的主外键命名与字段注释。</li>
+                <li><strong>全局 Schema 分析</strong>：AI 将自动比对所选所有表的主外键命名与字段注释。</li>
                 <li><strong>标准规则匹配</strong>：基于 `xxx_id = id`、`code`、业务术语等通用模式推断高置信度关系。</li>
                 <li><strong>适合冷启动</strong>：适合初次导入数据集后快速建立基础模型关联。</li>
               </ul>

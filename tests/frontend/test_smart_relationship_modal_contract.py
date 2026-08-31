@@ -57,6 +57,9 @@ def test_smart_relationship_modal_contract():
     assert "remaining_units" in content
     assert "batch_count" in content
     assert "estimatedRemainingText" in content
-    assert "上次扫描已中断" in content
+    assert "上次推导已中断" in content
+    assert "第 {{ progress.current_page }} 批 AI 推导" in content
+    assert "不查询或逐页读取业务数据行" in content
+    assert "累计推导批次" in content
     assert "生成中断，以下为已完成结果" in content
     assert 'v-if="runStatus === \'interrupted\'"' in content

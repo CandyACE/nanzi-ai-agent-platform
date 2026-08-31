@@ -833,7 +833,7 @@ class MetadataGeneratorService:
             await MetadataGeneratorService._emit_progress(
                 progress_callback,
                 phase="scanning",
-                message=f"开始逐表扫描，共 {total_anchors} 张表",
+                message=f"开始逐表分析元数据，共 {total_anchors} 张表",
                 percent=10,
                 trace_id=trace_id,
                 completed_units=0,
@@ -858,7 +858,7 @@ class MetadataGeneratorService:
                 await MetadataGeneratorService._emit_progress(
                     progress_callback,
                     phase="scanning",
-                    message=f"正在扫描表 {anchor_table or '全部表'}",
+                    message=f"正在分析表结构 {anchor_table or '全部表'}",
                     percent=progress_percent,
                     trace_id=trace_id,
                     completed_units=anchor_index - 1,
@@ -1012,13 +1012,13 @@ class MetadataGeneratorService:
                         })
                         batch_new_count += 1
 
-                    # 连续两页新增不超过 1 条时认为结果已收敛，避免模型用重复项维持 has_more。
+                    # 连续两批新增不超过 1 条时认为结果已收敛，避免模型用重复项维持 has_more。
                     if batch_new_count <= 1:
                         stagnant_pages += 1
                     else:
                         stagnant_pages = 0
 
-                    # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一页，直到空批次或收敛。
+                    # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一批，直到空批次或收敛。
                     should_continue = has_more or len(raw_relationships) >= batch_size
                     if not raw_relationships:
                         anchor_stop_reason = "empty_batch"
@@ -1074,8 +1074,8 @@ class MetadataGeneratorService:
                         progress_callback,
                         phase="scanning",
                         message=(
-                            f"表 {anchor_table or '全部表'} 第 {page_number} 页完成，"
-                            f"本页新增 {batch_new_count} 条"
+                            f"表 {anchor_table or '全部表'} 第 {page_number} 批 AI 推导完成，"
+                            f"本批新增 {batch_new_count} 条候选关系"
                         ),
                         percent=progress_percent,
                         trace_id=trace_id,
@@ -1112,7 +1112,7 @@ class MetadataGeneratorService:
                     progress_callback,
                     phase="anchor_completed",
                     message=(
-                        f"已完成表 {anchor_table or '全部表'}，"
+                        f"已完成表结构 {anchor_table or '全部表'}，"
                         f"还剩 {remaining_anchors} 张表"
                     ),
                     percent=10 + int(85 * completed_anchors / max(total_anchors, 1)),

@@ -151,7 +151,7 @@ export interface MetadataAiProgress {
   remaining_units?: number;
   unit_label?: string;
   current_item?: string;
-  current_page?: number;
+  current_page?: number; // 当前锚定表的 AI 推导批次序号，并非业务数据分页。
   batch_count?: number;
   result_count?: number;
   estimated_remaining_seconds?: number;
