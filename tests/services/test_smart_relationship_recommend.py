@@ -134,6 +134,49 @@ async def test_recommend_relationships_merges_multiple_batches_without_total_lim
     assert len(result["relationships"]) == 2
     assert mock_invoke.await_count == 2
     assert "本次任务已输出关系" in mock_invoke.await_args_list[1].args[0][3]
+    assert result["_batch_count"] == 2
+    assert result["_stop_reason"] == "has_more_false"
+
+
+@pytest.mark.asyncio
+async def test_recommend_relationships_continues_when_full_batch_omits_has_more():
+    """模型漏填 has_more 但单批打满时，应继续尝试下一批。"""
+    dataset_id = 1002
+    first_batch = {
+        "relationships": [
+            {
+                "source_table": f"orders_{idx}",
+                "target_table": "users",
+                "condition": f"orders_{idx}.user_id = users.id",
+                "relation_type": "many_to_one",
+                "confidence": 0.8,
+                "description": "订单关联用户",
+            }
+            for idx in range(10)
+        ],
+    }
+    second_batch = {"relationships": [], "has_more": False}
+
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None
+
+    with patch("app.core.redis.get_redis", return_value=mock_redis), \
+         patch("app.services.metadata_generator.MetadataGeneratorService._save_trace_log", new_callable=AsyncMock), \
+         patch("app.services.metadata_generator.AgentConfigProvider.get_configured_llm", new_callable=AsyncMock), \
+         patch(
+             "app.services.metadata_generator.MetadataGeneratorService._invoke_json",
+             new_callable=AsyncMock,
+             side_effect=[first_batch, second_batch],
+         ) as mock_invoke:
+        result = await MetadataGeneratorService.recommend_relationships(
+            dataset_id=dataset_id,
+            schema_context="tables:\n  - physical_name: orders\n",
+        )
+
+    assert len(result["relationships"]) == 10
+    assert result["_batch_count"] == 2
+    assert result["_stop_reason"] == "empty_batch"
+    assert mock_invoke.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -172,3 +215,4 @@ async def test_recommend_relationships_keeps_completed_batches_when_next_batch_f
 
     assert len(result["relationships"]) == 1
     assert result["relationships"][0]["source_table"] == "orders"
+    assert result["_stop_reason"] == "partial_batch_error"

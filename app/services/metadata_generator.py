@@ -564,6 +564,7 @@ class MetadataGeneratorService:
 
         # 1. 查询近 10 分钟已推荐的关联关系缓存（避免短期内频繁推荐相同关联）
         recent_recommended_keys = set()
+        recent_recommended_items = []
         redis_client = None
         redis_key = f"metadata:rel_rec:recent:{dataset_id}"
         try:
@@ -578,6 +579,7 @@ class MetadataGeneratorService:
                     if src and tgt:
                         pair_key = tuple(sorted([src, tgt])) + (cond,)
                         recent_recommended_keys.add(pair_key)
+                        recent_recommended_items.append(item)
         except Exception as e:
             logger.warning(f"Failed to read recent relationship recommendations from Redis: {e}")
 
@@ -586,6 +588,11 @@ class MetadataGeneratorService:
         if existing_relationships:
             for r in existing_relationships:
                 exclude_descriptions.append(f"- 已存在关系: {r}")
+        for item in recent_recommended_items[:20]:
+            exclude_descriptions.append(
+                f"- 近期已推荐关系: {item.get('source_table')} -> "
+                f"{item.get('target_table')} ({item.get('condition')})"
+            )
 
         try:
             # 1. Log Start
@@ -647,6 +654,7 @@ class MetadataGeneratorService:
                 "- description 用不超过 80 个中文字符简述该关联的业务含义。\n"
                 "- 每次只返回一批关系，单批最多 10 条；如果还有未输出的合理关系，将 has_more 设置为 true，"
                 "服务端会继续请求下一批，因此 10 条不是最终总量上限。\n"
+                "- 如果你无法判断是否还有更多关系，但本批已经输出 10 条，请优先将 has_more 设置为 true。\n"
                 "- 如果没有更多合理关系，将 relationships 返回空数组并将 has_more 设置为 false。\n"
                 "{format_instructions}"
             )
@@ -659,6 +667,7 @@ class MetadataGeneratorService:
             collected_relationships = []
             collected_keys = set(recent_recommended_keys)
             new_cache_items = []
+            stop_reason = "unknown"
 
             while True:
                 batch_number += 1
@@ -679,6 +688,17 @@ class MetadataGeneratorService:
                     "\n\n请输出当前尚未覆盖的一批关系。"
                     f"本批最多 {batch_size} 条；如果还有下一批，请将 has_more 设为 true。"
                 )
+                logger.info(
+                    "关系推荐开始请求批次: trace_id=%s, dataset_id=%s, batch=%s, "
+                    "schema_len=%s, prompt_len=%s, cached_exclusions=%s, collected=%s",
+                    trace_id,
+                    dataset_id,
+                    batch_number,
+                    len(schema_context),
+                    len(batch_user_prompt),
+                    len(recent_recommended_keys),
+                    len(collected_relationships),
+                )
 
                 try:
                     batch_result = await MetadataGeneratorService._invoke_json(
@@ -690,6 +710,7 @@ class MetadataGeneratorService:
                 except Exception as exc:
                     # 已经拿到部分结果时返回部分成功，避免后续某一批异常导致全部结果丢失。
                     if collected_relationships:
+                        stop_reason = "partial_batch_error"
                         logger.warning(
                             "关系推荐第 %s 批解析失败，返回已汇总结果: error=%s",
                             batch_number,
@@ -704,9 +725,21 @@ class MetadataGeneratorService:
                     if isinstance(batch_result, dict)
                     else []
                 )
+                has_more = bool(batch_result.get("has_more")) if isinstance(batch_result, dict) else False
+                logger.info(
+                    "关系推荐收到批次结果: trace_id=%s, dataset_id=%s, batch=%s, "
+                    "raw_count=%s, has_more=%s",
+                    trace_id,
+                    dataset_id,
+                    batch_number,
+                    len(raw_relationships),
+                    has_more,
+                )
                 if not raw_relationships:
+                    stop_reason = "empty_batch"
                     logger.info(
-                        "关系推荐收到空批次，停止继续请求: dataset_id=%s, batch=%s, total=%s",
+                        "关系推荐收到空批次，停止继续请求: trace_id=%s, dataset_id=%s, batch=%s, total=%s",
+                        trace_id,
                         dataset_id,
                         batch_number,
                         len(collected_relationships),
@@ -714,15 +747,19 @@ class MetadataGeneratorService:
                     break
 
                 batch_new_count = 0
+                batch_duplicate_count = 0
+                batch_invalid_count = 0
                 for rel in raw_relationships:
                     src = (rel.get("source_table") or "").strip().lower()
                     tgt = (rel.get("target_table") or "").strip().lower()
                     cond = (rel.get("condition") or "").strip().lower()
                     if not src or not tgt:
+                        batch_invalid_count += 1
                         continue
 
                     pair_key = tuple(sorted([src, tgt])) + (cond,)
                     if pair_key in collected_keys:
+                        batch_duplicate_count += 1
                         continue
 
                     collected_keys.add(pair_key)
@@ -735,23 +772,43 @@ class MetadataGeneratorService:
                     })
                     batch_new_count += 1
 
-                has_more = bool(batch_result.get("has_more")) if isinstance(batch_result, dict) else False
+                # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一批，直到空批次或无新增。
+                should_continue = has_more or len(raw_relationships) >= batch_size
                 logger.info(
                     "关系推荐批次完成: dataset_id=%s, batch=%s, batch_raw=%s, "
-                    "batch_new=%s, total=%s, has_more=%s",
+                    "batch_new=%s, batch_duplicate=%s, batch_invalid=%s, total=%s, "
+                    "has_more=%s, should_continue=%s",
                     dataset_id,
                     batch_number,
                     len(raw_relationships),
                     batch_new_count,
+                    batch_duplicate_count,
+                    batch_invalid_count,
                     len(collected_relationships),
                     has_more,
+                    should_continue,
                 )
 
-                if not has_more or batch_new_count == 0:
+                if batch_new_count == 0:
+                    stop_reason = "no_new_relationship"
+                    logger.info(
+                        "关系推荐本批无新增关系，停止继续请求: trace_id=%s, dataset_id=%s, "
+                        "batch=%s, duplicate=%s, invalid=%s",
+                        trace_id,
+                        dataset_id,
+                        batch_number,
+                        batch_duplicate_count,
+                        batch_invalid_count,
+                    )
+                    break
+                if not should_continue:
+                    stop_reason = "has_more_false"
                     break
                 if batch_number >= max_batches:
+                    stop_reason = "max_batches_reached"
                     logger.warning(
-                        "关系推荐达到批次保护上限，停止继续请求: dataset_id=%s, max_batches=%s, total=%s",
+                        "关系推荐达到批次保护上限，停止继续请求: trace_id=%s, dataset_id=%s, max_batches=%s, total=%s",
+                        trace_id,
                         dataset_id,
                         max_batches,
                         len(collected_relationships),
@@ -767,6 +824,8 @@ class MetadataGeneratorService:
             result = {
                 "relationships": filtered_relationships,
                 "_trace_id": trace_id,
+                "_batch_count": batch_number,
+                "_stop_reason": stop_reason,
             }
 
             if redis_client and new_cache_items:
@@ -780,6 +839,16 @@ class MetadataGeneratorService:
                     logger.warning(f"Failed to cache recent relationship recommendations to Redis: {ex}")
 
             # 6. Log Success
+            logger.info(
+                "关系推荐完成: trace_id=%s, dataset_id=%s, total=%s, batches=%s, "
+                "stop_reason=%s, execution_time_ms=%.2f",
+                trace_id,
+                dataset_id,
+                len(filtered_relationships),
+                batch_number,
+                stop_reason,
+                duration_llm,
+            )
             await MetadataGeneratorService._save_trace_log(
                 trace_id, 4, "llm_success", result, execution_time=duration_llm
             )
