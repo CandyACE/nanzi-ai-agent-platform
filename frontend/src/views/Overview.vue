@@ -54,12 +54,15 @@
             </svg>
             <span>{{ loading ? '刷新中' : '刷新' }}</span>
           </button>
+          <DeploymentChecklist v-if="userInfo?.role === 'admin'" compact />
         </div>
       </div>
       <p class="mt-0.5 truncate text-sm text-gray-500">
         {{ userInfo?.role === "admin" ? "平台运行状态与智能体健康度" : "我的调用概况与智能体表现" }}
       </p>
     </header>
+
+    <DeploymentChecklist v-if="userInfo?.role === 'admin'" hide-when-complete />
 
     <!-- Loading State -->
     <div
@@ -351,6 +354,7 @@ import RecentUsersCard from "../components/dashboard/RecentUsersCard.vue";
 import RecentCallsCard from "../components/dashboard/RecentCallsCard.vue";
 import RequestTrendChart from "../components/dashboard/RequestTrendChart.vue";
 import RecentFailuresCard from "../components/dashboard/RecentFailuresCard.vue";
+import DeploymentChecklist from "../components/system/DeploymentChecklist.vue";
 import { formatTokenCompact } from "@/utils/tokenFormat";
 
 const router = useRouter();

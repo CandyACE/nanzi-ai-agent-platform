@@ -296,7 +296,7 @@ class ConfigService:
         
         for key, data in configs.items():
             cat = data['category']
-            if cat == 'branding':
+            if cat in {'branding', 'internal'}:
                 continue
             if cat not in grouped:
                 grouped[cat] = []

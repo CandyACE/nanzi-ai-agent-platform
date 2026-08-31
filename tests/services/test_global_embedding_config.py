@@ -146,6 +146,51 @@ async def test_global_embed_connection_api():
         assert "Embedding connection test successful" in res.message
         assert any("length: 4" in log for log in res.logs)
 
+
+@pytest.mark.asyncio
+async def test_global_embed_connection_allows_empty_api_key():
+    payload = EmbedConnectionTestPayload(
+        embed_api_url="http://ollama.local/v1",
+        embed_api_key="",
+        embed_model_name="nomic-embed-text",
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = MagicMock(return_value={
+        "data": [{"embedding": [0.1, 0.2]}]
+    })
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    class MockClientContext:
+        async def __aenter__(self):
+            return mock_client
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    async def mock_config_get(key, default=None):
+        return {
+            "embed_api_url": "http://ollama.local/v1",
+            "embed_api_key": "",
+            "embed_model_name": "nomic-embed-text",
+            "llm_base_url": "",
+            "llm_api_key": "",
+        }.get(key, default)
+
+    with patch("httpx.AsyncClient", return_value=MockClientContext()), \
+         patch("app.api.portal.endpoints.system.ConfigService.get", side_effect=mock_config_get):
+        res = await system_test_connection(
+            component="global_embed",
+            payload=payload,
+            user={"username": "admin"},
+        )
+
+    assert res.status == "success"
+    assert mock_client.post.call_args.kwargs["headers"] == {
+        "Content-Type": "application/json",
+    }
+
 @pytest.mark.asyncio
 async def test_rebuild_vector_indexes_api():
     from app.api.portal.endpoints.system import rebuild_vector_indexes

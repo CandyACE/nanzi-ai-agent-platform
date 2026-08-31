@@ -2,7 +2,7 @@ import logging
 import uuid
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update, or_
+from sqlalchemy import select, delete, update, or_, case
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.models.agent import AIAgent, AIAgentVersion
@@ -710,8 +710,12 @@ class AgentManagerService:
                 AIAgent.display_name.ilike(f"%{keyword}%")
             ))
 
-        # Sort: sort_order DESC, then System first (desc), then Alphabetical
-        stmt = stmt.order_by(AIAgent.sort_order.desc(), AIAgent.is_system.desc(), AIAgent.display_name)
+        # Main is the fixed entry point and must always appear first.
+        main_first = case(
+            (or_(AIAgent.id == MAIN_GENERAL_AGENT_ID, AIAgent.name.in_(MAIN_GENERAL_AGENT_NAMES)), 0),
+            else_=1,
+        )
+        stmt = stmt.order_by(main_first, AIAgent.sort_order.desc(), AIAgent.is_system.desc(), AIAgent.display_name)
 
         return (await session.execute(stmt)).scalars().all()
 
@@ -787,6 +791,9 @@ class AgentManagerService:
         stmt = select(AIAgent).where(AIAgent.id.in_(ids))
         result = await session.execute(stmt)
         agents = {agent.id: agent for agent in result.scalars().all()}
+
+        if any(_is_main_general_agent_record(agent) for agent in agents.values()):
+            return False
 
         for item in items:
             agent = agents.get(item.id)

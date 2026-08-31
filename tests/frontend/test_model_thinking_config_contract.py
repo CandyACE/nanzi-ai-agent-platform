@@ -80,6 +80,15 @@ def test_model_registry_preserves_hidden_values_and_sends_configuration():
     assert "allow_disable_thinking: modelForm.value.allow_disable_thinking" in source
 
 
+def test_model_registry_allows_model_discovery_without_prevalidating_api_key():
+    source = MODEL_REGISTRY.read_text(encoding="utf-8")
+
+    assert "const canDiscoverModels = computed(() =>" in source
+    assert "String(modelForm.value.api_base_url || '').trim()" in source
+    assert "hasConfiguredApiKey" not in source
+    assert "请先填写 API Base URL 和 API Key" not in source
+
+
 def test_model_registry_hides_advanced_settings_for_embedding_models():
     source = MODEL_REGISTRY.read_text(encoding="utf-8")
 
