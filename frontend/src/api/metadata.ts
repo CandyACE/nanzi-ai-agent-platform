@@ -215,6 +215,7 @@ export const metadataApi = {
   recommendMetrics: (datasetId: number, params?: { table_names?: string[]; user_prompt?: string }, signal?: AbortSignal) =>
     axios.post(`${API_BASE}/datasets/${datasetId}/metrics/recommend`, params || {}, { timeout: 300000, signal }),
 
+  // 逐表关系扫描会串行执行多次模型请求，耗时取决于表数量；仅由调用方的 AbortSignal 主动取消。
   recommendRelationships: (
     datasetId: number,
     params?: { table_names?: string[]; user_prompt?: string },
@@ -224,7 +225,7 @@ export const metadataApi = {
       code: number;
       message?: string;
       data: RelationshipRecommendationResult;
-    }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, params || {}, { timeout: 300000, signal }),
+    }>(`${API_BASE}/datasets/${datasetId}/relationships/recommend`, params || {}, { timeout: 0, signal }),
 
   enhanceDatasetMetadata: (datasetId: number) =>
     axios.post<{ code: number; message?: string; data: { description: string; tags: string[] } }>(

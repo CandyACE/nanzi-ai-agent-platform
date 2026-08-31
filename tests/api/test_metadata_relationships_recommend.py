@@ -29,6 +29,7 @@ class _ResultWrapper:
 async def test_recommend_relationships_success():
     from unittest.mock import AsyncMock, patch
     from app.api.portal.endpoints import metadata as endpoint_module
+    from app.schemas.metadata import RelationshipRecommendRequest
 
     recommended = {
         "_trace_id": "rel-rec-test",
@@ -58,14 +59,24 @@ async def test_recommend_relationships_success():
         endpoint_module.MetadataService, "get_dataset_by_id",
         AsyncMock(return_value=_ResultWrapper(exists=True)),
     ) as mock_get_dataset, patch.object(
+        endpoint_module.MetadataService, "get_relationships_by_dataset",
+        AsyncMock(return_value=[]),
+    ) as mock_get_relationships, patch.object(
         endpoint_module.MetadataService, "export_dataset_yaml",
         AsyncMock(return_value="schema_yaml_string"),
     ) as mock_export, patch.object(
         endpoint_module.MetadataGeneratorService, "recommend_relationships",
         AsyncMock(return_value=recommended),
     ) as mock_recommend:
-
-        resp = await endpoint_module.recommend_relationships(1, AsyncMock())
+        mock_conn = AsyncMock()
+        mock_request = AsyncMock()
+        mock_request.is_disconnected = AsyncMock(return_value=False)
+        resp = await endpoint_module.recommend_relationships(
+            dataset_id=1,
+            request=mock_request,
+            req=RelationshipRecommendRequest(),
+            conn=mock_conn,
+        )
 
     assert resp["code"] == 200
     assert resp["message"] == "success"
@@ -73,7 +84,8 @@ async def test_recommend_relationships_success():
     assert resp["data"]["relationships"][0]["confidence"] == 0.95
 
     mock_get_dataset.assert_awaited_once()
-    mock_export.assert_awaited_once_with(mock_export.call_args.args[0] if mock_export.call_args.args else None, 1)
+    mock_get_relationships.assert_awaited_once_with(mock_conn, 1)
+    mock_export.assert_awaited_once_with(mock_conn, 1, table_names=None)
     mock_recommend.assert_awaited_once()
 
 
@@ -82,6 +94,7 @@ async def test_recommend_relationships_dataset_not_found():
     from unittest.mock import AsyncMock, patch
     from fastapi import HTTPException
     from app.api.portal.endpoints import metadata as endpoint_module
+    from app.schemas.metadata import RelationshipRecommendRequest
 
     with patch.object(
         endpoint_module.MetadataService, "get_dataset_by_id",
@@ -93,11 +106,62 @@ async def test_recommend_relationships_dataset_not_found():
     ) as mock_recommend:
 
         with pytest.raises(HTTPException) as exc:
-            await endpoint_module.recommend_relationships(999, AsyncMock())
+            await endpoint_module.recommend_relationships(
+                dataset_id=999,
+                request=AsyncMock(),
+                req=RelationshipRecommendRequest(),
+                conn=AsyncMock(),
+            )
 
     assert exc.value.status_code == 404
     mock_export.assert_not_awaited()
     mock_recommend.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recommend_relationships_cancels_generator_after_client_disconnect():
+    """客户端断开后应取消模型生成协程，避免无人接收的后台任务继续消耗资源。"""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from fastapi import HTTPException
+    from app.api.portal.endpoints import metadata as endpoint_module
+    from app.schemas.metadata import RelationshipRecommendRequest
+
+    generator_cancelled = asyncio.Event()
+
+    async def wait_until_cancelled(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            generator_cancelled.set()
+            raise
+
+    mock_request = AsyncMock()
+    mock_request.is_disconnected = AsyncMock(return_value=True)
+
+    with patch.object(
+        endpoint_module.MetadataService, "get_dataset_by_id",
+        AsyncMock(return_value=_ResultWrapper(exists=True)),
+    ), patch.object(
+        endpoint_module.MetadataService, "get_relationships_by_dataset",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        endpoint_module.MetadataService, "export_dataset_yaml",
+        AsyncMock(return_value="schema_yaml_string"),
+    ), patch.object(
+        endpoint_module.MetadataGeneratorService, "recommend_relationships",
+        side_effect=wait_until_cancelled,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await endpoint_module.recommend_relationships(
+                dataset_id=1,
+                request=mock_request,
+                req=RelationshipRecommendRequest(),
+                conn=AsyncMock(),
+            )
+
+    assert exc.value.status_code == 499
+    assert generator_cancelled.is_set()
 
 
 @pytest.mark.asyncio

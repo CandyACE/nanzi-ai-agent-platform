@@ -244,6 +244,12 @@ const handleRecommend = async () => {
   currentTraceId.value = ''
   startTimer()
   abortController = new AbortController()
+  const requestStartedAt = Date.now()
+  console.info('关系推荐请求开始', {
+    datasetId: props.datasetId,
+    selectedTableCount: selectedTableNames.value.length,
+    hasUserPrompt: Boolean(userPrompt.value.trim()),
+  })
   
   try {
     const res = await metadataApi.recommendRelationships(
@@ -258,6 +264,14 @@ const handleRecommend = async () => {
     
     recommendations.value = data?.relationships || []
     currentTraceId.value = (data as any)?._trace_id || ''
+    console.info('关系推荐请求完成', {
+      datasetId: props.datasetId,
+      traceId: currentTraceId.value,
+      relationshipCount: recommendations.value.length,
+      batchCount: data?._batch_count,
+      stopReason: data?._stop_reason,
+      durationMs: Date.now() - requestStartedAt,
+    })
     
     if (recommendations.value.length === 0) {
       showToast('未发现新的推荐关联关系，可能所选表间无明显主外键命名或已有关系已覆盖', 'info')
@@ -268,15 +282,33 @@ const handleRecommend = async () => {
     }
   } catch (e: any) {
     if (e.name === 'CanceledError' || e.code === 'ERR_CANCELED' || e.message === 'canceled') {
-      console.log('Relationship recommendation request canceled by user')
+      console.info('关系推荐请求已由用户取消', {
+        datasetId: props.datasetId,
+        durationMs: Date.now() - requestStartedAt,
+      })
       return
     }
-    console.error('Relationship recommendation failed', e)
     const detail = e.response?.data?.detail || ''
+    const status = e.response?.status
+    const isTimeout = e.code === 'ECONNABORTED' || String(e.message || '').toLowerCase().includes('timeout')
+    const isGatewayTimeout = [502, 503, 504].includes(status)
+    console.error('关系推荐请求失败', {
+      datasetId: props.datasetId,
+      selectedTableCount: selectedTableNames.value.length,
+      durationMs: Date.now() - requestStartedAt,
+      errorCode: e.code,
+      httpStatus: status,
+      message: e.message,
+      detail,
+    }, e)
     const match = detail.match(/Trace ID: ([a-zA-Z0-9-]+)/)
     if (match) currentTraceId.value = match[1]
-    
-    showToast(e.response?.data?.detail || '推荐失败，请重试', 'error')
+
+    if (isTimeout || isGatewayTimeout) {
+      showToast('关系推荐连接等待超时，请先查看后端关系推荐日志，避免立即重复提交', 'error')
+    } else {
+      showToast(detail || `推荐失败${status ? `（HTTP ${status}）` : ''}，请查看控制台与后端日志`, 'error')
+    }
   } finally {
     stopTimer()
     analyzing.value = false

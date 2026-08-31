@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Any, Dict, Optional
 from pydantic import BaseModel
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -595,6 +596,7 @@ async def recommend_metrics(
 @router.post("/datasets/{dataset_id}/relationships/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def recommend_relationships(
     dataset_id: int,
+    request: Request,
     req: RelationshipRecommendRequest = Body(default_factory=RelationshipRecommendRequest),
     conn: AsyncSession = Depends(get_db_session)
 ):
@@ -635,12 +637,52 @@ async def recommend_relationships(
         bool(user_prompt),
     )
 
-    # Call Generator
-    result = await MetadataGeneratorService.recommend_relationships(
+    # 独立运行生成任务并轮询客户端连接，用户取消或页面关闭后及时停止后续模型调用。
+    recommendation_task = asyncio.create_task(
+        MetadataGeneratorService.recommend_relationships(
+            dataset_id,
+            schema_yaml,
+            user_prompt=user_prompt,
+            existing_relationships=existing_rel_strs,
+        ),
+        name=f"metadata-relationship-recommend-{dataset_id}",
+    )
+    try:
+        while not recommendation_task.done():
+            done, _ = await asyncio.wait({recommendation_task}, timeout=0.5)
+            if recommendation_task in done:
+                break
+            if await request.is_disconnected():
+                logger.warning(
+                    "关系推荐客户端已断开，取消后端生成任务: dataset_id=%s, "
+                    "requested_table_count=%s",
+                    dataset_id,
+                    len(table_names or []),
+                )
+                recommendation_task.cancel()
+                try:
+                    await recommendation_task
+                except asyncio.CancelledError:
+                    pass
+                raise HTTPException(status_code=499, detail="客户端已断开，关系推荐任务已取消")
+
+        result = await recommendation_task
+    except asyncio.CancelledError:
+        # 服务端请求协程被取消时同步清理模型任务，防止任务脱离请求生命周期继续运行。
+        if not recommendation_task.done():
+            recommendation_task.cancel()
+        logger.warning("关系推荐请求协程已取消: dataset_id=%s", dataset_id)
+        raise
+
+    # 输出接口层汇总，便于区分“生成仍在运行”和“结果已成功写回 HTTP 响应”。
+    logger.warning(
+        "关系推荐响应完成: dataset_id=%s, trace_id=%s, relationship_count=%s, "
+        "batch_count=%s, stop_reason=%s",
         dataset_id,
-        schema_yaml,
-        user_prompt=user_prompt,
-        existing_relationships=existing_rel_strs
+        result.get("_trace_id") if isinstance(result, dict) else None,
+        len(result.get("relationships", [])) if isinstance(result, dict) else 0,
+        result.get("_batch_count") if isinstance(result, dict) else None,
+        result.get("_stop_reason") if isinstance(result, dict) else None,
     )
 
     return {
