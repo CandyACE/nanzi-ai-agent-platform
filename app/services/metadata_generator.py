@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 import logging
 import json
+import re
 from pydantic import BaseModel, Field
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.services.ai.agent_manager import AgentManagerService
@@ -77,19 +78,71 @@ class MetadataGeneratorService:
 
     @staticmethod
     def _extract_json(raw: str) -> Dict[str, Any]:
+        """从模型输出中提取完整的 JSON 对象，兼容说明文字和 Markdown 代码块。"""
         text = (raw or "").strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1]).strip()
-        try:
-            return json.loads(text)
-        except Exception:
-            import re
+        if not text:
+            raise ValueError("模型返回内容为空，无法解析 JSON")
 
-            match = re.search(r"\{[\s\S]*\}", text)
-            if not match:
-                raise
-            return json.loads(match.group())
+        # 代码块优先解析，避免说明文字中出现 JSON 示例时误取外层文本。
+        candidates = [text]
+        fenced_match = re.search(
+            r"```(?:json)?\s*(.*?)```",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if fenced_match:
+            candidates.insert(0, fenced_match.group(1).strip())
+
+        decoder = json.JSONDecoder()
+        last_error: Optional[Exception] = None
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+                last_error = ValueError("模型返回的 JSON 顶层结构不是对象")
+            except json.JSONDecodeError as exc:
+                last_error = exc
+
+            # 使用 JSONDecoder 扫描每个对象起点，正确处理字符串中的花括号，
+            # 同时避免原贪婪正则把多个对象或截断文本拼成一个无效 JSON。
+            valid_objects = []
+            stripped_candidate = candidate.lstrip()
+            if stripped_candidate.startswith("{"):
+                # 输出以对象开头时只尝试外层对象，避免外层截断后误返回嵌套对象。
+                scan_starts = [candidate.find("{")]
+            else:
+                # 输出包含前置说明时，扫描所有对象起点以兼容说明文字。
+                scan_starts = [
+                    start for start, char in enumerate(candidate) if char == "{"
+                ]
+
+            for start in scan_starts:
+                try:
+                    parsed, end = decoder.raw_decode(candidate[start:])
+                except json.JSONDecodeError as exc:
+                    last_error = exc
+                    continue
+                if isinstance(parsed, dict):
+                    valid_objects.append((end, parsed))
+
+            if valid_objects:
+                # 外层对象通常覆盖范围最大，优先返回它而不是字符串中的嵌套对象。
+                _, parsed = max(valid_objects, key=lambda item: item[0])
+                logger.info(
+                    "从模型输出中提取嵌入式 JSON 对象成功: raw_length=%s",
+                    len(candidate),
+                )
+                return parsed
+
+        logger.error(
+            "模型 JSON 输出解析失败: raw_length=%s, error=%s",
+            len(text),
+            last_error,
+        )
+        if last_error is not None:
+            raise last_error
+        raise ValueError("模型返回内容无法解析为 JSON 对象")
 
     @staticmethod
     async def _invoke_json(
@@ -109,8 +162,45 @@ class MetadataGeneratorService:
             ]
         )
         raw = getattr(response, "content", "") or str(response)
-        data = MetadataGeneratorService._extract_json(raw)
-        return result_model.model_validate(data).model_dump()
+        try:
+            data = MetadataGeneratorService._extract_json(raw)
+            return result_model.model_validate(data).model_dump()
+        except (json.JSONDecodeError, ValueError) as first_error:
+            # 截断或轻微格式漂移时重试一次，避免把一次模型输出异常直接暴露给接口。
+            logger.warning(
+                "模型结构化输出首次解析失败，准备重试: model=%s, raw_length=%s, error=%s",
+                getattr(llm, "model", "unknown"),
+                len(raw),
+                first_error,
+            )
+            retry_system_prompt = (
+                f"{system_prompt}\n\n"
+                "【结构化输出重试要求】上一次输出未通过 JSON 或 Schema 校验。"
+                "请重新生成完整结果：只返回一个可被 json.loads 解析的 JSON 对象，"
+                "不要 Markdown、不要解释文字；控制条目数量和描述长度，确保所有字符串、"
+                "数组及对象都完整闭合。"
+            )
+            retry_response = await llm.ainvoke(
+                [
+                    SystemMessage(content=retry_system_prompt),
+                    HumanMessage(content=user_prompt),
+                ]
+            )
+            retry_raw = getattr(retry_response, "content", "") or str(retry_response)
+            try:
+                retry_data = MetadataGeneratorService._extract_json(retry_raw)
+                return result_model.model_validate(retry_data).model_dump()
+            except (json.JSONDecodeError, ValueError) as retry_error:
+                logger.error(
+                    "模型结构化输出重试仍然失败: model=%s, first_raw_length=%s, "
+                    "retry_raw_length=%s, error=%s",
+                    getattr(llm, "model", "unknown"),
+                    len(raw),
+                    len(retry_raw),
+                    retry_error,
+                    exc_info=True,
+                )
+                raise retry_error from first_error
 
     @staticmethod
     async def _save_trace_log(trace_id: str, step: int, event: str, output: Any, error: str = None, execution_time: float = 0):
@@ -543,11 +633,12 @@ class MetadataGeneratorService:
 
             system_prompt += (
                 "输出要求：\n"
-                "- 根据给定的 Schema 规模，尽可能全面、详尽地发掘所有合理且有实际业务价值的关联关系（不设固定数量上限，优先输出高置信度的关系）。\n"
+                "- 根据给定的 Schema 规模，最多推荐 30 条高置信度且有实际业务价值的关联关系；"
+                "表较多时优先输出最可靠的关系，不要为了全面而输出过多内容。\n"
                 "- condition 使用 '物理表别名1.字段 = 物理表别名2.字段' 形式，例如 't1.order_id = t2.id'。\n"
                 "- relation_type 取值：one_to_one / one_to_many / many_to_one。\n"
                 "- confidence 是 0~1 之间的小数，表示你对该关联关系成立的自信心（优先输出高置信度的关系）。\n"
-                "- description 用中文简述该关联的业务含义。\n"
+                "- description 用不超过 80 个中文字符简述该关联的业务含义。\n"
                 "{format_instructions}"
             )
 
