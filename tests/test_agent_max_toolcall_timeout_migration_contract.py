@@ -24,6 +24,10 @@ def test_mysql_default_timeout_upgrade_migration_preserves_custom_values():
     assert "'120'" in source
     assert "'180'" in source
     assert "WHERE" in source.upper()
+    assert "description" in source
+    assert "system_config_history" in source
+    assert "new_value" in source
+    assert "NOT EXISTS" in source.upper()
 
 
 def test_postgres_migration_seeds_agent_tool_timeout_config_idempotently():
@@ -42,3 +46,7 @@ def test_postgres_default_timeout_upgrade_migration_preserves_custom_values():
     assert "'120'" in source
     assert "'180'" in source
     assert "WHERE" in source.upper()
+    assert "description" in source
+    assert "system_config_history" in source
+    assert "new_value" in source
+    assert "NOT EXISTS" in source.upper()

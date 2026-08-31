@@ -17,12 +17,12 @@ from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 from app.utils.fs_access import (
     assert_path_allowed,
     assert_path_writable,
-    build_upload_storage_name,
     get_allowed_fs_roots,
     get_user_docs_dir,
     get_user_private_workspace_root,
     get_user_sessions_dir,
     get_user_uploads_dir,
+    open_upload_storage_file,
     is_session_workdir_path,
     is_fs_admin,
     is_fs_virtual_root,
@@ -929,12 +929,11 @@ async def upload_to_workspace(
     if ext in FORBIDDEN_UPLOAD_EXTENSIONS:
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
 
-    unique_name = build_upload_storage_name(file.filename, suffix=uuid.uuid4().hex[:4])
-    target = os.path.normpath(os.path.join(parent, unique_name))
-
     try:
-        with open(target, "wb") as handle:
+        target, handle = open_upload_storage_file(parent, file.filename)
+        with handle:
             handle.write(contents)
+        unique_name = os.path.basename(target)
         stat = os.stat(target)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"上传失败: {exc}") from exc
