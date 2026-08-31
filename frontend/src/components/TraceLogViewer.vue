@@ -91,9 +91,9 @@ const fetchLogs = async () => {
     };
 
     if (traceData.value && traceData.value.steps) {
-      traceData.value.steps.forEach((_: any, idx: number) => {
+      traceData.value.steps.forEach((step: any, idx: number) => {
         expandedSteps.value[`input-${idx}`] = true;
-        expandedSteps.value[`output-${idx}`] = true;
+        expandedSteps.value[`output-${idx}`] = !step.tool_output?.__audit_trace?.truncated;
         expandedSteps.value[`raw-${idx}`] = false;
       });
     }

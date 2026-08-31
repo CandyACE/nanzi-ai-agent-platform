@@ -7,6 +7,7 @@ from app.core.dependencies import require_api_key, require_admin
 from app.core.orm import get_db_session
 from app.models.audit import AccessLog, AgentExecutionTrace
 from app.services.audit_service import AuditService
+from app.services.ai.audit_payload import bound_audit_payload
 from datetime import datetime, timedelta
 import json
 import csv
@@ -199,8 +200,12 @@ async def get_execution_trace(trace_id: str, user: dict = Depends(require_api_ke
     steps = []
     for row in rows:
         step = {"id": row.id, "step_number": row.step_number, "event_type": row.event_type, "agent_name": row.agent_name, "tool_name": row.tool_name, "status": row.status, "error_message": row.error_message, "execution_time_ms": row.execution_time_ms, "created_at": row.created_at.isoformat() if row.created_at else None}
-        if row.tool_input: step["tool_input"] = row.tool_input if isinstance(row.tool_input, (dict, list)) else json.loads(str(row.tool_input))
-        if row.tool_output: step["tool_output"] = row.tool_output if isinstance(row.tool_output, (dict, list)) else json.loads(str(row.tool_output))
+        if row.tool_input:
+            tool_input = row.tool_input if isinstance(row.tool_input, (dict, list)) else json.loads(str(row.tool_input))
+            step["tool_input"] = bound_audit_payload(tool_input)
+        if row.tool_output:
+            tool_output = row.tool_output if isinstance(row.tool_output, (dict, list)) else json.loads(str(row.tool_output))
+            step["tool_output"] = bound_audit_payload(tool_output)
         steps.append(step)
     return {"trace_id": trace_id, "steps": steps}
 
@@ -226,6 +231,8 @@ async def get_execution_trace_spans(
         if tool_output and isinstance(tool_output, str):
             try: tool_output = json.loads(tool_output)
             except Exception: pass
+        tool_input = bound_audit_payload(tool_input)
+        tool_output = bound_audit_payload(tool_output)
         meta_info = getattr(row, "meta_info", None)
         if meta_info and isinstance(meta_info, str):
             try: meta_info = json.loads(meta_info)

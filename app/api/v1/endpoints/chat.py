@@ -2093,6 +2093,7 @@ async def get_trace_logs(
     from app.models.audit import AgentExecutionTrace, AgentExecutionHistory
     from sqlalchemy import select
     from app.schemas.agent import AgentExecutionStep, AgentExecutionHistoryResponse
+    from app.services.ai.audit_payload import bound_audit_payload
     
     # 1. Fetch High-Level History within the current user's stable identity scope.
     current_user_id = _require_chat_user_id(user_info)
@@ -2131,8 +2132,8 @@ async def get_trace_logs(
             model=getattr(row, "model", None),
             temperature=getattr(row, "temperature", None),
             tool_name=row.tool_name,
-            tool_input=row.tool_input,
-            tool_output=row.tool_output,
+            tool_input=bound_audit_payload(row.tool_input),
+            tool_output=bound_audit_payload(row.tool_output),
             execution_time_ms=row.execution_time_ms,
             status=row.status,
             error_message=row.error_message,

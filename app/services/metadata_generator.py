@@ -118,6 +118,7 @@ class MetadataGeneratorService:
         try:
             from app.core.orm import AsyncSessionLocal
             from app.models.audit import AgentExecutionTrace
+            from app.services.ai.audit_payload import bound_audit_payload
             import json
             from datetime import datetime
             
@@ -129,7 +130,9 @@ class MetadataGeneratorService:
                     agent_name="MetadataGenerator",
                     tool_name="LLM",
                     tool_input={}, # Can be populated if needed
-                    tool_output=output if isinstance(output, (dict, list)) else {"raw": str(output)},
+                    tool_output=bound_audit_payload(
+                        output if isinstance(output, (dict, list)) else {"raw": str(output)}
+                    ),
                     execution_time_ms=execution_time,
                     status="error" if error else "success",
                     error_message=error,

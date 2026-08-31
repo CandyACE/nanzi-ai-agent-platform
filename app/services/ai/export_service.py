@@ -32,9 +32,26 @@ class ExportService:
                 "summary": curr_h.summary if curr_h else "无总结",
                 "trace_id": trace_id
             }
+            data = None
+
+            # Full tabular results live in the session result cache, not in
+            # the bounded audit trace. Use it for exports when available.
+            if curr_h and curr_h.conversation_id and curr_h.user_id:
+                try:
+                    from app.services.ai.memory_service import memory_service
+                    cached = await memory_service.get_current_data_result(
+                        str(curr_h.user_id), str(curr_h.conversation_id)
+                    )
+                    if isinstance(cached, dict) and str(cached.get("trace_id") or "") == trace_id:
+                        cached_data = cached.get("rows") or cached.get("structured")
+                        if cached_data:
+                            data = cached_data
+                except Exception as exc:
+                    logger.debug("Failed to load cached result for export: %s", exc)
 
             # 2. 尝试直接搜索当前 Trace 中的表格数据
-            data = await ExportService._search_in_trace(session, trace_id, step_number)
+            if not data:
+                data = await ExportService._search_in_trace(session, trace_id, step_number)
             
             # 3. 如果当前 Trace 没数据，寻找关联 Trace (处理多智能体协同)
             if not data and curr_h:

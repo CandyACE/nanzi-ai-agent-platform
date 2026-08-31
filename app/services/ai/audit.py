@@ -4,6 +4,7 @@ from app.schemas.agent import AgentExecutionStep
 from app.core.orm import AsyncSessionLocal
 from app.models.audit import AgentExecutionTrace
 from app.services.ai.conversation_identity import require_user_id
+from app.services.ai.audit_payload import bound_audit_payload
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +145,10 @@ class AuditManager:
                         event_type=log.event_type,
                         agent_name=log.agent_name,
                         tool_name=log.tool_name,
-                        tool_input=log.tool_input,
-                        tool_output=log.tool_output,
+                        # Bound only the audit copy. AgentScope has already
+                        # consumed the original result and keeps using it.
+                        tool_input=bound_audit_payload(log.tool_input),
+                        tool_output=bound_audit_payload(log.tool_output),
                         execution_time_ms=log.execution_time_ms,
                         status=log.status,
                         error_message=log.error_message,

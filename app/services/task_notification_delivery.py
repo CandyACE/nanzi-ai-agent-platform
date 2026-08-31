@@ -329,6 +329,28 @@ async def load_sql_tool_artifacts(trace_id: Optional[str]) -> Tuple[bool, List[D
         had_sql = False
         payloads = []
         async with AsyncSessionLocal() as session:
+            from app.models.audit import AgentExecutionHistory
+
+            history_stmt = select(AgentExecutionHistory).where(
+                AgentExecutionHistory.trace_id == trace_id
+            )
+            history = (await session.execute(history_stmt)).scalars().first()
+            if history and history.conversation_id and history.user_id:
+                try:
+                    from app.services.ai.memory_service import memory_service
+
+                    cached = await memory_service.get_current_data_result(
+                        str(history.user_id), str(history.conversation_id)
+                    )
+                    if isinstance(cached, dict) and str(cached.get("trace_id") or "") == trace_id:
+                        cached_payload = extract_tabular_payload(
+                            cached.get("rows") or cached.get("structured")
+                        )
+                        if cached_payload is not None:
+                            return True, [cached_payload]
+                except Exception as exc:
+                    logger.debug("Failed to load cached SQL result for trace %s: %s", trace_id, exc)
+
             stmt = (
                 select(AgentExecutionTrace)
                 .where(
