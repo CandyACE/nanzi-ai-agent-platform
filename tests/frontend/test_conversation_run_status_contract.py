@@ -95,6 +95,9 @@ def test_embed_chat_focuses_desktop_input_only_after_all_busy_states_clear():
 def test_agent_debug_focuses_desktop_input_only_after_all_busy_states_clear():
     source = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
 
+    watch_index = source.index("watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);")
+    assert source.index("const isProcessing = ref(false);") < watch_index
+    assert source.index("const { locked: sendLocked", source.index("const isProcessing = ref(false);")) < watch_index
     assert "const focusChatInputWhenReady = () =>" in source
     assert "if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;" in source
     assert "watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);" in source
@@ -102,6 +105,14 @@ def test_agent_debug_focuses_desktop_input_only_after_all_busy_states_clear():
 
     completion_block = source[source.index("isProcessing.value = false;", source.index("const sendMessageInternal")):source.index("const addRealLog")]
     assert "chatInputRef.value?.focus()" not in completion_block
+
+
+def test_agent_debug_preserves_dataset_name_when_editing_saved_report():
+    source = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+    edit_start = source.index("const openEditReportModal")
+    edit_end = source.index("const closeSavedReportEditor", edit_start)
+
+    assert "dataset_name: report.dataset_name || ''" in source[edit_start:edit_end]
 
 
 def test_context_compaction_control_is_user_triggered_on_both_chat_surfaces():

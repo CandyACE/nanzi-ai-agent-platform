@@ -18,10 +18,10 @@ const state = ref({
 })
 
 const steps = [
-  { id: 'model_config', title: '配置模型管理', desc: '添加可用的 Chat、Embedding 等模型并完成连通性测试。', path: '/dashboard/system', query: { tab: 'models' } },
+  { id: 'model_config', title: '配置模型管理', desc: '添加可用的 Chat、Embedding 等模型并完成连通性测试。', optional: false, path: '/dashboard/system', query: { tab: 'models' } },
   { id: 'knowledge_environment', title: '知识库环境', desc: '可选：使用知识库或让元数据走 RAGFlow 时，先独立部署并测试 RAGFlow。', optional: true, path: '/dashboard/system', query: { tab: 'configs' } },
-  { id: 'system_config', title: '检查参数配置', desc: '根据部署环境检查模型、向量、下载地址和沙箱等关键参数。', path: '/dashboard/system', query: { tab: 'configs' } },
-  { id: 'agent_config', title: '发布智能体配置', desc: '为预置智能体换绑可用模型，保存并发布生效版本。', path: '/dashboard/agent-management' },
+  { id: 'system_config', title: '检查参数配置', desc: '根据部署环境检查模型、向量、下载地址和沙箱等关键参数。', optional: false, path: '/dashboard/system', query: { tab: 'configs' } },
+  { id: 'agent_config', title: '发布智能体配置', desc: '为预置智能体换绑可用模型，保存并发布生效版本。', optional: false, path: '/dashboard/agent-management', query: undefined },
 ] as const
 
 const helpContent = {
@@ -138,7 +138,7 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
 </script>
 
 <template>
-  <section v-if="!props.compact && !loading && visible && (!props.hideWhenComplete || !isComplete || forceVisible)" id="deployment-checklist-details" class="hidden lg:block rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-slate-50/60 p-4 shadow-sm sm:p-5">
+  <section v-if="!props.compact && !loading && visible && isExpanded && (!props.hideWhenComplete || !isComplete || forceVisible)" id="deployment-checklist-details" class="hidden lg:block rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-slate-50/60 p-4 shadow-sm sm:p-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <div class="flex items-center gap-2">
@@ -174,8 +174,9 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
     </div>
     <p v-if="isComplete" class="mt-3 text-xs font-medium text-emerald-700">✓ 首次部署检查已完成；后续可随时重新打开查看。</p>
   </section>
-  <button v-else-if="!loading && visible && props.compact" type="button" class="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100" @click="scrollToDetails">
-    ✓ {{ isComplete ? '部署检查已完成' : `部署检查 ${completedCount} / ${steps.length}` }}
+  <button v-else-if="!loading && visible && props.compact" type="button" class="hidden lg:inline-flex items-center gap-1.5 rounded-lg border-0 bg-transparent px-2 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700" @click="scrollToDetails">
+    <span aria-hidden="true">✓</span>
+    <span>部署检查</span>
   </button>
 
   <div v-if="showHelp && activeHelp" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" role="dialog" aria-modal="true" :aria-label="`${helpContent[activeHelp].title}检查说明`" @click.self="closeHelp">

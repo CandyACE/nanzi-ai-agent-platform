@@ -38,6 +38,10 @@ def test_deployment_checklist_is_admin_only_and_reachable_from_overview():
     assert "重新展开" in checklist
     assert "hideWhenComplete" in checklist
     assert "部署检查已完成" in checklist
+    assert "v-else-if=\"!loading && visible && props.compact\"" in checklist
+    assert ">部署检查</span>" in checklist
+    assert "border-0 bg-transparent" in checklist
+    assert "&& isExpanded" in checklist
     assert "deployment-checklist-details" in checklist
     assert "!props.compact && !loading" in checklist
     assert "检查项目" in checklist
