@@ -60,6 +60,12 @@ class RelationshipRecommendation(BaseModel):
 class RelationshipRecommendationResult(BaseModel):
     relationships: List[RelationshipRecommendation] = Field(description="推荐的表关联关系列表")
 
+class RelationshipRecommendationBatchResult(RelationshipRecommendationResult):
+    has_more: bool = Field(
+        default=False,
+        description="是否还有未输出的合理关联关系，true 时服务端会继续请求下一批",
+    )
+
 class MetricRecommendationResult(BaseModel):
     metrics: List[MetricMetadata] = Field(description="推荐的高价值业务指标列表")
 
@@ -634,51 +640,134 @@ class MetadataGeneratorService:
             system_prompt += (
                 "输出要求：\n"
                 "- 根据给定的 Schema 规模，尽可能多地输出所有合理且有实际业务价值的关联关系，"
-                "不设置数量上限；表较多时优先输出高置信度关系，并确保 JSON 完整闭合。\n"
+                "不设置最终总数量上限；表较多时优先输出高置信度关系，并确保 JSON 完整闭合。\n"
                 "- condition 使用 '物理表别名1.字段 = 物理表别名2.字段' 形式，例如 't1.order_id = t2.id'。\n"
                 "- relation_type 取值：one_to_one / one_to_many / many_to_one。\n"
                 "- confidence 是 0~1 之间的小数，表示你对该关联关系成立的自信心（优先输出高置信度的关系）。\n"
                 "- description 用不超过 80 个中文字符简述该关联的业务含义。\n"
+                "- 每次只返回一批关系，单批最多 10 条；如果还有未输出的合理关系，将 has_more 设置为 true，"
+                "服务端会继续请求下一批，因此 10 条不是最终总量上限。\n"
+                "- 如果没有更多合理关系，将 relationships 返回空数组并将 has_more 设置为 false。\n"
                 "{format_instructions}"
             )
 
-            # 4. Invoke
+            # 4. 分批调用，单次响应保持可解析，最终结果不设置业务数量上限。
             start_llm = time.time()
-            result = await MetadataGeneratorService._invoke_json(
-                llm,
-                RelationshipRecommendationResult,
-                system_prompt,
-                f"Schema 定义如下：\n\n{schema_context}",
-            )
-            duration_llm = (time.time() - start_llm) * 1000
-
-            # 5. 代码级后置去重与 Redis 写入 (TTL 10 分钟 = 600s)
-            raw_relationships = result.get("relationships", []) if isinstance(result, dict) else []
-            filtered_relationships = []
+            batch_size = 10
+            max_batches = 100
+            batch_number = 0
+            collected_relationships = []
+            collected_keys = set(recent_recommended_keys)
             new_cache_items = []
 
-            for rel in raw_relationships:
-                src = (rel.get("source_table") or "").strip().lower()
-                tgt = (rel.get("target_table") or "").strip().lower()
-                cond = (rel.get("condition") or "").strip().lower()
-                if not src or not tgt:
-                    continue
+            while True:
+                batch_number += 1
+                generated_exclusions = []
+                for rel in collected_relationships[-200:]:
+                    generated_exclusions.append(
+                        f"- 已输出关系: {rel.get('source_table')} -> "
+                        f"{rel.get('target_table')} ({rel.get('condition')})"
+                    )
 
-                pair_key = tuple(sorted([src, tgt])) + (cond,)
-                if pair_key in recent_recommended_keys:
-                    continue
+                batch_user_prompt = f"Schema 定义如下：\n\n{schema_context}"
+                if generated_exclusions:
+                    batch_user_prompt += (
+                        "\n\n【本次任务已输出关系，下一批严禁重复】\n"
+                        + "\n".join(generated_exclusions)
+                    )
+                batch_user_prompt += (
+                    "\n\n请输出当前尚未覆盖的一批关系。"
+                    f"本批最多 {batch_size} 条；如果还有下一批，请将 has_more 设为 true。"
+                )
 
+                try:
+                    batch_result = await MetadataGeneratorService._invoke_json(
+                        llm,
+                        RelationshipRecommendationBatchResult,
+                        system_prompt,
+                        batch_user_prompt,
+                    )
+                except Exception as exc:
+                    # 已经拿到部分结果时返回部分成功，避免后续某一批异常导致全部结果丢失。
+                    if collected_relationships:
+                        logger.warning(
+                            "关系推荐第 %s 批解析失败，返回已汇总结果: error=%s",
+                            batch_number,
+                            exc,
+                            exc_info=True,
+                        )
+                        break
+                    raise
+
+                raw_relationships = (
+                    batch_result.get("relationships", [])
+                    if isinstance(batch_result, dict)
+                    else []
+                )
+                if not raw_relationships:
+                    logger.info(
+                        "关系推荐收到空批次，停止继续请求: dataset_id=%s, batch=%s, total=%s",
+                        dataset_id,
+                        batch_number,
+                        len(collected_relationships),
+                    )
+                    break
+
+                batch_new_count = 0
+                for rel in raw_relationships:
+                    src = (rel.get("source_table") or "").strip().lower()
+                    tgt = (rel.get("target_table") or "").strip().lower()
+                    cond = (rel.get("condition") or "").strip().lower()
+                    if not src or not tgt:
+                        continue
+
+                    pair_key = tuple(sorted([src, tgt])) + (cond,)
+                    if pair_key in collected_keys:
+                        continue
+
+                    collected_keys.add(pair_key)
+                    collected_relationships.append(rel)
+                    new_cache_items.append({
+                        "source_table": rel.get("source_table"),
+                        "target_table": rel.get("target_table"),
+                        "condition": rel.get("condition"),
+                        "ts": time.time()
+                    })
+                    batch_new_count += 1
+
+                has_more = bool(batch_result.get("has_more")) if isinstance(batch_result, dict) else False
+                logger.info(
+                    "关系推荐批次完成: dataset_id=%s, batch=%s, batch_raw=%s, "
+                    "batch_new=%s, total=%s, has_more=%s",
+                    dataset_id,
+                    batch_number,
+                    len(raw_relationships),
+                    batch_new_count,
+                    len(collected_relationships),
+                    has_more,
+                )
+
+                if not has_more or batch_new_count == 0:
+                    break
+                if batch_number >= max_batches:
+                    logger.warning(
+                        "关系推荐达到批次保护上限，停止继续请求: dataset_id=%s, max_batches=%s, total=%s",
+                        dataset_id,
+                        max_batches,
+                        len(collected_relationships),
+                    )
+                    break
+
+            duration_llm = (time.time() - start_llm) * 1000
+
+            # 5. Redis 写入 10 分钟缓存，并返回所有批次合并后的关系。
+            filtered_relationships = []
+            for rel in collected_relationships:
                 filtered_relationships.append(rel)
-                new_cache_items.append({
-                    "source_table": rel.get("source_table"),
-                    "target_table": rel.get("target_table"),
-                    "condition": rel.get("condition"),
-                    "ts": time.time()
-                })
-
-            if isinstance(result, dict):
-                result["relationships"] = filtered_relationships
-                result["_trace_id"] = trace_id
+            result = {
+                "relationships": filtered_relationships,
+                "_trace_id": trace_id,
+            }
 
             if redis_client and new_cache_items:
                 try:
