@@ -276,11 +276,14 @@ const handleRecommend = async () => {
     message: '正在连接实时进度服务',
     percent: 0,
     completed_units: 0,
-    total_units: selectedTableNames.value.length,
-    remaining_units: selectedTableNames.value.length,
-    unit_label: '张表',
+    total_units: 0,
+    remaining_units: 0,
+    unit_label: '候选组',
     batch_count: 0,
     result_count: 0,
+    candidate_pair_count: 0,
+    completed_pair_count: 0,
+    remaining_pair_count: 0,
   }
   startTimer()
   abortController = new AbortController()
@@ -317,7 +320,7 @@ const handleRecommend = async () => {
 
     recommendations.value = data?.relationships || []
     currentTraceId.value = data?._trace_id || ''
-    const partialInterruption = data?._stop_reason === 'partial_batch_error'
+    const partialInterruption = ['partial_batch_error', 'partial_group_error'].includes(data?._stop_reason || '')
     runStatus.value = partialInterruption ? 'interrupted' : 'completed'
     progress.value = {
       ...progress.value,
@@ -929,7 +932,7 @@ const handleBackToConfig = () => {
               <div class="min-w-0">
                 <div class="font-bold text-gray-800">{{ progress.message }}</div>
                 <div v-if="progress.current_item" class="mt-0.5 truncate font-mono text-[11px] text-emerald-700">
-                  当前表：{{ progress.current_item }}<span v-if="progress.current_page"> · 第 {{ progress.current_page }} 批 AI 推导</span>
+                  当前任务：{{ progress.current_item }}
                 </div>
               </div>
               <span class="flex-shrink-0 font-mono text-emerald-700">{{ progressPercent }}%</span>
@@ -937,24 +940,28 @@ const handleBackToConfig = () => {
             <div class="h-2 w-full overflow-hidden rounded bg-gray-200">
               <div class="h-full bg-emerald-600 transition-all duration-500" :style="{ width: `${progressPercent}%` }"></div>
             </div>
-            <div class="grid grid-cols-2 gap-2 sm:grid-cols-5 text-center text-[11px]">
+            <div class="grid grid-cols-2 gap-2 text-center text-[11px] sm:grid-cols-6">
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">表结构进度</div>
-                <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_units || 0 }} / {{ progress.total_units || selectedTableNames.length }}</div>
+                <div class="text-gray-400">候选组进度</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_units || 0 }} / {{ progress.total_units || 0 }}</div>
               </div>
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">剩余表</div>
-                <div class="mt-0.5 font-bold text-gray-800">{{ progress.remaining_units ?? selectedTableNames.length }}</div>
+                <div class="text-gray-400">剩余候选组</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.remaining_units ?? 0 }}</div>
               </div>
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">累计推导批次</div>
+                <div class="text-gray-400">AI 调用组</div>
                 <div class="mt-0.5 font-bold text-gray-800">{{ progress.batch_count || 0 }}</div>
+              </div>
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">候选表对</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_pair_count || 0 }} / {{ progress.candidate_pair_count || 0 }}</div>
               </div>
               <div class="rounded border border-gray-200 bg-white px-2 py-2">
                 <div class="text-gray-400">累计关系</div>
                 <div class="mt-0.5 font-bold text-gray-800">{{ progress.result_count || 0 }}</div>
               </div>
-              <div class="col-span-2 rounded border border-gray-200 bg-white px-2 py-2 sm:col-span-1">
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
                 <div class="text-gray-400">预计剩余</div>
                 <div class="mt-0.5 font-bold text-gray-800">{{ estimatedRemainingText }}</div>
               </div>
@@ -962,7 +969,7 @@ const handleBackToConfig = () => {
           </div>
 
           <div class="max-w-2xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
-            仅分析表结构与字段元数据，不查询或逐页读取业务数据行。“AI 推导批次”表示模型分批返回候选关系；当前表结果收敛后会自动进入下一张表。
+            仅分析表结构与字段元数据，不查询业务数据行。后端先筛选具备 JOIN 线索的候选表对，再按候选组调用 AI；每个表对只推导一次。
           </div>
 
           <!-- Cancel Action Button -->

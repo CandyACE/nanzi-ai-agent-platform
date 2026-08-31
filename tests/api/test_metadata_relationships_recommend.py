@@ -166,7 +166,7 @@ async def test_recommend_relationships_cancels_generator_after_client_disconnect
 
 @pytest.mark.asyncio
 async def test_metadata_recommendation_sse_emits_progress_and_completed_result():
-    """SSE 适配器应按顺序输出 started、progress 和 completed 终态。"""
+    """SSE 适配器应透传候选组进度并输出 completed 终态。"""
     from unittest.mock import AsyncMock
     from app.api.portal.endpoints import metadata as endpoint_module
 
@@ -176,11 +176,27 @@ async def test_metadata_recommendation_sse_emits_progress_and_completed_result()
     async def worker(progress_callback):
         await progress_callback({
             "phase": "scanning",
-            "message": "正在扫描",
+            "message": "正在推导候选关系组 1/3",
             "percent": 50,
             "remaining_units": 2,
+            "candidate_pair_count": 18,
+            "completed_pair_count": 6,
+            "remaining_pair_count": 12,
         })
-        return {"relationships": [], "_trace_id": "rel-rec-sse-test"}
+        return {
+            "relationships": [],
+            "_trace_id": "rel-rec-sse-test",
+            "_batch_count": 3,
+            "_stop_reason": "all_candidate_groups_scanned",
+            "_debug": {
+                "candidate_group_count": 3,
+                "completed_group_count": 3,
+                "remaining_group_count": 0,
+                "candidate_pair_count": 18,
+                "completed_pair_count": 18,
+                "remaining_pair_count": 0,
+            },
+        }
 
     response = await endpoint_module._stream_metadata_recommendation(
         mock_request,
@@ -196,8 +212,56 @@ async def test_metadata_recommendation_sse_emits_progress_and_completed_result()
     assert "event: started" in body
     assert "event: progress" in body
     assert '"remaining_units": 2' in body
+    assert '"candidate_pair_count": 18' in body
+    assert '"completed_pair_count": 6' in body
+    assert '"remaining_pair_count": 12' in body
     assert "event: completed" in body
     assert "rel-rec-sse-test" in body
+
+
+@pytest.mark.asyncio
+async def test_metadata_recommendation_sse_marks_partial_group_error_interrupted():
+    """候选组部分失败时，SSE 应返回中断终态和准确的剩余工作量。"""
+    from unittest.mock import AsyncMock
+    from app.api.portal.endpoints import metadata as endpoint_module
+
+    mock_request = AsyncMock()
+    mock_request.is_disconnected = AsyncMock(return_value=False)
+
+    async def worker(progress_callback):
+        return {
+            "relationships": [{"source_table": "orders"}],
+            "_trace_id": "rel-rec-partial-test",
+            "_batch_count": 3,
+            "_stop_reason": "partial_group_error",
+            "_debug": {
+                "candidate_group_count": 3,
+                "completed_group_count": 2,
+                "failed_group_count": 1,
+                "remaining_group_count": 1,
+                "candidate_pair_count": 18,
+                "completed_pair_count": 12,
+                "remaining_pair_count": 6,
+            },
+        }
+
+    response = await endpoint_module._stream_metadata_recommendation(
+        mock_request,
+        dataset_id=1,
+        recommendation_type="relationships",
+        worker=worker,
+    )
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+    body = "".join(chunks)
+
+    assert "event: interrupted" in body
+    assert '"status": "interrupted"' in body
+    assert '"completed_units": 2' in body
+    assert '"remaining_units": 1' in body
+    assert '"remaining_pair_count": 6' in body
+    assert '"stop_reason": "partial_group_error"' in body
 
 
 @pytest.mark.asyncio

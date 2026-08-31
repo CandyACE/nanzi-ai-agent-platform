@@ -55,7 +55,8 @@ async def _stream_metadata_recommendation(
         }
         logger.info(
             "元数据 AI 进度: type=%s, dataset_id=%s, phase=%s, percent=%s, "
-            "completed=%s, total=%s, remaining=%s, batch=%s, result_count=%s",
+            "completed=%s, total=%s, remaining=%s, batch=%s, result_count=%s, "
+            "candidate_pairs=%s, completed_pairs=%s, remaining_pairs=%s",
             recommendation_type,
             dataset_id,
             event_payload.get("phase"),
@@ -65,27 +66,39 @@ async def _stream_metadata_recommendation(
             event_payload.get("remaining_units"),
             event_payload.get("batch_count"),
             event_payload.get("result_count"),
+            event_payload.get("candidate_pair_count"),
+            event_payload.get("completed_pair_count"),
+            event_payload.get("remaining_pair_count"),
         )
         await event_queue.put(("progress", event_payload))
 
     async def run_worker() -> None:
         try:
             result = await worker(progress_callback)
-            interrupted = (
-                isinstance(result, dict)
-                and result.get("_stop_reason") == "partial_batch_error"
-            )
+            interrupted = isinstance(result, dict) and result.get("_stop_reason") in {
+                "partial_batch_error",
+                "partial_group_error",
+            }
             debug = result.get("_debug", {}) if isinstance(result, dict) else {}
             if recommendation_type == "metrics":
                 total_units = 5
                 completed_units = 5
                 result_count = len(result.get("metrics", [])) if isinstance(result, dict) else 0
             else:
-                total_units = int(debug.get("schema_table_count") or 0)
-                completed_units = int(debug.get("completed_anchor_count") or 0)
+                total_units = int(
+                    debug.get("candidate_group_count")
+                    or debug.get("schema_table_count")
+                    or 0
+                )
+                completed_units = int(
+                    debug.get("completed_group_count")
+                    or debug.get("completed_anchor_count")
+                    or 0
+                )
                 result_count = len(result.get("relationships", [])) if isinstance(result, dict) else 0
             remaining_units = int(
-                debug.get("remaining_anchor_count")
+                debug.get("remaining_group_count")
+                or debug.get("remaining_anchor_count")
                 or max(total_units - completed_units, 0)
             )
             await event_queue.put((
@@ -110,6 +123,9 @@ async def _stream_metadata_recommendation(
                     "remaining_units": remaining_units if interrupted else 0,
                     "batch_count": result.get("_batch_count") if isinstance(result, dict) else None,
                     "result_count": result_count,
+                    "candidate_pair_count": debug.get("candidate_pair_count"),
+                    "completed_pair_count": debug.get("completed_pair_count"),
+                    "remaining_pair_count": debug.get("remaining_pair_count"),
                     "stop_reason": result.get("_stop_reason") if isinstance(result, dict) else None,
                     "result": result,
                 },

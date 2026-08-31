@@ -48,7 +48,7 @@ def test_smart_relationship_modal_contract():
     assert "SmartRelationshipModal" in list_content
     assert "showSmartRelModal" in list_content
 
-    # 关系推荐通过 SSE 返回逐表进度，不能被固定的客户端超时误判为失败。
+    # 关系推荐通过 SSE 返回候选组进度，不能被固定的客户端超时误判为失败。
     api_path = Path("frontend/src/api/metadata.ts")
     api_content = api_path.read_text(encoding="utf-8")
     assert "recommendRelationshipsStream" in api_content
@@ -56,10 +56,15 @@ def test_smart_relationship_modal_contract():
     assert "关系推荐请求失败" in content
     assert "remaining_units" in content
     assert "batch_count" in content
+    assert "candidate_pair_count" in content
+    assert "completed_pair_count" in content
     assert "estimatedRemainingText" in content
     assert "上次推导已中断" in content
-    assert "第 {{ progress.current_page }} 批 AI 推导" in content
-    assert "不查询或逐页读取业务数据行" in content
-    assert "累计推导批次" in content
+    assert "候选组进度" in content
+    assert "剩余候选组" in content
+    assert "AI 调用组" in content
+    assert "候选表对" in content
+    assert "不查询业务数据行" in content
+    assert "每个表对只推导一次" in content
     assert "生成中断，以下为已完成结果" in content
     assert 'v-if="runStatus === \'interrupted\'"' in content

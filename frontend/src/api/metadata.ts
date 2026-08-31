@@ -125,10 +125,22 @@ export interface RelationshipRecommendationResult {
     schema_len?: number;
     schema_table_count?: number;
     schema_table_names_preview?: string[];
+    possible_pair_count?: number;
+    candidate_pair_count?: number;
+    filtered_pair_count?: number;
+    candidate_group_count?: number;
+    completed_group_count?: number;
+    failed_group_count?: number;
+    remaining_group_count?: number;
+    completed_pair_count?: number;
+    remaining_pair_count?: number;
+    total_prompt_chars?: number;
+    total_scoped_schema_chars?: number;
     batch_size?: number;
     batch_count?: number;
     stop_reason?: string;
     batches?: Array<Record<string, unknown>>;
+    groups?: Array<Record<string, unknown>>;
   };
 }
 
@@ -151,9 +163,12 @@ export interface MetadataAiProgress {
   remaining_units?: number;
   unit_label?: string;
   current_item?: string;
-  current_page?: number; // 当前锚定表的 AI 推导批次序号，并非业务数据分页。
+  current_page?: number; // 兼容旧版逐表推导批次；候选组模式固定为 0。
   batch_count?: number;
   result_count?: number;
+  candidate_pair_count?: number;
+  completed_pair_count?: number;
+  remaining_pair_count?: number;
   estimated_remaining_seconds?: number;
   stop_reason?: string | null;
 }

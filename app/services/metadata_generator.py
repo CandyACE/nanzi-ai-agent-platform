@@ -7,6 +7,9 @@ from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessag
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.config import AgentConfigProvider
 from app.core.orm import AsyncSessionLocal
+from app.services.metadata_relationship_candidate_service import (
+    MetadataRelationshipCandidateService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +64,6 @@ class RelationshipRecommendation(BaseModel):
 
 class RelationshipRecommendationResult(BaseModel):
     relationships: List[RelationshipRecommendation] = Field(description="推荐的表关联关系列表")
-
-class RelationshipRecommendationBatchResult(RelationshipRecommendationResult):
-    has_more: bool = Field(
-        default=False,
-        description="是否还有未输出的合理关联关系，true 时服务端会继续请求下一批",
-    )
 
 class MetricRecommendationResult(BaseModel):
     metrics: List[MetricMetadata] = Field(description="推荐的高价值业务指标列表")
@@ -679,7 +676,6 @@ class MetadataGeneratorService:
         from app.services.ai.agent_manager import AgentManagerService
 
         trace_id = f"rel-rec-{str(uuid.uuid4())}"
-        start_total = time.time()
         await MetadataGeneratorService._emit_progress(
             progress_callback,
             phase="initializing",
@@ -689,7 +685,7 @@ class MetadataGeneratorService:
             completed_units=0,
             total_units=0,
             remaining_units=0,
-            unit_label="张表",
+            unit_label="候选组",
             batch_count=0,
             result_count=0,
         )
@@ -724,16 +720,28 @@ class MetadataGeneratorService:
             completed_units=0,
             total_units=0,
             remaining_units=0,
-            unit_label="张表",
+            unit_label="候选组",
             batch_count=0,
             result_count=0,
         )
 
         # 整理负向排除清单（既有关系 + 近期推荐关系）
         exclude_descriptions = []
+        existing_relationship_keys = set()
         if existing_relationships:
             for r in existing_relationships:
                 exclude_descriptions.append(f"- 已存在关系: {r}")
+                existing_match = re.match(
+                    r"^\s*(.+?)\s*<->\s*(.+?)\s*\((.*)\)\s*$",
+                    str(r),
+                )
+                if existing_match:
+                    source_name = existing_match.group(1).strip().lower()
+                    target_name = existing_match.group(2).strip().lower()
+                    condition = existing_match.group(3).strip().lower()
+                    existing_relationship_keys.add(
+                        tuple(sorted((source_name, target_name))) + (condition,)
+                    )
         for item in recent_recommended_items[:20]:
             exclude_descriptions.append(
                 f"- 近期已推荐关系: {item.get('source_table')} -> "
@@ -753,393 +761,372 @@ class MetadataGeneratorService:
                 },
             )
 
-            # 2. Get Agent Config
-            async with AsyncSessionLocal() as session:
-                agent_config = await AgentManagerService.get_active_agent_config(
-                    session, agent_name='metadata-specialist'
-                )
-
-            chat_config = agent_config
-            if not chat_config:
-                logger.warning("Metadata Specialist config not found, using default.")
-
-            # Get configured LLM
-            llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
-
-            # 3. Prompt Construction
-            system_prompt = (
-                "你是一个精通数据建模的 DBA/数据架构师。\n"
-                "请分析给定的数据库 Schema（包含每张表的字段、业务术语、字段描述），推断表与表之间可能存在的高质量关联关系。\n\n"
-                "推断规则：\n"
-                "1. **字段语义匹配**：优先基于字段的业务术语/描述、命名相似性（如某表的 'id'/'code' 对应另一表的 'xxx_id'/'xxx_code'、主外键命名模式）推断关联。\n"
-                "2. **业务逻辑关联**：结合表名与字段描述判断它们是否描述同一业务实体（如订单与订单明细、用户与用户日志）。\n"
-                "3. **避免重复与负向约束**：**严禁推荐数据库中已存在或近期已推荐过的关联关系**，只输出新的潜在关联。\n"
-                "4. **只推荐当前 Schema 内真实存在的表**：source_table/target_table 必须使用 Schema 中的物理表名。\n\n"
+            # 2. 构建紧凑 Schema 和候选表对；候选范围由后端确定，不再依赖模型翻页。
+            schema_table_names, relationship_table_index = (
+                MetadataRelationshipCandidateService.parse_schema(schema_context)
             )
-
-            if exclude_descriptions:
-                system_prompt += (
-                    "【必须严格排除的已有关系列表】（请勿再次推荐以下关系）：\n"
-                    + "\n".join(exclude_descriptions[:20])
-                    + "\n\n"
-                )
-
-            if user_prompt:
-                system_prompt += (
-                    "【用户自定义业务偏好与重点关注方向】（必须优先结合此偏好发掘关联）：\n"
-                    f"{user_prompt}\n\n"
-                )
-
-            system_prompt += (
-                "输出要求：\n"
-                "- 根据给定的 Schema 规模，尽可能多地输出所有合理且有实际业务价值的关联关系，"
-                "不设置最终总数量上限；表较多时优先输出高置信度关系，并确保 JSON 完整闭合。\n"
-                "- condition 使用 '物理表别名1.字段 = 物理表别名2.字段' 形式，例如 't1.order_id = t2.id'。\n"
-                "- relation_type 取值：one_to_one / one_to_many / many_to_one。\n"
-                "- confidence 是 0~1 之间的小数，表示你对该关联关系成立的自信心（优先输出高置信度的关系）。\n"
-                "- description 用不超过 80 个中文字符简述该关联的业务含义。\n"
-                "- 每次只返回一批关系，单批最多 10 条；如果还有未输出的合理关系，将 has_more 设置为 true，"
-                "服务端会继续请求下一批，因此 10 条不是最终总量上限。\n"
-                "- 如果你无法判断是否还有更多关系，但本批已经输出 10 条，请优先将 has_more 设置为 true。\n"
-                "- 如果没有更多合理关系，将 relationships 返回空数组并将 has_more 设置为 false。\n"
-                "{format_instructions}"
+            candidate_pairs = MetadataRelationshipCandidateService.build_candidate_pairs(
+                schema_table_names,
+                relationship_table_index,
+                include_all_pairs=bool(user_prompt and user_prompt.strip()),
             )
-
-            # 4. 逐表锚定 + 分批调用；每对表只在前向锚点分析一次，避免对称重复扫描。
-            start_llm = time.time()
-            batch_size = 10
-            max_pages_per_anchor = 5
-            max_stagnant_pages = 2
-            batch_number = 0
-            collected_relationships = []
-            collected_keys = set(recent_recommended_keys)
-            new_cache_items = []
-            stop_reason = "unknown"
-            debug_batches = []
-            processed_anchor_count = 0
-            schema_table_names = MetadataGeneratorService._extract_schema_table_names(schema_context)
-            anchor_table_names = schema_table_names or [""]
-            total_anchors = len(anchor_table_names)
+            candidate_groups = MetadataRelationshipCandidateService.group_candidate_pairs(
+                candidate_pairs,
+                max_pairs_per_group=8,
+                max_tables_per_group=12,
+            )
+            total_groups = len(candidate_groups)
+            possible_pair_count = (
+                len(schema_table_names) * (len(schema_table_names) - 1) // 2
+            )
             logger.warning(
-                "关系推荐逐表扫描启动: trace_id=%s, dataset_id=%s, schema_len=%s, "
-                "table_count=%s, cached_exclusions=%s, max_pages_per_anchor=%s",
+                "关系推荐候选组执行启动: trace_id=%s, dataset_id=%s, "
+                "schema_len=%s, table_count=%s, possible_pairs=%s, "
+                "candidate_pairs=%s, group_count=%s, custom_prompt=%s",
                 trace_id,
                 dataset_id,
                 len(schema_context),
                 len(schema_table_names),
-                len(recent_recommended_keys),
-                max_pages_per_anchor,
+                possible_pair_count,
+                len(candidate_pairs),
+                total_groups,
+                bool(user_prompt and user_prompt.strip()),
             )
             await MetadataGeneratorService._emit_progress(
                 progress_callback,
-                phase="scanning",
-                message=f"开始逐表分析元数据，共 {total_anchors} 张表",
+                phase="candidate_ready",
+                message=(
+                    f"已从 {possible_pair_count} 个表对中筛出 "
+                    f"{len(candidate_pairs)} 个候选，分为 {total_groups} 组"
+                ),
                 percent=10,
                 trace_id=trace_id,
                 completed_units=0,
-                total_units=total_anchors,
-                remaining_units=total_anchors,
-                unit_label="张表",
+                total_units=total_groups,
+                remaining_units=total_groups,
+                unit_label="候选组",
                 batch_count=0,
                 result_count=0,
+                candidate_pair_count=len(candidate_pairs),
+                completed_pair_count=0,
+                remaining_pair_count=len(candidate_pairs),
             )
 
-            for anchor_index, anchor_table in enumerate(anchor_table_names, start=1):
-                anchor_stop_reason = "unknown"
-                page_number = 0
-                stagnant_pages = 0
-                # 只分析当前锚定表与其后续表，防止 A->B 完成后再次扫描 B->A。
-                candidate_target_names = (
-                    schema_table_names[anchor_index:]
-                    if anchor_table and schema_table_names
-                    else []
+            # 3. 只有存在候选组时才初始化模型，空候选任务直接返回成功。
+            llm = None
+            if candidate_groups:
+                async with AsyncSessionLocal() as session:
+                    agent_config = await AgentManagerService.get_active_agent_config(
+                        session,
+                        agent_name="metadata-specialist",
+                    )
+                if not agent_config:
+                    logger.warning("元数据专家配置不存在，关系推荐使用默认模型配置")
+                llm = await AgentConfigProvider.get_configured_llm(
+                    streaming=False,
+                    config=agent_config,
                 )
-                progress_percent = 10 + int(85 * (anchor_index - 1) / max(total_anchors, 1))
+                logger.warning(
+                    "关系推荐模型初始化完成: trace_id=%s, dataset_id=%s, model=%s",
+                    trace_id,
+                    dataset_id,
+                    getattr(llm, "model", "unknown"),
+                )
+            else:
+                logger.info(
+                    "关系推荐无候选组，跳过模型初始化: trace_id=%s, dataset_id=%s",
+                    trace_id,
+                    dataset_id,
+                )
+
+            # 4. 每个候选表对只在所属分组中调用一次 AI，模型只负责最终语义判断。
+            system_prompt = (
+                "你是一个精通数据建模的 DBA/数据架构师。\n"
+                "输入只包含后端预筛选的候选表对和相关字段，请逐对判断是否存在真实、"
+                "可执行且有业务价值的等值 JOIN 关系。\n\n"
+                "严格规则：\n"
+                "1. 只能推荐 candidate_pairs 中明确列出的表对，不得扩展到其它表对。\n"
+                "2. source_table、target_table 和 condition 必须使用输入中的物理表名和物理字段名。\n"
+                "3. condition 只能使用 '物理表.字段 = 物理表.字段' 的简单等值连接。\n"
+                "4. 只有具备明确字段命名、类型和业务语义依据时才输出；"
+                "禁止仅因业务领域相近而臆造关系。\n"
+                "5. confidence 必须客观评分，只输出 confidence >= 0.70 的关系。\n"
+                "6. 必须检查本组全部候选表对；没有可靠关系的表对无需输出。\n"
+                "7. 不设置最终关系总数上限，但不得输出重复关系。\n"
+                "8. relation_type 只能是 one_to_one、one_to_many、many_to_one。\n"
+                "9. description 使用不超过 80 个中文字符说明关系含义。\n"
+            )
+            if exclude_descriptions:
+                system_prompt += (
+                    "\n【已存在或近期已推荐关系，严禁重复】\n"
+                    + "\n".join(exclude_descriptions[:40])
+                    + "\n"
+                )
+            if user_prompt and user_prompt.strip():
+                system_prompt += (
+                    "\n【用户关注方向】\n"
+                    f"{user_prompt.strip()}\n"
+                )
+            system_prompt += "\n{format_instructions}"
+
+            start_llm = time.time()
+            batch_number = 0
+            successful_group_count = 0
+            failed_group_count = 0
+            completed_pair_count = 0
+            collected_relationships: List[Dict[str, Any]] = []
+            collected_keys = set(recent_recommended_keys).union(
+                existing_relationship_keys
+            )
+            new_cache_items: List[Dict[str, Any]] = []
+            debug_groups: List[Dict[str, Any]] = []
+            total_prompt_chars = 0
+            total_scoped_schema_chars = 0
+            last_group_error: Optional[Exception] = None
+
+            for group_index, group in enumerate(candidate_groups, start=1):
+                batch_number += 1
+                group_schema = MetadataRelationshipCandidateService.render_group_schema(
+                    group,
+                    relationship_table_index,
+                )
+                group_prompt = (
+                    f"这是候选关系组 {group_index}/{total_groups}。\n"
+                    "请完整判断 candidate_pairs 中的每个表对，并返回本组所有可靠关系。\n\n"
+                    f"{group_schema}"
+                )
+                total_prompt_chars += len(group_prompt)
+                total_scoped_schema_chars += len(group_schema)
+                compression_percent = max(
+                    0,
+                    int(
+                        100
+                        * (1 - len(group_schema) / max(len(schema_context), 1))
+                    ),
+                )
+                progress_percent = 10 + int(
+                    85 * successful_group_count / max(total_groups, 1)
+                )
                 await MetadataGeneratorService._emit_progress(
                     progress_callback,
                     phase="scanning",
-                    message=f"正在分析表结构 {anchor_table or '全部表'}",
+                    message=(
+                        f"正在推导候选关系组 {group_index}/{total_groups}，"
+                        f"本组 {len(group.pairs)} 个表对"
+                    ),
                     percent=progress_percent,
                     trace_id=trace_id,
-                    completed_units=anchor_index - 1,
-                    total_units=total_anchors,
-                    remaining_units=total_anchors - anchor_index + 1,
-                    unit_label="张表",
-                    current_item=anchor_table or "全部表",
+                    completed_units=successful_group_count,
+                    total_units=total_groups,
+                    remaining_units=total_groups - successful_group_count,
+                    unit_label="候选组",
+                    current_item=f"候选组 {group_index}/{total_groups}",
                     current_page=0,
                     batch_count=batch_number,
                     result_count=len(collected_relationships),
+                    candidate_pair_count=len(candidate_pairs),
+                    completed_pair_count=completed_pair_count,
+                    remaining_pair_count=len(candidate_pairs) - completed_pair_count,
+                )
+                logger.warning(
+                    "关系推荐开始请求候选组: trace_id=%s, dataset_id=%s, "
+                    "group=%s/%s, pair_count=%s, table_count=%s, "
+                    "full_schema_len=%s, scoped_schema_len=%s, "
+                    "compression_percent=%s, prompt_len=%s, collected=%s",
+                    trace_id,
+                    dataset_id,
+                    group_index,
+                    total_groups,
+                    len(group.pairs),
+                    len(group.table_names),
+                    len(schema_context),
+                    len(group_schema),
+                    compression_percent,
+                    len(group_prompt),
+                    len(collected_relationships),
                 )
 
-                if anchor_table and schema_table_names and not candidate_target_names:
-                    anchor_stop_reason = "no_remaining_target"
-                    logger.warning(
-                        "关系推荐锚定表无需重复扫描: trace_id=%s, dataset_id=%s, "
-                        "anchor=%s, anchor_index=%s, total_anchors=%s",
-                        trace_id,
-                        dataset_id,
-                        anchor_table,
-                        anchor_index,
-                        total_anchors,
+                group_started_at = time.time()
+                try:
+                    group_result = await MetadataGeneratorService._invoke_json(
+                        llm,
+                        RelationshipRecommendationResult,
+                        system_prompt,
+                        group_prompt,
                     )
-
-                while True:
-                    if anchor_stop_reason != "unknown":
-                        break
-                    page_number += 1
-                    batch_number += 1
-                    generated_exclusions = []
-                    for rel in collected_relationships[-200:]:
-                        generated_exclusions.append(
-                            f"- 已输出关系: {rel.get('source_table')} -> "
-                            f"{rel.get('target_table')} ({rel.get('condition')})"
-                        )
-
-                    batch_user_prompt = f"Schema 定义如下：\n\n{schema_context}"
-                    if anchor_table:
-                        batch_user_prompt += (
-                            f"\n\n【当前锚定表】{anchor_table}\n"
-                            "请尽可能完整地发现该锚定表的关系；source_table 或 target_table "
-                            "至少一个必须是当前锚定表。"
-                        )
-                        if candidate_target_names:
-                            batch_user_prompt += (
-                                "\n【本锚点允许关联的其它表】\n- "
-                                + "\n- ".join(candidate_target_names)
-                                + "\n除当前锚定表自身关系外，另一端必须来自以上列表；"
-                                "严禁输出已完成锚点方向的关系。"
-                            )
-                    if generated_exclusions:
-                        batch_user_prompt += (
-                            "\n\n【本次任务已输出关系，下一批严禁重复】\n"
-                            + "\n".join(generated_exclusions)
-                        )
-                    batch_user_prompt += (
-                        "\n\n请输出当前尚未覆盖的一批关系。"
-                        f"本批最多 {batch_size} 条；如果当前锚定表还有下一批，请将 has_more 设为 true。"
-                    )
-                    logger.warning(
-                        "关系推荐开始请求批次: trace_id=%s, dataset_id=%s, anchor=%s, "
-                        "page=%s, batch=%s, schema_len=%s, prompt_len=%s, "
-                        "cached_exclusions=%s, collected=%s",
-                        trace_id,
-                        dataset_id,
-                        anchor_table or "__all__",
-                        page_number,
-                        batch_number,
-                        len(schema_context),
-                        len(batch_user_prompt),
-                        len(recent_recommended_keys),
-                        len(collected_relationships),
-                    )
-
-                    try:
-                        batch_result = await MetadataGeneratorService._invoke_json(
-                            llm,
-                            RelationshipRecommendationBatchResult,
-                            system_prompt,
-                            batch_user_prompt,
-                        )
-                    except Exception as exc:
-                        # 已经拿到部分结果时返回部分成功，避免后续某一批异常导致全部结果丢失。
-                        if collected_relationships:
-                            stop_reason = "partial_batch_error"
-                            anchor_stop_reason = "partial_batch_error"
-                            logger.warning(
-                                "关系推荐第 %s 批解析失败，返回已汇总结果: trace_id=%s, "
-                                "anchor=%s, error=%s",
-                                batch_number,
-                                trace_id,
-                                anchor_table or "__all__",
-                                exc,
-                                exc_info=True,
-                            )
-                            break
-                        raise
-
-                    raw_relationships = (
-                        batch_result.get("relationships", [])
-                        if isinstance(batch_result, dict)
-                        else []
-                    )
-                    has_more = bool(batch_result.get("has_more")) if isinstance(batch_result, dict) else False
-                    logger.warning(
-                        "关系推荐收到批次结果: trace_id=%s, dataset_id=%s, anchor=%s, "
-                        "page=%s, batch=%s, raw_count=%s, has_more=%s",
-                        trace_id,
-                        dataset_id,
-                        anchor_table or "__all__",
-                        page_number,
-                        batch_number,
-                        len(raw_relationships),
-                        has_more,
-                    )
-
-                    batch_new_count = 0
-                    batch_duplicate_count = 0
-                    batch_invalid_count = 0
-                    batch_off_anchor_count = 0
-                    for rel in raw_relationships:
-                        pair_key = MetadataGeneratorService._relationship_pair_key(rel)
-                        if pair_key is None:
-                            batch_invalid_count += 1
-                            continue
-                        if anchor_table:
-                            src = (rel.get("source_table") or "").strip()
-                            tgt = (rel.get("target_table") or "").strip()
-                            if anchor_table not in {src, tgt}:
-                                batch_off_anchor_count += 1
-                                continue
-                            other_table = tgt if src == anchor_table else src
-                            if (
-                                candidate_target_names
-                                and other_table != anchor_table
-                                and other_table not in candidate_target_names
-                            ):
-                                batch_off_anchor_count += 1
-                                continue
-                        if pair_key in collected_keys:
-                            batch_duplicate_count += 1
-                            continue
-
-                        collected_keys.add(pair_key)
-                        collected_relationships.append(rel)
-                        new_cache_items.append({
-                            "source_table": rel.get("source_table"),
-                            "target_table": rel.get("target_table"),
-                            "condition": rel.get("condition"),
-                            "ts": time.time()
-                        })
-                        batch_new_count += 1
-
-                    # 连续两批新增不超过 1 条时认为结果已收敛，避免模型用重复项维持 has_more。
-                    if batch_new_count <= 1:
-                        stagnant_pages += 1
-                    else:
-                        stagnant_pages = 0
-
-                    # 兼容模型漏填 has_more 的情况：单批打满时继续请求下一批，直到空批次或收敛。
-                    should_continue = has_more or len(raw_relationships) >= batch_size
-                    if not raw_relationships:
-                        anchor_stop_reason = "empty_batch"
-                    elif batch_new_count == 0:
-                        anchor_stop_reason = "no_new_relationship"
-                    elif stagnant_pages >= max_stagnant_pages:
-                        anchor_stop_reason = "low_yield_converged"
-                    elif not should_continue:
-                        anchor_stop_reason = "has_more_false"
-                    elif page_number >= max_pages_per_anchor:
-                        anchor_stop_reason = "max_pages_per_anchor_reached"
-
-                    debug_batches.append({
-                        "anchor": anchor_table or "__all__",
-                        "page": page_number,
-                        "batch": batch_number,
-                        "raw_count": len(raw_relationships),
-                        "new_count": batch_new_count,
-                        "duplicate_count": batch_duplicate_count,
-                        "invalid_count": batch_invalid_count,
-                        "off_anchor_count": batch_off_anchor_count,
-                        "has_more": has_more,
-                        "should_continue": should_continue,
-                        "stagnant_pages": stagnant_pages,
-                        "stop_reason": anchor_stop_reason,
+                except Exception as exc:
+                    failed_group_count += 1
+                    last_group_error = exc
+                    debug_groups.append({
+                        "group": group_index,
+                        "pair_count": len(group.pairs),
+                        "status": "error",
+                        "error": str(exc),
                     })
                     logger.warning(
-                        "关系推荐批次完成: trace_id=%s, dataset_id=%s, anchor=%s, "
-                        "page=%s, batch=%s, batch_raw=%s, batch_new=%s, duplicate=%s, "
-                        "invalid=%s, off_anchor=%s, total=%s, has_more=%s, "
-                        "should_continue=%s, stop_reason=%s",
+                        "关系推荐候选组失败，继续后续分组: trace_id=%s, "
+                        "dataset_id=%s, group=%s/%s, pair_count=%s, error=%s",
                         trace_id,
                         dataset_id,
-                        anchor_table or "__all__",
-                        page_number,
-                        batch_number,
-                        len(raw_relationships),
-                        batch_new_count,
-                        batch_duplicate_count,
-                        batch_invalid_count,
-                        batch_off_anchor_count,
-                        len(collected_relationships),
-                        has_more,
-                        should_continue,
-                        anchor_stop_reason,
-                    )
-                    elapsed_seconds = max(time.time() - start_llm, 0.001)
-                    completed_for_eta = max(anchor_index - 1, 1)
-                    estimated_remaining_seconds = int(
-                        elapsed_seconds / completed_for_eta * (total_anchors - anchor_index + 1)
+                        group_index,
+                        total_groups,
+                        len(group.pairs),
+                        exc,
+                        exc_info=True,
                     )
                     await MetadataGeneratorService._emit_progress(
                         progress_callback,
-                        phase="scanning",
+                        phase="group_failed",
                         message=(
-                            f"表 {anchor_table or '全部表'} 第 {page_number} 批 AI 推导完成，"
-                            f"本批新增 {batch_new_count} 条候选关系"
+                            f"候选关系组 {group_index}/{total_groups} 失败，"
+                            "已记录并继续后续分组"
                         ),
-                        percent=progress_percent,
+                        percent=10 + int(
+                            85
+                            * successful_group_count
+                            / max(total_groups, 1)
+                        ),
                         trace_id=trace_id,
-                        completed_units=anchor_index - 1,
-                        total_units=total_anchors,
-                        remaining_units=total_anchors - anchor_index + 1,
-                        unit_label="张表",
-                        current_item=anchor_table or "全部表",
-                        current_page=page_number,
+                        completed_units=successful_group_count,
+                        total_units=total_groups,
+                        remaining_units=total_groups - successful_group_count,
+                        unit_label="候选组",
+                        current_item=f"候选组 {group_index}/{total_groups}",
+                        current_page=0,
                         batch_count=batch_number,
                         result_count=len(collected_relationships),
-                        estimated_remaining_seconds=estimated_remaining_seconds,
-                        stop_reason=(
-                            anchor_stop_reason
-                            if anchor_stop_reason != "unknown"
-                            else None
+                        candidate_pair_count=len(candidate_pairs),
+                        completed_pair_count=completed_pair_count,
+                        remaining_pair_count=(
+                            len(candidate_pairs) - completed_pair_count
                         ),
+                        stop_reason="partial_group_error",
                     )
+                    continue
 
-                    if anchor_stop_reason != "unknown":
-                        break
+                group_duration_ms = (time.time() - group_started_at) * 1000
+                successful_group_count += 1
+                completed_pair_count += len(group.pairs)
+                raw_relationships = (
+                    group_result.get("relationships", [])
+                    if isinstance(group_result, dict)
+                    else []
+                )
+                group_new_count = 0
+                group_duplicate_count = 0
+                rejection_reasons: List[str] = []
+                for relationship in raw_relationships:
+                    is_valid, rejection_reason = (
+                        MetadataRelationshipCandidateService.validate_relationship(
+                            relationship,
+                            group,
+                            relationship_table_index,
+                        )
+                    )
+                    if not is_valid:
+                        rejection_reasons.append(rejection_reason)
+                        continue
+                    relationship_key = MetadataGeneratorService._relationship_pair_key(
+                        relationship
+                    )
+                    if relationship_key is None:
+                        rejection_reasons.append("invalid_relationship_key")
+                        continue
+                    if relationship_key in collected_keys:
+                        group_duplicate_count += 1
+                        continue
+                    collected_keys.add(relationship_key)
+                    collected_relationships.append(relationship)
+                    new_cache_items.append({
+                        "source_table": relationship.get("source_table"),
+                        "target_table": relationship.get("target_table"),
+                        "condition": relationship.get("condition"),
+                        "ts": time.time(),
+                    })
+                    group_new_count += 1
 
-                if stop_reason == "partial_batch_error":
-                    break
+                rejection_counts = (
+                    MetadataRelationshipCandidateService.count_rejection_reasons(
+                        rejection_reasons
+                    )
+                )
+                debug_groups.append({
+                    "group": group_index,
+                    "pair_count": len(group.pairs),
+                    "table_count": len(group.table_names),
+                    "raw_count": len(raw_relationships),
+                    "new_count": group_new_count,
+                    "duplicate_count": group_duplicate_count,
+                    "rejection_counts": rejection_counts,
+                    "scoped_schema_len": len(group_schema),
+                    "compression_percent": compression_percent,
+                    "duration_ms": round(group_duration_ms, 2),
+                    "status": "completed",
+                })
+                logger.warning(
+                    "关系推荐候选组完成: trace_id=%s, dataset_id=%s, "
+                    "group=%s/%s, pair_count=%s, raw_count=%s, new_count=%s, "
+                    "duplicate_count=%s, rejected=%s, rejection_counts=%s, "
+                    "total=%s, duration_ms=%.2f",
+                    trace_id,
+                    dataset_id,
+                    group_index,
+                    total_groups,
+                    len(group.pairs),
+                    len(raw_relationships),
+                    group_new_count,
+                    group_duplicate_count,
+                    len(rejection_reasons),
+                    rejection_counts,
+                    len(collected_relationships),
+                    group_duration_ms,
+                )
 
-                completed_anchors = anchor_index
-                processed_anchor_count = completed_anchors
-                remaining_anchors = total_anchors - completed_anchors
+                remaining_groups = total_groups - successful_group_count
                 elapsed_seconds = max(time.time() - start_llm, 0.001)
                 estimated_remaining_seconds = int(
-                    elapsed_seconds / max(completed_anchors, 1) * remaining_anchors
+                    elapsed_seconds
+                    / max(batch_number, 1)
+                    * remaining_groups
                 )
                 await MetadataGeneratorService._emit_progress(
                     progress_callback,
-                    phase="anchor_completed",
+                    phase="group_completed",
                     message=(
-                        f"已完成表结构 {anchor_table or '全部表'}，"
-                        f"还剩 {remaining_anchors} 张表"
+                        f"候选关系组 {group_index}/{total_groups} 完成，"
+                        f"新增 {group_new_count} 条，剩余 {remaining_groups} 组"
                     ),
-                    percent=10 + int(85 * completed_anchors / max(total_anchors, 1)),
+                    percent=10 + int(
+                        85 * successful_group_count / max(total_groups, 1)
+                    ),
                     trace_id=trace_id,
-                    completed_units=completed_anchors,
-                    total_units=total_anchors,
-                    remaining_units=remaining_anchors,
-                    unit_label="张表",
-                    current_item=anchor_table or "全部表",
-                    current_page=page_number,
+                    completed_units=successful_group_count,
+                    total_units=total_groups,
+                    remaining_units=remaining_groups,
+                    unit_label="候选组",
+                    current_item=f"候选组 {group_index}/{total_groups}",
+                    current_page=0,
                     batch_count=batch_number,
                     result_count=len(collected_relationships),
                     estimated_remaining_seconds=estimated_remaining_seconds,
-                    stop_reason=anchor_stop_reason,
+                    candidate_pair_count=len(candidate_pairs),
+                    completed_pair_count=completed_pair_count,
+                    remaining_pair_count=len(candidate_pairs) - completed_pair_count,
                 )
 
-            if stop_reason == "unknown":
-                stop_reason = "all_anchors_scanned"
+            if total_groups and successful_group_count == 0 and last_group_error:
+                raise RuntimeError(
+                    f"全部 {total_groups} 个候选关系组均推导失败: {last_group_error}"
+                ) from last_group_error
 
+            stop_reason = (
+                "partial_group_error"
+                if failed_group_count
+                else "all_candidate_groups_scanned"
+            )
             duration_llm = (time.time() - start_llm) * 1000
-
-            # 5. Redis 写入 10 分钟缓存，并返回所有批次合并后的关系。
-            filtered_relationships = []
-            for rel in collected_relationships:
-                filtered_relationships.append(rel)
             result = {
-                "relationships": filtered_relationships,
+                "relationships": collected_relationships,
                 "_trace_id": trace_id,
                 "_batch_count": batch_number,
                 "_stop_reason": stop_reason,
@@ -1147,67 +1134,94 @@ class MetadataGeneratorService:
                     "schema_len": len(schema_context),
                     "schema_table_count": len(schema_table_names),
                     "schema_table_names_preview": schema_table_names[:30],
-                    "batch_size": batch_size,
-                    "batch_count": batch_number,
-                    "completed_anchor_count": processed_anchor_count,
-                    "remaining_anchor_count": total_anchors - processed_anchor_count,
+                    "possible_pair_count": possible_pair_count,
+                    "candidate_pair_count": len(candidate_pairs),
+                    "filtered_pair_count": possible_pair_count - len(candidate_pairs),
+                    "candidate_group_count": total_groups,
+                    "completed_group_count": successful_group_count,
+                    "failed_group_count": failed_group_count,
+                    "remaining_group_count": failed_group_count,
+                    "completed_pair_count": completed_pair_count,
+                    "remaining_pair_count": len(candidate_pairs) - completed_pair_count,
+                    "total_prompt_chars": total_prompt_chars,
+                    "total_scoped_schema_chars": total_scoped_schema_chars,
                     "stop_reason": stop_reason,
-                    "batches": debug_batches[-200:],
+                    "groups": debug_groups[-200:],
                 },
             }
 
             if redis_client and new_cache_items:
                 try:
-                    await redis_client.setex(
+                    await redis_client.set(
                         redis_key,
-                        600,
-                        json.dumps(new_cache_items, ensure_ascii=False)
+                        json.dumps(new_cache_items, ensure_ascii=False),
+                        ex=600,
                     )
                 except Exception as ex:
-                    logger.warning(f"Failed to cache recent relationship recommendations to Redis: {ex}")
+                    logger.warning(
+                        "关系推荐近期结果缓存失败: dataset_id=%s, error=%s",
+                        dataset_id,
+                        ex,
+                    )
 
-            # 6. Log Success
             logger.warning(
-                "关系推荐完成: trace_id=%s, dataset_id=%s, total=%s, batches=%s, "
-                "anchors=%s, stop_reason=%s, execution_time_ms=%.2f",
+                "关系推荐完成: trace_id=%s, dataset_id=%s, total=%s, "
+                "possible_pairs=%s, candidate_pairs=%s, groups=%s, "
+                "successful_groups=%s, failed_groups=%s, total_prompt_chars=%s, "
+                "stop_reason=%s, execution_time_ms=%.2f",
                 trace_id,
                 dataset_id,
-                len(filtered_relationships),
-                batch_number,
-                len(anchor_table_names),
+                len(collected_relationships),
+                possible_pair_count,
+                len(candidate_pairs),
+                total_groups,
+                successful_group_count,
+                failed_group_count,
+                total_prompt_chars,
                 stop_reason,
                 duration_llm,
             )
             await MetadataGeneratorService._save_trace_log(
-                trace_id, 4, "llm_success", result, execution_time=duration_llm
+                trace_id,
+                4,
+                "llm_success",
+                result,
+                execution_time=duration_llm,
             )
-            partial_interruption = stop_reason == "partial_batch_error"
+            partial_interruption = stop_reason == "partial_group_error"
             await MetadataGeneratorService._emit_progress(
                 progress_callback,
                 phase="interrupted" if partial_interruption else "completed",
                 message=(
-                    f"实体关系推荐中断，已保留 {len(filtered_relationships)} 条关系"
+                    f"实体关系推荐部分中断，已保留 {len(collected_relationships)} 条关系"
                     if partial_interruption
-                    else f"实体关系推荐完成，共生成 {len(filtered_relationships)} 条关系"
+                    else f"实体关系推荐完成，共生成 {len(collected_relationships)} 条关系"
                 ),
                 percent=(
-                    10 + int(85 * processed_anchor_count / max(total_anchors, 1))
+                    int(95 * successful_group_count / max(total_groups, 1))
                     if partial_interruption
                     else 100
                 ),
                 trace_id=trace_id,
-                completed_units=(processed_anchor_count if partial_interruption else total_anchors),
-                total_units=total_anchors,
-                remaining_units=(
-                    total_anchors - processed_anchor_count
+                completed_units=(
+                    successful_group_count
+                    if partial_interruption
+                    else total_groups
+                ),
+                total_units=total_groups,
+                remaining_units=(failed_group_count if partial_interruption else 0),
+                unit_label="候选组",
+                batch_count=batch_number,
+                result_count=len(collected_relationships),
+                estimated_remaining_seconds=(None if partial_interruption else 0),
+                stop_reason=stop_reason,
+                candidate_pair_count=len(candidate_pairs),
+                completed_pair_count=completed_pair_count,
+                remaining_pair_count=(
+                    len(candidate_pairs) - completed_pair_count
                     if partial_interruption
                     else 0
                 ),
-                unit_label="张表",
-                batch_count=batch_number,
-                result_count=len(filtered_relationships),
-                estimated_remaining_seconds=(None if partial_interruption else 0),
-                stop_reason=stop_reason,
             )
 
             return result
