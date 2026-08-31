@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, markRaw, type Component } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 import {
@@ -7,7 +7,21 @@ import {
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, uploadToWorkspaceDir, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
-import { ComputerDesktopIcon, FolderIcon } from '@heroicons/vue/24/outline'
+import {
+  ArrowPathIcon,
+  ArrowUpTrayIcon,
+  ChatBubbleLeftEllipsisIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  ComputerDesktopIcon,
+  DocumentTextIcon,
+  FolderIcon,
+  HomeIcon,
+  ListBulletIcon,
+  Squares2X2Icon,
+  TrashIcon,
+  XMarkIcon,
+} from '@heroicons/vue/24/outline'
 
 const LEGACY_RECENT_FILES_KEY = 'workspace_recent_files_v1'
 const LEGACY_BROWSER_PREFS_KEY = 'workspace_browser_prefs_v1'
@@ -60,6 +74,8 @@ const uploadTargetPath = ref('')
 const highlightedPath = ref('')
 const selectedPaths = ref<Set<string>>(new Set())
 const multiSelectMode = ref(false)
+type ViewMode = 'list' | 'grid'
+const viewMode = ref<ViewMode>('list')
 const listPage = ref(1)
 const recentFiles = ref<Array<{ path: string; name: string; mtime: number }>>([])
 const recentFilesOpen = ref(false)
@@ -1137,7 +1153,7 @@ const trashNavLink = computed(() => {
     key: 'trash',
     label: '回收站',
     path: `${userWorkspaceRoot.value}/.trash`,
-    icon: '🗑️',
+    icon: markRaw(TrashIcon),
   }
 })
 
@@ -1146,24 +1162,24 @@ const quickNavLinks = computed(() => {
     key: string
     label: string
     path: string
-    icon: string
+    icon: Component
     disabled?: boolean
     disabledTitle?: string
   }> = []
   if (userWorkspaceRoot.value) {
-    links.push({ key: 'home', label: '我的目录', path: userWorkspaceRoot.value, icon: '🏠' })
-    links.push({ key: 'docs', label: '我的文档', path: `${userWorkspaceRoot.value}/docs`, icon: '📄' })
+    links.push({ key: 'home', label: '我的目录', path: userWorkspaceRoot.value, icon: markRaw(HomeIcon) })
+    links.push({ key: 'docs', label: '我的文档', path: `${userWorkspaceRoot.value}/docs`, icon: markRaw(DocumentTextIcon) })
     if (props.conversationId) {
       links.push({
         key: 'session',
         label: '本会话目录',
         path: `${userWorkspaceRoot.value}/sessions/${props.conversationId}`,
-        icon: '💬',
+        icon: markRaw(ChatBubbleLeftEllipsisIcon),
         disabled: !props.sessionStarted,
         disabledTitle: '发送首条消息后会话目录才会创建',
       })
     }
-    links.push({ key: 'uploads', label: 'uploads', path: `${userWorkspaceRoot.value}/uploads`, icon: '📤' })
+    links.push({ key: 'uploads', label: 'uploads', path: `${userWorkspaceRoot.value}/uploads`, icon: markRaw(ArrowUpTrayIcon) })
   }
   return links
 })
@@ -1714,6 +1730,16 @@ onUnmounted(() => {
                       </svg>
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                    :disabled="loading || searchLoading"
+                    title="刷新当前目录"
+                    aria-label="刷新当前目录"
+                    @click="refreshDirectory()"
+                  >
+                    <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
+                  </button>
                   <label
                     class="inline-flex items-center gap-1 shrink-0 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer select-none"
                     title="搜索时是否包含子目录"
@@ -1776,7 +1802,33 @@ onUnmounted(() => {
                 </div>
 
                 <div class="flex-1 min-h-[240px] border border-gray-100 dark:border-gray-800 rounded-xl overflow-hidden flex flex-col relative bg-gray-50/10">
-                  <div class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-black text-gray-400 tracking-wider shrink-0">
+                  <div class="flex items-center justify-start border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+                    <div class="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-gray-700 dark:bg-gray-900" role="group" aria-label="文件视图">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold transition-colors"
+                        :class="viewMode === 'list' ? 'bg-primary/10 text-primary' : 'text-gray-500 hover:text-primary'"
+                        title="切换到列表视图"
+                        aria-label="切换到列表视图"
+                        @click="viewMode = 'list'"
+                      >
+                        <ListBulletIcon class="h-3.5 w-3.5" aria-hidden="true" />
+                        列表
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold transition-colors"
+                        :class="viewMode === 'grid' ? 'bg-primary/10 text-primary' : 'text-gray-500 hover:text-primary'"
+                        title="切换到文件夹视图"
+                        aria-label="切换到文件夹视图"
+                        @click="viewMode = 'grid'"
+                      >
+                        <Squares2X2Icon class="h-3.5 w-3.5" aria-hidden="true" />
+                        文件夹
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="viewMode === 'list'" class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-black text-gray-400 tracking-wider shrink-0">
                     <div v-if="multiSelectMode" class="col-span-1" aria-hidden="true" />
                     <button
                       type="button"
@@ -1831,7 +1883,7 @@ onUnmounted(() => {
                     </div>
                   </div>
 
-                  <div class="flex-1 overflow-y-auto custom-scrollbar p-1 pb-16 min-h-0" @contextmenu="handleListContextMenu">
+                  <div v-if="viewMode === 'list'" class="flex-1 overflow-y-auto custom-scrollbar p-1 pb-16 min-h-0" @contextmenu="handleListContextMenu">
                     <div v-if="displayItems.length === 0 && !searchLoading" class="h-full flex flex-col items-center justify-center text-gray-400 py-12 px-4">
                       <span class="text-4xl mb-2">{{ isRecursiveListingActive || isSearchActive ? '🔍' : '📂' }}</span>
                       <span class="text-xs font-bold">{{ displayEmptyHint }}</span>
@@ -2028,6 +2080,55 @@ onUnmounted(() => {
                     </div>
                   </div>
 
+                  <div v-else class="flex-1 overflow-y-auto custom-scrollbar p-2 pb-16 min-h-0" @contextmenu="handleListContextMenu">
+                    <div v-if="displayItems.length === 0 && !searchLoading" class="h-full flex flex-col items-center justify-center text-gray-400 py-12 px-4">
+                      <span class="text-4xl mb-2">{{ isRecursiveListingActive || isSearchActive ? '🔍' : '📂' }}</span>
+                      <span class="text-xs font-bold">{{ displayEmptyHint }}</span>
+                    </div>
+                    <div v-else class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <div
+                        v-for="item in paginatedDisplayItems"
+                        :key="item.path"
+                        class="group min-w-0 cursor-pointer rounded-xl border border-gray-100 bg-white p-2.5 transition-all hover:border-primary/30 hover:bg-primary/5 dark:border-gray-800 dark:bg-gray-900/40"
+                        :class="selectedItem?.path === item.path || selectedPaths.has(item.path) || highlightedPath === item.path ? 'border-primary/40 bg-primary/10 ring-1 ring-primary/20' : ''"
+                        @click="multiSelectMode ? toggleMultiSelect(item) : handleRowClick(item)"
+                        @dblclick="handleDoubleClick(item)"
+                        @contextmenu="handleItemContextMenu($event, item)"
+                        @touchstart.passive="handleTouchStart($event, item)"
+                        @touchend="handleTouchEnd"
+                        @touchmove="handleTouchEnd"
+                      >
+                        <div class="flex items-start justify-between gap-1">
+                          <div
+                            class="flex h-10 w-10 items-center justify-center rounded-lg text-lg"
+                            :class="[getRowVisual(item).iconBg, getRowVisual(item).iconRing]"
+                          >
+                            {{ getRowVisual(item).icon }}
+                          </div>
+                          <input
+                            v-if="multiSelectMode"
+                            type="checkbox"
+                            class="mt-1 rounded border-gray-300 text-primary"
+                            :checked="selectedPaths.has(item.path)"
+                            @click.stop="toggleMultiSelect(item)"
+                          >
+                        </div>
+                        <div class="mt-2 truncate text-xs font-bold text-gray-700 dark:text-gray-200" :title="resolveItemDisplayName(item)">
+                          {{ resolveItemDisplayName(item) }}
+                        </div>
+                        <div class="mt-1 flex items-center justify-between gap-1 text-[9px] text-gray-400">
+                          <span class="truncate">{{ item.is_dir ? '文件夹' : formatSize(item.size) }}</span>
+                          <span v-if="isRecursiveListingActive" class="max-w-[55%] truncate" :title="item.path">{{ getItemLocationHint(item.path) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="hasMoreListItems" class="py-3 text-center">
+                      <button type="button" class="text-[10px] font-bold text-primary hover:opacity-80" @click="loadMoreListItems">
+                        加载更多 ({{ paginatedDisplayItems.length }}/{{ sortedDisplayItems.length }})
+                      </button>
+                    </div>
+                  </div>
+
                   <div class="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2 pointer-events-none">
                     <button
                       v-if="multiSelectMode && selectedPaths.size > 0"
@@ -2047,28 +2148,8 @@ onUnmounted(() => {
                       :aria-label="multiSelectMode ? '取消多选' : '多选'"
                       @click="toggleMultiSelectMode"
                     >
-                      <svg
-                        v-if="multiSelectMode"
-                        class="h-5 w-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      <svg
-                        v-else
-                        class="h-5 w-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 11H5a2 2 0 00-2 2v6a2 2 0 002 2h6a2 2 0 002-2v-4" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7h4a2 2 0 012 2v6" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2" />
-                      </svg>
+                      <XMarkIcon v-if="multiSelectMode" class="h-5 w-5" aria-hidden="true" />
+                      <CheckCircleIcon v-else class="h-5 w-5" aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -2109,7 +2190,7 @@ onUnmounted(() => {
         :aria-disabled="link.disabled ? 'true' : undefined"
         @click="handleQuickNavClick(link)"
       >
-        <span class="shrink-0">{{ link.icon }}</span>
+        <component :is="link.icon" class="h-5 w-5 shrink-0" aria-hidden="true" />
         <span class="truncate flex-1">{{ link.label }}</span>
         <span
           v-if="isQuickLinkActive(link.path) && !link.disabled"
@@ -2123,7 +2204,7 @@ onUnmounted(() => {
         class="w-full px-3 py-2 text-left flex items-center gap-2 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
         @click="openRecentFilesFromQuickNav"
       >
-        <span class="shrink-0">🕒</span>
+        <ClockIcon class="h-5 w-5 shrink-0" aria-hidden="true" />
         <span class="truncate flex-1">最近文件</span>
         <svg class="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
@@ -2139,7 +2220,7 @@ onUnmounted(() => {
           : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'"
         @click="handleQuickNavClick(trashNavLink)"
       >
-        <span class="shrink-0">{{ trashNavLink.icon }}</span>
+        <component :is="trashNavLink.icon" class="h-5 w-5 shrink-0" aria-hidden="true" />
         <span class="truncate flex-1">{{ trashNavLink.label }}</span>
         <span v-if="isTrashView" class="text-[9px] font-bold text-primary/70">当前</span>
       </button>

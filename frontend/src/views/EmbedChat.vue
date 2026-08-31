@@ -865,7 +865,7 @@
                 :can-regenerate="msg === lastAgentMessage && !isProcessing"
                 @regenerate="regenerate"
               />
-              <div class="hidden sm:block">
+              <div class="hidden sm:block shrink-0">
                 <MessageActionMenus
                   mode="data"
                   :has-conversation-data-file="hasConversationDataFile"
@@ -907,8 +907,8 @@
                   <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.completion_tokens || 0 }}</span>
                 </span>
               </button>
-              <!-- 反馈与 ChatBI 扩展操作（靠右对齐） -->
-              <div class="flex items-center space-x-1 ml-auto">
+              <!-- 反馈与 ChatBI 扩展操作（保持完整宽度，随操作栏滚动） -->
+              <div class="flex shrink-0 items-center space-x-1">
                 <template v-if="!hideEmbedLikeDislike">
                 <button
                   @click="handleFeedback(msg, 'up')"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue"
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue"
 import { ShareIcon } from "@heroicons/vue/24/outline"
 
 const props = withDefaults(defineProps<{
@@ -48,6 +48,9 @@ const emit = defineEmits<{
 
 const openMenu = ref<"data" | "more" | null>(null)
 const root = ref<HTMLElement | null>(null)
+const moreButton = ref<HTMLButtonElement | null>(null)
+const moreMenu = ref<HTMLElement | null>(null)
+const moreMenuStyle = ref<Record<string, string>>({})
 
 const hasReusableResult = computed(() => Boolean(props.reusableCount && props.reusableCount > 0))
 const hasReusableResultEntry = computed(() => Boolean(hasReusableResult.value || props.hasConversationReusableResult))
@@ -64,35 +67,74 @@ const hasMore = computed(() => Boolean(
 ))
 
 const closeOnOutside = (event: PointerEvent) => {
-  if (openMenu.value && !root.value?.contains(event.target as Node)) openMenu.value = null
+  const target = event.target as Node
+  if (openMenu.value && !root.value?.contains(target) && !moreMenu.value?.contains(target)) openMenu.value = null
 }
 const closeOnEscape = (event: KeyboardEvent) => {
   if (event.key === "Escape") openMenu.value = null
 }
+const repositionMoreMenu = async () => {
+  if (openMenu.value !== "more" || !moreButton.value) return
+  const buttonRect = moreButton.value.getBoundingClientRect()
+  const menuWidth = Math.min(192, Math.max(0, window.innerWidth - 16))
+  const left = Math.min(
+    Math.max(8, buttonRect.right - menuWidth),
+    Math.max(8, window.innerWidth - menuWidth - 8),
+  )
+
+  moreMenuStyle.value = {
+    position: "fixed",
+    left: `${left}px`,
+    top: "8px",
+    width: `${menuWidth}px`,
+    visibility: "hidden",
+  }
+  await nextTick()
+
+  const menuRect = moreMenu.value?.getBoundingClientRect()
+  const menuHeight = menuRect?.height ?? 0
+  let top = buttonRect.top - menuHeight - 8
+  if (top < 8) top = buttonRect.bottom + 8
+  if (top + menuHeight > window.innerHeight - 8) top = Math.max(8, window.innerHeight - menuHeight - 8)
+  moreMenuStyle.value = {
+    position: "fixed",
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${menuWidth}px`,
+    maxHeight: "calc(100vh - 16px)",
+    overflowY: "auto",
+  }
+}
 const toggle = (menu: "data" | "more") => {
   openMenu.value = openMenu.value === menu ? null : menu
+  if (openMenu.value === "more") void repositionMoreMenu()
 }
 const run = (action: () => void) => {
   openMenu.value = null
+  moreMenuStyle.value = {}
   action()
 }
 
 onMounted(() => {
   document.addEventListener("pointerdown", closeOnOutside)
   document.addEventListener("keydown", closeOnEscape)
+  window.addEventListener("resize", repositionMoreMenu)
+  window.addEventListener("scroll", repositionMoreMenu, true)
 })
 onUnmounted(() => {
   document.removeEventListener("pointerdown", closeOnOutside)
   document.removeEventListener("keydown", closeOnEscape)
+  window.removeEventListener("resize", repositionMoreMenu)
+  window.removeEventListener("scroll", repositionMoreMenu, true)
 })
 </script>
 
 <template>
-  <div ref="root" class="flex items-center gap-1.5">
+  <div ref="root" class="flex shrink-0 items-center gap-1.5">
     <div v-if="(mode === 'data' || mode === 'both')" class="relative">
       <button
         type="button"
-        class="flex min-h-8 shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+        class="flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[11px] text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
         :class="[
           { 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200': openMenu === 'data' },
           !hasDataFile ? 'cursor-not-allowed opacity-60 hover:bg-transparent hover:text-gray-500 dark:hover:bg-transparent dark:hover:text-gray-400' : '',
@@ -135,8 +177,9 @@ onUnmounted(() => {
     </template>
     <template v-if="mode === 'more' || mode === 'both'">
       <div v-if="hasMore" class="relative" :class="{ 'sm:hidden': showDataOnMobile && !hasDesktopMore }">
-        <button type="button" class="flex min-h-8 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200" :class="{ 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200': openMenu === 'more' }" :aria-expanded="openMenu === 'more'" aria-haspopup="menu" title="更多操作" @click="toggle('more')">⋯ 更多</button>
-        <div v-if="openMenu === 'more'" class="absolute bottom-full right-0 z-50 mb-2 w-48 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl dark:border-gray-700 dark:bg-gray-900" role="menu">
+        <button ref="moreButton" type="button" class="flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200" :class="{ 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200': openMenu === 'more' }" :aria-expanded="openMenu === 'more'" aria-haspopup="menu" title="更多操作" @click="toggle('more')">⋯ 更多</button>
+        <Teleport to="body">
+          <div v-if="openMenu === 'more'" ref="moreMenu" :style="moreMenuStyle" class="z-[120] rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl dark:border-gray-700 dark:bg-gray-900" role="menu">
           <div v-if="hasMobileDataMenu" class="sm:hidden">
             <div v-if="hasDataFile" class="flex items-center gap-1 px-2.5 py-2 text-[10px] font-semibold text-gray-400 dark:text-gray-500">
               <span>▤ 数据 / 文件</span>
@@ -152,7 +195,8 @@ onUnmounted(() => {
           <button v-if="hasTrace" type="button" class="menu-item flex items-center gap-1.5 whitespace-nowrap" role="menuitem" @click="run(() => emit('openTrace'))"><ShareIcon class="h-4 w-4 shrink-0 text-gray-500" /> 查看执行链路</button>
           <button v-if="hasTokenStats" type="button" class="menu-item" role="menuitem" @click="run(() => emit('openStats'))">▤ 查看调用详情</button>
           <button v-if="canSaveReport" type="button" class="menu-item" role="menuitem" @click="run(() => emit('saveReport'))">☆ 添加固化报表</button>
-        </div>
+          </div>
+        </Teleport>
       </div>
     </template>
   </div>
