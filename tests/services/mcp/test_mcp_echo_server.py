@@ -4,6 +4,7 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from app.services.mcp import echo_server
 from app.services.mcp.echo_server import (
     build_echo_diagnostics,
     echo_mcp,
@@ -13,6 +14,39 @@ from app.services.mcp.user_context_assertion import issue_user_assertion
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_echo_transport_security_uses_public_url_host_and_origin():
+    security = echo_server.build_echo_transport_security("http://103.79.25.80:8001")
+
+    assert security is not None
+    assert security.enable_dns_rebinding_protection is True
+    assert security.allowed_hosts == ["103.79.25.80:8001"]
+    assert security.allowed_origins == ["http://103.79.25.80:8001"]
+
+
+def test_echo_transport_security_supports_https_domain_without_port():
+    security = echo_server.build_echo_transport_security("https://mcp.example.com/")
+
+    assert security is not None
+    assert security.allowed_hosts == ["mcp.example.com"]
+    assert security.allowed_origins == ["https://mcp.example.com"]
+
+
+@pytest.mark.parametrize("public_url", ["", "not-a-url", "ftp://mcp.example.com", "https:///missing-host"])
+def test_echo_transport_security_ignores_invalid_public_url(public_url):
+    assert echo_server.build_echo_transport_security(public_url) is None
+
+
+def test_echo_base_url_prefers_valid_public_url_and_falls_back_for_invalid_url():
+    assert echo_server.resolve_echo_base_url(
+        "http://proxy.internal:8001/",
+        "https://mcp.example.com/",
+    ) == "https://mcp.example.com"
+    assert echo_server.resolve_echo_base_url(
+        "http://proxy.internal:8001/",
+        "not-a-url",
+    ) == "http://proxy.internal:8001"
 
 
 def _server(**overrides):

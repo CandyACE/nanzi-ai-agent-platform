@@ -47,6 +47,12 @@ def test_main_mounts_echo_streamable_http_mcp():
     assert "async with echo_mcp_lifespan()" in source
 
 
+def test_echo_transport_security_reads_app_public_url():
+    source = Path("app/services/mcp/echo_server.py").read_text(encoding="utf-8")
+
+    assert "transport_security=build_echo_transport_security(settings.APP_PUBLIC_URL)" in source
+
+
 @pytest.mark.asyncio
 async def test_echo_creation_is_admin_only_and_returns_no_credentials():
     db = MagicMock()
@@ -77,6 +83,28 @@ async def test_echo_creation_is_admin_only_and_returns_no_credentials():
     assert any(isinstance(item, McpServer) for item in added)
     assert any(isinstance(item, McpToolCache) and item.is_published for item in added)
     assert manager.encrypt_api_key.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_echo_creation_prefers_configured_app_public_url():
+    db = MagicMock()
+    db.execute = AsyncMock(
+        return_value=SimpleNamespace(scalar_one_or_none=lambda: None)
+    )
+    db.commit = AsyncMock()
+    manager = MagicMock()
+    manager.encrypt_api_key.return_value = "encrypted-value"
+
+    with patch.object(mcp.settings, "APP_PUBLIC_URL", "https://mcp.example.com/"), patch.object(
+        mcp, "get_api_key_manager", return_value=manager
+    ), patch.object(mcp, "_clear_runtime_tool_cache"):
+        response = await mcp.create_echo_test_mcp(
+            SimpleNamespace(base_url="http://proxy.internal:8001/"),
+            db,
+            {"role": "admin"},
+        )
+
+    assert response.sse_url == "https://mcp.example.com/mcp/echo/mcp"
 
 
 @pytest.mark.asyncio

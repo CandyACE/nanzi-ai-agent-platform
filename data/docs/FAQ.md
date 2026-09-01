@@ -1340,6 +1340,13 @@ NanZi 登录用户
 
 管理员在【MCP 管理】的【平台 MCP】页点击【创建 Echo 测试 MCP】即可创建平台级测试服务。Echo MCP 默认包含一个已发布的 `echo` 工具，所有有权限的智能体都可以按现有方式挂载和调用。重复点击是幂等操作，不会轮换既有凭证。
 
+生产环境使用 Docker 部署时，需要在 `.env` 中配置平台公网 Origin，例如
+`APP_PUBLIC_URL=https://your-domain.example.com`。Compose 会将它传入 API 容器，Echo MCP
+启动时自动据此配置 Host/Origin 白名单并生成 MCP 地址。若出现 `421 Invalid Host header`，
+请确认容器内能读取该变量、反向代理转发的 Host 与公网地址一致，并重新创建容器；已有 Echo
+配置还需要重新点击一次“创建 Echo 测试 MCP”同步地址。测试页面不需要填写
+`request.base_url` 或 `allowed_hosts`。
+
 调用结果会返回“已收到”和以下安全诊断：
 
 | 诊断字段 | 含义 |

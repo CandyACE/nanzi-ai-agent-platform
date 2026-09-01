@@ -12,6 +12,35 @@ NanZi 内置 Echo 测试 MCP 用来验证一条真实的智能体 MCP 调用链�
 
 Echo MCP 的固定 `Authorization: Bearer <Token>` 和 Ed25519 签名私钥均由系统自动生成并加密保存，用户不需要填写、复制或维护它们。
 
+## 部署地址与生产环境配置
+
+Echo MCP 使用 MCP SDK 的 DNS rebinding 防护校验请求的 `Host` 和 `Origin`。生产环境必须让后端知道平台对外访问地址，推荐在 Docker Compose 的 `.env` 中配置：
+
+```dotenv
+APP_PUBLIC_URL=http://103.79.25.80:8001
+# 或：APP_PUBLIC_URL=https://your-domain.example.com
+```
+
+两个 Docker Compose 文件都会把该变量传入 API 容器。应用启动时会自动将地址中的 Host 加入 `allowed_hosts`，将完整 Origin 加入 `allowed_origins`，不需要在测试页面填写 `request.base_url` 或 `allowed_hosts`。
+
+如果没有配置 `APP_PUBLIC_URL`，本地开发会继续使用当前请求地址，并保留 `localhost` 默认白名单。修改 Compose 环境变量后必须重新创建或重启 API 容器；已有 Echo 配置还需要回到【MCP 管理】点击一次【创建 Echo 测试 MCP】，更新数据库中的 `sse_url`。
+
+### 生产环境常见错误
+
+如果日志出现：
+
+```text
+HTTP/1.1 421 Misdirected Request
+Invalid Host header
+```
+
+说明请求还没有进入 Echo 工具或 UserContext 验签逻辑，而是在 Host 校验阶段被拒绝。请依次检查：
+
+1. `docker exec nanzi-ai-agent env | grep APP_PUBLIC_URL` 是否能看到公网地址；
+2. `APP_PUBLIC_URL` 是否只包含协议、域名和可选端口，不包含 `/api` 或 `/mcp/echo/mcp` 路径；
+3. 反向代理转发的 `Host` 是否与公网地址一致；
+4. 修改配置后是否重新创建容器，并重新点击创建 Echo 测试 MCP。
+
 ## 二、挂载和调用
 
 Echo MCP 是 `scope=global` 的平台 MCP，沿用现有 MCP 工具挂载机制：

@@ -19,6 +19,8 @@ services:
       # Service Config
       - API_SERVICE_ENV=${API_SERVICE_ENV:-prod}
       - API_SERVICE_LOG_LEVEL=${API_SERVICE_LOG_LEVEL:-INFO}
+      # 平台公网访问地址；Echo MCP 会据此生成访问地址和 Host/Origin 白名单
+      - APP_PUBLIC_URL=${APP_PUBLIC_URL:-}
       # 宿主机数据目录真实物理路径（DooD 沙箱容器挂载对齐，留空则自动按容器工作区解析）
       - HOST_DATA_DIR=${HOST_DATA_DIR:-}
       # 业务默认时区（与系统配置 platform_timezone 默认值一致）

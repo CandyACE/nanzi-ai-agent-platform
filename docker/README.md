@@ -40,6 +40,9 @@ vim .env
 API_SERVICE_ENV=prod                    # 环境: dev/prod
 API_SERVICE_LOG_LEVEL=INFO              # 日志级别
 
+# 平台公网访问地址（生产部署建议填写，Echo MCP 会用它生成地址并校验 Host）
+APP_PUBLIC_URL=https://your-domain.example.com
+
 # 平台主数据库类型：mysql（默认），也可设置为 postgresql
 DATABASE_TYPE=mysql
 
@@ -337,6 +340,23 @@ docker exec nanzi-ai-agent python -c "from app.core.database import engine; prin
 1. 确认 `.env` 中配置了 `ENCRYPTION_KEY`
 2. 确认 docker-compose 文件中传递了该环境变量
 3. 重新生成 API Key：`python scripts/create_admin_key.py`
+
+### 问题 4: Echo MCP 返回 `421 Invalid Host header`
+
+**原因**: Echo MCP 启用了 MCP SDK 的 DNS rebinding 防护，但容器没有收到正确的
+`APP_PUBLIC_URL`，因此公网请求的 Host 不在允许列表中。常见表现是本地
+`localhost` 测试成功，生产公网 IP 或域名测试失败。
+
+**解决方法**:
+1. 在 Docker 目录的 `.env` 中填写平台对外 Origin，不要填写 API 路径：
+   `APP_PUBLIC_URL=http://103.79.25.80:8001` 或 `APP_PUBLIC_URL=https://your-domain.example.com`
+2. 确认使用的 Compose 文件包含 `APP_PUBLIC_URL=${APP_PUBLIC_URL:-}`，并重新创建 API 容器：
+   `docker-compose -f docker-compose.ai-agent.yml up -d --force-recreate`
+3. 检查变量确实进入容器：`docker exec nanzi-ai-agent env | grep APP_PUBLIC_URL`
+4. 回到【MCP 管理】点击一次【创建 Echo 测试 MCP】，让数据库中的 Echo 地址同步为公网地址。
+
+不要在测试页面填写 `request.base_url` 或 `allowed_hosts`；前者由后端自动回退生成，后者由
+服务端根据 `APP_PUBLIC_URL` 自动配置。
 
 ## 生产环境部署建议
 

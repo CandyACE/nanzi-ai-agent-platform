@@ -8,11 +8,14 @@ import uuid
 from contextlib import asynccontextmanager
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import jwt
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.models.mcp import McpServer
 from app.services.mcp.mcp_auth_policy import (
     load_mcp_private_key,
@@ -27,6 +30,63 @@ ECHO_TOOL_NAME = f"{ECHO_SERVER_NAME}:echo"
 ECHO_TOOL_DESCRIPTION = "验证 MCP 请求是否收到，以及 NanZi 用户身份断言是否验签成功。"
 _USER_CONTEXT_FIELDS = ("user_id", "user_name", "real_name", "dept_code", "org_path")
 _AGENT_CONTEXT_FIELDS = ("agent_id", "agent_version_id", "agent_name")
+
+
+def _parse_public_url(public_url: str | None) -> tuple[str, str] | None:
+    """解析平台公网 Origin，返回 (origin, host[:port])。"""
+    value = str(public_url or "").strip()
+    if not value:
+        return None
+
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    if (
+        parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/")
+    ):
+        return None
+
+    try:
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+
+    hostname = hostname.lower()
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    host_with_port = f"{host}:{port}" if port is not None else host
+    origin = f"{parsed.scheme.lower()}://{host_with_port}"
+    return origin, host_with_port
+
+
+def build_echo_transport_security(
+    public_url: str | None,
+) -> TransportSecuritySettings | None:
+    """根据公网地址构造 Echo MCP 的 DNS rebinding 防护配置。"""
+    parsed = _parse_public_url(public_url)
+    if parsed is None:
+        return None
+
+    origin, host = parsed
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[host],
+        allowed_origins=[origin],
+    )
+
+
+def resolve_echo_base_url(request_base_url: str, public_url: str | None) -> str:
+    """优先使用有效 APP_PUBLIC_URL，否则回退到当前请求地址。"""
+    parsed = _parse_public_url(public_url)
+    if parsed is not None:
+        return parsed[0]
+    return str(request_base_url).rstrip("/")
 
 
 def _mask_secret(value: str | None, *, prefix_length: int = 6, suffix_length: int = 6) -> str | None:
@@ -202,6 +262,7 @@ echo_mcp = FastMCP(
     streamable_http_path="/mcp",
     json_response=True,
     stateless_http=True,
+    transport_security=build_echo_transport_security(settings.APP_PUBLIC_URL),
 )
 
 

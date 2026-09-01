@@ -8,6 +8,7 @@ import time
 import logging
 import secrets
 
+from app.core.config import settings
 from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.models.mcp import McpServer, McpToolCache
@@ -21,6 +22,7 @@ from app.services.mcp.echo_server import (
     ECHO_TOOL_NAME,
     ECHO_TOOL_DESCRIPTION,
     echo_tool_schema,
+    resolve_echo_base_url,
 )
 from app.utils.encryption import get_api_key_manager
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -316,7 +318,7 @@ async def create_echo_test_mcp(
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有系统管理员才能创建 Echo 测试 MCP")
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = resolve_echo_base_url(str(request.base_url), settings.APP_PUBLIC_URL)
     echo_url = f"{base_url}/mcp/echo/mcp"
     manager = get_api_key_manager()
     server = (

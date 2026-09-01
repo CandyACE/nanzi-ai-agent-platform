@@ -27,6 +27,13 @@ cp ../env.example .env
 vim .env
 ```
 
+For a public deployment, set the platform origin in `.env`. Echo MCP uses it to build its public
+endpoint and its Host/Origin allowlist:
+
+```dotenv
+APP_PUBLIC_URL=https://your-domain.example.com
+```
+
 Use host IP instead of `localhost` for MySQL/Redis from inside the container. On Mac/Windows you can use `host.docker.internal`.
 
 If the platform container will use the `docker` sandbox policy, configure DooD before starting:
@@ -118,5 +125,6 @@ docker logs -f nanzi-ai-agent
 | Build seems stuck | Often pulling images / first cross-build; check `docker stats` |
 | Container exits immediately | Check `.env` DB/Redis host (not `localhost`) |
 | API Key auth fails | Set `ENCRYPTION_KEY` in `.env` |
+| Echo MCP returns `421 Invalid Host header` | Set `APP_PUBLIC_URL` to the public origin, recreate the API container, then click **Create Echo Test MCP** once to refresh its stored endpoint. |
 
 Chinese version: [README.md](README.md)
