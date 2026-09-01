@@ -228,6 +228,8 @@ const syncLogTaskId = ref<string | null>(null)
 const syncLogStatus = ref<'running' | 'completed' | 'failed' | 'disconnected'>('running')
 const syncLogStage = ref('queued')
 const syncLogProgress = ref<number | null>(0)
+const syncLogCompletedDocuments = ref<number | null>(null)
+const syncLogTotalDocuments = ref<number | null>(null)
 const syncLogElapsedMs = ref(0)
 const syncLogMessage = ref('正在连接同步日志...')
 const syncLogEntries = ref<Array<{ event: string; stage: string; message: string; progress?: number | null; elapsed_ms?: number; error_detail?: string }>>([])
@@ -949,6 +951,8 @@ const readSyncLog = async (datasetId: number, taskId: string) => {
       syncLogStage.value = item.stage || syncLogStage.value
       syncLogMessage.value = item.message || syncLogMessage.value
       syncLogProgress.value = item.progress ?? syncLogProgress.value
+      syncLogCompletedDocuments.value = item.completed_documents ?? syncLogCompletedDocuments.value
+      syncLogTotalDocuments.value = item.total_documents ?? syncLogTotalDocuments.value
       syncLogElapsedMs.value = item.elapsed_ms ?? syncLogElapsedMs.value
       if (item.event === 'completed' || item.event === 'failed') {
         terminalReceived = true
@@ -994,6 +998,8 @@ const confirmSync = async () => {
       syncLogStatus.value = 'running'
       syncLogStage.value = 'queued'
       syncLogProgress.value = 0
+      syncLogCompletedDocuments.value = null
+      syncLogTotalDocuments.value = null
       syncLogElapsedMs.value = 0
       syncLogMessage.value = '同步任务已开始'
       syncLogEntries.value = []
@@ -3316,6 +3322,10 @@ relationships:
           <div class="flex items-center justify-between text-xs">
             <span class="text-gray-500">当前阶段</span>
             <span class="text-gray-800 font-medium">{{ syncLogStage }}</span>
+          </div>
+          <div v-if="syncLogTotalDocuments !== null" class="flex items-center justify-between text-xs">
+            <span class="text-gray-500">文档进度</span>
+            <span class="text-gray-800 font-semibold">已完成 {{ syncLogCompletedDocuments ?? 0 }} / {{ syncLogTotalDocuments }} 个文档</span>
           </div>
           <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
             <div class="h-full bg-blue-500 transition-all duration-300" :style="{ width: `${syncLogProgress ?? 0}%` }"></div>

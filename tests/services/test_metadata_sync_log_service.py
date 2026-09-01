@@ -99,3 +99,22 @@ async def test_terminal_event_updates_task_status():
 
     state = await service.get_task(task.task_id)
     assert state["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_publish_preserves_document_progress_counts():
+    service = MetadataSyncLogService(FakeRedis())
+    task = await service.create_task(dataset_id=17)
+
+    event = await service.publish(
+        task.task_id,
+        event="progress",
+        stage="documents",
+        message="已同步文档：orders.txt",
+        progress=55,
+        completed_documents=3,
+        total_documents=8,
+    )
+
+    assert event["completed_documents"] == 3
+    assert event["total_documents"] == 8

@@ -81,6 +81,8 @@ class MetadataSyncLogService:
         stage: str,
         message: str,
         progress: int | None = None,
+        completed_documents: int | None = None,
+        total_documents: int | None = None,
         error_detail: str | None = None,
     ) -> dict[str, Any]:
         if event in self.TERMINAL_EVENTS and stage != event:
@@ -100,6 +102,8 @@ class MetadataSyncLogService:
             "stage": stage,
             "message": message,
             "progress": progress,
+            "completed_documents": completed_documents,
+            "total_documents": total_documents,
             "elapsed_ms": elapsed_ms,
         }
         if error_detail:

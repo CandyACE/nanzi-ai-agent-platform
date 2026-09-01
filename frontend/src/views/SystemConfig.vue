@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
@@ -1381,6 +1381,72 @@ const findConfigItemByKey = (key: string): ConfigItem | null => {
   return null
 }
 
+type RagflowConnectionResult = {
+  status: 'success' | 'error'
+  message: string
+  datasetCount?: number
+}
+
+const ragflowConnectionTesting = ref(false)
+const ragflowConnectionResult = ref<RagflowConnectionResult | null>(null)
+const ragflowApiUrl = computed(() => findConfigItemByKey('ragflow_api_url')?.value ?? '')
+const ragflowApiKey = computed(() => findConfigItemByKey('ragflow_api_key')?.value ?? '')
+const ragflowTestDisabled = computed(() => {
+  const hasApiKey = ragflowApiKey.value.trim().length > 0
+  const hasSavedApiKey = ragflowApiKey.value.includes('****')
+  return !canSave ||
+    metadataProvider.value !== 'ragflow' ||
+    !ragflowApiUrl.value.trim() ||
+    (!hasApiKey && !hasSavedApiKey)
+})
+
+const clearRagflowConnectionResult = () => {
+  ragflowConnectionResult.value = null
+}
+
+watch(
+  [metadataProvider, ragflowApiUrl, ragflowApiKey],
+  clearRagflowConnectionResult
+)
+
+const testRagflowMetadataConnection = async () => {
+  if (ragflowConnectionTesting.value || ragflowTestDisabled.value) return
+
+  const apiUrl = ragflowApiUrl.value.trim()
+  const apiKey = ragflowApiKey.value.trim()
+  const useSavedApiKey = apiKey.includes('****')
+
+  ragflowConnectionTesting.value = true
+  ragflowConnectionResult.value = null
+  try {
+    const response = await axios.post('/api/portal/system/test-connection/ragflow_metadata', {
+      ragflow_api_url: apiUrl,
+      ragflow_api_key: useSavedApiKey ? '' : apiKey,
+      use_saved_api_key: useSavedApiKey,
+    })
+    const data = response.data || {}
+    const success = data.status === 'success'
+    ragflowConnectionResult.value = {
+      status: success ? 'success' : 'error',
+      message: data.message || (success ? 'RAGFlow 连接成功' : '连接失败'),
+      datasetCount: data.dataset_count,
+    }
+    showToast(
+      success ? 'RAGFlow 连接测试成功' : `RAGFlow 连接测试失败：${data.message || '未知错误'}`,
+      success ? 'success' : 'error'
+    )
+  } catch (error: any) {
+    const message = error.response?.data?.detail || error.message || '未知错误'
+    ragflowConnectionResult.value = {
+      status: 'error',
+      message: `连接失败：${message}`,
+    }
+    showToast(`RAGFlow 连接测试失败：${message}`, 'error')
+  } finally {
+    ragflowConnectionTesting.value = false
+  }
+}
+
 const sandboxConnectionConfigKeys: Record<'e2b' | 'ssh', string[]> = {
   e2b: [
     'sandbox_e2b_api_key',
@@ -2532,7 +2598,16 @@ onUnmounted(() => {
                           知识库功能已<strong>关闭</strong>。开启「knowledge_base_enabled」后将显示 RAGFlow 连接与检索参数，并启用知识库管理、检索测试与智能体知识库检索工具。
                        </div>
                     </div>
-                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="['embed_api_url', 'embed_api_key', 'embed_model_name', 'embed_dimensions'].includes(item.key) ? 'embed-config-group bg-indigo-50/30 rounded-lg px-4 py-3 -mx-4 border border-indigo-100/70' : ''">
+                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="[
+                      ['embed_api_url', 'embed_api_key', 'embed_model_name', 'embed_dimensions'].includes(item.key) ? 'embed-config-group bg-indigo-50/30 rounded-lg px-4 py-3 -mx-4 border border-indigo-100/70' : '',
+                      item.key === 'ragflow_api_url' ? 'ragflow-config-group rounded-t-xl border-x border-t border-sky-200/80 bg-sky-50/70 px-4 pt-4 -mx-4' : '',
+                      item.key === 'ragflow_api_key' ? 'ragflow-config-group rounded-b-xl border-x border-b border-sky-200/80 bg-sky-50/70 px-4 pb-4 -mx-4 !mt-0' : ''
+                    ]">
+                      <div v-if="item.key === 'ragflow_api_url'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-sky-800">
+                        <ServerIcon class="h-4 w-4 shrink-0 text-sky-600" />
+                        <span>RAGFlow 连接配置</span>
+                        <span class="text-xs font-normal text-sky-700/80">配置地址与密钥后，可立即测试数据集列表接口</span>
+                      </div>
                       <div class="md:col-span-1 pt-2">
                          <label class="block text-sm font-medium text-gray-700 flex items-center gap-1.5">
                             <span>{{ item.key }}</span>
@@ -2724,6 +2799,28 @@ onUnmounted(() => {
                              <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
                                 <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
                                 <EyeSlashIcon v-else class="h-5 w-5" />
+                             </div>
+                             <div v-if="item.key === 'ragflow_api_key'" class="mt-3 flex flex-wrap items-center gap-3">
+                               <button
+                                 type="button"
+                                 @click="testRagflowMetadataConnection"
+                                 :disabled="ragflowTestDisabled || ragflowConnectionTesting"
+                                 class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 shadow-sm transition-colors hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                               >
+                                 <PlayIcon v-if="!ragflowConnectionTesting" class="h-4 w-4" />
+                                 <span v-else class="h-4 w-4 animate-spin rounded-full border-2 border-sky-400 border-t-transparent"></span>
+                                 {{ ragflowConnectionTesting ? '测试中...' : '测试连接' }}
+                               </button>
+                               <span
+                                 v-if="ragflowConnectionResult"
+                                 class="inline-flex min-w-0 items-center gap-1 text-xs leading-relaxed"
+                                 :class="ragflowConnectionResult.status === 'success' ? 'text-emerald-700' : 'text-rose-700'"
+                               >
+                                 <CheckCircleIcon v-if="ragflowConnectionResult.status === 'success'" class="h-4 w-4 shrink-0" />
+                                 <XCircleIcon v-else class="h-4 w-4 shrink-0" />
+                                 <span>{{ ragflowConnectionResult.message }}</span>
+                               </span>
+                               <span v-else class="text-xs text-gray-500">仅测试连接，不会自动保存配置</span>
                              </div>
                           </div>
                           <div v-else-if="item.key === 'third_party_user_sync_config'">

@@ -30,6 +30,15 @@ def test_metadata_api_declares_sync_task_response():
     assert "task_id: string" in source
 
 
+def test_metadata_sync_log_displays_document_progress_count():
+    source = (ROOT / "frontend/src/views/MetadataDatasets.vue").read_text(encoding="utf-8")
+
+    assert "completed_documents" in source
+    assert "total_documents" in source
+    assert "已完成" in source
+    assert "个文档" in source
+
+
 def test_knowledge_base_binding_uses_current_editor_value_after_unbinding():
     source = (ROOT / "frontend/src/views/AgentManagement.vue").read_text(encoding="utf-8")
 

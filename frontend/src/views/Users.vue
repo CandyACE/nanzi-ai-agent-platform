@@ -1042,9 +1042,14 @@
                     <div
                       class="px-3 py-2 bg-gray-50 flex items-center gap-2 border-b border-gray-100"
                     >
+                      <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
+                      </svg>
+                      <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
                       <input
                         type="checkbox"
                         :checked="isItemSelected(menu.id)"
+                        :indeterminate="isMenuPartiallySelected(menu.id)"
                         @change="toggleTreeItem(menu.id)"
                         class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
                       />
@@ -1055,8 +1060,16 @@
                     </div>
                     <div
                       v-if="menu.children.length > 0"
-                      class="p-2 grid grid-cols-1 xs:grid-cols-2 gap-1.5"
+                      class="p-2"
                     >
+                      <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
+                        <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
+                        </svg>
+                        <span>功能点权限</span>
+                        <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
+                      </div>
+                      <div class="grid grid-cols-1 xs:grid-cols-2 gap-1.5">
                       <div
                         v-for="child in menu.children"
                         :key="child.id"
@@ -1090,6 +1103,7 @@
                         <span class="text-[11px] text-gray-600 leading-tight">{{
                           child.label
                         }}</span>
+                      </div>
                       </div>
                     </div>
                   </div>
@@ -1604,7 +1618,7 @@ import axios from "axios";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
-import { MENU_TREE } from "../constants/permissions";
+import { MENU_TREE, getMenuDescendantIds } from "../constants/permissions";
 import { copyToClipboard } from "../utils/clipboard";
 import Switch from "../components/Switch.vue";
 import RoleList from "../components/RoleList.vue";
@@ -2019,9 +2033,31 @@ const toggleTreeItem = (itemId: string) => {
   const targetArray = isMenu
     ? permissionData.value.menus
     : permissionData.value.elements;
+  if (isMenu) {
+    const descendantIds = getMenuDescendantIds(itemId);
+    const shouldSelect = !targetArray.includes(itemId);
+    if (shouldSelect) {
+      if (!targetArray.includes(itemId)) targetArray.push(itemId);
+      descendantIds.forEach((id) => {
+        if (!permissionData.value.elements.includes(id)) permissionData.value.elements.push(id);
+      });
+    } else {
+      permissionData.value.menus = targetArray.filter((id) => id !== itemId);
+      permissionData.value.elements = permissionData.value.elements.filter(
+        (id) => !descendantIds.includes(id),
+      );
+    }
+    return;
+  }
+
   const idx = targetArray.indexOf(itemId);
   if (idx > -1) targetArray.splice(idx, 1);
   else targetArray.push(itemId);
+};
+const isMenuPartiallySelected = (menuId: string) => {
+  const descendantIds = getMenuDescendantIds(menuId);
+  const selectedCount = descendantIds.filter((id) => permissionData.value.elements.includes(id)).length;
+  return selectedCount > 0 && selectedCount < descendantIds.length;
 };
 const isItemSelected = (itemId: string) => {
   const isMenu = itemId.startsWith("menu:");
