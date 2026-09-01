@@ -30,6 +30,7 @@ const { hasPermission } = useUser()
 
 const showDatasetSelector = ref(false)
 const datasetIds = ref<string[]>([])
+const datasetNameById = ref<Record<string, string>>({})
 const query = ref('')
 
 // A/B 对照检索模式状态
@@ -58,7 +59,14 @@ const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking')
 const isKnowledgeEnabled = computed(() => ragflowConfig.value?.knowledge_base_enabled !== false)
 const isEngineReady = computed(() => isKnowledgeEnabled.value && engineStatus.value === 'connected')
 const canTest = computed(() => hasPermission('element:knowledge:test_retrieval') && isEngineReady.value)
-const datasetIdsText = computed(() => datasetIds.value.join(','))
+const datasetDisplayItems = computed(() => {
+  const limit = datasetIds.value.length > 3 ? 2 : 3
+  return datasetIds.value.slice(0, limit).map((id) => ({
+    id,
+    name: datasetNameById.value[id] || id,
+  }))
+})
+const hiddenDatasetCount = computed(() => Math.max(0, datasetIds.value.length - datasetDisplayItems.value.length))
 const ragflowApiUrl = computed(() => ragflowConfig.value?.api_url || '未配置')
 
 const friendlyRagFlowError = computed(() => {
@@ -96,6 +104,16 @@ const extractError = (err: unknown) => {
 
 const handleDatasetSelect = (value: string | string[]) => {
   datasetIds.value = Array.isArray(value) ? value : [value].filter(Boolean)
+}
+
+const handleDatasetDetailsSelect = (details: Array<{ id: string; name: string }>) => {
+  const next = { ...datasetNameById.value }
+  for (const item of details) next[item.id] = item.name
+  datasetNameById.value = next
+}
+
+const removeDataset = (id: string) => {
+  datasetIds.value = datasetIds.value.filter((item) => item !== id)
 }
 
 const validate = () => {
@@ -349,17 +367,35 @@ onMounted(fetchRagFlowConfig)
           class="space-y-4 flex flex-col flex-1 min-w-0 border-0 p-0 m-0 disabled:opacity-60"
         >
 
-          <!-- Dataset IDs -->
+          <!-- Dataset names, while requests continue using Dataset IDs -->
           <div>
             <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">知识库</label>
             <div class="flex gap-2">
-              <input
-                :value="datasetIdsText"
-                readonly
-                :disabled="!isEngineReady"
-                class="flex-1 border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-xs font-mono truncate disabled:cursor-not-allowed"
-                placeholder="请先选择知识库"
-              />
+              <div
+                class="flex-1 min-h-[42px] max-h-[88px] overflow-y-auto border border-gray-200 rounded-lg px-2.5 py-2 bg-gray-50 flex flex-wrap content-start gap-1.5 disabled:cursor-not-allowed"
+                :class="!isEngineReady ? 'opacity-60' : ''"
+                :title="datasetIds.length ? datasetIds.map((id) => datasetNameById[id] || id).join('、') : '请先选择知识库'"
+              >
+                <template v-if="datasetDisplayItems.length">
+                  <span
+                    v-for="item in datasetDisplayItems"
+                    :key="item.id"
+                    class="inline-flex max-w-full items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-700"
+                  >
+                    <span class="max-w-[170px] truncate">{{ item.name }}</span>
+                    <button type="button" class="shrink-0 text-indigo-400 hover:text-indigo-700" :aria-label="`移除${item.name}`" :disabled="!isEngineReady" @click="removeDataset(item.id)">×</button>
+                  </span>
+                  <button
+                    v-if="hiddenDatasetCount > 0"
+                    type="button"
+                    class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-500 hover:text-gray-800"
+                    @click="showDatasetSelector = true"
+                  >
+                    还有 {{ hiddenDatasetCount }} 个
+                  </button>
+                </template>
+                <span v-else class="self-center px-1 text-xs text-gray-400">请先选择知识库</span>
+              </div>
               <button
                 type="button"
                 class="px-3 py-2 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all whitespace-nowrap shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-primary"
@@ -638,6 +674,7 @@ onMounted(fetchRagFlowConfig)
       type="dataset"
       :initial-selected="datasetIds"
       @select="handleDatasetSelect"
+      @select-details="handleDatasetDetailsSelect"
     />
   </div>
 </template>

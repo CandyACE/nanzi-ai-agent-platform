@@ -20,6 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:modelValue", val: boolean): void;
   (e: "select", val: string | string[]): void;
+  (e: "select-details", val: DatasetSelectionDetail[]): void;
 }>();
 
 const loading = ref(false);
@@ -30,6 +31,8 @@ const engineStatus = ref<"checking" | "connected" | "disconnected">("checking");
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null);
 
 const selectedIds = ref<string[]>([]); // Always array for internal logic
+
+type DatasetSelectionDetail = { id: string; name: string };
 
 const ragflowApiUrl = computed(() => props.overrideUrl || ragflowConfig.value?.api_url || "未配置");
 const engineStatusText = computed(() => {
@@ -168,6 +171,11 @@ const confirmSelection = () => {
     emit("select", selectedIds.value[0] || "");
   } else {
     emit("select", selectedIds.value);
+    const selectedDetails = selectedIds.value.map((id) => {
+      const dataset = datasets.value.find((item) => item.id === id);
+      return { id, name: dataset?.platform_name || dataset?.name || id };
+    });
+    emit("select-details", selectedDetails);
   }
   close();
 };
