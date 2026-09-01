@@ -33,6 +33,7 @@ const userApiKey = ref("");
 const loadingApiKey = ref(false);
 const onlineUserCount = ref(0);
 const onlineUsers = ref<any[]>([]);
+let onlineUsersRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 // Toast State
 const toast = ref({
@@ -103,7 +104,8 @@ onMounted(async () => {
   await fetchUserInfo();
   // 在线人数仅管理员可见，普通用户不请求、不展示
   if (userInfo.value.role === "admin") {
-    fetchOnlineUsers();
+    await fetchOnlineUsers();
+    startOnlineUsersRefresh();
   }
 });
 
@@ -117,6 +119,21 @@ const fetchOnlineUsers = async () => {
   } catch (e) {
     console.error("Failed to fetch online users", e);
   }
+};
+
+const startOnlineUsersRefresh = () => {
+  if (onlineUsersRefreshTimer) {
+    clearInterval(onlineUsersRefreshTimer);
+  }
+  onlineUsersRefreshTimer = setInterval(() => {
+    void fetchOnlineUsers();
+  }, 60_000);
+};
+
+const stopOnlineUsersRefresh = () => {
+  if (!onlineUsersRefreshTimer) return;
+  clearInterval(onlineUsersRefreshTimer);
+  onlineUsersRefreshTimer = null;
 };
 
 const openOnlineUsers = () => {
@@ -202,6 +219,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleEscape);
+  stopOnlineUsersRefresh();
 });
 
 // 监听路由变化，移动端下自动收起侧边栏
@@ -985,7 +1003,7 @@ const filteredMenuGroups = computed(() => {
                 暂无在线用户信息
               </div>
               <div v-else class="space-y-3">
-                <div v-for="user in onlineUsers" :key="user.user_name" class="flex items-center p-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 transition-all hover:border-green-200">
+                <div v-for="user in onlineUsers" :key="user.user_id || user.user_name" class="flex items-center p-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 transition-all hover:border-green-200">
                   <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-black uppercase text-sm flex-shrink-0">
                     {{ (user.real_name || user.user_name).substring(0, 2) }}
                   </div>

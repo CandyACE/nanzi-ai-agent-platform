@@ -56,3 +56,14 @@ def test_online_users_widget_hidden_for_non_admin():
     assert "online-users-divider" in dashboard
     assert 'if (userInfo.value.role === "admin")' in dashboard
     assert "fetchOnlineUsers()" in dashboard
+
+
+def test_online_users_refresh_and_render_with_stable_identity():
+    """在线人数应定期刷新，列表不能用可变用户名作为重复键。"""
+    dashboard = Path("frontend/src/views/Dashboard.vue").read_text(encoding="utf-8")
+
+    assert "onlineUsersRefreshTimer" in dashboard
+    assert "setInterval" in dashboard
+    assert "60_000" in dashboard
+    assert "clearInterval" in dashboard
+    assert ':key="user.user_id || user.user_name"' in dashboard
