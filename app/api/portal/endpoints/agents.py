@@ -97,7 +97,7 @@ async def reorder_agents(
     """批量更新智能体排序权重（值越大越靠前）"""
     success = await AgentManagerService.reorder_agents(session, data.items, user=user)
     if not success:
-        raise HTTPException(status_code=403, detail="Forbidden: Only admins can reorder agents")
+        raise HTTPException(status_code=403, detail="排序失败：主智能体不可参与排序")
     return {"status": "success"}
 
 @router.post("/", response_model=AIAgentResponse, dependencies=[Depends(require_permission("element", "element:agent:create"))])

@@ -385,6 +385,9 @@ const filteredAgents = computed(() => {
   // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
   return result.sort((a, b) => {
     if (isMainAgent(a) !== isMainAgent(b)) return isMainAgent(a) ? -1 : 1;
+    if ((a.is_enabled ?? true) !== (b.is_enabled ?? true)) {
+      return (a.is_enabled ?? true) ? -1 : 1;
+    }
     // Primary sort: sort_order (descending)
     if (a.sort_order !== b.sort_order) {
       return (b.sort_order || 0) - (a.sort_order || 0);
@@ -476,7 +479,9 @@ const handleAgentDrop = (event: DragEvent, targetId: string) => {
   dragSourceId.value = null;
   if (!canDragAgents.value || !sourceId || sourceId === targetId || isMainAgent(sourceId) || isMainAgent(targetId)) return;
 
-  const currentOrder = filteredAgents.value.map((agent) => agent.id);
+  const currentOrder = filteredAgents.value
+    .filter((agent) => !isMainAgent(agent))
+    .map((agent) => agent.id);
   const sourceIdx = currentOrder.indexOf(sourceId);
   const targetIdx = currentOrder.indexOf(targetId);
   if (sourceIdx === -1 || targetIdx === -1) return;

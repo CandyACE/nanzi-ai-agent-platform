@@ -15,6 +15,7 @@ import traceback
 import os
 import time
 import json
+import httpx
 
 router = APIRouter()
 
@@ -55,6 +56,10 @@ class EmbedConnectionTestPayload(BaseModel):
     ragflow_api_url: Optional[str] = None
     ragflow_api_key: Optional[str] = None
     use_saved_api_key: bool = False
+    external_sql_api_url: Optional[str] = None
+    external_sql_api_key: Optional[str] = None
+    external_sql_data_source: Optional[str] = None
+    use_saved_external_sql_api_key: bool = False
 
 
 class RagFlowConnectionTestPayload(EmbedConnectionTestPayload):
@@ -158,6 +163,39 @@ async def test_connection(
             else:
                 message = "RAGFlow 连接成功，当前没有数据集"
 
+        elif component == "remote_sql":
+            log("Target: remote SQL execution service")
+            test_url = ((payload.external_sql_api_url if payload else "") or "").strip().rstrip("/")
+            test_key = ((payload.external_sql_api_key if payload else "") or "").strip()
+            data_source = ((payload.external_sql_data_source if payload else "") or "").strip()
+
+            if payload and payload.use_saved_external_sql_api_key or "****" in test_key:
+                test_key = (await ConfigService.get("external_sql_api_key") or "").strip()
+            if test_key:
+                sensitive_values.append(test_key)
+            if not test_url:
+                raise ValueError("远程 SQL 服务地址为空，请先填写 URL。")
+            if not test_key:
+                raise ValueError("远程 SQL API Key 为空，请先填写 API Key。")
+            if not data_source:
+                raise ValueError("远程 SQL 数据源 ID 为空，请先填写数据源。")
+
+            log(f"API URL: {test_url}")
+            log(f"Data source: {data_source}")
+            log("Executing: SELECT 1")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    test_url,
+                    headers={"Content-Type": "application/json", "X-API-Key": test_key},
+                    json={"data_source": data_source, "sql": "SELECT 1", "params": {}},
+                )
+                response.raise_for_status()
+                response_data = response.json()
+            if isinstance(response_data, dict) and response_data.get("code") not in (None, 200):
+                raise ValueError(response_data.get("message") or "远程 SQL 服务返回失败")
+            status = "success"
+            message = "远程 SQL 连接成功，SELECT 1 执行正常"
+
         elif component == "global_embed":
             log("Target: Global Embedding Service (local-redis backend)")
             
@@ -200,7 +238,6 @@ async def test_connection(
                 
             log(f"Sending test vector request to: {url}")
             
-            import httpx
             headers = {"Content-Type": "application/json"}
             if test_key:
                 headers["Authorization"] = f"Bearer {test_key}"
