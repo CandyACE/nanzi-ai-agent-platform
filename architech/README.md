@@ -18,6 +18,7 @@
 | [agent_execution_flow_review.md](./design/agent_execution_flow_review.md) | 执行流评审（K1/K2/K3） |
 | [CHAT_BI_DESIGN.md](./design/CHAT_BI_DESIGN.md) | ChatBI |
 | [redis_key_design.md](./design/redis_key_design.md) | Redis Key |
+| [mcp-business-integration-authentication-design.md](./design/mcp-business-integration-authentication-design.md) | MCP 业务集成认证、用户身份透传与 Echo 联调测试服务 |
 
 ## 集成与契约（`docs/md/`）
 
@@ -25,6 +26,8 @@
 |------|------|
 | [api_integration_guide.md](../docs/md/api_integration_guide.md) | API / Embed 集成 |
 | [ai_agent_gating_contract.md](../docs/md/ai_agent_gating_contract.md) | Agent 门控契约 |
+| [mcp_user_context_integration_guide.md](../docs/md/mcp_user_context_integration_guide.md) | 自有 MCP UserContext 验签接入指南 |
+| [mcp_echo_test_server.md](../docs/md/mcp_echo_test_server.md) | 平台级 Echo MCP 创建、挂载与认证诊断 |
 
 ## 提示词草稿（`prompts/`）
 

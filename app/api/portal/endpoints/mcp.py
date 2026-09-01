@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from typing import List, Optional, Dict, Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, func
@@ -6,6 +6,7 @@ import uuid
 import json
 import time
 import logging
+import secrets
 
 from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, require_permission, require_api_key
@@ -14,6 +15,14 @@ from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.mcp.mcp_auth_policy import generate_mcp_private_key_pem
+from app.services.mcp.echo_server import (
+    ECHO_SERVER_ID,
+    ECHO_SERVER_NAME,
+    ECHO_TOOL_NAME,
+    ECHO_TOOL_DESCRIPTION,
+    echo_tool_schema,
+)
+from app.utils.encryption import get_api_key_manager
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 logger = logging.getLogger(__name__)
@@ -298,6 +307,113 @@ async def list_mcp_servers(
         item.stale_tool_count = stale_count
         res.append(item)
     return res
+
+
+@router.post("/servers/echo-test", response_model=McpServerResponse)
+async def create_echo_test_mcp(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    """幂等创建平台级 Echo MCP，固定 Authorization Bearer Token 只加密保存，不返回给前端。"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有系统管理员才能创建 Echo 测试 MCP")
+
+    base_url = str(request.base_url).rstrip("/")
+    echo_url = f"{base_url}/mcp/echo/mcp"
+    manager = get_api_key_manager()
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == ECHO_SERVER_ID))
+    ).scalar_one_or_none()
+
+    if server is None:
+        server = McpServer(
+            id=ECHO_SERVER_ID,
+            server_name=ECHO_SERVER_NAME,
+            remark="平台内置 Echo 测试 MCP，用于验证协议和用户身份透传",
+            sse_url=echo_url,
+            auth_headers="{}",
+            credential_mode="fixed_token_signed_user",
+            fixed_token_encrypted=manager.encrypt_api_key(secrets.token_urlsafe(32)),
+            user_assertion_enabled=True,
+            user_assertion_header="X-Nanzi-User-Assertion",
+            user_assertion_audience=f"mcp:{ECHO_SERVER_ID}",
+            user_assertion_key_id=f"echo-{uuid.uuid4().hex[:16]}",
+            user_assertion_issuer="nanzi-platform",
+            user_assertion_private_key_encrypted=manager.encrypt_api_key(
+                generate_mcp_private_key_pem()
+            ),
+            enabled_status=1,
+            scope="global",
+            user_id=None,
+        )
+        db.add(server)
+        db.add(
+            McpToolCache(
+                id=str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo")),
+                server_id=ECHO_SERVER_ID,
+                tool_name=ECHO_TOOL_NAME,
+                tool_description=ECHO_TOOL_DESCRIPTION,
+                parameter_schema=echo_tool_schema(),
+                is_published=True,
+                is_available=True,
+            )
+        )
+    else:
+        # 允许管理员重新点击入口恢复内置服务，但不轮换既有凭证。
+        server.server_name = ECHO_SERVER_NAME
+        server.sse_url = echo_url
+        server.remark = "平台内置 Echo 测试 MCP，用于验证协议和用户身份透传"
+        server.auth_headers = "{}"
+        server.credential_mode = "fixed_token_signed_user"
+        server.user_assertion_enabled = True
+        server.user_assertion_header = "X-Nanzi-User-Assertion"
+        server.user_assertion_audience = server.user_assertion_audience or f"mcp:{ECHO_SERVER_ID}"
+        server.user_assertion_key_id = server.user_assertion_key_id or f"echo-{uuid.uuid4().hex[:16]}"
+        server.user_assertion_issuer = "nanzi-platform"
+        server.enabled_status = 1
+        server.scope = "global"
+        server.user_id = None
+        if not server.fixed_token_encrypted:
+            server.fixed_token_encrypted = manager.encrypt_api_key(secrets.token_urlsafe(32))
+        if not server.user_assertion_private_key_encrypted:
+            server.user_assertion_private_key_encrypted = manager.encrypt_api_key(
+                generate_mcp_private_key_pem()
+            )
+
+        tool = (
+            await db.execute(
+                select(McpToolCache).where(
+                    McpToolCache.server_id == ECHO_SERVER_ID,
+                    McpToolCache.tool_name == ECHO_TOOL_NAME,
+                )
+            )
+        ).scalar_one_or_none()
+        if tool is None:
+            db.add(
+                McpToolCache(
+                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo")),
+                    server_id=ECHO_SERVER_ID,
+                    tool_name=ECHO_TOOL_NAME,
+                    tool_description=ECHO_TOOL_DESCRIPTION,
+                    parameter_schema=echo_tool_schema(),
+                    is_published=True,
+                    is_available=True,
+                )
+            )
+        else:
+            tool.tool_description = ECHO_TOOL_DESCRIPTION
+            tool.parameter_schema = echo_tool_schema()
+            tool.is_published = True
+            tool.is_available = True
+
+    await db.commit()
+    _clear_runtime_tool_cache()
+    response = McpServerResponse.model_validate(server)
+    response.tool_count = 1
+    response.published_tool_count = 1
+    response.stale_tool_count = 0
+    return response
 
 @router.post("/servers", response_model=McpServerResponse)
 async def create_mcp_server(

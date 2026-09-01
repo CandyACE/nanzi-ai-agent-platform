@@ -193,6 +193,7 @@
 | [mcp-business-integration-authentication-design.md](architech/design/mcp-business-integration-authentication-design.md) | MCP 业务集成认证总体架构、安全策略与调用流程 |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API 集成 |
 | [mcp_user_context_integration_guide.md](docs/md/mcp_user_context_integration_guide.md) | 自有 MCP UserContext 接入、JWKS 验签及 Python / Java 示例 |
+| [mcp_echo_test_server.md](docs/md/mcp_echo_test_server.md) | 平台级 MCP Echo 测试服务创建、智能体挂载与认证诊断 |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | 代码画布、工作区文件与执行 API |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent 门控契约 |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md) | 自动化测试验收清单 |

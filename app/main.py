@@ -1,4 +1,14 @@
 import sys
+
+import logging
+
+# Configure logging before importing application modules. FastMCP may configure
+# a RichHandler at import time; the platform format must remain authoritative.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:     %(message)s'
+)
+
 from fastapi import FastAPI, HTTPException, Cookie, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -19,23 +29,18 @@ from app.core.errors import ErrorCode
 from app.core.openapi import custom_openapi, tags_metadata # Import OpenAPI Logic
 from asynch.errors import InterfaceError
 from aiomysql import OperationalError
-import logging
 import datetime
 import uuid
 import os
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.orm import get_db_session
+from app.services.mcp.echo_server import echo_mcp, echo_mcp_lifespan
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)s:     %(message)s'
-)
 logging.getLogger('apscheduler').setLevel(logging.DEBUG)
 install_cancellation_log_filters()
 
@@ -89,7 +94,10 @@ async def lifespan(app: FastAPI):
     # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）
     asyncio.create_task(maybe_ensure_memory_index_on_startup())
 
-    yield
+    # Mounted Starlette 子应用不会自动执行自己的 lifespan；显式托管
+    # FastMCP 的 session manager，否则首次请求会报 Task group 未初始化。
+    async with echo_mcp_lifespan():
+        yield
     # Shutdown
     from app.services.ai.runtime.agentscope.workspace import stop_docker_workspace_reaper
 
@@ -325,6 +333,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-API-Key", "Accept", "Origin", "User-Agent", "DNT", "Cache-Control", "X-Requested-With"],
     expose_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# 内置平台 Echo MCP：创建配置后供所有智能体挂载，用于验证实际出站请求。
+app.mount("/mcp/echo", echo_mcp.streamable_http_app())
 
 # Routers
 # 挂载 API V1 路由 (外部集成接口)

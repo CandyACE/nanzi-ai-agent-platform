@@ -534,6 +534,26 @@ Audience 不匹配
 业务资源权限不足
 ```
 
+### 9.7 平台级 Echo 测试 MCP
+
+为方便管理员验证上述设计是否真正贯通，平台提供内置的 **Echo 测试 MCP**。在【MCP 管理】的【平台 MCP】页点击【创建 Echo 测试 MCP】后，系统幂等创建一个全局 MCP 服务，并自动发布无副作用的 `echo` 工具。
+
+Echo MCP 的固定 `Authorization: Bearer` Token 和 Ed25519 私钥由系统自动生成、按 MCP 配置加密保存，用户不需要填写或复制。Echo 工具调用时会校验：
+
+| 检查项 | 诊断结果 |
+| --- | --- |
+| 固定 `Authorization: Bearer` | `authorization_valid` |
+| Authorization 脱敏展示 | `authorization_masked` |
+| `X-Nanzi-User-Assertion` 是否收到 | `user_assertion_received` |
+| JWS 是否通过签名、Issuer、Audience、有效期、主体和用户 ID 校验 | `user_assertion_valid` |
+| 用户断言脱敏展示 | `user_assertion_masked` |
+| 认证和解析处理步骤 | `processing_log` |
+| 当前用户 | `verified_user_id`、`verified_user_context`、`custom_attributes` |
+| 当前智能体 | `verified_agent_context` |
+| 调用链路 | `request_context.request_id` |
+
+Echo 只返回验签后的安全诊断，不返回原始 Bearer Token、完整 JWS、私钥或 `jti`；`authorization_masked` 和 `user_assertion_masked` 仅保留首尾片段，中间使用 `***`，`processing_log` 按顺序记录认证与解析步骤。它是平台级 MCP，所有已发布且有权限的智能体都可以沿用现有机制挂载；浏览器无法直接观察后端到 MCP 的 Header，应以 Echo 返回的诊断字段确认实际透传结果。详细操作见：[MCP Echo 测试服务使用说明](../../docs/md/mcp_echo_test_server.md)。
+
 ## 10. 后端模块边界
 
 建议增加以下服务边界：
