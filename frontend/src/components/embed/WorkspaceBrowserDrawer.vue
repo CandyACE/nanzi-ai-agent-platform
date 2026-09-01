@@ -1179,7 +1179,7 @@ const quickNavLinks = computed(() => {
         disabledTitle: '发送首条消息后会话目录才会创建',
       })
     }
-    links.push({ key: 'uploads', label: 'uploads', path: `${userWorkspaceRoot.value}/uploads`, icon: markRaw(ArrowUpTrayIcon) })
+    links.push({ key: 'uploads', label: '上传目录', path: `${userWorkspaceRoot.value}/uploads`, icon: markRaw(ArrowUpTrayIcon) })
   }
   return links
 })

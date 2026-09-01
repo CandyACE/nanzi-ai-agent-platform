@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from app.models.metadata import MetaDataset, MetaTable, MetaMetric
 from app.services.ai.ragflow_client import RagFlowClient
 from app.services.metadata_service import MetadataService
+from app.services.metadata_sync_log_service import metadata_sync_log_service
 
 logger = logging.getLogger(__name__)
 
@@ -224,25 +225,57 @@ class MetadataRagService:
         return MetadataRagService.render_metrics_schema_yaml(dataset, data_source=data_source)
 
     @staticmethod
-    async def sync_dataset(db: AsyncSession, dataset_id: int):
+    async def sync_dataset(
+        db: AsyncSession,
+        dataset_id: int,
+        task_id: Optional[str] = None,
+    ):
         """
         Main synchronization logic.
         """
         client = RagFlowClient()
+
+        async def publish(
+            event: str,
+            stage: str,
+            message: str,
+            progress: Optional[int] = None,
+            completed_documents: Optional[int] = None,
+            total_documents: Optional[int] = None,
+            error_detail: Optional[str] = None,
+        ):
+            if not task_id:
+                return
+            try:
+                await metadata_sync_log_service.publish(
+                    task_id,
+                    event=event,
+                    stage=stage,
+                    message=message,
+                    progress=progress,
+                    completed_documents=completed_documents,
+                    total_documents=total_documents,
+                    error_detail=error_detail,
+                )
+            except Exception:
+                logger.warning("[RAG Sync] Failed to publish sync event", exc_info=True)
         
         # 1. Load Dataset Detail (Admin mode)
         dataset = await MetadataService.get_dataset_by_id(db, dataset_id, is_admin=True)
         if not dataset:
             logger.error(f"[RAG Sync] Dataset {dataset_id} not found.")
+            await publish("failed", "failed", "数据集不存在", error_detail="数据集不存在")
             return
 
         logger.info(f"[RAG Sync] Starting sync for dataset: {dataset.name} (ID: {dataset_id})")
+        await publish("progress", "loading", "正在读取元数据", 10)
         
         try:
             # Update status to 'Syncing'
             await MetadataRagService._update_sync_status(db, dataset_id, 1, notes="Syncing started...")
 
             # 2. Check/Create RAGFlow KB
+            await publish("progress", "knowledge_base", "正在检查知识库", 25)
             rag_kb_id = dataset.rag_dataset_id
             kb_name = f"meta-{dataset.name}"
             
@@ -288,6 +321,16 @@ class MetadataRagService:
             # 3. Get Existing Documents
             existing_docs = await client.list_documents(rag_kb_id, page_size=1000)
             doc_map = {doc['name']: doc['id'] for doc in existing_docs}
+            total_documents = len(dataset.tables) + (1 if dataset.metrics else 0)
+            completed_documents = 0
+            await publish(
+                "progress",
+                "documents",
+                "正在准备文档同步",
+                40,
+                completed_documents=completed_documents,
+                total_documents=total_documents,
+            )
 
             # --- Cleanup Stale Documents (Zombie Files) ---
             # Define what SHOULD be there
@@ -323,6 +366,16 @@ class MetadataRagService:
                 logger.info(f"[RAG Sync] Uploading new document: {file_name}")
                 new_doc = await client.upload_document(rag_kb_id, file_name, blob)
                 new_doc_ids.append(new_doc['id'])
+                completed_documents += 1
+                progress = 45 + int(completed_documents / max(total_documents, 1) * 35)
+                await publish(
+                    "progress",
+                    "documents",
+                    f"已同步文档：{file_name}",
+                    progress,
+                    completed_documents=completed_documents,
+                    total_documents=total_documents,
+                )
 
             # 5. Sync Metrics (as a separate file)
             if dataset.metrics:
@@ -338,21 +391,41 @@ class MetadataRagService:
                     logger.info(f"[RAG Sync] Uploading metrics file")
                     m_doc = await client.upload_document(rag_kb_id, metrics_file, metrics_blob)
                     new_doc_ids.append(m_doc['id'])
+                    completed_documents += 1
+                    progress = 45 + int(completed_documents / max(total_documents, 1) * 35)
+                    await publish(
+                        "progress",
+                        "documents",
+                        f"已同步文档：{metrics_file}",
+                        progress,
+                        completed_documents=completed_documents,
+                        total_documents=total_documents,
+                    )
 
             # 6. Trigger Parsing
             if new_doc_ids:
                 logger.info(f"[RAG Sync] Triggering parse for {len(new_doc_ids)} documents")
+                await publish("progress", "parsing", "正在触发文档解析", 90)
                 await client.parse_documents(rag_kb_id, new_doc_ids)
 
             # 7. Finalize
             success_msg = f"Successfully synced {len(new_doc_ids)} items to RAGFlow (KB: {rag_kb_id})"
             await MetadataRagService._update_sync_status(db, dataset_id, 2, rag_kb_id, notes=success_msg)
             logger.info(f"[RAG Sync] {success_msg}")
+            await publish(
+                "completed",
+                "completed",
+                f"同步成功，共处理 {len(new_doc_ids)} 个文档",
+                100,
+                completed_documents=completed_documents,
+                total_documents=total_documents,
+            )
 
         except Exception as e:
             error_msg = f"Sync Failed: {str(e)}"
             logger.error(f"[RAG Sync] Failed to sync dataset {dataset_id}: {str(e)}", exc_info=True)
             await MetadataRagService._update_sync_status(db, dataset_id, -1, notes=error_msg)
+            await publish("failed", "failed", "同步失败", error_detail=str(e))
 
     @staticmethod
     async def delete_rag_dataset(rag_kb_id: str):

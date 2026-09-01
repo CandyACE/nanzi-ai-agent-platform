@@ -148,3 +148,8 @@ export const MENU_TREE = [
         children: []
     }
 ];
+
+export const getMenuDescendantIds = (menuId: string): string[] => {
+    const menu = MENU_TREE.find(item => item.id === menuId);
+    return menu?.children?.map(child => child.id) || [];
+};

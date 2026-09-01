@@ -114,9 +114,19 @@ async def resolve_document_input_path(
             raise DocumentPathError("该上传文件不属于当前会话附件")
         return candidate
 
+    workspace_root = Path(await resolve_workspace_root()).resolve()
+    from app.services.ai.runtime.agentscope.workspace import resolve_user_workspace_root
+
+    user_workspace_dir = resolve_user_workspace_root(
+        root=str(workspace_root),
+        user_id=user_id,
+        user_name=user_name,
+    )
+    if user_workspace_dir and _path_under(candidate, Path(user_workspace_dir).resolve()):
+        return candidate
+
     if not conversation_id:
         raise DocumentPathError("当前会话缺少工作目录，无法访问该文件")
-    workspace_root = Path(await resolve_workspace_root()).resolve()
     user_docs_dir = Path(
         resolve_user_docs_dir(
             root=str(workspace_root),
