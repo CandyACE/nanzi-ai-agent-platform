@@ -58,19 +58,47 @@ def test_detector_fuses_on_consecutive_repeated_sentences():
     assert v4.fused is True
 
 
-def test_default_detector_waits_until_fiftieth_repeated_sentence():
+def test_default_detector_fuses_after_twenty_repeated_sentences():
     detector = StreamRepetitionDetector()
     phrase = "让我查看一下聊天区域的实际内容，看看输入框在哪里。"
 
-    for repetition in range(49):
+    for repetition in range(19):
         verdict = detector.feed(phrase + "\n")
         assert verdict.fused is False, f"unexpected fuse at repetition {repetition + 1}"
 
     verdict = detector.feed(phrase + "\n")
 
     assert verdict.fused is True
-    assert verdict.repeat_count >= 50
+    assert verdict.repeat_count >= 20
     assert detector.is_fused is True
+
+
+def test_detector_fuses_repeated_four_character_sentence_after_twenty_repetitions():
+    detector = StreamRepetitionDetector()
+    phrase = "我爱上海。\n"
+
+    for repetition in range(19):
+        verdict = detector.feed(phrase)
+        assert verdict.fused is False, repetition + 1
+
+    verdict = detector.feed(phrase)
+
+    assert verdict.fused is True
+    assert verdict.repeat_count >= 20
+
+
+def test_detector_fuses_repeated_short_text_without_punctuation():
+    detector = StreamRepetitionDetector()
+    unit = "我爱上海"
+
+    for _ in range(19):
+        verdict = detector.feed(unit)
+        assert verdict.fused is False
+
+    verdict = detector.feed(unit)
+
+    assert verdict.fused is True
+    assert verdict.repeat_count >= 20
 
 
 def test_detector_stream_incremental_deltas():
@@ -86,17 +114,20 @@ def test_detector_stream_incremental_deltas():
     assert detector.is_fused is True
 
 
-def test_detector_ignores_repeated_text_without_sentence_terminator():
+def test_detector_fuses_repeated_text_without_sentence_terminator():
     detector = StreamRepetitionDetector(threshold=3, min_phrase_len=6)
-    # 无句末标点的连续重复字符串不属于句子，不参与熔断判断
+    # 无句末标点的有效文本也要由短文本重复检测兜底拦截
     unit = "正在检索相关数据文档"
 
-    for _ in range(100):
+    for _ in range(19):
         verdict = detector.feed(unit)
+        assert verdict.fused is False
 
-    assert verdict.fused is False
-    assert detector.is_fused is False
+    verdict = detector.feed(unit)
 
+    assert verdict.fused is True
+    assert verdict.repeat_count >= 20
+    assert detector.is_fused is True
 
 def test_detector_ignores_repeated_markdown_table_separator():
     detector = StreamRepetitionDetector(threshold=3)
@@ -107,6 +138,123 @@ def test_detector_ignores_repeated_markdown_table_separator():
 
     assert verdict.fused is False
     assert detector.is_fused is False
+
+
+def test_detector_ignores_repeated_markdown_table_rows_with_punctuation():
+    detector = StreamRepetitionDetector(threshold=3)
+    table = (
+        "| 名称 | 说明 |\n"
+        "| --- | --- |\n"
+        "| A | 结果 1. |\n"
+    )
+
+    verdict = detector.feed(table * 20)
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+
+def test_detector_ignores_repeated_markdown_tables_without_outer_pipes():
+    detector = StreamRepetitionDetector(threshold=3)
+    table = (
+        "名称 | 说明\n"
+        "--- | ---\n"
+        "A | 结果 1.\n"
+    )
+
+    verdict = detector.feed(table * 20)
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+
+def test_detector_ignores_repeated_markdown_code_blocks():
+    detector = StreamRepetitionDetector(threshold=3)
+    code_block = "```python\nprint('固定结果').\n```\n"
+
+    verdict = detector.feed(code_block * 10)
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+
+def test_detector_keeps_fenced_code_state_across_stream_deltas():
+    detector = StreamRepetitionDetector(threshold=3)
+
+    for _ in range(10):
+        detector.feed("```python\n")
+        detector.feed("print('固定结果').\n")
+        detector.feed("```\n")
+
+    assert detector.is_fused is False
+
+
+def test_detector_ignores_tilde_fenced_code_blocks():
+    detector = StreamRepetitionDetector(threshold=3)
+    code_block = "~~~python\nprint('固定结果').\n~~~\n"
+
+    verdict = detector.feed(code_block * 10)
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+
+def test_detector_ignores_unclosed_fenced_code_and_reset_restores_detection():
+    detector = StreamRepetitionDetector(threshold=3)
+    detector.feed("```python\n")
+
+    for _ in range(10):
+        verdict = detector.feed("print('固定结果').\n")
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+    detector.reset()
+    phrase = "这是重置后应该检测的真实正文。\n"
+    detector.feed(phrase)
+    detector.feed(phrase)
+    verdict = detector.feed(phrase)
+
+    assert verdict.fused is True
+
+
+def test_detector_does_not_fuse_near_duplicate_sentences():
+    detector = StreamRepetitionDetector(threshold=3)
+
+    verdict = RepetitionVerdict()
+    for index in range(10):
+        verdict = detector.feed(f"这是第 {index + 1} 次生成的结果。\n")
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+
+def test_detector_does_not_bridge_new_content_between_body_cycles():
+    detector = StreamRepetitionDetector(threshold=12, block_threshold=3)
+    body_block = (
+        "第一段内容说明这里的查询结果。\n"
+        "第二段内容说明生成文件。\n"
+        "第三段内容说明处理已经完成。\n"
+    )
+
+    verdict = detector.feed(body_block * 2 + "这里插入了新的分析内容。\n" + body_block)
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+
+def test_detector_fuses_repeated_body_block_after_three_cycles():
+    detector = StreamRepetitionDetector(threshold=12, block_threshold=3)
+    body_block = (
+        "第一段内容说明这里的查询结果。\n"
+        "第二段内容说明生成文件。\n"
+        "第三段内容说明处理已经完成。\n"
+    )
+
+    verdict = detector.feed(body_block * 3)
+
+    assert verdict.fused is True
+    assert verdict.repeat_count >= 3
 
 
 def test_detector_ignores_short_common_words():
@@ -154,17 +302,17 @@ def test_process_narration_repetition_interception():
     state = {}
     phrase = "让我查看一下聊天区域的实际内容，看看输入框在哪里。\n"
 
-    # 前 49 遍不熔断
-    for repetition in range(49):
+    # 前 19 遍不熔断
+    for repetition in range(19):
         events = on_text_delta(state, phrase)
         assert len(events) == 1
         assert events[0]["type"] == "process_narration", repetition + 1
 
-    # 第 50 遍：触发熔断并返回 error 告警事件
-    events50 = on_text_delta(state, phrase)
-    assert len(events50) == 1
-    assert events50[0]["type"] == "error"
-    assert "流式安全拦截" in events50[0]["content"]
+    # 第 20 遍：触发熔断并返回 error 告警事件
+    events20 = on_text_delta(state, phrase)
+    assert len(events20) == 1
+    assert events20[0]["type"] == "error"
+    assert "流式安全拦截" in events20[0]["content"]
     assert state.get("repetition_fused") is True
 
     # 第 51 遍：已被熔断，后续增量直接被丢弃（返回空列表）

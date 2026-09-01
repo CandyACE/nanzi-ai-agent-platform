@@ -1,10 +1,15 @@
+import logging
+
 from fastapi import Header, HTTPException, status, Request, Depends
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.auth_service import AuthService
+from app.services.online_presence_service import OnlinePresenceService
 from app.core import redis
 from app.core.orm import get_db_session
 import datetime
+
+logger = logging.getLogger(__name__)
 
 async def require_api_key(
     request: Request,
@@ -39,6 +44,13 @@ async def require_api_key(
         pass
 
     request.state.user = user_info
+
+    # 在线状态是展示性数据；Redis 写入失败不能影响正常认证和业务请求。
+    try:
+        await OnlinePresenceService.touch(user_info)
+    except Exception as exc:
+        logger.warning("更新在线用户状态失败，不影响本次认证: %s", exc)
+
     return user_info
 
 async def check_rate_limit(user_id: str):
@@ -128,7 +140,6 @@ async def verify_v1_api_access(
         )
 
     return user_info
-
 
 
 
