@@ -7,6 +7,7 @@ from app.core import redis
 from app.services.config_service import ConfigService
 from app.schemas.branding import BrandingSettingsUpdate
 from app.services.branding_settings_service import BrandingSettingsService
+from app.services.ai.ragflow_client import RagFlowClient
 from app.schemas.system_config import ConfigHistoryItem
 import logging
 import asyncio
@@ -14,6 +15,7 @@ import traceback
 import os
 import time
 import json
+import httpx
 
 router = APIRouter()
 
@@ -45,16 +47,28 @@ class ConnectionTestResponse(BaseModel):
     status: str
     message: str
     logs: List[str]
+    dataset_count: Optional[int] = None
 
 class EmbedConnectionTestPayload(BaseModel):
     embed_api_url: Optional[str] = None
     embed_api_key: Optional[str] = None
     embed_model_name: Optional[str] = None
+    ragflow_api_url: Optional[str] = None
+    ragflow_api_key: Optional[str] = None
+    use_saved_api_key: bool = False
+    external_sql_api_url: Optional[str] = None
+    external_sql_api_key: Optional[str] = None
+    external_sql_data_source: Optional[str] = None
+    use_saved_external_sql_api_key: bool = False
+
+
+class RagFlowConnectionTestPayload(EmbedConnectionTestPayload):
+    """RAGFlow 元数据连接测试的显式请求模型。"""
 
 @router.post("/test-connection/{component}", response_model=ConnectionTestResponse)
 async def test_connection(
     component: str,
-    payload: Optional[EmbedConnectionTestPayload] = None,
+    payload: Optional[RagFlowConnectionTestPayload] = None,
     user: Dict = Depends(require_permission("element", "element:system:config_save"))
 ):
     """
@@ -63,6 +77,8 @@ async def test_connection(
     logs = []
     status = "failed"
     message = ""
+    dataset_count: Optional[int] = None
+    sensitive_values: List[str] = []
 
     def log(msg: str):
         logs.append(msg)
@@ -104,7 +120,6 @@ async def test_connection(
             log(f"Successfully ensured KB. ID: {kb_id}")
             
             # Verify connectivity to RAGFlow by listing documents
-            from app.services.ai.ragflow_client import RagFlowClient
             client = RagFlowClient()
             log("Testing connection to RAGFlow by listing documents...")
             docs = await client.list_documents(kb_id, page_size=5)
@@ -112,6 +127,74 @@ async def test_connection(
             
             status = "success"
             message = f"ChatBI KB connection successful. ID: {kb_id}"
+
+        elif component == "ragflow_metadata":
+            log("Target: RAGFlow metadata service")
+            test_url = (payload.ragflow_api_url if payload else "") or ""
+            test_key = (payload.ragflow_api_key if payload else "") or ""
+            test_url = test_url.strip().rstrip("/")
+            test_key = test_key.strip()
+
+            if payload and payload.use_saved_api_key:
+                test_key = (await ConfigService.get("ragflow_api_key") or "").strip()
+            elif "****" in test_key:
+                # 兼容未更新的前端：脱敏值不能用于外部认证，应回退到保存值。
+                test_key = (await ConfigService.get("ragflow_api_key") or "").strip()
+
+            if test_key:
+                sensitive_values.append(test_key)
+            if not test_url:
+                raise ValueError("RAGFlow 服务地址为空，请先填写 URL。")
+            if not test_key:
+                raise ValueError("RAGFlow API Key 为空，请先填写 API Key。")
+
+            log(f"API URL: {test_url}")
+            log("Sending dataset list request (page=1, page_size=1)...")
+            client = RagFlowClient(
+                config_prefix="ragflow",
+                override_url=test_url,
+                override_key=test_key,
+            )
+            datasets = await client.list_datasets(page=1, page_size=1)
+            dataset_count = len(datasets or [])
+            status = "success"
+            if dataset_count:
+                message = f"RAGFlow 连接成功，已获取 {dataset_count} 个数据集"
+            else:
+                message = "RAGFlow 连接成功，当前没有数据集"
+
+        elif component == "remote_sql":
+            log("Target: remote SQL execution service")
+            test_url = ((payload.external_sql_api_url if payload else "") or "").strip().rstrip("/")
+            test_key = ((payload.external_sql_api_key if payload else "") or "").strip()
+            data_source = ((payload.external_sql_data_source if payload else "") or "").strip()
+
+            if payload and payload.use_saved_external_sql_api_key or "****" in test_key:
+                test_key = (await ConfigService.get("external_sql_api_key") or "").strip()
+            if test_key:
+                sensitive_values.append(test_key)
+            if not test_url:
+                raise ValueError("远程 SQL 服务地址为空，请先填写 URL。")
+            if not test_key:
+                raise ValueError("远程 SQL API Key 为空，请先填写 API Key。")
+            if not data_source:
+                raise ValueError("远程 SQL 数据源 ID 为空，请先填写数据源。")
+
+            log(f"API URL: {test_url}")
+            log(f"Data source: {data_source}")
+            log("Executing: SELECT 1")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    test_url,
+                    headers={"Content-Type": "application/json", "X-API-Key": test_key},
+                    json={"data_source": data_source, "sql": "SELECT 1", "params": {}},
+                )
+                response.raise_for_status()
+                response_data = response.json()
+            if isinstance(response_data, dict) and response_data.get("code") not in (None, 200):
+                raise ValueError(response_data.get("message") or "远程 SQL 服务返回失败")
+            status = "success"
+            message = "远程 SQL 连接成功，SELECT 1 执行正常"
 
         elif component == "global_embed":
             log("Target: Global Embedding Service (local-redis backend)")
@@ -155,7 +238,6 @@ async def test_connection(
                 
             log(f"Sending test vector request to: {url}")
             
-            import httpx
             headers = {"Content-Type": "application/json"}
             if test_key:
                 headers["Authorization"] = f"Bearer {test_key}"
@@ -184,15 +266,24 @@ async def test_connection(
         # Re-raise HTTP exceptions to be handled by FastAPI's exception handlers
         raise
     except Exception as e:
-        log(f"❌ Error: {str(e)}")
-        log(f"Traceback: {traceback.format_exc()}")
+        error_message = str(e)
+        for sensitive_value in sensitive_values:
+            if sensitive_value:
+                error_message = error_message.replace(sensitive_value, "[REDACTED]")
+        log(f"❌ Error: {error_message}")
+        traceback_text = traceback.format_exc()
+        for sensitive_value in sensitive_values:
+            if sensitive_value:
+                traceback_text = traceback_text.replace(sensitive_value, "[REDACTED]")
+        log(f"Traceback: {traceback_text}")
         status = "error"
-        message = f"Connection failed: {str(e)}"
+        message = f"Connection failed: {error_message}"
 
     return ConnectionTestResponse(
         status=status,
         message=message,
-        logs=logs
+        logs=logs,
+        dataset_count=dataset_count,
     )
 
 class RedisKeysResponse(BaseModel):

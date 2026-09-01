@@ -19,14 +19,14 @@ def test_agent_tool_timeout_config_parsing_and_precedence():
         resolve_agent_toolcall_timeout,
     )
 
-    assert DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT == 120.0
-    assert parse_agent_max_toolcall_timeout(None) == 120.0
+    assert DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT == 180.0
+    assert parse_agent_max_toolcall_timeout(None) == 180.0
     assert parse_agent_max_toolcall_timeout("3600") == 3600.0
-    assert parse_agent_max_toolcall_timeout("3601") == 120.0
-    assert parse_agent_max_toolcall_timeout("1.5") == 120.0
-    assert effective_tool_timeout(120.0, 30.0, 45.0) == 120.0
-    assert effective_tool_timeout(120.0, 300.0, 45.0) == 120.0
-    assert effective_tool_timeout(120.0, None, None) == 120.0
+    assert parse_agent_max_toolcall_timeout("3601") == 180.0
+    assert parse_agent_max_toolcall_timeout("1.5") == 180.0
+    assert effective_tool_timeout(180.0, 30.0, 45.0) == 180.0
+    assert effective_tool_timeout(180.0, 300.0, 45.0) == 180.0
+    assert effective_tool_timeout(180.0, None, None) == 180.0
     assert resolve_agent_toolcall_timeout(120.0, 300.0) == 300.0
     assert resolve_agent_toolcall_timeout(300.0, 120.0) == 120.0
     assert resolve_agent_toolcall_timeout(45.0, None) == 45.0
@@ -51,8 +51,8 @@ def test_agent_tool_timeout_config_parsing_and_precedence():
         ),
     ]
 
-    limited = apply_agent_tool_timeout(specs, 120.0)
-    assert [spec.timeout_seconds for spec in limited] == [120.0, 120.0]
+    limited = apply_agent_tool_timeout(specs, 180.0)
+    assert [spec.timeout_seconds for spec in limited] == [180.0, 180.0]
 
     version_limited = apply_agent_tool_timeout(specs, 120.0, agent_timeout=300.0)
     assert [spec.timeout_seconds for spec in version_limited] == [300.0, 300.0]

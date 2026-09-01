@@ -533,8 +533,19 @@ class AgentManagerService:
         - Admin: See all.
         - User: See active (public/system) + own created.
         """
-        # 1. Fetch Agents (Sort by sort_order DESC, then System)
-        query = select(AIAgent).order_by(AIAgent.sort_order.desc(), AIAgent.is_system.desc(), AIAgent.display_name)
+        # 1. Fetch Agents: fixed Main first, then enabled agents, then disabled agents.
+        main_first = case(
+            (or_(AIAgent.id == MAIN_GENERAL_AGENT_ID, AIAgent.name.in_(MAIN_GENERAL_AGENT_NAMES)), 0),
+            else_=1,
+        )
+        enabled_first = case((AIAgent.is_enabled == True, 0), else_=1)
+        query = select(AIAgent).order_by(
+            main_first,
+            enabled_first,
+            AIAgent.sort_order.desc(),
+            AIAgent.is_system.desc(),
+            AIAgent.display_name,
+        )
         result = await session.execute(query)
         agents = result.scalars().all()
 

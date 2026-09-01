@@ -27,7 +27,6 @@ from app.services.ai.turn_decision import TurnDecision
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DELEGATION_TIMEOUT_SECONDS = 120.0
 DEFAULT_DELEGATION_RESULT_MAX_CHARS = 8000
 MAX_DELEGATION_CALLS_PER_AGENT = 2
 MAX_DELEGATION_DEPTH = 1
@@ -436,16 +435,16 @@ def finalize_delegation_result(
 
 
 async def _resolve_delegation_timeout_seconds() -> float:
-    try:
-        from app.services.config_service import ConfigService
+    current_context = get_current_agent_context()
+    snapshot = getattr(current_context, "agent_max_toolcall_timeout_seconds", None)
+    if snapshot is not None:
+        from app.services.ai.runtime.agentscope.tool_timeout import parse_agent_max_toolcall_timeout
 
-        raw = await ConfigService.get(
-            "sub_agent_delegation_timeout_seconds",
-            str(int(DEFAULT_DELEGATION_TIMEOUT_SECONDS)),
-        )
-        return max(30.0, float(raw))
-    except (TypeError, ValueError):
-        return DEFAULT_DELEGATION_TIMEOUT_SECONDS
+        return parse_agent_max_toolcall_timeout(snapshot)
+
+    from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
+
+    return await load_agent_max_toolcall_timeout()
 
 
 async def _resolve_delegation_result_max_chars() -> int:
@@ -773,6 +772,7 @@ async def sub_agent_call(
         delegation_depth=main_ctx.delegation_depth + 1,  # 深度加 1
         trace_id=child_trace_id,
         parent_trace_id=parent_trace_id,
+        agent_max_toolcall_timeout_seconds=main_ctx.agent_max_toolcall_timeout_seconds,
         delegation_run_id=run_id,
         delegation_tool_filter=(
             list(resolved_tool_filter)

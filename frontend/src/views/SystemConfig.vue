@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
@@ -702,6 +702,14 @@ const metadataProvider = computed(() => {
   return 'local'
 })
 
+const sqlExecutionMode = computed(() => {
+  for (const list of Object.values(configGroups.value)) {
+    const item = list.find(x => x.key === 'sql_execution_mode')
+    if (item) return item.value.trim().toLowerCase() === 'local' ? 'local' : 'remote'
+  }
+  return 'remote'
+})
+
 const isKnowledgeFeatureEnabled = computed(() => {
   const list = configGroups.value.knowledge
   if (!list) return true
@@ -1167,11 +1175,14 @@ const getCategoryTip = (key: string) => {
     'llm_temperature': '大模型温度系数，范围为 0.0 至 1.0。趋近于 0.0 表示回答更加确定、严谨和精准（适合数据查询与逻辑推理）；趋近于 1.0 表示回答更具创造力、发散性和随机性。',
     'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
-    'agent_max_toolcall_timeout': '单次 Agent 工具调用的全局超时时间（秒），默认 120 秒，范围 1-3600；版本级配置优先于全局配置。',
+    'agent_max_toolcall_timeout': '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
     'agent_tool_loop_global_limit': '单次对话所有工具调用的总次数上限，默认 50 次，范围 1-3600，用于防止工具循环空转。',
     'agent_max_context_turns': '智能体能够保留的最大历史上下文轮数。设置合理的值能防止发送给大模型的消息体过长，从而节约 Token 并加速模型响应。',
     'external_sql_api_url': '用于远程安全沙箱中执行生成 SQL 查询的 API 服务网关地址。直连物理执行模式（local）下此配置项将被忽略。',
     'external_sql_api_key': '用于调用远程安全 SQL 执行服务的身份验证 Token，请确保保密。',
+    'external_sql_data_source': `远程 SQL 服务使用的默认数据源 ID。
+
+如果 AI 调用工具时传入了实际的 data_source，会优先使用 AI 传入的 data_source；只有工具没有传入数据源时，才使用这里配置的默认值。请填写远程 NanZi 数据服务平台中已配置的数据源标识，例如 default_clickhouse、mysql_oa。`,
     'data_api_timeout_seconds': '查数接口执行物理数据库查询时的最大等待超时。若查询的数据量非常大（如报表统计），可适当调大此值。',
     'schema_api_timeout_seconds': '平台抓取或读取数据库 Schema 结构信息时的超时时间，通常设为 10 秒即可。',
     'metadata_provider': '定义系统通过何种途径获取数据库表和字段的描述信息。local 表示直接读取本地手工填写的元数据字典，ragflow 表示通过语义检索自动从知识库获取描述。',
@@ -1210,7 +1221,13 @@ const getCategoryTip = (key: string) => {
 * 如果你的数据集多为行业术语、字母缩写、特定型号、人名或股票代码等需要精准字面匹配的场景，调低该值（如 0.3 ~ 0.4）。
 * 如果用户提问多为口语化日常表达、长句描述，或包含大量同义词（如“查找”与“搜索”），调高该值（如 0.7 ~ 0.85）。`,
     'ragflow_metadata_top_k': '检索数据库表/字段描述时，最大召回的候选文档数量。值越大，召回的内容越多，但会增加 Token 消耗。',
-    'sql_execution_mode': '控制生成的 SQL 查询的执行位置。remote 表示通过安全的远程微服务沙箱执行，local 表示直连本地配置好的数据源连接池执行。',
+    'sql_execution_mode': `当前支持两种执行模式：
+
+remote（推荐用于独立部署）：平台不直接连接业务数据库，而是把 SQL、数据源 ID 和 API Key 发送给远程 NanZi 数据服务平台执行。请先部署开源项目并配置数据源，再填写下方远程服务地址、API Key 和数据源 ID，最后点击“测试连接”。
+
+local（适用于同一平台可直连数据库）：平台使用本地已配置的数据源连接池直接执行 SQL，不调用远程 SQL 服务。请确保数据库连接已在本平台的数据源管理中配置完成；remote 专用的 URL、API Key 和数据源 ID 在此模式下不会生效。
+
+切换模式并保存后，新的 SQL 查询才会按对应路径执行。`,
     'platform_timezone': '平台业务时区（IANA）。用于定时任务、当前时间锚点与前端时间展示。默认 Asia/Shanghai。修改后会刷新缓存并尝试重载调度器。外部数据库服务器时区不受此项控制。',
     'agentscope_inject_runtime_state': '向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用等）。时区跟随「平台业务时区」。关闭后不注入 hint，不影响工具权限与 HITL。',
     'agentscope_inject_time_interval_hours': '时间字段重复注入的最小间隔（小时）。仅在开启运行时状态注入时生效。默认 0.5（约 30 分钟）。',
@@ -1381,6 +1398,131 @@ const findConfigItemByKey = (key: string): ConfigItem | null => {
   return null
 }
 
+type RagflowConnectionResult = {
+  status: 'success' | 'error'
+  message: string
+  datasetCount?: number
+}
+
+const ragflowConnectionTesting = ref(false)
+const ragflowConnectionResult = ref<RagflowConnectionResult | null>(null)
+const ragflowApiUrl = computed(() => findConfigItemByKey('ragflow_api_url')?.value ?? '')
+const ragflowApiKey = computed(() => findConfigItemByKey('ragflow_api_key')?.value ?? '')
+const ragflowTestDisabled = computed(() => {
+  const hasApiKey = ragflowApiKey.value.trim().length > 0
+  const hasSavedApiKey = ragflowApiKey.value.includes('****')
+  return !canSave ||
+    metadataProvider.value !== 'ragflow' ||
+    !ragflowApiUrl.value.trim() ||
+    (!hasApiKey && !hasSavedApiKey)
+})
+
+const clearRagflowConnectionResult = () => {
+  ragflowConnectionResult.value = null
+}
+
+watch(
+  [metadataProvider, ragflowApiUrl, ragflowApiKey],
+  clearRagflowConnectionResult
+)
+
+const testRagflowMetadataConnection = async () => {
+  if (ragflowConnectionTesting.value || ragflowTestDisabled.value) return
+
+  const apiUrl = ragflowApiUrl.value.trim()
+  const apiKey = ragflowApiKey.value.trim()
+  const useSavedApiKey = apiKey.includes('****')
+
+  ragflowConnectionTesting.value = true
+  ragflowConnectionResult.value = null
+  try {
+    const response = await axios.post('/api/portal/system/test-connection/ragflow_metadata', {
+      ragflow_api_url: apiUrl,
+      ragflow_api_key: useSavedApiKey ? '' : apiKey,
+      use_saved_api_key: useSavedApiKey,
+    })
+    const data = response.data || {}
+    const success = data.status === 'success'
+    ragflowConnectionResult.value = {
+      status: success ? 'success' : 'error',
+      message: data.message || (success ? 'RAGFlow 连接成功' : '连接失败'),
+      datasetCount: data.dataset_count,
+    }
+    showToast(
+      success ? 'RAGFlow 连接测试成功' : `RAGFlow 连接测试失败：${data.message || '未知错误'}`,
+      success ? 'success' : 'error'
+    )
+  } catch (error: any) {
+    const message = error.response?.data?.detail || error.message || '未知错误'
+    ragflowConnectionResult.value = {
+      status: 'error',
+      message: `连接失败：${message}`,
+    }
+    showToast(`RAGFlow 连接测试失败：${message}`, 'error')
+  } finally {
+    ragflowConnectionTesting.value = false
+  }
+}
+
+type RemoteSqlConnectionResult = {
+  status: 'success' | 'error'
+  message: string
+}
+
+const remoteSqlConnectionTesting = ref(false)
+const remoteSqlConnectionResult = ref<RemoteSqlConnectionResult | null>(null)
+const externalSqlApiUrl = computed(() => findConfigItemByKey('external_sql_api_url')?.value ?? '')
+const externalSqlApiKey = computed(() => findConfigItemByKey('external_sql_api_key')?.value ?? '')
+const externalSqlDataSource = computed(() => findConfigItemByKey('external_sql_data_source')?.value ?? '')
+const remoteSqlTestDisabled = computed(() => {
+  const apiKey = externalSqlApiKey.value.trim()
+  return !canSave ||
+    sqlExecutionMode.value !== 'remote' ||
+    !externalSqlApiUrl.value.trim() ||
+    (!apiKey && !apiKey.includes('****')) ||
+    !externalSqlDataSource.value.trim()
+})
+
+watch(
+  [sqlExecutionMode, externalSqlApiUrl, externalSqlApiKey, externalSqlDataSource],
+  () => { remoteSqlConnectionResult.value = null }
+)
+
+const testRemoteSqlConnection = async () => {
+  if (remoteSqlConnectionTesting.value || remoteSqlTestDisabled.value) return
+
+  const apiUrl = externalSqlApiUrl.value.trim()
+  const apiKey = externalSqlApiKey.value.trim()
+  const useSavedApiKey = apiKey.includes('****')
+
+  remoteSqlConnectionTesting.value = true
+  remoteSqlConnectionResult.value = null
+  try {
+    const response = await axios.post('/api/portal/system/test-connection/remote_sql', {
+      external_sql_api_url: apiUrl,
+      external_sql_api_key: useSavedApiKey ? '' : apiKey,
+      external_sql_data_source: externalSqlDataSource.value.trim(),
+      use_saved_external_sql_api_key: useSavedApiKey,
+    })
+    const data = response.data || {}
+    const success = data.status === 'success'
+    remoteSqlConnectionResult.value = {
+      status: success ? 'success' : 'error',
+      message: data.message || (success ? '远程 SQL 连接成功' : '连接失败'),
+    }
+    showToast(
+      success ? '远程 SQL 连接测试成功' : `远程 SQL 连接测试失败：${data.message || '未知错误'}`,
+      success ? 'success' : 'error'
+    )
+  } catch (error: any) {
+    const message = error.response?.data?.detail || error.message || '未知错误'
+    remoteSqlConnectionResult.value = { status: 'error', message: `连接失败：${message}` }
+    showToast(`远程 SQL 连接测试失败：${message}`, 'error')
+  } finally {
+    remoteSqlConnectionTesting.value = false
+  }
+}
+
 const sandboxConnectionConfigKeys: Record<'e2b' | 'ssh', string[]> = {
   e2b: [
     'sandbox_e2b_api_key',
@@ -1492,7 +1634,9 @@ const configShortDescriptions: Record<string, string> = {
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
-  agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 120 秒，范围 1-3600；版本级配置优先于全局配置。',
+  agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
+  sql_execution_mode: 'remote 调用独立数据服务，local 由平台直连数据源。',
+  external_sql_data_source: '远程 SQL 的默认数据源 ID；AI 调用工具时传入的实际 data_source 优先于此配置。',
   agent_context_max_tokens: '上下文 Token 预算上限 (默认 64k，超过则从最早历史开始截断)。',
   agent_max_context_messages: '发送给 LLM 的最大历史消息条目数 (Token 预算优先，此处作为绝对兜底上限，默认 60)。',
   agent_context_compaction_enabled: '上下文超预算时，是否把早期对话压缩为摘录注入，避免丢失关键信息。',
@@ -1663,13 +1807,22 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     if (modeItemIndex !== -1) {
       const modeItem = restItems[modeItemIndex]
       if (modeItem) {
-        let visibleRest = [...restItems]
-        if (modeItem.value === 'local') {
-          visibleRest = [modeItem]
-        } else {
-          visibleRest.splice(modeItemIndex, 1)
-          visibleRest.unshift(modeItem)
-        }
+        const commonDataApiKeys = ['data_api_timeout_seconds', 'schema_api_timeout_seconds']
+        const remoteDataApiOrder = [
+          'sql_execution_mode',
+          'external_sql_api_url',
+          'external_sql_api_key',
+          'external_sql_data_source',
+          ...commonDataApiKeys,
+        ]
+        let visibleRest = modeItem.value === 'local'
+          ? [modeItem, ...restItems.filter(item => commonDataApiKeys.includes(item.key))]
+          : [...restItems]
+        visibleRest.sort((a, b) => {
+          const idxA = remoteDataApiOrder.indexOf(a.key)
+          const idxB = remoteDataApiOrder.indexOf(b.key)
+          return (idxA === -1 ? remoteDataApiOrder.length : idxA) - (idxB === -1 ? remoteDataApiOrder.length : idxB)
+        })
         list = [...chatbiItems, ...visibleRest]
       }
     } else {
@@ -2532,7 +2685,44 @@ onUnmounted(() => {
                           知识库功能已<strong>关闭</strong>。开启「knowledge_base_enabled」后将显示 RAGFlow 连接与检索参数，并启用知识库管理、检索测试与智能体知识库检索工具。
                        </div>
                     </div>
-                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="['embed_api_url', 'embed_api_key', 'embed_model_name', 'embed_dimensions'].includes(item.key) ? 'embed-config-group bg-indigo-50/30 rounded-lg px-4 py-3 -mx-4 border border-indigo-100/70' : ''">
+                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="[
+                      item.key === 'embed_api_url' ? 'embed-config-group rounded-t-xl border-x border-t border-indigo-100/70 bg-indigo-50/30 px-4 pt-4 pb-3 -mx-4' : '',
+                      ['embed_api_key', 'embed_model_name'].includes(item.key) ? 'embed-config-group border-x border-indigo-100/70 bg-indigo-50/30 px-4 py-3 -mx-4 !mt-0' : '',
+                      ['embed_dimensions'].includes(item.key) ? 'embed-config-group rounded-b-xl border-x border-b border-indigo-100/70 bg-indigo-50/30 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'ragflow_api_url' ? 'ragflow-config-group rounded-t-xl border-x border-t border-sky-200/80 bg-sky-50/70 px-4 pt-4 -mx-4' : '',
+                      item.key === 'ragflow_api_key' ? 'ragflow-config-group rounded-b-xl border-x border-b border-sky-200/80 bg-sky-50/70 px-4 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-t-xl border-x border-t border-emerald-200/80 bg-emerald-50/60 px-4 pt-4 -mx-4' : '',
+                      item.key === 'external_sql_api_key' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group border-x border-emerald-200/80 bg-emerald-50/60 px-4 -mx-4 !mt-0' : '',
+                      item.key === 'external_sql_data_source' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-b-xl border-x border-b border-emerald-200/80 bg-emerald-50/60 px-4 pb-4 -mx-4 !mt-0' : ''
+                    ]">
+                      <div v-if="item.key === 'ragflow_api_url'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-sky-800">
+                        <ServerIcon class="h-4 w-4 shrink-0 text-sky-600" />
+                        <span>RAGFlow 连接配置</span>
+                        <span class="text-xs font-normal text-sky-700/80">配置地址与密钥后，可立即测试数据集列表接口</span>
+                      </div>
+                      <div v-if="item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-emerald-800">
+                        <ServerIcon class="h-4 w-4 shrink-0 text-emerald-600" />
+                        <span>远程 SQL 执行配置</span>
+                        <span class="text-xs font-normal text-emerald-700/80">配置远程服务后，可立即测试 SELECT 1</span>
+                      </div>
+                      <div v-if="item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote'" class="md:col-span-3 rounded-lg border border-emerald-200/80 bg-white/70 px-4 py-3 text-sm leading-relaxed text-emerald-950">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <span class="font-semibold">远程 SQL 模式怎么使用？</span>
+                          <span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium">
+                            <a href="https://github.com/RandyChen1985/nanzi-api-data-platform/blob/main/HOW_TO_INSTALL.md" target="_blank" rel="noopener noreferrer" class="text-emerald-700 underline decoration-emerald-300 underline-offset-2 hover:text-emerald-900">查看部署教程 ↗</a>
+                            <a href="https://github.com/RandyChen1985/nanzi-api-data-platform/blob/main/architech/api-schema/sql_execution_api_usage.md" target="_blank" rel="noopener noreferrer" class="text-emerald-700 underline decoration-emerald-300 underline-offset-2 hover:text-emerald-900">查看 API 接入说明 ↗</a>
+                          </span>
+                        </div>
+                        <ol class="mt-2 grid gap-1 text-xs text-emerald-900/80 md:grid-cols-2">
+                          <li><span class="font-semibold">1.</span> 部署 NanZi 数据服务平台（推荐 Docker）。</li>
+                          <li><span class="font-semibold">2.</span> 在数据服务平台中配置数据源。</li>
+                          <li><span class="font-semibold">3.</span> 创建或获取 API Key。</li>
+                          <li><span class="font-semibold">4.</span> 填好下方 3 项后，点击「测试连接」。</li>
+                        </ol>
+                        <div class="mt-2 rounded-md bg-emerald-50/80 px-2.5 py-1.5 text-[11px] text-emerald-800">
+                          服务地址示例：<code class="font-mono">http://your-server:8000/api/v1/chatbi/sql/execute</code>；测试会执行安全的 <code class="font-mono">SELECT 1</code>。
+                        </div>
+                      </div>
                       <div class="md:col-span-1 pt-2">
                          <label class="block text-sm font-medium text-gray-700 flex items-center gap-1.5">
                             <span>{{ item.key }}</span>
@@ -2602,8 +2792,8 @@ onUnmounted(() => {
                           </div>
                           <div v-else-if="item.key === 'sql_execution_mode'">
                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                                <option value="remote">remote (走远程执行服务)</option>
-                                <option value="local">local (本地数据源直连执行)</option>
+                                <option value="remote">remote（调用远程数据服务）</option>
+                                <option value="local">local（平台直连数据源）</option>
                              </select>
                           </div>
                           <div v-else-if="item.key === 'sandbox_policy'" class="relative">
@@ -2725,6 +2915,59 @@ onUnmounted(() => {
                                 <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
                                 <EyeSlashIcon v-else class="h-5 w-5" />
                              </div>
+                             <div v-if="item.key === 'ragflow_api_key'" class="mt-3 flex flex-wrap items-center gap-3">
+                               <button
+                                 type="button"
+                                 @click="testRagflowMetadataConnection"
+                                 :disabled="ragflowTestDisabled || ragflowConnectionTesting"
+                                 class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 shadow-sm transition-colors hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                               >
+                                 <PlayIcon v-if="!ragflowConnectionTesting" class="h-4 w-4" />
+                                 <span v-else class="h-4 w-4 animate-spin rounded-full border-2 border-sky-400 border-t-transparent"></span>
+                                 {{ ragflowConnectionTesting ? '测试中...' : '测试连接' }}
+                               </button>
+                               <span
+                                 v-if="ragflowConnectionResult"
+                                 class="inline-flex min-w-0 items-center gap-1 text-xs leading-relaxed"
+                                 :class="ragflowConnectionResult.status === 'success' ? 'text-emerald-700' : 'text-rose-700'"
+                               >
+                                 <CheckCircleIcon v-if="ragflowConnectionResult.status === 'success'" class="h-4 w-4 shrink-0" />
+                                 <XCircleIcon v-else class="h-4 w-4 shrink-0" />
+                                 <span>{{ ragflowConnectionResult.message }}</span>
+                               </span>
+                               <span v-else class="text-xs text-gray-500">仅测试连接，不会自动保存配置</span>
+                             </div>
+                          </div>
+                          <div v-else-if="item.key === 'external_sql_data_source'" class="space-y-2.5">
+                            <input
+                              type="text"
+                              v-model="item.value"
+                              :disabled="isConfigItemDisabled(String(category), item)"
+                              class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2"
+                              placeholder="如 default_clickhouse"
+                            />
+                            <div class="flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                @click="testRemoteSqlConnection"
+                                :disabled="remoteSqlTestDisabled || remoteSqlConnectionTesting"
+                                class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <PlayIcon v-if="!remoteSqlConnectionTesting" class="h-4 w-4" />
+                                <span v-else class="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent"></span>
+                                {{ remoteSqlConnectionTesting ? '测试中...' : '测试连接' }}
+                              </button>
+                              <span
+                                v-if="remoteSqlConnectionResult"
+                                class="inline-flex min-w-0 items-center gap-1 text-xs leading-relaxed"
+                                :class="remoteSqlConnectionResult.status === 'success' ? 'text-emerald-700' : 'text-rose-700'"
+                              >
+                                <CheckCircleIcon v-if="remoteSqlConnectionResult.status === 'success'" class="h-4 w-4 shrink-0" />
+                                <XCircleIcon v-else class="h-4 w-4 shrink-0" />
+                                <span>{{ remoteSqlConnectionResult.message }}</span>
+                              </span>
+                              <span v-else class="text-xs text-gray-500">仅测试连接，不会自动保存配置</span>
+                            </div>
                           </div>
                           <div v-else-if="item.key === 'third_party_user_sync_config'">
                               <div class="border border-gray-200/80 rounded-xl p-4 bg-gray-50/50 space-y-4 shadow-inner">
@@ -2827,10 +3070,11 @@ onUnmounted(() => {
                                    <button
                                        v-if="canSave"
                                        @click="openDatasetSelector(item)"
-                                       class="px-3 py-2 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-primary hover:border-primary transition-colors"
-                                       title="选择知识库"
+                                       class="inline-flex shrink-0 items-center gap-1.5 px-3 py-2 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-primary hover:border-primary transition-colors"
+                                       :title="item.key === 'knowledge_ragflow_dataset_ids' ? '测试连接并配置默认知识库' : '选择知识库'"
                                     >
                                        <CircleStackIcon class="w-5 h-5" />
+                                       <span v-if="item.key === 'knowledge_ragflow_dataset_ids'" class="whitespace-nowrap text-xs font-medium">测试 &amp; 配置默认知识库</span>
                                    </button>
                                </div>
                           </div>
@@ -3673,7 +3917,7 @@ onUnmounted(() => {
           <div class="space-y-2">
             <span class="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">功能描述</span>
             <p class="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100 whitespace-pre-wrap">
-              {{ activeExplanationItem.key === 'sandbox_policy' ? sandboxPolicyTip : (activeExplanationItem.description || '暂无描述信息。') }}
+              {{ activeExplanationItem.key === 'sandbox_policy' ? sandboxPolicyTip : (activeExplanationItem.key === 'sql_execution_mode' ? 'SQL 查询执行位置。当前仅支持 remote 和 local 两种模式。' : (activeExplanationItem.description || '暂无描述信息。')) }}
             </p>
           </div>
           

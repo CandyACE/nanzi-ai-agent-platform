@@ -5,6 +5,14 @@ from app.services.metadata_rag_service import MetadataRagService
 from app.models.metadata import MetaDataset, MetaTable, MetaColumn
 from app.services.ai.ragflow_client import RagFlowClient
 
+
+class FakeSyncLogPublisher:
+    def __init__(self):
+        self.events = []
+
+    async def publish(self, task_id, **kwargs):
+        self.events.append(type("Event", (), {"event": kwargs["event"], "stage": kwargs["stage"], "error_detail": kwargs.get("error_detail")})())
+
 @pytest.mark.asyncio
 async def test_yaml_generation():
     """验证生成的 YAML 格式是否符合要求"""
@@ -65,7 +73,9 @@ async def test_sync_dataset_flow(db_session: AsyncSession):
     await db_session.commit()
     
     # 2. Mock RagFlowClient
-    with patch("app.services.metadata_rag_service.RagFlowClient") as MockClient:
+    publisher = FakeSyncLogPublisher()
+    with patch("app.services.metadata_rag_service.RagFlowClient") as MockClient, \
+         patch("app.services.metadata_rag_service.metadata_sync_log_service", publisher):
         mock_instance = MockClient.return_value
         mock_instance.list_datasets = AsyncMock(return_value=[])
         mock_instance.create_dataset = AsyncMock(return_value={"id": "rag_kb_123"})
@@ -74,7 +84,7 @@ async def test_sync_dataset_flow(db_session: AsyncSession):
         mock_instance.parse_documents = AsyncMock()
         
         # 3. Execute Sync
-        await MetadataRagService.sync_dataset(db_session, dataset.id)
+        await MetadataRagService.sync_dataset(db_session, dataset.id, task_id="sync_test")
         
         # 4. Verify DB updated
         await db_session.refresh(dataset)
@@ -85,6 +95,8 @@ async def test_sync_dataset_flow(db_session: AsyncSession):
         # 5. Verify Client calls
         mock_instance.create_dataset.assert_called_once()
         mock_instance.upload_document.assert_called()
+        assert [event.event for event in publisher.events][-1] == "completed"
+        assert publisher.events[-1].stage == "completed"
 
 @pytest.mark.asyncio
 async def test_sync_dataset_failure(db_session: AsyncSession):
@@ -96,14 +108,18 @@ async def test_sync_dataset_failure(db_session: AsyncSession):
     await db_session.commit()
     
     # Mock Client to raise exception
-    with patch("app.services.metadata_rag_service.RagFlowClient") as MockClient:
+    publisher = FakeSyncLogPublisher()
+    with patch("app.services.metadata_rag_service.RagFlowClient") as MockClient, \
+         patch("app.services.metadata_rag_service.metadata_sync_log_service", publisher):
         mock_instance = MockClient.return_value
         mock_instance.list_datasets = AsyncMock(side_effect=Exception("RAGFlow Down"))
         
-        await MetadataRagService.sync_dataset(db_session, dataset.id)
+        await MetadataRagService.sync_dataset(db_session, dataset.id, task_id="sync_test")
         
         await db_session.refresh(dataset)
         assert dataset.rag_sync_status == -1 # Should be marked as failed
+        assert publisher.events[-1].event == "failed"
+        assert publisher.events[-1].error_detail
 
 @pytest.mark.asyncio
 async def test_cascade_delete(db_session: AsyncSession):

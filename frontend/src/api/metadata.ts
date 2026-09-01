@@ -39,6 +39,15 @@ export interface Dataset {
   tables?: Table[];
 }
 
+export interface MetadataSyncStartResponse {
+  code: number;
+  message: string;
+  data?: {
+    rag_sync_status: number;
+    task_id: string;
+  };
+}
+
 export interface Column {
   id?: number;
   physical_name: string;
@@ -297,7 +306,7 @@ export const metadataApi = {
     axios.put<Dataset>(`${API_BASE}/datasets/${id}`, data),
   deleteDataset: (id: number) => axios.delete(`${API_BASE}/datasets/${id}`),
   syncToRag: (id: number) =>
-    axios.post<any>(`${API_BASE}/datasets/${id}/rag/sync`),
+    axios.post<MetadataSyncStartResponse>(`${API_BASE}/datasets/${id}/rag/sync`),
   getDatasetYaml: (id: number) =>
     axios.get<any>(`${API_BASE}/datasets/${id}/yaml`),
   testRetrieval: (

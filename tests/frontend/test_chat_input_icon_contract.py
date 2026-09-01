@@ -123,7 +123,7 @@ def test_ai_message_actions_have_larger_desktop_hit_areas() -> None:
     source = MESSAGE_ACTION_MENUS.read_text(encoding="utf-8")
     embed_chat = EMBED_CHAT.read_text(encoding="utf-8")
 
-    assert "class=\"flex items-center gap-1.5\"" in source
+    assert "class=\"flex shrink-0 items-center gap-1.5\"" in source
     assert "min-h-8" in source
     assert "text-[11px]" in source
     assert "class=\"w-3.5 h-3.5\"" in embed_chat

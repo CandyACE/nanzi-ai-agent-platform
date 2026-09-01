@@ -110,25 +110,22 @@ const handleRagSelect = async (val: string | string[]) => {
   if (ragSelectorTarget.value === "app_id") {
     engineConfigUI.value.app_id = val as string;
   } else if (ragSelectorTarget.value === "dataset_ids") {
-    engineConfigUI.value.dataset_ids = Array.isArray(val)
-      ? val.join(",")
-      : (val as string);
-    if (isCreatingAgent.value) {
-      agentForm.value.engine_config = {
-        ...(agentForm.value.engine_config || {}),
-        dataset_ids: Array.isArray(val) ? val : [val],
-      };
-    }
+    const newIds = (Array.isArray(val) ? val : [val]).filter(Boolean);
+    engineConfigUI.value.dataset_ids = newIds.join(",");
+    agentForm.value.engine_config = {
+      ...(agentForm.value.engine_config || {}),
+      dataset_ids: newIds,
+    };
   } else if (ragSelectorTarget.value === "agent_kb_immediate") {
     // Immediate update for Agent's KB config
-    const newIds = Array.isArray(val) ? val : [val];
+    const newIds = (Array.isArray(val) ? val : [val]).filter(Boolean);
+    engineConfigUI.value.dataset_ids = newIds.join(",");
+    agentForm.value.engine_config = {
+      ...(agentForm.value.engine_config || {}),
+      dataset_ids: newIds,
+    };
 
     if (isCreatingAgent.value && !selectedAgent.value) {
-      engineConfigUI.value.dataset_ids = newIds.join(",");
-      agentForm.value.engine_config = {
-        ...(agentForm.value.engine_config || {}),
-        dataset_ids: newIds,
-      };
       showToast("知识库已加入初始配置", "success");
       return;
     }
@@ -388,6 +385,9 @@ const filteredAgents = computed(() => {
   // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
   return result.sort((a, b) => {
     if (isMainAgent(a) !== isMainAgent(b)) return isMainAgent(a) ? -1 : 1;
+    if ((a.is_enabled ?? true) !== (b.is_enabled ?? true)) {
+      return (a.is_enabled ?? true) ? -1 : 1;
+    }
     // Primary sort: sort_order (descending)
     if (a.sort_order !== b.sort_order) {
       return (b.sort_order || 0) - (a.sort_order || 0);
@@ -479,7 +479,9 @@ const handleAgentDrop = (event: DragEvent, targetId: string) => {
   dragSourceId.value = null;
   if (!canDragAgents.value || !sourceId || sourceId === targetId || isMainAgent(sourceId) || isMainAgent(targetId)) return;
 
-  const currentOrder = filteredAgents.value.map((agent) => agent.id);
+  const currentOrder = filteredAgents.value
+    .filter((agent) => !isMainAgent(agent))
+    .map((agent) => agent.id);
   const sourceIdx = currentOrder.indexOf(sourceId);
   const targetIdx = currentOrder.indexOf(targetId);
   if (sourceIdx === -1 || targetIdx === -1) return;
@@ -902,10 +904,7 @@ const getEnabledToolNames = () =>
     .filter(Boolean);
 
 const getKnowledgeBaseDatasetIds = () => {
-  const raw =
-    agentForm.value.engine_config?.dataset_ids ??
-    selectedAgent.value?.engine_config?.dataset_ids ??
-    engineConfigUI.value.dataset_ids;
+  const raw = engineConfigUI.value.dataset_ids;
   return (Array.isArray(raw) ? raw : String(raw || '').split(','))
     .map((value) => String(value).trim())
     .filter(Boolean);
@@ -2066,6 +2065,12 @@ const publishVersionFromEditor = async () => {
     toolTab.value = "skills";
     return;
   }
+  if (!isVersionConfigStepComplete('tools')) {
+    versionConfigStep.value = 'tools';
+    toolTab.value = 'static';
+    showToast(describeIncompleteVersionConfigStep('tools'), 'warning');
+    return;
+  }
 
   try {
     if (isCreatingAgent.value) {
@@ -2109,6 +2114,7 @@ const publishVersionFromEditor = async () => {
       published_version: "可发布版本",
       data_query_tool: "查数工具",
       knowledge_base_tool: "知识库检索工具",
+      knowledge_base_binding: "知识库绑定",
       knowledge_base: "知识库",
     };
     const missing = Array.isArray(detail?.missing)

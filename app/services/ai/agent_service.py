@@ -1263,6 +1263,23 @@ class AgentService:
             debug_options["injected_context"] = sanitize_injected_context(
                 debug_options["injected_context"]
             )
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            load_agent_max_toolcall_timeout,
+            parse_agent_max_toolcall_timeout,
+        )
+
+        configured_timeout = (request_observability or {}).get(
+            "agent_max_toolcall_timeout"
+        )
+        if configured_timeout is None:
+            agent_max_toolcall_timeout_seconds = await load_agent_max_toolcall_timeout()
+        else:
+            agent_max_toolcall_timeout_seconds = parse_agent_max_toolcall_timeout(
+                configured_timeout
+            )
+        debug_options["_agent_max_toolcall_timeout_seconds"] = (
+            agent_max_toolcall_timeout_seconds
+        )
         from app.utils.context import current_user_info
         current_user_info.set(user_info)
 
@@ -1683,6 +1700,7 @@ class AgentService:
                     trace_buffer=trace_buffer,
                     start_time=asyncio.get_running_loop().time(),
                     shared_state=shared_state,
+                    agent_max_toolcall_timeout_seconds=agent_max_toolcall_timeout_seconds,
                 )
                 try:
                     async for chunk in gen:
@@ -3438,6 +3456,7 @@ class AgentService:
         shared_state: Optional[Dict[str, Any]] = None,
         reusable_result_id: Optional[str] = None,
         request_observability: Optional[Dict[str, Any]] = None,
+        agent_max_toolcall_timeout_seconds: Optional[float] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Internal turn runner; must be called inside conversation run lane when enabled."""
         agent_config = None
@@ -3844,6 +3863,7 @@ class AgentService:
                 trace_buffer=trace_buffer,
                 runtime_model_info=runtime_context_metadata,
                 published_download_urls=published_download_urls,
+                agent_max_toolcall_timeout_seconds=agent_max_toolcall_timeout_seconds,
             )
             performance_tracker.mark("context_setup")
 
@@ -3894,6 +3914,7 @@ class AgentService:
                     trace_buffer=trace_buffer,
                     runtime_model_info=runtime_context_metadata,
                     published_download_urls=published_download_urls,
+                    agent_max_toolcall_timeout_seconds=agent_max_toolcall_timeout_seconds,
                 )
                 performance_tracker.mark("knowledge_context_setup")
 
@@ -4766,6 +4787,11 @@ class AgentService:
                 trace_buffer=getattr(runner, "trace_buffer", None) or [],
                 runtime_model_info=runtime_context_metadata,
                 published_download_urls=_restore_published_download_urls_from_pending(pending),
+                agent_max_toolcall_timeout_seconds=(
+                    dict(getattr(runner, "debug_options", {}) or {}).get(
+                        "_agent_max_toolcall_timeout_seconds"
+                    )
+                ),
             )
             return
         if hasattr(runner, "_ensure_agent_context"):

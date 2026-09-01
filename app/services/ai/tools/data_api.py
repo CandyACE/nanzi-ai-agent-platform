@@ -201,7 +201,7 @@ async def call_external_sql_api(
     if env_mode in ("local", "remote"):
         execution_mode = env_mode
     else:
-        # 环境变量为空或 auto 时，读取数据库动态配置 sql_execution_mode
+        # 环境变量未指定时，读取数据库动态配置 sql_execution_mode
         try:
             execution_mode = await ConfigService.get("sql_execution_mode", default="remote")
             execution_mode = execution_mode.strip().lower()

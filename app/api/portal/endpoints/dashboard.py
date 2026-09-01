@@ -10,6 +10,7 @@ from app.core.redis import get_redis
 from app.models.audit import AccessLog, AgentExecutionTrace, AgentExecutionHistory
 from app.models.user import User
 from app.models.agent import AIAgent
+from app.services.online_presence_service import OnlinePresenceService
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -389,37 +390,12 @@ async def get_online_users(
     
     admin_flag = is_admin(user)
     try:
-        cursor = 0
-        keys = []
-        while True:
-            cursor, batch = await redis.scan(cursor, match="auth:api_key:*", count=100)
-            keys.extend(batch)
-            if cursor == 0: break
-        
-        count = len(keys)
-        online_users = []
-        
-        # Only return detailed list for admins
-        if admin_flag and keys:
-            # Use pipeline to fetch all hash data efficiently
-            pipe = redis.pipeline()
-            for key in keys:
-                pipe.hgetall(key)
-            
-            hash_results = await pipe.execute()
-            
-            for u_data in hash_results:
-                if u_data:
-                    # Redis hash results are dicts
-                    online_users.append({
-                        "user_name": u_data.get("user_name"),
-                        "real_name": u_data.get("real_name") or u_data.get("user_name"),
-                        "role": u_data.get("role"),
-                        "last_active": datetime.now().isoformat()
-                    })
+        online_users = await OnlinePresenceService.list_active_users(
+            redis_client=redis
+        )
         
         return {
-            "count": count,
+            "count": len(online_users),
             "users": online_users if admin_flag else []
         }
     except Exception as e:

@@ -1,10 +1,11 @@
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator, Awaitable, Callable, List, Any, Dict, Optional
 from pydantic import BaseModel
-import asyncio
-import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ from app.models.permission import Role
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from app.core.errors import ErrorCode
 from app.services.permission_service import PermissionService
+from app.services.metadata_sync_log_service import metadata_sync_log_service
 
 router = APIRouter()
 
@@ -564,18 +566,67 @@ async def sync_dataset_to_rag(
     # We pass dataset_id. The service will open its own session or we use a factory.
     # To keep it simple and safe for BackgroundTasks, the service will handle its session.
     from app.core.orm import AsyncSessionLocal
+
+    task = await metadata_sync_log_service.create_task(dataset_id)
+    await metadata_sync_log_service.publish(
+        task.task_id,
+        event="started",
+        stage="queued",
+        message="同步任务已开始",
+        progress=0,
+    )
     
     async def run_sync():
         async with AsyncSessionLocal() as session:
-            await MetadataRagService.sync_dataset(session, dataset_id)
+            await MetadataRagService.sync_dataset(session, dataset_id, task_id=task.task_id)
 
     background_tasks.add_task(run_sync)
     
     return {
         "code": 200, 
-        "message": "同步任务已启动，请稍后刷新查看状态",
-        "data": {"rag_sync_status": 1}
+        "message": "同步任务已启动",
+        "data": {"rag_sync_status": 1, "task_id": task.task_id}
     }
+
+
+@router.get(
+    "/datasets/{dataset_id}/rag/sync/{task_id}/events",
+    dependencies=[Depends(require_permission("element", "element:metadata:sync"))],
+)
+async def metadata_sync_events(dataset_id: int, task_id: str):
+    """订阅当前元数据同步任务的临时实时日志。"""
+    if not await metadata_sync_log_service.belongs_to_dataset(task_id, dataset_id):
+        raise HTTPException(status_code=404, detail="同步任务不存在")
+
+    async def event_stream():
+        last_id = "0-0"
+        try:
+            while True:
+                events = await metadata_sync_log_service.read_events(task_id, after_id=last_id)
+                if not events:
+                    events = await metadata_sync_log_service.read_new_events(
+                        task_id, after_id=last_id, block_ms=1000
+                    )
+                for item in events:
+                    event_id = item.pop("id", None)
+                    if event_id:
+                        last_id = event_id
+                    event_name = item.get("event", "progress")
+                    yield f"id: {last_id}\nevent: {event_name}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    if event_name in metadata_sync_log_service.TERMINAL_EVENTS:
+                        return
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 # --- Metric APIs ---
 

@@ -122,6 +122,13 @@ async def test_chat_completion_stream_sse_snapshot(monkeypatch):
     from app.api.v1.endpoints import chat as chat_endpoint
     from app.core.orm import get_db_session
 
+    monkeypatch.setattr(
+        chat_endpoint,
+        "load_agent_max_toolcall_timeout",
+        AsyncMock(return_value=300.0),
+        raising=False,
+    )
+
     async def fake_require_api_key():
         return {"user_id": "u-sse", "role": "user"}
 
@@ -169,6 +176,7 @@ async def test_chat_completion_stream_sse_snapshot(monkeypatch):
     assert lines[-1] == "data: [DONE]"
     events = [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
     assert events == [
+        {"type": "run_config", "agent_max_toolcall_timeout": 300},
         {"type": "log", "title": "调用工具: search_knowledge_base", "status": "pending"},
         {"content": "Hello"},
         {"type": "citation", "data": [{"id": "doc-1", "text": "Source 1"}]},
