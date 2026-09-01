@@ -134,6 +134,15 @@ export interface RelationshipRecommendationResult {
     remaining_group_count?: number;
     completed_pair_count?: number;
     remaining_pair_count?: number;
+    fk_relationship_count?: number;
+    probed_pair_count?: number;
+    confirmed_pair_count?: number;
+    unverified_pair_count?: number;
+    rejected_reasons?: Record<string, number>;
+    confirmed_duplicate_count?: number;
+    confirmed_description_updated?: number;
+    probe_duration_ms?: number;
+    probe_unavailable_reason?: string | null;
     total_prompt_chars?: number;
     total_scoped_schema_chars?: number;
     batch_size?: number;

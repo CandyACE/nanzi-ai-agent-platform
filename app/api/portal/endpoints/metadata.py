@@ -126,6 +126,12 @@ async def _stream_metadata_recommendation(
                     "candidate_pair_count": debug.get("candidate_pair_count"),
                     "completed_pair_count": debug.get("completed_pair_count"),
                     "remaining_pair_count": debug.get("remaining_pair_count"),
+                    "fk_relationship_count": debug.get("fk_relationship_count"),
+                    "probed_pair_count": debug.get("probed_pair_count"),
+                    "confirmed_pair_count": debug.get("confirmed_pair_count"),
+                    "unverified_pair_count": debug.get("unverified_pair_count"),
+                    "probe_duration_ms": debug.get("probe_duration_ms"),
+                    "probe_unavailable_reason": debug.get("probe_unavailable_reason"),
                     "stop_reason": result.get("_stop_reason") if isinstance(result, dict) else None,
                     "result": result,
                 },
@@ -888,6 +894,7 @@ async def recommend_relationships(
             schema_yaml,
             user_prompt=user_prompt,
             existing_relationships=existing_rel_strs,
+            data_source=ds.data_source,
         ),
         name=f"metadata-relationship-recommend-{dataset_id}",
     )
@@ -994,6 +1001,7 @@ async def recommend_relationships_stream(
             schema_context=schema_yaml,
             user_prompt=user_prompt,
             existing_relationships=existing_rel_strs,
+            data_source=ds.data_source,
             progress_callback=progress_callback,
         )
 

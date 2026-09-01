@@ -10,6 +10,9 @@ from app.core.orm import AsyncSessionLocal
 from app.services.metadata_relationship_candidate_service import (
     MetadataRelationshipCandidateService,
 )
+from app.services.metadata_relationship_probe_service import (
+    MetadataRelationshipProbeService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,25 @@ class RelationshipRecommendation(BaseModel):
 class RelationshipRecommendationResult(BaseModel):
     relationships: List[RelationshipRecommendation] = Field(description="推荐的表关联关系列表")
 
+class RelationshipDescriptionItem(BaseModel):
+    pair_id: int = Field(description="对应输入的 pair_id")
+    description: str = Field(description="关系业务含义描述，不超过 80 个中文字符")
+
+class RelationshipDescriptionResult(BaseModel):
+    descriptions: List[RelationshipDescriptionItem] = Field(
+        description="每条已确认关系的业务描述，必须覆盖全部输入 pair_id"
+    )
+
+RELATIONSHIP_DESCRIPTION_SYSTEM_PROMPT = (
+    "你是一个数据建模专家。输入中的关系已通过数据库外键约束或数据抽样验证确认，"
+    "请结合表名、字段名和探测原因，为每条关系输出简洁的中文业务含义描述。\n"
+    "严格规则：\n"
+    "1. 只能为输入给出的 pair_id 输出描述，不得新增或删除。\n"
+    "2. description 不超过 80 个中文字符，不要复述 SQL。\n"
+    "3. 只返回一个 JSON 对象。\n"
+    "{format_instructions}"
+)
+
 class MetricRecommendationResult(BaseModel):
     metrics: List[MetricMetadata] = Field(description="推荐的高价值业务指标列表")
 
@@ -119,6 +141,21 @@ class MetadataGeneratorService:
         if not src or not tgt:
             return None
         return tuple(sorted([src, tgt])) + (cond,)
+
+    @staticmethod
+    def _extract_condition_pair_keys(condition: str) -> List[tuple[str, str]]:
+        """从 JOIN 条件里解析参与比较的物理表对键，用于去重前置匹配。"""
+        keys: List[tuple[str, str]] = []
+        for match in re.finditer(
+            r"([A-Za-z_][\w$]*)\s*\.\s*([A-Za-z_][\w$]*)\s*=\s*"
+            r"([A-Za-z_][\w$]*)\s*\.\s*([A-Za-z_][\w$]*)",
+            str(condition or ""),
+        ):
+            left_table = str(match.group(1) or "").strip().lower()
+            right_table = str(match.group(3) or "").strip().lower()
+            if left_table and right_table:
+                keys.append(tuple(sorted((left_table, right_table))))
+        return list(dict.fromkeys(keys))
 
     @staticmethod
     def _format_instructions(model_cls: type[BaseModel]) -> str:
@@ -662,6 +699,7 @@ class MetadataGeneratorService:
         schema_context: str,
         user_prompt: Optional[str] = None,
         existing_relationships: Optional[List[str]] = None,
+        data_source: Optional[str] = None,
         progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """
@@ -765,56 +803,218 @@ class MetadataGeneratorService:
             schema_table_names, relationship_table_index = (
                 MetadataRelationshipCandidateService.parse_schema(schema_context)
             )
+            focused_table_names = MetadataRelationshipCandidateService.parse_focused_table_names(
+                user_prompt,
+                schema_table_names,
+            )
             candidate_pairs = MetadataRelationshipCandidateService.build_candidate_pairs(
                 schema_table_names,
                 relationship_table_index,
-                include_all_pairs=bool(user_prompt and user_prompt.strip()),
+                focused_table_names=focused_table_names,
             )
-            candidate_groups = MetadataRelationshipCandidateService.group_candidate_pairs(
-                candidate_pairs,
-                max_pairs_per_group=8,
-                max_tables_per_group=12,
-            )
-            total_groups = len(candidate_groups)
             possible_pair_count = (
                 len(schema_table_names) * (len(schema_table_names) - 1) // 2
             )
             logger.warning(
-                "关系推荐候选组执行启动: trace_id=%s, dataset_id=%s, "
-                "schema_len=%s, table_count=%s, possible_pairs=%s, "
-                "candidate_pairs=%s, group_count=%s, custom_prompt=%s",
+                "关系推荐候选准备完成: trace_id=%s, dataset_id=%s, schema_len=%s, "
+                "table_count=%s, possible_pairs=%s, candidate_pairs=%s, "
+                "custom_prompt=%s",
                 trace_id,
                 dataset_id,
                 len(schema_context),
                 len(schema_table_names),
                 possible_pair_count,
                 len(candidate_pairs),
-                total_groups,
                 bool(user_prompt and user_prompt.strip()),
             )
+
+            # 2.1 去重前置：既有关系与近期推荐命中的表对在探测前剔除，
+            # 避免数据库探测和 AI 兜底重复处理已经确认过的关系。
+            existing_condition_pair_keys = set()
+            for src_name, tgt_name, condition in list(existing_relationship_keys) + list(recent_recommended_keys):
+                condition_pairs = MetadataGeneratorService._extract_condition_pair_keys(condition)
+                if condition_pairs:
+                    existing_condition_pair_keys.update(condition_pairs)
+                else:
+                    existing_condition_pair_keys.add(
+                        tuple(sorted((src_name, tgt_name)))
+                    )
+            deduped_candidate_pairs = []
+            excluded_pair_count = 0
+            for pair in candidate_pairs:
+                if pair.unordered_key in existing_condition_pair_keys:
+                    excluded_pair_count += 1
+                    continue
+                deduped_candidate_pairs.append(pair)
+            if excluded_pair_count:
+                logger.warning(
+                    "关系推荐候选去重前置完成: trace_id=%s, dataset_id=%s, "
+                    "before=%s, excluded=%s, remaining=%s",
+                    trace_id,
+                    dataset_id,
+                    len(candidate_pairs),
+                    excluded_pair_count,
+                    len(deduped_candidate_pairs),
+                )
+            candidate_pairs = deduped_candidate_pairs
+
+            # 3. 数据库探测优先；未确认候选才进入候选组模型兜底。
             await MetadataGeneratorService._emit_progress(
                 progress_callback,
-                phase="candidate_ready",
-                message=(
-                    f"已从 {possible_pair_count} 个表对中筛出 "
-                    f"{len(candidate_pairs)} 个候选，分为 {total_groups} 组"
-                ),
-                percent=10,
+                phase="database_probe",
+                message="正在读取数据库外键约束",
+                percent=12,
                 trace_id=trace_id,
                 completed_units=0,
-                total_units=total_groups,
-                remaining_units=total_groups,
-                unit_label="候选组",
+                total_units=len(candidate_pairs),
+                remaining_units=len(candidate_pairs),
+                unit_label="候选表对",
                 batch_count=0,
                 result_count=0,
                 candidate_pair_count=len(candidate_pairs),
                 completed_pair_count=0,
                 remaining_pair_count=len(candidate_pairs),
             )
+            foreign_keys, probe_unavailable_reason = (
+                await MetadataRelationshipProbeService.load_foreign_keys(data_source)
+            )
+            probe_relationships = MetadataRelationshipProbeService.find_fk_relationships(
+                foreign_keys,
+                candidate_pairs,
+            )
+            fk_pair_keys = {
+                tuple(sorted((
+                    relationship["source_table"].lower(),
+                    relationship["target_table"].lower(),
+                )))
+                for relationship in probe_relationships
+            }
+            unprobed_pairs = [
+                pair for pair in candidate_pairs
+                if pair.unordered_key not in fk_pair_keys
+            ]
+            if probe_unavailable_reason is None:
+                await MetadataGeneratorService._emit_progress(
+                    progress_callback,
+                    phase="database_sampling",
+                    message=f"开始抽样验证 {len(unprobed_pairs)} 个候选表对",
+                    percent=15,
+                    trace_id=trace_id,
+                    completed_units=0,
+                    total_units=len(candidate_pairs),
+                    remaining_units=len(candidate_pairs),
+                    unit_label="候选表对",
+                    batch_count=0,
+                    result_count=0,
+                    candidate_pair_count=len(candidate_pairs),
+                    completed_pair_count=0,
+                    remaining_pair_count=len(candidate_pairs),
+                )
+                sampled_relationships, probe_stats = (
+                    await MetadataRelationshipProbeService.probe_candidate_pairs(
+                        data_source,
+                        unprobed_pairs,
+                        relationship_table_index,
+                    )
+                )
+            else:
+                sampled_relationships, probe_stats = [], {
+                    "probed_pair_count": 0,
+                    "confirmed_pair_count": 0,
+                    "rejected_pair_count": 0,
+                    "rejected_reasons": {},
+                    "unverified_pair_count": 0,
+                    "probe_duration_ms": 0,
+                    "probe_unavailable_reason": probe_unavailable_reason,
+                }
+                logger.warning(
+                    "关系数据库探测不可用，回退候选组模型: trace_id=%s, reason=%s",
+                    trace_id,
+                    probe_unavailable_reason,
+                )
 
-            # 3. 只有存在候选组时才初始化模型，空候选任务直接返回成功。
+            collected_keys = set(recent_recommended_keys).union(
+                existing_relationship_keys
+            )
+            confirmed_relationships = []
+            confirmed_duplicate_count = 0
+            for item in probe_relationships + sampled_relationships:
+                # 兼容数据类与测试注入的字典形态，字段语义一致。
+                left_table = getattr(item, "left_table", None)
+                right_table = getattr(item, "right_table", None)
+                left_column = getattr(item, "left_column", None)
+                right_column = getattr(item, "right_column", None)
+                if left_table is None:
+                    left_table = item.get("left_table")
+                    right_table = item.get("right_table")
+                    left_column = item.get("left_column")
+                    right_column = item.get("right_column")
+                relationship = {
+                    "source_table": left_table,
+                    "target_table": right_table,
+                    "condition": (
+                        f"{left_table}.{left_column} = "
+                        f"{right_table}.{right_column}"
+                    ),
+                    "relation_type": getattr(item, "relation_type", None) or item.get("relation_type"),
+                    "description": getattr(item, "reason", None) or item.get("reason"),
+                    "confidence": getattr(item, "confidence", None) or item.get("confidence"),
+                    "source": getattr(item, "source", None) or item.get("source", "PROBE"),
+                }
+                # 探测结论同样执行去重键校验，避免外键与近期缓存重复输出。
+                relationship_key = (
+                    MetadataGeneratorService._relationship_pair_key(relationship)
+                )
+                if relationship_key and relationship_key in collected_keys:
+                    confirmed_duplicate_count += 1
+                    continue
+                confirmed_relationships.append(relationship)
+            if confirmed_duplicate_count:
+                logger.warning(
+                    "关系探测结果去重完成: trace_id=%s, dataset_id=%s, "
+                    "excluded=%s, kept=%s",
+                    trace_id,
+                    dataset_id,
+                    confirmed_duplicate_count,
+                    len(confirmed_relationships),
+                )
+
+            confirmed_pair_keys = set(fk_pair_keys)
+            for item in sampled_relationships:
+                # 与上面的确认关系转换保持一致，兼容数据类与字典形态。
+                left_table = getattr(item, "left_table", None)
+                right_table = getattr(item, "right_table", None)
+                if left_table is None:
+                    left_table = item.get("left_table")
+                    right_table = item.get("right_table")
+                confirmed_pair_keys.add(tuple(sorted((
+                    left_table.lower(),
+                    right_table.lower(),
+                ))))
+            fallback_pairs = [
+                pair for pair in candidate_pairs
+                if pair.unordered_key not in confirmed_pair_keys
+            ]
+            candidate_groups = MetadataRelationshipCandidateService.group_candidate_pairs(
+                fallback_pairs,
+                max_pairs_per_group=8,
+                max_tables_per_group=12,
+            )
+            total_groups = len(candidate_groups)
+
+            confirmed_pair_summaries = [
+                {
+                    "pair_id": index + 1,
+                    "source_table": rel["source_table"],
+                    "target_table": rel["target_table"],
+                    "condition": rel["condition"],
+                    "probe_reason": rel["description"],
+                }
+                for index, rel in enumerate(confirmed_relationships)
+            ]
             llm = None
-            if candidate_groups:
+            needs_llm = bool(candidate_groups or confirmed_pair_summaries)
+            if needs_llm:
                 async with AsyncSessionLocal() as session:
                     agent_config = await AgentManagerService.get_active_agent_config(
                         session,
@@ -838,6 +1038,50 @@ class MetadataGeneratorService:
                     trace_id,
                     dataset_id,
                 )
+
+            # 3.1 已确认关系只差业务描述，合并为单次模型调用以降低总耗时。
+            confirmed_description_updated = 0
+            if confirmed_pair_summaries:
+                description_started_at = time.time()
+                try:
+                    description_prompt = (
+                        "以下为数据库探测已确认的表关系，请逐条生成业务含义描述。\n\n"
+                        f"{json.dumps(confirmed_pair_summaries, ensure_ascii=False)}"
+                    )
+                    description_result = await MetadataGeneratorService._invoke_json(
+                        llm,
+                        RelationshipDescriptionResult,
+                        RELATIONSHIP_DESCRIPTION_SYSTEM_PROMPT,
+                        description_prompt,
+                    )
+                    descriptions_by_id = {
+                        item.get("pair_id"): str(item.get("description") or "").strip()
+                        for item in description_result.get("descriptions", [])
+                        if isinstance(item, dict)
+                    }
+                    for index, rel in enumerate(confirmed_relationships):
+                        text = descriptions_by_id.get(index + 1, "")
+                        if text:
+                            rel["description"] = text
+                            confirmed_description_updated += 1
+                    logger.warning(
+                        "关系探测描述生成完成: trace_id=%s, dataset_id=%s, "
+                        "pair_count=%s, updated=%s, duration_ms=%.2f",
+                        trace_id,
+                        dataset_id,
+                        len(confirmed_pair_summaries),
+                        confirmed_description_updated,
+                        (time.time() - description_started_at) * 1000,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "关系探测描述生成失败，保留探测原因描述: trace_id=%s, "
+                        "dataset_id=%s, error=%s",
+                        trace_id,
+                        dataset_id,
+                        exc,
+                        exc_info=True,
+                    )
 
             # 4. 每个候选表对只在所属分组中调用一次 AI，模型只负责最终语义判断。
             system_prompt = (
@@ -873,13 +1117,19 @@ class MetadataGeneratorService:
             batch_number = 0
             successful_group_count = 0
             failed_group_count = 0
-            completed_pair_count = 0
-            collected_relationships: List[Dict[str, Any]] = []
-            collected_keys = set(recent_recommended_keys).union(
-                existing_relationship_keys
+            completed_pair_count = len(confirmed_relationships)
+            collected_relationships: List[Dict[str, Any]] = list(
+                confirmed_relationships
             )
             new_cache_items: List[Dict[str, Any]] = []
-            debug_groups: List[Dict[str, Any]] = []
+            debug_groups: List[Dict[str, Any]] = [
+                {
+                    "group": 0,
+                    "pair_count": len(confirmed_relationships),
+                    "status": "completed",
+                    "source": "database_probe",
+                }
+            ]
             total_prompt_chars = 0
             total_scoped_schema_chars = 0
             last_group_error: Optional[Exception] = None
@@ -1138,6 +1388,17 @@ class MetadataGeneratorService:
                     "candidate_pair_count": len(candidate_pairs),
                     "filtered_pair_count": possible_pair_count - len(candidate_pairs),
                     "candidate_group_count": total_groups,
+                    "fk_relationship_count": len(probe_relationships),
+                    "probed_pair_count": probe_stats.get("probed_pair_count"),
+                    "confirmed_pair_count": probe_stats.get("confirmed_pair_count"),
+                    "rejected_reasons": probe_stats.get("rejected_reasons"),
+                    "unverified_pair_count": probe_stats.get("unverified_pair_count"),
+                    "confirmed_duplicate_count": confirmed_duplicate_count,
+                    "confirmed_description_updated": confirmed_description_updated,
+                    "probe_duration_ms": probe_stats.get("probe_duration_ms"),
+                    "probe_unavailable_reason": probe_stats.get(
+                        "probe_unavailable_reason"
+                    ),
                     "completed_group_count": successful_group_count,
                     "failed_group_count": failed_group_count,
                     "remaining_group_count": failed_group_count,

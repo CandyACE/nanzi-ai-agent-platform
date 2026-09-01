@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.metadata_generator import MetadataGeneratorService
+from app.services.metadata_generator import (
+    MetadataGeneratorService,
+    RelationshipDescriptionResult,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -153,43 +156,81 @@ async def test_recommend_relationships_does_not_follow_model_has_more():
     assert result["_debug"]["candidate_pair_count"] == 1
 
 
+def _probe_test_schema() -> str:
+    """构造 12 张表的 Schema：1 张主表、1 张用户表、10 张订单子表。
+
+    这样命名候选共有 11 对；抽样探测确认 1 对后仍有 10 对进入
+    分组兜底，可覆盖 2 个候选组的部分失败场景。
+    """
+    child_tables = [
+        "payments", "shipments", "coupons", "refunds", "returns",
+        "invoices", "adjustments", "ledgers", "credits", "memos",
+    ]
+    lines = ["tables:"]
+    lines.append("  - physical_name: orders")
+    lines.append("    columns:")
+    lines.append("      - physical_name: id")
+    lines.append("        type: bigint")
+    lines.append("        is_primary: true")
+    lines.append("      - physical_name: user_id")
+    lines.append("        type: bigint")
+    lines.append("  - physical_name: users")
+    lines.append("    columns:")
+    lines.append("      - physical_name: id")
+    lines.append("        type: bigint")
+    lines.append("        is_primary: true")
+    for table_name in child_tables:
+        lines.append(f"  - physical_name: {table_name}")
+        lines.append("    columns:")
+        lines.append("      - physical_name: id")
+        lines.append("        type: bigint")
+        lines.append("        is_primary: true")
+        lines.append("      - physical_name: order_id")
+        lines.append("        type: bigint")
+    return "\n".join(lines)
+
+
 @pytest.mark.asyncio
 async def test_recommend_relationships_keeps_completed_groups_when_later_group_fails():
-    """后续候选组失败时应继续保留已经校验通过的关系。"""
-    schema_yaml = """tables:
-  - physical_name: orders
-    columns:
-      - physical_name: id
-        type: bigint
-        is_primary: true
-      - physical_name: user_id
-        type: bigint
-  - physical_name: users
-    columns:
-      - physical_name: id
-        type: bigint
-        is_primary: true
-  - physical_name: payments
-    columns:
-      - physical_name: id
-        type: bigint
-        is_primary: true
-  - physical_name: shipments
-    columns:
-      - physical_name: id
-        type: bigint
-        is_primary: true
-  - physical_name: coupons
-    columns:
-      - physical_name: id
-        type: bigint
-        is_primary: true
-"""
+    """探测确认后剩余候选组失败，应保留探测结果并标记部分中断。"""
+    description_result = {
+        "descriptions": [
+            {"pair_id": 1, "description": "订单支付流水通过 order_id 关联订单主表"}
+        ]
+    }
     first_group = {
         "relationships": [
             _relationship("orders", "users", "orders.user_id = users.id")
         ]
     }
+    probe_return = (
+        [
+            {
+                "left_table": "orders",
+                "right_table": "payments",
+                "left_column": "id",
+                "right_column": "order_id",
+                "relation_type": "one_to_many",
+                "confidence": 0.95,
+                "status": "confirmed",
+                "reason": "抽样命中率 1.00",
+                "source": "PROBE",
+                "sampled": 10,
+                "matched": 10,
+            }
+        ],
+        {
+            "probed_pair_count": 10,
+            "confirmed_pair_count": 1,
+            "rejected_pair_count": 9,
+            "rejected_reasons": {"抽样命中率低于阈值": 9},
+            "unverified_pair_count": 0,
+            "probe_duration_ms": 12.5,
+            "probe_unavailable_reason": None,
+        },
+    )
+    mock_fk = AsyncMock()
+    mock_fk.return_value = ([], None)
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
     progress_events = []
@@ -200,24 +241,40 @@ async def test_recommend_relationships_keeps_completed_groups_when_later_group_f
         progress_events.append(payload)
 
     with patches[0], patches[1], patches[2], patches[3], patch(
+        "app.services.metadata_generator.MetadataRelationshipProbeService.load_foreign_keys",
+        new_callable=AsyncMock,
+    ) as mock_load_fk, patch(
+        "app.services.metadata_generator.MetadataRelationshipProbeService.probe_candidate_pairs",
+        new_callable=AsyncMock,
+    ) as mock_probe_pairs, patch(
         "app.services.metadata_generator.MetadataGeneratorService._invoke_json",
         new_callable=AsyncMock,
-        side_effect=[first_group, ValueError("JSON 截断")],
+        side_effect=[description_result, first_group, ValueError("json error")],
     ) as mock_invoke:
+        mock_load_fk.return_value = ([], None)
+        mock_probe_pairs.return_value = probe_return
         result = await MetadataGeneratorService.recommend_relationships(
             dataset_id=1001,
-            schema_context=schema_yaml,
-            user_prompt="执行跨域完整关系检查",
+            schema_context=_probe_test_schema(),
             progress_callback=collect_progress,
         )
 
-    assert mock_invoke.await_count == 2
-    assert result["relationships"] == first_group["relationships"]
+    # 描述生成 + 两个候选组，共 3 次模型调用
+    assert mock_invoke.await_count == 3
+    assert mock_invoke.await_args_list[0].args[1] is RelationshipDescriptionResult
+    assert mock_probe_pairs.await_count == 1
     assert result["_stop_reason"] == "partial_group_error"
-    assert result["_debug"]["candidate_pair_count"] == 10
+    assert result["_debug"]["candidate_pair_count"] == 11
     assert result["_debug"]["candidate_group_count"] == 2
+    assert result["_debug"]["confirmed_pair_count"] == 1
+    assert result["_debug"]["probed_pair_count"] == 10
+    assert len(result["relationships"]) == 2
+    probe_relationship = result["relationships"][0]
+    assert probe_relationship["source"] == "PROBE"
+    assert probe_relationship["description"] == "订单支付流水通过 order_id 关联订单主表"
     assert result["_debug"]["completed_group_count"] == 1
     assert result["_debug"]["failed_group_count"] == 1
+    assert result["_debug"]["confirmed_description_updated"] == 1
     assert progress_events[-1]["phase"] == "interrupted"
     assert progress_events[-1]["remaining_units"] == 1
 

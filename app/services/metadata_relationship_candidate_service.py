@@ -404,7 +404,7 @@ class MetadataRelationshipCandidateService:
         table_index: Dict[str, Dict[str, Any]],
         *,
         include_incomplete_metadata: bool = True,
-        include_all_pairs: bool = False,
+        focused_table_names: Optional[Sequence[str]] = None,
     ) -> List[RelationshipCandidatePair]:
         """生成前向无重复候选表对，结果总量不设置固定上限。"""
         candidates: List[RelationshipCandidatePair] = []
@@ -427,9 +427,9 @@ class MetadataRelationshipCandidateService:
                     incomplete_pair_count += 1
                     if not include_incomplete_metadata:
                         continue
-                if score <= 0 and include_all_pairs:
+                if score <= 0 and any(name.lower() in {left_name.lower(), right_name.lower()} for name in focused_table_names or []):
                     score = 5
-                    reasons = ("用户提供了自定义推导方向，扩大候选范围",)
+                    reasons = ("用户自定义需求包含相关表，补充候选",)
                 if score <= 0:
                     continue
                 candidates.append(
@@ -462,6 +462,32 @@ class MetadataRelationshipCandidateService:
             incomplete_pair_count,
         )
         return candidates
+
+    @classmethod
+    def parse_focused_table_names(
+        cls,
+        user_prompt: Optional[str],
+        table_order: Sequence[str],
+    ) -> List[str]:
+        text = str(user_prompt or "")
+        if not text.strip():
+            return []
+        matched: List[str] = []
+        for table_name in table_order:
+            normalized = str(table_name or "").strip().lower()
+            if normalized and re.search(
+                r"(?<![a-z0-9_])" + re.escape(normalized) + r"(?![a-z0-9_])",
+                text,
+                flags=re.IGNORECASE,
+            ):
+                matched.append(table_name)
+        logger.info(
+            "自定义需求物理表识别完成: prompt_chars=%s, matched_tables=%s",
+            len(text),
+            matched,
+        )
+        return matched
+
 
     @staticmethod
     def group_candidate_pairs(

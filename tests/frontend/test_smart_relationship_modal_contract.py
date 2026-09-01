@@ -66,5 +66,11 @@ def test_smart_relationship_modal_contract():
     assert "候选表对" in content
     assert "不查询业务数据行" in content
     assert "每个表对只推导一次" in content
+    # 探测优先链路：进度说明与结果来源徽章必须覆盖外键、抽样与 AI 三类来源。
+    assert "外键约束与数据抽样验证" in content
+    assert "sourceBadge" in content
+    assert "外键确认" in content
+    assert "抽样确认" in content
+    assert "AI 推断" in content
     assert "生成中断，以下为已完成结果" in content
     assert 'v-if="runStatus === \'interrupted\'"' in content

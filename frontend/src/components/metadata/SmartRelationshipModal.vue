@@ -425,6 +425,12 @@ const relationTypeLabel = (t?: string) => {
   }
 }
 
+const sourceBadge = (source?: string) => {
+  if (source === 'FK') return { label: '外键确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
+  if (source === 'PROBE') return { label: '抽样确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
+  return { label: 'AI 推断', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' }
+}
+
 const confidenceStyle = (c: number) => {
   if (c >= 0.85)
     return { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500', label: '高置信' }
@@ -970,7 +976,7 @@ const handleBackToConfig = () => {
           </div>
 
           <div class="max-w-2xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
-            仅分析表结构与字段元数据，不查询业务数据行。后端先筛选具备 JOIN 线索的候选表对，再按候选组调用 AI；每个表对只推导一次。
+            后端先读取外键约束与数据抽样验证，能确认的关系不再调用 AI；未确认候选按候选组交给 AI 复核，每个表对只推导一次。仅分析表结构与字段元数据，不查询业务数据行。
           </div>
 
           <!-- Cancel Action Button -->
@@ -1117,6 +1123,15 @@ const handleBackToConfig = () => {
                       :class="item.relation_type === 'one_to_one' ? 'bg-blue-50 text-blue-700 border-blue-200' : (item.relation_type === 'one_to_many' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200')"
                     >
                       {{ relationTypeLabel(item.relation_type) }}
+                    </span>
+
+                    <!-- 判定来源徽章：区分外键确认、抽样确认与 AI 推断 -->
+                    <span
+                      v-if="item.source"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded border"
+                      :class="[sourceBadge(item.source).bg, sourceBadge(item.source).text, sourceBadge(item.source).border]"
+                    >
+                      {{ sourceBadge(item.source).label }}
                     </span>
 
                     <!-- 置信度徽章 -->
