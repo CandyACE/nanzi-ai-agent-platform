@@ -14,6 +14,14 @@ import {
 } from '@heroicons/vue/24/outline'
 
 type ResultKind = 'json' | 'markdown' | 'text'
+type McpAuthStatus = {
+  user_assertion_sent: boolean
+  header: string | null
+  value_masked: string | null
+  audience: string | null
+  issuer: string | null
+  key_id: string | null
+}
 
 const props = defineProps<{
   tool: any,
@@ -27,7 +35,11 @@ const loading = ref(false)
 const result = ref<unknown>(null)
 const error = ref<string | null>(null)
 const args = ref<Record<string, any>>({})
+const activeTab = ref<'input' | 'details'>('input')
+const requestPayload = ref<{ arguments: Record<string, any> } | null>(null)
+const requestCopied = ref(false)
 const copied = ref(false)
+const mcpAuth = ref<McpAuthStatus | null>(null)
 
 const schema = computed(() => {
   try {
@@ -40,11 +52,15 @@ const schema = computed(() => {
 const properties = computed(() => schema.value.properties || {})
 const requiredFields = computed(() => schema.value.required || [])
 
-watch(() => props.tool, () => {
+watch([() => props.tool, () => props.isOpen], () => {
   args.value = {}
   result.value = null
   error.value = null
+  activeTab.value = 'input'
+  requestPayload.value = null
+  requestCopied.value = false
   copied.value = false
+  mcpAuth.value = null
 }, { immediate: true })
 
 const normalizeResultText = (value: unknown): string => {
@@ -118,6 +134,25 @@ const formattedResult = computed(() => {
   }
 })
 
+const formattedRequest = computed(() => {
+  if (!requestPayload.value) return null
+  return JSON.stringify(requestPayload.value, null, 2)
+})
+
+const handleCopyRequest = async () => {
+  if (!formattedRequest.value) return
+  const ok = await copyToClipboard(formattedRequest.value)
+  if (!ok) {
+    showToast('复制失败', 'error')
+    return
+  }
+  requestCopied.value = true
+  showToast('已复制到剪贴板', 'success')
+  window.setTimeout(() => {
+    requestCopied.value = false
+  }, 1500)
+}
+
 const handleCopyResult = async () => {
   const payload = formattedResult.value
   if (!payload?.copyText) return
@@ -137,13 +172,19 @@ const executeTool = async () => {
   loading.value = true
   result.value = null
   error.value = null
+  requestPayload.value = {
+    arguments: JSON.parse(JSON.stringify(args.value))
+  }
+  requestCopied.value = false
   copied.value = false
+  mcpAuth.value = null
 
   try {
     const res = await axios.post(`/api/portal/mcp/tools/${props.tool.id}/execute`, {
       arguments: args.value
     })
 
+    mcpAuth.value = res.data.mcp_auth || null
     if (res.data.status === 'success') {
       result.value = res.data.result
     } else {
@@ -153,6 +194,7 @@ const executeTool = async () => {
     error.value = e.response?.data?.detail || e.message
   } finally {
     loading.value = false
+    activeTab.value = 'details'
   }
 }
 </script>
@@ -179,9 +221,30 @@ const executeTool = async () => {
         <p class="text-xs text-gray-500 italic">{{ tool.tool_description || '暂无描述' }}</p>
       </div>
 
+      <div class="px-6 pt-4 border-b border-gray-100">
+        <div class="flex gap-5" role="tablist" aria-label="工具测试内容">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'input'"
+            class="pb-3 text-sm font-semibold border-b-2 transition-colors"
+            :class="activeTab === 'input' ? 'text-primary border-primary' : 'text-gray-400 border-transparent hover:text-gray-600'"
+            @click="activeTab = 'input'"
+          >参数输入</button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'details'"
+            class="pb-3 text-sm font-semibold border-b-2 transition-colors"
+            :class="activeTab === 'details' ? 'text-primary border-primary' : 'text-gray-400 border-transparent hover:text-gray-600'"
+            @click="activeTab = 'details'"
+          >调用详情</button>
+        </div>
+      </div>
+
       <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
         <!-- Input Form -->
-        <div class="space-y-4">
+        <div v-if="activeTab === 'input'" class="space-y-4">
           <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">参数输入</h4>
           <div v-if="Object.keys(properties).length === 0" class="text-xs text-gray-400 italic">
             此工具无需参数
@@ -213,10 +276,57 @@ const executeTool = async () => {
           </div>
         </div>
 
-        <!-- Result Area -->
-        <div v-if="formattedResult" class="space-y-2 animate-fade-in">
+        <!-- Call Details -->
+        <div v-else class="space-y-6">
+          <div v-if="!requestPayload" class="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-xs text-gray-400">
+            运行测试后查看本次调用详情
+          </div>
+
+          <!-- MCP 认证状态：只展示脱敏结果，不把可重放的 JWT 返回浏览器 -->
+          <div v-if="mcpAuth" class="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <h4 class="text-xs font-bold text-indigo-900">本次调用认证信息</h4>
+            <span
+              class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
+              :class="mcpAuth.user_assertion_sent ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'"
+            >{{ mcpAuth.user_assertion_sent ? '用户身份已发送' : '未发送用户身份' }}</span>
+          </div>
+          <div v-if="mcpAuth.user_assertion_sent" class="space-y-1 text-[10px] leading-relaxed text-indigo-900">
+            <div class="break-all rounded border border-indigo-100 bg-white/80 px-2 py-1.5 font-mono">
+              {{ mcpAuth.header || 'X-Nanzi-User-Assertion' }}: {{ mcpAuth.value_masked || '********' }}
+            </div>
+            <div class="grid grid-cols-1 gap-1 sm:grid-cols-3">
+              <span><b>Audience：</b>{{ mcpAuth.audience || '-' }}</span>
+              <span><b>Issuer：</b>{{ mcpAuth.issuer || '-' }}</span>
+              <span><b>Key ID：</b>{{ mcpAuth.key_id || '-' }}</span>
+            </div>
+            <p class="text-indigo-700">完整签名值不会展示；业务 MCP 收到完整 Header 后自行验签。</p>
+          </div>
+          <p v-else class="text-[10px] leading-relaxed text-gray-500">当前 MCP 未开启用户身份传递，本次测试只使用原有认证 Header。</p>
+          </div>
+
+          <div v-if="formattedRequest" class="space-y-2">
+            <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">请求参数</h4>
+            <div class="group/request relative rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+              <button
+                type="button"
+                class="absolute top-2 right-2 z-10 inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-800/90 p-1.5 text-slate-300 shadow-sm opacity-0 transition-all group-hover/request:opacity-100 focus:opacity-100 hover:bg-slate-700 hover:text-white"
+                title="复制请求参数"
+                aria-label="复制请求参数"
+                @click="handleCopyRequest"
+              >
+                <CheckIcon v-if="requestCopied" class="w-3.5 h-3.5 text-emerald-400" />
+                <DocumentDuplicateIcon v-else class="w-3.5 h-3.5" />
+              </button>
+              <pre class="p-3 pr-10 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words max-h-[260px] overflow-y-auto custom-scrollbar m-0 text-slate-100">{{ formattedRequest }}</pre>
+            </div>
+          </div>
+
+          <!-- Result Area -->
+          <div v-if="formattedResult" class="space-y-2 animate-fade-in">
+
           <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
-            执行结果
+            响应结果
             <span
               v-if="error"
               class="text-[10px] text-red-500 bg-red-50 px-1.5 py-0.5 rounded normal-case tracking-normal"
@@ -275,6 +385,7 @@ const executeTool = async () => {
               class="p-3 pr-10 text-xs font-mono whitespace-pre-wrap break-words max-h-[360px] overflow-y-auto custom-scrollbar m-0"
               :class="error ? 'text-red-700' : 'text-green-400'"
             >{{ formattedResult.displayText }}</pre>
+          </div>
           </div>
         </div>
       </div>

@@ -9,6 +9,7 @@ from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
+from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
 from sqlalchemy import select, update
 
 logger = logging.getLogger(__name__)
@@ -65,10 +66,6 @@ class McpSseSession:
             # Debug: Log header keys (redacted)
             header_keys = list(self.auth_headers.keys())
             logger.info(f"[MCP] Connecting to {self.server_id} at {self.sse_url}. Headers keys present: {header_keys}")
-            if "Authorization" in self.auth_headers:
-                logger.info(f"[MCP] Auth Value (first 10 chars): {self.auth_headers['Authorization'][:10]}...")
-
-            
             try:
                 from contextlib import AsyncExitStack
                 self._exit_stack = AsyncExitStack()
@@ -138,19 +135,32 @@ class McpClientService:
     _cleanup_task: Optional[asyncio.Task] = None
 
     @classmethod
-    async def get_session(cls, server_id: str) -> McpSseSession:
+    async def _load_server(cls, server_id: str) -> McpServer:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(McpServer).where(McpServer.id == server_id))
+            server = result.scalar_one_or_none()
+            if not server:
+                raise ValueError(f"MCP Server {server_id} not found")
+            return server
+
+    @classmethod
+    async def get_session(
+        cls,
+        server_id: str,
+        *,
+        session_key: Optional[str] = None,
+        auth_headers: Optional[Dict[str, str]] = None,
+    ) -> McpSseSession:
         if not cls._cleanup_task:
             cls._cleanup_task = asyncio.create_task(cls._idle_cleanup_loop())
 
-        if server_id not in cls._sessions:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(select(McpServer).where(McpServer.id == server_id))
-                server = result.scalar_one_or_none()
-                if not server: raise ValueError(f"MCP Server {server_id} not found")
-                headers = json.loads(server.auth_headers) if server.auth_headers else {}
-                cls._sessions[server_id] = McpSseSession(server_id, server.sse_url, headers)
+        cache_key = session_key or server_id
+        if cache_key not in cls._sessions:
+            server = await cls._load_server(server_id)
+            headers = auth_headers if auth_headers is not None else resolve_mcp_auth_headers(server)
+            cls._sessions[cache_key] = McpSseSession(server_id, server.sse_url, headers)
 
-        session = cls._sessions[server_id]
+        session = cls._sessions[cache_key]
         await session.connect()
         session.update_activity()
         return session
@@ -226,74 +236,122 @@ class McpClientService:
             await cls._initialize_direct_http(session_mgr)
 
     @classmethod
-    async def call_remote_tool(cls, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        session_mgr = await cls.get_session(server_id)
-        
-        if not session_mgr.is_direct_http:
-            try:
-                response = await session_mgr.session.call_tool(tool_name, arguments)
-                text = "".join(
-                    getattr(item, "text", "")
-                    for item in (getattr(response, "content", None) or [])
-                )
-                if bool(getattr(response, "isError", False) or getattr(response, "is_error", False)):
-                    raise RuntimeError(text or f"MCP tool '{tool_name}' returned an error")
-                structured_content = getattr(response, "structuredContent", None)
-                if structured_content is None:
-                    structured_content = getattr(response, "structured_content", None)
-                if structured_content is not None:
-                    return {
-                        "success": True,
-                        "content": text,
-                        "structured_content": structured_content,
-                    }
-                return text if text else {"success": True, "content": ""}
-            except Exception as e:
-                await session_mgr.close()
-                raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e
-        else:
-            if not session_mgr.mcp_session_id:
-                await cls._direct_http_rpc(session_mgr, "initialize", {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "clientInfo": {"name": "nanzi", "version": "1.0.0"}
-                })
-                await cls._direct_http_rpc(session_mgr, "notifications/initialized", {}, is_notification=True)
+    async def call_remote_tool(
+        cls,
+        server_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        user_info: Optional[Dict[str, Any]] = None,
+        agent_info: Optional[Dict[str, Any]] = None,
+        request_id: Optional[str] = None,
+        private_key: Any = None,
+        require_user_context: bool = False,
+    ) -> Any:
+        session_kwargs: Dict[str, Any] = {}
+        ephemeral_session = False
+        session_key: Optional[str] = None
+        if require_user_context or user_info or agent_info or request_id or private_key:
+            server = await cls._load_server(server_id)
+            signed_user_enabled = bool(
+                getattr(server, "user_assertion_enabled", False)
+                and getattr(server, "credential_mode", "static") == "fixed_token_signed_user"
+            )
+            if signed_user_enabled and require_user_context:
+                user_id = str((user_info or {}).get("user_id") or "").strip()
+                if not user_id:
+                    raise ValueError("MCP UserContext requires an authenticated user_id")
+            auth_headers = build_mcp_headers(
+                server,
+                user_info=user_info,
+                agent_info=agent_info,
+                request_id=request_id,
+                private_key=private_key,
+            )
+            session_key = server_id
+            if signed_user_enabled:
+                user_id = str((user_info or {}).get("user_id") or "").strip()
+                if not user_id:
+                    raise ValueError("MCP UserContext requires an authenticated user_id")
+                # SSE transports capture their headers when connected. A signed
+                # assertion is per-call, so never reuse a session carrying an
+                # older assertion or jti (for either SSE or direct HTTP).
+                session_key = f"{server_id}:user:{user_id}:call:{uuid.uuid4().hex}"
+                ephemeral_session = True
+            session_kwargs = {"session_key": session_key, "auth_headers": auth_headers}
 
-            res = await cls._direct_http_rpc(session_mgr, "tools/call", {
-                "name": tool_name,
-                "arguments": arguments
-            })
-            if isinstance(res, dict) and bool(res.get("isError") or res.get("is_error")):
-                error_text = "".join(
-                    c.get("text", "")
-                    for c in res.get("content") or []
-                    if isinstance(c, dict) and c.get("type") == "text"
-                )
-                raise RuntimeError(
-                    error_text
-                    or str(res.get("message") or res.get("error") or "")
-                    or f"MCP tool '{tool_name}' returned an error"
-                )
-            if isinstance(res, dict) and "content" in res:
-                text = "".join(
-                    c.get("text", "")
-                    for c in (res.get("content") or [])
-                    if isinstance(c, dict) and c.get("type") == "text"
-                )
-                structured_content = res.get("structuredContent")
-                if structured_content is None:
-                    structured_content = res.get("structured_content")
-                if structured_content is not None:
-                    return {
-                        "success": True,
-                        "content": text,
-                        "structured_content": structured_content,
-                    }
-                return text if text else {"success": True, "content": ""}
-            if res is None:
-                return {"success": True, "content": ""}
-            return str(res)
+        session_mgr = await cls.get_session(server_id, **session_kwargs)
+        try:
+            if not session_mgr.is_direct_http:
+                try:
+                    response = await session_mgr.session.call_tool(tool_name, arguments)
+                    text = "".join(
+                        getattr(item, "text", "")
+                        for item in (getattr(response, "content", None) or [])
+                    )
+                    if bool(getattr(response, "isError", False) or getattr(response, "is_error", False)):
+                        raise RuntimeError(text or f"MCP tool '{tool_name}' returned an error")
+                    structured_content = getattr(response, "structuredContent", None)
+                    if structured_content is None:
+                        structured_content = getattr(response, "structured_content", None)
+                    if structured_content is not None:
+                        return {
+                            "success": True,
+                            "content": text,
+                            "structured_content": structured_content,
+                        }
+                    return text if text else {"success": True, "content": ""}
+                except Exception as e:
+                    if not ephemeral_session:
+                        await session_mgr.close()
+                    raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e
+            else:
+                if not session_mgr.mcp_session_id:
+                    await cls._direct_http_rpc(session_mgr, "initialize", {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "clientInfo": {"name": "nanzi", "version": "1.0.0"}
+                    })
+                    await cls._direct_http_rpc(session_mgr, "notifications/initialized", {}, is_notification=True)
+
+                res = await cls._direct_http_rpc(session_mgr, "tools/call", {
+                    "name": tool_name,
+                    "arguments": arguments
+                })
+                if isinstance(res, dict) and bool(res.get("isError") or res.get("is_error")):
+                    error_text = "".join(
+                        c.get("text", "")
+                        for c in res.get("content") or []
+                        if isinstance(c, dict) and c.get("type") == "text"
+                    )
+                    raise RuntimeError(
+                        error_text
+                        or str(res.get("message") or res.get("error") or "")
+                        or f"MCP tool '{tool_name}' returned an error"
+                    )
+                if isinstance(res, dict) and "content" in res:
+                    text = "".join(
+                        c.get("text", "")
+                        for c in (res.get("content") or [])
+                        if isinstance(c, dict) and c.get("type") == "text"
+                    )
+                    structured_content = res.get("structuredContent")
+                    if structured_content is None:
+                        structured_content = res.get("structured_content")
+                    if structured_content is not None:
+                        return {
+                            "success": True,
+                            "content": text,
+                            "structured_content": structured_content,
+                        }
+                    return text if text else {"success": True, "content": ""}
+                if res is None:
+                    return {"success": True, "content": ""}
+                return str(res)
+        finally:
+            if ephemeral_session:
+                await session_mgr.close()
+                if session_key:
+                    cls._sessions.pop(session_key, None)
 
     @staticmethod
     def _parse_sse_payload(text: str) -> Optional[Dict]:
@@ -368,10 +426,6 @@ class McpClientService:
             payload["id"] = rpc_id
 
         logger.debug(f"[MCP-Direct] Request: {method} to {session_mgr.sse_url} | RPC ID: {rpc_id} | Headers keys: {list(headers.keys())}")
-        if "Authorization" in headers:
-             logger.info(f"[MCP-Direct] Sending Authorization: {headers['Authorization'][:15]}...")
-
-
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 resp = await client.post(session_mgr.sse_url, json=payload, headers=headers)

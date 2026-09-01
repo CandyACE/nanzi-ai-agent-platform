@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
 import axios from '@/utils/axios'
+import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
 import ConfirmModal from '../../components/ConfirmModal.vue'
@@ -237,6 +238,7 @@ const publishAllCurrentServerTools = async () => {
 // Headers Editing Logic
 const headerMode = ref<'simple' | 'advanced'>('simple')
 const headerPairs = ref<{ key: string, value: string }[]>([{ key: '', value: '' }])
+const authHeadersTouched = ref(false)
 
 const addHeaderPair = () => {
   headerPairs.value.push({ key: '', value: '' })
@@ -251,8 +253,239 @@ const newServer = ref({
   remark: '',
   sse_url: '',
   auth_headers: '{}',
-  enabled_status: 1
+  enabled_status: 1,
+  credential_mode: 'static' as 'static' | 'fixed_token_signed_user',
+  user_assertion_enabled: false,
+  user_assertion_header: 'X-Nanzi-User-Assertion',
+  user_assertion_audience: '',
+  user_assertion_key_id: '',
+  user_assertion_issuer: 'nanzi-platform',
 })
+
+const buildServerPayload = (server: any) => {
+  const payload: Record<string, any> = {
+    ...server,
+    scope: props.scope,
+    credential_mode: server.user_assertion_enabled ? 'fixed_token_signed_user' : 'static',
+    user_assertion_enabled: Boolean(server.user_assertion_enabled),
+    user_assertion_header: server.user_assertion_header || 'X-Nanzi-User-Assertion',
+    user_assertion_audience: server.user_assertion_audience || null,
+    user_assertion_key_id: server.user_assertion_key_id || null,
+    user_assertion_issuer: server.user_assertion_issuer || 'nanzi-platform',
+  }
+  // 认证 Header 不从服务端回显。编辑时未修改认证区域，后端保留原配置。
+  if (isEditing.value && !authHeadersTouched.value) {
+    delete payload.auth_headers
+  }
+  return payload
+}
+
+watch(
+  () => newServer.value.user_assertion_enabled,
+  (enabled) => {
+    newServer.value.credential_mode = enabled ? 'fixed_token_signed_user' : 'static'
+  },
+)
+
+const authHelp = ref<{ title: string, content: string } | null>(null)
+const openAuthHelp = (title: string, content: string) => {
+  authHelp.value = { title, content }
+}
+const closeAuthHelp = () => {
+  authHelp.value = null
+}
+
+const showPayloadHelp = ref(false)
+const payloadFieldRows = [
+  { location: 'HTTP Header', field: 'X-Nanzi-User-Assertion', required: '开启时必有', usage: '业务 MCP 读取完整 JWS，并交给验签中间件。' },
+  { location: 'HTTP Header', field: 'X-Request-ID', required: '必有', usage: '关联 NanZi 与业务 MCP 两侧日志。' },
+  { location: 'JWT Header', field: 'alg', required: '必有', usage: '签名算法，当前为 EdDSA（Ed25519）。' },
+  { location: 'JWT Header', field: 'kid', required: '必有', usage: '公钥版本编号；业务方据此从 JWKS 选择公钥。' },
+  { location: 'JWT Header', field: 'typ', required: '必有', usage: '令牌类型，当前为 JWT。' },
+  { location: 'JWT Payload', field: 'iss', required: '必有', usage: '签发方，固定为 nanzi-platform；校验 iss。' },
+  { location: 'JWT Payload', field: 'aud', required: '必有', usage: '目标 MCP，系统按 MCP ID 自动生成；校验 aud。' },
+  { location: 'JWT Payload', field: 'sub', required: '必有', usage: '稳定主体标识，格式为 nanzi:user:{user_id}。' },
+  { location: 'user_context', field: 'user_id', required: '必有', usage: 'NanZi 用户 ID；业务方用它关联业务用户。' },
+  { location: 'user_context', field: 'user_name / real_name', required: '有值时', usage: '登录名和用户姓名，按用户资料有值情况传递。' },
+  { location: 'user_context', field: 'dept_code / org_path', required: '有值时', usage: '部门编码和组织路径，按用户资料有值情况传递。' },
+  { location: 'custom_attributes', field: '安全扩展 key-value', required: '必有（可为空对象）', usage: '来自用户资料 extra_data 的安全扩展字段，平台自动过滤敏感 key。' },
+  { location: 'JWT Payload', field: 'agent_id', required: '必有', usage: '发起本次调用的智能体 ID。' },
+  { location: 'JWT Payload', field: 'agent_version_id', required: '有值时', usage: '当前智能体版本 ID。' },
+  { location: 'JWT Payload', field: 'agent_name', required: '有值时', usage: '当前智能体名称。' },
+  { location: 'JWT Payload', field: 'request_id', required: '必有', usage: '本次 NanZi 请求链路 ID。' },
+  { location: 'JWT Payload', field: 'jti', required: '必有', usage: '本次断言唯一 ID；业务方可存储它进行防重放。' },
+  { location: 'JWT Payload', field: 'iat / exp', required: '必有', usage: '签发时间和过期时间，默认有效期 60 秒。' },
+]
+const openPayloadHelp = () => {
+  showPayloadHelp.value = true
+}
+const closePayloadHelp = () => {
+  showPayloadHelp.value = false
+}
+
+const copiedMcpValue = ref('')
+const mcpAudienceValue = computed(() => {
+  const serverId = editingId.value || createdServer.value?.id
+  return newServer.value.user_assertion_audience || (
+    serverId ? `mcp:${serverId}` : '保存后由系统自动生成'
+  )
+})
+const mcpIssuerValue = computed(() => newServer.value.user_assertion_issuer || 'nanzi-platform')
+const mcpJwksUrl = computed(() => {
+  const serverId = editingId.value || createdServer.value?.id
+  if (!serverId) return ''
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}/.well-known/nanzi/mcp/${serverId}/jwks.json`
+})
+
+const copyMcpValue = async (value: string, label: string) => {
+  if (!value || value === '保存后由系统自动生成') {
+    showToast('保存 MCP 后才能复制该信息', 'warning')
+    return
+  }
+  const copied = await copyToClipboard(value)
+  if (!copied) {
+    showToast(`复制${label}失败，请手动复制`, 'error')
+    return
+  }
+  copiedMcpValue.value = label
+  showToast(`${label}已复制`, 'success')
+  window.setTimeout(() => {
+    if (copiedMcpValue.value === label) copiedMcpValue.value = ''
+  }, 1600)
+}
+
+const copyJwksUrl = () => copyMcpValue(mcpJwksUrl.value, 'JWKS 地址')
+
+const showMcpCodeModal = ref(false)
+const mcpCodeLanguage = ref<'python' | 'java'>('python')
+const generatedMcpCode = computed(() => {
+  if (mcpCodeLanguage.value === 'java') {
+    return `// 依赖：com.nimbusds:nimbus-jose-jwt
+// 下面三个值来自 NanZi MCP 管理页面的只读配置，请复制到业务 MCP 的 Secret / 配置中心。
+private static final String NANZI_MCP_AUDIENCE = "${mcpAudienceValue.value}"; // 用于校验 aud
+private static final String NANZI_MCP_ISSUER = "${mcpIssuerValue.value}"; // 用于校验 iss
+private static final String NANZI_MCP_JWKS_URL = "${mcpJwksUrl.value}"; // 用于获取公钥
+
+public Map<String, Object> verifyNanZiUser(String fixedToken, String assertion, ReplayStore replayStore)
+        throws Exception {
+    // 1. 先按业务 MCP 原有方式校验 Authorization 固定 Token。
+    if (fixedToken == null || fixedToken.isBlank()) {
+        throw new SecurityException("invalid MCP client token");
+    }
+
+    // 2. 根据 JWT Header 的 kid，从当前 MCP 的 JWKS 选择公钥并验签。
+    JWKSet jwkSet = JWKSet.load(new URL(NANZI_MCP_JWKS_URL));
+    SignedJWT jwt = SignedJWT.parse(assertion);
+    JWK jwk = jwkSet.getKeyByKeyId(jwt.getHeader().getKeyID());
+    if (!(jwk instanceof OctetKeyPair keyPair)
+            || !jwt.verify(new Ed25519Verifier(keyPair))) {
+        throw new SecurityException("invalid NanZi User Assertion");
+    }
+
+    JWTClaimsSet claims = jwt.getJWTClaimsSet();
+    if (!NANZI_MCP_ISSUER.equals(claims.getIssuer())
+            || !NANZI_MCP_AUDIENCE.equals(claims.getAudience().get(0))
+            || claims.getExpirationTime().before(new Date())) {
+        throw new SecurityException("invalid NanZi User Assertion claims");
+    }
+
+    // 3. 验签成功后，用 user_context.user_id 关联业务系统用户。
+    Map<String, Object> userContext = (Map<String, Object>) claims.getClaim("user_context");
+    if (userContext == null || userContext.get("user_id") == null) {
+        throw new SecurityException("missing user context");
+    }
+    String userId = String.valueOf(userContext.get("user_id"));
+    if (!("nanzi:user:" + userId).equals(claims.getSubject())) {
+        throw new SecurityException("user subject mismatch");
+    }
+    if (claims.getClaim("agent_id") == null || claims.getClaim("request_id") == null
+            || claims.getJWTID() == null) {
+        throw new SecurityException("missing assertion identity");
+    }
+    long ttlSeconds = Math.max(1, (claims.getExpirationTime().getTime() - System.currentTimeMillis()) / 1000);
+    if (!replayStore.claim(claims.getJWTID(), ttlSeconds)) {
+        throw new SecurityException("replayed NanZi user assertion");
+    }
+    return Map.of(
+            "user_id", userContext.get("user_id"),
+            "user_name", userContext.get("user_name"),
+            "agent_id", claims.getClaim("agent_id"),
+            "request_id", claims.getClaim("request_id"));
+}
+
+@FunctionalInterface
+interface ReplayStore {
+    // 使用 Redis SETNX + EXPIRE 等原子操作；已存在的 jti 返回 false。
+    boolean claim(String jti, long ttlSeconds);
+}
+`
+  }
+
+  return `# 依赖：PyJWT、cryptography、httpx、redis
+# 下面三个值来自 NanZi MCP 管理页面的只读配置，请复制到业务 MCP 的 Secret / 配置中心。
+NANZI_MCP_AUDIENCE = "${mcpAudienceValue.value}"  # 用于校验 aud
+NANZI_MCP_ISSUER = "${mcpIssuerValue.value}"  # 用于校验 iss
+NANZI_MCP_JWKS_URL = "${mcpJwksUrl.value}"  # 用于自动获取公钥
+
+import hmac
+import os
+import time
+import jwt
+from redis import Redis
+from jwt import PyJWKClient
+
+jwk_client = PyJWKClient(NANZI_MCP_JWKS_URL)
+redis_client = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+
+def verify_nanzi_user(authorization: str, assertion: str, expected_token: str) -> dict:
+    # 1. 先按业务 MCP 原有方式校验 Authorization 固定 Token。
+    expected_authorization = f"Bearer {expected_token}"
+    if not hmac.compare_digest(authorization or "", expected_authorization):
+        raise PermissionError("invalid MCP client token")
+
+    # 2. 根据 JWT Header 的 kid 获取公钥并验签，同时校验 iss、aud、exp。
+    signing_key = jwk_client.get_signing_key_from_jwt(assertion).key
+    claims = jwt.decode(
+        assertion,
+        signing_key,
+        algorithms=["EdDSA"],
+        issuer=NANZI_MCP_ISSUER,
+        audience=NANZI_MCP_AUDIENCE,
+        options={"require": ["iss", "aud", "sub", "exp", "iat", "jti", "agent_id", "request_id"]},
+    )
+
+    # 3. 验签成功后，用 user_context.user_id 关联业务系统用户。
+    user_context = claims["user_context"]
+    if not isinstance(user_context, dict) or not user_context.get("user_id"):
+        raise PermissionError("missing user context")
+    if claims.get("sub") != f"nanzi:user:{user_context['user_id']}":
+        raise PermissionError("user subject mismatch")
+    ttl = max(1, int(claims["exp"] - time.time()))
+    if not redis_client.set(f"mcp:user-assertion:{claims['jti']}", "1", nx=True, ex=ttl):
+        raise PermissionError("replayed NanZi user assertion")
+    return {
+        "user_id": user_context["user_id"],
+        "user_name": user_context.get("user_name"),
+        "agent_id": claims.get("agent_id"),
+        "request_id": claims.get("request_id"),
+    }
+`
+})
+
+const openMcpCodeModal = () => {
+  if (!mcpJwksUrl.value) {
+    showToast('保存 MCP 后才能生成调用模拟代码', 'warning')
+    return
+  }
+  showMcpCodeModal.value = true
+}
+
+const copyMcpCode = async () => {
+  const copied = await copyToClipboard(generatedMcpCode.value)
+  if (copied) showToast(`${mcpCodeLanguage.value === 'python' ? 'Python' : 'Java'} 模拟代码已复制`, 'success')
+  else showToast('复制失败，请手动复制模拟代码', 'error')
+}
 
 // Sync Header Pairs to JSON string
 watch(headerPairs, (newPairs) => {
@@ -307,13 +540,26 @@ const resetWizard = () => {
   publishAllLoading.value = false
   verifying.value = false
   discoveredTools.value = []
-  newServer.value = { server_name: '', remark: '', sse_url: '', auth_headers: '{}', enabled_status: 1 }
+  newServer.value = {
+    server_name: '',
+    remark: '',
+    sse_url: '',
+    auth_headers: '{}',
+    enabled_status: 1,
+    credential_mode: 'static',
+    user_assertion_enabled: false,
+    user_assertion_header: 'X-Nanzi-User-Assertion',
+    user_assertion_audience: '',
+    user_assertion_key_id: '',
+    user_assertion_issuer: 'nanzi-platform',
+  }
   serverNameSuffix.value = ''
   connectionInputTab.value = 'manual'
   mcpJsonPaste.value = ''
   mcpJsonPasteHint.value = ''
   headerPairs.value = [{ key: '', value: '' }]
   headerMode.value = 'simple'
+  authHeadersTouched.value = false
 }
 
 const closeWizard = () => {
@@ -345,11 +591,19 @@ const openEditModal = (server: any) => {
     server_name: server.server_name,
     remark: server.remark || '',
     sse_url: server.sse_url,
-    auth_headers: server.auth_headers || '{}',
-    enabled_status: server.enabled_status
+    // 认证 Header 是敏感信息，服务端不会回显；留空表示沿用已有配置。
+    auth_headers: '{}',
+    enabled_status: server.enabled_status,
+    credential_mode: server.credential_mode || 'static',
+    user_assertion_enabled: Boolean(server.user_assertion_enabled),
+    user_assertion_header: server.user_assertion_header || 'X-Nanzi-User-Assertion',
+    user_assertion_audience: server.user_assertion_audience || '',
+    user_assertion_key_id: server.user_assertion_key_id || '',
+    user_assertion_issuer: server.user_assertion_issuer || 'nanzi-platform',
   }
   syncFullServerName()
   syncJsonToPairs()
+  authHeadersTouched.value = false
   showAddModal.value = true
 }
 
@@ -365,9 +619,8 @@ const toggleServerStatus = async (server: any, enabled: boolean) => {
       server_name: server.server_name,
       remark: server.remark || '',
       sse_url: server.sse_url,
-      auth_headers: server.auth_headers || '{}',
       enabled_status: nextStatus,
-      scope: props.scope,
+      ...buildServerPayload(server),
     })
     const savedStatus = Number(response.data?.enabled_status ?? nextStatus)
     server.enabled_status = savedStatus
@@ -558,7 +811,7 @@ const addServer = async () => {
   }
 
   try {
-    const payload = { ...newServer.value, scope: props.scope }
+    const payload = buildServerPayload(newServer.value)
     if (isEditing.value) {
       await axios.put(`/api/portal/mcp/servers/${editingId.value}`, payload)
       showToast('更新成功', 'success')
@@ -805,6 +1058,10 @@ onMounted(fetchServers)
             <div class="mb-1.5 flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-bold text-gray-900">{{ server.server_name }}</span>
+                <span
+                  v-if="server.credential_mode === 'fixed_token_signed_user'"
+                  class="mt-1 inline-flex rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700"
+                >已启用用户身份签名</span>
                 <p v-if="server.remark" class="mt-0.5 line-clamp-2 text-[11px] leading-snug text-gray-500">{{ server.remark }}</p>
               </div>
               <div class="flex shrink-0 items-center gap-2" @click.stop>
@@ -1039,7 +1296,7 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Step 1: Input -->
-        <div v-if="wizardStep === 1" class="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+        <div v-if="wizardStep === 1" class="flex flex-1 flex-col space-y-5 overflow-y-auto p-4 sm:p-6">
           <div
             v-if="!isEditing"
             class="flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5"
@@ -1089,16 +1346,148 @@ onMounted(fetchServers)
 
           <!-- 手动填写 Tab（编辑时强制手动） -->
           <template v-else>
-            <div>
+            <div class="order-1">
               <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 flex items-center">
                 <LinkIcon class="w-3 h-3 mr-1" /> 服务地址（SSE / HTTP）
               </label>
               <input v-model="newServer.sse_url" placeholder="https://..." class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono" />
               <p class="text-[10px] text-gray-400 mt-1">支持 MCP SSE 与 streamable HTTP（如 ModelScope）；连接时自动探测协议。</p>
             </div>
+
+            <div class="order-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <label class="text-xs font-bold text-gray-700">开启用户身份传递</label>
+                    <button
+                      type="button"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      title="用户身份传递说明"
+                      @click="openAuthHelp('开启用户身份传递', '开启后，系统会把当前登录用户和当前智能体生成短期签名 UserContext，通过 X-Nanzi-User-Assertion 发送给当前 MCP。关闭时完全沿用原有身份认证方式。')"
+                    >?</button>
+                  </div>
+                  <p class="mt-1 text-[10px] leading-relaxed text-gray-500">
+                    关闭时保持原有 MCP 调用方式；开启后仅为当前 MCP 增加签名用户身份。签名私钥由系统自动生成并加密保存，业务方只使用公钥验签。
+                  </p>
+                </div>
+                <Switch
+                  :model-value="newServer.user_assertion_enabled"
+                  aria-label="开启用户身份传递"
+                  @update:model-value="newServer.user_assertion_enabled = $event"
+                />
+              </div>
+
+              <div v-if="newServer.user_assertion_enabled" class="mt-4 space-y-3 border-t border-indigo-100 pt-3">
+                <div>
+                  <div class="mb-1 flex items-center gap-1.5">
+                    <label class="text-[11px] font-semibold text-gray-700">MCP Audience（系统生成）</label>
+                    <button
+                      type="button"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      title="Audience 说明"
+                      @click="openAuthHelp('MCP Audience 在哪里使用？', '系统会按当前 MCP 的 server_id 自动生成 Audience，例如 mcp:当前MCP的ID。业务方把这个只读值配置为验签时的 aud 期望值，用来防止其他 MCP 接受本 MCP 的身份断言。用户不需要填写。')"
+                    >?</button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      :value="mcpAudienceValue"
+                      readonly
+                      aria-label="当前 MCP Audience"
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-mono text-gray-600 outline-none"
+                    />
+                    <button
+                      v-if="mcpAudienceValue !== '保存后由系统自动生成'"
+                      type="button"
+                      class="shrink-0 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                      aria-label="复制 Audience"
+                      @click="copyMcpValue(mcpAudienceValue, 'Audience')"
+                    >{{ copiedMcpValue === 'Audience' ? '已复制' : '复制 Audience' }}</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="mb-1 flex items-center gap-1.5">
+                    <label class="text-[11px] font-semibold text-gray-700">签名 Issuer（系统固定）</label>
+                    <button
+                      type="button"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      title="Issuer 说明"
+                      @click="openAuthHelp('签名 Issuer 在哪里使用？', 'Issuer 表示这份用户身份签名由谁签发。系统固定使用 nanzi-platform。业务方把这个只读值配置为验签时的 iss 期望值，用户不需要填写。')"
+                    >?</button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      :value="mcpIssuerValue"
+                      readonly
+                      aria-label="当前 MCP 签名 Issuer"
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-mono text-gray-600 outline-none"
+                    />
+                    <button
+                      type="button"
+                      class="shrink-0 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                      aria-label="复制 Issuer"
+                      @click="copyMcpValue(mcpIssuerValue, 'Issuer')"
+                    >{{ copiedMcpValue === 'Issuer' ? '已复制' : '复制 Issuer' }}</button>
+                  </div>
+                </div>
+
+                <div class="rounded-md border border-indigo-100 bg-white/70 p-2.5 text-[10px] leading-relaxed text-gray-500">
+                  <div class="flex items-center gap-1.5 font-semibold text-gray-700">
+                    <span>默认透传字段</span>
+                    <button
+                      type="button"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      title="默认透传字段说明"
+                      @click="openPayloadHelp"
+                    >?</button>
+                  </div>
+                  <p class="mt-1">用户身份结构为 user_context + custom_attributes，业务 MCP 通过验签后的 user_context.user_id 关联业务用户。</p>
+                </div>
+
+                <div class="rounded-md border border-indigo-100 bg-white/70 p-2.5 text-[10px] leading-relaxed text-gray-500">
+                  <div class="flex items-center gap-1.5 font-semibold text-gray-700">
+                    <span>公钥获取地址（JWKS）</span>
+                    <button
+                      type="button"
+                      class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-bold text-indigo-600"
+                      title="业务方如何使用"
+                      @click="openAuthHelp('业务方如何使用公钥验签？', `业务 MCP 不需要获取或保存 NanZi 私钥，只需配置当前 MCP 的 JWKS 地址。示例：GET ${mcpJwksUrl || 'https://<NanZi域名>/.well-known/nanzi/mcp/<server_id>/jwks.json'}，缓存返回的公钥；收到 X-Nanzi-User-Assertion 后，根据 JWT Header 的 kid 选择公钥并验证签名，同时校验 iss、aud、exp、iat 和 jti。验签成功后，从 user_context.user_id 关联业务用户。例如：const userId = claims.user_context.user_id。关闭本开关的 MCP 不会发送这个 Header。`)"
+                    >?</button>
+                  </div>
+                  <div v-if="mcpJwksUrl" class="mt-2 flex items-center gap-2">
+                    <input
+                      :value="mcpJwksUrl"
+                      readonly
+                      aria-label="当前 MCP 公钥获取地址"
+                      class="min-w-0 flex-1 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 font-mono text-[10px] text-gray-600 outline-none"
+                    />
+                    <button
+                      type="button"
+                      class="shrink-0 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-700 hover:bg-indigo-100"
+                      aria-label="复制 JWKS 地址"
+                      @click="copyJwksUrl"
+                    >{{ copiedMcpValue === 'JWKS 地址' ? '已复制' : '复制 JWKS 地址' }}</button>
+                  </div>
+                  <p v-else class="mt-1">保存 MCP 后，系统会生成当前 MCP 专属地址；业务方访问该地址获取公钥。</p>
+                </div>
+
+                <div class="flex items-center justify-between gap-3 rounded-md border border-indigo-200 bg-indigo-50/70 p-2.5">
+                  <div class="min-w-0 text-[10px] leading-relaxed text-indigo-800">
+                    <div class="font-semibold">业务方接入示例</div>
+                    <p>自动带入上面的 Audience、Issuer 和 JWKS 地址，生成可复制的验签示例。</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    :disabled="!mcpJwksUrl"
+                    @click="openMcpCodeModal"
+                  >一键生成调用模拟代码</button>
+                </div>
+              </div>
+            </div>
           
             <!-- Dynamic Headers Editor -->
-            <div>
+            <div class="order-2">
               <div class="flex justify-between items-center mb-2">
                 <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider">身份认证 (可选)</label>
                 <button @click="toggleHeaderMode" class="text-[10px] text-primary font-bold flex items-center hover:underline">
@@ -1110,21 +1499,26 @@ onMounted(fetchServers)
               <div v-if="headerMode === 'simple'" class="space-y-3">
                 <p class="text-[10px] text-gray-400 leading-relaxed">
                   如果服务需要令牌或 API Key，请添加下方项。
-                  <span class="text-primary cursor-pointer hover:underline" @click="headerPairs[0] = {key: 'Authorization', value: 'Bearer '}">[常用推荐：Authorization]</span>
+                  <span class="text-primary cursor-pointer hover:underline" @click="headerPairs[0] = {key: 'Authorization', value: 'Bearer '}; authHeadersTouched = true">[常用推荐：Authorization]</span>
+                </p>
+                <p v-if="isEditing" class="text-[10px] text-amber-600 leading-relaxed">
+                  已有认证信息不会回显；不修改下方内容并保存时，会保留原配置。需要更换认证信息时，请重新填写。
                 </p>
               
                 <div class="space-y-2 bg-gray-50 p-3 rounded-lg border border-gray-100 max-h-[150px] overflow-y-auto custom-scrollbar">
                   <div v-for="(pair, index) in headerPairs" :key="index" class="flex gap-2">
                     <div class="flex-1">
                       <input 
-                        v-model="pair.key" 
+                        v-model="pair.key"
+                        @input="authHeadersTouched = true"
                         placeholder="名称 (如 Authorization)" 
                         class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
                       />
                     </div>
                     <div class="flex-1">
                       <input 
-                        v-model="pair.value" 
+                        v-model="pair.value"
+                        @input="authHeadersTouched = true"
                         :placeholder="pair.key === 'Authorization' ? 'Bearer sk-...' : '内容 (Value)'" 
                         class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
                       />
@@ -1139,7 +1533,7 @@ onMounted(fetchServers)
                 </div>
               </div>
               <div v-else>
-                <textarea v-model="newServer.auth_headers" rows="4" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-900 text-green-400" placeholder='{}'></textarea>
+                <textarea v-model="newServer.auth_headers" rows="4" @input="authHeadersTouched = true" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-900 text-green-400" placeholder='{}'></textarea>
               </div>
             </div>
           </template>
@@ -1313,6 +1707,124 @@ onMounted(fetchServers)
               </button>
             </template>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MCP 接入模拟代码 Modal -->
+    <div
+      v-if="showMcpCodeModal"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-gray-900/40 p-4 backdrop-blur-sm"
+      @click.self="showMcpCodeModal = false"
+    >
+      <div class="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-3 border-b border-gray-100 p-5">
+          <div>
+            <h4 class="text-base font-bold text-gray-900">业务方 MCP 调用模拟代码</h4>
+            <p class="mt-1 text-xs leading-relaxed text-gray-500">代码已自动带入当前 MCP 的 Audience、Issuer 和 JWKS 地址。复制后放入业务 MCP 的验签中间件，并替换固定 Token 读取方式。</p>
+          </div>
+          <button type="button" class="text-xl leading-none text-gray-400 hover:text-gray-700" @click="showMcpCodeModal = false">×</button>
+        </div>
+
+        <div class="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="rounded-md px-3 py-1.5 text-xs font-semibold"
+              :class="mcpCodeLanguage === 'python' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'"
+              @click="mcpCodeLanguage = 'python'"
+            >Python</button>
+            <button
+              type="button"
+              class="rounded-md px-3 py-1.5 text-xs font-semibold"
+              :class="mcpCodeLanguage === 'java' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'"
+              @click="mcpCodeLanguage = 'java'"
+            >Java</button>
+          </div>
+          <button
+            type="button"
+            class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+            @click="copyMcpCode"
+          >复制全部代码</button>
+        </div>
+
+        <pre class="m-0 flex-1 overflow-auto bg-gray-950 p-5 text-xs leading-6 text-gray-100"><code>{{ generatedMcpCode }}</code></pre>
+
+        <div class="border-t border-gray-100 bg-gray-50 px-5 py-3 text-[11px] leading-relaxed text-gray-600">
+          使用位置：Audience 填业务方的 <code class="rounded bg-gray-200 px-1">aud</code> 校验配置，Issuer 填 <code class="rounded bg-gray-200 px-1">iss</code> 校验配置，JWKS 地址填公钥发现配置。验签成功后从 <code class="rounded bg-gray-200 px-1">user_context.user_id</code> 关联业务用户。
+        </div>
+      </div>
+    </div>
+
+    <!-- Default Payload Fields Modal -->
+    <div
+      v-if="showPayloadHelp"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-gray-900/40 p-4 backdrop-blur-sm"
+      @click.self="closePayloadHelp"
+    >
+      <div class="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-3 border-b border-gray-100 p-5">
+          <div>
+            <h4 class="text-base font-bold text-gray-900">默认透传字段（完整结构）</h4>
+            <p class="mt-1 text-xs leading-relaxed text-gray-500">以下信息只在开启用户身份传递后，随当前 MCP 调用发送。业务方先验签，再读取用户和智能体信息。</p>
+          </div>
+          <button type="button" class="text-xl leading-none text-gray-400 hover:text-gray-700" @click="closePayloadHelp">×</button>
+        </div>
+
+        <div class="flex-1 overflow-auto p-5">
+          <div class="overflow-hidden rounded-lg border border-gray-200">
+            <table class="min-w-full divide-y divide-gray-200 text-left text-xs">
+              <thead class="bg-gray-50 text-[11px] font-semibold text-gray-600">
+                <tr>
+                  <th class="whitespace-nowrap px-3 py-2.5">字段位置</th>
+                  <th class="whitespace-nowrap px-3 py-2.5">字段</th>
+                  <th class="whitespace-nowrap px-3 py-2.5">是否必有</th>
+                  <th class="px-3 py-2.5">业务方使用方式</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 bg-white text-gray-600">
+                <tr v-for="row in payloadFieldRows" :key="`${row.location}-${row.field}`" class="align-top hover:bg-indigo-50/30">
+                  <td class="whitespace-nowrap px-3 py-2 font-medium text-indigo-700">{{ row.location }}</td>
+                  <td class="whitespace-nowrap px-3 py-2 font-mono text-gray-800">{{ row.field }}</td>
+                  <td class="whitespace-nowrap px-3 py-2">{{ row.required }}</td>
+                  <td class="px-3 py-2 leading-relaxed">{{ row.usage }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="mt-4 grid gap-3 text-[11px] leading-relaxed text-gray-600 sm:grid-cols-2">
+            <div class="rounded-lg border border-amber-100 bg-amber-50/70 p-3">
+              <div class="font-semibold text-amber-900">过滤规则：不会透传的敏感字段</div>
+              <p class="mt-1">password、token、api_key、authorization、cookie、secret、private_key、session_token 等敏感字段会自动过滤。</p>
+            </div>
+            <div class="rounded-lg border border-blue-100 bg-blue-50/70 p-3">
+              <div class="font-semibold text-blue-900">当前版本暂不包含</div>
+              <p class="mt-1">当前第一期不传 `tenant_id`、`scope` 和完整权限树；业务权限仍由业务 MCP 自己判断。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end border-t border-gray-100 bg-gray-50 p-4">
+          <button type="button" class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark" @click="closePayloadHelp">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- UserContext Help Modal -->
+    <div
+      v-if="authHelp"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-gray-900/40 p-4 backdrop-blur-sm"
+      @click.self="closeAuthHelp"
+    >
+      <div class="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl">
+        <div class="flex items-start justify-between gap-3">
+          <h4 class="text-base font-bold text-gray-900">{{ authHelp.title }}</h4>
+          <button type="button" class="text-xl leading-none text-gray-400 hover:text-gray-700" @click="closeAuthHelp">×</button>
+        </div>
+        <p class="mt-3 whitespace-pre-line text-sm leading-7 text-gray-600">{{ authHelp.content }}</p>
+        <div class="mt-5 flex justify-end">
+          <button type="button" class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark" @click="closeAuthHelp">知道了</button>
         </div>
       </div>
     </div>

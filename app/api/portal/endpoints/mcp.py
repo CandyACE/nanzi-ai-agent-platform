@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, func
 import uuid
@@ -13,7 +13,8 @@ from app.models.mcp import McpServer, McpToolCache
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
-from pydantic import BaseModel, Field, ConfigDict
+from app.services.mcp.mcp_auth_policy import generate_mcp_private_key_pem
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,10 +29,31 @@ def _clear_runtime_tool_cache() -> None:
 class McpServerBase(BaseModel):
     server_name: str
     sse_url: str
-    auth_headers: Optional[str] = "{}"
     enabled_status: Optional[int] = 1
     scope: Optional[str] = "global"
     remark: Optional[str] = Field(default=None, max_length=500)
+    credential_mode: Literal["static", "fixed_token_signed_user"] = "static"
+    user_assertion_enabled: bool = False
+    user_assertion_header: str = "X-Nanzi-User-Assertion"
+    user_assertion_audience: Optional[str] = None
+    user_assertion_key_id: Optional[str] = None
+    user_assertion_issuer: Optional[str] = "nanzi-platform"
+
+
+class McpServerWrite(McpServerBase):
+    """MCP Server 写入模型；fixed_token 只允许写入，不进入响应模型。"""
+
+    auth_headers: Optional[str] = "{}"
+    fixed_token: Optional[str] = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_user_assertion_config(self):
+        if self.credential_mode == "fixed_token_signed_user":
+            if not self.user_assertion_enabled:
+                raise ValueError("启用用户身份签名模式时必须开启 UserContext 传递")
+        if str(self.user_assertion_header or "").strip().lower() == "authorization":
+            raise ValueError("UserContext Header 不能使用 Authorization")
+        return self
 
 
 def _normalized_remark(value: Optional[str]) -> Optional[str]:
@@ -85,6 +107,10 @@ class McpServerUsageResponse(BaseModel):
 
 def _normalized_server_name(value: str) -> str:
     return str(value or "").strip()
+
+
+def _default_user_assertion_audience(server_id: str) -> str:
+    return f"mcp:{server_id}"
 
 
 def _configured_tool_names(value: Any) -> set[str]:
@@ -190,7 +216,7 @@ async def _find_server_with_name(
 
 @router.post("/verify")
 async def verify_mcp_server(
-    data: McpServerBase,
+    data: McpServerWrite,
     user: Dict = Depends(require_api_key)
 ):
     """Test connection and return discovered tools without saving"""
@@ -199,6 +225,8 @@ async def verify_mcp_server(
     if data.auth_headers:
         try: auth_headers = json.loads(data.auth_headers)
         except: pass
+    if data.fixed_token:
+        auth_headers["Authorization"] = f"Bearer {data.fixed_token}"
 
     McpClientService._sessions[temp_id] = McpSseSession(temp_id, data.sse_url, auth_headers)
     
@@ -273,7 +301,7 @@ async def list_mcp_servers(
 
 @router.post("/servers", response_model=McpServerResponse)
 async def create_mcp_server(
-    data: McpServerBase,
+    data: McpServerWrite,
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key)
 ):
@@ -295,12 +323,25 @@ async def create_mcp_server(
 
     user_id = _get_user_id(user) if target_scope == "personal" else None
     server_id = str(uuid.uuid4())
-    server_data = data.model_dump()
+    server_data = data.model_dump(exclude={"fixed_token"})
     server_data["server_name"] = server_name
     server_data["remark"] = _normalized_remark(data.remark)
     server_data["scope"] = target_scope
     server_data["user_id"] = user_id
     
+    if data.fixed_token:
+        from app.utils.encryption import get_api_key_manager
+        server_data["fixed_token_encrypted"] = get_api_key_manager().encrypt_api_key(data.fixed_token)
+    if data.credential_mode == "fixed_token_signed_user":
+        from app.utils.encryption import get_api_key_manager
+        server_data["user_assertion_audience"] = (
+            data.user_assertion_audience or _default_user_assertion_audience(server_id)
+        )
+        server_data["user_assertion_issuer"] = "nanzi-platform"
+        server_data["user_assertion_private_key_encrypted"] = get_api_key_manager().encrypt_api_key(
+            generate_mcp_private_key_pem()
+        )
+        server_data["user_assertion_key_id"] = data.user_assertion_key_id or f"mcp-{uuid.uuid4().hex[:16]}"
     new_server = McpServer(id=server_id, **server_data)
     db.add(new_server)
     try:
@@ -316,12 +357,15 @@ async def create_mcp_server(
     except Exception as e:
         logger.warning(f"Initial sync failed for new server {server_id}: {e}")
         
-    return {**server_data, "id": server_id, "tool_count": 0, "published_tool_count": 0}
+    response_data = {
+        key: value for key, value in server_data.items() if key != "auth_headers"
+    }
+    return {**response_data, "id": server_id, "tool_count": 0, "published_tool_count": 0}
 
 @router.put("/servers/{server_id}", response_model=McpServerResponse)
 async def update_mcp_server(
     server_id: str,
-    data: McpServerBase,
+    data: McpServerWrite,
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key)
 ):
@@ -351,7 +395,33 @@ async def update_mcp_server(
         await _migrate_server_name_references(db, server_id, server.server_name, server_name)
     server.server_name = server_name
     server.sse_url = data.sse_url
-    server.auth_headers = data.auth_headers
+    if "auth_headers" in data.model_fields_set:
+        server.auth_headers = data.auth_headers
+    server.credential_mode = data.credential_mode
+    server.user_assertion_enabled = data.user_assertion_enabled
+    server.user_assertion_header = data.user_assertion_header
+    if data.credential_mode == "fixed_token_signed_user":
+        server.user_assertion_audience = (
+            data.user_assertion_audience
+            or server.user_assertion_audience
+            or _default_user_assertion_audience(server_id)
+        )
+        server.user_assertion_key_id = data.user_assertion_key_id or server.user_assertion_key_id
+        server.user_assertion_issuer = "nanzi-platform"
+    else:
+        server.user_assertion_audience = data.user_assertion_audience
+        server.user_assertion_key_id = data.user_assertion_key_id
+        server.user_assertion_issuer = data.user_assertion_issuer
+    if data.fixed_token:
+        from app.utils.encryption import get_api_key_manager
+        server.fixed_token_encrypted = get_api_key_manager().encrypt_api_key(data.fixed_token)
+    if data.credential_mode == "fixed_token_signed_user" and not server.user_assertion_key_id:
+        server.user_assertion_key_id = f"mcp-{uuid.uuid4().hex[:16]}"
+    if data.credential_mode == "fixed_token_signed_user" and not server.user_assertion_private_key_encrypted:
+        from app.utils.encryption import get_api_key_manager
+        server.user_assertion_private_key_encrypted = get_api_key_manager().encrypt_api_key(
+            generate_mcp_private_key_pem()
+        )
     server.enabled_status = data.enabled_status
     # 启用/禁用等局部更新可能不传 remark，避免误清空
     if "remark" in data.model_fields_set:
@@ -382,8 +452,11 @@ async def update_mcp_server(
     )
     pub = (await db.execute(pub_stmt)).scalar() or 0
     
-    response_data = data.model_dump()
+    response_data = data.model_dump(exclude={"fixed_token", "auth_headers"})
     response_data["server_name"] = server_name
+    response_data["user_assertion_audience"] = server.user_assertion_audience
+    response_data["user_assertion_key_id"] = server.user_assertion_key_id
+    response_data["user_assertion_issuer"] = server.user_assertion_issuer
     return {
         **response_data,
         "id": server_id,
@@ -587,12 +660,57 @@ async def execute_mcp_tool(
     if not tool.is_published:
         raise HTTPException(status_code=409, detail="工具尚未发布，无法执行")
 
+    mcp_auth = {
+        "user_assertion_sent": False,
+        "header": None,
+        "value_masked": None,
+        "audience": None,
+        "issuer": None,
+        "key_id": None,
+    }
     try:
-        lc_tool = McpToolFactory.create_tool(tool)
-        result = await lc_tool.ainvoke(req.arguments)
-        return {"status": "success", "result": result}
+        signed_user_mode = bool(
+            server.user_assertion_enabled
+            and server.credential_mode == "fixed_token_signed_user"
+        )
+        if signed_user_mode:
+            test_user_info = {
+                key: user.get(key)
+                for key in (
+                    "user_id",
+                    "user_name",
+                    "real_name",
+                    "dept_code",
+                    "org_path",
+                    "extra_data",
+                )
+                if user.get(key) is not None
+            }
+            result = await McpClientService.call_remote_tool(
+                server_id=tool.server_id,
+                tool_name=tool.tool_name.split(":", 1)[-1],
+                arguments=req.arguments,
+                user_info=test_user_info,
+                agent_info={
+                    "agent_id": "mcp-tool-tester",
+                    "agent_name": "MCP 工具测试台",
+                },
+                request_id=str(uuid.uuid4()),
+            )
+            mcp_auth = {
+                "user_assertion_sent": True,
+                "header": server.user_assertion_header or "X-Nanzi-User-Assertion",
+                "value_masked": "********",
+                "audience": server.user_assertion_audience,
+                "issuer": server.user_assertion_issuer or "nanzi-platform",
+                "key_id": server.user_assertion_key_id,
+            }
+        else:
+            lc_tool = McpToolFactory.create_tool(tool)
+            result = await lc_tool.ainvoke(req.arguments)
+        return {"status": "success", "result": result, "mcp_auth": mcp_auth}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e), "mcp_auth": mcp_auth}
 
 @router.put("/tools/{tool_id}/publish")
 async def toggle_tool_publish(
