@@ -1,5 +1,7 @@
 # MCP 业务集成认证方案
 
+![MCP 用户身份透传认证架构图](../../docs/images/mcp_auth.png)
+
 ## 1. 文档信息
 
 - **适用系统**：NanZi AI Agent Platform 与自有业务 MCP 服务
