@@ -80,6 +80,27 @@ async def test_should_run_after_enough_turns():
 
 
 @pytest.mark.asyncio
+async def test_prev_summary_reads_existing_summary_by_document_key():
+    raw = {b"title": b"existing summary"}
+    parsed = {"title": "existing summary"}
+
+    with patch(
+        "app.services.ai.session_summary_service.MemoryIndexService._hgetall_summary",
+        new_callable=AsyncMock,
+        return_value=raw,
+    ) as mock_hgetall, patch(
+        "app.services.ai.session_summary_service.MemoryIndexService._parse_hash",
+        new_callable=AsyncMock,
+        return_value=parsed,
+    ) as mock_parse:
+        result = await SessionSummaryService._prev_summary("u1", "conv1")
+
+    assert result == parsed
+    mock_hgetall.assert_awaited_once_with("memory:summary:u1:conv1")
+    mock_parse.assert_awaited_once_with(raw)
+
+
+@pytest.mark.asyncio
 async def test_memory_search_uses_context_user_id():
     from app.core.context import AgentContext, set_agent_context
     from app.services.ai.tools import memory_search_tool

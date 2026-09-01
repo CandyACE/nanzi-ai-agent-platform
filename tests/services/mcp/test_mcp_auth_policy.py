@@ -86,6 +86,34 @@ def test_signed_mode_adds_signed_user_assertion_without_exposing_private_data():
     assert claims["agent_id"] == "agent-1"
 
 
+def test_user_assertion_is_independent_of_authorization_bearer_token():
+    private_key = Ed25519PrivateKey.generate()
+    server = _server(
+        auth_headers="{}",
+        credential_mode="static",
+        user_assertion_enabled=True,
+        user_assertion_audience="mcp:crm",
+        user_assertion_key_id="key-1",
+    )
+
+    headers = build_mcp_headers(
+        server,
+        user_info=_user_info(),
+        agent_info=_agent_info(),
+        request_id="req-no-bearer",
+        private_key=private_key,
+    )
+
+    assert "Authorization" not in headers
+    assert headers["X-Request-ID"] == "req-no-bearer"
+    claims = verify_user_assertion(
+        headers["X-Nanzi-User-Assertion"],
+        public_key=private_key.public_key(),
+        audience="mcp:crm",
+    )
+    assert claims["sub"] == "nanzi:user:123"
+
+
 def test_signed_mode_requires_audience_and_private_key():
     server = _server(
         credential_mode="fixed_token_signed_user",

@@ -266,7 +266,7 @@ const buildServerPayload = (server: any) => {
   const payload: Record<string, any> = {
     ...server,
     scope: props.scope,
-    credential_mode: server.user_assertion_enabled ? 'fixed_token_signed_user' : 'static',
+    credential_mode: server.credential_mode || 'static',
     user_assertion_enabled: Boolean(server.user_assertion_enabled),
     user_assertion_header: server.user_assertion_header || 'X-Nanzi-User-Assertion',
     user_assertion_audience: server.user_assertion_audience || null,
@@ -279,13 +279,6 @@ const buildServerPayload = (server: any) => {
   }
   return payload
 }
-
-watch(
-  () => newServer.value.user_assertion_enabled,
-  (enabled) => {
-    newServer.value.credential_mode = enabled ? 'fixed_token_signed_user' : 'static'
-  },
-)
 
 const authHelp = ref<{ title: string, content: string } | null>(null)
 const openAuthHelp = (title: string, content: string) => {
@@ -529,6 +522,20 @@ const fetchServers = async () => {
     showToast(getApiErrorMessage(e, '获取 MCP 服务列表失败'), 'error')
   } finally {
     loading.value = false
+  }
+}
+
+const createEchoTestMcp = async () => {
+  if (props.scope !== 'global' || !canSave.value) return
+
+  try {
+    const response = await axios.post('/api/portal/mcp/servers/echo-test')
+    await fetchServers()
+    const created = servers.value.find((server: any) => server.id === response.data?.id)
+    if (created) selectServer(created)
+    showToast('Echo 测试 MCP 已就绪，所有智能体都可以挂载', 'success')
+  } catch (error: any) {
+    showToast(getApiErrorMessage(error, '创建 Echo 测试 MCP 失败'), 'error')
   }
 }
 
@@ -1029,15 +1036,27 @@ onMounted(fetchServers)
             管理员可编辑
           </span>
         </div>
-        <button 
-          v-if="canSave" 
-          @click="resetWizard(); showAddModal = true" 
-          class="flex shrink-0 items-center rounded-md px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all sm:px-3"
-          :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
-        >
-          <PlusIcon class="mr-1 h-3.5 w-3.5" />
-          添加
-        </button>
+        <div v-if="canSave" class="flex shrink-0 items-center gap-1.5">
+          <button
+            v-if="props.scope === 'global'"
+            type="button"
+            @click="createEchoTestMcp"
+            class="flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-bold text-indigo-700 transition-colors hover:bg-indigo-100 sm:px-2.5"
+            title="创建平台内置 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+          >
+            <BeakerIcon class="mr-1 h-3.5 w-3.5" />
+            创建 Echo 测试 MCP
+          </button>
+          <button
+            type="button"
+            @click="resetWizard(); showAddModal = true"
+            class="flex items-center rounded-md px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all sm:px-3"
+            :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
+          >
+            <PlusIcon class="mr-1 h-3.5 w-3.5" />
+            添加
+          </button>
+        </div>
       </div>
 
       <div class="custom-scrollbar max-h-[min(52vh,28rem)] flex-1 overflow-y-auto lg:max-h-none">
@@ -1059,9 +1078,13 @@ onMounted(fetchServers)
               <div class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-bold text-gray-900">{{ server.server_name }}</span>
                 <span
-                  v-if="server.credential_mode === 'fixed_token_signed_user'"
+                  v-if="server.user_assertion_enabled"
                   class="mt-1 inline-flex rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700"
                 >已启用用户身份签名</span>
+                <span
+                  v-if="server.server_name === 'NanZi Echo 测试 MCP'"
+                  class="mt-1 ml-1 inline-flex rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700"
+                >平台测试 MCP / 所有智能体可挂载</span>
                 <p v-if="server.remark" class="mt-0.5 line-clamp-2 text-[11px] leading-snug text-gray-500">{{ server.remark }}</p>
               </div>
               <div class="flex shrink-0 items-center gap-2" @click.stop>
@@ -1344,9 +1367,9 @@ onMounted(fetchServers)
             </p>
           </div>
 
-          <!-- 手动填写 Tab（编辑时强制手动） -->
-          <template v-else>
-            <div class="order-1">
+          <!-- 手动填写区域与通用用户身份传递配置 -->
+          <div class="contents">
+            <div v-if="connectionInputTab === 'manual' || isEditing" class="order-1">
               <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 flex items-center">
                 <LinkIcon class="w-3 h-3 mr-1" /> 服务地址（SSE / HTTP）
               </label>
@@ -1487,7 +1510,7 @@ onMounted(fetchServers)
             </div>
           
             <!-- Dynamic Headers Editor -->
-            <div class="order-2">
+            <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2">
               <div class="flex justify-between items-center mb-2">
                 <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider">身份认证 (可选)</label>
                 <button @click="toggleHeaderMode" class="text-[10px] text-primary font-bold flex items-center hover:underline">
@@ -1536,7 +1559,7 @@ onMounted(fetchServers)
                 <textarea v-model="newServer.auth_headers" rows="4" @input="authHeadersTouched = true" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-900 text-green-400" placeholder='{}'></textarea>
               </div>
             </div>
-          </template>
+          </div>
         </div>
 
         <!-- Wizard Step 2: Preview -->

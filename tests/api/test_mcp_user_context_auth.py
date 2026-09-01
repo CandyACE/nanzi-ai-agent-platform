@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from app.api.portal.endpoints.mcp import (
     McpServerResponse,
@@ -56,6 +55,19 @@ def test_signed_user_mode_accepts_write_only_token_and_policy():
     assert "fixed_token" not in McpServerResponse.model_fields
     assert "fixed_token_encrypted" not in McpServerResponse.model_fields
     assert "user_assertion_private_key" not in McpServerWrite.model_fields
+
+
+def test_user_assertion_can_be_enabled_without_bearer_auth_mode():
+    request = McpServerWrite(
+        **_payload(
+            credential_mode="static",
+            user_assertion_enabled=True,
+            auth_headers="{}",
+        )
+    )
+
+    assert request.credential_mode == "static"
+    assert request.user_assertion_enabled is True
 
 
 def test_update_model_accepts_write_only_fixed_token():
