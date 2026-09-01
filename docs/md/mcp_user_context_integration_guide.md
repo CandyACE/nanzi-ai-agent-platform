@@ -22,21 +22,21 @@
   user_assertion_audience
 ```
 
-不同 MCP 不共享固定 Token、签名私钥或 Audience。平台 MCP 由管理员维护，用户 MCP 由所属用户维护。签名私钥在 NanZi 后端按 MCP 加密保存，业务 MCP 只保存对应的公钥。
+不同 MCP 不共享固定 Authorization Bearer Token、签名私钥或 Audience。平台 MCP 由管理员维护，用户 MCP 由所属用户维护。签名私钥在 NanZi 后端按 MCP 加密保存，业务 MCP 只保存对应的公钥。
 
 ## 2. 请求约定
 
 开启 UserContext 的 MCP 收到：
 
 ```http
-Authorization: Bearer <该 MCP 的固定 Token>
+Authorization: Bearer <该 MCP 的 Token 值>
 X-Nanzi-User-Assertion: <该 MCP 对应私钥签发的 JWS>
 X-Request-ID: <request-id>
 ```
 
 未开启 UserContext 的 MCP 只收到原有认证 Header，不会生成或发送 JWS。
 
-用户身份不放在工具 `arguments` 中。固定 Token 证明请求来自已登记的 NanZi 客户端，签名断言证明当前用户信息来自 NanZi 且没有被篡改。
+用户身份不放在工具 `arguments` 中。固定 Authorization Bearer Token 证明请求来自已登记的 NanZi 客户端，签名断言证明当前用户信息来自 NanZi 且没有被篡改。
 
 ## 3. MCP 管理页面
 
@@ -46,11 +46,11 @@ X-Request-ID: <request-id>
 2. 打开“开启用户身份传递”开关；
 3. 保存 MCP。系统会自动生成当前 MCP 的 Audience、Key ID 和签名私钥；Issuer 固定为 `nanzi-platform`。
 
-Token 编辑时不回显，留空表示沿用原值。UserContext 不重复配置固定 Token；私钥不让用户在页面中填写，由平台为当前 MCP 生成并加密保存。
+Token 编辑时不回显，留空表示沿用原值。UserContext 不重复配置固定 Authorization Bearer Token；私钥不让用户在页面中填写，由平台为当前 MCP 生成并加密保存。
 
 保存后，MCP 管理页面会以只读方式显示当前 MCP 的 Audience、Issuer 和“公钥获取地址（JWKS）”，并提供复制按钮。把 Audience 复制到业务 MCP 的 `aud` 校验配置，把 Issuer 复制到 `iss` 校验配置，把 JWKS 地址配置到公钥发现配置中。Key ID 不需要单独复制，业务方根据 JWT Header 的 `kid` 从 JWKS 自动选择公钥。
 
-页面下方提供“一键生成调用模拟代码”。点击后选择 Python 或 Java，系统会自动把当前 MCP 的三个只读值带入示例代码。复制全部代码后，将其放入业务 MCP 的认证中间件，并按业务框架补充请求头读取、固定 Token 的 Secret 读取和 `jti` 防重放存储。示例代码的核心结果是拿到 `user_context.user_id`，再用它关联业务系统用户。
+页面下方提供“一键生成调用模拟代码”。点击后选择 Python 或 Java，系统会自动把当前 MCP 的三个只读值带入示例代码。复制全部代码后，将其放入业务 MCP 的认证中间件，并按业务框架补充请求头读取、固定 Authorization Bearer Token 的 Secret 读取和 `jti` 防重放存储。示例代码的核心结果是拿到 `user_context.user_id`，再用它关联业务系统用户。
 
 在 NanZi 的 MCP 工具测试台中，点击“运行测试”时也会按当前登录用户生成并发送 `X-Nanzi-User-Assertion`。测试结果中的“本次调用认证信息”只显示：
 
@@ -129,7 +129,7 @@ GET https://nanzi.example.com/.well-known/nanzi/mcp/{mcp_server_id}/jwks.json
 
 ## 6. 业务 MCP 中间件
 
-业务 MCP 中间件应先校验当前 MCP 自己的固定 Token，再使用当前 MCP 的 JWKS、公钥、Issuer 和 Audience 验证 User Assertion。下面示例中的配置都属于当前 MCP，不是全局配置。
+业务 MCP 中间件应先校验当前 MCP 自己的固定 Authorization Bearer Token，再使用当前 MCP 的 JWKS、公钥、Issuer 和 Audience 验证 User Assertion。下面示例中的配置都属于当前 MCP，不是全局配置。
 
 ### 6.1 Python 版本
 
@@ -152,7 +152,7 @@ import jwt
 from jwt import PyJWKClient
 
 
-MCP_FIXED_TOKEN = "从当前 MCP 的 Secret 读取"
+MCP_FIXED_AUTHORIZATION_BEARER_TOKEN = "从当前 MCP 的 Secret 读取"
 MCP_ISSUER = "nanzi-platform"
 MCP_AUDIENCE = os.environ["NANZI_MCP_AUDIENCE"]  # 使用页面复制的只读 Audience
 MCP_JWKS_URL = os.environ["NANZI_MCP_JWKS_URL"]  # 使用页面复制的 JWKS 地址
@@ -177,7 +177,7 @@ def resolve_nanzi_principal(
     authorization: str | None,
     assertion: str | None,
 ) -> McpPrincipal:
-    expected_authorization = f"Bearer {MCP_FIXED_TOKEN}"
+    expected_authorization = f"Bearer {MCP_FIXED_AUTHORIZATION_BEARER_TOKEN}"
     if not authorization or not hmac.compare_digest(authorization, expected_authorization):
         raise PermissionError("invalid MCP client token")
     if not assertion:
@@ -360,7 +360,7 @@ public final class NanZiMcpIdentity {
 
 实际中间件还必须：
 
-- 先校验当前 MCP 自己的固定 Token；
+- 先校验当前 MCP 自己的固定 Authorization Bearer Token；
 - 校验 `iss`、`aud`、`iat`、`exp` 和 `jti`；
 - 防止同一个 `jti` 在有效期内重复使用；
 - 校验 `sub` 与 `user_context.user_id` 一致；
@@ -383,7 +383,7 @@ async def query_customer(ctx, customer_id: str):
 
 ## 8. 不支持 UserContext 的 MCP
 
-第三方 MCP 如果不解析该 Header，可以关闭当前 MCP 的 UserContext 开关，继续使用原来的固定 Token。即使第三方 MCP 收到并忽略自定义 Header，也不会影响正常协议调用；但它无法获得可信的 NanZi 用户身份。
+第三方 MCP 如果不解析该 Header，可以关闭当前 MCP 的 UserContext 开关，继续使用原来的固定 Authorization Bearer Token。即使第三方 MCP 收到并忽略自定义 Header，也不会影响正常协议调用；但它无法获得可信的 NanZi 用户身份。
 
 ## 9. 密钥轮换
 

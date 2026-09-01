@@ -19,9 +19,9 @@ NanZi 已经在用户登录后完成平台身份认证，并在后端运行上�
 
 1. 复用 NanZi 已认证的用户身份，避免让用户在每个 MCP 中重复登录。
 2. 不能仅通过明文 `user_id` 或普通请求头建立信任，防止调用方伪造其他用户。
-3. 固定 MCP Token 与用户身份信息分离。
+3. 固定 Authorization Bearer Token 与用户身份信息分离。
 4. 自有 MCP 能解析并验证用户身份；不支持该扩展的第三方 MCP 仍能正常调用。
-5. 不把 MCP Token 或签名 UserContext 暴露给模型、浏览器、SSE 前端事件或业务日志。
+5. 不把固定 Authorization Bearer Token 或签名 UserContext 暴露给模型、浏览器、SSE 前端事件或业务日志。
 6. 为后续租户隔离和工具 scope 保留扩展点，同时具备短期有效期、重放防护、密钥轮换和审计追踪能力。
 
 ## 3. 方案结论
@@ -29,7 +29,7 @@ NanZi 已经在用户登录后完成平台身份认证，并在后端运行上�
 采用双凭证模式：
 
 ```text
-固定 MCP Token
+固定 Authorization Bearer Token
     证明：请求来自已登记的 NanZi 平台客户端
 
 签名 UserContext
@@ -44,7 +44,7 @@ X-Nanzi-User-Assertion: <signed-user-context-jws>
 X-Request-ID: <request-id>
 ```
 
-业务 MCP 通过固定 Token 识别 NanZi 客户端，通过签名 UserContext 识别当前用户，之后仍然由业务 MCP 根据用户、租户和资源执行最终的业务权限判断。
+业务 MCP 通过固定 Authorization Bearer Token 识别 NanZi 客户端，通过签名 UserContext 识别当前用户，之后仍然由业务 MCP 根据用户、租户和资源执行最终的业务权限判断。
 
 ## 4. 信任边界
 
@@ -89,7 +89,7 @@ MCP 创建自己的 McpPrincipal
 | 凭证 | 用途 | 来源 | 是否传给模型 | 是否传给 MCP |
 | --- | --- | --- | --- | --- |
 | NanZi 登录 API Key / JWT | 登录 NanZi | 用户或宿主 | 否 | 否 |
-| 固定 MCP Token | 证明调用方是 NanZi 平台 | MCP 管理配置 | 否 | 是 |
+| 固定 Authorization Bearer Token | 证明调用方是 NanZi 平台 | MCP 管理配置 | 否 | 是 |
 | 签名 UserContext | 证明当前业务用户身份 | NanZi 后端临时生成 | 否 | 自有 MCP 是 |
 | MCP 业务 Access Token | 本方案不强制要求 | MCP 自己签发 | 否 | 后续可扩展 |
 
@@ -112,7 +112,7 @@ MCP 创建自己的 McpPrincipal
 │ MCP Identity Service   │
 │ 构造并签名 UserContext │
 └──────────┬───────────┘
-           │ 固定 Token + 签名断言
+           │ 固定 Authorization Bearer Token + 签名断言
            ▼
 ┌──────────────────────┐
 │ NanZi MCP Client       │
@@ -266,7 +266,7 @@ NanZi 使用签名私钥生成 JWS/JWT。每次 MCP 调用生成一个新的 `jt
 
 - NanZi API Key；
 - 密码；
-- 固定 MCP Token；
+- 固定 Authorization Bearer Token；
 - 完整权限树；
 - 数据库连接信息；
 - 内部 Prompt 或会话历史。
@@ -317,7 +317,7 @@ X-Request-ID: req-20260901-001
 业务 MCP 按顺序执行：
 
 1. 校验 HTTPS 或内部安全网络连接。
-2. 校验 `Authorization` 中的固定 MCP Token。
+2. 校验固定 Authorization Bearer Token（即 `Authorization: Bearer` Header 中的 Token 值）。
 3. 读取 `X-Nanzi-User-Assertion`。
 4. 使用 NanZi 公钥或 JWKS 验证签名。
 5. 校验 `iss`。
@@ -417,9 +417,9 @@ MCP 根据 JWT Header 中的 `kid` 选择公钥：
 
 不允许直接替换唯一公钥后立即让旧 Token 全部失败。
 
-## 8. 固定 MCP Token 管理
+## 8. 固定 Authorization Bearer Token 管理
 
-固定 MCP Token 用于认证 NanZi 这个客户端，不用于表达用户身份。
+固定 Authorization Bearer Token 用于认证 NanZi 这个客户端，不用于表达用户身份。
 
 管理规则：
 
@@ -460,7 +460,7 @@ SSE / Streamable HTTP URL
 
 ### 9.3 原有 MCP 身份认证配置
 
-原有“身份认证（可选）”区域保持不变。`Authorization` Header 仍然用于认证 MCP 接口本身，固定 Token 仍按照原来的方式配置，不在 UserContext 区域重复展示。
+原有“身份认证（可选）”区域保持不变。`Authorization: Bearer` Header 仍然用于认证 MCP 接口本身，固定 Authorization Bearer Token 仍按照原来的方式配置，不在 UserContext 区域重复展示。
 
 ### 9.4 UserContext 配置
 
@@ -476,7 +476,7 @@ Audience、Issuer 和 JWKS 地址均为只读信息，并提供复制按钮。�
 
 `X-Nanzi-User-Assertion` 是系统固定使用的请求 Header，不作为页面输入项；签名私钥由系统按 MCP 独立生成并加密保存，用户不需要填写。
 
-页面在 JWKS 信息下提供“一键生成调用模拟代码”按钮。代码弹框支持 Python 和 Java 两种示例，并自动带入当前 MCP 的 Audience、Issuer 和 JWKS 地址。业务方复制代码后，放入自己的认证中间件，完成固定 Token 校验、JWKS 公钥验签、`iss`/`aud`/时间窗口/`jti` 校验，最后从 `user_context.user_id` 关联业务用户。
+页面在 JWKS 信息下提供“一键生成调用模拟代码”按钮。代码弹框支持 Python 和 Java 两种示例，并自动带入当前 MCP 的 Audience、Issuer 和 JWKS 地址。业务方复制代码后，放入自己的认证中间件，完成固定 Authorization Bearer Token 校验、JWKS 公钥验签、`iss`/`aud`/时间窗口/`jti` 校验，最后从 `user_context.user_id` 关联业务用户。
 
 MCP 工具测试台的“运行测试”也属于实际 MCP 出站调用：UserContext 开启时，后端使用当前登录用户和测试台调用来源生成断言并发送。前端测试结果只展示脱敏状态，例如 `X-Nanzi-User-Assertion: ********`，同时展示 Audience、Issuer 和 Key ID；完整 JWS 不返回浏览器，避免被复制或重放。
 
@@ -520,14 +520,14 @@ is_admin
 在 MCP 工具测试台点击“运行测试”时，才属于实际的用户关联调用：
 
 1. 先使用当前登录用户的服务端认证身份生成测试断言。
-2. 发送固定 MCP Token 和 User Assertion。
+2. 发送固定 Authorization Bearer Token 和 User Assertion。
 3. 显示工具结果和脱敏认证结果。
 4. 不显示完整 Token、完整 JWT 或私钥。
 
 测试结果应明确区分：
 
 ```text
-固定 MCP Token 认证失败
+固定 Authorization Bearer Token 认证失败
 UserContext 签名验证失败
 Audience 不匹配
 工具 scope 不足
@@ -580,7 +580,7 @@ headers = await mcp_assertion_service.build_headers(call_context)
 
 ### 11.1 Python 示例
 
-每个业务 MCP 只配置并信任自己对应的固定 Token、公钥和 Audience。不要使用一套供所有 MCP 共用的 Token 或签名密钥。
+每个业务 MCP 只配置并信任自己对应的固定 Authorization Bearer Token、公钥和 Audience。不要使用一套供所有 MCP 共用的 Token 或签名密钥。
 
 ```python
 from dataclasses import dataclass
@@ -600,7 +600,7 @@ class McpPrincipal:
 
 async def require_nanzi_principal(request) -> McpPrincipal:
     fixed_token = read_bearer_token(request)
-    if not constant_time_compare(fixed_token, settings.NANZI_CRM_MCP_FIXED_TOKEN):
+    if not constant_time_compare(fixed_token, settings.NANZI_CRM_MCP_FIXED_AUTHORIZATION_BEARER_TOKEN):
         raise HttpUnauthorized("invalid MCP client credential")
 
     assertion = request.headers.get("X-Nanzi-User-Assertion")
@@ -650,7 +650,7 @@ async def query_customer(ctx, customer_id: str):
 ### 11.3 错误返回
 
 ```text
-401 Unauthorized：固定 Token 缺失、错误或 User Assertion 无效
+401 Unauthorized：固定 Authorization Bearer Token 缺失、错误或 User Assertion 无效
 403 Forbidden：业务资源权限不足
 400 Bad Request：请求格式或 MCP 参数错误
 ```
@@ -683,7 +683,7 @@ Authorization: Bearer <fixed-mcp-token>
 - session 过期时重新初始化；
 - 用户退出或权限撤销时清理用户 session；
 - MCP `mcp-session-id` 不能代替 User Assertion；
-- 固定 MCP Token 不能被模型或浏览器持有。
+- 固定 Authorization Bearer Token 不能被模型或浏览器持有。
 
 ## 14. 权限模型
 
@@ -736,7 +736,7 @@ timestamp
 禁止记录：
 
 ```text
-固定 MCP Token 原文
+固定 Authorization Bearer Token 原文
 User Assertion 原文
 NanZi 私钥
 用户登录 API Key
@@ -753,9 +753,9 @@ assertion_jti=...
 
 ## 16. 异常处理
 
-### 16.1 固定 Token 错误
+### 16.1 固定 Authorization Bearer Token 错误
 
-MCP 返回 401，NanZi 标记本次调用失败，并提示管理员检查 MCP 管理页面的固定 Token 配置。不能自动把用户登录 API Key 当作替代凭证。
+MCP 返回 401，NanZi 标记本次调用失败，并提示管理员检查 MCP 管理页面的固定 Authorization Bearer Token 配置。不能自动把用户登录 API Key 当作替代凭证。
 
 ### 16.2 User Assertion 过期
 
@@ -767,7 +767,7 @@ MCP 返回 401。NanZi 只允许在同一次调用链内重新签发一次短期
 
 ### 16.4 第三方 MCP 不支持用户断言
 
-如果该 MCP 的配置为“不发送用户身份”，只使用固定 MCP Token，不把错误解释成用户身份认证失败。
+如果该 MCP 的配置为“不发送用户身份”，只使用固定 Authorization Bearer Token，不把错误解释成用户身份认证失败。
 
 ## 17. 数据库和配置建议
 
@@ -808,15 +808,15 @@ scope_mapping
 - 过期 Assertion 被拒绝。
 - 错误 `aud` 被拒绝。
 - 错误 `iss` 被拒绝。
-- 不同 MCP 不会共用签名私钥、固定 Token 或 Audience。
+- 不同 MCP 不会共用签名私钥、固定 Authorization Bearer Token 或 Audience。
 - 不同用户的调用不会共享用户绑定 session。
-- 固定 MCP Token 不出现在前端响应、Prompt、SSE 事件和普通日志。
+- 固定 Authorization Bearer Token 不出现在前端响应、Prompt、SSE 事件和普通日志。
 - 未开启用户断言时不发送 `X-Nanzi-User-Assertion`。
 
 ### 18.2 MCP 业务端测试
 
-- 固定 Token 正确且用户断言正确时，成功获得 `McpPrincipal`。
-- 固定 Token 错误返回 401。
+- 固定 Authorization Bearer Token 正确且用户断言正确时，成功获得 `McpPrincipal`。
+- 固定 Authorization Bearer Token 错误返回 401。
 - User Assertion 缺失返回 401。
 - 签名错误返回 401。
 - Audience 错误返回 401。
@@ -826,7 +826,7 @@ scope_mapping
 
 ### 18.3 第三方兼容测试
 
-- 不解析扩展 Header 的 MCP 仍能使用固定 Token 完成调用。
+- 不解析扩展 Header 的 MCP 仍能使用固定 Authorization Bearer Token 完成调用。
 - 配置为不发送用户断言后，请求不带 `X-Nanzi-User-Assertion`。
 - 第三方错误不会导致 NanZi 把用户身份信息写入前端错误消息。
 
@@ -844,7 +844,7 @@ scope_mapping
 ### 阶段二：管理页面和权限配置
 
 1. 增加认证模式选择。
-2. 增加固定 Token 安全配置和重置。
+2. 增加固定 Authorization Bearer Token 安全配置和重置。
 3. 增加系统生成的 Audience、固定 Issuer、JWKS 地址和默认透传字段说明。
 4. 增加测试连接和身份认证结果展示。
 5. 增加工具 scope 映射和审计查询。
@@ -871,7 +871,7 @@ X-Tenant-ID: tenant-001
 
 - 把 `user_id` 放进 MCP 工具 arguments 作为身份依据；
 - 把 NanZi 登录 API Key 直接传给 MCP；
-- 把 MCP Token 放入 Prompt 或 `injected_context`；
+- 把固定 Authorization Bearer Token 放入 Prompt 或 `injected_context`；
 - 把完整权限树放入用户断言；
 - 使用一个所有系统共享的长期 HMAC 密钥作为生产方案；
 - 仅验证“Token 正确”而不验证 `aud` 和业务资源权限；
@@ -884,7 +884,7 @@ NanZi 内部：
   使用已认证的 AgentContext.user_id
 
 跨 MCP 边界：
-  使用固定 MCP Token 证明平台客户端身份
+  使用固定 Authorization Bearer Token 证明平台客户端身份
   使用签名 UserContext 证明当前业务用户身份
 
 MCP 内部：

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 NanZi MCP 调用增加可选的固定 MCP Token + EdDSA 签名 UserContext，使自有 MCP 能验证用户和智能体身份，并兼容不解析该扩展的第三方 MCP。
+**Goal:** 为 NanZi MCP 调用增加可选的固定 Authorization Bearer Token + EdDSA 签名 UserContext，使自有 MCP 能验证用户和智能体身份，并兼容不解析该扩展的第三方 MCP。
 
-**Architecture:** 复用已认证的 `AgentContext`，在开启能力的 MCP 出站调用边界生成最小 UserContext JWS，通过 `X-Nanzi-User-Assertion` 发送；固定 MCP Token、签名私钥、Key ID、Issuer 和 Audience 均按 MCP 实例独立保存。未开启 UserContext 的 MCP 完全沿用旧调用链。完整用户断言不进入 Prompt、工具参数、前端事件或日志；MCP 工具测试台只返回脱敏认证状态。
+**Architecture:** 复用已认证的 `AgentContext`，在开启能力的 MCP 出站调用边界生成最小 UserContext JWS，通过 `X-Nanzi-User-Assertion` 发送；固定 Authorization Bearer Token、签名私钥、Key ID、Issuer 和 Audience 均按 MCP 实例独立保存。未开启 UserContext 的 MCP 完全沿用旧调用链。完整用户断言不进入 Prompt、工具参数、前端事件或日志；MCP 工具测试台只返回脱敏认证状态。
 
 **Tech Stack:** Python 3.11、FastAPI、SQLAlchemy Async、Pydantic 2、PyJWT + cryptography Ed25519、Vue 3 + TypeScript、pytest。
 
@@ -44,7 +44,7 @@
 
 - [ ] **Step 1: 写失败 API 测试。** 覆盖认证模式校验、Audience 可由系统生成、Token 不回显、旧 static 模式保持兼容。
 - [ ] **Step 2: 增加字段。** 增加 MCP 级 `credential_mode`、`fixed_token_encrypted`、`user_assertion_enabled`、`user_assertion_header`、`user_assertion_audience`、`user_assertion_key_id`、`user_assertion_issuer` 和 `user_assertion_private_key_encrypted`。
-- [ ] **Step 3: 实现保存和返回。** 仅允许 `static` 和 `fixed_token_signed_user`；固定 Token 和签名私钥均按 MCP 加密保存，不在 response 返回；编辑时空 Token 表示保持原值；UserContext 使用默认安全字段，不配置白名单。
+- [ ] **Step 3: 实现保存和返回。** 仅允许 `static` 和 `fixed_token_signed_user`；固定 Authorization Bearer Token 和签名私钥均按 MCP 加密保存，不在 response 返回；编辑时空 Token 表示保持原值；UserContext 使用默认安全字段，不配置白名单。
 - [ ] **Step 4: 编写迁移。** 只新增字段，不直接改数据库；默认值保持旧 MCP 为 `static` 且不发送 UserContext。
 - [ ] **Step 5: 运行。** `pytest tests/api/test_mcp_user_context_auth.py -q && git diff --check`。
 
@@ -63,9 +63,9 @@
 
 **Files:** `frontend/src/components/system/McpServerRegistry.vue`, `frontend/src/views/McpManagement.vue`（仅需要更新说明时），`tests/frontend/test_mcp_user_context_management_contract.py`
 
-- [ ] **Step 1: 写前端契约测试。** 页面保留原有身份认证 Header，新增 UserContext 开关、只读 Audience、只读 Issuer、JWKS 地址和默认字段说明；不展示固定 Token、私钥或完整 JWS。
+- [ ] **Step 1: 写前端契约测试。** 页面保留原有身份认证 Header，新增 UserContext 开关、只读 Audience、只读 Issuer、JWKS 地址和默认字段说明；不展示固定 Authorization Bearer Token、私钥或完整 JWS。
 - [ ] **Step 2: 扩展页面信息。** 只保留 `user_assertion_enabled` 用户操作；Audience 按 MCP ID 自动生成，Issuer 固定为 `nanzi-platform`，Key ID 和私钥由系统生成；保存后展示可复制的只读配置。
-- [ ] **Step 3: 添加说明。** 明确沿用原有固定 Token/Authorization 认证；签名 UserContext 仅由开关控制；第三方 MCP 可关闭用户断言；JWS 防篡改但不加密；提供 Python/Java 模拟代码和完整字段表。
+- [ ] **Step 3: 添加说明。** 明确沿用原有 `Authorization: Bearer` 认证（固定 Authorization Bearer Token）；签名 UserContext 仅由开关控制；第三方 MCP 可关闭用户断言；JWS 防篡改但不加密；提供 Python/Java 模拟代码和完整字段表。
 - [ ] **Step 4: 运行。** `pytest --confcutdir=tests/frontend tests/frontend/test_mcp_user_context_management_contract.py -q`；`cd frontend && ./node_modules/.bin/vue-tsc --noEmit`。
 
 ## Task 5：JWKS 和运行配置
@@ -81,9 +81,9 @@
 
 **Files:** `docs/md/mcp_user_context_integration_guide.md`, `tests/services/mcp/test_mcp_integration_contract.py`
 
-- [ ] **Step 1: 编写业务方中间件。** 统一验证固定 Token、JWS 签名、`iss`、`aud`、`exp`、`jti`，解析 `user_context`、`custom_attributes`、`agent_id` 和 `agent_version_id` 为 `McpPrincipal`。
+- [ ] **Step 1: 编写业务方中间件。** 统一验证固定 Authorization Bearer Token、JWS 签名、`iss`、`aud`、`exp`、`jti`，解析 `user_context`、`custom_attributes`、`agent_id` 和 `agent_version_id` 为 `McpPrincipal`。
 - [ ] **Step 2: 编写工具示例。** 工具从 `ctx.principal.user_id` 获取用户，不从 arguments 获取 `user_id`；再执行业务资源级权限校验。
-- [ ] **Step 3: 编写兼容说明。** 不解析 `X-Nanzi-User-Assertion` 的第三方 MCP 继续使用固定 Token，但没有用户级身份能力；可按配置不发送断言。
+- [ ] **Step 3: 编写兼容说明。** 不解析 `X-Nanzi-User-Assertion` 的第三方 MCP 继续使用固定 Authorization Bearer Token，但没有用户级身份能力；可按配置不发送断言。
 - [ ] **Step 4: 运行全目标回归。** `pytest tests/services/mcp tests/api/test_mcp_user_context_auth.py tests/ai/tools/test_mcp_client_grounding.py -q`；`git diff --check`；前端执行 `./node_modules/.bin/vue-tsc --noEmit`。
 
 ### 工具测试台展示
@@ -93,4 +93,4 @@
 
 ## 实施边界
 
-静态测试只证明签名、字段过滤、API 脱敏、Header 兼容和前端契约；不证明真实业务 MCP 的公钥部署、固定 Token 配置、TLS、网络访问和业务数据权限。不得启动 `./dev.sh`，不得执行部署或生产数据库操作；真实 MCP 联调由用户在控制台启动服务后执行。
+静态测试只证明签名、字段过滤、API 脱敏、Header 兼容和前端契约；不证明真实业务 MCP 的公钥部署、固定 Authorization Bearer Token 配置、TLS、网络访问和业务数据权限。不得启动 `./dev.sh`，不得执行部署或生产数据库操作；真实 MCP 联调由用户在控制台启动服务后执行。
