@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import { metadataApi } from '../api/metadata'
@@ -16,6 +16,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
+import { createSseLineParser } from '../utils/chartRenderer'
 import { CircleStackIcon, KeyIcon, MagnifyingGlassIcon, UserIcon } from '@heroicons/vue/24/outline'
 
 const { isAdmin: _isAdmin, hasPermission } = useUser()
@@ -404,6 +405,15 @@ const exportMarkdown = () => {
 const getDatasetIcon = (_name: string) => CircleStackIcon
 
 const syncingId = ref<number | null>(null)
+const syncLogOpen = ref(false)
+const syncLogTaskId = ref<string | null>(null)
+const syncLogStatus = ref<'running' | 'completed' | 'failed' | 'disconnected'>('running')
+const syncLogStage = ref('queued')
+const syncLogProgress = ref<number | null>(0)
+const syncLogElapsedMs = ref(0)
+const syncLogMessage = ref('正在连接同步日志...')
+const syncLogEntries = ref<Array<{ event: string; stage: string; message: string; progress?: number | null; elapsed_ms?: number; error_detail?: string }>>([])
+let syncLogAbortController: AbortController | null = null
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null)
 const isLocalMode = computed(() => ragflowConfig.value?.metadata_provider === 'local')
 
@@ -416,18 +426,91 @@ const fetchRagFlowConfig = async () => {
   }
 }
 
+const closeSyncLog = () => {
+  syncLogOpen.value = false
+  syncLogAbortController?.abort()
+  syncLogAbortController = null
+}
+
+const readSyncLog = async (taskId: string) => {
+  syncLogAbortController?.abort()
+  const controller = new AbortController()
+  syncLogAbortController = controller
+  try {
+    const headers: Record<string, string> = { Accept: 'text/event-stream' }
+    const apiKey = localStorage.getItem('api_key')
+    const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token')
+    if (apiKey) headers['X-API-Key'] = apiKey
+    else if (token) headers.Authorization = `Bearer ${token}`
+
+    const response = await fetch(`/api/portal/metadata/datasets/${datasetId}/rag/sync/${taskId}/events`, {
+      headers,
+      credentials: 'include',
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`同步日志请求失败（${response.status}）`)
+    if (!response.body) throw new Error('同步日志没有返回数据流')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    const parser = createSseLineParser()
+    let terminalReceived = false
+    const applyEvent = (dataStr: string) => {
+      if (!dataStr || dataStr === '[DONE]') return
+      const item = JSON.parse(dataStr)
+      syncLogEntries.value.push(item)
+      syncLogStage.value = item.stage || syncLogStage.value
+      syncLogMessage.value = item.message || syncLogMessage.value
+      syncLogProgress.value = item.progress ?? syncLogProgress.value
+      syncLogElapsedMs.value = item.elapsed_ms ?? syncLogElapsedMs.value
+      if (item.event === 'completed' || item.event === 'failed') {
+        terminalReceived = true
+        syncLogStatus.value = item.event
+        if (item.event === 'completed') showToast('同步成功', 'success')
+        else showToast(item.error_detail || '同步失败', 'error')
+      }
+    }
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      for (const dataStr of parser.feed(decoder.decode(value, { stream: true }))) applyEvent(dataStr)
+      if (terminalReceived) break
+    }
+    for (const dataStr of parser.flush()) applyEvent(dataStr)
+    if (!terminalReceived && !controller.signal.aborted) {
+      syncLogStatus.value = 'disconnected'
+      syncLogMessage.value = '同步日志连接已断开'
+    }
+    if (terminalReceived) await fetchDatasetInfo()
+  } catch (error: any) {
+    if (controller.signal.aborted) return
+    syncLogStatus.value = 'disconnected'
+    syncLogMessage.value = error.message || '同步日志连接已断开'
+  } finally {
+    if (syncLogAbortController === controller) syncLogAbortController = null
+    syncingId.value = null
+  }
+}
+
 const handleSyncNow = async () => {
   if (!dataset.value || syncingId.value) return
   
   syncingId.value = dataset.value.id
+  syncLogTaskId.value = null
   try {
     const res: any = await metadataApi.syncToRag(dataset.value.id)
     if (res.data.code === 200) {
-      // Optimistic update
       dataset.value.rag_sync_status = 1
-      showToast('同步任务已启动，请稍后刷新查看状态', 'success')
-      // Auto refresh after a short delay
-      setTimeout(fetchDatasetInfo, 3500)
+      syncLogTaskId.value = res.data.data?.task_id || null
+      syncLogStatus.value = 'running'
+      syncLogStage.value = 'queued'
+      syncLogProgress.value = 0
+      syncLogElapsedMs.value = 0
+      syncLogMessage.value = '同步任务已开始'
+      syncLogEntries.value = []
+      syncLogOpen.value = true
+      if (syncLogTaskId.value) await readSyncLog(syncLogTaskId.value)
+      else throw new Error('同步接口未返回任务编号')
     } else {
       showToast(res.data.message || '同步请求失败', 'error')
     }
@@ -435,12 +518,11 @@ const handleSyncNow = async () => {
     const errorMsg = e.response?.data?.message || e.message || '启动同步失败'
     showToast(errorMsg, 'error')
   } finally {
-    // Keep the loading state for at least 1 second for visual comfort
-    setTimeout(() => {
-        syncingId.value = null
-    }, 1000)
+    if (!syncLogTaskId.value) syncingId.value = null
   }
 }
+
+onUnmounted(() => syncLogAbortController?.abort())
 
 onMounted(async () => {
   await fetchRagFlowConfig()
@@ -1667,6 +1749,55 @@ defineExpose({ fetchMetrics })
       @confirm="handleAiEnhance"
       @cancel="showAiConfirmModal = false"
     />
+
+    <!-- 当前元数据同步实时日志 -->
+    <Transition name="sync-log-drawer">
+      <aside
+        v-if="syncLogOpen"
+        class="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl border-l border-gray-200 flex flex-col"
+        aria-label="元数据同步日志"
+      >
+        <div class="px-5 py-4 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <h3 class="text-base font-bold text-gray-900">同步日志</h3>
+            <p class="mt-1 text-xs text-gray-500 truncate max-w-[280px]">{{ dataset?.display_name || dataset?.name }}</p>
+          </div>
+          <button class="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="关闭同步日志" @click="closeSyncLog">&times;</button>
+        </div>
+        <div class="px-5 py-4 border-b border-gray-100 space-y-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-gray-500">状态</span>
+            <span :class="syncLogStatus === 'completed' ? 'text-emerald-600' : syncLogStatus === 'failed' ? 'text-red-600' : syncLogStatus === 'disconnected' ? 'text-amber-600' : 'text-blue-600'" class="font-semibold">
+              {{ syncLogStatus === 'completed' ? '已完成' : syncLogStatus === 'failed' ? '失败' : syncLogStatus === 'disconnected' ? '连接中断' : '同步中' }}
+            </span>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-gray-500">当前阶段</span>
+            <span class="text-gray-800 font-medium">{{ syncLogStage }}</span>
+          </div>
+          <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
+            <div class="h-full bg-blue-500 transition-all duration-300" :style="{ width: `${syncLogProgress ?? 0}%` }"></div>
+          </div>
+          <div class="flex justify-between text-[11px] text-gray-400">
+            <span>{{ syncLogMessage }}</span>
+            <span>{{ syncLogElapsedMs }} ms</span>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          <div v-for="(entry, index) in syncLogEntries" :key="`${entry.stage}-${index}`" class="relative pl-4 border-l-2" :class="entry.event === 'failed' ? 'border-red-300' : entry.event === 'completed' ? 'border-emerald-300' : 'border-blue-200'">
+            <div class="text-xs font-medium text-gray-800">{{ entry.message }}</div>
+            <div class="mt-1 text-[11px] text-gray-400 flex justify-between gap-2">
+              <span>{{ entry.stage }}</span><span>{{ entry.elapsed_ms ?? 0 }} ms</span>
+            </div>
+            <div v-if="entry.error_detail" class="mt-1 text-[11px] text-red-600 break-words">{{ entry.error_detail }}</div>
+          </div>
+          <p v-if="syncLogEntries.length === 0" class="text-xs text-gray-400">正在等待同步日志...</p>
+        </div>
+        <div class="px-5 py-3 border-t border-gray-100 text-[11px] text-gray-400">
+          关闭窗口不会取消后台同步任务
+        </div>
+      </aside>
+    </Transition>
   </div>
 </template>
 
@@ -1685,5 +1816,15 @@ defineExpose({ fetchMetrics })
 @keyframes pulse-slow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.85; }
+}
+
+.sync-log-drawer-enter-active,
+.sync-log-drawer-leave-active {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.sync-log-drawer-enter-from,
+.sync-log-drawer-leave-to {
+  transform: translateX(100%);
+  opacity: 0;
 }
 </style>
