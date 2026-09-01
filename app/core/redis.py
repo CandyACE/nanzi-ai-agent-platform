@@ -40,10 +40,10 @@ async def init_redis():
 async def close_redis():
     global redis_client, redis_client_binary
     if redis_client:
-        await redis_client.close()
+        await redis_client.aclose()
         redis_client = None
     if redis_client_binary:
-        await redis_client_binary.close()
+        await redis_client_binary.aclose()
         redis_client_binary = None
 
 

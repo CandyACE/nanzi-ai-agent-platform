@@ -9,7 +9,7 @@ from app.core.redis import get_redis
 from app.services.ai.conversation_summarizer import ConversationSummarizer
 from app.services.ai.daily_summary_service import DailySummaryService
 from app.services.ai.embedding_client import EmbeddingClient
-from app.services.ai.memory_index_service import MemoryIndexService
+from app.services.ai.memory_index_service import MemoryIndexService, _doc_key
 from app.services.ai.memory_service import memory_service
 from app.services.memory_config_service import MemoryConfigService
 
@@ -411,7 +411,7 @@ class SessionSummaryService:
         """Read the previously stored structured summary for a conversation,
         or None when none exists yet."""
         try:
-            key = MemoryIndexService._doc_key(user_id, conversation_id)
+            key = _doc_key(user_id, conversation_id)
             raw = await MemoryIndexService._hgetall_summary(key)
             if not raw:
                 return None
