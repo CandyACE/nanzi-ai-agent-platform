@@ -27,6 +27,84 @@ async def test_mcp_sdk_error_result_raises_instead_of_returning_fact_payload(mon
 
 
 @pytest.mark.asyncio
+async def test_mcp_call_uses_user_scoped_session_and_signed_headers(monkeypatch):
+    server = SimpleNamespace(
+        id="server-1",
+        auth_headers='{"Authorization":"Bearer fixed-token"}',
+        credential_mode="fixed_token_signed_user",
+        user_assertion_enabled=True,
+        user_assertion_header="X-Nanzi-User-Assertion",
+        user_assertion_audience="mcp:crm",
+        user_assertion_key_id="key-1",
+    )
+    session_mgr = SimpleNamespace(
+        is_direct_http=False,
+        session=SimpleNamespace(
+            call_tool=AsyncMock(return_value=SimpleNamespace(isError=False, content=[]))
+        ),
+        close=AsyncMock(),
+    )
+    private_key = object()
+    monkeypatch.setattr(McpClientService, "_load_server", AsyncMock(return_value=server))
+    monkeypatch.setattr(
+        "app.services.ai.tools.mcp_client.build_mcp_headers",
+        lambda *args, **kwargs: {
+            "Authorization": "Bearer fixed-token",
+            "X-Nanzi-User-Assertion": "signed-user",
+            "X-Request-ID": "req-1",
+        },
+    )
+    get_session = AsyncMock(return_value=session_mgr)
+    monkeypatch.setattr(McpClientService, "get_session", get_session)
+
+    result = await McpClientService.call_remote_tool(
+        "server-1",
+        "get-data",
+        {},
+        user_info={"user_id": "123"},
+        agent_info={"agent_id": "agent-1"},
+        request_id="req-1",
+        private_key=private_key,
+    )
+
+    assert result == {"success": True, "content": ""}
+    get_session.assert_awaited_once()
+    call_args = get_session.await_args
+    assert call_args.args == ("server-1",)
+    assert call_args.kwargs["session_key"].startswith("server-1:user:123:call:")
+    assert call_args.kwargs["auth_headers"] == {
+        "Authorization": "Bearer fixed-token",
+        "X-Nanzi-User-Assertion": "signed-user",
+        "X-Request-ID": "req-1",
+    }
+    assert session_mgr.close.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_mcp_call_fails_closed_without_runtime_identity(monkeypatch):
+    server = SimpleNamespace(
+        id="server-1",
+        credential_mode="fixed_token_signed_user",
+        user_assertion_enabled=True,
+    )
+    load_server = AsyncMock(return_value=server)
+    get_session = AsyncMock()
+    monkeypatch.setattr(McpClientService, "_load_server", load_server)
+    monkeypatch.setattr(McpClientService, "get_session", get_session)
+
+    with pytest.raises(ValueError, match="authenticated user_id"):
+        await McpClientService.call_remote_tool(
+            "server-1",
+            "get-data",
+            {},
+            require_user_context=True,
+        )
+
+    load_server.assert_awaited_once_with("server-1")
+    get_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_mcp_sdk_exception_is_raised_instead_of_returned_as_text(monkeypatch):
     session_mgr = SimpleNamespace(
         is_direct_http=False,

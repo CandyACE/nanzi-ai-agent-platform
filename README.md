@@ -190,7 +190,9 @@
 | [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) | 聊天端到端流程 |
 | [PROMPT_LAYERS.md](architech/design/chat/PROMPT_LAYERS.md) | 提示词分层与注入 |
 | [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | 智能委派与专家直选设计 |
+| [mcp-business-integration-authentication-design.md](architech/design/mcp-business-integration-authentication-design.md) | MCP 业务集成认证总体架构、安全策略与调用流程 |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API 集成 |
+| [mcp_user_context_integration_guide.md](docs/md/mcp_user_context_integration_guide.md) | 自有 MCP UserContext 接入、JWKS 验签及 Python / Java 示例 |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | 代码画布、工作区文件与执行 API |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent 门控契约 |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md) | 自动化测试验收清单 |

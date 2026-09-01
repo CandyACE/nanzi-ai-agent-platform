@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.orm import get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
 
@@ -167,6 +168,33 @@ X-API-Key: your_api_key_here
     redoc_url=None,      # Disable default ReDoc
     openapi_url=None     # Disable default OpenAPI schema
 )
+
+
+@app.get("/.well-known/nanzi/mcp/{server_id}/jwks.json", include_in_schema=False)
+async def get_mcp_user_assertion_jwks(
+    server_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """供自有 MCP 服务发现当前 MCP 实例的签名公钥。"""
+    from app.models.mcp import McpServer
+    from app.services.mcp.mcp_auth_policy import load_mcp_private_key
+    from app.services.mcp.user_context_assertion import public_jwks
+
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == server_id))
+    ).scalar_one_or_none()
+    if server is None or not server.user_assertion_enabled:
+        raise HTTPException(status_code=404, detail="MCP UserContext key not found")
+    private_key = load_mcp_private_key(server)
+    if private_key is None or not server.user_assertion_key_id:
+        raise HTTPException(
+            status_code=404,
+            detail="MCP UserContext key not configured",
+        )
+    return public_jwks(
+        private_key=private_key,
+        key_id=server.user_assertion_key_id,
+    )
 
 async def _get_execution_mode() -> str:
     import os

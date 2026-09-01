@@ -11,6 +11,14 @@ class McpServer(Base):
     remark = Column(String(500), nullable=True)
     sse_url = Column(Text, nullable=False)
     auth_headers = Column(Text, nullable=True)  # JSON string
+    credential_mode = Column(String(40), nullable=False, default="static")
+    fixed_token_encrypted = Column(Text, nullable=True)
+    user_assertion_enabled = Column(Boolean, nullable=False, default=False)
+    user_assertion_header = Column(String(100), nullable=False, default="X-Nanzi-User-Assertion")
+    user_assertion_audience = Column(String(255), nullable=True)
+    user_assertion_key_id = Column(String(100), nullable=True)
+    user_assertion_issuer = Column(String(255), nullable=True)
+    user_assertion_private_key_encrypted = Column(Text, nullable=True)
     enabled_status = Column(Integer, default=0) # 0: Offline/Disabled, 1: Online/Enabled
     last_sync_at = Column(DateTime, nullable=True)
     

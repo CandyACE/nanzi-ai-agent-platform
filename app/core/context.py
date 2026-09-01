@@ -19,6 +19,7 @@ def set_debug_context(options: Dict[str, Any]):
 class AgentContext(BaseModel):
     agent_id: str
     agent_name: str
+    agent_version: Optional[str] = None
     dataset_ids: List[str] = Field(default_factory=list)
     knowledge_dataset_ids: List[str] = Field(
         default_factory=list,

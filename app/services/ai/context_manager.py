@@ -292,6 +292,7 @@ class AgentContextManager:
         set_agent_context(AgentContext(
             agent_id=config.agent_id,
             agent_name=config.agent_name,
+            agent_version=config.agent_version,
             dataset_ids=effective_dataset_ids,
             knowledge_dataset_ids=request_dataset_ids,
             agent_dataset_ids=configured_agent_dataset_ids,

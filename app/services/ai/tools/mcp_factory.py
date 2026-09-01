@@ -8,8 +8,27 @@ from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.mcp import McpToolCache
 from app.services.ai.tools.mcp_client import McpClientService
 from app.services.ai.grounding.models import EvidenceType
+from app.core.context import get_current_agent_context
 
 logger = logging.getLogger(__name__)
+
+
+def current_mcp_agent_identity() -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """从当前后端 AgentContext 提取 MCP 断言所需身份，绝不读取工具参数。"""
+    context = get_current_agent_context()
+    if context is None:
+        return {}, {}
+
+    user_info = dict(context.user_dimensions or {})
+    if context.user_id is not None:
+        user_info["user_id"] = str(context.user_id)
+    agent_info: Dict[str, Any] = {
+        "agent_id": context.agent_id,
+        "agent_name": context.agent_name,
+    }
+    if context.agent_version:
+        agent_info["agent_version_id"] = context.agent_version
+    return user_info, agent_info
 
 
 def _build_model_tool_name(tool_name: str) -> str:
@@ -63,11 +82,23 @@ class McpToolFactory:
                 raw_name = tool_record.tool_name.split(":", 1)[1]
             else:
                 raw_name = tool_record.tool_name
-                
+
+            user_info, agent_info = current_mcp_agent_identity()
+            context = get_current_agent_context()
+            identity_kwargs: Dict[str, Any] = {}
+            if user_info:
+                identity_kwargs["user_info"] = user_info
+            if agent_info:
+                identity_kwargs["agent_info"] = agent_info
+            if context and context.trace_id:
+                identity_kwargs["request_id"] = context.trace_id
+
             return await McpClientService.call_remote_tool(
                 server_id=tool_record.server_id,
                 tool_name=raw_name,
-                arguments=kwargs
+                arguments=kwargs,
+                require_user_context=True,
+                **identity_kwargs,
             )
         
         _execute.__doc__ = tool_record.tool_description or f"MCP tool: {tool_record.tool_name}"
