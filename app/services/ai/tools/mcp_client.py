@@ -252,10 +252,7 @@ class McpClientService:
         session_key: Optional[str] = None
         if require_user_context or user_info or agent_info or request_id or private_key:
             server = await cls._load_server(server_id)
-            signed_user_enabled = bool(
-                getattr(server, "user_assertion_enabled", False)
-                and getattr(server, "credential_mode", "static") == "fixed_token_signed_user"
-            )
+            signed_user_enabled = bool(getattr(server, "user_assertion_enabled", False))
             if signed_user_enabled and require_user_context:
                 user_id = str((user_info or {}).get("user_id") or "").strip()
                 if not user_id:

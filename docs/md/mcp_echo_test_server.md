@@ -33,7 +33,7 @@ Echo MCP 是 `scope=global` 的平台 MCP，沿用现有 MCP 工具挂载机制�
 | `X-Nanzi-User-Assertion: <短期 JWS>` | 当前登录用户、当前智能体运行上下文 | 业务 MCP 验签后获取 NanZi 用户、智能体和请求信息 |
 | `X-Request-ID: <request id>` | 本次工具调用 | 关联平台和 MCP 两侧日志 |
 
-如果关闭用户身份传递，平台只发送原有 MCP 认证 Header，Echo 返回 `user_assertion_received=false`，用于验证“关闭开关时不透传”的兼容行为。
+如果关闭用户身份传递，平台只发送已配置的原有 MCP 认证 Header，Echo 返回 `user_assertion_received=false`，用于验证“关闭开关时不透传”的兼容行为。对于普通业务 MCP，是否配置 Authorization 与是否透传用户身份也是两个独立设置；没有 Authorization 仍可以只发送用户断言。
 
 ## 四、工具返回示例
 

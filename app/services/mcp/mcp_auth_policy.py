@@ -75,10 +75,9 @@ def build_mcp_headers(
     User Assertion 只在显式开启时生成，默认行为完全保留旧的静态 auth_headers。
     """
     headers = resolve_mcp_auth_headers(server)
-    enabled = bool(
-        getattr(server, "user_assertion_enabled", False)
-        and getattr(server, "credential_mode", "static") == "fixed_token_signed_user"
-    )
+    # UserContext 透传独立于 MCP 自身认证方式。MCP 可以没有
+    # Authorization Bearer Token，但只要开启该开关，仍应发送用户断言。
+    enabled = bool(getattr(server, "user_assertion_enabled", False))
     if not enabled:
         return headers
 

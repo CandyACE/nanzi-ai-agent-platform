@@ -57,9 +57,6 @@ class McpServerWrite(McpServerBase):
 
     @model_validator(mode="after")
     def validate_user_assertion_config(self):
-        if self.credential_mode == "fixed_token_signed_user":
-            if not self.user_assertion_enabled:
-                raise ValueError("启用用户身份签名模式时必须开启 UserContext 传递")
         if str(self.user_assertion_header or "").strip().lower() == "authorization":
             raise ValueError("UserContext Header 不能使用 Authorization")
         return self
@@ -448,7 +445,7 @@ async def create_mcp_server(
     if data.fixed_token:
         from app.utils.encryption import get_api_key_manager
         server_data["fixed_token_encrypted"] = get_api_key_manager().encrypt_api_key(data.fixed_token)
-    if data.credential_mode == "fixed_token_signed_user":
+    if data.user_assertion_enabled:
         from app.utils.encryption import get_api_key_manager
         server_data["user_assertion_audience"] = (
             data.user_assertion_audience or _default_user_assertion_audience(server_id)
@@ -516,7 +513,7 @@ async def update_mcp_server(
     server.credential_mode = data.credential_mode
     server.user_assertion_enabled = data.user_assertion_enabled
     server.user_assertion_header = data.user_assertion_header
-    if data.credential_mode == "fixed_token_signed_user":
+    if data.user_assertion_enabled:
         server.user_assertion_audience = (
             data.user_assertion_audience
             or server.user_assertion_audience
@@ -531,9 +528,9 @@ async def update_mcp_server(
     if data.fixed_token:
         from app.utils.encryption import get_api_key_manager
         server.fixed_token_encrypted = get_api_key_manager().encrypt_api_key(data.fixed_token)
-    if data.credential_mode == "fixed_token_signed_user" and not server.user_assertion_key_id:
+    if data.user_assertion_enabled and not server.user_assertion_key_id:
         server.user_assertion_key_id = f"mcp-{uuid.uuid4().hex[:16]}"
-    if data.credential_mode == "fixed_token_signed_user" and not server.user_assertion_private_key_encrypted:
+    if data.user_assertion_enabled and not server.user_assertion_private_key_encrypted:
         from app.utils.encryption import get_api_key_manager
         server.user_assertion_private_key_encrypted = get_api_key_manager().encrypt_api_key(
             generate_mcp_private_key_pem()
@@ -785,10 +782,7 @@ async def execute_mcp_tool(
         "key_id": None,
     }
     try:
-        signed_user_mode = bool(
-            server.user_assertion_enabled
-            and server.credential_mode == "fixed_token_signed_user"
-        )
+        signed_user_mode = bool(server.user_assertion_enabled)
         if signed_user_mode:
             test_user_info = {
                 key: user.get(key)

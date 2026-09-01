@@ -1,5 +1,10 @@
 from pathlib import Path
 
+import pytest
+
+
+pytestmark = pytest.mark.no_infrastructure
+
 
 COMPONENT = Path("frontend/src/components/system/McpServerRegistry.vue")
 

@@ -266,7 +266,7 @@ const buildServerPayload = (server: any) => {
   const payload: Record<string, any> = {
     ...server,
     scope: props.scope,
-    credential_mode: server.user_assertion_enabled ? 'fixed_token_signed_user' : 'static',
+    credential_mode: server.credential_mode || 'static',
     user_assertion_enabled: Boolean(server.user_assertion_enabled),
     user_assertion_header: server.user_assertion_header || 'X-Nanzi-User-Assertion',
     user_assertion_audience: server.user_assertion_audience || null,
@@ -279,13 +279,6 @@ const buildServerPayload = (server: any) => {
   }
   return payload
 }
-
-watch(
-  () => newServer.value.user_assertion_enabled,
-  (enabled) => {
-    newServer.value.credential_mode = enabled ? 'fixed_token_signed_user' : 'static'
-  },
-)
 
 const authHelp = ref<{ title: string, content: string } | null>(null)
 const openAuthHelp = (title: string, content: string) => {
@@ -1085,7 +1078,7 @@ onMounted(fetchServers)
               <div class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-bold text-gray-900">{{ server.server_name }}</span>
                 <span
-                  v-if="server.credential_mode === 'fixed_token_signed_user'"
+                  v-if="server.user_assertion_enabled"
                   class="mt-1 inline-flex rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700"
                 >已启用用户身份签名</span>
                 <span

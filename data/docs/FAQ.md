@@ -1262,13 +1262,13 @@ flowchart LR
 
 | 请求信息 | 作用 | 业务 MCP 如何处理 |
 | --- | --- | --- |
-| `Authorization: Bearer <Token 值>` | 认证 MCP 接口调用方是已登记的 NanZi 客户端 | 按原有方式校验当前 MCP 配置的固定 Authorization Bearer Token |
+| `Authorization: Bearer <Token 值>` | 如果 MCP 配置了该 Header，则认证 MCP 接口调用方是已登记的 NanZi 客户端 | 按原有方式校验；未配置时不发送、不校验 |
 | `X-Nanzi-User-Assertion: <JWS>` | 证明本次调用对应哪个 NanZi 用户，且用户信息未被篡改 | 使用公钥验签并解析 Payload，得到 `user_context.user_id` |
 | `X-Request-ID` | 关联 NanZi 与业务 MCP 的请求日志 | 写入业务请求日志和审计记录，不用于身份认证 |
 
 ##### 页面上需要配置什么？
 
-原有的「身份认证」区域保持不变，仍然用于填写业务 MCP 要求的 `Authorization`、API Key 等 Header。开启用户身份传递后，不需要再次填写固定 Authorization Bearer Token，也不需要用户手工生成公钥或私钥。
+原有的「身份认证」区域保持不变，仍然用于按需填写业务 MCP 要求的 `Authorization`、API Key 等 Header。`Authorization` 是否配置与用户身份传递相互独立；即使不配置 Authorization，也可以开启用户身份传递。不需要用户手工生成公钥或私钥。
 
 系统会针对当前 MCP 自动生成并保存签名密钥：
 
@@ -1279,14 +1279,14 @@ flowchart LR
 | 公钥获取地址（JWKS） | 业务方服务自动获取验签公钥，并按 JWT 的 `kid` 选择公钥 | 否；只读复制 |
 | 签名私钥 | 仅 NanZi 后端使用，用于临时签发断言 | 不显示、不填写、不传给业务方 |
 
-业务方只需要把页面上的 Audience、Issuer 和 JWKS 地址复制到自己的 MCP 服务配置中，并把该 MCP 的固定 Authorization Bearer Token 放入业务方自己的 Secret 管理系统。详细的 Python、Java 中间件示例见：[MCP UserContext 接入指南](../../docs/md/mcp_user_context_integration_guide.md)。
+业务方只需要把页面上的 Audience、Issuer 和 JWKS 地址复制到自己的 MCP 服务配置中；如果业务 MCP 配置了 Authorization Bearer Token，再把该 Token 放入业务方自己的 Secret 管理系统。详细的 Python、Java 中间件示例见：[MCP UserContext 接入指南](../../docs/md/mcp_user_context_integration_guide.md)。
 
 ##### 业务 MCP 收到请求后怎么处理？
 
 推荐按以下顺序处理：
 
-1. 先校验当前 MCP 配置的固定 Authorization Bearer Token（即 `Authorization: Bearer` Header 中的 Token 值）；失败则返回 `401`。
-2. 读取 `X-Nanzi-User-Assertion`，根据 JWT Header 中的 `kid` 从当前 MCP 对应的 JWKS 地址选择公钥。
+1. 如果当前 MCP 配置了 `Authorization: Bearer`，先按原有方式校验；未配置时跳过这一步。
+2. 如果 NanZi 开启了用户身份传递，读取 `X-Nanzi-User-Assertion`，根据 JWT Header 中的 `kid` 从当前 MCP 对应的 JWKS 地址选择公钥。
 3. 使用 Ed25519 / `EdDSA` 验证签名，并校验 `iss`、`aud`、`iat`、`exp`、`jti`、`sub`。
 4. 校验 `sub` 与 `user_context.user_id` 一致，并将 `jti` 写入 Redis 等短期存储，重复使用的 `jti` 必须拒绝。
 5. 读取 `user_context.user_id`，映射为业务系统自己的用户 ID，再执行业务 MCP 的数据权限和操作权限判断。
@@ -1294,7 +1294,7 @@ flowchart LR
 ```text
 NanZi 登录用户
     ↓ 后端签发短期签名断言
-业务 MCP 验证固定 Authorization Bearer Token + JWS
+业务 MCP 验证可选的 Authorization Bearer Token + JWS
     ↓
 读取 user_context.user_id
     ↓
