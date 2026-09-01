@@ -2686,7 +2686,9 @@ onUnmounted(() => {
                        </div>
                     </div>
                     <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="[
-                      ['embed_api_url', 'embed_api_key', 'embed_model_name', 'embed_dimensions'].includes(item.key) ? 'embed-config-group bg-indigo-50/30 rounded-lg px-4 py-3 -mx-4 border border-indigo-100/70' : '',
+                      item.key === 'embed_api_url' ? 'embed-config-group rounded-t-xl border-x border-t border-indigo-100/70 bg-indigo-50/30 px-4 pt-4 pb-3 -mx-4' : '',
+                      ['embed_api_key', 'embed_model_name'].includes(item.key) ? 'embed-config-group border-x border-indigo-100/70 bg-indigo-50/30 px-4 py-3 -mx-4 !mt-0' : '',
+                      ['embed_dimensions'].includes(item.key) ? 'embed-config-group rounded-b-xl border-x border-b border-indigo-100/70 bg-indigo-50/30 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
                       item.key === 'ragflow_api_url' ? 'ragflow-config-group rounded-t-xl border-x border-t border-sky-200/80 bg-sky-50/70 px-4 pt-4 -mx-4' : '',
                       item.key === 'ragflow_api_key' ? 'ragflow-config-group rounded-b-xl border-x border-b border-sky-200/80 bg-sky-50/70 px-4 pb-4 -mx-4 !mt-0' : '',
                       item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-t-xl border-x border-t border-emerald-200/80 bg-emerald-50/60 px-4 pt-4 -mx-4' : '',
@@ -3068,10 +3070,11 @@ onUnmounted(() => {
                                    <button
                                        v-if="canSave"
                                        @click="openDatasetSelector(item)"
-                                       class="px-3 py-2 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-primary hover:border-primary transition-colors"
-                                       title="选择知识库"
+                                       class="inline-flex shrink-0 items-center gap-1.5 px-3 py-2 bg-white border border-gray-300 rounded-md text-gray-500 hover:text-primary hover:border-primary transition-colors"
+                                       :title="item.key === 'knowledge_ragflow_dataset_ids' ? '测试连接并配置默认知识库' : '选择知识库'"
                                     >
                                        <CircleStackIcon class="w-5 h-5" />
+                                       <span v-if="item.key === 'knowledge_ragflow_dataset_ids'" class="whitespace-nowrap text-xs font-medium">测试 &amp; 配置默认知识库</span>
                                    </button>
                                </div>
                           </div>
