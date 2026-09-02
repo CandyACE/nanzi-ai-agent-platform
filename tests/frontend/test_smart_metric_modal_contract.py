@@ -57,3 +57,11 @@ def test_smart_metric_modal_contract():
     assert "item.calculation_logic" in content
     assert "item.description" in content
     assert "selectedRecommendation.tags" in content
+
+    # 7. 后端 SSE 实时进度、剩余阶段和中断状态契约
+    api_content = Path("frontend/src/api/metadata.ts").read_text(encoding="utf-8")
+    assert "recommendMetricsStream" in api_content
+    assert "metrics/recommend/stream" in api_content
+    assert "remaining_units" in content
+    assert "progressPercent" in content
+    assert "上次生成已中断" in content

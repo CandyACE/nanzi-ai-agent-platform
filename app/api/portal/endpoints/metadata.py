@@ -1,10 +1,10 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Any, Dict, Optional
+from typing import AsyncGenerator, Awaitable, Callable, List, Any, Dict, Optional
 from pydantic import BaseModel
 import logging
 
@@ -27,6 +27,205 @@ from app.services.permission_service import PermissionService
 from app.services.metadata_sync_log_service import metadata_sync_log_service
 
 router = APIRouter()
+
+METADATA_SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+
+
+def _metadata_sse_event(event: str, data: Dict[str, Any]) -> str:
+    """编码元数据 AI SSE 事件，中文内容保持可读以便抓包排查。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+async def _stream_metadata_recommendation(
+    request: Request,
+    dataset_id: int,
+    recommendation_type: str,
+    worker: Callable[[Callable[[Dict[str, Any]], Awaitable[None]]], Awaitable[Dict[str, Any]]],
+) -> StreamingResponse:
+    """将推荐服务的进度回调转为 SSE，并在客户端断开时清理模型任务。"""
+    event_queue: asyncio.Queue[tuple[str, Dict[str, Any]]] = asyncio.Queue()
+
+    async def progress_callback(payload: Dict[str, Any]) -> None:
+        event_payload = {
+            "status": "running",
+            "recommendation_type": recommendation_type,
+            **payload,
+        }
+        logger.info(
+            "元数据 AI 进度: type=%s, dataset_id=%s, phase=%s, percent=%s, "
+            "completed=%s, total=%s, remaining=%s, batch=%s, result_count=%s, "
+            "candidate_pairs=%s, completed_pairs=%s, remaining_pairs=%s",
+            recommendation_type,
+            dataset_id,
+            event_payload.get("phase"),
+            event_payload.get("percent"),
+            event_payload.get("completed_units"),
+            event_payload.get("total_units"),
+            event_payload.get("remaining_units"),
+            event_payload.get("batch_count"),
+            event_payload.get("result_count"),
+            event_payload.get("candidate_pair_count"),
+            event_payload.get("completed_pair_count"),
+            event_payload.get("remaining_pair_count"),
+        )
+        await event_queue.put(("progress", event_payload))
+
+    async def run_worker() -> None:
+        try:
+            result = await worker(progress_callback)
+            interrupted = isinstance(result, dict) and result.get("_stop_reason") in {
+                "partial_batch_error",
+                "partial_group_error",
+            }
+            debug = result.get("_debug", {}) if isinstance(result, dict) else {}
+            if recommendation_type == "metrics":
+                total_units = 5
+                completed_units = 5
+                result_count = len(result.get("metrics", [])) if isinstance(result, dict) else 0
+            else:
+                total_units = int(
+                    debug.get("candidate_group_count")
+                    or debug.get("schema_table_count")
+                    or 0
+                )
+                completed_units = int(
+                    debug.get("completed_group_count")
+                    or debug.get("completed_anchor_count")
+                    or 0
+                )
+                result_count = len(result.get("relationships", [])) if isinstance(result, dict) else 0
+            remaining_units = int(
+                debug.get("remaining_group_count")
+                or debug.get("remaining_anchor_count")
+                or max(total_units - completed_units, 0)
+            )
+            await event_queue.put((
+                "interrupted" if interrupted else "completed",
+                {
+                    "status": "interrupted" if interrupted else "completed",
+                    "recommendation_type": recommendation_type,
+                    "phase": "interrupted" if interrupted else "completed",
+                    "message": (
+                        "AI 推荐中途发生异常，已返回此前完成的结果"
+                        if interrupted
+                        else "AI 推荐已完成"
+                    ),
+                    "percent": (
+                        int(95 * completed_units / max(total_units, 1))
+                        if interrupted
+                        else 100
+                    ),
+                    "trace_id": result.get("_trace_id") if isinstance(result, dict) else None,
+                    "completed_units": completed_units if interrupted else total_units,
+                    "total_units": total_units,
+                    "remaining_units": remaining_units if interrupted else 0,
+                    "batch_count": result.get("_batch_count") if isinstance(result, dict) else None,
+                    "result_count": result_count,
+                    "candidate_pair_count": debug.get("candidate_pair_count"),
+                    "completed_pair_count": debug.get("completed_pair_count"),
+                    "remaining_pair_count": debug.get("remaining_pair_count"),
+                    "fk_relationship_count": debug.get("fk_relationship_count"),
+                    "probed_pair_count": debug.get("probed_pair_count"),
+                    "confirmed_pair_count": debug.get("confirmed_pair_count"),
+                    "unverified_pair_count": debug.get("unverified_pair_count"),
+                    "probe_duration_ms": debug.get("probe_duration_ms"),
+                    "probe_unavailable_reason": debug.get("probe_unavailable_reason"),
+                    "stop_reason": result.get("_stop_reason") if isinstance(result, dict) else None,
+                    "result": result,
+                },
+            ))
+        except asyncio.CancelledError:
+            logger.warning(
+                "元数据 AI SSE 任务已取消: type=%s, dataset_id=%s",
+                recommendation_type,
+                dataset_id,
+            )
+            raise
+        except Exception as exc:
+            detail = getattr(exc, "detail", None) or str(exc)
+            logger.error(
+                "元数据 AI SSE 任务失败: type=%s, dataset_id=%s, error=%s",
+                recommendation_type,
+                dataset_id,
+                detail,
+                exc_info=True,
+            )
+            await event_queue.put((
+                "error",
+                {
+                    "status": "error",
+                    "recommendation_type": recommendation_type,
+                    "phase": "error",
+                    "message": str(detail),
+                    "percent": 0,
+                },
+            ))
+
+    recommendation_task = asyncio.create_task(
+        run_worker(),
+        name=f"metadata-{recommendation_type}-stream-{dataset_id}",
+    )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        terminal_event_sent = False
+        heartbeat_count = 0
+        yield _metadata_sse_event(
+            "started",
+            {
+                "status": "running",
+                "recommendation_type": recommendation_type,
+                "phase": "preparing",
+                "message": "请求已建立，正在准备生成上下文",
+                "percent": 1,
+            },
+        )
+        try:
+            while True:
+                if await request.is_disconnected():
+                    logger.warning(
+                        "元数据 AI SSE 客户端断开: type=%s, dataset_id=%s",
+                        recommendation_type,
+                        dataset_id,
+                    )
+                    break
+                try:
+                    event, payload = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    heartbeat_count += 1
+                    if heartbeat_count % 10 == 0:
+                        yield ": keep-alive\n\n"
+                    if recommendation_task.done() and event_queue.empty():
+                        break
+                    continue
+
+                heartbeat_count = 0
+                yield _metadata_sse_event(event, payload)
+                if event in {"completed", "interrupted", "error"}:
+                    terminal_event_sent = True
+                    break
+        finally:
+            if not recommendation_task.done():
+                recommendation_task.cancel()
+            try:
+                await recommendation_task
+            except asyncio.CancelledError:
+                pass
+            if not terminal_event_sent:
+                logger.warning(
+                    "元数据 AI SSE 流中断且未发送终态: type=%s, dataset_id=%s",
+                    recommendation_type,
+                    dataset_id,
+                )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=METADATA_SSE_HEADERS,
+    )
 
 # --- Dataset APIs ---
 
@@ -646,10 +845,60 @@ async def recommend_metrics(
         "data": result
     }
 
+
+@router.post("/datasets/{dataset_id}/metrics/recommend/stream", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
+async def recommend_metrics_stream(
+    dataset_id: int,
+    request: Request,
+    req: MetricRecommendRequest = Body(default_factory=MetricRecommendRequest),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """通过 SSE 推送业务指标 AI 生成的真实阶段进度与最终结果。"""
+    from app.services.metadata_service import MetadataService
+    from app.services.metadata_generator import MetadataGeneratorService
+
+    ds = await MetadataService.get_dataset_by_id(conn, dataset_id, is_admin=True)
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    schema_yaml = await MetadataService.export_dataset_yaml(
+        conn,
+        dataset_id,
+        table_names=req.table_names,
+    )
+    existing_metrics = await MetadataService.get_metrics_by_dataset(conn, dataset_id)
+    logger.warning(
+        "指标推荐 SSE 请求入口: dataset_id=%s, requested_table_count=%s, "
+        "schema_len=%s, existing_metric_count=%s, user_prompt=%s",
+        dataset_id,
+        len(req.table_names or []),
+        len(schema_yaml),
+        len(existing_metrics),
+        bool(req.user_prompt),
+    )
+
+    async def worker(progress_callback):
+        return await MetadataGeneratorService.recommend_metrics(
+            dataset_id=dataset_id,
+            schema_context=schema_yaml,
+            user_prompt=req.user_prompt,
+            existing_metrics=existing_metrics,
+            data_source=ds.data_source,
+            progress_callback=progress_callback,
+        )
+
+    return await _stream_metadata_recommendation(
+        request,
+        dataset_id,
+        "metrics",
+        worker,
+    )
+
 @router.post("/datasets/{dataset_id}/relationships/recommend", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def recommend_relationships(
     dataset_id: int,
-    req: Optional[RelationshipRecommendRequest] = None,
+    request: Request,
+    req: RelationshipRecommendRequest = Body(default_factory=RelationshipRecommendRequest),
     conn: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -678,13 +927,64 @@ async def recommend_relationships(
             existing_rel_strs.append(f"{src} <-> {tgt} ({cond})")
 
     schema_yaml = await MetadataService.export_dataset_yaml(conn, dataset_id, table_names=table_names)
-
-    # Call Generator
-    result = await MetadataGeneratorService.recommend_relationships(
+    schema_table_names = MetadataGeneratorService._extract_schema_table_names(schema_yaml)
+    logger.warning(
+        "关系推荐请求入口: dataset_id=%s, requested_table_count=%s, schema_table_count=%s, "
+        "schema_len=%s, user_prompt=%s",
         dataset_id,
-        schema_yaml,
-        user_prompt=user_prompt,
-        existing_relationships=existing_rel_strs
+        len(table_names or []),
+        len(schema_table_names),
+        len(schema_yaml),
+        bool(user_prompt),
+    )
+
+    # 独立运行生成任务并轮询客户端连接，用户取消或页面关闭后及时停止后续模型调用。
+    recommendation_task = asyncio.create_task(
+        MetadataGeneratorService.recommend_relationships(
+            dataset_id,
+            schema_yaml,
+            user_prompt=user_prompt,
+            existing_relationships=existing_rel_strs,
+            data_source=ds.data_source,
+        ),
+        name=f"metadata-relationship-recommend-{dataset_id}",
+    )
+    try:
+        while not recommendation_task.done():
+            done, _ = await asyncio.wait({recommendation_task}, timeout=0.5)
+            if recommendation_task in done:
+                break
+            if await request.is_disconnected():
+                logger.warning(
+                    "关系推荐客户端已断开，取消后端生成任务: dataset_id=%s, "
+                    "requested_table_count=%s",
+                    dataset_id,
+                    len(table_names or []),
+                )
+                recommendation_task.cancel()
+                try:
+                    await recommendation_task
+                except asyncio.CancelledError:
+                    pass
+                raise HTTPException(status_code=499, detail="客户端已断开，关系推荐任务已取消")
+
+        result = await recommendation_task
+    except asyncio.CancelledError:
+        # 服务端请求协程被取消时同步清理模型任务，防止任务脱离请求生命周期继续运行。
+        if not recommendation_task.done():
+            recommendation_task.cancel()
+        logger.warning("关系推荐请求协程已取消: dataset_id=%s", dataset_id)
+        raise
+
+    # 输出接口层汇总，便于区分“生成仍在运行”和“结果已成功写回 HTTP 响应”。
+    logger.warning(
+        "关系推荐响应完成: dataset_id=%s, trace_id=%s, relationship_count=%s, "
+        "batch_count=%s, stop_reason=%s",
+        dataset_id,
+        result.get("_trace_id") if isinstance(result, dict) else None,
+        len(result.get("relationships", [])) if isinstance(result, dict) else 0,
+        result.get("_batch_count") if isinstance(result, dict) else None,
+        result.get("_stop_reason") if isinstance(result, dict) else None,
     )
 
     return {
@@ -692,6 +992,76 @@ async def recommend_relationships(
         "message": "success",
         "data": result
     }
+
+
+@router.post("/datasets/{dataset_id}/relationships/recommend/stream", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
+async def recommend_relationships_stream(
+    dataset_id: int,
+    request: Request,
+    req: RelationshipRecommendRequest = Body(default_factory=RelationshipRecommendRequest),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """通过 SSE 推送实体关系逐表扫描进度、剩余表数、中断状态与最终结果。"""
+    from app.services.metadata_service import MetadataService
+    from app.services.metadata_generator import MetadataGeneratorService
+
+    ds = await MetadataService.get_dataset_by_id(conn, dataset_id, is_admin=True)
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    table_names = req.table_names if req and req.table_names else None
+    user_prompt = req.user_prompt if req and req.user_prompt else None
+    existing_rels = await MetadataService.get_relationships_by_dataset(conn, dataset_id)
+    existing_rel_strs = []
+    for relationship in existing_rels:
+        source_name = (
+            getattr(relationship.source_table, "physical_name", "")
+            if relationship.source_table
+            else ""
+        )
+        target_name = (
+            getattr(relationship.target_table, "physical_name", "")
+            if relationship.target_table
+            else ""
+        )
+        condition = getattr(relationship, "join_condition", "")
+        if source_name and target_name:
+            existing_rel_strs.append(
+                f"{source_name} <-> {target_name} ({condition})"
+            )
+
+    schema_yaml = await MetadataService.export_dataset_yaml(
+        conn,
+        dataset_id,
+        table_names=table_names,
+    )
+    schema_table_names = MetadataGeneratorService._extract_schema_table_names(schema_yaml)
+    logger.warning(
+        "关系推荐 SSE 请求入口: dataset_id=%s, requested_table_count=%s, "
+        "schema_table_count=%s, schema_len=%s, user_prompt=%s",
+        dataset_id,
+        len(table_names or []),
+        len(schema_table_names),
+        len(schema_yaml),
+        bool(user_prompt),
+    )
+
+    async def worker(progress_callback):
+        return await MetadataGeneratorService.recommend_relationships(
+            dataset_id=dataset_id,
+            schema_context=schema_yaml,
+            user_prompt=user_prompt,
+            existing_relationships=existing_rel_strs,
+            data_source=ds.data_source,
+            progress_callback=progress_callback,
+        )
+
+    return await _stream_metadata_recommendation(
+        request,
+        dataset_id,
+        "relationships",
+        worker,
+    )
 
 @router.post("/datasets/{dataset_id}/enhance-metadata", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def enhance_dataset_metadata(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):

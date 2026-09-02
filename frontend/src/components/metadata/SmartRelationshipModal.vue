@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, shallowRef, onUnmounted } from 'vue'
 import { metadataApi } from '../../api/metadata'
-import type { RelationshipRecommendation } from '../../api/metadata'
+import type { MetadataAiProgress, MetadataAiRunStatus, RelationshipRecommendation } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
 import TraceLogViewer from '../TraceLogViewer.vue'
 import { ExclamationTriangleIcon, KeyIcon, LightBulbIcon, LinkIcon, PencilIcon, SparklesIcon } from '@heroicons/vue/24/outline'
@@ -36,6 +36,21 @@ const recommendations = ref<RelationshipRecommendation[]>([])
 const selectedIndices = ref<number[]>([])
 const currentTraceId = ref('')
 const showLogs = ref(false)
+const runStatus = ref<MetadataAiRunStatus>('idle')
+const progress = ref<MetadataAiProgress>({
+  status: 'idle',
+  phase: 'idle',
+  message: '等待开始',
+  percent: 0,
+})
+
+const progressPercent = computed(() => Math.max(0, Math.min(100, Math.round(progress.value.percent || 0))))
+const estimatedRemainingText = computed(() => {
+  const seconds = progress.value.estimated_remaining_seconds
+  if (seconds === undefined || seconds === null) return '计算中'
+  if (seconds < 60) return `约 ${seconds} 秒`
+  return `约 ${Math.ceil(seconds / 60)} 分钟`
+})
 
 // Result View Mode Tab ('list' | 'graph')
 const resultTab = ref<'list' | 'graph'>('list')
@@ -86,6 +101,18 @@ const handleCancelRecommend = () => {
   }
   stopTimer()
   analyzing.value = false
+  runStatus.value = 'interrupted'
+  progress.value = {
+    ...progress.value,
+    status: 'interrupted',
+    phase: 'interrupted',
+    message: '用户已取消，后端关系推导正在中断',
+  }
+  console.warn('关系推荐已由用户中断', {
+    datasetId: props.datasetId,
+    traceId: currentTraceId.value,
+    progress: progress.value,
+  })
   showToast('已取消实体关系智能发现', 'info')
 }
 
@@ -243,41 +270,132 @@ const handleRecommend = async () => {
   recommendations.value = []
   selectedIndices.value = []
   currentTraceId.value = ''
+  runStatus.value = 'running'
+  progress.value = {
+    status: 'running',
+    phase: 'connecting',
+    message: '正在连接实时进度服务',
+    percent: 0,
+    completed_units: 0,
+    total_units: 0,
+    remaining_units: 0,
+    unit_label: '候选组',
+    batch_count: 0,
+    result_count: 0,
+    candidate_pair_count: 0,
+    completed_pair_count: 0,
+    remaining_pair_count: 0,
+  }
   startTimer()
   abortController = new AbortController()
+  const requestStartedAt = Date.now()
+  console.info('关系推荐请求开始', {
+    datasetId: props.datasetId,
+    selectedTableCount: selectedTableNames.value.length,
+    hasUserPrompt: Boolean(userPrompt.value.trim()),
+  })
   
   try {
-    const res = await metadataApi.recommendRelationships(
+    const data = await metadataApi.recommendRelationshipsStream(
       props.datasetId,
       {
         table_names: selectedTableNames.value.length > 0 ? selectedTableNames.value : undefined,
         user_prompt: userPrompt.value.trim() ? userPrompt.value.trim() : undefined,
       },
-      abortController.signal
+      abortController.signal,
+      (streamEvent) => {
+        const eventStatus: MetadataAiRunStatus = streamEvent.event === 'completed'
+          ? 'completed'
+          : streamEvent.event === 'interrupted'
+            ? 'interrupted'
+            : 'running'
+        progress.value = {
+          ...progress.value,
+          ...streamEvent.data,
+          status: eventStatus,
+        }
+        runStatus.value = eventStatus
+        if (streamEvent.data.trace_id) currentTraceId.value = streamEvent.data.trace_id
+      },
     )
-    const data = res.data?.data
-    
+
     recommendations.value = data?.relationships || []
-    currentTraceId.value = (data as any)?._trace_id || ''
+    currentTraceId.value = data?._trace_id || ''
+    const partialInterruption = ['partial_batch_error', 'partial_group_error'].includes(data?._stop_reason || '')
+    runStatus.value = partialInterruption ? 'interrupted' : 'completed'
+    progress.value = {
+      ...progress.value,
+      status: partialInterruption ? 'interrupted' : 'completed',
+      phase: partialInterruption ? 'interrupted' : 'completed',
+      message: partialInterruption
+        ? `关系推荐中断，已保留 ${recommendations.value.length} 条结果`
+        : `关系推荐完成，共生成 ${recommendations.value.length} 条关系`,
+      percent: partialInterruption ? progress.value.percent : 100,
+      remaining_units: partialInterruption ? progress.value.remaining_units : 0,
+      result_count: recommendations.value.length,
+    }
+    console.info('关系推荐请求完成', {
+      datasetId: props.datasetId,
+      traceId: currentTraceId.value,
+      relationshipCount: recommendations.value.length,
+      batchCount: data?._batch_count,
+      stopReason: data?._stop_reason,
+      durationMs: Date.now() - requestStartedAt,
+    })
     
     if (recommendations.value.length === 0) {
       showToast('未发现新的推荐关联关系，可能所选表间无明显主外键命名或已有关系已覆盖', 'info')
     } else {
-      showToast(`AI 成功推导了 ${recommendations.value.length} 条关联关系 (耗时 ${formattedElapsedTime.value})`, 'success')
+      showToast(
+        partialInterruption
+          ? `生成中断，已保留 ${recommendations.value.length} 条关系，可先检查或保存`
+          : `AI 成功推导了 ${recommendations.value.length} 条关联关系 (耗时 ${formattedElapsedTime.value})`,
+        partialInterruption ? 'warning' : 'success',
+      )
       // Default select all
       selectedIndices.value = recommendations.value.map((_, i) => i)
     }
   } catch (e: any) {
-    if (e.name === 'CanceledError' || e.code === 'ERR_CANCELED' || e.message === 'canceled') {
-      console.log('Relationship recommendation request canceled by user')
+    if (e.name === 'AbortError' || e.name === 'CanceledError' || e.code === 'ERR_CANCELED' || e.message === 'canceled') {
+      if (runStatus.value !== 'interrupted') {
+        runStatus.value = 'interrupted'
+        progress.value = {
+          ...progress.value,
+          status: 'interrupted',
+          phase: 'interrupted',
+          message: '关系推荐连接已中断',
+        }
+      }
       return
     }
-    console.error('Relationship recommendation failed', e)
-    const detail = e.response?.data?.detail || ''
+    const detail = e.response?.data?.detail || e.message || ''
+    const status = e.response?.status
+    const isTimeout = e.code === 'ECONNABORTED' || String(e.message || '').toLowerCase().includes('timeout')
+    const isGatewayTimeout = [502, 503, 504].includes(status)
+    console.error('关系推荐请求失败', {
+      datasetId: props.datasetId,
+      selectedTableCount: selectedTableNames.value.length,
+      durationMs: Date.now() - requestStartedAt,
+      errorCode: e.code,
+      httpStatus: status,
+      message: e.message,
+      detail,
+    }, e)
     const match = detail.match(/Trace ID: ([a-zA-Z0-9-]+)/)
     if (match) currentTraceId.value = match[1]
-    
-    showToast(e.response?.data?.detail || '推荐失败，请重试', 'error')
+    runStatus.value = 'error'
+    progress.value = {
+      ...progress.value,
+      status: 'error',
+      phase: 'error',
+      message: detail || '关系推荐失败',
+    }
+
+    if (isTimeout || isGatewayTimeout) {
+      showToast('关系推荐连接等待超时，请先查看后端关系推荐日志，避免立即重复提交', 'error')
+    } else {
+      showToast(detail || `推荐失败${status ? `（HTTP ${status}）` : ''}，请查看控制台与后端日志`, 'error')
+    }
   } finally {
     stopTimer()
     analyzing.value = false
@@ -305,6 +423,12 @@ const relationTypeLabel = (t?: string) => {
     case 'many_to_one': return '多对一'
     default: return t || '-'
   }
+}
+
+const sourceBadge = (source?: string) => {
+  if (source === 'FK') return { label: '外键确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
+  if (source === 'PROBE') return { label: '抽样确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
+  return { label: 'AI 推断', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' }
 }
 
 const confidenceStyle = (c: number) => {
@@ -603,6 +727,17 @@ const handleBackToConfig = () => {
         
         <!-- Config / Pre-run Mode -->
         <div v-if="!analyzing && recommendations.length === 0" class="space-y-4">
+          <div
+            v-if="runStatus === 'interrupted' || runStatus === 'error'"
+            class="flex items-start gap-3 rounded-lg border px-4 py-3 text-left"
+            :class="runStatus === 'interrupted' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-red-200 bg-red-50 text-red-800'"
+          >
+            <span class="mt-0.5 h-2 w-2 flex-shrink-0 rounded-full" :class="runStatus === 'interrupted' ? 'bg-amber-500' : 'bg-red-500'"></span>
+            <div class="min-w-0">
+              <div class="text-xs font-bold">{{ runStatus === 'interrupted' ? '上次推导已中断' : '上次推导失败' }}</div>
+              <div class="mt-0.5 break-words text-[11px]">{{ progress.message }}</div>
+            </div>
+          </div>
           
           <!-- 1. Table Selection Section with Collapse -->
           <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm">
@@ -788,34 +923,60 @@ const handleBackToConfig = () => {
 
         </div>
 
-        <!-- Analyzing State (带有秒表计时、耐心等待提示与取消生成) -->
-        <div v-else-if="analyzing" class="h-96 flex flex-col items-center justify-center text-center p-6 space-y-5">
-          <!-- Animated Spinner with Elapsed Time Badge in Center -->
+        <!-- Analyzing State：展示逐表元数据分析、剩余表数、累计批次和结果。 -->
+        <div v-else-if="analyzing" class="min-h-96 flex flex-col items-center justify-center text-center p-6 space-y-5">
           <div class="relative w-20 h-20 flex items-center justify-center">
             <div class="absolute inset-0 border-4 border-emerald-100 rounded-full"></div>
             <div class="absolute inset-0 border-4 border-emerald-600 rounded-full border-t-transparent animate-spin"></div>
             <div class="flex flex-col items-center justify-center z-10">
-              <span class="text-xs font-mono font-bold text-emerald-600">{{ elapsedSeconds }}s</span>
+              <span class="text-sm font-mono font-bold text-emerald-700">{{ progressPercent }}%</span>
+              <span class="text-[10px] text-gray-400">{{ elapsedSeconds }}s</span>
             </div>
           </div>
 
-          <!-- Main Status Text -->
-          <div class="space-y-1.5 max-w-md">
-            <div class="flex items-center justify-center gap-2">
-              <h3 class="text-base font-bold text-gray-800">AI 正在深度分析表间关系与主外键...</h3>
+          <div class="w-full max-w-2xl space-y-2 text-left">
+            <div class="flex items-center justify-between gap-3 text-xs">
+              <div class="min-w-0">
+                <div class="font-bold text-gray-800">{{ progress.message }}</div>
+                <div v-if="progress.current_item" class="mt-0.5 truncate font-mono text-[11px] text-emerald-700">
+                  当前任务：{{ progress.current_item }}
+                </div>
+              </div>
+              <span class="flex-shrink-0 font-mono text-emerald-700">{{ progressPercent }}%</span>
             </div>
-            <p class="text-xs text-gray-500">
-              已选 <span class="font-bold text-emerald-600">{{ selectedTableNames.length }}</span> 张数据表，正在进行两两字段语义匹配、主外键模式比对与 Join 条件推导
-            </p>
+            <div class="h-2 w-full overflow-hidden rounded bg-gray-200">
+              <div class="h-full bg-emerald-600 transition-all duration-500" :style="{ width: `${progressPercent}%` }"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-center text-[11px] sm:grid-cols-6">
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">候选组进度</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_units || 0 }} / {{ progress.total_units || 0 }}</div>
+              </div>
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">剩余候选组</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.remaining_units ?? 0 }}</div>
+              </div>
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">AI 调用组</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.batch_count || 0 }}</div>
+              </div>
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">候选表对</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_pair_count || 0 }} / {{ progress.candidate_pair_count || 0 }}</div>
+              </div>
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">累计关系</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ progress.result_count || 0 }}</div>
+              </div>
+              <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                <div class="text-gray-400">预计剩余</div>
+                <div class="mt-0.5 font-bold text-gray-800">{{ estimatedRemainingText }}</div>
+              </div>
+            </div>
           </div>
 
-          <!-- Patient waiting hint box -->
-          <div class="max-w-lg p-3.5 bg-amber-50/80 border border-amber-200/90 rounded-xl text-left flex items-start gap-2.5 shadow-sm">
-            <svg class="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <div class="text-[11px] text-amber-900 leading-relaxed">
-              <span class="font-bold">AI 努力推导中，可能较为耗时：</span>
-              大模型需交叉对比各表字段类型、命名相似度与业务注释并计算置信度，通常需要 <span class="font-semibold text-amber-800">15 ~ 45 秒</span>，请您耐心等待。
-            </div>
+          <div class="max-w-2xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
+            后端先读取外键约束与数据抽样验证，能确认的关系不再调用 AI；未确认候选按候选组交给 AI 复核，每个表对只推导一次。仅分析表结构与字段元数据，不查询业务数据行。
           </div>
 
           <!-- Cancel Action Button -->
@@ -860,6 +1021,13 @@ const handleBackToConfig = () => {
 
               <span class="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold border border-emerald-200/60 hidden sm:inline-block">
                 已完成去重
+              </span>
+              <!-- 部分批次失败时保留已生成结果，并明确提示结果并非完整推导。 -->
+              <span
+                v-if="runStatus === 'interrupted'"
+                class="text-[11px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full font-bold border border-amber-200"
+              >
+                生成中断，以下为已完成结果
               </span>
             </div>
 
@@ -955,6 +1123,15 @@ const handleBackToConfig = () => {
                       :class="item.relation_type === 'one_to_one' ? 'bg-blue-50 text-blue-700 border-blue-200' : (item.relation_type === 'one_to_many' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200')"
                     >
                       {{ relationTypeLabel(item.relation_type) }}
+                    </span>
+
+                    <!-- 判定来源徽章：区分外键确认、抽样确认与 AI 推断 -->
+                    <span
+                      v-if="item.source"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded border"
+                      :class="[sourceBadge(item.source).bg, sourceBadge(item.source).text, sourceBadge(item.source).border]"
+                    >
+                      {{ sourceBadge(item.source).label }}
                     </span>
 
                     <!-- 置信度徽章 -->
@@ -1085,7 +1262,7 @@ const handleBackToConfig = () => {
                 留空（不填）时
               </div>
               <ul class="text-[11px] text-gray-600 list-disc list-inside space-y-0.5">
-                <li><strong>全局 Schema 扫描</strong>：AI 将自动比对所选所有表的主外键命名与字段注释。</li>
+                <li><strong>全局 Schema 分析</strong>：AI 将自动比对所选所有表的主外键命名与字段注释。</li>
                 <li><strong>标准规则匹配</strong>：基于 `xxx_id = id`、`code`、业务术语等通用模式推断高置信度关系。</li>
                 <li><strong>适合冷启动</strong>：适合初次导入数据集后快速建立基础模型关联。</li>
               </ul>

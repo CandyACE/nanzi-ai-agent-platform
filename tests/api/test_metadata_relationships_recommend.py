@@ -29,6 +29,7 @@ class _ResultWrapper:
 async def test_recommend_relationships_success():
     from unittest.mock import AsyncMock, patch
     from app.api.portal.endpoints import metadata as endpoint_module
+    from app.schemas.metadata import RelationshipRecommendRequest
 
     recommended = {
         "_trace_id": "rel-rec-test",
@@ -58,14 +59,24 @@ async def test_recommend_relationships_success():
         endpoint_module.MetadataService, "get_dataset_by_id",
         AsyncMock(return_value=_ResultWrapper(exists=True)),
     ) as mock_get_dataset, patch.object(
+        endpoint_module.MetadataService, "get_relationships_by_dataset",
+        AsyncMock(return_value=[]),
+    ) as mock_get_relationships, patch.object(
         endpoint_module.MetadataService, "export_dataset_yaml",
         AsyncMock(return_value="schema_yaml_string"),
     ) as mock_export, patch.object(
         endpoint_module.MetadataGeneratorService, "recommend_relationships",
         AsyncMock(return_value=recommended),
     ) as mock_recommend:
-
-        resp = await endpoint_module.recommend_relationships(1, AsyncMock())
+        mock_conn = AsyncMock()
+        mock_request = AsyncMock()
+        mock_request.is_disconnected = AsyncMock(return_value=False)
+        resp = await endpoint_module.recommend_relationships(
+            dataset_id=1,
+            request=mock_request,
+            req=RelationshipRecommendRequest(),
+            conn=mock_conn,
+        )
 
     assert resp["code"] == 200
     assert resp["message"] == "success"
@@ -73,7 +84,8 @@ async def test_recommend_relationships_success():
     assert resp["data"]["relationships"][0]["confidence"] == 0.95
 
     mock_get_dataset.assert_awaited_once()
-    mock_export.assert_awaited_once_with(mock_export.call_args.args[0] if mock_export.call_args.args else None, 1)
+    mock_get_relationships.assert_awaited_once_with(mock_conn, 1)
+    mock_export.assert_awaited_once_with(mock_conn, 1, table_names=None)
     mock_recommend.assert_awaited_once()
 
 
@@ -82,6 +94,7 @@ async def test_recommend_relationships_dataset_not_found():
     from unittest.mock import AsyncMock, patch
     from fastapi import HTTPException
     from app.api.portal.endpoints import metadata as endpoint_module
+    from app.schemas.metadata import RelationshipRecommendRequest
 
     with patch.object(
         endpoint_module.MetadataService, "get_dataset_by_id",
@@ -93,11 +106,162 @@ async def test_recommend_relationships_dataset_not_found():
     ) as mock_recommend:
 
         with pytest.raises(HTTPException) as exc:
-            await endpoint_module.recommend_relationships(999, AsyncMock())
+            await endpoint_module.recommend_relationships(
+                dataset_id=999,
+                request=AsyncMock(),
+                req=RelationshipRecommendRequest(),
+                conn=AsyncMock(),
+            )
 
     assert exc.value.status_code == 404
     mock_export.assert_not_awaited()
     mock_recommend.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recommend_relationships_cancels_generator_after_client_disconnect():
+    """客户端断开后应取消模型生成协程，避免无人接收的后台任务继续消耗资源。"""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from fastapi import HTTPException
+    from app.api.portal.endpoints import metadata as endpoint_module
+    from app.schemas.metadata import RelationshipRecommendRequest
+
+    generator_cancelled = asyncio.Event()
+
+    async def wait_until_cancelled(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            generator_cancelled.set()
+            raise
+
+    mock_request = AsyncMock()
+    mock_request.is_disconnected = AsyncMock(return_value=True)
+
+    with patch.object(
+        endpoint_module.MetadataService, "get_dataset_by_id",
+        AsyncMock(return_value=_ResultWrapper(exists=True)),
+    ), patch.object(
+        endpoint_module.MetadataService, "get_relationships_by_dataset",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        endpoint_module.MetadataService, "export_dataset_yaml",
+        AsyncMock(return_value="schema_yaml_string"),
+    ), patch.object(
+        endpoint_module.MetadataGeneratorService, "recommend_relationships",
+        side_effect=wait_until_cancelled,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await endpoint_module.recommend_relationships(
+                dataset_id=1,
+                request=mock_request,
+                req=RelationshipRecommendRequest(),
+                conn=AsyncMock(),
+            )
+
+    assert exc.value.status_code == 499
+    assert generator_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_metadata_recommendation_sse_emits_progress_and_completed_result():
+    """SSE 适配器应透传候选组进度并输出 completed 终态。"""
+    from unittest.mock import AsyncMock
+    from app.api.portal.endpoints import metadata as endpoint_module
+
+    mock_request = AsyncMock()
+    mock_request.is_disconnected = AsyncMock(return_value=False)
+
+    async def worker(progress_callback):
+        await progress_callback({
+            "phase": "scanning",
+            "message": "正在推导候选关系组 1/3",
+            "percent": 50,
+            "remaining_units": 2,
+            "candidate_pair_count": 18,
+            "completed_pair_count": 6,
+            "remaining_pair_count": 12,
+        })
+        return {
+            "relationships": [],
+            "_trace_id": "rel-rec-sse-test",
+            "_batch_count": 3,
+            "_stop_reason": "all_candidate_groups_scanned",
+            "_debug": {
+                "candidate_group_count": 3,
+                "completed_group_count": 3,
+                "remaining_group_count": 0,
+                "candidate_pair_count": 18,
+                "completed_pair_count": 18,
+                "remaining_pair_count": 0,
+            },
+        }
+
+    response = await endpoint_module._stream_metadata_recommendation(
+        mock_request,
+        dataset_id=1,
+        recommendation_type="relationships",
+        worker=worker,
+    )
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+    body = "".join(chunks)
+
+    assert "event: started" in body
+    assert "event: progress" in body
+    assert '"remaining_units": 2' in body
+    assert '"candidate_pair_count": 18' in body
+    assert '"completed_pair_count": 6' in body
+    assert '"remaining_pair_count": 12' in body
+    assert "event: completed" in body
+    assert "rel-rec-sse-test" in body
+
+
+@pytest.mark.asyncio
+async def test_metadata_recommendation_sse_marks_partial_group_error_interrupted():
+    """候选组部分失败时，SSE 应返回中断终态和准确的剩余工作量。"""
+    from unittest.mock import AsyncMock
+    from app.api.portal.endpoints import metadata as endpoint_module
+
+    mock_request = AsyncMock()
+    mock_request.is_disconnected = AsyncMock(return_value=False)
+
+    async def worker(progress_callback):
+        return {
+            "relationships": [{"source_table": "orders"}],
+            "_trace_id": "rel-rec-partial-test",
+            "_batch_count": 3,
+            "_stop_reason": "partial_group_error",
+            "_debug": {
+                "candidate_group_count": 3,
+                "completed_group_count": 2,
+                "failed_group_count": 1,
+                "remaining_group_count": 1,
+                "candidate_pair_count": 18,
+                "completed_pair_count": 12,
+                "remaining_pair_count": 6,
+            },
+        }
+
+    response = await endpoint_module._stream_metadata_recommendation(
+        mock_request,
+        dataset_id=1,
+        recommendation_type="relationships",
+        worker=worker,
+    )
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+    body = "".join(chunks)
+
+    assert "event: interrupted" in body
+    assert '"status": "interrupted"' in body
+    assert '"completed_units": 2' in body
+    assert '"remaining_units": 1' in body
+    assert '"remaining_pair_count": 6' in body
+    assert '"stop_reason": "partial_group_error"' in body
 
 
 @pytest.mark.asyncio

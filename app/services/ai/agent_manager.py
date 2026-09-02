@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, or_, case
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
 from app.services.ai.agent_types import resolve_agent_type
@@ -454,6 +454,17 @@ class AgentManagerService:
                 engine_config=agent.engine_config
             )
             
+        except OperationalError as e:
+            error_text = str(e)
+            if "toolcall_timeout_seconds" in error_text and "Unknown column" in error_text:
+                # 兼容未执行 V133/V33 迁移的环境，避免元数据推荐前刷整段堆栈。
+                logger.warning(
+                    "读取智能体配置失败：数据库缺少 ai_agent_versions.toolcall_timeout_seconds，"
+                    "请执行对应迁移 db-prod/V133 或 db-prod-pg/V33；本次将使用默认模型配置降级继续。"
+                )
+                return None
+            logger.error(f"Error fetching agent config: {e}", exc_info=True)
+            return None
         except Exception as e:
             logger.error(f"Error fetching agent config: {e}", exc_info=True)
             return None

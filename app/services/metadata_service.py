@@ -1352,8 +1352,8 @@ class MetadataService:
             if selected_table_set is not None:
                 filtered_relationships = [
                     r for r in relationships
-                    if getattr(r, "source_table", None) in selected_table_set
-                    and getattr(r, "target_table", None) in selected_table_set
+                    if getattr(getattr(r, "source_table", None), "physical_name", None) in selected_table_set
+                    and getattr(getattr(r, "target_table", None), "physical_name", None) in selected_table_set
                 ]
 
             chunks.append(
@@ -1390,4 +1390,3 @@ class MetadataService:
             if piece:
                 formatted.append(piece)
         return "\n\n".join(formatted)
-
