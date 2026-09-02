@@ -15,11 +15,15 @@
 import pytest
 
 
+pytestmark = pytest.mark.no_infrastructure
+
+
 class _ResultWrapper:
     """模拟数据集查询返回的 ORM 对象（仅需为真值即可）。"""
     def __init__(self, exists=True):
         self.id = 1
         self.exists = exists
+        self.data_source = "mysql_main"
 
     def __bool__(self):
         return self.exists
@@ -74,7 +78,7 @@ async def test_recommend_relationships_success():
         resp = await endpoint_module.recommend_relationships(
             dataset_id=1,
             request=mock_request,
-            req=RelationshipRecommendRequest(),
+            req=RelationshipRecommendRequest(strategy="smart"),
             conn=mock_conn,
         )
 
@@ -87,6 +91,7 @@ async def test_recommend_relationships_success():
     mock_get_relationships.assert_awaited_once_with(mock_conn, 1)
     mock_export.assert_awaited_once_with(mock_conn, 1, table_names=None)
     mock_recommend.assert_awaited_once()
+    assert mock_recommend.await_args.kwargs["strategy"] == "smart"
 
 
 @pytest.mark.asyncio
@@ -300,3 +305,14 @@ async def test_recommendation_schema_enforces_confidence_bounds():
             description="订单明细",
             confidence=-0.1,
         )
+
+
+def test_relationship_recommend_request_strategy_is_explicit_and_compatible():
+    """未传策略保持严格，智能策略可被请求模型明确传递。"""
+    from pydantic import ValidationError
+    from app.schemas.metadata import RelationshipRecommendRequest
+
+    assert RelationshipRecommendRequest().strategy == "strict"
+    assert RelationshipRecommendRequest(strategy="smart").strategy == "smart"
+    with pytest.raises(ValidationError):
+        RelationshipRecommendRequest(strategy="unsafe")

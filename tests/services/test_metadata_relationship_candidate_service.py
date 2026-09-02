@@ -1,10 +1,15 @@
 """实体关系候选表对服务的聚焦测试。"""
 
+import pytest
+
 from app.services.metadata_relationship_candidate_service import (
     MetadataRelationshipCandidateService,
     RelationshipCandidateGroup,
     RelationshipCandidatePair,
 )
+
+
+pytestmark = pytest.mark.no_infrastructure
 
 
 def test_parse_schema_filters_examples_and_builds_structural_candidate():
@@ -188,6 +193,82 @@ def test_entity_foreign_key_only_pairs_with_target_primary_key():
 
     assert len(candidates) == 1
     assert candidates[0].column_pairs == (("member_id", "id"),)
+
+
+def test_smart_strategy_recalls_semantic_key_without_primary_or_foreign_key():
+    """智能推断应能用字段中文语义发现没有主外键约束的关联候选。"""
+    table_order = ["sales_order", "customer"]
+    table_index = {
+        "sales_order": {
+            "table_name": "sales_order",
+            "table_desc": "销售订单",
+            "columns": [
+                {
+                    "name": "customer_ref",
+                    "type": "bigint",
+                    "term": "客户标识",
+                }
+            ],
+        },
+        "customer": {
+            "table_name": "customer",
+            "table_desc": "客户",
+            "columns": [
+                {
+                    "name": "customer_code",
+                    "type": "bigint",
+                    "term": "客户编码",
+                }
+            ],
+        },
+    }
+
+    strict_candidates = MetadataRelationshipCandidateService.build_candidate_pairs(
+        table_order,
+        table_index,
+        strategy="strict",
+    )
+    smart_candidates = MetadataRelationshipCandidateService.build_candidate_pairs(
+        table_order,
+        table_index,
+        strategy="smart",
+    )
+
+    assert strict_candidates == []
+    assert len(smart_candidates) == 1
+    assert smart_candidates[0].score < 100
+    assert smart_candidates[0].column_pairs == (("customer_ref", "customer_code"),)
+    assert any("语义" in reason for reason in smart_candidates[0].reasons)
+
+
+def test_smart_strategy_applies_stable_candidate_limit_and_reports_truncation():
+    """智能候选必须限量，避免把全部表组合发送给模型。"""
+    table_order = ["entity_a", "entity_b", "entity_c", "entity_d"]
+    table_index = {
+        name: {
+            "table_name": name,
+            "table_desc": "业务实体",
+            "columns": [
+                {
+                    "name": "entity_ref",
+                    "type": "bigint",
+                    "term": "实体标识",
+                }
+            ],
+        }
+        for name in table_order
+    }
+
+    result = MetadataRelationshipCandidateService.build_candidate_pairs_with_stats(
+        table_order,
+        table_index,
+        strategy="smart",
+        max_candidate_pairs=2,
+    )
+
+    assert len(result.pairs) == 2
+    assert result.smart_candidate_pair_count >= 2
+    assert result.truncated_pair_count == result.smart_candidate_pair_count - 2
 
 
 def test_longer_table_prefix_does_not_steal_shorter_entity_foreign_key():

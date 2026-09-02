@@ -66,11 +66,41 @@ def test_smart_relationship_modal_contract():
     assert "候选表对" in content
     assert "不查询业务数据行" in content
     assert "每个表对只推导一次" in content
-    # 探测优先链路：进度说明与结果来源徽章必须覆盖外键、抽样与 AI 三类来源。
-    assert "外键约束与数据抽样验证" in content
+    assert "relationshipStrategy" in content
+    assert "relationshipStrategy = ref<RelationshipRecommendationStrategy>('smart')" in content
+    assert "智能推断" in content
+    assert "严格模式" in content
+    assert "strategy: relationshipStrategy" in content
+    assert "candidate_pair_limit" in content
+    # 元数据优先链路：只允许外键确认与 AI 推断两类来源，不得宣传业务行抽样。
+    assert "外键约束" in content
     assert "sourceBadge" in content
     assert "外键确认" in content
-    assert "抽样确认" in content
+    assert "抽样确认" not in content
     assert "AI 推断" in content
     assert "生成中断，以下为已完成结果" in content
     assert 'v-if="runStatus === \'interrupted\'"' in content
+
+
+def test_smart_relationship_modal_clears_previous_run_diagnostics_on_open():
+    """重新打开弹窗不能把上一次的零结果诊断误标成“本次”。"""
+    content = Path(
+        "frontend/src/components/metadata/SmartRelationshipModal.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "const resetRunState = () =>" in content
+    show_watch = content.split("watch(\n  () => props.show", 1)[1].split(
+        "watch(", 1
+    )[0]
+    assert "resetRunState()" in show_watch
+
+
+def test_smart_relationship_modal_places_strategy_before_table_scope():
+    """配置流程先选发现策略，再确定参与分析的数据表范围。"""
+    content = Path(
+        "frontend/src/components/metadata/SmartRelationshipModal.vue"
+    ).read_text(encoding="utf-8")
+
+    assert content.index("发现策略") < content.index(
+        "分析数据表范围 (推断表间关联关系)"
+    )

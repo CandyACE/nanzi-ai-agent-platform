@@ -126,6 +126,10 @@ async def _stream_metadata_recommendation(
                     "batch_count": result.get("_batch_count") if isinstance(result, dict) else None,
                     "result_count": result_count,
                     "candidate_pair_count": debug.get("candidate_pair_count"),
+                    "strategy": debug.get("strategy"),
+                    "smart_candidate_pair_count": debug.get("smart_candidate_pair_count"),
+                    "candidate_pair_limit": debug.get("candidate_pair_limit"),
+                    "truncated_pair_count": debug.get("truncated_pair_count"),
                     "completed_pair_count": debug.get("completed_pair_count"),
                     "remaining_pair_count": debug.get("remaining_pair_count"),
                     "fk_relationship_count": debug.get("fk_relationship_count"),
@@ -915,6 +919,7 @@ async def recommend_relationships(
 
     table_names = req.table_names if req and req.table_names else None
     user_prompt = req.user_prompt if req and req.user_prompt else None
+    strategy = req.strategy if req else "strict"
 
     # 获取当前已存在的关系列表
     existing_rels = await MetadataService.get_relationships_by_dataset(conn, dataset_id)
@@ -946,6 +951,7 @@ async def recommend_relationships(
             user_prompt=user_prompt,
             existing_relationships=existing_rel_strs,
             data_source=ds.data_source,
+            strategy=strategy,
         ),
         name=f"metadata-relationship-recommend-{dataset_id}",
     )
@@ -1011,6 +1017,7 @@ async def recommend_relationships_stream(
 
     table_names = req.table_names if req and req.table_names else None
     user_prompt = req.user_prompt if req and req.user_prompt else None
+    strategy = req.strategy if req else "strict"
     existing_rels = await MetadataService.get_relationships_by_dataset(conn, dataset_id)
     existing_rel_strs = []
     for relationship in existing_rels:
@@ -1053,6 +1060,7 @@ async def recommend_relationships_stream(
             user_prompt=user_prompt,
             existing_relationships=existing_rel_strs,
             data_source=ds.data_source,
+            strategy=strategy,
             progress_callback=progress_callback,
         )
 

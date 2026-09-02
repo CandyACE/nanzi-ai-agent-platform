@@ -8,6 +8,7 @@ from app.services.metadata_generator import (
     MetadataGeneratorService,
     RelationshipDescriptionResult,
 )
+from app.services.metadata_relationship_probe_service import ForeignKeyEvidence
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -159,7 +160,7 @@ async def test_recommend_relationships_does_not_follow_model_has_more():
 def _probe_test_schema() -> str:
     """构造 12 张表的 Schema：1 张主表、1 张用户表、10 张订单子表。
 
-    这样命名候选共有 11 对；抽样探测确认 1 对后仍有 10 对进入
+    这样命名候选共有 11 对；外键元数据确认 1 对后仍有 10 对进入
     分组兜底，可覆盖 2 个候选组的部分失败场景。
     """
     child_tables = [
@@ -203,34 +204,18 @@ async def test_recommend_relationships_keeps_completed_groups_when_later_group_f
             _relationship("orders", "users", "orders.user_id = users.id")
         ]
     }
-    probe_return = (
+    fk_result = (
         [
-            {
-                "left_table": "orders",
-                "right_table": "payments",
-                "left_column": "id",
-                "right_column": "order_id",
-                "relation_type": "one_to_many",
-                "confidence": 0.95,
-                "status": "confirmed",
-                "reason": "抽样命中率 1.00",
-                "source": "PROBE",
-                "sampled": 10,
-                "matched": 10,
-            }
+            ForeignKeyEvidence(
+                constraint_name="fk_payments_order",
+                child_table="payments",
+                child_columns=("order_id",),
+                parent_table="orders",
+                parent_columns=("id",),
+            )
         ],
-        {
-            "probed_pair_count": 10,
-            "confirmed_pair_count": 1,
-            "rejected_pair_count": 9,
-            "rejected_reasons": {"抽样命中率低于阈值": 9},
-            "unverified_pair_count": 0,
-            "probe_duration_ms": 12.5,
-            "probe_unavailable_reason": None,
-        },
+        None,
     )
-    mock_fk = AsyncMock()
-    mock_fk.return_value = ([], None)
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
     progress_events = []
@@ -244,15 +229,11 @@ async def test_recommend_relationships_keeps_completed_groups_when_later_group_f
         "app.services.metadata_generator.MetadataRelationshipProbeService.load_foreign_keys",
         new_callable=AsyncMock,
     ) as mock_load_fk, patch(
-        "app.services.metadata_generator.MetadataRelationshipProbeService.probe_candidate_pairs",
-        new_callable=AsyncMock,
-    ) as mock_probe_pairs, patch(
         "app.services.metadata_generator.MetadataGeneratorService._invoke_json",
         new_callable=AsyncMock,
         side_effect=[description_result, first_group, ValueError("json error")],
     ) as mock_invoke:
-        mock_load_fk.return_value = ([], None)
-        mock_probe_pairs.return_value = probe_return
+        mock_load_fk.return_value = fk_result
         result = await MetadataGeneratorService.recommend_relationships(
             dataset_id=1001,
             schema_context=_probe_test_schema(),
@@ -262,15 +243,15 @@ async def test_recommend_relationships_keeps_completed_groups_when_later_group_f
     # 描述生成 + 两个候选组，共 3 次模型调用
     assert mock_invoke.await_count == 3
     assert mock_invoke.await_args_list[0].args[1] is RelationshipDescriptionResult
-    assert mock_probe_pairs.await_count == 1
     assert result["_stop_reason"] == "partial_group_error"
     assert result["_debug"]["candidate_pair_count"] == 11
     assert result["_debug"]["candidate_group_count"] == 2
     assert result["_debug"]["confirmed_pair_count"] == 1
-    assert result["_debug"]["probed_pair_count"] == 10
+    assert result["_debug"]["probed_pair_count"] == 0
+    assert result["_debug"]["probe_unavailable_reason"] == "business_row_sampling_disabled"
     assert len(result["relationships"]) == 2
     probe_relationship = result["relationships"][0]
-    assert probe_relationship["source"] == "PROBE"
+    assert probe_relationship["source"] == "FK"
     assert probe_relationship["description"] == "订单支付流水通过 order_id 关联订单主表"
     assert result["_debug"]["completed_group_count"] == 1
     assert result["_debug"]["failed_group_count"] == 1
@@ -318,3 +299,52 @@ async def test_recommend_relationships_skips_ai_when_no_join_candidate_exists():
     assert result["_debug"]["possible_pair_count"] == 3
     assert result["_debug"]["candidate_pair_count"] == 0
     assert result["_debug"]["candidate_group_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_recommend_relationships_smart_strategy_calls_ai_for_semantic_candidates():
+    """智能策略应把无主外键但有业务语义线索的表对交给 AI。"""
+    schema_yaml = """tables:
+  - physical_name: sales_order
+    term: 销售订单
+    columns:
+      - physical_name: customer_ref
+        type: bigint
+        term: 客户标识
+  - physical_name: customer
+    term: 客户
+    columns:
+      - physical_name: customer_code
+        type: bigint
+        term: 客户编码
+"""
+    model_result = {
+        "relationships": [
+            _relationship(
+                "sales_order",
+                "customer",
+                "sales_order.customer_ref = customer.customer_code",
+                confidence=0.82,
+            )
+        ]
+    }
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None
+    patches = _base_patches(mock_redis)
+
+    with patches[0], patches[1], patches[2], patches[3], patch(
+        "app.services.metadata_generator.MetadataGeneratorService._invoke_json",
+        new_callable=AsyncMock,
+        return_value=model_result,
+    ) as mock_invoke:
+        result = await MetadataGeneratorService.recommend_relationships(
+            dataset_id=1003,
+            schema_context=schema_yaml,
+            strategy="smart",
+        )
+
+    assert result["_debug"]["strategy"] == "smart"
+    assert result["_debug"]["candidate_pair_count"] == 1
+    assert result["_debug"]["candidate_group_count"] == 1
+    assert result["relationships"] == model_result["relationships"]
+    assert mock_invoke.await_count == 1

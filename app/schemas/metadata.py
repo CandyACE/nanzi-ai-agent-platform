@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 
 # --- Table/Column Schemas (Defined first for nesting) ---
@@ -58,6 +58,7 @@ class RelationshipSchema(BaseModel):
 class RelationshipRecommendRequest(BaseModel):
     table_names: Optional[List[str]] = None
     user_prompt: Optional[str] = None
+    strategy: Literal["strict", "smart"] = "strict"
 
 class RelationshipResponse(RelationshipSchema):
     id: int
@@ -150,4 +151,3 @@ class BatchDeleteMetricsRequest(BaseModel):
 
 class BatchDeleteRelationshipsRequest(BaseModel):
     relationship_ids: List[int]
-
