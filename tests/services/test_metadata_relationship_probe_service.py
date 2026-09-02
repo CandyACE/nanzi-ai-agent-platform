@@ -12,6 +12,7 @@ from app.services.metadata_relationship_probe_service import (
 )
 from app.services.metadata_relationship_candidate_service import (
     MetadataRelationshipCandidateService,
+    RelationshipCandidatePair,
 )
 
 
@@ -95,6 +96,93 @@ def test_find_fk_relationships_matches_child_parent_direction():
     assert result.source == "FK"
 
 
+def test_find_fk_relationships_preserves_all_composite_columns():
+    """复合外键应保留全部列对，而不是只输出第一列。"""
+    candidate = RelationshipCandidatePair(
+        left_table="orders",
+        right_table="order_items",
+        score=120,
+        reasons=("显式外键",),
+        column_pairs=(("tenant_id", "tenant_id"), ("id", "order_id")),
+    )
+    foreign_keys = [
+        ForeignKeyEvidence(
+            constraint_name="fk_order_items_order",
+            child_table="order_items",
+            child_columns=("tenant_id", "order_id"),
+            parent_table="orders",
+            parent_columns=("tenant_id", "id"),
+        )
+    ]
+
+    results = MetadataRelationshipProbeService.find_fk_relationships(
+        foreign_keys,
+        [candidate],
+    )
+
+    assert len(results) == 1
+    assert results[0].column_pairs == (
+        ("tenant_id", "tenant_id"),
+        ("id", "order_id"),
+    )
+
+
+def test_find_fk_relationships_matches_schema_qualified_tables():
+    """外键和候选表都带 schema 时应能正确匹配。"""
+    candidate = RelationshipCandidatePair(
+        left_table="sales.orders",
+        right_table="sales.order_items",
+        score=120,
+        reasons=("显式外键",),
+        column_pairs=(("id", "order_id"),),
+    )
+    foreign_keys = [
+        ForeignKeyEvidence(
+            constraint_name="fk_order_items_order",
+            child_table="sales.order_items",
+            child_columns=("order_id",),
+            parent_table="sales.orders",
+            parent_columns=("id",),
+        )
+    ]
+
+    results = MetadataRelationshipProbeService.find_fk_relationships(
+        foreign_keys,
+        [candidate],
+    )
+
+    assert len(results) == 1
+    assert (results[0].left_table, results[0].right_table) == (
+        "sales.orders",
+        "sales.order_items",
+    )
+
+
+def test_find_fk_relationships_does_not_cross_match_different_schemas():
+    """两个表名相同但 schema 不同且候选已限定 schema 时不得误匹配。"""
+    candidate = RelationshipCandidatePair(
+        left_table="hr.orders",
+        right_table="hr.order_items",
+        score=120,
+        reasons=("显式外键",),
+        column_pairs=(("id", "order_id"),),
+    )
+    foreign_keys = [
+        ForeignKeyEvidence(
+            constraint_name="fk_order_items_order",
+            child_table="sales.order_items",
+            child_columns=("order_id",),
+            parent_table="sales.orders",
+            parent_columns=("id",),
+        )
+    ]
+
+    assert MetadataRelationshipProbeService.find_fk_relationships(
+        foreign_keys,
+        [candidate],
+    ) == []
+
+
 def test_find_fk_relationships_ignores_unknown_tables():
     """不在候选范围内的外键不应生成关系结论。"""
     table_index = _build_schema_index()
@@ -116,19 +204,12 @@ def test_find_fk_relationships_ignores_unknown_tables():
 
 
 @pytest.mark.asyncio
-async def test_probe_candidate_pairs_confirms_by_sampling():
-    """高命中率抽样应生成确认结论，并被低命中候选拒绝。"""
+async def test_probe_candidate_pairs_does_not_read_business_rows():
+    """关系推荐不得执行抽样、回查或业务表统计 SQL。"""
     table_index = _build_schema_index()
     candidates = _build_candidates(table_index)
-    probe_pairs = [
-        pair for pair in candidates
-        if {pair.left_table.lower(), pair.right_table.lower()} == {"orders", "payments"}
-    ]
-    adapter = _FakeAdapter([
-        ("GROUP BY", [[1001, 5], [1002, 4], [1003, 3]]),
-        ("IN (", [[1001], [1002], [1003]]),
-        ("COUNT(DISTINCT", [[100, 95]]),
-    ])
+    adapter = _FakeAdapter([])
+
     with patch(
         "app.services.metadata_relationship_probe_service.get_adapter",
         new_callable=AsyncMock,
@@ -136,74 +217,58 @@ async def test_probe_candidate_pairs_confirms_by_sampling():
     ):
         confirmed, stats = await MetadataRelationshipProbeService.probe_candidate_pairs(
             "mysql_main",
-            probe_pairs,
+            candidates,
             table_index,
-            RelationshipProbeOptions(min_child_values=3),
+            RelationshipProbeOptions(),
         )
-    assert stats["confirmed_pair_count"] == 1
-    assert stats["probed_pair_count"] == 1
-    assert confirmed[0].source == "PROBE"
-    assert confirmed[0].confidence == 0.95
-    assert confirmed[0].sampled == 3
-    assert confirmed[0].matched == 3
-    # 回查 SQL 必须包含抽样字面量，而不是未绑定参数。
-    hit_sql = next(sql for sql in adapter.executed if "IN (" in sql)
-    assert "1001" in hit_sql and "1003" in hit_sql
 
-
-@pytest.mark.asyncio
-async def test_probe_candidate_pairs_rejects_low_hit_rate():
-    """命中率低于下限的候选应被拒绝，不进入 AI 兜底。"""
-    table_index = _build_schema_index()
-    candidates = _build_candidates(table_index)
-    probe_pairs = [
-        pair for pair in candidates
-        if {pair.left_table.lower(), pair.right_table.lower()} == {"orders", "payments"}
-    ]
-    adapter = _FakeAdapter([
-        ("GROUP BY", [[1001, 5], [1002, 4], [1003, 3]]),
-        ("IN (", [[999]]),
-    ])
-    with patch(
-        "app.services.metadata_relationship_probe_service.get_adapter",
-        new_callable=AsyncMock,
-        return_value=adapter,
-    ):
-        confirmed, stats = await MetadataRelationshipProbeService.probe_candidate_pairs(
-            "mysql_main",
-            probe_pairs,
-            table_index,
-            RelationshipProbeOptions(min_child_values=3),
-        )
     assert confirmed == []
-    assert stats["confirmed_pair_count"] == 0
-    assert stats["rejected_pair_count"] >= 1
+    assert adapter.executed == []
+    assert stats["probe_unavailable_reason"] == "business_row_sampling_disabled"
 
 
 @pytest.mark.asyncio
-async def test_probe_candidate_pairs_falls_back_when_adapter_missing():
-    """数据源不可用应整体降级，并把原因写入诊断统计。"""
+async def test_probe_candidate_pairs_does_not_need_data_source_adapter():
+    """禁用业务行探测后，不应为候选关系获取数据源适配器。"""
     table_index = _build_schema_index()
     candidates = _build_candidates(table_index)
     with patch(
         "app.services.metadata_relationship_probe_service.get_adapter",
         new_callable=AsyncMock,
         side_effect=ValueError("未找到对应的数据源配置"),
-    ):
+    ) as mock_get_adapter:
         confirmed, stats = await MetadataRelationshipProbeService.probe_candidate_pairs(
             "missing_source",
             candidates,
             table_index,
         )
     assert confirmed == []
-    assert stats["probe_unavailable_reason"] == "data_source_unavailable"
+    assert stats["probe_unavailable_reason"] == "business_row_sampling_disabled"
+    mock_get_adapter.assert_not_awaited()
 
 
-def test_sql_literal_escapes_quotes_and_backslashes():
-    """字面量渲染应转义单引号与反斜杠，避免破坏回查 SQL。"""
-    render = MetadataRelationshipProbeService._sql_literal
-    assert render("o'brien") == "'o''brien'"
-    assert render("a\\b") == "'a\\\\b'"
-    assert render(10) == "10"
-    assert render(None) == "NULL"
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("db_type", "schema_marker"),
+    [
+        ("postgresql", "parent_ns.nspname"),
+        ("sqlserver", "child_schema.name"),
+        ("oracle", "c.owner || '.' || c.table_name"),
+    ],
+)
+async def test_load_foreign_keys_preserves_schema_qualified_names(db_type, schema_marker):
+    """支持 schema 的数据库应把 schema 一并返回，避免同名表误匹配。"""
+    adapter = _FakeAdapter([])
+    adapter.db_type = db_type
+    with patch(
+        "app.services.metadata_relationship_probe_service.get_adapter",
+        new_callable=AsyncMock,
+        return_value=adapter,
+    ):
+        evidence, reason = await MetadataRelationshipProbeService.load_foreign_keys(
+            "source",
+        )
 
+    assert evidence == []
+    assert reason is None
+    assert schema_marker in adapter.executed[0]

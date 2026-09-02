@@ -115,6 +115,8 @@ export type RelationshipRelationType =
   | "one_to_many"
   | "many_to_one";
 
+export type RelationshipRecommendationStrategy = "strict" | "smart";
+
 export interface RelationshipRecommendation {
   source_table: string; // 源表物理名
   target_table: string; // 目标表物理名
@@ -131,11 +133,15 @@ export interface RelationshipRecommendationResult {
   _batch_count?: number;
   _stop_reason?: string;
   _debug?: {
+    strategy?: RelationshipRecommendationStrategy;
     schema_len?: number;
     schema_table_count?: number;
     schema_table_names_preview?: string[];
     possible_pair_count?: number;
     candidate_pair_count?: number;
+    smart_candidate_pair_count?: number;
+    candidate_pair_limit?: number;
+    truncated_pair_count?: number;
     filtered_pair_count?: number;
     candidate_group_count?: number;
     completed_group_count?: number;
@@ -185,6 +191,10 @@ export interface MetadataAiProgress {
   batch_count?: number;
   result_count?: number;
   candidate_pair_count?: number;
+  strategy?: RelationshipRecommendationStrategy;
+  smart_candidate_pair_count?: number;
+  candidate_pair_limit?: number;
+  truncated_pair_count?: number;
   completed_pair_count?: number;
   remaining_pair_count?: number;
   estimated_remaining_seconds?: number;
@@ -238,7 +248,11 @@ const parseMetadataSseBlock = <T>(block: string): MetadataAiStreamEvent<T> | nul
  */
 export async function streamMetadataRecommendation<T>(
   url: string,
-  params: { table_names?: string[]; user_prompt?: string },
+  params: {
+    table_names?: string[];
+    user_prompt?: string;
+    strategy?: RelationshipRecommendationStrategy;
+  },
   signal: AbortSignal,
   onEvent: (event: MetadataAiStreamEvent<T>) => void,
 ): Promise<T> {
@@ -394,7 +408,7 @@ export const metadataApi = {
   // 逐表关系扫描会串行执行多次模型请求，耗时取决于表数量；仅由调用方的 AbortSignal 主动取消。
   recommendRelationships: (
     datasetId: number,
-    params?: { table_names?: string[]; user_prompt?: string },
+    params?: { table_names?: string[]; user_prompt?: string; strategy?: RelationshipRecommendationStrategy },
     signal?: AbortSignal
   ) =>
     axios.post<{
@@ -405,7 +419,7 @@ export const metadataApi = {
 
   recommendRelationshipsStream: (
     datasetId: number,
-    params: { table_names?: string[]; user_prompt?: string },
+    params: { table_names?: string[]; user_prompt?: string; strategy?: RelationshipRecommendationStrategy },
     signal: AbortSignal,
     onEvent: (event: MetadataAiStreamEvent<RelationshipRecommendationResult>) => void,
   ) => streamMetadataRecommendation<RelationshipRecommendationResult>(

@@ -53,6 +53,15 @@ class RelationshipCandidateGroup:
     table_names: Tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class RelationshipCandidateBuildResult:
+    """候选构建结果及智能策略的限量诊断。"""
+
+    pairs: Tuple[RelationshipCandidatePair, ...]
+    smart_candidate_pair_count: int
+    truncated_pair_count: int
+
+
 class MetadataRelationshipCandidateService:
     """构建高召回关系候选，并对 AI 输出执行确定性校验。"""
 
@@ -69,6 +78,7 @@ class MetadataRelationshipCandidateService:
         "mapping", "rel", "rl",
     }
     _RELATION_TYPES = {"one_to_one", "one_to_many", "many_to_one"}
+    _SMART_KEY_SUFFIXES = _KEY_SUFFIXES | {"ref", "reference"}
 
     @staticmethod
     def _identifier_tokens(value: Any) -> List[str]:
@@ -397,16 +407,152 @@ class MetadataRelationshipCandidateService:
             tuple(sorted(candidate_columns)),
         )
 
+    @staticmethod
+    def _semantic_fragments(value: Any) -> set[str]:
+        """提取可用于结构化语义匹配的中英文片段，不读取业务数据。"""
+        text = str(value or "").strip().lower()
+        if not text:
+            return set()
+        fragments = set(re.findall(r"[\u4e00-\u9fff]{2,}", text))
+        fragments.update(
+            token
+            for token in MetadataRelationshipCandidateService._identifier_tokens(text)
+            if len(token) > 1
+            and token not in MetadataRelationshipCandidateService._KEY_SUFFIXES
+            and token not in MetadataRelationshipCandidateService._IGNORED_TABLE_TOKENS
+        )
+        return fragments
+
     @classmethod
-    def build_candidate_pairs(
+    def _has_semantic_overlap(cls, left: Iterable[str], right: Iterable[str]) -> bool:
+        """允许完整词与带后缀的业务词匹配，例如“客户”与“客户编码”。"""
+        for left_item in left:
+            for right_item in right:
+                if len(left_item) >= 2 and len(right_item) >= 2 and (
+                    left_item in right_item or right_item in left_item
+                ):
+                    return True
+        return False
+
+    @classmethod
+    def _smart_score_table_pair(
+        cls,
+        left_table: Dict[str, Any],
+        right_table: Dict[str, Any],
+    ) -> Tuple[int, Tuple[str, ...], Tuple[Tuple[str, str], ...]]:
+        """在无主外键时按字段角色和中英文元数据语义补充低置信度候选。"""
+        left_columns = left_table.get("columns") or []
+        right_columns = right_table.get("columns") or []
+        if not left_columns or not right_columns:
+            return 0, (), ()
+
+        left_table_context = cls._semantic_fragments(
+            " ".join(
+                (
+                    str(left_table.get("table_name") or ""),
+                    str(left_table.get("table_desc") or ""),
+                    str(left_table.get("description") or ""),
+                )
+            )
+        )
+        right_table_context = cls._semantic_fragments(
+            " ".join(
+                (
+                    str(right_table.get("table_name") or ""),
+                    str(right_table.get("table_desc") or ""),
+                    str(right_table.get("description") or ""),
+                )
+            )
+        )
+        left_aliases = cls._table_aliases(left_table["table_name"])
+        right_aliases = cls._table_aliases(right_table["table_name"])
+        best_score = 0
+        reasons: set[str] = set()
+        candidate_columns: set[Tuple[str, str]] = set()
+
+        for left_column in left_columns:
+            left_name = str(left_column.get("name") or "")
+            left_name_lower = left_name.lower()
+            left_stems = cls._column_key_stems(left_name)
+            left_key_like = any(
+                token in cls._SMART_KEY_SUFFIXES
+                for token in cls._identifier_tokens(left_name)[-1:]
+            )
+            left_context = cls._semantic_fragments(
+                " ".join(
+                    (
+                        left_name,
+                        str(left_column.get("term") or ""),
+                        str(left_column.get("desc") or ""),
+                    )
+                )
+            )
+            for right_column in right_columns:
+                right_name = str(right_column.get("name") or "")
+                right_stems = cls._column_key_stems(right_name)
+                right_key_like = any(
+                    token in cls._SMART_KEY_SUFFIXES
+                    for token in cls._identifier_tokens(right_name)[-1:]
+                )
+                if not cls.column_types_compatible(
+                    left_column.get("type"),
+                    right_column.get("type"),
+                ):
+                    continue
+                right_context = cls._semantic_fragments(
+                    " ".join(
+                        (
+                            right_name,
+                            str(right_column.get("term") or ""),
+                            str(right_column.get("desc") or ""),
+                        )
+                    )
+                )
+                pair_score = 0
+                pair_reasons: set[str] = set()
+                if left_key_like and cls._has_semantic_overlap(
+                    left_context, right_table_context | right_aliases
+                ):
+                    pair_score = max(pair_score, 58)
+                    pair_reasons.add(f"{left_name} 与表 {right_table['table_name']} 语义匹配")
+                if right_key_like and cls._has_semantic_overlap(
+                    right_context, left_table_context | left_aliases
+                ):
+                    pair_score = max(pair_score, 58)
+                    pair_reasons.add(f"{right_name} 与表 {left_table['table_name']} 语义匹配")
+                if left_stems.intersection(right_aliases) and right_key_like:
+                    pair_score = max(pair_score, 55)
+                    pair_reasons.add(f"{left_name} 指向表 {right_table['table_name']} 的语义键")
+                if right_stems.intersection(left_aliases) and left_key_like:
+                    pair_score = max(pair_score, 55)
+                    pair_reasons.add(f"{right_name} 指向表 {left_table['table_name']} 的语义键")
+                if (
+                    left_key_like
+                    and right_key_like
+                    and cls._has_semantic_overlap(left_context, right_context)
+                ):
+                    pair_score = max(pair_score, 48)
+                    pair_reasons.add("两侧键字段业务语义匹配")
+                if pair_score:
+                    best_score = max(best_score, pair_score)
+                    reasons.update(pair_reasons)
+                    candidate_columns.add((left_name, right_name))
+
+        return best_score, tuple(sorted(reasons)), tuple(sorted(candidate_columns))
+
+    @classmethod
+    def build_candidate_pairs_with_stats(
         cls,
         table_order: Sequence[str],
         table_index: Dict[str, Dict[str, Any]],
         *,
         include_incomplete_metadata: bool = True,
         focused_table_names: Optional[Sequence[str]] = None,
-    ) -> List[RelationshipCandidatePair]:
-        """生成前向无重复候选表对，结果总量不设置固定上限。"""
+        strategy: str = "strict",
+        max_candidate_pairs: Optional[int] = None,
+    ) -> RelationshipCandidateBuildResult:
+        """构建候选并返回智能策略的限量诊断。"""
+        normalized_strategy = strategy if strategy in {"strict", "smart"} else "strict"
         candidates: List[RelationshipCandidatePair] = []
         possible_pair_count = 0
         incomplete_pair_count = 0
@@ -427,7 +573,15 @@ class MetadataRelationshipCandidateService:
                     incomplete_pair_count += 1
                     if not include_incomplete_metadata:
                         continue
-                if score <= 0 and any(name.lower() in {left_name.lower(), right_name.lower()} for name in focused_table_names or []):
+                if normalized_strategy == "smart" and score <= 0:
+                    score, reasons, column_pairs = cls._smart_score_table_pair(
+                        left_table,
+                        right_table,
+                    )
+                if score <= 0 and any(
+                    name.lower() in {left_name.lower(), right_name.lower()}
+                    for name in focused_table_names or []
+                ):
                     score = 5
                     reasons = ("用户自定义需求包含相关表，补充候选",)
                 if score <= 0:
@@ -445,23 +599,71 @@ class MetadataRelationshipCandidateService:
         order_positions = {
             table_name: index for index, table_name in enumerate(table_order)
         }
-        candidates.sort(
-            key=lambda pair: (
-                order_positions.get(pair.left_table, len(order_positions)),
-                -pair.score,
-                order_positions.get(pair.right_table, len(order_positions)),
+        if normalized_strategy == "smart":
+            candidates.sort(
+                key=lambda pair: (
+                    -pair.score,
+                    order_positions.get(pair.left_table, len(order_positions)),
+                    order_positions.get(pair.right_table, len(order_positions)),
+                )
             )
+        else:
+            candidates.sort(
+                key=lambda pair: (
+                    order_positions.get(pair.left_table, len(order_positions)),
+                    -pair.score,
+                    order_positions.get(pair.right_table, len(order_positions)),
+                )
+            )
+
+        smart_candidate_pair_count = len(candidates)
+        effective_limit = (
+            max_candidate_pairs
+            if normalized_strategy == "smart" and max_candidate_pairs is not None
+            else None
         )
+        truncated_pair_count = 0
+        if effective_limit is not None and effective_limit >= 0:
+            truncated_pair_count = max(0, len(candidates) - effective_limit)
+            candidates = candidates[:effective_limit]
         logger.warning(
-            "关系候选表对生成完成: table_count=%s, possible_pairs=%s, "
-            "candidate_pairs=%s, filtered_pairs=%s, incomplete_pairs=%s",
+            "关系候选表对生成完成: strategy=%s, table_count=%s, possible_pairs=%s, "
+            "candidate_pairs=%s, filtered_pairs=%s, incomplete_pairs=%s, truncated_pairs=%s",
+            normalized_strategy,
             len(table_order),
             possible_pair_count,
             len(candidates),
             possible_pair_count - len(candidates),
             incomplete_pair_count,
+            truncated_pair_count,
         )
-        return candidates
+        return RelationshipCandidateBuildResult(
+            pairs=tuple(candidates),
+            smart_candidate_pair_count=smart_candidate_pair_count,
+            truncated_pair_count=truncated_pair_count,
+        )
+
+    @classmethod
+    def build_candidate_pairs(
+        cls,
+        table_order: Sequence[str],
+        table_index: Dict[str, Dict[str, Any]],
+        *,
+        include_incomplete_metadata: bool = True,
+        focused_table_names: Optional[Sequence[str]] = None,
+        strategy: str = "strict",
+        max_candidate_pairs: Optional[int] = None,
+    ) -> List[RelationshipCandidatePair]:
+        """生成前向无重复候选表对，结果总量不设置固定上限。"""
+        result = cls.build_candidate_pairs_with_stats(
+            table_order,
+            table_index,
+            include_incomplete_metadata=include_incomplete_metadata,
+            focused_table_names=focused_table_names,
+            strategy=strategy,
+            max_candidate_pairs=max_candidate_pairs,
+        )
+        return list(result.pairs)
 
     @classmethod
     def parse_focused_table_names(

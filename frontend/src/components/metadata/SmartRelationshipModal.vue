@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, shallowRef, onUnmounted } from 'vue'
 import { metadataApi } from '../../api/metadata'
-import type { MetadataAiProgress, MetadataAiRunStatus, RelationshipRecommendation } from '../../api/metadata'
+import type {
+  MetadataAiProgress,
+  MetadataAiRunStatus,
+  RelationshipRecommendation,
+  RelationshipRecommendationResult,
+  RelationshipRecommendationStrategy,
+} from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
 import TraceLogViewer from '../TraceLogViewer.vue'
 import { ExclamationTriangleIcon, KeyIcon, LightBulbIcon, LinkIcon, PencilIcon, SparklesIcon } from '@heroicons/vue/24/outline'
@@ -33,6 +39,7 @@ const analyzing = ref(false)
 const saving = ref(false)
 const loadingTables = ref(false)
 const recommendations = ref<RelationshipRecommendation[]>([])
+const lastDebug = ref<RelationshipRecommendationResult['_debug'] | null>(null)
 const selectedIndices = ref<number[]>([])
 const currentTraceId = ref('')
 const showLogs = ref(false)
@@ -61,6 +68,7 @@ const chartInstance = shallowRef<echarts.ECharts | null>(null)
 const internalTables = ref<TableItem[]>([])
 const selectedTableNames = ref<string[]>([])
 const userPrompt = ref('')
+const relationshipStrategy = ref<RelationshipRecommendationStrategy>('smart')
 const tableSearchQuery = ref('')
 const showHelpModal = ref(false)
 const isTablesCollapsed = ref(false)
@@ -91,6 +99,23 @@ const stopTimer = () => {
   if (timerInterval) {
     clearInterval(timerInterval)
     timerInterval = null
+  }
+}
+
+const resetRunState = () => {
+  stopTimer()
+  analyzing.value = false
+  recommendations.value = []
+  lastDebug.value = null
+  selectedIndices.value = []
+  currentTraceId.value = ''
+  runStatus.value = 'idle'
+  elapsedSeconds.value = 0
+  progress.value = {
+    status: 'idle',
+    phase: 'idle',
+    message: '等待开始',
+    percent: 0,
   }
 }
 
@@ -187,6 +212,7 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal) {
+      resetRunState()
       loadTablesIfNeeded()
     } else {
       stopTimer()
@@ -268,6 +294,7 @@ const handleRecommend = async () => {
 
   analyzing.value = true
   recommendations.value = []
+  lastDebug.value = null
   selectedIndices.value = []
   currentTraceId.value = ''
   runStatus.value = 'running'
@@ -293,6 +320,7 @@ const handleRecommend = async () => {
     datasetId: props.datasetId,
     selectedTableCount: selectedTableNames.value.length,
     hasUserPrompt: Boolean(userPrompt.value.trim()),
+    strategy: relationshipStrategy.value,
   })
   
   try {
@@ -301,6 +329,7 @@ const handleRecommend = async () => {
       {
         table_names: selectedTableNames.value.length > 0 ? selectedTableNames.value : undefined,
         user_prompt: userPrompt.value.trim() ? userPrompt.value.trim() : undefined,
+        strategy: relationshipStrategy.value,
       },
       abortController.signal,
       (streamEvent) => {
@@ -320,6 +349,7 @@ const handleRecommend = async () => {
     )
 
     recommendations.value = data?.relationships || []
+    lastDebug.value = data?._debug || null
     currentTraceId.value = data?._trace_id || ''
     const partialInterruption = ['partial_batch_error', 'partial_group_error'].includes(data?._stop_reason || '')
     runStatus.value = partialInterruption ? 'interrupted' : 'completed'
@@ -427,7 +457,6 @@ const relationTypeLabel = (t?: string) => {
 
 const sourceBadge = (source?: string) => {
   if (source === 'FK') return { label: '外键确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
-  if (source === 'PROBE') return { label: '抽样确认', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' }
   return { label: 'AI 推断', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' }
 }
 
@@ -738,8 +767,79 @@ const handleBackToConfig = () => {
               <div class="mt-0.5 break-words text-[11px]">{{ progress.message }}</div>
             </div>
           </div>
+
+          <div
+            v-if="lastDebug && runStatus === 'completed' && recommendations.length === 0"
+            class="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-left"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-xs font-bold text-amber-900">本次未发现新的关系</div>
+              <span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                {{ lastDebug.strategy === 'smart' ? '智能推断' : '严格模式' }}
+              </span>
+            </div>
+            <div class="mt-2 grid grid-cols-2 gap-2 text-[11px] text-amber-900 sm:grid-cols-4">
+              <span>表对总数：{{ lastDebug.possible_pair_count || 0 }}</span>
+              <span>候选表对：{{ lastDebug.candidate_pair_count || 0 }}</span>
+              <span>AI 分析组：{{ lastDebug.candidate_group_count || 0 }}</span>
+              <span>已去重：{{ lastDebug.confirmed_duplicate_count || 0 }}</span>
+            </div>
+            <p v-if="lastDebug.truncated_pair_count" class="mt-2 text-[11px] leading-relaxed text-amber-800">
+              智能候选较多，已按置信度截取 {{ lastDebug.candidate_pair_limit }} 对进行分析，另有 {{ lastDebug.truncated_pair_count }} 对未进入本次分析。
+            </p>
+            <p v-else-if="lastDebug.strategy !== 'smart'" class="mt-2 text-[11px] leading-relaxed text-amber-800">
+              可切换到“智能推断”扩大无主外键场景的候选范围，或补充字段中文名称和业务描述后重试。
+            </p>
+            <p v-else class="mt-2 text-[11px] leading-relaxed text-amber-800">
+              可补充字段中文名称和业务描述后重试；如果只想查看明确结构关系，可以切换到“严格模式”。
+            </p>
+          </div>
           
-          <!-- 1. Table Selection Section with Collapse -->
+          <!-- 1. Relationship Discovery Strategy -->
+          <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-emerald-600"></span>
+                  <label class="text-sm font-bold text-gray-900">发现策略</label>
+                  <span class="text-[11px] font-bold rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 border border-emerald-100">默认推荐</span>
+                </div>
+                <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                  两种策略都只分析 Schema 和字段元数据，不查询业务数据行。
+                </p>
+              </div>
+              <div class="flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-1">
+                <button
+                  type="button"
+                  :disabled="analyzing"
+                  @click="relationshipStrategy = 'smart'"
+                  class="rounded-md px-3 py-1.5 text-xs font-bold transition-all"
+                  :class="relationshipStrategy === 'smart' ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                >
+                  智能推断
+                </button>
+                <button
+                  type="button"
+                  :disabled="analyzing"
+                  @click="relationshipStrategy = 'strict'"
+                  class="rounded-md px-3 py-1.5 text-xs font-bold transition-all"
+                  :class="relationshipStrategy === 'strict' ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                >
+                  严格模式
+                </button>
+              </div>
+            </div>
+            <div class="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-[11px] leading-relaxed text-emerald-900">
+              <span v-if="relationshipStrategy === 'smart'">
+                智能推断会结合表名、字段名、中文术语、描述和类型等线索扩大候选；结果会标记为“AI 推断”，仍需人工确认。
+              </span>
+              <span v-else>
+                严格模式只使用明确外键、强命名和高置信度结构线索，误推荐更少，但无主外键的数据库可能发现较少。
+              </span>
+            </div>
+          </div>
+
+          <!-- 2. Table Selection Section with Collapse -->
           <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
               <div 
@@ -850,7 +950,7 @@ const handleBackToConfig = () => {
             </div>
           </div>
 
-          <!-- 2. Custom Business Prompt Section with Help Modal -->
+          <!-- 3. Custom Business Prompt Section with Help Modal -->
           <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm relative">
             <div class="flex items-center justify-between mb-2.5">
               <div class="flex items-center gap-2">
@@ -976,7 +1076,7 @@ const handleBackToConfig = () => {
           </div>
 
           <div class="max-w-2xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
-            后端先读取外键约束与数据抽样验证，能确认的关系不再调用 AI；未确认候选按候选组交给 AI 复核，每个表对只推导一次。仅分析表结构与字段元数据，不查询业务数据行。
+            后端先读取数据库外键约束等结构化元数据，能确认的关系只调用一次 AI 生成业务描述；未确认候选按候选组交给 AI 复核，每个表对只推导一次。整个过程仅分析表结构与字段元数据，不查询业务数据行。
           </div>
 
           <!-- Cancel Action Button -->
@@ -1125,7 +1225,7 @@ const handleBackToConfig = () => {
                       {{ relationTypeLabel(item.relation_type) }}
                     </span>
 
-                    <!-- 判定来源徽章：区分外键确认、抽样确认与 AI 推断 -->
+                    <!-- 判定来源徽章：区分外键确认与 AI 推断 -->
                     <span
                       v-if="item.source"
                       class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded border"

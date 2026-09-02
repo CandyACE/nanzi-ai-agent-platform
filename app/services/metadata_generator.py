@@ -78,7 +78,7 @@ class RelationshipDescriptionResult(BaseModel):
     )
 
 RELATIONSHIP_DESCRIPTION_SYSTEM_PROMPT = (
-    "你是一个数据建模专家。输入中的关系已通过数据库外键约束或数据抽样验证确认，"
+    "你是一个数据建模专家。输入中的关系已通过数据库外键约束确认，"
     "请结合表名、字段名和探测原因，为每条关系输出简洁的中文业务含义描述。\n"
     "严格规则：\n"
     "1. 只能为输入给出的 pair_id 输出描述，不得新增或删除。\n"
@@ -700,11 +700,12 @@ class MetadataGeneratorService:
         user_prompt: Optional[str] = None,
         existing_relationships: Optional[List[str]] = None,
         data_source: Optional[str] = None,
+        strategy: str = "strict",
         progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """
         根据数据集 Schema 智能推荐实体（表）之间的关联关系。
-        支持 10 分钟内 Redis 历史去重、DB 已有关系排除以及用户自定义 Prompt 偏好注入。
+        支持严格/智能推断策略、10 分钟内 Redis 历史去重、DB 已有关系排除以及用户自定义 Prompt 偏好注入。
         仅输出建议，不自动入库，供用户人工判断确认。
         """
         import uuid
@@ -713,6 +714,8 @@ class MetadataGeneratorService:
         from app.core.redis import get_redis
         from app.services.ai.agent_manager import AgentManagerService
 
+        strategy = strategy if strategy in {"strict", "smart"} else "strict"
+        smart_candidate_pair_limit = 120
         trace_id = f"rel-rec-{str(uuid.uuid4())}"
         await MetadataGeneratorService._emit_progress(
             progress_callback,
@@ -807,11 +810,14 @@ class MetadataGeneratorService:
                 user_prompt,
                 schema_table_names,
             )
-            candidate_pairs = MetadataRelationshipCandidateService.build_candidate_pairs(
+            candidate_build = MetadataRelationshipCandidateService.build_candidate_pairs_with_stats(
                 schema_table_names,
                 relationship_table_index,
                 focused_table_names=focused_table_names,
+                strategy=strategy,
+                max_candidate_pairs=smart_candidate_pair_limit,
             )
+            candidate_pairs = list(candidate_build.pairs)
             possible_pair_count = (
                 len(schema_table_names) * (len(schema_table_names) - 1) // 2
             )
@@ -826,6 +832,16 @@ class MetadataGeneratorService:
                 possible_pair_count,
                 len(candidate_pairs),
                 bool(user_prompt and user_prompt.strip()),
+            )
+            logger.info(
+                "关系推荐策略完成: trace_id=%s, dataset_id=%s, strategy=%s, "
+                "smart_candidate_pairs=%s, truncated_pairs=%s, limit=%s",
+                trace_id,
+                dataset_id,
+                strategy,
+                candidate_build.smart_candidate_pair_count,
+                candidate_build.truncated_pair_count,
+                smart_candidate_pair_limit if strategy == "smart" else None,
             )
 
             # 2.1 去重前置：既有关系与近期推荐命中的表对在探测前剔除，
@@ -858,7 +874,7 @@ class MetadataGeneratorService:
                 )
             candidate_pairs = deduped_candidate_pairs
 
-            # 3. 数据库探测优先；未确认候选才进入候选组模型兜底。
+            # 3. 数据库元数据探测优先；禁止读取业务行，未确认候选交给模型兜底。
             await MetadataGeneratorService._emit_progress(
                 progress_callback,
                 phase="database_probe",
@@ -884,8 +900,14 @@ class MetadataGeneratorService:
             )
             fk_pair_keys = {
                 tuple(sorted((
-                    relationship["source_table"].lower(),
-                    relationship["target_table"].lower(),
+                    (
+                        getattr(relationship, "left_table", None)
+                        or relationship.get("left_table", "")
+                    ).lower(),
+                    (
+                        getattr(relationship, "right_table", None)
+                        or relationship.get("right_table", "")
+                    ).lower(),
                 )))
                 for relationship in probe_relationships
             }
@@ -893,45 +915,25 @@ class MetadataGeneratorService:
                 pair for pair in candidate_pairs
                 if pair.unordered_key not in fk_pair_keys
             ]
-            if probe_unavailable_reason is None:
-                await MetadataGeneratorService._emit_progress(
-                    progress_callback,
-                    phase="database_sampling",
-                    message=f"开始抽样验证 {len(unprobed_pairs)} 个候选表对",
-                    percent=15,
-                    trace_id=trace_id,
-                    completed_units=0,
-                    total_units=len(candidate_pairs),
-                    remaining_units=len(candidate_pairs),
-                    unit_label="候选表对",
-                    batch_count=0,
-                    result_count=0,
-                    candidate_pair_count=len(candidate_pairs),
-                    completed_pair_count=0,
-                    remaining_pair_count=len(candidate_pairs),
-                )
-                sampled_relationships, probe_stats = (
-                    await MetadataRelationshipProbeService.probe_candidate_pairs(
-                        data_source,
-                        unprobed_pairs,
-                        relationship_table_index,
-                    )
-                )
-            else:
-                sampled_relationships, probe_stats = [], {
-                    "probed_pair_count": 0,
-                    "confirmed_pair_count": 0,
-                    "rejected_pair_count": 0,
-                    "rejected_reasons": {},
-                    "unverified_pair_count": 0,
-                    "probe_duration_ms": 0,
-                    "probe_unavailable_reason": probe_unavailable_reason,
-                }
-                logger.warning(
-                    "关系数据库探测不可用，回退候选组模型: trace_id=%s, reason=%s",
-                    trace_id,
-                    probe_unavailable_reason,
-                )
+            sampled_relationships = []
+            probe_stats = {
+                "probed_pair_count": 0,
+                "confirmed_pair_count": len(probe_relationships),
+                "rejected_pair_count": 0,
+                "rejected_reasons": {},
+                "unverified_pair_count": 0,
+                "probe_duration_ms": 0,
+                "probe_unavailable_reason": (
+                    probe_unavailable_reason or "business_row_sampling_disabled"
+                ),
+            }
+            logger.info(
+                "关系推荐跳过业务行抽样，未确认候选交给模型: trace_id=%s, "
+                "dataset_id=%s, unprobed_pair_count=%s",
+                trace_id,
+                dataset_id,
+                len(unprobed_pairs),
+            )
 
             collected_keys = set(recent_recommended_keys).union(
                 existing_relationship_keys
@@ -949,17 +951,33 @@ class MetadataGeneratorService:
                     right_table = item.get("right_table")
                     left_column = item.get("left_column")
                     right_column = item.get("right_column")
+                column_pairs = getattr(item, "column_pairs", None)
+                if column_pairs is None and isinstance(item, dict):
+                    column_pairs = item.get("column_pairs")
+                if not column_pairs and left_column and right_column:
+                    column_pairs = ((left_column, right_column),)
+                column_pairs = tuple(
+                    (str(left), str(right))
+                    for left, right in (column_pairs or ())
+                    if left and right
+                )
+                if not column_pairs:
+                    continue
                 relationship = {
                     "source_table": left_table,
                     "target_table": right_table,
-                    "condition": (
-                        f"{left_table}.{left_column} = "
-                        f"{right_table}.{right_column}"
+                    "condition": " AND ".join(
+                        f"{left_table}.{left} = {right_table}.{right}"
+                        for left, right in column_pairs
                     ),
-                    "relation_type": getattr(item, "relation_type", None) or item.get("relation_type"),
-                    "description": getattr(item, "reason", None) or item.get("reason"),
-                    "confidence": getattr(item, "confidence", None) or item.get("confidence"),
-                    "source": getattr(item, "source", None) or item.get("source", "PROBE"),
+                    "relation_type": getattr(item, "relation_type", None)
+                    or (item.get("relation_type") if isinstance(item, dict) else None),
+                    "description": getattr(item, "reason", None)
+                    or (item.get("reason") if isinstance(item, dict) else None),
+                    "confidence": getattr(item, "confidence", None)
+                    or (item.get("confidence") if isinstance(item, dict) else None),
+                    "source": getattr(item, "source", None)
+                    or (item.get("source", "FK") if isinstance(item, dict) else "FK"),
                 }
                 # 探测结论同样执行去重键校验，避免外键与近期缓存重复输出。
                 relationship_key = (
@@ -1100,6 +1118,11 @@ class MetadataGeneratorService:
                 "8. relation_type 只能是 one_to_one、one_to_many、many_to_one。\n"
                 "9. description 使用不超过 80 个中文字符说明关系含义。\n"
             )
+            if strategy == "smart":
+                system_prompt += (
+                    "10. 本次使用智能推断策略，候选可能没有数据库主外键约束；"
+                    "只有字段语义、类型和表业务含义共同支持时才确认，不能把候选本身当作事实。\n"
+                )
             if exclude_descriptions:
                 system_prompt += (
                     "\n【已存在或近期已推荐关系，严禁重复】\n"
@@ -1384,9 +1407,15 @@ class MetadataGeneratorService:
                     "schema_len": len(schema_context),
                     "schema_table_count": len(schema_table_names),
                     "schema_table_names_preview": schema_table_names[:30],
+                    "strategy": strategy,
                     "possible_pair_count": possible_pair_count,
                     "candidate_pair_count": len(candidate_pairs),
                     "filtered_pair_count": possible_pair_count - len(candidate_pairs),
+                    "smart_candidate_pair_count": candidate_build.smart_candidate_pair_count,
+                    "candidate_pair_limit": (
+                        smart_candidate_pair_limit if strategy == "smart" else None
+                    ),
+                    "truncated_pair_count": candidate_build.truncated_pair_count,
                     "candidate_group_count": total_groups,
                     "fk_relationship_count": len(probe_relationships),
                     "probed_pair_count": probe_stats.get("probed_pair_count"),
