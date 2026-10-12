@@ -6,6 +6,7 @@ import pytest
 pytestmark = pytest.mark.no_infrastructure
 ROOT = Path(__file__).resolve().parents[2]
 COMPONENT = ROOT / "frontend/src/components/chat/MessageContinueAnalysis.vue"
+CONTINUE_ACTIONS = ROOT / "frontend/src/components/chat/continueAnalysisActions.ts"
 EMBED = ROOT / "frontend/src/views/EmbedChat.vue"
 DEBUG = ROOT / "frontend/src/views/AgentDebug.vue"
 AGENT_SCHEMA = ROOT / "app/schemas/agent.py"
@@ -17,20 +18,25 @@ CHAT_ENDPOINT = ROOT / "app/api/v1/endpoints/chat.py"
 
 def test_generic_continue_analysis_contains_asset_prompts_and_emits_queries():
     source = COMPONENT.read_text(encoding="utf-8")
+    # 动作文案已抽到共享模块（移动端操作抽屉复用同一批），断言指向唯一来源。
+    actions = CONTINUE_ACTIONS.read_text(encoding="utf-8")
 
     assert '<span aria-hidden="true">✨</span>' not in source
     for label in ("生成可视化分析报告", "保存为 Markdown", "保存为 Word", "提炼生成 Skill"):
-        assert label in source
+        assert label in actions
+    assert "CONTINUE_ANALYSIS_ACTIONS" in source
     assert 'emit("select", action.query)' in source
-    assert "直接调用 create_skills 工具" in source
-    assert "scope 使用 personal" in source
-    assert "不要只输出 Skill 草稿，必须实际调用工具创建" in source
-    assert "当前工作区的 docs 目录" in source
-    assert "完整路径" in source
-    assert "合法的 ```chart ECharts 代码块" in source
-    assert "图表数据必须完全来自当前回复" in source
-    assert "数据不足以生成可靠图表" in source
-    assert "fixed inset-0" in source
+    assert "直接调用 create_skills 工具" in actions
+    assert "scope 使用 personal" in actions
+    assert "不要只输出 Skill 草稿，必须实际调用工具创建" in actions
+    assert "当前工作区的 docs 目录" in actions
+    assert "完整路径" in actions
+    assert "合法的 ```chart ECharts 代码块" in actions
+    assert "图表数据必须完全来自当前回复" in actions
+    assert "数据不足以生成可靠图表" in actions
+    # 移动端抽屉改由公共壳承载（自绘遮罩已删除），桌面浮层保留。
+    assert "<MobileActionSheet" in source
+    assert ':open="open && props.isMobile"' in source
     assert "absolute bottom-full" in source
     assert 'aria-label="关闭继续分析"' in source
 

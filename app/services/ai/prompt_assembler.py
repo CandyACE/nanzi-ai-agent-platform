@@ -111,6 +111,8 @@ class PromptAssemblyInput:
     quick_suggestions_forbidden: bool = False
     runtime_tool_names: Optional[Iterable[str]] = None
     turn_decision: Optional[TurnDecision] = None
+    # 任务级约束原文：仅由本任务创建者设定，渲染为 system 末段的冲突裁决段。
+    task_constraints: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.prompt_layout_mode is not None:
@@ -387,6 +389,13 @@ def _enabled_prompt_plan(params: PromptAssemblyInput) -> PromptPlan:
             PromptSection("ltm_profile", 60, params.ltm_profile or "", source="memory"),
             PromptSection("skills", 70, skills_block, source="skill"),
             PromptSection("sub_agents_context", 80, params.sub_agents_context or "", source="sub_agents"),
+            PromptSection(
+                "task_constraints",
+                90,
+                AgentServicePrompts.task_constraints_block(params.task_constraints),
+                stability="dynamic",
+                source="task",
+            ),
         ),
     )
 
@@ -433,6 +442,10 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
                         skills_dir=params.skills_dir,
                     ),
                 ),
+                (
+                    "task_constraints",
+                    AgentServicePrompts.task_constraints_block(params.task_constraints),
+                ),
             )
         )
         if text and text.strip()
@@ -468,6 +481,12 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
             source="skill",
         ),
         PromptSection("agent_system_prompt", 70, params.agent_system_prompt, stability="stable", source="agent"),
+        PromptSection(
+            "task_constraints",
+            80,
+            AgentServicePrompts.task_constraints_block(params.task_constraints),
+            source="task",
+        ),
     ]
     section_names = tuple(
         section.name
@@ -510,6 +529,14 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
             )
     else:
         full_text = stack_without_platform
+
+    # legacy 非重排分支的 full_text 不经过 dynamic_sections，必须在此单独追加任务约束。
+    # 追加放在 if/else 之后，让 LOCAL 与非 LOCAL（RAGFlow / OpenClaw）引擎行为一致；
+    # 否则同一个字段会因引擎类型而静默失效。
+    # _join_blocks 会跳过空块，约束为空时 full_text 逐字节不变。
+    full_text = _join_blocks(
+        [full_text, AgentServicePrompts.task_constraints_block(params.task_constraints)]
+    )
 
     stable_prefix = _join_blocks([part for part in [platform_global, params.user_profile, agent_db] if part])
     return AssembledSystemPrompt(

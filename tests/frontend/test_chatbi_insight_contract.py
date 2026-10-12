@@ -59,7 +59,9 @@ def test_continue_analysis_uses_one_trigger_and_responsive_chooser():
 
     assert source.count('@click="open = true"') == 1
     assert "isMobile" in source
-    assert "fixed inset-0" in source
+    # 移动端抽屉改由公共壳承载（自绘遮罩已删除），桌面浮层保留。
+    assert "<MobileActionSheet" in source
+    assert ':open="open && isMobile"' in source
     assert "absolute bottom-full" in source
     assert "emit('select', action.query)" in source
     assert "props.actions.slice(0, 6)" in source

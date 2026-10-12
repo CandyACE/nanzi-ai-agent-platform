@@ -308,6 +308,17 @@ def _new_task_run_conversation_id(task_conversation_id: str) -> str:
     return f"{_task_run_conversation_prefix(task_conversation_id)}_run_{uuid.uuid4().hex[:12]}"
 
 
+def _task_constraints_from_config(task_config: Any) -> str:
+    """取出任务级「任务约束指令」（用户填写的裸文本），未填写时返回空串。
+
+    返回裸文本而非包装后的段落：裁决声明与 <task_constraints> 标签由提示词
+    组装层统一施加，保证包装只有一处实现。
+    """
+    if not isinstance(task_config, dict):
+        return ""
+    return str(task_config.get("task_constraints") or "").strip()
+
+
 def _build_scheduled_task_prompt(
     task_id: int,
     agent_display_name: str,
@@ -625,6 +636,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             agent_res = await session.execute(agent_stmt)
             agent_display_name = agent_res.scalar_one_or_none() or task_agent_id
 
+            task_constraints = _task_constraints_from_config(task_config)
             user_info = {
                 "user_id": user.id,
                 "user_name": user.user_name,
@@ -635,6 +647,8 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 "task_name": task_name,
                 "requires_tool_execution": True,
             }
+            if task_constraints:
+                user_info["task_constraints"] = task_constraints
 
             # 4. Execute via Agent Service
             # 标记「已开始」并提交（_mark_task_attempt_started 内部会 commit），

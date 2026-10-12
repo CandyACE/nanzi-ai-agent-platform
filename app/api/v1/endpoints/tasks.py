@@ -48,6 +48,11 @@ async def _task_owner_info(db: AsyncSession, owner_user_id: Any) -> Dict[str, An
     }
 
 
+# 任务约束指令会进入 system prompt，必须限制体量：超限直接拒绝保存，
+# 不做静默截断——否则用户会误以为约束已完整生效。
+TASK_CONSTRAINTS_MAX_CHARS = 2000
+
+
 async def _sanitize_task_config(
     db: AsyncSession,
     owner_info: Dict[str, Any],
@@ -57,6 +62,21 @@ async def _sanitize_task_config(
     if not isinstance(config, dict):
         return config
     sanitized = dict(config)
+    if "task_constraints" in sanitized:
+        raw_constraints = sanitized.get("task_constraints")
+        constraints = str(raw_constraints).strip() if raw_constraints is not None else ""
+        if not constraints:
+            sanitized.pop("task_constraints", None)
+        elif len(constraints) > TASK_CONSTRAINTS_MAX_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"任务约束指令最多 {TASK_CONSTRAINTS_MAX_CHARS} 个字符，"
+                    f"当前 {len(constraints)} 个"
+                ),
+            )
+        else:
+            sanitized["task_constraints"] = constraints
     if "thinking_enable" in sanitized:
         thinking_enable = normalize_thinking_enable(sanitized.get("thinking_enable"))
         if thinking_enable is None:

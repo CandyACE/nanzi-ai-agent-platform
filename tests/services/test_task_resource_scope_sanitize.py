@@ -7,6 +7,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.v1.endpoints import tasks as tasks_endpoint
 
@@ -214,3 +215,53 @@ async def test_update_task_without_config_does_not_touch_scope():
         )
 
     sanitize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sanitize_keeps_trimmed_task_constraints():
+    db = AsyncMock()
+    owner = {"user_id": 7, "user_name": "alice", "role": "user"}
+
+    sanitized = await tasks_endpoint._sanitize_task_config(
+        db, owner, {"task_constraints": "  禁止图表；用列表呈现。  "}
+    )
+
+    assert sanitized["task_constraints"] == "禁止图表；用列表呈现。"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", [None, "", "   ", "\n\t "])
+async def test_sanitize_drops_blank_task_constraints(raw):
+    db = AsyncMock()
+    owner = {"user_id": 7, "user_name": "alice", "role": "user"}
+
+    sanitized = await tasks_endpoint._sanitize_task_config(
+        db, owner, {"task_constraints": raw, "approval_mode": "allow"}
+    )
+
+    assert "task_constraints" not in sanitized
+    assert sanitized["approval_mode"] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_sanitize_rejects_overlong_task_constraints():
+    db = AsyncMock()
+    owner = {"user_id": 7, "user_name": "alice", "role": "user"}
+    overlong = "禁" * (tasks_endpoint.TASK_CONSTRAINTS_MAX_CHARS + 1)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tasks_endpoint._sanitize_task_config(db, owner, {"task_constraints": overlong})
+
+    assert exc_info.value.status_code == 400
+    assert str(tasks_endpoint.TASK_CONSTRAINTS_MAX_CHARS) in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_sanitize_accepts_max_length_task_constraints():
+    db = AsyncMock()
+    owner = {"user_id": 7, "user_name": "alice", "role": "user"}
+    at_limit = "禁" * tasks_endpoint.TASK_CONSTRAINTS_MAX_CHARS
+
+    sanitized = await tasks_endpoint._sanitize_task_config(db, owner, {"task_constraints": at_limit})
+
+    assert len(sanitized["task_constraints"]) == tasks_endpoint.TASK_CONSTRAINTS_MAX_CHARS

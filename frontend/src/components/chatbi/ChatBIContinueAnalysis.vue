@@ -25,29 +25,23 @@
       </svg>
     </button>
 
-    <template v-if="open">
-      <div v-if="isMobile" class="fixed inset-0 z-[260] flex items-end bg-black/35 backdrop-blur-[1px]" @click.self="closeChooser">
-        <div class="w-full rounded-t-2xl border-t border-gray-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl dark:border-gray-800 dark:bg-gray-900">
-          <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-gray-300 dark:bg-gray-600" />
-          <div class="mb-2 flex items-center justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">继续分析</h3>
-              <p class="mt-0.5 text-[11px] text-gray-400">基于刚才的数据选择下一步</p>
-            </div>
-            <button type="button" class="rounded-full p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800" aria-label="关闭继续分析" @click="closeChooser">
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <div class="space-y-1">
-            <button v-for="action in props.actions.slice(0, 6)" :key="action.id" type="button" class="group w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100 dark:hover:bg-gray-800" @click="selectAction(action)">
-              <div class="text-sm font-semibold text-gray-700 group-hover:text-gray-900 dark:text-gray-200 dark:group-hover:text-gray-100">{{ action.label }}</div>
-              <div v-if="action.description" class="mt-0.5 text-xs leading-relaxed text-gray-400">{{ action.description }}</div>
-            </button>
-          </div>
-        </div>
+    <!-- 移动端底部抽屉：常驻挂载（靠 :open 切换），壳才能正确锁 / 放背景滚动 -->
+    <MobileActionSheet
+      :open="open && isMobile"
+      title="继续分析"
+      subtitle="基于刚才的数据选择下一步"
+      @close="closeChooser"
+    >
+      <div class="space-y-1">
+        <button v-for="action in props.actions.slice(0, 6)" :key="action.id" type="button" class="group w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100 dark:hover:bg-gray-800" @click="selectAction(action)">
+          <div class="text-sm font-semibold text-gray-700 group-hover:text-gray-900 dark:text-gray-200 dark:group-hover:text-gray-100">{{ action.label }}</div>
+          <div v-if="action.description" class="mt-0.5 text-xs leading-relaxed text-gray-400">{{ action.description }}</div>
+        </button>
       </div>
+    </MobileActionSheet>
 
-      <div v-else class="absolute bottom-full right-0 z-[80] mb-2 w-72 overflow-hidden rounded-xl border border-gray-200/80 bg-white/95 shadow-[0_14px_40px_rgba(15,23,42,0.16)] backdrop-blur-xl dark:border-gray-700 dark:bg-gray-900/95" role="menu">
+    <template v-if="open && !isMobile">
+      <div class="absolute bottom-full right-0 z-[80] mb-2 w-72 overflow-hidden rounded-xl border border-gray-200/80 bg-white/95 shadow-[0_14px_40px_rgba(15,23,42,0.16)] backdrop-blur-xl dark:border-gray-700 dark:bg-gray-900/95" role="menu">
         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-2.5 dark:border-gray-800">
           <div class="min-w-0">
             <div class="text-xs font-bold text-gray-800 dark:text-gray-100">继续分析</div>
@@ -74,6 +68,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import type { ChatBIInsightAction } from "@/types/chatbiInsight";
+import { chatbiActionIcon as actionIcon } from "@/components/chat/continueAnalysisActions";
+import MobileActionSheet from "@/components/chat/MobileActionSheet.vue";
 
 const props = defineProps<{ actions: ChatBIInsightAction[]; isMobile: boolean; resultId?: string }>();
 const emit = defineEmits<{ (event: "select", query: string): void; (event: "action", action: ChatBIInsightAction): void }>();
@@ -101,10 +97,6 @@ const handleFocusOut = (event: FocusEvent) => {
 const handleDocumentPointerDown = (event: PointerEvent) => {
   if (open.value && !chooserRoot.value?.contains(event.target as Node)) closeChooser();
 };
-const actionIcon = (id: string) => ({
-  trend: "↗", ranking: "#", contribution: "%", anomaly: "!", visualize: "▥", summary: "≡",
-  brief: "▤", monitor: "◉",
-}[id] || "→");
 const selectAction = (action: ChatBIInsightAction) => {
   closeChooser();
   if (action.action_type === "local_action") emit('action', { ...action, result_id: action.result_id || props.resultId });

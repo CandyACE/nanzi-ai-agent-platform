@@ -833,3 +833,59 @@ def test_prompt_inventory_mcp_name_matches_registered_model_tool_name():
     assert registered_name == MCP_MODEL_TOOL_NAME
     assert _prompt_inventory_names(prompt) == {registered_name}
 
+
+# ── 任务约束指令（task_constraints）────────────────────────────────────────
+
+
+THREE_PATHS = (
+    pytest.param({}, id="legacy-plain"),
+    pytest.param({"cache_reorder_enabled": True, "cache_boundary_enabled": True}, id="legacy-cache-reorder"),
+    pytest.param({"layout_mode": "enabled"}, id="enabled-plan"),
+)
+
+
+@pytest.mark.parametrize("path_kwargs", THREE_PATHS)
+def test_task_constraints_blank_is_never_injected(path_kwargs):
+    assembled = assemble_system_prompt(_params(task_constraints="   ", **path_kwargs))
+
+    assert "## 任务约束（冲突裁决）" not in assembled.full_text
+    assert "task_constraints" not in assembled.section_names
+
+
+@pytest.mark.parametrize("path_kwargs", THREE_PATHS)
+def test_task_constraints_appended_to_system_tail(path_kwargs):
+    assembled = assemble_system_prompt(
+        _params(task_constraints="禁止输出图表代码块；用无序列表呈现。", **path_kwargs)
+    )
+
+    assert assembled.full_text.rstrip().endswith("</task_constraints>")
+    assert "禁止输出图表代码块；用无序列表呈现。" in assembled.full_text
+    assert "task_constraints" in assembled.section_names
+
+
+@pytest.mark.parametrize("path_kwargs", THREE_PATHS)
+def test_task_constraints_section_char_count_tracks_content(path_kwargs):
+    assembled = assemble_system_prompt(_params(task_constraints="禁止图表", **path_kwargs))
+
+    assert assembled.section_char_counts["task_constraints"] > 0
+
+
+def test_task_constraints_injected_for_non_local_engine_legacy_path():
+    """非 LOCAL 引擎（RAGFlow / OpenClaw）的 legacy 分支同样要注入约束。
+
+    平台规则段只在 LOCAL 引擎产出，但「任务约束」是任务级要求，
+    不能因为引擎类型而静默失效——否则同一字段的行为随智能体类型变化。
+    """
+    assembled = assemble_system_prompt(
+        _params(task_constraints="禁止输出图表代码块。", engine_type="RAGFLOW")
+    )
+
+    assert assembled.full_text.rstrip().endswith("</task_constraints>")
+    assert "禁止输出图表代码块。" in assembled.full_text
+
+
+def test_task_constraints_blank_not_injected_for_non_local_engine():
+    assembled = assemble_system_prompt(_params(task_constraints="   ", engine_type="RAGFLOW"))
+
+    assert "## 任务约束（冲突裁决）" not in assembled.full_text
+

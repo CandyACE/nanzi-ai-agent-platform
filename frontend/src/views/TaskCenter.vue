@@ -373,6 +373,8 @@ const handleAgentDropdownOutsideClick = (e: MouseEvent) => {
 const loading = ref(false)
 const showEditModal = ref(false)
 const showPromptHelpModal = ref(false)
+const showConstraintsHelpModal = ref(false)
+const taskConstraints = ref('')
 const showLogsDrawer = ref(false)
 const editingTask = ref<Partial<AgentTask>>({})
 const notificationChannelOptions = [
@@ -514,6 +516,33 @@ const applyPromptExample = (text: string) => {
   editingTask.value.prompt = text
   showPromptHelpModal.value = false
   showToast('已填入示例，可按需修改')
+}
+const constraintExamples = [
+  {
+    title: '移动端列表交付',
+    tip: '不要图表，用列表排版',
+    text: '用无序列表呈现结论与关键数据；禁止输出图表代码块（chart / ECharts）；不要使用宽表格；按移动端阅读习惯分行。',
+  },
+  {
+    title: '统一口径与单位',
+    tip: '固化指标口径',
+    text: '金额一律以万元为单位并保留两位小数；时间口径按自然日；同比对比去年同期。',
+  },
+  {
+    title: '限定数据范围',
+    tip: '收窄统计范围',
+    text: '仅统计华东区；排除测试账号与内部账号；只取已生效订单。',
+  },
+  {
+    title: '精简交付',
+    tip: '只要结论',
+    text: '只输出结论与关键数据，不要过程说明、不要复述任务；不要追加反问或建议。',
+  },
+]
+
+const applyConstraintExample = (text: string) => {
+  taskConstraints.value = text
+  showConstraintsHelpModal.value = false
 }
 const promptTemplates = [
   {
@@ -825,6 +854,7 @@ const openCreateModal = async () => {
   const defaultAgentId = systemAgents.value[0]?.id || agents.value[0]?.id || ''
   editingTask.value = { name: '', agent_id: defaultAgentId, cron_expr: '0 8 * * *', prompt: '', status: 1 }
   notificationChannels.value = ['portal']
+  taskConstraints.value = ''
   hydrateExecutionOptions({})
   showAgentDropdown.value = false
   agentSearchQuery.value = ''
@@ -849,6 +879,7 @@ const openEditModal = async (task: AgentTask) => {
   notificationChannels.value = Array.isArray(cfg.notification_channels)
     ? cfg.notification_channels.map((c: string) => String(c))
     : []
+  taskConstraints.value = String(cfg.task_constraints || '')
   hydrateExecutionOptions(cfg)
   showAgentDropdown.value = false
   agentSearchQuery.value = ''
@@ -875,6 +906,9 @@ const saveTask = async () => {
     } else {
       delete baseConfig.notification_channels
     }
+    const constraints = String(taskConstraints.value || '').trim()
+    if (constraints) baseConfig.task_constraints = constraints
+    else delete baseConfig.task_constraints
     baseConfig.approval_mode = taskApprovalMode.value
     if (taskModel.value) baseConfig.model = taskModel.value
     else {
@@ -1604,6 +1638,11 @@ onMounted(async () => {
                   <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full border border-amber-200 flex-shrink-0">
                     我创建的
                   </span>
+                  <span
+                    v-if="String(task.config?.task_constraints || '').trim()"
+                    class="px-2 py-0.5 bg-sky-50 text-sky-700 text-[9px] font-black rounded-full border border-sky-200 flex-shrink-0"
+                    title="该任务已配置任务约束指令"
+                  >约束</span>
                   <span class="px-2 py-0.5 text-[9px] font-black rounded-full border flex items-center flex-shrink-0" :class="taskHealthMeta(task).class">
                     <span class="w-1.5 h-1.5 rounded-full mr-1" :class="taskHealthMeta(task).dot"></span>
                     {{ taskHealthMeta(task).label }}
@@ -2528,6 +2567,30 @@ onMounted(async () => {
           </div>
 
           <div>
+            <div class="mb-1 flex items-center gap-1.5">
+              <label class="text-xs font-bold text-gray-400 uppercase tracking-widest">任务约束指令</label>
+              <span class="text-[10px] font-bold text-gray-300">可选</span>
+              <button
+                type="button"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                title="查看填写说明与示例"
+                aria-label="查看填写说明与示例"
+                @click="showConstraintsHelpModal = true"
+              >?</button>
+            </div>
+            <textarea
+              v-model="taskConstraints"
+              rows="3"
+              maxlength="2000"
+              class="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-xs leading-relaxed text-gray-700 placeholder:text-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20"
+              placeholder="例如：用无序列表呈现、按移动端阅读排版；禁止输出图表代码块；金额单位统一为万元；只看华东区。"
+            ></textarea>
+            <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
+              写<b>怎么做</b>的约束：输出格式、禁止项、业务口径、数据范围。冲突时优先于智能体自身设定；<b>要做什么</b>请填在上面的执行指令里。
+            </p>
+          </div>
+
+          <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">结果通知</label>
             <div class="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-2">
               <div class="flex flex-wrap gap-x-4 gap-y-2">
@@ -2607,6 +2670,55 @@ onMounted(async () => {
         </div>
         <div class="flex justify-end">
           <button type="button" class="px-3 py-1.5 text-xs font-bold text-gray-400 hover:text-gray-600" @click="showPromptHelpModal = false">关闭</button>
+        </div>
+      </div>
+    </Modal>
+
+    <Modal
+      v-if="showConstraintsHelpModal"
+      title="任务约束指令填写说明"
+      size="max-w-md"
+      :z-index="80"
+      @close="showConstraintsHelpModal = false"
+    >
+      <div class="space-y-3">
+        <p class="text-[11px] leading-relaxed text-gray-500">
+          执行指令决定「<b>做什么</b>」，任务约束决定「<b>怎么做</b>」。<br />
+          这里填写的内容会作为<b>高优先级约束</b>合并进智能体的系统提示词——当它与智能体自身的输出习惯（例如默认要求画图表、要求固定表格）冲突时，<b>以这里为准</b>。
+        </p>
+        <div class="rounded-xl border border-gray-100 bg-gray-50/70 p-2.5 space-y-1.5">
+          <p class="text-xs font-black text-gray-800">可以用来约束什么</p>
+          <p class="text-[11px] leading-relaxed text-gray-600"><b>输出形态</b>：列表 / 表格 / 纯文本、禁止图表代码块、按移动端排版。</p>
+          <p class="text-[11px] leading-relaxed text-gray-600"><b>业务口径</b>：指标定义、单位、时间口径、统计方式。</p>
+          <p class="text-[11px] leading-relaxed text-gray-600"><b>数据范围</b>：只看哪些区域 / 业务线 / 数据集。</p>
+          <p class="text-[11px] leading-relaxed text-gray-600"><b>禁止事项</b>：不要多余寒暄、禁止臆测、不要追加反问。</p>
+        </div>
+        <div
+          v-for="example in constraintExamples"
+          :key="example.title"
+          class="rounded-xl border border-gray-100 bg-gray-50/70 p-2.5"
+        >
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <p class="text-xs font-black text-gray-800">{{ example.title }}</p>
+              <p class="mt-0.5 text-[10px] text-gray-400 line-clamp-1">{{ example.tip }}</p>
+            </div>
+            <button
+              type="button"
+              class="shrink-0 rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-100"
+              @click="applyConstraintExample(example.text)"
+            >填入</button>
+          </div>
+          <pre class="max-h-24 overflow-y-auto whitespace-pre-wrap rounded-lg border border-gray-100 bg-white px-2.5 py-2 text-[10px] leading-relaxed text-gray-700">{{ example.text }}</pre>
+        </div>
+        <p class="text-[11px] leading-relaxed text-gray-500">
+          <b>留空即不生效</b> —— 不填写时任务行为与不加约束完全一致。
+        </p>
+        <p class="text-[11px] leading-relaxed text-amber-600">
+          <b>需要强制生效的格式要求，请写在这里。</b>写在「执行指令」里的格式要求不会获得同等优先级。
+        </p>
+        <div class="flex justify-end">
+          <button type="button" class="px-3 py-1.5 text-xs font-bold text-gray-400 hover:text-gray-600" @click="showConstraintsHelpModal = false">关闭</button>
         </div>
       </div>
     </Modal>

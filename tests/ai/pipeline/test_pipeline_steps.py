@@ -233,6 +233,69 @@ async def test_assemble_step_prompt_building_and_boundary():
         assert context.shared_state.get("preparation_ready") is True
 
 
+async def _run_assemble_step_with_user_info(user_info):
+    """跑一遍 AssembleStep，返回回写后的 system prompt。"""
+    from app.services.ai.pipeline.steps.assemble_step import AssembleStep
+
+    class DummyAgentConfig:
+        name = "test_bot"
+        system_prompt = "You are a helpful test bot."
+        engine_type = "LOCAL"
+
+    dummy_config = DummyAgentConfig()
+    context = PipelineContext(
+        messages=[{"role": "user", "content": "查一下昨天的 PUE 峰值"}],
+        user_info=user_info,
+        conversation_id="conv_task_constraints_1",
+    )
+    context.shared_state["agent_config"] = dummy_config
+    context.shared_state["preparation_started_at"] = 0
+
+    with patch(
+        "app.services.ai.context_manager.AgentContextManager.setup_context",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.resolve_prompt_assembler_flags",
+        new_callable=AsyncMock,
+    ) as mock_flags:
+        mock_flags.return_value = (True, True)
+        _ = [chunk async for chunk in AssembleStep().run(context)]
+
+    return dummy_config.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_assemble_step_injects_task_constraints_into_system_prompt():
+    """任务约束必须真的落到 assembled system prompt 末尾，而不只是被传参。
+
+    这是「调度器 user_info → 装配步骤 → 提示词组装」整条链路的唯一行为级断言：
+    其余测试分别锁段落内容、渲染路径与源码接线，但都不足以证明运行时真的生效。
+    """
+    system_prompt = await _run_assemble_step_with_user_info(
+        {
+            "user_id": 123,
+            "is_scheduled_task": True,
+            "task_constraints": "用无序列表呈现；禁止输出图表代码块。",
+        }
+    )
+
+    assert "## 任务约束（冲突裁决）" in system_prompt
+    assert "<task_constraints>" in system_prompt
+    assert "用无序列表呈现；禁止输出图表代码块。" in system_prompt
+    assert system_prompt.rstrip().endswith("</task_constraints>")
+
+
+@pytest.mark.asyncio
+async def test_assemble_step_omits_task_constraints_when_absent_or_blank():
+    """未填写约束时 system prompt 不得出现该段（交互式链路零影响）。"""
+    without_key = await _run_assemble_step_with_user_info({"user_id": 123})
+    blank = await _run_assemble_step_with_user_info({"user_id": 123, "task_constraints": "   "})
+
+    assert "## 任务约束（冲突裁决）" not in without_key
+    assert "## 任务约束（冲突裁决）" not in blank
+    assert without_key == blank
+
+
 @pytest.mark.asyncio
 async def test_assemble_step_debug_override():
     """Verify that AssembleStep handles debug system_prompt_override correctly."""

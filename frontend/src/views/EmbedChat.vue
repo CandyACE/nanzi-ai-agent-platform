@@ -1151,19 +1151,19 @@
                   @open-artifacts="openMessageArtifacts(msg.trace_id)"
                 />
               </div>
-              <!-- Token 消耗：移动端展示图标，桌面端展示 数据库图标 + 用量 12.4K tok -->
+              <!-- 数据 / 文件（移动端）：入口提到明面上，带计数徽标 -->
               <button
-                v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
-                @click="openModelCallStats(msg)"
-                class="flex sm:hidden shrink-0 items-center justify-center text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 p-2.5"
-                :title="getMessageTokenTooltip(msg)"
+                v-if="hasConversationDataFile"
+                type="button"
+                class="sm:hidden flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                aria-label="查看本会话的数据和文件"
+                @click="openMobileActions(msg, 'data')"
               >
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                  <ellipse cx="12" cy="5" rx="9" ry="3" />
-                  <path d="M3 5v14a9 3 0 0 0 18 0V5" />
-                  <path d="M3 12a9 3 0 0 0 18 0" />
-                </svg>
+                <span aria-hidden="true">▤</span>
+                <span v-if="currentMessageReusableCount(msg) > 0" class="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white">数据 {{ currentMessageReusableCount(msg) }}</span>
+                <span v-if="msg.trace_id && artifactCount(msg.trace_id) > 0" class="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white">文件 {{ artifactCount(msg.trace_id) }}</span>
               </button>
+              <!-- Token 消耗（桌面）：移动端不再占操作栏位置，能力进操作抽屉 -->
               <button
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
                 @click="openModelCallStats(msg)"
@@ -1177,8 +1177,8 @@
                 </svg>
                 <span>用量 {{ getMessageTokenAmount(msg) }}</span>
               </button>
-              <!-- 业务扩展与更多操作（保持完整宽度，随操作栏滚动） -->
-              <div class="flex shrink-0 items-center space-x-1">
+              <!-- 业务扩展与更多操作（桌面：保持完整宽度，随操作栏滚动；移动端改由操作抽屉承载） -->
+              <div class="hidden sm:flex shrink-0 items-center space-x-1">
                 <ChatBIContinueAnalysis
                   v-if="msg.chatbiInsight?.actions?.length && checkRole(msg, 'agent') && !msg.isThinking"
                   :actions="msg.chatbiInsight.actions"
@@ -1215,7 +1215,49 @@
                   @save-report="handleSaveReportFromMessage(msg)"
                 />
               </div>
+              <!-- 移动端：⋯ 更多（打开底部操作抽屉） -->
+              <button
+                v-if="hasMobileSheetContent(msg)"
+                type="button"
+                class="sm:hidden flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                aria-haspopup="dialog"
+                :aria-expanded="mobileActionsMessageId === msg.id"
+                @click="openMobileActions(msg, null)"
+              >⋯ 更多</button>
             </div>
+            <!-- 移动端操作抽屉（Teleport 到 body，不参与操作栏布局） -->
+            <MobileActionSheet
+              :open="mobileActionsMessageId === msg.id"
+              title="更多操作"
+              @close="closeMobileActions"
+            >
+              <MobileMessageActionsSheet
+                :focus="mobileActionsFocus"
+                :has-conversation-data-file="hasConversationDataFile"
+                :reusable-count="currentMessageReusableCount(msg)"
+                :artifact-count="msg.trace_id ? artifactCount(msg.trace_id) : 0"
+                :has-reusable-result-entry="hasConversationReusableResult"
+                :has-artifact-entry="hasConversationArtifact"
+                :conversation-reusable-count="conversationReusableResultCount"
+                :conversation-artifact-count="conversationArtifactCount"
+                :can-export="Boolean(msg.trace_id)"
+                :has-trace="Boolean(msg.trace_id)"
+                :has-token-stats="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
+                :token-label="getMessageTokenAmount(msg)"
+                :can-save-report="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
+                :chatbi-actions="msg.chatbiInsight?.actions || []"
+                :show-generic-continue="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && visibleStreamBody(msg)"
+                @export-data="msg.trace_id && exportData(msg.trace_id, 'xlsx')"
+                @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId, msg.trace_id, msg.reusableResultStatus?.status)"
+                @open-artifacts="openMessageArtifacts(msg.trace_id)"
+                @open-trace="msg.trace_id && openEmbedTrace(msg.trace_id)"
+                @open-stats="openModelCallStats(msg)"
+                @save-report="handleSaveReportFromMessage(msg)"
+                @continue-analysis="(query) => handleQuickQuestion(query, 'send', visibleStreamBody(msg))"
+                @chatbi-action="(action) => handleSheetChatbiAction(action, msg)"
+                @close="closeMobileActions"
+              />
+            </MobileActionSheet>
             </div>
         </div>
       </div>
@@ -2347,6 +2389,9 @@ import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import MobileActionSheet from "@/components/chat/MobileActionSheet.vue";
+import MobileMessageActionsSheet from "@/components/chat/MobileMessageActionsSheet.vue";
+import type { ChatBIInsightAction } from "@/types/chatbiInsight";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import MessageActionMenus from "@/components/chat/MessageActionMenus.vue";
 import ReusableResultNotice from "@/components/chat/ReusableResultNotice.vue";
@@ -6966,10 +7011,51 @@ const updateFullScreenStatus = () => {
   isFullScreen.value = !!document.fullscreenElement;
 };
 
+// —— 移动端操作抽屉（<640px 专用）：一个抽屉、两个入口 ——
+const mobileActionsMessageId = ref<string | null>(null);
+const mobileActionsFocus = ref<"data" | null>(null);
+
+const openMobileActions = (msg: Message, focus: "data" | null) => {
+  mobileActionsMessageId.value = msg.id;
+  mobileActionsFocus.value = focus;
+};
+const closeMobileActions = () => {
+  mobileActionsMessageId.value = null;
+  mobileActionsFocus.value = null;
+};
+
+/** 抽屉里至少有一组内容时，「⋯ 更多」才出现（对齐桌面 MessageActionMenus 的 hasMore 语义）。 */
+const hasMobileSheetContent = (msg: Message): boolean =>
+  Boolean(
+    hasConversationDataFile.value ||
+      msg.chatbiInsight?.actions?.length ||
+      (checkRole(msg, "agent") &&
+        isGeneralAgentMessage(msg) &&
+        !msg.chatbiInsight?.actions?.length &&
+        !msg.isThinking &&
+        visibleStreamBody(msg)) ||
+      msg.trace_id ||
+      msg.prompt_tokens !== undefined ||
+      msg.completion_tokens !== undefined ||
+      (canSaveGoldenReportFromMessage(msg) && checkRole(msg, "agent") && !msg.isThinking)
+  );
+
+/** ChatBI 追问分派：local_action 需要原始 action，其余走查询追问（与 ChatBIContinueAnalysis 内部一致）。 */
+const handleSheetChatbiAction = (action: ChatBIInsightAction, msg: Message) => {
+  if (action.action_type === "local_action") {
+    handleChatBIResultAction({ ...action, result_id: action.result_id || msg.chatbiInsight?.result_id }, msg);
+    return;
+  }
+  handleChatBIContinueSelect(action.query);
+};
+
 const windowWidth = ref(window.innerWidth);
 const isMobile = computed(() => windowWidth.value < 640);
 const updateWidth = () => {
+  const wasMobile = isMobile.value;
   windowWidth.value = window.innerWidth;
+  // 跨过 640px 断点时必须收起抽屉，否则状态会悬空
+  if (wasMobile !== isMobile.value) closeMobileActions();
   // Inject device context
   injectedContext.value = {
     ...injectedContext.value,
