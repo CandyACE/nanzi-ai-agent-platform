@@ -106,8 +106,11 @@ def test_embedchat_mobile_bar_exposes_data_entry_and_sheet_trigger():
     source = _read("frontend/src/views/EmbedChat.vue")
     # 移动端「▤ 数据」入口：会话有数据 / 文件时才出现
     assert 'v-if="hasConversationDataFile"' in source
-    assert "@click=\"openMobileActions(msg, 'data')\"" in source
-    assert 'aria-label="查看本会话的数据和文件"' in source
+    # 本消息有数据 / 文件徽标时才进抽屉；没有徽标就退回「查看调用详情」，避免点开空抽屉
+    assert "const hasMessageDataBadge = (msg: Message): boolean" in source
+    assert "hasMessageDataBadge(msg) ? openMobileActions(msg, 'data') : openModelCallStats(msg)" in source
+    # aria-label 随分派动态切换，两种语义都要有
+    assert "hasMessageDataBadge(msg) ? '查看本会话的数据和文件' : '查看本次调用详情'" in source
     # 移动端「⋯ 更多」改为打开同一个抽屉
     assert '@click="openMobileActions(msg, null)"' in source
     assert 'v-if="hasMobileSheetContent(msg)"' in source
@@ -169,3 +172,14 @@ def test_embedchat_wires_sheet_content_close_to_the_sheet():
     start = source.index("<MobileMessageActionsSheet")
     block = source[start : start + 3000]
     assert '@close="closeMobileActions"' in block, "内容组件的 close 必须接到 closeMobileActions"
+
+
+def test_embedchat_renders_legacy_continue_components_in_desktop_form_only():
+    """EmbedChat 的移动端入口统一走操作抽屉；调试页没有抽屉，必须保留移动端形态。"""
+    source = _read("frontend/src/views/EmbedChat.vue")
+    # 触发按钮被 hidden sm:flex 隐藏 ⇒ 组件移动端形态不可达，恒传 false，别再多挂空抽屉壳
+    assert source.count(':is-mobile="false"') == 2, "两个继续分析组件都应恒按桌面形态渲染"
+    assert ':is-mobile="isMobile"' not in source
+    # 反向保护：调试页仍按真实宽度传值，避免联带删掉它的移动端抽屉
+    debug = _read("frontend/src/views/AgentDebug.vue")
+    assert ':is-mobile="isMobile"' in debug, "调试页仍需移动端形态，不得联带清理"
