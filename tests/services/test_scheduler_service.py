@@ -15,6 +15,7 @@ from app.services.ai.scheduler_service import (
     _normalize_task_metrics,
     _should_alert_delivery_failure,
     _should_alert_failure,
+    _task_constraints_from_config,
     _task_permission_options,
     execution_timeout_from_task_config,
     retry_policy_from_task_config,
@@ -318,3 +319,20 @@ async def test_disable_task(seed_data, cleanup_tasks):
             
         finally:
             await scheduler_service.stop()
+
+
+@pytest.mark.no_infrastructure
+def test_task_constraints_from_config_reads_trimmed_text():
+    assert (
+        _task_constraints_from_config({"task_constraints": "  禁止图表  "})
+        == "禁止图表"
+    )
+
+
+@pytest.mark.no_infrastructure
+@pytest.mark.parametrize(
+    "raw_config",
+    [None, "not-a-dict", {}, {"task_constraints": None}, {"task_constraints": "   "}],
+)
+def test_task_constraints_from_config_returns_empty_for_absent_or_blank(raw_config):
+    assert _task_constraints_from_config(raw_config) == ""

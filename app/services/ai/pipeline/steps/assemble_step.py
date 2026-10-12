@@ -319,6 +319,10 @@ class AssembleStep(BasePipelineStep):
             (getattr(agent_config, "engine_type", None) or "LOCAL") if agent_config else "LOCAL"
         )
         forbid_quick_suggestions = self._should_forbid_quick_suggestions(user_info)
+        # 任务约束由调度器写入 user_info（仅在非空时写键）；user_info 可能为 None，
+        # 这里先做空安全归一化，再读取约束并交给提示词组装层注入 system 提示词。
+        user_info = user_info or {}
+        task_constraints = str(user_info.get("task_constraints") or "").strip()
 
         assembly_input = PromptAssemblyInput(
             agent_system_prompt=agent_system_prompt,
@@ -339,6 +343,7 @@ class AssembleStep(BasePipelineStep):
             runtime_tool_names=effective_prompt_tool_names,
             turn_decision=turn_decision,
             prompt_layout_mode=effective_layout_mode,
+            task_constraints=task_constraints,
         )
         assembled_prompt = assemble_system_prompt(assembly_input)
 
