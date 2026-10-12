@@ -106,11 +106,17 @@ def test_embedchat_mobile_bar_exposes_data_entry_and_sheet_trigger():
     source = _read("frontend/src/views/EmbedChat.vue")
     # 移动端「▤ 数据」入口：会话有数据 / 文件时才出现
     assert 'v-if="hasConversationDataFile"' in source
-    # 本消息有数据 / 文件徽标时才进抽屉；没有徽标就退回「查看调用详情」，避免点开空抽屉
+    # 「▤ 数据」三分支分派：有徽标进抽屉；无徽标但有调用统计→查看调用详情；连统计都没有→仍进抽屉
     assert "const hasMessageDataBadge = (msg: Message): boolean" in source
-    assert "hasMessageDataBadge(msg) ? openMobileActions(msg, 'data') : openModelCallStats(msg)" in source
-    # aria-label 随分派动态切换，两种语义都要有
-    assert "hasMessageDataBadge(msg) ? '查看本会话的数据和文件' : '查看本次调用详情'" in source
+    assert "const hasMessageTokenStats = (msg: Message): boolean" in source
+    assert "const handleMobileDataClick = (msg: Message)" in source
+    assert "hasMessageDataBadge(msg) || !hasMessageTokenStats(msg)" in source
+    assert '@click="handleMobileDataClick(msg)"' in source
+    # aria-label 必须与分派同源，不得各自判断（否则会出现「说的」和「做的」不一致）
+    assert "const mobileDataAriaLabel = (msg: Message): string" in source
+    assert ':aria-label="mobileDataAriaLabel(msg)"' in source
+    # 防回退：不得再出现只按徽标判断的旧三元
+    assert "? openMobileActions(msg, 'data') : openModelCallStats(msg)" not in source
     # 移动端「⋯ 更多」改为打开同一个抽屉
     assert '@click="openMobileActions(msg, null)"' in source
     assert 'v-if="hasMobileSheetContent(msg)"' in source

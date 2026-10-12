@@ -1151,13 +1151,13 @@
                   @open-artifacts="openMessageArtifacts(msg.trace_id)"
                 />
               </div>
-              <!-- 数据 / 文件（移动端）：有徽标时进操作抽屉看数据；没有徽标时这个按钮退回原来的「查看调用详情」 -->
+              <!-- 数据 / 文件（移动端）：有徽标进抽屉看数据；没有徽标但能看调用统计则退回「查看调用详情」；两者都没有则仍进抽屉 -->
               <button
                 v-if="hasConversationDataFile"
                 type="button"
                 class="sm:hidden flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-                :aria-label="hasMessageDataBadge(msg) ? '查看本会话的数据和文件' : '查看本次调用详情'"
-                @click="hasMessageDataBadge(msg) ? openMobileActions(msg, 'data') : openModelCallStats(msg)"
+                :aria-label="mobileDataAriaLabel(msg)"
+                @click="handleMobileDataClick(msg)"
               >
                 <span aria-hidden="true">▤</span>
                 <span v-if="currentMessageReusableCount(msg) > 0" class="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white">数据 {{ currentMessageReusableCount(msg) }}</span>
@@ -7030,6 +7030,27 @@ const closeMobileActions = () => {
 /** 本条消息是否带数据 / 文件徽标（与「▤ 数据」按钮上两个徽标同条件）。 */
 const hasMessageDataBadge = (msg: Message): boolean =>
   currentMessageReusableCount(msg) > 0 || Boolean(msg.trace_id && artifactCount(msg.trace_id) > 0);
+
+/** 本条消息是否有 token 统计（与桌面「用量」按钮同条件，决定「查看调用详情」弹层有没有内容）。 */
+const hasMessageTokenStats = (msg: Message): boolean =>
+  msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined;
+
+/** 「▤ 数据」该不该进操作抽屉：有数据 / 文件徽标，或连调用统计都没有（抽屉里至少还有会话级数据入口）。 */
+const shouldOpenMobileDataSheet = (msg: Message): boolean =>
+  hasMessageDataBadge(msg) || !hasMessageTokenStats(msg);
+
+/** 「▤ 数据」点击分派：其余情况退回「查看调用详情」，避免点开一个没有数据可看的空抽屉。 */
+const handleMobileDataClick = (msg: Message) => {
+  if (shouldOpenMobileDataSheet(msg)) {
+    openMobileActions(msg, "data");
+    return;
+  }
+  openModelCallStats(msg);
+};
+
+/** 与 handleMobileDataClick 同源，保证「说的」和「做的」一致。 */
+const mobileDataAriaLabel = (msg: Message): string =>
+  shouldOpenMobileDataSheet(msg) ? "查看本会话的数据和文件" : "查看本次调用详情";
 
 /** 抽屉里至少有一组内容时，「⋯ 更多」才出现（对齐桌面 MessageActionMenus 的 hasMore 语义）。 */
 const hasMobileSheetContent = (msg: Message): boolean =>
