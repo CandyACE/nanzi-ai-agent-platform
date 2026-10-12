@@ -33,6 +33,7 @@ export interface AgentTask {
   config?: {
     notification_channels?: string[]
     task_metrics?: Record<string, any>
+    task_constraints?: string
     [key: string]: any
   }
   last_run_id?: string
