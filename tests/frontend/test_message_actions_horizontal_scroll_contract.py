@@ -13,7 +13,8 @@ def _source(path: Path) -> str:
 def test_embed_message_actions_scroll_without_compressing_items() -> None:
     source = _source(EMBED)
     assert 'class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto' in source
-    assert 'class="flex shrink-0 items-center space-x-1"' in source
+    # 移动端改由操作抽屉承载，桌面专属操作组因此必须是 hidden sm:flex（改动前是 flex，窄屏会被挤压）
+    assert 'class="hidden sm:flex shrink-0 items-center space-x-1"' in source
     assert '<div class="hidden sm:block shrink-0">' in source
     # 间距值由 space-x-1.5 回调为 space-x-1，仅锚定「桌面端专属操作组」这一稳定特征。
     assert 'class="hidden sm:flex shrink-0 items-center' in source
