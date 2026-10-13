@@ -2,7 +2,9 @@ import pytest
 import asyncio
 import logging
 import os
+import sys
 import time
+from dataclasses import dataclass
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core import database, redis
@@ -281,6 +283,260 @@ async def cleanup_registered():
             )
         await session.execute(delete(User).where(User.user_name.in_(names)))
         await session.commit()
+
+
+# --------------------------------------------------------------------------- #
+# 测试数据自清理（兜底 teardown）
+#
+# 背景：tests/api/portal/ 下的接口测试直连开发库，并通过真实 API 造数据
+# （`AuthService.generate_api_key("dup_admin_xxx")` + `POST /api/portal/agents/`），
+# 但没有任何 teardown，数据就永久留在库里——历史上累积出 2416 个测试智能体
+# 和 6884 个测试账号，把「智能体中心」拖到 2422 条、列表打开极慢。
+#
+# 这里给每个用例加一道兜底：用例开始前对 ai_agents / ai_agent_users 拍 id 快照，
+# 结束后删除快照之后新增的行。**快照之前就存在的行一律不动**，真实业务智能体
+# 因此天然安全。seed 账号（test_admin / test_user）是跨用例共用的测试基础设施，
+# 白名单放行，避免被反复建删。
+# --------------------------------------------------------------------------- #
+
+TEST_DATA_KEEP_USER_NAMES = frozenset({"test_admin", "test_user"})
+
+# 以 agent_id 指向智能体主键的附属表：主表删行后这些表会留下孤儿，需一并清理。
+# （ai_agent_versions 另有 ON DELETE CASCADE 外键兜底，显式删除是为顺序明确。）
+AGENT_DEPENDENT_TABLES = (
+    "ai_agent_versions",
+    "ai_agent_scenario_instances",
+    "ai_agent_scenario_install_runs",
+    "ai_agent_scheduled_tasks",
+    "ai_agent_resource_permissions",
+    "ai_agent_eval_runs",
+    "ai_agent_eval_sets",
+    "ai_chatbi_examples",
+)
+
+
+@dataclass(frozen=True)
+class TestDataSnapshot:
+    """用例开始前既有的行 id 集合。"""
+
+    agent_ids: frozenset
+    user_ids: frozenset
+    model_ids: frozenset
+
+
+async def take_test_data_snapshot() -> TestDataSnapshot:
+    """记录当前 ai_agents / ai_agent_users / ai_models 的全部 id。"""
+    from app.models.agent import AIAgent
+    from app.models.ai_model import AIModel
+    from app.models.user import User
+
+    async with AsyncSessionLocal() as session:
+        agent_ids = set((await session.execute(select(AIAgent.id))).scalars().all())
+        user_ids = set((await session.execute(select(User.id))).scalars().all())
+        model_ids = set((await session.execute(select(AIModel.id))).scalars().all())
+    return TestDataSnapshot(
+        agent_ids=frozenset(agent_ids),
+        user_ids=frozenset(user_ids),
+        model_ids=frozenset(model_ids),
+    )
+
+
+_GUARD_STATE = sys.modules.setdefault(
+    "_nanzi_test_data_guard_state",
+    {"hooked": False, "pending": [], "agents": set(), "users": set(), "models": set()},
+)
+
+
+def infrastructure_is_real() -> bool:
+    """本用例是否真的初始化了基础设施（而不是被纯单元测试 patch 掉）。
+
+    有若干单元测试文件用同名 fixture 覆盖了 conftest 的 ``init_infrastructure``，
+    并把 ``AsyncSessionLocal`` / ``init_db`` / ``close_db`` 一并 patch 成 mock——它们
+    刻意不碰数据库。此时 guard 既无意义又有害：conftest 顶层的
+    ``from app.core.orm import AsyncSessionLocal`` 是绑定引用，patch 不到它，于是
+    guard 会绕过被 mock 的连接池直接连真实库；而覆盖版 fixture 没有执行
+    「Force reset engine pool」那步，池里留着上一轮 loop 的连接，checkout 时的
+    pool_pre_ping 就会抛 ``got Future attached to a different loop``。
+
+    这里按属性查找（而非绑定引用）判断，才能看见 patch。
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.core import orm
+
+    return isinstance(orm.AsyncSessionLocal, async_sessionmaker)
+
+
+def _install_row_tracker() -> None:
+    """追踪「本进程经 ORM 新建的行」，teardown 时据此精确清理。
+
+    为什么不按「整表差集」清理：开发时经常有两个 pytest 进程共用一个开发库，
+    差集会把对方刚建的行一起删掉，表现为 POST 返回 200、紧接着 PUT 404 或
+    `StaleDataError: UPDATE ... 0 were matched` 这类幽灵失败。按主键追踪后，
+    各进程只删自己造的数据，天然互不干扰。
+    """
+    if _GUARD_STATE["hooked"]:
+        return
+
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session as SyncSession
+
+    @event.listens_for(SyncSession, "before_flush")
+    def _remember_new_rows(session, flush_context, instances):
+        _GUARD_STATE["pending"] = list(session.new)
+
+    @event.listens_for(SyncSession, "after_flush")
+    def _collect_new_rows(session, flush_context):
+        pending, _GUARD_STATE["pending"] = _GUARD_STATE["pending"], []
+        if not pending:
+            return
+
+        from app.models.agent import AIAgent
+        from app.models.ai_model import AIModel
+        from app.models.user import User
+
+        for obj in pending:
+            pk = getattr(obj, "id", None)
+            if pk is None:
+                continue
+            if isinstance(obj, AIModel):
+                _GUARD_STATE["models"].add(pk)
+            elif isinstance(obj, AIAgent):
+                _GUARD_STATE["agents"].add(pk)
+            elif isinstance(obj, User):
+                _GUARD_STATE["users"].add(int(pk))
+
+    _GUARD_STATE["hooked"] = True
+
+
+def _reset_tracked_rows() -> None:
+    """丢弃 setup 阶段（如 seed）产生的记录，只留用例执行期间新建的行。"""
+    _GUARD_STATE["pending"] = []
+    for key in ("agents", "users", "models"):
+        _GUARD_STATE[key].clear()
+
+
+async def purge_test_data_since(snapshot: TestDataSnapshot) -> dict:
+    """删除本进程在本用例中新造、且不在快照内的智能体/用户/模型及其附属行。"""
+    from sqlalchemy import bindparam, text
+
+    def _by_ids(sql: str):
+        return text(sql).bindparams(bindparam("ids", expanding=True))
+
+    agent_ids = [i for i in _GUARD_STATE["agents"] if i not in snapshot.agent_ids]
+    candidate_user_ids = [i for i in _GUARD_STATE["users"] if i not in snapshot.user_ids]
+    model_ids = [i for i in _GUARD_STATE["models"] if i not in snapshot.model_ids]
+    _reset_tracked_rows()
+
+    stats = {"agents": 0, "users": 0, "models": 0}
+
+    async with AsyncSessionLocal() as session:
+        if agent_ids:
+            for table in AGENT_DEPENDENT_TABLES:
+                await session.execute(
+                    _by_ids(f"DELETE FROM {table} WHERE agent_id IN :ids"),
+                    {"ids": agent_ids},
+                )
+            result = await session.execute(
+                _by_ids("DELETE FROM ai_agents WHERE id IN :ids"), {"ids": agent_ids}
+            )
+            stats["agents"] = result.rowcount or 0
+
+        user_ids = []
+        if candidate_user_ids:
+            rows = (
+                await session.execute(
+                    _by_ids("SELECT id, user_name FROM ai_agent_users WHERE id IN :ids"),
+                    {"ids": candidate_user_ids},
+                )
+            ).all()
+            user_ids = [
+                r.id for r in rows if r.user_name not in TEST_DATA_KEEP_USER_NAMES
+            ]
+        if user_ids:
+            await session.execute(
+                _by_ids("DELETE FROM ai_agent_user_role_relations WHERE user_id IN :ids"),
+                {"ids": user_ids},
+            )
+            result = await session.execute(
+                _by_ids("DELETE FROM ai_agent_users WHERE id IN :ids"), {"ids": user_ids}
+            )
+            stats["users"] = result.rowcount or 0
+
+        # 模型：测试会批量造 provider/thinking/token-limit 之类的探针模型，
+        # 不清就会像智能体中心一样把「模型管理」页塞满（历史上积到 944 条）。
+        if model_ids:
+            result = await session.execute(
+                _by_ids("DELETE FROM ai_models WHERE id IN :ids"), {"ids": model_ids}
+            )
+            stats["models"] = result.rowcount or 0
+
+        await session.commit()
+
+    if user_ids:
+        stats["sessions"] = await _revoke_sessions_for_deleted_users(user_ids)
+
+    return stats
+
+
+async def _revoke_sessions_for_deleted_users(user_ids: list) -> int:
+    """摘掉被删账号在 Redis 里的会话索引与会话键。
+
+    账号没了、认证缓存还在的话，认证层会继续按旧 user_id 返回身份；此时写带外键
+    的配置表就会 500，读自己的 API Key 会 404（真实事故见
+    tests/test_test_data_teardown_guard.py 的会话索引用例）。
+    """
+    from app.core.redis import get_redis
+    from app.services.auth_service import AuthService
+
+    redis_client = await get_redis()
+    if redis_client is None:
+        return 0
+
+    removed = 0
+    for user_id in user_ids:
+        try:
+            removed += await AuthService.revoke_sessions_for_user(
+                user_id, redis=redis_client
+            )
+        except Exception as exc:  # 缓存清理失败不应把用例 teardown 变成 error
+            logger.warning("清理测试账号 %s 的会话缓存失败: %s", user_id, exc)
+    return removed
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def purge_test_data(request, init_infrastructure):
+    """用例级兜底清理：只删本用例新造的数据，既有数据一律不动。
+
+    显式依赖 ``init_infrastructure``，保证 teardown 时数据库连接仍可用
+    （依赖方的 finalizer 先于被依赖方执行）。
+
+    这是**兜底**设施：任何失败都只记警告，绝不把用例变成 error。部分单元测试文件
+    用同名 fixture 覆盖了 ``init_infrastructure``（连带把 DB 初始化 patch 成 mock，
+    于是「Force reset engine pool to bind to current loop」那步不再执行），连接池
+    会留着上一轮 loop 的连接，guard 一查询就抛
+    ``got Future attached to a different loop``——实测曾给
+    tests/ai/test_chatbi_result_stack.py 制造 9 个、tests/services/ai/test_memory_service.py
+    制造 12 个 teardown/setup error。
+    """
+    if request.node.get_closest_marker("no_infrastructure") or not infrastructure_is_real():
+        yield
+        return
+
+    _install_row_tracker()
+    try:
+        snapshot = await take_test_data_snapshot()
+    except Exception as exc:
+        logger.warning("测试数据快照失败，本用例跳过自动清理: %s", exc)
+        yield
+        return
+
+    _reset_tracked_rows()  # seed 等 setup 阶段的插入不算本用例的产出
+    yield
+    try:
+        await purge_test_data_since(snapshot)
+    except Exception as exc:
+        logger.warning("测试数据清理失败（不影响用例结果）: %s", exc)
 
 
 @pytest.fixture

@@ -20,5 +20,9 @@ def test_permission_update_normalizes_forbidden_policy_entries():
 def test_permission_update_rejects_policy_entries_longer_than_storage_limit():
     from app.schemas.permission import PermissionUpdate
 
+    # 上限 255，与 SysApiTool.name / 外部 MCP 工具名的列宽对齐（此前是 100：
+    # 一个超长工具名被勾中会让整页权限保存 422，且永远禁不掉）。
+    PermissionUpdate(forbidden_commands=["x" * 255])  # 边界值必须放行
+
     with pytest.raises(ValidationError):
-        PermissionUpdate(forbidden_commands=["x" * 101])
+        PermissionUpdate(forbidden_commands=["x" * 256])

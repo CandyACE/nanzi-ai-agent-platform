@@ -195,7 +195,9 @@ async def test_schema_endpoint_local_vector_search():
         }
     ]
     
-    request = SchemaRequest(query="test query")
+    # 显式指定 local：否则会去读开发库 system_configs.metadata_provider
+    # （可能被配成 ragflow），让这个「本地向量检索」用例随环境而挂。
+    request = SchemaRequest(query="test query", metadata_provider="local")
     
     with patch("app.services.metadata_service.MetadataService.search_datasets", new_callable=AsyncMock, return_value=[dataset]), \
          patch("app.services.ai.embedding_client.EmbeddingClient.embed_text", new_callable=AsyncMock, return_value=[0.1]*1536), \

@@ -67,6 +67,7 @@ def test_normalize_external_user():
         "user_name": "alice",
         "real_name": "Bob",
         "remark": None,
+        "email": None,
         "extra_data": None,
     }
 
