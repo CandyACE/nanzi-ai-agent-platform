@@ -5,6 +5,7 @@
 ——这几条断言就是钉住"委托"这件事。
 """
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -175,15 +176,21 @@ def test_skills_mode_copy_never_calls_a_skill_a_tool():
 
 def test_both_views_mount_a_skills_catalog_next_to_the_tools_catalog():
     """用户页与角色页各挂两个实例：工具实例保持原样，技能实例紧随其后并绑定 forbidden_skills。"""
-    tools_tag = '<ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />'
-    skills_tag = (
-        '<ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />'
+    # 结构断言而不是单行字面量：属性可能被拆成多行（用户页要传 :inherited），
+    # 用字面量会把"加一个属性"误判成"实例被改动"。[^>] 含换行，因此天然跨行。
+    tools_re = re.compile(
+        r'<ForbiddenToolCatalog\s[^>]*v-model="permissionData\.forbidden_tools"'
+    )
+    skills_re = re.compile(
+        r'<ForbiddenToolCatalog\s[^>]*v-model="permissionData\.forbidden_skills"[^>]*resource="skills"'
     )
     for view in (USERS, ROLES):
         source = view.read_text(encoding="utf-8")
-        assert tools_tag in source, f"{view} 的工具实例被改动"
-        assert skills_tag in source, f"{view} 缺 skills 实例或未绑定 forbidden_skills"
-        assert source.index(tools_tag) < source.index(skills_tag), "技能实例应紧随工具实例之后"
+        tools_match = tools_re.search(source)
+        skills_match = skills_re.search(source)
+        assert tools_match, f"{view} 缺工具实例或未绑定 forbidden_tools"
+        assert skills_match, f"{view} 缺 skills 实例或未绑定 forbidden_skills"
+        assert tools_match.start() < skills_match.start(), "技能实例应紧随工具实例之后"
 
 
 def test_both_views_persist_and_hydrate_forbidden_skills():
@@ -208,7 +215,10 @@ def test_both_views_persist_and_hydrate_forbidden_skills():
 
     roles = ROLES.read_text(encoding="utf-8")
     assert "forbidden_skills: string[]" in roles, "角色页的 permissionData 缺技能字段类型"
-    assert roles.count("forbidden_skills: []") == 2, "角色页的默认值与失败重置不完整"
+    # 下界而不是等号：这条断言的本意是「默认值与失败重置两处都不能缺」。
+    # 智能体级限制的批量回填兜底 `{ forbidden_tools: [], forbidden_skills: [] }` 也是
+    # 一个合法的空默认值，用等号会把这类正当新增判成回归。
+    assert roles.count("forbidden_skills: []") >= 2, "角色页的默认值与失败重置不完整"
     assert "forbidden_skills: perms.forbidden_skills || []" in roles, "角色页没回显已保存的技能"
     assert (
         "forbidden_skills: [...(permissionData.value.forbidden_skills || [])]" in roles

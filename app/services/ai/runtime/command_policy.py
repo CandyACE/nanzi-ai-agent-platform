@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 from typing import Any, Iterable, Optional
 
@@ -61,41 +62,279 @@ def is_shell_like_tool_name(tool_name: Any) -> bool:
     return False
 
 
-def shell_command_tokens(command: str) -> list[str]:
-    """把命令拆成"可执行名"序列：取 basename 并小写，丢掉纯分隔符。
+# 真正**分隔命令**的字符。
+_COMMAND_SEPARATORS = ";&|()"
 
-    用 shlex 而不是 ``str.split``，是为了让 ``/bin/cat``、``cat;``、``a|cat`` 这类写法
-    都归一到 ``cat``；``punctuation_chars`` 让 ``;&|()`` 单独成 token 后被过滤掉。
-    """
+# 交给 shlex 的标点：必须包含重定向符，否则 `cat</etc/passwd` 会连成一个 token，
+# 取 basename 后 `cat` 整个消失（实测可绕过"禁用 cat"）。
+#
+# 但 `<` `>` **不是命令分隔符**：把重定向目标切成分段后它会变成新段的"命令名"，
+# 于是 `echo hi > /tmp/rm` 会命中"禁用 rm"（误杀），而 `sudo -u root cat` 里
+# `-u` 的取值会被当命令、真正的 `cat` 丢失（漏判，安全方向）。所以只让它参与分词，
+# 段内由 `_is_redirect_token` 识别并连同目标一起跳过。
+_LEX_PUNCTUATION = _COMMAND_SEPARATORS + "<>"
+
+# 重定向操作符：只由 `<>`、`&`、数字组成且**至少含一个** `<>`
+# （`&` 单独出现是命令分隔符，不算重定向）。覆盖 `>` `>>` `<` `<<` `<>` `>&` `2>&1` 等。
+_REDIRECT_CHARS = frozenset("<>&0123456789")
+
+# 包装器：真正的命令在它们后面。不展开的话 `sudo cat x` 的命令名会被当成 `sudo`。
+_WRAPPER_COMMANDS = {
+    "env",
+    "sudo",
+    "doas",
+    "nohup",
+    "time",
+    "command",
+    "exec",
+    "nice",
+    "setsid",
+    "stdbuf",
+    "ionice",
+    "timeout",
+}
+
+# 包装器里**带取值**的选项：不显式跳过取值，`sudo -u root cat` 会把 `root` 当成命令名，
+# 真正的 `cat` 整个丢失（实测漏判，安全方向）。取值粘连写法（`-uroot` / `--user=root`）
+# 命中不了精确匹配，但那种写法取值已含在同一个 token 里，跳一个即可。
+_WRAPPER_OPTIONS_WITH_VALUE: dict[str, frozenset[str]] = {
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "sudo": frozenset({
+        "-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
+        "-C", "--close-from", "-r", "--role", "-t", "--type", "-U", "--other-user",
+        "-D", "--chdir", "-R", "--chroot", "-a", "--auth-type",
+    }),
+    "doas": frozenset({"-u", "-C"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "ionice": frozenset({"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"}),
+    "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
+    "time": frozenset({"-f", "--format", "-o", "--output", "-a", "--append"}),
+    "exec": frozenset({"-a"}),
+}
+
+# 包装器的**位置**参数个数（`timeout 5 cat x` 里的 duration 不是命令名）。
+_WRAPPER_POSITIONAL_COUNT = {"timeout": 1}
+
+# shell 解释器：`sh -c "cat x"` 里真正执行的是内层脚本。
+_SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "ash", "busybox"}
+
+# 赋值前缀：`X=1 cat x` 里 `X=1` 不是命令名。
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# 递归展开的上限：防止 `sh -c "sh -c \"sh -c ...\""` 这类构造导致无限递归。
+_MAX_EXPAND_DEPTH = 4
+
+
+def _lex(command: str) -> list[str]:
+    # 换行是命令分隔符，但 shlex 把它当普通空白：`cat a\nrm -rf b` 会被粘成一段，
+    # 于是第二行的命令名永远看不到（实测可绕过）。规范成 `;` 后再分词。
+    normalized = command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ; ")
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+        lexer = shlex.shlex(normalized, posix=True, punctuation_chars=_LEX_PUNCTUATION)
         lexer.whitespace_split = True
-        raw_tokens = list(lexer)
+        return list(lexer)
     except ValueError:
-        raw_tokens = command.split()
-    return [
-        os.path.basename(token).lower()
-        for token in raw_tokens
-        if token and not all(char in ";&|()" for char in token)
-    ]
+        return command.split()
+
+
+def _is_redirect_token(token: str) -> bool:
+    """该 token 是不是重定向操作符（`>` `>>` `<` `2>&1` …）。
+
+    `&` 单独出现是命令分隔符，因此要求至少含一个 `<>`。
+    """
+    if not token:
+        return False
+    if not all(char in _REDIRECT_CHARS for char in token):
+        return False
+    return any(char in "<>" for char in token)
+
+
+def _split_segments(tokens: list[str]) -> list[list[str]]:
+    """按**命令分隔符**切成"子命令"段（`a; b | c` → `[[a], [b], [c]]`）。
+
+    重定向符不切段：`cat < /etc/passwd` 是一段，重定向目标是本段的参数，
+    只有当不了命令名（否则"禁用 passwd"会拦下正常的读文件）。
+    """
+    segments: list[list[str]] = []
+    current: list[str] = []
+    skip_redirect_target = False
+    for token in tokens:
+        if skip_redirect_target:
+            current.append(token)
+            skip_redirect_target = False
+            continue
+        if _is_redirect_token(token):
+            current.append(token)
+            skip_redirect_target = True
+            continue
+        if token and all(char in _COMMAND_SEPARATORS for char in token):
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _is_assignment(token: str) -> bool:
+    return bool(_ASSIGNMENT_RE.match(token))
+
+
+def _normalize(token: str) -> str:
+    return os.path.basename(token).lower() or token.lower()
+
+
+def _script_after_dash_c(args: list[str]) -> Optional[str]:
+    """取出 `-c` / `-lc` / `--command` 后面那个（内层脚本）参数。"""
+    for index, arg in enumerate(args):
+        if arg == "--command":
+            return args[index + 1] if index + 1 < len(args) else None
+        if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+            return args[index + 1] if index + 1 < len(args) else None
+    return None
+
+
+def _skip_wrapper_arguments(segment: list[str], index: int, wrapper: str) -> int:
+    """跳过包装器的实参，返回真正命令所在的下标。
+
+    - 赋值前缀（`env FOO=1 cmd`）跳过；
+    - 带取值的选项（`-u root`）连取值一起跳；
+    - 无值选项 / 取值粘连（`-p`、`-uroot`、`--user=root`）跳一个；
+    - `--` 之后就是命令；
+    - 剩下按该包装器的位置参数个数跳过（`timeout 5 cat`）。
+    """
+    positional = _WRAPPER_POSITIONAL_COUNT.get(wrapper, 0)
+    with_value = _WRAPPER_OPTIONS_WITH_VALUE.get(wrapper, frozenset())
+    while index < len(segment):
+        token = segment[index]
+        if _is_assignment(token):
+            index += 1
+            continue
+        if token == "--":
+            return index + 1
+        if token.startswith("-") and token != "-":
+            index += 2 if token in with_value else 1
+            continue
+        if positional > 0:
+            positional -= 1
+            index += 1
+            continue
+        break
+    return index
+
+
+def _segment_command_names(segment: list[str], depth: int) -> list[str]:
+    """一段里被执行的命令名（可能多个：包装器 + 内层脚本）。"""
+    index = 0
+    while index < len(segment):
+        token = segment[index]
+        if _is_redirect_token(token):
+            # 前导重定向（`> f cmd`）：操作符与它的目标都不是命令名
+            index += 2
+            continue
+        if _is_assignment(token):
+            index += 1
+            continue
+        break
+
+    while index < len(segment):
+        if _is_redirect_token(segment[index]):
+            index += 2
+            continue
+        name = _normalize(segment[index])
+        if name in _WRAPPER_COMMANDS:
+            index = _skip_wrapper_arguments(segment, index + 1, name)
+            continue
+        if name in _SHELL_INTERPRETERS and depth < _MAX_EXPAND_DEPTH:
+            script = _script_after_dash_c(segment[index + 1 :])
+            if script:
+                # 内层脚本按新的命令解析（`sh -c "cat x"` 真正执行的是 cat）
+                return [name, *shell_command_names(script, depth=depth + 1)]
+            return [name]
+        return [name]
+    return []
+
+
+def shell_command_names(command: str, depth: int = 0) -> list[str]:
+    """命令**名**序列（各子命令的可执行名，basename + 小写）。
+
+    只取命令位置的 token，参数一律不参与：旧实现对每个 token 都取 basename，导致
+    `rm -rf /tmp/test` 会命中"禁用 test"（参数路径的 basename），把合法命令误杀。
+    """
+    if not isinstance(command, str) or not command.strip():
+        return []
+    names: list[str] = []
+    for segment in _split_segments(_lex(command)):
+        names.extend(_segment_command_names(segment, depth))
+    return names
+
+
+def shell_command_tokens(command: str, depth: int = 0) -> list[str]:
+    """规范化的 token 序列（basename + 小写），用于**多词规则**（如 `rm -rf`）的窗口匹配。
+
+    同时展开包装器与 `sh -c "..."`：否则 `sh -c "cat /etc/passwd"` 会变成
+    ``['sh', '-c', 'passwd']``——`cat` 丢失，"禁用 cat"被绕过（实测复现）。
+    """
+    if not isinstance(command, str) or not command.strip():
+        return []
+    tokens: list[str] = []
+    for segment in _split_segments(_lex(command)):
+        stripped = [token for token in segment if not _is_assignment(token)]
+        # 丢掉包装器本身**及其实参**，让内层命令落到序列前部，多词规则才匹配得上。
+        # 只丢名字不丢实参的话，`sudo -u root rm -rf /` 会变成 ['-u','root','rm','-rf','/']，
+        # 多词规则 `rm -rf` 依旧滑不到窗口。
+        while stripped and _normalize(stripped[0]) in _WRAPPER_COMMANDS:
+            wrapper = _normalize(stripped[0])
+            cut = _skip_wrapper_arguments(stripped, 1, wrapper)
+            stripped = [token for token in stripped[cut:] if not _is_assignment(token)]
+        if not stripped:
+            continue
+        if (
+            depth < _MAX_EXPAND_DEPTH
+            and _normalize(stripped[0]) in _SHELL_INTERPRETERS
+        ):
+            script = _script_after_dash_c(stripped[1:])
+            if script:
+                tokens.extend(shell_command_tokens(script, depth=depth + 1))
+                continue
+        tokens.extend(_normalize(token) for token in stripped)
+    return tokens
 
 
 def matches_forbidden_command(command: str, rule: str) -> bool:
-    """命令是否命中某条禁用规则（按"连续 token 窗口"匹配）。
+    """命令是否命中某条禁用规则。
 
-    逐 token 精确比对而不是子串包含：规则 ``rm`` 不该被 ``charm`` 命中，也不该拦下
-    ``echo rm``（那只是把 rm 当参数打印）。规则本身可以是多词（``rm -rf``），
-    因此在命令 token 序列上滑一个与规则等长的窗口。
+    按规则形态分派，这是修掉"参数误杀/误报"的关键：
+
+    - **单词规则**（`cat`、`rm`）：只与**命令名序列**比。参数不参与，因此
+      `rm -rf /tmp/test` 不会命中"禁用 test"，`echo rm` 也不会命中"禁用 rm"
+      （后者是 docstring 一直声称、旧实现却没做到的行为）。
+    - **多词规则**（`rm -rf`）：在规范化 token 序列上滑窗，保留原有表达能力。
     """
-    command_tokens = shell_command_tokens(command)
+    if not isinstance(command, str) or not isinstance(rule, str):
+        return False
+    command = command.strip()
+    rule = rule.strip()
+    if not command or not rule:
+        return False
+
     rule_tokens = shell_command_tokens(rule)
-    if not rule_tokens or not command_tokens:
+    if not rule_tokens:
+        return False
+
+    if len(rule_tokens) == 1:
+        return rule_tokens[0] in shell_command_names(command)
+
+    command_tokens = shell_command_tokens(command)
+    if not command_tokens:
         return False
     window = len(rule_tokens)
-    for start in range(len(command_tokens) - window + 1):
-        if command_tokens[start : start + window] == rule_tokens:
-            return True
-    return False
+    return any(
+        command_tokens[start : start + window] == rule_tokens
+        for start in range(len(command_tokens) - window + 1)
+    )
 
 
 async def find_forbidden_command_rule(

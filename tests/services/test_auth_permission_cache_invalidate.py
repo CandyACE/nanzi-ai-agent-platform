@@ -40,11 +40,26 @@ async def test_invalidate_user_auth_cache_accepts_explicit_hash():
     redis.delete.assert_any_await("auth:user_sessions:7")
 
 
+
+def _empty_async_scan_iter(*_args, **_kwargs):
+    """真实 redis-py 的 scan_iter 是异步生成器；AsyncMock 会退化成 coroutine。
+
+    PermissionService._invalidate_user_cache 用 ``async for ... in redis.scan_iter(...)``
+    清理智能体作用域键族（v6 的 ``...:agent:*``），因此桩必须提供异步生成器，
+    否则测到的是"mock 不支持"而不是真实行为。
+    """
+    async def _gen():
+        for _ in ():
+            yield ""
+
+    return _gen()
+
 @pytest.mark.asyncio
 async def test_permission_invalidate_also_clears_auth_cache_and_legacy_v2_key():
     redis = AsyncMock()
     db = AsyncMock()
     service = PermissionService(db)
+    redis.scan_iter = _empty_async_scan_iter
     service._redis = redis
 
     with patch(
@@ -73,6 +88,7 @@ async def test_permission_invalidate_does_not_revoke_user_sessions():
     redis = AsyncMock()
     db = AsyncMock()
     service = PermissionService(db)
+    redis.scan_iter = _empty_async_scan_iter
     service._redis = redis
 
     with patch(

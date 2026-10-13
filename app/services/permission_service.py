@@ -18,6 +18,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# 智能体级作用域缺少迁移时的统一提示（MySQL V168 / PostgreSQL V69）。
+_AGENT_SCOPE_MIGRATION_HINT = (
+    "ai_agent_resource_permissions.agent_id is missing; "
+    "run migration db-prod/V168 (MySQL) or db-prod-pg/V69 (PostgreSQL) first"
+)
+
+# 进程级缓存：ai_agent_resource_permissions.agent_id 是否已由迁移加入。
+# None = 未探测；False = 未迁移（降级为只看全局行，保持既有行为）。
+_AGENT_SCOPE_COLUMN_STATE: Optional[bool] = None
+
 class PermissionService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -28,20 +38,87 @@ class PermissionService:
             self._redis = await get_redis()
         return self._redis
 
-    async def _get_cache_key(self, user_id: int) -> str:
-        # v5: 新增 forbidden_skills（禁用公共技能）。理由与 v4 相同——旧缓存缺该字段会解析成
-        # 空列表 = 未禁用，会让「刚配好的禁用不生效」难以排查，因此升版本强制回源。
-        # 版本沿革：v2（仍在失效列表里兼容清理）、v4（新增 models）、v5（新增禁用技能）。
-        return f"sys:auth:permissions:v5:user:{user_id}"
+    async def _get_cache_key(self, user_id: int, agent_id: Optional[str] = None) -> str:
+        # v6: 新增智能体级作用域（agent_id）。同一用户在不同智能体里的有效禁用集合不同，
+        # 缓存键必须带上作用域，否则「在 A 智能体里禁了 X」会串到 B 智能体（或反之漏禁）。
+        # v5 的理由同样成立：旧缓存缺 forbidden_skills 会解析成空列表 = 未禁用。
+        # 版本沿革：v2（仍在失效列表里兼容清理）、v4（新增 models）、v5（新增禁用技能）、
+        # v6（新增智能体级作用域）。scope 段：全局用 "-"，智能体级用其 agent_id。
+        scope = str(agent_id).strip() if agent_id is not None else ""
+        return f"sys:auth:permissions:v6:user:{user_id}:agent:{scope or '-'}"
 
-    async def get_user_permissions(self, user_id: int) -> UserPermissionsResponse:
+    async def _supports_agent_scope(self) -> bool:
+        """``ai_agent_resource_permissions.agent_id`` 是否已由迁移加入（进程内缓存一次）。
+
+        代码可能**先于迁移**上线。若直接引用不存在的列，SQL 会报错、端点转成 5xx，
+        结果是"禁用资源"整块功能不可用——用一个新功能把老功能打挂是不可接受的。
+        因此未迁移时降级为"只看全局行"（此时库里也不可能有智能体级数据），迁移后自动启用。
+
+        探测失败（例如权限不足读不到 information_schema）按**未迁移**处理：同样是降级到
+        既有行为，不会让权限系统整体报错。
+        """
+        global _AGENT_SCOPE_COLUMN_STATE
+        if _AGENT_SCOPE_COLUMN_STATE is None:
+            try:
+                from sqlalchemy import text
+
+                result = await self.db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.columns "
+                        "WHERE table_name = 'ai_agent_resource_permissions' "
+                        "AND column_name = 'agent_id'"
+                    )
+                )
+                _AGENT_SCOPE_COLUMN_STATE = int(result.scalar() or 0) > 0
+            except Exception as ex:  # noqa: BLE001
+                logger.warning(
+                    "[agent-scope] Failed to probe agent_id column; "
+                    "falling back to global-only scope: %s",
+                    ex,
+                )
+                _AGENT_SCOPE_COLUMN_STATE = False
+        return _AGENT_SCOPE_COLUMN_STATE
+
+    async def _agent_scope_filters(self, agent_id: Optional[str]):
+        """权限行的作用域过滤条件（原生 SQL，因为 ORM **刻意不映射** agent_id）。
+
+        - 未迁移（无 ``agent_id`` 列）：返回空条件，即"不过滤"——此时库里不可能有
+          智能体级行，等价于既有行为；
+        - ``agent_id=None``（全局视角）：只取 ``agent_id IS NULL`` 的行，与历史行为一致；
+        - 指定智能体：取「全局行 ∪ 该智能体行」，即把两层禁用合并成"该智能体内的有效禁用"。
+
+        合并放在这里而不是各调用方，是为了避免出现"有的入口并了、有的没并"——
+        同一个用户在不同智能体里的边界必须是同一套判定。
+        """
+        if not await self._supports_agent_scope():
+            return ()
+        from sqlalchemy import text
+
+        scope = str(agent_id).strip() if agent_id is not None else ""
+        if not scope:
+            return (text("agent_id IS NULL"),)
+        return (
+            text("(agent_id IS NULL OR agent_id = :agent_scope)").bindparams(
+                agent_scope=scope
+            ),
+        )
+
+    async def get_user_permissions(
+        self, user_id: int, agent_id: Optional[str] = None
+    ) -> UserPermissionsResponse:
+        """用户在该作用域下的有效权限。
+
+        ``agent_id=None`` 返回**全局**有效权限（与历史行为一致）；传入某个 agent_id 时返回
+        **该智能体内**的有效权限 = 全局禁用 ∪ 该智能体级禁用——调用方不需要自己合并，
+        避免"有的入口并了、有的没并"这类漂移。
+        """
         try:
             parsed_uid = int(user_id)
         except (TypeError, ValueError):
             parsed_uid = user_id
         # 1. Try Cache
         redis = await self._get_redis()
-        cache_key = await self._get_cache_key(parsed_uid)
+        cache_key = await self._get_cache_key(parsed_uid, agent_id)
         if redis:
             cached_data = await redis.get(cache_key)
             if cached_data:
@@ -75,7 +152,8 @@ class PermissionService:
         # C. Fetch Direct Permissions
         direct_stmt = select(ResourcePermission).where(
             ResourcePermission.user_id == parsed_uid,
-            ResourcePermission.enabled == True
+            ResourcePermission.enabled == True,
+            *(await self._agent_scope_filters(agent_id)),
         )
         direct_perms = (await self.db.execute(direct_stmt)).scalars().all()
         self._aggregate_permissions(perm_set, direct_perms)
@@ -86,7 +164,8 @@ class PermissionService:
             UserRoleRelation, ResourcePermission.role_id == UserRoleRelation.role_id
         ).where(
             UserRoleRelation.user_id == parsed_uid,
-            ResourcePermission.enabled == True
+            ResourcePermission.enabled == True,
+            *(await self._agent_scope_filters(agent_id)),
         )
         role_perms = (await self.db.execute(role_perm_stmt)).scalars().all()
         self._aggregate_permissions(perm_set, role_perms)
@@ -111,11 +190,14 @@ class PermissionService:
         return response
 
     async def get_user_direct_permissions(self, user_id: int) -> PermissionSet:
-        """仅该用户直配的权限（不含角色继承）。
+        """仅该用户直配的**全局**权限（不含角色继承，也不含智能体级作用域）。
 
         禁用资源页必须基于它回显与提交：``get_user_permissions`` 返回的是「用户 ∪ 角色」的
         有效权限，拿它整份写回会把角色级禁用固化成用户级记录——角色侧随后取消禁用，
         用户依旧被禁（黑名单收不回来）。
+
+        同理，智能体级行也不该混进全局禁用页的直配集合：页面上"来自角色"与"用户直配"两栏
+        都只讲全局；智能体级限制由智能体卡片上的「功能限制」弹框单独读写。
         """
         try:
             parsed_uid = int(user_id)
@@ -124,6 +206,7 @@ class PermissionService:
         stmt = select(ResourcePermission).where(
             ResourcePermission.user_id == parsed_uid,
             ResourcePermission.enabled == True,
+            *(await self._agent_scope_filters(None)),
         )
         rows = (await self.db.execute(stmt)).scalars().all()
         perm_set = PermissionSet()
@@ -131,7 +214,11 @@ class PermissionService:
         return perm_set
 
     async def _role_derived_forbidden_ids(self, user_id: int, resource_type: str) -> set[str]:
-        """该用户经角色继承到的禁用项（用于避免在用户级重复落库）。"""
+        """该用户经角色继承到的**全局**禁用项（用于避免在用户级重复落库）。
+
+        只取 ``agent_id IS NULL`` 的行：智能体级限制是另一套作用域，不该影响
+        全局禁用页"用户直配 vs 角色继承"的判定。
+        """
         stmt = (
             select(ResourcePermission.resource_id)
             .join(UserRoleRelation, ResourcePermission.role_id == UserRoleRelation.role_id)
@@ -139,9 +226,118 @@ class PermissionService:
                 UserRoleRelation.user_id == user_id,
                 ResourcePermission.resource_type == resource_type,
                 ResourcePermission.enabled == True,
+                *(await self._agent_scope_filters(None)),
             )
         )
         return {str(value) for value in (await self.db.execute(stmt)).scalars().all()}
+
+    async def get_agent_scoped_forbidden_ids(
+        self, *, user_id: Optional[int] = None, role_id: Optional[int] = None, agent_id: str
+    ) -> dict[str, list[str]]:
+        """某一「主体 × 智能体」自己配置的禁用项（**不含**全局行）。
+
+        供「功能限制」弹框回显：弹框要区分"我在这里禁的"与"全局已经禁了的"（后者只读），
+        所以这里不能走 ``get_user_permissions`` 的并集。
+
+        走原生 SQL 的理由见 ``app/models/permission.py`` 的注释：ORM 不映射 agent_id，
+        否则未迁移的库会在 SELECT 的字段列表上报 Unknown column。
+        """
+        scope = str(agent_id).strip()
+        if not scope:
+            return {"forbidden_tools": [], "forbidden_skills": []}
+        if not await self._supports_agent_scope():
+            raise RuntimeError(_AGENT_SCOPE_MIGRATION_HINT)
+        if user_id is None and role_id is None:
+            return {"forbidden_tools": [], "forbidden_skills": []}
+
+        from sqlalchemy import text
+
+        subject_column = "user_id" if user_id is not None else "role_id"
+        subject_value = user_id if user_id is not None else role_id
+        stmt = text(
+            f"SELECT resource_type, resource_id FROM ai_agent_resource_permissions "
+            f"WHERE {subject_column} = :subject AND agent_id = :scope "
+            # 写 TRUE 而不是 1：PG 里本列是 BOOLEAN，BOOLEAN 与 INTEGER 之间没有隐式转换，
+            # 用整型字面量比较会直接报 operator does not exist: boolean = integer；
+            # 而 MySQL 把 TRUE 当 1 的别名，两套库都能跑。
+            f"AND enabled = TRUE AND resource_type IN ('forbidden_tool', 'forbidden_skill')"
+        ).bindparams(subject=int(subject_value), scope=scope)
+        rows = (await self.db.execute(stmt)).all()
+        result: dict[str, list[str]] = {"forbidden_tools": [], "forbidden_skills": []}
+        for resource_type, resource_id in rows:
+            if resource_type == "forbidden_tool" and resource_id not in result["forbidden_tools"]:
+                result["forbidden_tools"].append(resource_id)
+            elif resource_type == "forbidden_skill" and resource_id not in result["forbidden_skills"]:
+                result["forbidden_skills"].append(resource_id)
+        return result
+
+    async def update_agent_scoped_forbidden_ids(
+        self,
+        *,
+        agent_id: str,
+        user_id: Optional[int] = None,
+        role_id: Optional[int] = None,
+        forbidden_tools: Optional[Iterable[str]] = None,
+        forbidden_skills: Optional[Iterable[str]] = None,
+    ) -> dict[str, list[str]]:
+        """覆盖式写入某「主体 × 智能体」的禁用项（原生 SQL）。
+
+        只动 ``agent_id`` 等于该值的行——全局禁用行（``agent_id IS NULL``）与**其它智能体**
+        的行都必须原样保留；后者尤其容易写错成"整表重建"，那会把别的智能体的限制一起清掉。
+        传 ``None`` 表示不修改该类别；传空列表表示清空该类别。
+        """
+        scope = str(agent_id).strip()
+        if not scope:
+            raise ValueError("agent_id is required for agent-scoped restrictions")
+        if not await self._supports_agent_scope():
+            raise RuntimeError(_AGENT_SCOPE_MIGRATION_HINT)
+        if user_id is None and role_id is None:
+            raise ValueError("either user_id or role_id is required")
+
+        from sqlalchemy import text
+
+        subject_column = "user_id" if user_id is not None else "role_id"
+        subject_value = int(user_id if user_id is not None else role_id)
+
+        payload: list[tuple[str, Iterable[str]]] = []
+        if forbidden_tools is not None:
+            payload.append(("forbidden_tool", forbidden_tools))
+        if forbidden_skills is not None:
+            payload.append(("forbidden_skill", forbidden_skills))
+
+        for resource_type, values in payload:
+            await self.db.execute(
+                text(
+                    f"DELETE FROM ai_agent_resource_permissions "
+                    f"WHERE {subject_column} = :subject AND agent_id = :scope "
+                    f"AND resource_type = :rtype"
+                ).bindparams(subject=subject_value, scope=scope, rtype=resource_type)
+            )
+            seen: set[str] = set()
+            for value in values:
+                clean = str(value).strip()
+                if not clean or clean in seen:
+                    continue
+                seen.add(clean)
+                await self.db.execute(
+                    text(
+                        f"INSERT INTO ai_agent_resource_permissions "
+                        f"({subject_column}, agent_id, resource_type, resource_id, enabled, created_at, updated_at) "
+                        # TRUE 而非 1，理由同上面的读取查询（PG 的 BOOLEAN 不接受整型字面量）
+                        f"VALUES (:subject, :scope, :rtype, :rid, TRUE, NOW(), NOW())"
+                    ).bindparams(
+                        subject=subject_value, scope=scope, rtype=resource_type, rid=clean
+                    )
+                )
+        await self.db.flush()
+
+        if user_id is not None:
+            await self._invalidate_user_cache(int(user_id))
+        else:
+            await self._invalidate_role_cache(int(role_id))
+        return await self.get_agent_scoped_forbidden_ids(
+            user_id=user_id, role_id=role_id, agent_id=scope
+        )
 
     async def get_accessible_dataset_ids_csv(self, user_id: int) -> str:
         """
@@ -693,10 +889,14 @@ class PermissionService:
                     types_to_update.append(resource_type)
             if "models" in updates.model_fields_set:
                 types_to_update = [*types_to_update, "model"]
+            # 只删**全局**行：ORM 刻意不映射 agent_id（防"代码先于迁移上线"时接口整体 503），
+            # 生成的 DELETE 因而没有作用域条件。迁移执行后若不显式加 agent_id IS NULL，
+            # 这一句会把该用户在所有智能体上的限制一起删掉——管理员改一次菜单就静默丢失。
             await self.db.execute(
                 delete(ResourcePermission).where(
                     ResourcePermission.user_id == user_id,
-                    ResourcePermission.resource_type.in_(types_to_update)
+                    ResourcePermission.resource_type.in_(types_to_update),
+                    *(await self._agent_scope_filters(None)),
                 )
             )
 
@@ -768,10 +968,17 @@ class PermissionService:
             raise e
 
     async def get_role_permissions(self, role_id: int) -> UserPermissionsResponse:
-        """Get permissions assigned to a Role"""
+        """Get permissions assigned to a Role
+
+        只返回**全局**权限（``agent_id IS NULL``）：这是角色权限弹框的回显来源，
+        智能体级行一旦混进来，管理员点一次保存就会把"只禁某个智能体"固化成
+        "该角色全局禁用"——黑名单收不回来。作用域过滤与
+        ``get_user_permissions`` / ``get_user_direct_permissions`` 保持同一实现。
+        """
         stmt = select(ResourcePermission).where(
             ResourcePermission.role_id == role_id,
-            ResourcePermission.enabled == True
+            ResourcePermission.enabled == True,
+            *(await self._agent_scope_filters(None)),
         )
         perms = (await self.db.execute(stmt)).scalars().all()
 
@@ -802,10 +1009,12 @@ class PermissionService:
                     types_to_update.append(resource_type)
             if "models" in updates.model_fields_set:
                 types_to_update = [*types_to_update, "model"]
+            # 同上：角色侧同样只能删全局行，否则会连带删掉该角色在各智能体上的限制。
             await self.db.execute(
                 delete(ResourcePermission).where(
                     ResourcePermission.role_id == role_id,
-                    ResourcePermission.resource_type.in_(types_to_update)
+                    ResourcePermission.resource_type.in_(types_to_update),
+                    *(await self._agent_scope_filters(None)),
                 )
             )
 
@@ -853,10 +1062,18 @@ class PermissionService:
     async def _invalidate_user_cache(self, user_id: int):
         redis = await self._get_redis()
         if redis:
+            # v6 全局键
             await redis.delete(await self._get_cache_key(user_id))
-            # 兼容历史 v2 / v4 key，避免旧缓存继续命中
+            # v6 的智能体作用域键是一族（同一用户 × N 个智能体），必须整族清掉：
+            # 只删全局键会让「某智能体里刚取消的禁用」在 TTL 内继续生效。
+            # 用 SCAN 而不是 KEYS —— 后者在大 key 空间会阻塞 Redis。
+            pattern = f"sys:auth:permissions:v6:user:{user_id}:agent:*"
+            async for key in redis.scan_iter(match=pattern, count=200):
+                await redis.delete(key)
+            # 兼容历史版本 key，避免旧缓存继续命中
             await redis.delete(f"sys:auth:permissions:v2:user:{user_id}")
             await redis.delete(f"sys:auth:permissions:v4:user:{user_id}")
+            await redis.delete(f"sys:auth:permissions:v5:user:{user_id}")
             try:
                 from app.services.ai.config import AgentConfigProvider
                 await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=user_id)
@@ -873,6 +1090,18 @@ class PermissionService:
             )
         except Exception as ex:
             logger.warning(f"Failed to invalidate auth api_key cache for user {user_id}: {ex}")
+
+    async def _invalidate_role_cache(self, role_id: int) -> None:
+        """角色级变更后，失效该角色**所有成员**的权限缓存。
+
+        角色级智能体限制只影响拥有该角色的用户，因此按成员精确失效而不是清全局——
+        同时也要覆盖他们的智能体作用域键族（见 ``_invalidate_user_cache``）。
+        """
+        user_ids_stmt = select(UserRoleRelation.user_id).where(
+            UserRoleRelation.role_id == int(role_id)
+        )
+        for uid in (await self.db.execute(user_ids_stmt)).scalars().all():
+            await self._invalidate_user_cache(uid)
 
     async def invalidate_cached_permissions_for_users(self, user_ids: Iterable[int]) -> None:
         """Clear permission cache for users (e.g. after role membership changes outside update_user_roles)."""

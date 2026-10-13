@@ -117,7 +117,7 @@ async def test_permission_cache_key_is_bumped_for_forbidden_skills():
     """forbidden_skills 是 v4 之后加的：不升版会让旧缓存缺字段 = 未禁用，禁用不生效。"""
     service = PermissionService(None)
     key = await service._get_cache_key(42)
-    assert key == "sys:auth:permissions:v5:user:42"
+    assert key == "sys:auth:permissions:v6:user:42:agent:-"
 
 
 # ---------------------------------------------------------------- F2

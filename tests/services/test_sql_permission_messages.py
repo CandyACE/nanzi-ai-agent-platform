@@ -223,7 +223,7 @@ async def test_execute_sql_query_core_marks_permission_notice_when_row_filter_re
         def __init__(self, _session):
             pass
 
-        async def get_user_permissions(self, _user_id):
+        async def get_user_permissions(self, _user_id, agent_id=None):
             return SimpleNamespace(roles=[])
 
     async def fake_sandbox_verify(_session, *, sql, data_source, dialect):

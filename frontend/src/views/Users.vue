@@ -1266,9 +1266,16 @@
                       </div>
 
                       <!-- 直配可编辑：禁用工具 / 技能 / 命令 -->
-                      <ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />
+                      <ForbiddenToolCatalog
+                        v-model="permissionData.forbidden_tools"
+                        :inherited="inheritedForbidden.forbidden_tools"
+                      />
                       <!-- 公共技能与工具并列：同一个组件泛化出 skills 模式，候选来自 skill_candidates -->
-                      <ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />
+                      <ForbiddenToolCatalog
+                        v-model="permissionData.forbidden_skills"
+                        resource="skills"
+                        :inherited="inheritedForbidden.forbidden_skills"
+                      />
 
                       <!-- 2. 禁用 Bash 命令关键字 -->
                       <div class="border border-gray-150 rounded-xl p-3 bg-white flex flex-col">
@@ -1355,6 +1362,27 @@
                             {{ res.description || res.id }}
                           </p>
                         </div>
+                        <!-- 智能体卡片：只有已勾选（已授权）的智能体才值得配「功能限定」，
+                             没分配就不必配；角标 = 该智能体上已禁用的工具/技能条目数 -->
+                        <button
+                          v-if="activeResTab === 'agents' && (permissionData as any).agents.includes(res.id)"
+                          type="button"
+                          class="shrink-0 self-center ml-1 px-2 py-1 rounded-lg border text-[10px] font-bold whitespace-nowrap"
+                          :class="
+                            agentRestrictionCount(res.id) > 0
+                              ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                          "
+                          title="只在该智能体里禁用选定的工具 / MCP 工具 / 技能"
+                          @click.stop.prevent="openAgentRestriction(res)"
+                        >
+                          功能限定
+                          <span
+                            v-if="agentRestrictionCount(res.id) > 0"
+                            class="ml-1 inline-block min-w-[1.1rem] text-center px-1 rounded-full bg-red-600 text-white text-[9px] leading-4"
+                            >{{ agentRestrictionCount(res.id) }}</span
+                          >
+                        </button>
                       </label>
                       </template>
                     </div>
@@ -1500,6 +1528,16 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- 智能体级功能限定：用户 × 单个智能体 × 工具/MCP工具/技能（与全局禁用取并集） -->
+    <AgentRestrictionDialog
+      v-model="showAgentRestrictionDialog"
+      kind="user"
+      :scope-id="editingUserId"
+      :agent-id="agentRestrictionTargetId"
+      :agent-label="agentRestrictionTargetLabel"
+      @saved="onAgentRestrictionSaved"
+    />
 
     <!-- View API Key Dialog -->
     <Teleport to="body">
@@ -2295,8 +2333,16 @@ import {
 } from "../utils/userExtraData";
 import Switch from "../components/Switch.vue";
 import ForbiddenToolCatalog from "../components/system/ForbiddenToolCatalog.vue";
+import AgentRestrictionDialog from "../components/system/AgentRestrictionDialog.vue";
 import { parseForbiddenCommands } from "../utils/forbiddenCommands";
 import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge";
+import {
+  agentRestrictionCacheKey,
+  agentRestrictionCountsPath,
+  countAgentRestrictionBadge,
+  type AgentRestrictionLists,
+} from "../utils/agentRestrictions";
+import { writeAgentRestriction } from "../utils/agentRestrictionCache";
 import {
   peekForbiddenCatalog,
   subscribeForbiddenCatalog,
@@ -2903,6 +2949,17 @@ const syncForbiddenCatalogSnapshot = () => {
 };
 let unsubscribeForbiddenCatalog: (() => void) | null = null;
 
+// F8：徽标计数需要候选目录（判断哪些选中项属于同一个别名组），目录由 ForbiddenToolCatalog
+// 加载，这里只订阅共享缓存；卸载必须退订，否则回调会一直持有本页状态。
+onMounted(() => {
+  syncForbiddenCatalogSnapshot();
+  unsubscribeForbiddenCatalog = subscribeForbiddenCatalog(syncForbiddenCatalogSnapshot);
+});
+onUnmounted(() => {
+  unsubscribeForbiddenCatalog?.();
+  unsubscribeForbiddenCatalog = null;
+});
+
 /**
  * tab 徽标口径：禁用资源 = 工具条目数 + 命令条目数 + 技能条目数（用户视角，一个别名组算 1），
  * 其余 tab = 已勾选资产数。计数与角色页共用同一个纯函数，避免两页数字对不上。
@@ -2942,6 +2999,10 @@ const resetPermissionBuffers = () => {
   forbiddenCommandsText.value = "";
   permissionsLoaded.value = false;
   permissionsLoadError.value = "";
+  // 智能体级「功能限定」的计数与弹框目标也属于**这个用户**：不复位会让上一个用户的
+  // 角标残留（获取逻辑对已有键会跳过请求，于是直接显示别人的数字）。
+  agentRestrictionCounts.value = {};
+  agentRestrictionTarget.value = null;
 };
 
 // F3：身份一变就清空缓冲。切到非 user 时尤其重要——保存判定虽然已经基于真实身份，
@@ -2957,16 +3018,77 @@ watch(
   },
 );
 
-// F8：徽标计数需要候选目录（判断哪些选中项属于同一个别名组），目录由 ForbiddenToolCatalog
-// 加载，这里只订阅共享缓存；卸载必须退订，否则回调会一直持有本页状态。
-onMounted(() => {
-  syncForbiddenCatalogSnapshot();
-  unsubscribeForbiddenCatalog = subscribeForbiddenCatalog(syncForbiddenCatalogSnapshot);
-});
-onUnmounted(() => {
-  unsubscribeForbiddenCatalog?.();
-  unsubscribeForbiddenCatalog = null;
-});
+/**
+ * 智能体级「功能限定」：目标是「该用户 × 单个智能体 × 资源」，与全局禁用取并集。
+ *
+ * 角标要显示每个**已勾选**智能体上的已禁条目数，而接口按智能体提供，所以只在
+ * 「智能体」tab 可见时按需加载，并走 agentRestrictionCache 去重（同一次打开里
+ * 同一个智能体只请求一次；保存后由弹框回填，不必再 GET）。
+ */
+const agentRestrictionTarget = ref<{ id: string; label: string } | null>(null);
+const showAgentRestrictionDialog = ref(false);
+const agentRestrictionCounts = ref<Record<string, number>>({});
+const agentRestrictionTargetId = computed(() => agentRestrictionTarget.value?.id || "");
+const agentRestrictionTargetLabel = computed(
+  () => agentRestrictionTarget.value?.label || "",
+);
+
+const agentRestrictionCacheKeyFor = (agentId: string) =>
+  agentRestrictionCacheKey("user", editingUserId.value ?? "", agentId);
+
+const applyAgentRestrictionCount = (agentId: string, lists: AgentRestrictionLists) => {
+  agentRestrictionCounts.value = {
+    ...agentRestrictionCounts.value,
+    [String(agentId)]: countAgentRestrictionBadge(lists),
+  };
+};
+
+/** 卡片角标：只反映已知的限制数（目录未加载时按去重计数，口径与弹框一致）。 */
+const agentRestrictionCount = (agentId: string) =>
+  agentRestrictionCounts.value[String(agentId)] || 0;
+
+const openAgentRestriction = (res: any) => {
+  agentRestrictionTarget.value = {
+    id: String(res?.id ?? ""),
+    label: String(res?.platform_name || res?.display_name || res?.name || res?.id || ""),
+  };
+  showAgentRestrictionDialog.value = true;
+};
+
+const onAgentRestrictionSaved = (lists: AgentRestrictionLists) => {
+  const agentId = agentRestrictionTarget.value?.id;
+  if (agentId) applyAgentRestrictionCount(agentId, lists);
+};
+
+/**
+ * 已勾选智能体的已禁数量：**一次批量接口**取齐，而不是逐个智能体 GET。
+ *
+ * 走批量不只是省请求：回填时顺带写进限制缓存，管理员随后打开弹框即命中，不再多打一次。
+ * 整批失败时所有卡片角标显示 0，入口仍可用（打开弹框会给出明确报错）。
+ */
+const loadAgentRestrictionCounts = async () => {
+  const userId = editingUserId.value;
+  if (!canEditPermissions.value || !userId) return;
+  const pending = (permissionData.value.agents || [])
+    .map((id: any) => String(id))
+    .filter((id: string) => !(id in agentRestrictionCounts.value));
+  if (!pending.length) return;
+  try {
+    const response = await axios.get(
+      agentRestrictionCountsPath("user", userId, pending),
+    );
+    const restrictions = response?.data?.restrictions || {};
+    for (const agentId of pending) {
+      const lists = writeAgentRestriction(
+        agentRestrictionCacheKeyFor(agentId),
+        restrictions[agentId] || { forbidden_tools: [], forbidden_skills: [] },
+      );
+      applyAgentRestrictionCount(agentId, lists);
+    }
+  } catch (error) {
+    console.warn("加载智能体功能限定计数失败", error);
+  }
+};
 
 // Tree Logic
 const toggleTreeItem = (itemId: string) => {
@@ -3042,6 +3164,17 @@ const showModelSearch = computed(() =>
 watch(activeResTab, () => {
   modelSearchQuery.value = "";
 });
+
+// 智能体 tab 可见时按需补齐各已勾选智能体的已禁数量角标（勾选变化后也要对齐）
+watch(
+  [activeResTab, () => permissionData.value.agents, canEditPermissions],
+  () => {
+    if (activeResTab.value === "agents" && canEditPermissions.value) {
+      void loadAgentRestrictionCounts();
+    }
+  },
+  { deep: true },
+);
 
 /** models 页的分组：已选一段、其余一段（其它资源页不使用） */
 const modelResourceGroups = computed(() =>
@@ -3685,6 +3818,10 @@ const openCreateDialog = async () => {
 };
 const editUser = async (user: any) => {
   editingUserId.value = user.id;
+  // 用户 A → 用户 B 可能都是普通用户，`resetPermissionBuffers` 的身份 watch 不会触发，
+  // 所以打开时也要显式复位，否则 B 的角标沿用 A 的数字。
+  agentRestrictionCounts.value = {};
+  agentRestrictionTarget.value = null;
   formData.value = {
     user_name: user.user_name,
     real_name: user.real_name || "",

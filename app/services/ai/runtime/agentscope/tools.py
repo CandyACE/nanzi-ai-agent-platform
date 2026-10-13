@@ -1658,14 +1658,22 @@ def _shell_deletion_permission_decision(
 async def enforce_tool_forbidden(
     tool_name: str,
     explicit_user_id: int | str | None = None,
+    explicit_agent_id: str | None = None,
 ) -> Any:
     """DENY when the user has the tool in ``forbidden_tools`` (alias-aware).
 
     Shared by tool ``check_permissions`` and ``ToolPermissionMiddleware``.
+
+    作用域：有效禁用 = 全局禁用 ∪ **当前智能体**的智能体级禁用。智能体取自显式参数，
+    否则取会话上下文（``AgentContext.agent_id``）——同一个用户在不同智能体里的边界不同，
+    这层上下文必须由调用链带进来，不能在这里猜。
     """
     from app.core.context import get_current_agent_context
     agent_ctx = get_current_agent_context()
     user_id = explicit_user_id or (agent_ctx.user_id if agent_ctx else None)
+    agent_id = explicit_agent_id or (
+        getattr(agent_ctx, "agent_id", None) if agent_ctx else None
+    )
 
     if explicit_user_id is None and agent_ctx and agent_ctx.is_admin:
         return None
@@ -1688,7 +1696,7 @@ async def enforce_tool_forbidden(
 
             async with AsyncSessionLocal() as session:
                 perm_service = PermissionService(session)
-                perms = await perm_service.get_user_permissions(int(user_id))
+                perms = await perm_service.get_user_permissions(int(user_id), agent_id)
                 if "admin" in perms.roles:
                     return None
 

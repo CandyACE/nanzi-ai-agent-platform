@@ -555,6 +555,26 @@
                                       >{{ res.path }}</span>
                                       <span class="text-gray-400 text-[9px] block truncate font-mono">{{ res.description || res.id }}</span>
                                   </div>
+                                  <!-- 智能体卡片：只有已勾选（已授权）的智能体才值得配「功能限定」，
+                                       没分配就不必配；角标 = 该智能体上已禁用的工具/技能条目数 -->
+                                  <button
+                                      v-if="activeResTab === 'agents' && (permissionData as any).agents.includes(res.id)"
+                                      type="button"
+                                      class="shrink-0 self-center ml-1 px-2 py-1 rounded-lg border text-[10px] font-bold whitespace-nowrap"
+                                      :class="
+                                          agentRestrictionCount(res.id) > 0
+                                              ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                                              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                                      "
+                                      title="只在该智能体里禁用选定的工具 / MCP 工具 / 技能"
+                                      @click.stop.prevent="openAgentRestriction(res)"
+                                  >
+                                      功能限定
+                                      <span
+                                          v-if="agentRestrictionCount(res.id) > 0"
+                                          class="ml-1 inline-block min-w-[1.1rem] text-center px-1 rounded-full bg-red-600 text-white text-[9px] leading-4"
+                                      >{{ agentRestrictionCount(res.id) }}</span>
+                                  </button>
                               </label>
                               </template>
                           </div>
@@ -656,6 +676,16 @@
           </div>
       </div>
     </Teleport>
+
+    <!-- 智能体级功能限定：角色 × 单个智能体 × 工具/MCP工具/技能（与全局禁用取并集） -->
+    <AgentRestrictionDialog
+        v-model="showAgentRestrictionDialog"
+        kind="role"
+        :scope-id="currentRole?.id ?? null"
+        :agent-id="agentRestrictionTargetId"
+        :agent-label="agentRestrictionTargetLabel"
+        @saved="onAgentRestrictionSaved"
+    />
 
     <!-- User Assignment Dialog (Refactored to Dual Column) -->
     <Teleport to="body">
@@ -1107,8 +1137,16 @@ import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import ForbiddenToolCatalog from '../components/system/ForbiddenToolCatalog.vue'
+import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
 import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge"
+import {
+    agentRestrictionCacheKey,
+    agentRestrictionCountsPath,
+    countAgentRestrictionBadge,
+    type AgentRestrictionLists,
+} from "../utils/agentRestrictions"
+import { writeAgentRestriction } from "../utils/agentRestrictionCache"
 import {
     peekForbiddenCatalog,
     subscribeForbiddenCatalog,
@@ -1371,6 +1409,83 @@ onUnmounted(() => {
     unsubscribeForbiddenCatalog?.()
     unsubscribeForbiddenCatalog = null
 })
+
+/**
+ * 智能体级「功能限定」：目标是「该角色 × 单个智能体 × 资源」，与全局禁用取并集。
+ *
+ * 角标只对**已勾选**智能体显示，接口按智能体提供计数，因此在「智能体」tab 可见时
+ * 按需加载，并走 agentRestrictionCache 去重（保存后由弹框回填，不必再 GET）。
+ */
+const agentRestrictionTarget = ref<{ id: string; label: string } | null>(null)
+const showAgentRestrictionDialog = ref(false)
+const agentRestrictionCounts = ref<Record<string, number>>({})
+const agentRestrictionTargetId = computed(() => agentRestrictionTarget.value?.id || '')
+const agentRestrictionTargetLabel = computed(() => agentRestrictionTarget.value?.label || '')
+
+const agentRestrictionCacheKeyFor = (agentId: string) =>
+    agentRestrictionCacheKey('role', currentRole.value?.id ?? '', agentId)
+
+const applyAgentRestrictionCount = (agentId: string, lists: AgentRestrictionLists) => {
+    agentRestrictionCounts.value = {
+        ...agentRestrictionCounts.value,
+        [String(agentId)]: countAgentRestrictionBadge(lists),
+    }
+}
+
+/** 卡片角标：只反映已知的限制数（口径与弹框、用户页一致）。 */
+const agentRestrictionCount = (agentId: string) =>
+    agentRestrictionCounts.value[String(agentId)] || 0
+
+const openAgentRestriction = (res: any) => {
+    agentRestrictionTarget.value = {
+        id: String(res?.id ?? ''),
+        label: String(res?.platform_name || res?.display_name || res?.name || res?.id || ''),
+    }
+    showAgentRestrictionDialog.value = true
+}
+
+const onAgentRestrictionSaved = (lists: AgentRestrictionLists) => {
+    const agentId = agentRestrictionTarget.value?.id
+    if (agentId) applyAgentRestrictionCount(agentId, lists)
+}
+
+/** 已禁数量按需加载：分 4 个一批并发，单个失败不影响其它卡片（入口仍可用）。 */
+/**
+ * 已勾选智能体的已禁数量：**一次批量接口**取齐，而不是逐个智能体 GET。
+ *
+ * 走批量不只是省请求：回填时顺带写进限制缓存，管理员随后打开弹框即命中，不再多打一次。
+ * 整批失败时所有卡片角标显示 0，入口仍可用（打开弹框会给出明确报错）。
+ */
+const loadAgentRestrictionCounts = async () => {
+    const roleId = currentRole.value?.id
+    if (!roleId) return
+    const pending = (permissionData.value.agents || [])
+        .map((id: any) => String(id))
+        .filter((id: string) => !(id in agentRestrictionCounts.value))
+    if (!pending.length) return
+    try {
+        const response = await axios.get(
+            agentRestrictionCountsPath('role', roleId, pending),
+        )
+        const restrictions = response?.data?.restrictions || {}
+        for (const agentId of pending) {
+            const lists = writeAgentRestriction(
+                agentRestrictionCacheKeyFor(agentId),
+                restrictions[agentId] || { forbidden_tools: [], forbidden_skills: [] },
+            )
+            applyAgentRestrictionCount(agentId, lists)
+        }
+    } catch (error) {
+        console.warn('加载智能体功能限定计数失败', error)
+    }
+}
+
+/** 智能体 tab 可见时补齐角标；勾选变化后同样要重新对齐。 */
+watch([activeResTab, () => permissionData.value.agents, showPermissionDialog], () => {
+    if (activeResTab.value === 'agents' && showPermissionDialog.value) {
+        void loadAgentRestrictionCounts()
+    }
+}, { deep: true })
 
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
@@ -2139,6 +2254,9 @@ const openPermissionDialog = async (role: any) => {
     currentRole.value = role
     showPermissionDialog.value = true
     activeMainTab.value = 'assets'
+    // 上一个角色的智能体级限制计数与弹框目标必须复位，否则角标会跨角色残留
+    agentRestrictionCounts.value = {}
+    agentRestrictionTarget.value = null
     await Promise.all([
         fetchResources(),
         fetchRolePermissions(role.id)
@@ -2289,6 +2407,10 @@ const closeDialogs = () => {
 const closePermissionDialog = () => {
     showPermissionDialog.value = false
     currentRole.value = null
+    // 智能体级限制属于「这个角色」的配置：计数与弹框目标一起复位
+    agentRestrictionCounts.value = {}
+    agentRestrictionTarget.value = null
+    showAgentRestrictionDialog.value = false
 }
 
 const formatDate = (dateStr: string) => {

@@ -12,7 +12,7 @@ async def test_require_dataset_access_rejects_invisible_dataset(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def get_user_permissions(self, user_id):
+        async def get_user_permissions(self, user_id, agent_id=None):
             return SimpleNamespace(
                 permissions=SimpleNamespace(datasets=["allowed-ds"])
             )

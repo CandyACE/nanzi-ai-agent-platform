@@ -173,8 +173,13 @@ def _skill_attachment_id(item: Any) -> str:
     return str(item.get("url") or "").strip()
 
 
-def _skill_attachment_is_personal(item: Any) -> bool:
-    """挂载项是否指向**个人技能**（个人技能与公共技能可能同名）。"""
+def is_personal_skill_attachment(item: Any) -> bool:
+    """挂载项是否指向**个人技能**（个人技能与公共技能可能同名）。
+
+    公开出来给 `services.ai.skills.policy` 复用：两处过滤（上下文清洗、显式挂载丢弃）
+    必须同口径——只禁公共技能，同名个人技能不连坐。曾经因为各写一份，显式挂载那条
+    漏了 scope 判定，同名个人技能被静默丢弃。
+    """
     if not isinstance(item, dict):
         return False
     scopes = [item.get("scope")]
@@ -182,6 +187,11 @@ def _skill_attachment_is_personal(item: Any) -> bool:
     if isinstance(meta, dict):
         scopes.append(meta.get("scope"))
     return any(str(scope or "").strip().lower() == "personal" for scope in scopes)
+
+
+
+# 兼容旧调用点的私有别名（实现只有上面那一份）
+_skill_attachment_is_personal = is_personal_skill_attachment
 
 
 def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:

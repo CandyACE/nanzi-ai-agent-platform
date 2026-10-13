@@ -75,17 +75,18 @@
               v-for="candidate in sub.candidates"
               :key="candidate.id"
               class="flex items-start p-2 rounded border bg-white transition-colors"
-              :class="disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'"
+              :class="disabled || isCandidateLocked(candidate) ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'"
             >
               <input
                 type="checkbox"
                 :checked="isCandidateSelected(candidate)"
-                :disabled="disabled"
+                :disabled="disabled || isCandidateLocked(candidate)"
                 class="mt-1 h-4 w-4 rounded text-red-600 focus:ring-red-500"
                 @change="toggleCandidate(candidate, ($event.target as HTMLInputElement).checked)"
               />
               <div class="ml-2 min-w-0">
                 <p class="text-xs sm:text-sm font-bold text-gray-900 truncate">{{ candidate.label }}</p>
+                <p v-if="isCandidateLocked(candidate)" class="text-[9px] text-amber-600 truncate">已由所属角色禁用</p>
                 <p class="text-[9px] text-gray-400 truncate">{{ candidate.description }}</p>
                 <p v-if="(candidate.aliases?.length || 0) > 1" class="text-[9px] text-red-400 truncate">
                   同时拦截：{{ (candidate.aliases || []).filter((alias) => alias !== candidate.id).join('、') }}
@@ -160,17 +161,18 @@
               v-for="candidate in sub.candidates"
               :key="candidate.id"
               class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs"
-              :class="disabled ? 'opacity-60 cursor-not-allowed' : ''"
+              :class="disabled || isCandidateLocked(candidate) ? 'opacity-60 cursor-not-allowed' : ''"
             >
               <input
                 type="checkbox"
                 :checked="isCandidateSelected(candidate)"
-                :disabled="disabled"
+                :disabled="disabled || isCandidateLocked(candidate)"
                 class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
                 @change="toggleCandidate(candidate, ($event.target as HTMLInputElement).checked)"
               />
               <div class="ml-1.5 min-w-0 flex-1">
                 <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ candidate.label }}</p>
+                <p v-if="isCandidateLocked(candidate)" class="text-[9px] text-amber-600 truncate">已由所属角色禁用</p>
                 <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ candidate.description }}</p>
               </div>
             </label>
@@ -255,17 +257,18 @@
                 v-for="candidate in sub.candidates"
                 :key="candidate.id"
                 class="flex items-start p-2 rounded border bg-white transition-colors"
-                :class="disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'"
+                :class="disabled || isCandidateLocked(candidate) ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'"
               >
                 <input
                   type="checkbox"
                   :checked="isCandidateSelected(candidate)"
-                  :disabled="disabled"
+                  :disabled="disabled || isCandidateLocked(candidate)"
                   class="mt-1 h-4 w-4 rounded text-red-600 focus:ring-red-500"
                   @change="toggleCandidate(candidate, ($event.target as HTMLInputElement).checked)"
                 />
                 <div class="ml-2 min-w-0">
                   <p class="text-xs sm:text-sm font-bold text-gray-900 truncate">{{ candidate.label }}</p>
+                <p v-if="isCandidateLocked(candidate)" class="text-[9px] text-amber-600 truncate">已由所属角色禁用</p>
                   <p class="text-[9px] text-gray-400 truncate">{{ candidate.description }}</p>
                 </div>
               </label>
@@ -315,14 +318,25 @@ import {
   type ForbiddenToolCandidate,
   type ForbiddenToolSubGroup,
 } from '../../utils/forbiddenToolGroups'
+import { isInheritedForbiddenCandidate } from '../../utils/permissionLists'
 import { loadForbiddenCatalog } from '../../utils/forbiddenCatalogCache'
 
 const props = withDefaults(
-  defineProps<{ modelValue: string[]; disabled?: boolean; resource?: 'tools' | 'skills' }>(),
+  defineProps<{
+    modelValue: string[]
+    disabled?: boolean
+    resource?: 'tools' | 'skills'
+    /**
+     * 已由所属角色禁用的项（用户页才有）。这些项在直配区必须置灰：后端保存时会把
+     * 它们 `continue` 掉，勾了只会「保存成功但勾选消失」。角色页不传。
+     */
+    inherited?: string[]
+  }>(),
   {
     disabled: false,
     // 默认 tools：现有两个页面的工具实例不传 resource，行为必须与改造前完全一致
     resource: 'tools',
+    inherited: () => [],
   },
 )
 
@@ -420,8 +434,14 @@ const isAllSelected = (list: ForbiddenToolCandidate[]) =>
   list.length > 0 && selectedCountOf(list) === list.length
 const isCandidateSelected = (candidate: ForbiddenToolCandidate) => selectedCountOf([candidate]) > 0
 
+/** 候选是否被锁定：已在所属角色的禁用集合里（别名命中同样算）。 */
+const isCandidateLocked = (candidate: ForbiddenToolCandidate) =>
+  isInheritedForbiddenCandidate(candidate.id, candidate.aliases, props.inherited)
+
 const toggleSelection = (list: ForbiddenToolCandidate[], checked: boolean) => {
-  emit('update:modelValue', applyGroupSelection(props.modelValue || [], list, checked))
+  // 锁定项绝不能进勾选：后端会丢弃，勾了只会变成「保存落空」。
+  const selectable = list.filter((candidate) => !isCandidateLocked(candidate))
+  emit('update:modelValue', applyGroupSelection(props.modelValue || [], selectable, checked))
 }
 
 /** 单卡片勾选与组级全选同语义：写入 / 移除该候选的全部 aliases。 */

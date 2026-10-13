@@ -198,7 +198,7 @@ async def test_skill_policy_identity_fallback_also_covers_user_id(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def get_user_permissions(self, user_id):
+        async def get_user_permissions(self, user_id, agent_id=None):
             seen.append(user_id)
             return SimpleNamespace(
                 roles=[], permissions=SimpleNamespace(forbidden_skills=["docx"])

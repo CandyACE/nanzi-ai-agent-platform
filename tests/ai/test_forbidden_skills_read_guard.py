@@ -376,3 +376,60 @@ async def test_directory_catalog_lists_everything_when_nothing_is_forbidden(skil
     assert {"alpha", "beta", "gamma"} <= set(skills_entry["available_skill_ids"])
     assert skills_entry["forbidden_skill_ids"] == []
     assert "已被管理员禁用" not in skills_entry["description"]
+
+
+def test_drop_forbidden_skill_items_keeps_same_name_personal_skill():
+    """显式挂载的过滤必须与上下文清洗同口径：**只禁公共技能，同名个人技能不连坐**。
+
+    `sanitize_forbidden_skill_context` 用 `blocked_ids = forbidden - personal_ids` 排除个人技能，
+    而 `drop_forbidden_skill_items` 原先只看 `url in forbidden`——用户自建的个人技能若与某个
+    被禁公共技能同名，显式挂载时会被静默丢弃（ai review 核实项 2）。
+    """
+    from app.services.ai.skills.policy import drop_forbidden_skill_items
+
+    items = [
+        {"type": "skill", "url": "pdf", "scope": "public"},
+        {"type": "skill", "url": "pdf", "scope": "personal"},
+        {"type": "skill", "url": "pdf", "skillMeta": {"scope": "personal"}},
+        {"type": "skill", "url": "pdf"},               # 没标 scope：按公共处理
+        {"type": "skill", "url": "other", "scope": "public"},
+        {"type": "file", "url": "pdf"},                # 非技能附件不动
+    ]
+
+    kept = drop_forbidden_skill_items(items, {"pdf"})
+
+    assert len(kept) == 4, kept
+    # 两个标明 personal 的必须留下
+    assert sum(1 for item in kept if item.get("scope") == "personal") == 1
+    assert sum(1 for item in kept if (item.get("skillMeta") or {}).get("scope") == "personal") == 1
+    # 公共 pdf 与未标 scope 的都要丢掉（用同一判定函数，避免测试自己又造一套口径）
+    from app.utils.skill_metadata import is_personal_skill_attachment
+
+    assert not any(
+        item.get("type") == "skill"
+        and item.get("url") == "pdf"
+        and not is_personal_skill_attachment(item)
+        for item in kept
+    )
+    # 其它技能与非技能附件原样保留
+    assert any(item.get("url") == "other" for item in kept)
+    assert any(item.get("type") == "file" for item in kept)
+
+
+def test_drop_forbidden_skill_items_scope_check_matches_sanitizer():
+    """两处过滤必须共用同一个"是否个人技能"判定，否则迟早再次漂移成两套口径。"""
+    from pathlib import Path
+
+    policy_source = Path("app/services/ai/skills/policy.py").read_text(encoding="utf-8")
+    sanitizer_source = Path("app/utils/skill_metadata.py").read_text(encoding="utf-8")
+
+    assert "is_personal_skill_attachment" in policy_source, (
+        "policy 侧必须复用共享的个人技能判定函数"
+    )
+    assert "def is_personal_skill_attachment" in sanitizer_source, (
+        "个人技能判定应作为公开函数收在 skill_metadata 一处"
+    )
+    # 只允许存在一份实现
+    assert policy_source.count("def is_personal_skill_attachment") == 0, (
+        "不得在 policy 里复制一份判定实现"
+    )

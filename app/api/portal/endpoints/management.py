@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+from fastapi import APIRouter, Body, Depends, Query, HTTPException, status, Request
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, desc, or_
 from sqlalchemy.orm import selectinload
@@ -15,7 +15,8 @@ from app.models.user import (
 )
 from app.schemas.permission import UserPermissionsResponse, PermissionUpdate
 from app.services.permission_service import PermissionService
-from app.models.permission import ResourcePermission, UserRoleRelation
+from app.models.agent import AIAgent
+from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.services.sso_user import LaplacePortalApiClient
 from app.services.db_connection_service import DbConnectionService
 import json
@@ -1114,3 +1115,240 @@ async def get_available_resources(
         "metadata": datasets,
         "apis": apis
     }
+
+# ---------------------------------------------------------------------------
+# 智能体级资源限制（用户/角色 × 单个智能体的排除机制）
+#
+# 与全局禁用资源的关系：有效禁用 = 全局禁用 ∪ 该智能体的智能体级禁用。这里只读写
+# 「智能体级」那一层（agent_id 等于目标值的行），绝不触碰全局行，也不动其它智能体的行。
+# 详见 docs/superpowers/specs/2026-10-13-agent-scoped-resource-restrictions-design.md
+# ---------------------------------------------------------------------------
+
+
+def _agent_restriction_subject_filter(subject_column, subject_value: int):
+    return (subject_column == int(subject_value))
+
+
+@router.get("/agents/{agent_id}/restrictable-resources")
+async def get_agent_restrictable_resources(
+    agent_id: str,
+    user_id: Optional[int] = Query(None, description="按用户视角回填 forbidden_globally"),
+    role_id: Optional[int] = Query(None, description="按角色视角回填 forbidden_globally"),
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该智能体**实际绑定**的可限制资源（内置工具 / MCP 分组 / 公共技能 / 个人技能）。
+
+    候选不是"平台全部资源"而是这个智能体的绑定集合，管理员才能在其上做排除。
+    每项带 ``forbidden_globally``：全局已禁的项在弹框里置灰只读（排除机制只增不减）。
+    """
+    from app.services.agent_scoped_restrictions import (
+        build_restrictable_resources,
+        list_personal_skill_metas,
+    )
+
+    agent = await db.get(AIAgent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    globally_tools: set[str] = set()
+    globally_skills: set[str] = set()
+    person: Optional[dict] = None
+    if user_id is not None:
+        person = (await db.execute(select(User).where(User.id == int(user_id)))).scalar_one_or_none()
+    if person is not None:
+        perms = await PermissionService(db).get_user_permissions(int(user_id))
+        globally_tools = set(perms.permissions.forbidden_tools or [])
+        globally_skills = set(perms.permissions.forbidden_skills or [])
+    elif role_id is not None:
+        role_perms = await PermissionService(db).get_role_permissions(int(role_id))
+        globally_tools = set(role_perms.permissions.forbidden_tools or [])
+        globally_skills = set(role_perms.permissions.forbidden_skills or [])
+
+    # 个人技能必须按**目标**视角取：
+    # - 配用户时看该用户自己的个人技能。传当前登录管理员会让管理员看到自己的私有技能，
+    #   而目标用户真正拥有的技能一个都不显示；
+    # - 配角色时角色没有个人技能（个人技能属于账号），必须传空——否则会把管理员的
+    #   私有技能塞进角色的可限制清单，等于凭空给角色造出条目。
+    personal_skill_owner: Optional[dict] = None
+    if person is not None:
+        personal_skill_owner = {"id": person.id, "user_name": person.user_name}
+
+    try:
+        return await build_restrictable_resources(
+            db,
+            agent_id=agent_id,
+            globally_forbidden_tools=globally_tools,
+            globally_forbidden_skills=globally_skills,
+            personal_skills=list_personal_skill_metas(personal_skill_owner),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        # 未迁移时 _supports_agent_scope 会抛 RuntimeError：给出可操作的提示而不是 500
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/users/{user_id}/agent-restrictions/{agent_id}")
+async def get_user_agent_restrictions(
+    user_id: int,
+    agent_id: str,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该用户在该智能体上的智能体级限制（不含全局项）。"""
+    try:
+        data = await PermissionService(db).get_agent_scoped_forbidden_ids(
+            user_id=user_id, agent_id=agent_id
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"agent_id": agent_id, **data}
+
+
+@router.put("/users/{user_id}/agent-restrictions/{agent_id}")
+async def update_user_agent_restrictions(
+    user_id: int,
+    agent_id: str,
+    body: Dict[str, Any] = Body(...),
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """覆盖式写入该用户的智能体级限制（只动该 agent 的行）。"""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        data = await PermissionService(db).update_agent_scoped_forbidden_ids(
+            user_id=user_id,
+            agent_id=agent_id,
+            forbidden_tools=body.get("forbidden_tools"),
+            forbidden_skills=body.get("forbidden_skills"),
+        )
+        await db.commit()
+    except RuntimeError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        logger.exception("Failed to update agent restrictions for user %s", user_id)
+        raise HTTPException(status_code=400, detail=f"Failed to save agent restrictions: {exc}")
+    return {"agent_id": agent_id, **data}
+
+
+@router.get("/roles/{role_id}/agent-restrictions/{agent_id}")
+async def get_role_agent_restrictions(
+    role_id: int,
+    agent_id: str,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该角色在该智能体上的智能体级限制（不含全局项）。"""
+    try:
+        data = await PermissionService(db).get_agent_scoped_forbidden_ids(
+            role_id=role_id, agent_id=agent_id
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"agent_id": agent_id, **data}
+
+
+@router.put("/roles/{role_id}/agent-restrictions/{agent_id}")
+async def update_role_agent_restrictions(
+    role_id: int,
+    agent_id: str,
+    body: Dict[str, Any] = Body(...),
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """覆盖式写入该角色的智能体级限制（只动该 agent 的行）。"""
+    role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    try:
+        data = await PermissionService(db).update_agent_scoped_forbidden_ids(
+            role_id=role_id,
+            agent_id=agent_id,
+            forbidden_tools=body.get("forbidden_tools"),
+            forbidden_skills=body.get("forbidden_skills"),
+        )
+        await db.commit()
+    except RuntimeError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        logger.exception("Failed to update agent restrictions for role %s", role_id)
+        raise HTTPException(status_code=400, detail=f"Failed to save agent restrictions: {exc}")
+    return {"agent_id": agent_id, **data}
+
+
+@router.get("/agent-restrictions/counts")
+async def get_agent_restriction_counts(
+    user_id: Optional[int] = Query(None),
+    role_id: Optional[int] = Query(None),
+    agent_ids: str = Query("", description="逗号分隔的智能体 id 列表"),
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """**一次**返回多个智能体的智能体级限制清单，供权限页卡片的角标取齐。
+
+    为什么不返回「已禁数目」：角标口径必须与弹框完全一致——弹框会把**全局已禁用**的项
+    排除在计数外（界面上它们置灰不可选），如果这里图省事返回一个 COUNT，两个数字就会
+    对不上，管理员会看到"角标 3、打开只有 1 项"。所以这里返回与 GET 单智能体完全相同的
+    清单结构，由前端复用同一个计数函数——顺便让弹框打开时直接命中缓存。
+
+    逐个 GET 会让打开一次权限页发出 N 个请求（N = 已授权智能体数），因此用一次
+    ``agent_id IN (...)`` 查询聚合。
+    """
+    ids = [item.strip() for item in (agent_ids or "").split(",") if item.strip()]
+    if not ids:
+        return {"restrictions": {}}
+    if user_id is None and role_id is None:
+        raise HTTPException(status_code=400, detail="user_id 或 role_id 必须提供一个")
+
+    try:
+        # 未迁移时没有作用域列：返回空清单（而不是报错让整个权限页打不开）
+        if not await PermissionService(db)._supports_agent_scope():
+            return {"restrictions": {agent_id: {"forbidden_tools": [], "forbidden_skills": []} for agent_id in ids}}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    from sqlalchemy import text
+
+    subject_column = "user_id" if user_id is not None else "role_id"
+    subject_value = int(user_id if user_id is not None else role_id)
+    placeholders = ", ".join(f":aid_{index}" for index in range(len(ids)))
+    params = {f"aid_{index}": value for index, value in enumerate(ids)}
+    params["subject"] = subject_value
+
+    rows = (
+        await db.execute(
+            text(
+                f"SELECT agent_id, resource_type, resource_id "
+                f"FROM ai_agent_resource_permissions "
+                f"WHERE {subject_column} = :subject AND agent_id IN ({placeholders}) "
+                # TRUE 而非整型：PG 的 enabled 是 BOOLEAN，不接受整型字面量（MySQL 视 TRUE 为 1）
+                f"AND enabled = TRUE "
+                f"AND resource_type IN ('forbidden_tool', 'forbidden_skill')"
+            ).bindparams(**params)
+        )
+    ).all()
+
+    restrictions: Dict[str, Dict[str, List[str]]] = {
+        agent_id: {"forbidden_tools": [], "forbidden_skills": []} for agent_id in ids
+    }
+    seen: Dict[str, Dict[str, set]] = {
+        agent_id: {"forbidden_tools": set(), "forbidden_skills": set()} for agent_id in ids
+    }
+    for agent_id, resource_type, resource_id in rows:
+        agent_key = str(agent_id)
+        if agent_key not in restrictions:
+            continue
+        bucket = "forbidden_skills" if resource_type == "forbidden_skill" else "forbidden_tools"
+        value = str(resource_id)
+        if value in seen[agent_key][bucket]:
+            continue
+        seen[agent_key][bucket].add(value)
+        restrictions[agent_key][bucket].append(value)
+    return {"restrictions": restrictions}

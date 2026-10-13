@@ -117,6 +117,32 @@ export function diffInheritedForbidden(
 }
 
 /**
+ * 该候选是否「已由所属角色禁用」——这类项在用户直配区必须置灰。
+ *
+ * 后端 `update_user_permissions` 会把「已由角色派生」的项 `continue` 掉（F1 直配/继承
+ * 隔离的有意设计：避免把继承项固化成用户直配而无法解绑）。前端若不提示，管理员勾选后
+ * 会看到「保存成功、勾选消失」；更麻烦的是角色侧日后解禁时该用户会直接解禁，与
+ * 「我专门在这个用户上配过」的预期相反。
+ *
+ * 判定要连 aliases 一起看：后端按提交的 id 逐个比对派生集合，别名命中同样会被丢弃；
+ * 只比 `id` 会让「同时拦截」的别名组漏判。
+ */
+export function isInheritedForbiddenCandidate(
+  id: unknown,
+  aliases: readonly unknown[] | null | undefined,
+  inherited: readonly unknown[] | null | undefined,
+): boolean {
+  const inheritedSet = new Set(
+    (inherited || []).map((item) => String(item ?? '').trim()).filter(Boolean),
+  )
+  if (inheritedSet.size === 0) return false
+  const ids = [id, ...(aliases || [])]
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean)
+  return ids.some((item) => inheritedSet.has(item))
+}
+
+/**
  * 解析 `GET /users/{id}/permissions` 的响应体（`response.data`，不是 axios 的整个 response）。
  * `direct_permissions` 必须是**对象**才算有效：数组 / 字符串 / null 都按缺失处理。
  */
