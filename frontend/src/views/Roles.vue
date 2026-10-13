@@ -485,57 +485,7 @@
                                   </div>
                               </div>
 
-                              <!-- 1. 禁用工具 Checkbox 组 -->
-                              <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
-                                  <h4 class="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5 select-none">
-                                      <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                                      选择要禁用的工具（全局拉黑）
-                                  </h4>
-                                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                      <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm bg-white hover:border-red-200 cursor-pointer">
-                                          <input
-                                              type="checkbox"
-                                              :value="tool.id"
-                                              v-model="permissionData.forbidden_tools"
-                                              class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 text-red-600 focus:ring-red-500"
-                                          />
-                                          <div class="ml-2.5 min-w-0 flex-1">
-                                              <p class="font-bold text-gray-900 truncate text-xs leading-tight">{{ tool.name }}</p>
-                                              <span class="text-gray-400 text-[9px] block truncate font-mono mt-0.5">{{ tool.description }}</span>
-                                          </div>
-                                      </label>
-                                  </div>
-                              </div>
-
-                              <!-- 1.2 其他自定义与扩展工具禁用 -->
-                              <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
-                                  <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
-                                      <span class="flex items-center gap-1.5">
-                                          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
-                                          自定义 API 与 MCP 扩展工具禁用
-                                      </span>
-                                      <input
-                                          v-model="toolSearchQuery"
-                                          type="search"
-                                          placeholder="搜索工具名..."
-                                          class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
-                                      />
-                                  </h4>
-                                  <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                      <label v-for="tool in filteredOtherTools" :key="tool.id" class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs">
-                                          <input
-                                              type="checkbox"
-                                              :value="tool.id"
-                                              v-model="permissionData.forbidden_tools"
-                                              class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
-                                          />
-                                          <div class="ml-1.5 min-w-0 flex-1">
-                                              <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
-                                              <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
-                                          </div>
-                                      </label>
-                                  </div>
-                              </div>
+                              <ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />
 
                               <!-- 2. 禁用 Bash 命令关键字 -->
                               <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm flex flex-col">
@@ -1155,6 +1105,7 @@ import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSele
 import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
+import ForbiddenToolCatalog from '../components/system/ForbiddenToolCatalog.vue'
 
 const { showToast } = useToast()
 
@@ -1369,54 +1320,6 @@ const permissionData = ref<{
 })
 
 const forbiddenCommandsText = ref("")
-
-const availableToolsToForbid = [
-  { id: "exec_command", name: "执行终端命令 (exec_command)", description: "在沙箱中执行 Bash/shell 命令行" },
-  { id: "write_file", name: "写入/修改文件 (write_file)", description: "对沙箱目录物理写入或修改代码文件" },
-  { id: "read_file", name: "读取文件内容 (read_file)", description: "读取沙箱工作目录中的文本或源代码" },
-  { id: "search_qa_examples", name: "检索经验库 (search_qa_examples)", description: "检索历史问答优质案例及 SQL" },
-  { id: "manage_process", name: "进程管理 (manage_process)", description: "查看或终止沙箱中的系统进程" }
-]
-
-const otherAvailableTools = ref<any[]>([])
-const toolSearchQuery = ref("")
-
-const filteredOtherTools = computed(() => {
-    const query = toolSearchQuery.value.trim().toLowerCase()
-    if (!query) return otherAvailableTools.value
-    return otherAvailableTools.value.filter(t =>
-        t.name.toLowerCase().includes(query) ||
-        t.description.toLowerCase().includes(query)
-    )
-})
-
-const fetchAllSystemTools = async () => {
-    try {
-        const [resPortal, resMcp] = await Promise.all([
-            axios.get("/api/portal/tools"),
-            axios.get("/api/portal/tools/mcp").catch(() => ({ data: [] }))
-        ])
-
-        const dynamicMapped = (resPortal.data || []).map((t: any) => ({
-            id: t.name,
-            name: t.name,
-            description: t.description || "自定义 API 工具",
-            category: "api"
-        }))
-
-        const mcpMapped = (Array.isArray(resMcp.data) ? resMcp.data : (resMcp.data.data || [])).map((t: any) => ({
-            id: t.name,
-            name: t.name,
-            description: t.description || "MCP 注册工具",
-            category: "mcp"
-        }))
-
-        const forbiddenIds = new Set(["exec_command", "write_file", "read_file", "manage_process"])
-        otherAvailableTools.value = [...dynamicMapped, ...mcpMapped].filter(t => !forbiddenIds.has(t.name))
-    } catch (e) {
-        console.error("Failed to fetch all tools for permission mapping", e)
-    }
-}
 
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
@@ -2338,7 +2241,6 @@ const formatDate = (dateStr: string) => {
 
 onMounted(() => {
     fetchRoles()
-    fetchAllSystemTools()
     checkDefaultRole()
 })
 
