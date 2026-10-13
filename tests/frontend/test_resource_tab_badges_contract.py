@@ -1,4 +1,4 @@
-"""分配权限的两页 tab 行：统一徽标 + 「禁用资源」改名（口径 = 禁用工具数 + 禁用命令数）。
+"""分配权限的两页 tab 行：统一徽标 + 「禁用资源」改名（口径 = 禁用工具数 + 禁用命令数 + 禁用技能数）。
 
 用户页原先没有任何徽标；角色页有，但用 `v-if="type !== 'forbidden_configs'"` 把这一项排除了
 （因为 `permissionData` 里没有 `forbidden_configs` 数组，它是 tab 名，内容分别存在
@@ -40,13 +40,20 @@ def test_roles_no_longer_excludes_forbidden_configs_from_the_badge():
     assert "type !== \"forbidden_configs\"" not in source
 
 
-def test_badge_count_for_disabled_resources_covers_tools_and_commands():
+def test_badge_count_for_disabled_resources_covers_tools_commands_and_skills():
     for view in (USERS, ROLES):
         source = _source(view)
         assert "forbiddenCommandCount" in source, f"{view} 的徽标没算禁用命令"
         assert "forbidden_tools" in source
         # 命令数取编辑中的文本，实时反映尚未保存的输入
         assert "forbiddenCommandsText.value" in source
+
+        # 技能是勾选式数组：直接用已勾选个数，不需要像命令那样实时解析文本
+        badge = source.split("const resourceTabCount", 1)[1].split(";", 1)[0]
+        assert "forbidden_tools" in badge, f"{view} 的徽标没算禁用工具"
+        assert "forbiddenCommandCount" in badge, f"{view} 的徽标没算禁用命令"
+        assert "forbidden_skills" in badge, f"{view} 的徽标没算禁用技能"
+        assert "parseForbiddenCommands" not in badge, "技能数不该走命令的文本解析"
 
 
 def test_command_parsing_has_a_single_shared_source():

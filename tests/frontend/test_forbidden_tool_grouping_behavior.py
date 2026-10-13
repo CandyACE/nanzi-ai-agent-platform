@@ -274,3 +274,87 @@ return {
     assert result["plainIndigo"]["arrow"] == "text-indigo-400"
     assert result["plainIndigo"]["dot"] == "bg-indigo-500"
     assert "text-indigo-600" in result["plainIndigo"]["action"]
+
+
+# skills 模式：后端 `skill_candidates` 只给 { id, label, description, group_key, group }，没有 category/aliases。
+# 目录里列了两组，用来钉住"聚合不得写死只有一个组"（当前后端只发 skill:__all__）。
+SKILL_CANDIDATES = [
+    {
+        "id": "skill:report-export",
+        "label": "报表导出",
+        "description": "把会话内容导出为报表文件",
+        "group_key": "skill:__all__",
+        "group": "公共技能",
+    },
+    {
+        "id": "skill:web-search",
+        "label": "联网搜索",
+        "description": "调用搜索引擎检索资料",
+        "group_key": "skill:__all__",
+        "group": "公共技能",
+    },
+    {
+        "id": "skill:sql-audit",
+        "label": "SQL 审计",
+        "description": "审查 SQL 合规性",
+        "group_key": "skill:audit",
+        "group": "公共技能 · 审计",
+    },
+]
+
+
+def test_skill_candidates_without_aliases_are_grouped_and_selected_by_id():
+    """技能候选只有 `id`（没有别名概念），聚合与选中判定必须退化为按 id。
+
+    否则 `(n/m)` 恒为 0、组卡片永远不变红、全选一个 id 都写不进去——skills 模式整块失效。
+    这两条同时是"skills 复用同一套纯函数、不另写一份技能逻辑"的行为证据。
+    """
+    result = _run_typescript(
+        f"""
+const candidates = {json.dumps(SKILL_CANDIDATES)};
+const groups = api.groupCandidates(candidates);
+const allGroup = groups.find((group) => group.key === 'skill:__all__');
+return {{
+  groupKeys: groups.map((group) => group.key),
+  groupLabels: groups.map((group) => group.label),
+  groupIds: groups.map((group) => group.candidates.map((candidate) => candidate.id)),
+  countOne: api.groupSelectedCount(allGroup, new Set(['skill:web-search'])),
+  countAll: api.groupSelectedCount(allGroup, new Set(['skill:report-export', 'skill:web-search'])),
+  countOneOfTwo: api.groupSelectedCount(allGroup, new Set(['skill:report-export'])),
+  emptyAliases: api.groupSelectedCount(
+    {{ key: 'g', label: 'g', candidates: [{{ id: 'skill:empty', aliases: [] }}] }},
+    new Set(['skill:empty']),
+  ),
+  checked: api.applyGroupSelection(['legacy:skill'], allGroup.candidates, true),
+  unchecked: api.applyGroupSelection(
+    ['legacy:skill', 'skill:report-export', 'skill:web-search'],
+    allGroup.candidates,
+    false,
+  ),
+  filteredByLabel: api.filterSubGroups(groups, '审计').map((group) => group.key),
+  filteredById: api.filterSubGroups(groups, 'WEB-SEARCH').map((group) => group.key),
+  orphans: api.findOrphanIds(['skill:report-export', 'skill:removed'], candidates),
+}};
+"""
+    )
+
+    # 聚合沿用同一个 groupCandidates：保序、不写死"只有一个组"
+    assert result["groupKeys"] == ["skill:__all__", "skill:audit"]
+    assert result["groupLabels"] == ["公共技能", "公共技能 · 审计"]
+    assert result["groupIds"][0] == ["skill:report-export", "skill:web-search"]
+    assert all(group_ids for group_ids in result["groupIds"]), "不得产生空组"
+
+    # 计数：按 id 命中，一个技能算 1
+    assert result["countOne"] == 1
+    assert result["countOneOfTwo"] == 1
+    assert result["countAll"] == 2
+    assert result["emptyAliases"] == 1, "aliases 显式为空时同样退化为按 id"
+
+    # 全选写入整组 id、取消全选只移除组内 id（不碰组外项）
+    assert result["checked"] == ["legacy:skill", "skill:report-export", "skill:web-search"]
+    assert result["unchecked"] == ["legacy:skill"]
+
+    # 搜索与 orphan 判定同样复用，不需要技能专用分支
+    assert result["filteredByLabel"] == ["skill:audit"]
+    assert result["filteredById"] == ["skill:__all__"]
+    assert result["orphans"] == ["skill:removed"], "已下架的技能仍要能解除禁用"

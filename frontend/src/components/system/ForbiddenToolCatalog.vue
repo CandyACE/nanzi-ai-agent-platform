@@ -1,5 +1,7 @@
 <template>
   <div class="space-y-3">
+    <!-- 工具模式的两个大组；skills 模式走下面的 v-else，两者互斥（不靠空数据兜住） -->
+    <template v-if="!isSkillsMode">
     <!-- 大组 1：内置高危工具（可折叠，子组按 category 分组） -->
     <div v-show="showBuiltinSection" class="border rounded-xl p-3" :class="toneOf(builtinVisibleCandidates, 'gray').bigCard">
       <div class="flex items-center justify-between gap-3 mb-2 select-none">
@@ -31,12 +33,12 @@
           <input
             v-model="searchQuery"
             type="search"
-            placeholder="搜索工具名..."
+            :placeholder="searchPlaceholder"
             class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
           />
         </div>
       </div>
-      <p v-if="loading" class="text-[10px] text-gray-400">正在加载可禁用工具目录…</p>
+      <p v-if="loading" class="text-[10px] text-gray-400">{{ loadingText }}</p>
       <p v-else-if="loadError" class="text-[10px] text-red-500">{{ loadError }}</p>
       <div v-else v-show="isExpanded(GROUP_BUILTIN_KEY)" class="space-y-2">
         <div
@@ -85,8 +87,8 @@
               <div class="ml-2 min-w-0">
                 <p class="text-xs sm:text-sm font-bold text-gray-900 truncate">{{ candidate.label }}</p>
                 <p class="text-[9px] text-gray-400 truncate">{{ candidate.description }}</p>
-                <p v-if="candidate.aliases.length > 1" class="text-[9px] text-red-400 truncate">
-                  同时拦截：{{ candidate.aliases.filter((alias) => alias !== candidate.id).join('、') }}
+                <p v-if="(candidate.aliases?.length || 0) > 1" class="text-[9px] text-red-400 truncate">
+                  同时拦截：{{ (candidate.aliases || []).filter((alias) => alias !== candidate.id).join('、') }}
                 </p>
               </div>
             </label>
@@ -176,6 +178,102 @@
         </div>
       </div>
     </div>
+    </template>
+
+    <!-- 公共技能：整体只有一个大组，子组仍交给同一个 groupCandidates 聚合（不写死"只有一组"） -->
+    <template v-else>
+      <!-- 大组（skills 模式）：折叠 / 搜索 / (n/m) / 全选 / 变红全部复用同一套纯函数 -->
+      <div v-show="showSkillSection" class="border rounded-xl p-3" :class="toneOf(skillVisibleCandidates, 'gray').bigCard">
+        <div class="flex items-center justify-between gap-3 mb-2 select-none">
+          <button
+            type="button"
+            @click="toggleCollapse(GROUP_SKILLS_KEY)"
+            :disabled="isSearching"
+            :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''"
+            :class="isSearching ? 'cursor-default' : ''"
+            class="flex items-center gap-1.5 min-w-0 flex-1 text-left"
+          >
+            <svg class="w-3.5 h-3.5 transition-transform shrink-0" :class="[toneOf(skillVisibleCandidates, 'gray').arrow, { 'rotate-90': isExpanded(GROUP_SKILLS_KEY) }]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+            <span class="w-1.5 h-1.5 rounded-full" :class="toneOf(skillVisibleCandidates, 'gray').dot"></span>
+            <span class="text-xs font-bold truncate" :class="toneOf(skillVisibleCandidates, 'gray').title">禁用选定的公共技能</span>
+            <span class="text-[10px] font-normal shrink-0" :class="toneOf(skillVisibleCandidates, 'gray').count">({{ selectedCountOf(skillVisibleCandidates) }}/{{ skillVisibleCandidates.length }})</span>
+          </button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              v-if="!disabled"
+              type="button"
+              :disabled="!skillVisibleCandidates.length"
+              @click.stop="toggleSelection(skillVisibleCandidates, !isAllSelected(skillVisibleCandidates))"
+              class="text-[10px] font-bold disabled:opacity-40 disabled:cursor-not-allowed" :class="toneOf(skillVisibleCandidates, 'gray').action"
+            >
+              {{ isAllSelected(skillVisibleCandidates) ? '取消全选' : '全选' }}
+            </button>
+            <input
+              v-model="searchQuery"
+              type="search"
+              :placeholder="searchPlaceholder"
+              class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+        </div>
+        <p v-if="loading" class="text-[10px] text-gray-400">{{ loadingText }}</p>
+        <p v-else-if="loadError" class="text-[10px] text-red-500">{{ loadError }}</p>
+        <div v-else v-show="isExpanded(GROUP_SKILLS_KEY)" class="space-y-2">
+          <div
+            v-for="sub in visibleSkillGroups"
+            :key="sub.key"
+            class="rounded-lg border overflow-hidden" :class="toneOf(sub.candidates, 'gray').subCard"
+          >
+            <div class="flex items-center justify-between py-1.5 px-2.5" :class="toneOf(sub.candidates, 'gray').subHead">
+              <button
+                type="button"
+                @click="toggleCollapse(sub.key)"
+                :disabled="isSearching"
+                :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''"
+                :class="isSearching ? 'cursor-default' : ''"
+                class="flex items-center gap-2 min-w-0 flex-1 text-left"
+              >
+                <svg class="w-3.5 h-3.5 transition-transform shrink-0" :class="[toneOf(sub.candidates, 'gray').arrow, { 'rotate-90': isExpanded(sub.key) }]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+                <span class="text-[11px] font-bold truncate" :class="toneOf(sub.candidates, 'gray').title">{{ sub.label }}</span>
+                <span class="text-[10px] shrink-0" :class="toneOf(sub.candidates, 'gray').count">({{ selectedCountOf(sub.candidates) }}/{{ sub.candidates.length }})</span>
+              </button>
+              <button
+                v-if="!disabled"
+                type="button"
+                @click.stop="toggleSelection(sub.candidates, !isAllSelected(sub.candidates))"
+                class="text-[10px] font-bold ml-2 shrink-0" :class="toneOf(sub.candidates, 'gray').action"
+              >
+                {{ isAllSelected(sub.candidates) ? '取消全选' : '全选' }}
+              </button>
+            </div>
+            <div v-show="isExpanded(sub.key)" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2">
+              <label
+                v-for="candidate in sub.candidates"
+                :key="candidate.id"
+                class="flex items-start p-2 rounded border bg-white transition-colors"
+                :class="disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isCandidateSelected(candidate)"
+                  :disabled="disabled"
+                  class="mt-1 h-4 w-4 rounded text-red-600 focus:ring-red-500"
+                  @change="toggleCandidate(candidate, ($event.target as HTMLInputElement).checked)"
+                />
+                <div class="ml-2 min-w-0">
+                  <p class="text-xs sm:text-sm font-bold text-gray-900 truncate">{{ candidate.label }}</p>
+                  <p class="text-[9px] text-gray-400 truncate">{{ candidate.description }}</p>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
 
     <!-- 历史遗留：已禁用但已不在目录中的工具，必须仍可见、可解除（不被搜索过滤） -->
     <div v-if="orphanIds.length" class="border border-amber-200 rounded-xl p-3 bg-amber-50/40">
@@ -183,7 +281,7 @@
         <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
         其他已禁用项（历史）
       </h4>
-      <p class="text-[10px] text-amber-600 mb-2">这些工具已不在当前目录中（例如 MCP 工具已下架），取消勾选即可解除禁用。</p>
+      <p class="text-[10px] text-amber-600 mb-2">{{ orphanHint }}</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
         <label
           v-for="orphanId in orphanIds"
@@ -218,20 +316,48 @@ import {
   type ForbiddenToolSubGroup,
 } from '../../utils/forbiddenToolGroups'
 
-const props = withDefaults(defineProps<{ modelValue: string[]; disabled?: boolean }>(), {
-  disabled: false,
-})
+const props = withDefaults(
+  defineProps<{ modelValue: string[]; disabled?: boolean; resource?: 'tools' | 'skills' }>(),
+  {
+    disabled: false,
+    // 默认 tools：现有两个页面的工具实例不传 resource，行为必须与改造前完全一致
+    resource: 'tools',
+  },
+)
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string[]): void }>()
 
-/** 大组折叠键；子组折叠键直接复用后端给的 group_key。 */
+/**
+ * 同一个组件同时服务「禁用工具」与「禁用公共技能」：只切换候选来源与文案，
+ * 交互逻辑（折叠 / 搜索 / 计数 / 全选 / 变红 / 历史区）一律复用同一套纯函数。
+ */
+const isSkillsMode = computed(() => props.resource === 'skills')
+
+/**
+ * 大组折叠键；子组折叠键直接复用后端给的 group_key。
+ *
+ * skills 大组必须自定一个键：用户页与角色页会**同时挂载**工具实例与技能实例，
+ * 键若撞车（例如都用 group:builtin），折叠一个会让另一个跟着动。
+ */
 const GROUP_BUILTIN_KEY = 'group:builtin'
 const GROUP_DYNAMIC_KEY = 'group:dynamic'
+const GROUP_SKILLS_KEY = 'group:forbidden-skills'
 
 const candidates = ref<ForbiddenToolCandidate[]>([])
 const loading = ref(false)
 const loadError = ref('')
 const searchQuery = ref('')
+
+/** 文案随资源类型切换：skills 模式里把技能说成"工具"会误导用户。 */
+const resourceNoun = computed(() => (isSkillsMode.value ? '技能' : '工具'))
+const searchPlaceholder = computed(() => `搜索${resourceNoun.value}名...`)
+const loadingText = computed(() => `正在加载可禁用${resourceNoun.value}目录…`)
+const loadErrorText = computed(() => `可禁用${resourceNoun.value}目录加载失败，请刷新页面重试。`)
+const orphanHint = computed(() =>
+  isSkillsMode.value
+    ? '这些技能已不在当前目录中（例如公共技能已下架），取消勾选即可解除禁用。'
+    : '这些工具已不在当前目录中（例如 MCP 工具已下架），取消勾选即可解除禁用。',
+)
 
 /** 折叠集合：空集 = 默认全展开；只在本组件存活期间记忆，不持久化。 */
 const collapsedKeys = ref<Set<string>>(new Set())
@@ -260,16 +386,22 @@ const dynamicCandidates = computed(() =>
 
 const builtinGroups = computed(() => groupCandidates(builtinCandidates.value))
 const dynamicGroups = computed(() => groupCandidates(dynamicCandidates.value))
+/** skills 模式的候选整体交给同一个 groupCandidates：后端将来给出多个技能组也不会漏渲染。 */
+const skillGroups = computed(() => groupCandidates(candidates.value))
 
 // 搜索只决定可见子组，不写回折叠集合
 const visibleBuiltinGroups = computed(() => filterSubGroups(builtinGroups.value, searchQuery.value))
 const visibleDynamicGroups = computed(() => filterSubGroups(dynamicGroups.value, searchQuery.value))
+const visibleSkillGroups = computed(() => filterSubGroups(skillGroups.value, searchQuery.value))
 
 const builtinVisibleCandidates = computed(() =>
   visibleBuiltinGroups.value.flatMap((sub) => sub.candidates),
 )
 const dynamicVisibleCandidates = computed(() =>
   visibleDynamicGroups.value.flatMap((sub) => sub.candidates),
+)
+const skillVisibleCandidates = computed(() =>
+  visibleSkillGroups.value.flatMap((sub) => sub.candidates),
 )
 
 /** 计数与全选判定都委托纯函数：这里只把候选列表包成"组"的形状。 */
@@ -314,15 +446,24 @@ const showBuiltinSection = computed(() =>
   || visibleBuiltinGroups.value.length > 0,
 )
 const showDynamicSection = computed(() => visibleDynamicGroups.value.length > 0)
+/** skills 大组同样遵守"搜索无命中则整组隐藏"（加载中 / 失败仍要显示提示）。 */
+const showSkillSection = computed(() =>
+  !isSearching.value
+  || loading.value
+  || Boolean(loadError.value)
+  || visibleSkillGroups.value.length > 0,
+)
 
 const fetchCatalog = async () => {
   loading.value = true
   loadError.value = ''
   try {
     const response = await axios.get('/api/portal/tools/forbidden-catalog')
-    candidates.value = Array.isArray(response.data?.candidates) ? response.data.candidates : []
+    // 两种资源同一个接口：tools 取 candidates，skills 取 skill_candidates
+    const list = isSkillsMode.value ? response.data?.skill_candidates : response.data?.candidates
+    candidates.value = Array.isArray(list) ? list : []
   } catch (error) {
-    loadError.value = '可禁用工具目录加载失败，请刷新页面重试。'
+    loadError.value = loadErrorText.value
   } finally {
     loading.value = false
   }

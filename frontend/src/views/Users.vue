@@ -1228,6 +1228,8 @@
                       </div>
 
                       <ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />
+                      <!-- 公共技能与工具并列：同一个组件泛化出 skills 模式，候选来自 skill_candidates -->
+                      <ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />
 
                       <!-- 2. 禁用 Bash 命令关键字 -->
                       <div class="border border-gray-150 rounded-xl p-3 bg-white flex flex-col">
@@ -2785,6 +2787,7 @@ const permissionData = ref<{
   elements: string[];
   forbidden_tools: string[];
   forbidden_commands: string[];
+  forbidden_skills: string[];
   models: string[];
 }>({
   agents: [],
@@ -2795,6 +2798,7 @@ const permissionData = ref<{
   elements: [],
   forbidden_tools: [],
   forbidden_commands: [],
+  forbidden_skills: [],
   models: [],
 });
 
@@ -2805,10 +2809,13 @@ const forbiddenCommandCount = computed(() =>
   parseForbiddenCommands(forbiddenCommandsText.value).length
 );
 
-/** tab 徽标口径：禁用资源 = 禁用工具数 + 禁用命令数；其余 tab = 已勾选资产数。 */
+/** tab 徽标口径：禁用资源 = 禁用工具数 + 禁用命令数 + 禁用技能数；其余 tab = 已勾选资产数。 */
 const resourceTabCount = (type: string) =>
   type === "forbidden_configs"
-    ? (permissionData.value.forbidden_tools?.length || 0) + forbiddenCommandCount.value
+    ? (permissionData.value.forbidden_tools?.length || 0) +
+      forbiddenCommandCount.value +
+      // 技能是勾选式数组：直接用已勾选个数，不需要像命令那样实时解析文本
+      (permissionData.value.forbidden_skills?.length || 0)
     : ((permissionData.value as any)[type]?.length || 0);
 
 // Tree Logic
@@ -3134,6 +3141,7 @@ const fetchUserPermissions = async (userId: number) => {
       elements: perms.elements || [],
       forbidden_tools: perms.forbidden_tools || [],
       forbidden_commands: perms.forbidden_commands || [],
+      forbidden_skills: perms.forbidden_skills || [],
       models: perms.models || [],
     };
     forbiddenCommandsText.value = (perms.forbidden_commands || []).join(", ");
@@ -3147,6 +3155,7 @@ const fetchUserPermissions = async (userId: number) => {
       elements: [],
       forbidden_tools: [],
       forbidden_commands: [],
+      forbidden_skills: [],
       models: [],
     };
     forbiddenCommandsText.value = "";
@@ -3222,6 +3231,8 @@ const saveUser = async () => {
           ),
           // 字段名必须与后端 PermissionUpdate.models 一致（字符串数组，空 = 不限制）
           models: [...(permissionData.value.models || [])],
+          // 技能是勾选式数组：显式带上，字段名与后端 PermissionUpdate.forbidden_skills 一致
+          forbidden_skills: [...(permissionData.value.forbidden_skills || [])],
         };
         await axios.put(
           `/api/portal/management/users/${editingUserId.value}/permissions`,

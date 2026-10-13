@@ -223,11 +223,25 @@ async def list_skills(
     扫描技能物理目录，解析 SKILL.md 返回技能列表。
     平台技能目录可供登录用户查询和使用；创建、编辑、删除等管理操作
     仍由 element:skills:admin 单独保护。
+
+    每条带 ``forbidden`` 标记：被权限侧禁用（forbidden_skills）的公共技能**仍会返回**——
+    前端要显示"技能还在、只是被管理员禁用"而不是让它凭空消失，但会据此置灰不可挂载。
     """
     skills_list = []
     if not os.path.exists(settings.SKILLS_DIR):
         return {"status": "success", "data": []}
-        
+
+    # 策略查询失败不能让整个技能列表 500：退化为"不标记"，可用性优先
+    try:
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+        forbidden_skill_ids = await get_forbidden_skill_ids(
+            user.get("user_id") or user.get("id")
+        )
+    except Exception:
+        logger.warning("[Skills] Failed to resolve forbidden skills for the catalog", exc_info=True)
+        forbidden_skill_ids = set()
+
     try:
         for item in sorted(os.listdir(settings.SKILLS_DIR)):
             item_path = os.path.join(settings.SKILLS_DIR, item)
@@ -235,6 +249,7 @@ async def list_skills(
                 skill_md = os.path.join(item_path, "SKILL.md")
                 meta = parse_skill_metadata(item, skill_md)
                 meta["modified_at"] = get_skill_modified_at(item_path, skill_md)
+                meta["forbidden"] = str(item) in forbidden_skill_ids
                 skills_list.append(meta)
     except Exception as e:
         logger.error(f"[Skills] Failed to list skills: {e}")

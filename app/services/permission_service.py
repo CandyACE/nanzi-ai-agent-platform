@@ -549,6 +549,13 @@ class PermissionService:
                 for cmd in perm_set.forbidden_commands
             ]
 
+        # 9. Forbidden Skills（禁用公共技能）
+        if perm_set.forbidden_skills:
+            details.forbidden_skills = [
+                ResourceDetail(id=skill_id, name=skill_id, display_name=skill_id)
+                for skill_id in perm_set.forbidden_skills
+            ]
+
         if perm_set.models:
             model_stmt = select(AIModel.model_id, AIModel.name).where(
                 AIModel.model_id.in_(perm_set.models)
@@ -587,6 +594,9 @@ class PermissionService:
             elif p.resource_type == "forbidden_command":
                 if p.resource_id not in perm_set.forbidden_commands:
                     perm_set.forbidden_commands.append(p.resource_id)
+            elif p.resource_type == "forbidden_skill":
+                if p.resource_id not in perm_set.forbidden_skills:
+                    perm_set.forbidden_skills.append(p.resource_id)
             elif p.resource_type == "model":
                 # 聊天模型白名单：空 = 不限制（由 _resolve_allowed_model_ids 统一判定）
                 if p.resource_id not in perm_set.models:
@@ -637,7 +647,7 @@ class PermissionService:
     async def update_user_permissions(self, user_id: int, updates: PermissionUpdate):
         """Update DIRECT user permissions"""
         try:
-            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command"]
+            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command", "forbidden_skill"]
             # 未显式提交 models（旧客户端）时不触碰 model 记录，避免静默清空白名单
             if "models" in updates.model_fields_set:
                 types_to_update = [*types_to_update, "model"]
@@ -665,6 +675,8 @@ class PermissionService:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_tool", resource_id=t_id))
             for cmd in updates.forbidden_commands:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_command", resource_id=cmd))
+            for skill_id in updates.forbidden_skills:
+                new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_skill", resource_id=skill_id))
             for model_id in (updates.models if "models" in updates.model_fields_set else []):
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="model", resource_id=str(model_id)))
 
@@ -722,7 +734,7 @@ class PermissionService:
     async def update_role_permissions(self, role_id: int, updates: PermissionUpdate):
         """Update Role Permissions"""
         try:
-            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command"]
+            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command", "forbidden_skill"]
             # 未显式提交 models（旧客户端）时不触碰 model 记录，避免静默清空白名单
             if "models" in updates.model_fields_set:
                 types_to_update = [*types_to_update, "model"]
@@ -750,6 +762,8 @@ class PermissionService:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_tool", resource_id=t_id))
             for cmd in updates.forbidden_commands:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_command", resource_id=cmd))
+            for skill_id in updates.forbidden_skills:
+                new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_skill", resource_id=skill_id))
             for model_id in (updates.models if "models" in updates.model_fields_set else []):
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="model", resource_id=str(model_id)))
 

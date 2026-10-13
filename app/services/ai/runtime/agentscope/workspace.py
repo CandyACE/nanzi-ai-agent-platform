@@ -205,11 +205,14 @@ def discover_platform_skill_paths(
     *,
     skills_custom: bool = False,
     allowed_global_skills: list[str] | None = None,
+    forbidden_skill_ids: list[str] | None = None,
 ) -> list[str]:
     """Collect skill directories: global platform skills + user personal skills.
 
     When skills_custom is True, only allowlisted global skill ids are included;
     personal skills are always appended (if enabled).
+
+    forbidden_skill_ids 是权限侧的禁用集合：同样只作用于全局技能，个人技能不受影响。
     """
     try:
         from app.core.config import settings
@@ -219,6 +222,10 @@ def discover_platform_skill_paths(
         return []
     if not skills_root or not os.path.isdir(skills_root):
         return []
+
+    forbidden: set[str] = {
+        str(s).strip() for s in (forbidden_skill_ids or []) if str(s).strip()
+    }
 
     allowlist: set[str] | None = None
     if skills_custom:
@@ -230,6 +237,8 @@ def discover_platform_skill_paths(
         skill_dir = os.path.join(skills_root, entry)
         if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
             if allowlist is not None and entry not in allowlist:
+                continue
+            if entry in forbidden:
                 continue
             # 过滤禁用的技能
             meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
@@ -409,6 +418,76 @@ def _hardlink_or_copy2(src: str, dst: str) -> None:
         shutil.copy2(src, dst)
 
 
+def _skill_content_hashes(skill_paths: list[str]) -> set[str] | None:
+    """算出当前可用技能的 SKILL.md 内容哈希集合；任一个读不出来就返回 None（放弃清理）。
+
+    哈希算法必须与下面的播种逻辑完全一致，否则清理会误判。
+    """
+    hashes: set[str] = set()
+    for skill_path in skill_paths:
+        try:
+            with open(os.path.join(skill_path, "SKILL.md"), "rb") as fh:
+                content = fh.read().decode("utf-8")
+        except Exception as exc:
+            logger.warning("[workspace] Cannot hash skill %s for pruning: %s", skill_path, exc)
+            return None
+        hashes.add(hashlib.sha256(content.encode("utf-8")).hexdigest())
+    return hashes
+
+
+def _prune_stale_session_skills(
+    skills_dir: str, index_path: str, allowed_hashes: set[str] | None
+) -> None:
+    """按内容哈希反向清理会话快照里已不再可用的技能。
+
+    幂等逻辑（索引已存在就直接返回）会让"权限侧禁用、或智能体白名单收窄"之前铺好的技能
+    一直留在会话目录里，agent 直接读文件就绕过了禁用。这里按当前可用集合清理。
+
+    判定必须用**内容哈希**而不是目录名：会话目录名是 ``sanitize(SKILL.md 的 name)``，
+    跟技能 id 没关系，而且 name 冲突时还会带 ``_1`` 后缀——只有哈希是可靠的对应关系
+    （播种逻辑也正是按哈希判重的）。
+
+    ``allowed_hashes`` 为 None 或空时不做任何清理：那更可能是技能源目录临时不可读，
+    误删整份快照的代价远大于多留一会儿。
+    """
+    if not allowed_hashes:
+        logger.warning("[workspace] Skip pruning session skills: no verified skill hashes")
+        return
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as exc:
+        logger.warning("[workspace] Failed to read .skills for pruning: %s", exc)
+        return
+
+    stored = data.get("skills")
+    if not isinstance(stored, dict):
+        return
+
+    stale = [
+        dir_name
+        for dir_name, entry in stored.items()
+        if str((entry or {}).get("hash") or "") not in allowed_hashes
+    ]
+    if not stale:
+        return
+
+    for dir_name in stale:
+        shutil.rmtree(os.path.join(skills_dir, dir_name), ignore_errors=True)
+        stored.pop(dir_name, None)
+
+    # 索引必须同步，否则 AgentScope.initialize 会认为内容仍在而跳过复制，留下悬空条目
+    try:
+        data["skills"] = stored
+        with open(index_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("[workspace] Failed to sync .skills after pruning: %s", exc)
+
+    logger.info("[workspace] Pruned %d unavailable session skill(s): %s", len(stale), stale)
+
+
 def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
     """Pre-seed ``<workdir>/skills`` with the platform skills before AgentScope.
 
@@ -437,6 +516,8 @@ def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
     skills_dir = os.path.join(workdir, "skills")
     index_path = os.path.join(skills_dir, ".skills")
     if os.path.isfile(index_path):
+        # 已经铺过：不重建，但要按当前可用集合反向清理（权限/白名单可能已经变化）
+        _prune_stale_session_skills(skills_dir, index_path, _skill_content_hashes(skill_paths))
         return
 
     os.makedirs(skills_dir, exist_ok=True)
@@ -1940,10 +2021,15 @@ async def get_local_workspace(
         return cached
 
     # 命中已有工作区时扫描结果本来就不会被使用；仅初始化时读取技能目录。
+    from app.services.ai.skills.policy import get_forbidden_skill_ids
+
     skill_paths = discover_platform_skill_paths(
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
+        forbidden_skill_ids=await get_forbidden_skill_ids(
+            (user_info or {}).get("u_id_val") or (user_info or {}).get("id")
+        ),
     )
 
     is_sandbox = policy in (
@@ -3139,10 +3225,15 @@ async def build_host_only_workspace(
         conversation_id=conversation_id,
     )
     os.makedirs(workdir, exist_ok=True)
+    from app.services.ai.skills.policy import get_forbidden_skill_ids
+
     skill_paths = discover_platform_skill_paths(
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
+        forbidden_skill_ids=await get_forbidden_skill_ids(
+            (user_info or {}).get("u_id_val") or (user_info or {}).get("id")
+        ),
     )
     _preseed_session_skills(workdir, skill_paths)
     local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)

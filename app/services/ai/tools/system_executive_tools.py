@@ -145,27 +145,31 @@ def _is_forbidden_shell_command(command: str) -> str | None:
 
 
 @tool
-def list_available_skills() -> str:
+async def list_available_skills() -> str:
     """
     列出当前会话可用的技能摘要（已启用），供智能体按 name/description 判断是否需要读取具体技能。
     规则与运行时一致：未自定义时=全部已启用公共技能+当前用户个人技能；
-    自定义开启时=智能体勾选的公共技能+当前用户个人技能。
+    自定义开启时=智能体勾选的公共技能+当前用户个人技能；
+    两种情况都还要再扣掉权限侧禁用（forbidden_skills）的公共技能。
     只返回技能 ID、名称、描述与 scope，不读取完整 SKILL.md。
     """
     try:
         from app.core.context import get_current_agent_context
         from app.utils.context import current_user_info
         from app.services.ai.skill_resolver import list_skill_metas
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
 
         user_info = current_user_info.get()
         ctx = get_current_agent_context()
         skills_custom = bool(getattr(ctx, "skills_custom", False)) if ctx else False
         allowed = list(getattr(ctx, "skills", None) or []) if ctx else []
+        forbidden_skill_ids = await get_forbidden_skill_ids()
 
         metas = list_skill_metas(
             user_info=user_info,
             skills_custom=skills_custom,
             allowed_global_skills=allowed if skills_custom else None,
+            excluded_skill_ids=forbidden_skill_ids,
         )
         skills = []
         for meta in metas:
@@ -185,10 +189,11 @@ def list_available_skills() -> str:
 
 
 @tool
-def read_skill_instruction(skill_id: str) -> str:
+async def read_skill_instruction(skill_id: str) -> str:
     """
     读取指定技能的 SKILL.md 指令内容。调用前应先使用 list_available_skills 确认技能存在且适用。
-    仅允许读取当前会话可见技能（含自定义白名单过滤后的公共技能与个人技能）。
+    仅允许读取当前会话可见技能（含自定义白名单过滤后的公共技能与个人技能），
+    被权限侧禁用（forbidden_skills）的公共技能一律拒绝。
 
     Args:
         skill_id: 技能唯一 ID，仅允许英文、数字、中划线及下划线。
@@ -197,17 +202,20 @@ def read_skill_instruction(skill_id: str) -> str:
         from app.core.context import get_current_agent_context
         from app.utils.context import current_user_info
         from app.services.ai.skill_resolver import list_skill_metas
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
 
         safe_skill_id = _validate_skill_id(skill_id)
         user_info = current_user_info.get()
         ctx = get_current_agent_context()
         skills_custom = bool(getattr(ctx, "skills_custom", False)) if ctx else False
         allowed = list(getattr(ctx, "skills", None) or []) if ctx else []
+        forbidden_skill_ids = await get_forbidden_skill_ids()
 
         metas = list_skill_metas(
             user_info=user_info,
             skills_custom=skills_custom,
             allowed_global_skills=allowed if skills_custom else None,
+            excluded_skill_ids=forbidden_skill_ids,
         )
         matched = next(
             (

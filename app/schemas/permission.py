@@ -16,12 +16,15 @@ class PermissionSet(BaseModel):
     elements: List[str] = Field(default_factory=list, description="List of allowed Action/Element IDs")
     forbidden_tools: List[str] = Field(default_factory=list, description="List of forbidden tool names")
     forbidden_commands: List[str] = Field(default_factory=list, description="List of forbidden shell command keywords")
+    forbidden_skills: List[str] = Field(
+        default_factory=list, description="List of forbidden platform (global) skill IDs"
+    )
     models: List[str] = Field(
         default_factory=list,
         description="聊天可手动切换的模型 ID 白名单（空 = 不限制，与 element 语义相反）",
     )
 
-    @field_validator("forbidden_tools", "forbidden_commands", mode="before")
+    @field_validator("forbidden_tools", "forbidden_commands", "forbidden_skills", mode="before")
     @classmethod
     def normalize_forbidden_policy_entries(cls, value):
         if value is None:
@@ -57,6 +60,7 @@ class PermissionSetDetail(BaseModel):
     elements: List[ResourceDetail] = Field(default_factory=list)
     forbidden_tools: List[ResourceDetail] = Field(default_factory=list)
     forbidden_commands: List[ResourceDetail] = Field(default_factory=list)
+    forbidden_skills: List[ResourceDetail] = Field(default_factory=list)
     models: List[ResourceDetail] = Field(default_factory=list)
 
 class UserPermissionsResponse(BaseModel):

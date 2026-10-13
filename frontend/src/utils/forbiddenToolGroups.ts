@@ -10,9 +10,11 @@ export interface ForbiddenToolCandidate {
   id: string
   label: string
   description: string
-  category: string
-  aliases: string[]
-  /** 稳定聚合键：`builtin:<category>` / `api:<group_name|__ungrouped__>` / `mcp:<server_name|__unknown__>`。 */
+  /** 内置工具的类别；公共技能候选没有这个概念，故可选（skills 模式也不做类别分流）。 */
+  category?: string
+  /** 参与选中判定的名字集合；缺省（技能候选只给 id）时由 `candidateAliases` 退化为 `[id]`。 */
+  aliases?: string[]
+  /** 稳定聚合键：`builtin:<category>` / `api:<group_name|__ungrouped__>` / `mcp:<server_name|__unknown__>` / `skill:__all__`。 */
   group_key: string
   /** 展示标题，前端直接渲染。 */
   group: string
@@ -48,7 +50,24 @@ export function groupCandidates(candidates: ForbiddenToolCandidate[]): Forbidden
 }
 
 /**
- * 组内已选数量：按 `aliases` 命中 `selectedIds` 计数。
+ * 候选项在选中集合里的名字集合：`aliases` 缺省或为空时退化为 `id` 本身。
+ *
+ * 为什么必须有这条退化：公共技能候选（`skill_candidates`）只给 `id`，没有别名概念。
+ * 若这里不退化，`groupSelectedCount` 会恒为 0、`(n/m)` 永远显示 0/2、组卡片永远不变红、
+ * 「全选」一个 id 都写不进去——skills 模式整块静默失效。放在纯函数里而不是组件里，
+ * 是为了让"怎么算选中"只有一个来源（工具与技能共用同一套判定）。
+ */
+export function candidateAliases(candidate: ForbiddenToolCandidate): string[] {
+  const aliases = (candidate?.aliases || [])
+    .map((alias) => String(alias))
+    .filter((alias) => alias.length > 0)
+  if (aliases.length) return aliases
+  const id = String(candidate?.id ?? '')
+  return id ? [id] : []
+}
+
+/**
+ * 组内已选数量：按 `candidateAliases` 命中 `selectedIds` 计数。
  * 一个候选无论有几个别名都只算 1（勾 `write_file` 就是 1，不因"同时拦截 3 个别名"而变 3）。
  */
 export function groupSelectedCount(
@@ -57,12 +76,12 @@ export function groupSelectedCount(
 ): number {
   const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || [])
   return (group?.candidates || []).filter((candidate) =>
-    (candidate?.aliases || []).some((alias) => selected.has(String(alias))),
+    candidateAliases(candidate).some((alias) => selected.has(alias)),
   ).length
 }
 
 /**
- * 组级全选 / 取消全选：勾选并入组内全部 `aliases`，取消移除组内全部 `aliases`。
+ * 组级全选 / 取消全选：勾选并入组内全部名字（别名 / 技能 id），取消移除组内全部名字。
  * 返回新数组：保序（原有项位置不变、新增项按候选顺序追加）、去重、**不修改入参**。
  */
 export function applyGroupSelection(
@@ -72,7 +91,7 @@ export function applyGroupSelection(
 ): string[] {
   const aliases = new Set<string>()
   ;(candidates || []).forEach((candidate) => {
-    ;(candidate?.aliases || []).forEach((alias) => aliases.add(String(alias)))
+    candidateAliases(candidate).forEach((alias) => aliases.add(alias))
   })
 
   const result: string[] = []
@@ -111,7 +130,7 @@ export function findOrphanIds(
   ;(candidates || []).forEach((candidate) => {
     if (!candidate) return
     known.add(String(candidate.id))
-    ;(candidate.aliases || []).forEach((alias) => known.add(String(alias)))
+    candidateAliases(candidate).forEach((alias) => known.add(alias))
   })
   return (selected || []).map((id) => String(id)).filter((id) => !known.has(id))
 }

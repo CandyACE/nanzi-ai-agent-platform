@@ -8,10 +8,11 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPONENT = (ROOT / "frontend/src/components/system/ForbiddenToolCatalog.vue").read_text(
-    encoding="utf-8"
-)
+COMPONENT_PATH = ROOT / "frontend/src/components/system/ForbiddenToolCatalog.vue"
+COMPONENT = COMPONENT_PATH.read_text(encoding="utf-8")
 UTILS = (ROOT / "frontend/src/utils/forbiddenToolGroups.ts").read_text(encoding="utf-8")
+USERS = ROOT / "frontend/src/views/Users.vue"
+ROLES = ROOT / "frontend/src/views/Roles.vue"
 
 
 def test_component_renders_three_levels_with_two_level_collapse_and_search():
@@ -107,10 +108,92 @@ def test_selected_groups_are_toned_red_without_bleeding_into_items_or_orphans():
     assert "toneOf(dynamicVisibleCandidates, 'indigo')" in source
 
     # 候选条目保持中性白底：红化只发生在"组"这一层，否则红成一片看不清勾了哪项
-    # 两处组的候选条目 + orphan 区条目，三处都保持中性白底
-    assert source.count("rounded border bg-white") == 3
+    # 两处组的候选条目 + orphan 区条目 + skills 模式的技能条目，四处都保持中性白底
+    assert source.count("rounded border bg-white") == 4
 
     # orphan 区（琥珀色）不参与色调映射
     orphan_block = source.split("历史遗留：已禁用但已不在目录中的工具")[1].split("</template>")[0]
     assert "toneOf(" not in orphan_block
     assert "bg-amber-50/40" in source
+
+
+def test_component_renders_skills_mode_as_one_dedicated_group():
+    """同一个组件泛化出 skills 模式：只渲染一个大组「禁用选定的公共技能」，候选取 `skill_candidates`。
+
+    大组折叠键必须自定：同一页面会同时挂工具实例与技能实例，键撞车会让折叠互相干扰；
+    工具侧的两个大组在 skills 模式下必须完全不渲染（互斥分支，而不是靠搜索/空数据兜住）。
+    """
+    assert "resource?: 'tools' | 'skills'" in COMPONENT, "组件缺 resource prop"
+    assert "resource: 'tools'" in COMPONENT, "resource 默认必须是 tools，工具侧行为不变"
+    assert "GROUP_SKILLS_KEY = 'group:forbidden-skills'" in COMPONENT, "skills 大组键必须自定"
+    assert "skill_candidates" in COMPONENT, "skills 模式必须取响应里的 skill_candidates"
+    assert "禁用选定的公共技能" in COMPONENT
+    assert "toggleCollapse(GROUP_SKILLS_KEY)" in COMPONENT
+    assert 'v-if="!isSkillsMode"' in COMPONENT, "工具大组与技能大组必须走互斥分支"
+
+    # 只有一个大组：工具侧的两个大组都在 tools 分支里，skills 分支不得再出现它们
+    tools_part, skills_part = COMPONENT.split("<!-- 大组（skills 模式）")
+    assert 'v-if="!isSkillsMode"' in tools_part
+    assert "v-else" in tools_part, "skills 大组应由 v-else 与工具分支互斥"
+    for title in ("选择要禁用的工具", "自定义 API 与 MCP 扩展工具禁用"):
+        assert title in tools_part, f"工具大组被挪出 tools 分支：{title}"
+        assert title not in skills_part, f"skills 模式不该再渲染工具大组：{title}"
+    assert "禁用选定的公共技能" in skills_part
+    assert "toneOf(skillVisibleCandidates, 'gray')" in skills_part
+
+    # 折叠 / 搜索 / (n/m) / 全选 / 变红全部复用同一套纯函数与同一份大组语言
+    assert "filterSubGroups(skillGroups.value, searchQuery.value)" in COMPONENT
+    assert "groupCandidates(candidates.value)" in COMPONENT
+    assert "selectedCountOf(skillVisibleCandidates)" in COMPONENT
+    assert "isAllSelected(skillVisibleCandidates)" in COMPONENT
+    assert "selectedCountOf(sub.candidates)" in skills_part
+    assert "toggleSelection(sub.candidates" in skills_part
+    assert "searchQuery" in skills_part, "skills 模式没有工具侧那个大组，搜索框必须自带"
+    assert "rotate-90" in skills_part
+
+
+def test_skills_mode_copy_never_calls_a_skill_a_tool():
+    """skills 模式的加载 / 失败 / 搜索 / 历史区文案不得把技能说成「工具」，避免误导。
+
+    文案按 resource 切换（技能 / 工具两套），而不是复制一份技能专用模板——所以这里
+    同时钉住"skills 分支里没有硬编码的工具字样"与"文案取自同一组计算属性"。
+    """
+    skills_section = COMPONENT.split("<!-- 大组（skills 模式）")[1].split("</template>")[0]
+    assert "工具" not in skills_section, "skills 分支里出现了「工具」字样"
+    assert "{{ loadingText }}" in skills_section
+    assert ':placeholder="searchPlaceholder"' in skills_section
+    assert 'v-else-if="loadError"' in skills_section
+
+    # 文案同源：一份计算属性按 resource 切换，而不是在模板里写死两套中文
+    assert "const resourceNoun = computed(() => (isSkillsMode.value ? '技能' : '工具'))" in COMPONENT
+    assert "const loadingText = computed(" in COMPONENT
+    assert "const searchPlaceholder = computed(" in COMPONENT
+    assert "const orphanHint = computed(" in COMPONENT
+    # 历史区也随模式换词（公共技能可能已下架），标题与琥珀底色保持共享
+    assert "{{ orphanHint }}" in COMPONENT
+
+
+def test_both_views_mount_a_skills_catalog_next_to_the_tools_catalog():
+    """用户页与角色页各挂两个实例：工具实例保持原样，技能实例紧随其后并绑定 forbidden_skills。"""
+    tools_tag = '<ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />'
+    skills_tag = (
+        '<ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />'
+    )
+    for view in (USERS, ROLES):
+        source = view.read_text(encoding="utf-8")
+        assert tools_tag in source, f"{view} 的工具实例被改动"
+        assert skills_tag in source, f"{view} 缺 skills 实例或未绑定 forbidden_skills"
+        assert source.index(tools_tag) < source.index(skills_tag), "技能实例应紧随工具实例之后"
+
+
+def test_both_views_persist_and_hydrate_forbidden_skills():
+    """技能与工具、命令并列：默认空数组、读取回显、失败重置、保存 payload 显式带上。"""
+    for view in (USERS, ROLES):
+        source = view.read_text(encoding="utf-8")
+        assert "forbidden_skills: string[]" in source, f"{view} 的 permissionData 缺技能字段类型"
+        assert source.count("forbidden_skills: []") == 2, f"{view} 的默认值与失败重置不完整"
+        assert "forbidden_skills: perms.forbidden_skills || []" in source, f"{view} 没回显已保存的技能"
+        assert (
+            "forbidden_skills: [...(permissionData.value.forbidden_skills || [])]" in source
+        ), f"{view} 的保存 payload 没带技能"
+        assert "...permissionData.value" in source, "保存 payload 仍应是 permissionData 的结构"

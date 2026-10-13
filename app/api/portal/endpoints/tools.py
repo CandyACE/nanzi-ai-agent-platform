@@ -80,6 +80,32 @@ async def list_published_mcp_tools(
     ]
 
 
+def _list_forbidden_skill_candidates() -> list[dict[str, Any]]:
+    """可禁用的技能候选：只列**已启用的平台（全局）技能**。
+
+    个人技能属于用户自己的资源，不在管理员配置范围内；而列出本来就已经禁用的技能也没有
+    意义（禁用是为了拦住"目前能用"的技能）。
+    """
+    from app.services.ai.skill_resolver import list_global_skill_metas
+
+    candidates: list[dict[str, Any]] = []
+    for meta in list_global_skill_metas():
+        skill_id = str(meta.get("id") or "").strip()
+        if not skill_id or meta.get("enabled", "true") == "false":
+            continue
+        candidates.append(
+            {
+                "id": skill_id,
+                "label": str(meta.get("name") or skill_id),
+                "description": str(meta.get("description") or ""),
+                # 技能暂不细分来源，统一一个分组；仍带 group_key/group 以便前端复用同一套分组渲染
+                "group_key": "skill:__all__",
+                "group": "公共技能",
+            }
+        )
+    return candidates
+
+
 @router.get("/forbidden-catalog", response_model=Dict[str, Any])
 async def list_forbidden_tool_catalog(
     db: AsyncSession = Depends(get_db_session),
@@ -146,7 +172,8 @@ async def list_forbidden_tool_catalog(
                 "group": candidate.group,
             }
             for candidate in merged
-        ]
+        ],
+        "skill_candidates": _list_forbidden_skill_candidates(),
     }
 
 

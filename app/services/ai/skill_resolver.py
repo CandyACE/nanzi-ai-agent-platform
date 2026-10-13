@@ -7,7 +7,7 @@ import re
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +170,7 @@ def list_skill_metas(
     *,
     skills_custom: bool = False,
     allowed_global_skills: Optional[List[str]] = None,
+    excluded_skill_ids: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, str]]:
     """扫描技能目录，返回 id/name/description/scope 摘要列表。
 
@@ -178,6 +179,9 @@ def list_skill_metas(
 
     skills_custom=True 时，全局技能仅保留 allowed_global_skills 白名单中的项；
     个人技能始终合并。
+
+    excluded_skill_ids 是权限侧的禁用集合（forbidden_skills）：只作用于全局技能，且发生在
+    与个人技能合并之前——所以「禁平台那一份」不会牵连用户自建的同名个人技能。
     """
     try:
         from app.core.config import settings
@@ -187,6 +191,10 @@ def list_skill_metas(
         return []
 
     global_metas = _scan_skill_dir_cached(skills_dir, SCOPE_GLOBAL)
+    if excluded_skill_ids:
+        forbidden = {str(s).strip() for s in excluded_skill_ids if str(s).strip()}
+        if forbidden:
+            global_metas = [m for m in global_metas if m.get("id") not in forbidden]
     if skills_custom:
         allowlist = {str(s).strip() for s in (allowed_global_skills or []) if str(s).strip()}
         global_metas = [m for m in global_metas if m.get("id") in allowlist]
@@ -202,6 +210,22 @@ def list_skill_metas(
         merged[m["id"]] = m
 
     return list(merged.values())
+
+
+def list_global_skill_metas() -> List[Dict[str, str]]:
+    """只返回平台（全局）技能摘要，不含任何用户个人技能。
+
+    配置页的技能候选需要它：管理员禁用技能时管理的是**平台技能**，个人技能属于用户自己的
+    资源，不该出现在候选里；显式走全局扫描，避免依赖"没有 user_info 就没有个人技能"的隐式行为。
+    """
+    try:
+        from app.core.config import settings
+
+        skills_dir = settings.SKILLS_DIR
+    except Exception:
+        return []
+
+    return _scan_skill_dir_cached(skills_dir, SCOPE_GLOBAL)
 
 
 def count_enabled_global_skills() -> int:
@@ -456,6 +480,7 @@ def scan_relevant_skills(
     min_score: float = 0.45,
     skills_custom: bool = False,
     allowed_global_skills: Optional[List[str]] = None,
+    excluded_skill_ids: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
     """扫描技能库，按关键词相关度返回候选技能（流程化自动匹配，非语义向量）。
 
@@ -470,6 +495,7 @@ def scan_relevant_skills(
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
+        excluded_skill_ids=excluded_skill_ids,
     )
     if not metas:
         return []
@@ -509,6 +535,7 @@ def resolve_skills_from_query(
     max_results: int = 2,
     skills_custom: bool = False,
     allowed_global_skills: Optional[List[str]] = None,
+    excluded_skill_ids: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
     """从用户问题中解析技能引用并按 name/id 匹配可用技能。
 
@@ -526,6 +553,7 @@ def resolve_skills_from_query(
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
+        excluded_skill_ids=excluded_skill_ids,
     )
     if not metas:
         return []
