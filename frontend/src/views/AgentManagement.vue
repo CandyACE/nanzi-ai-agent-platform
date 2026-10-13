@@ -598,6 +598,7 @@ const versionForm = ref<Partial<AIAgentVersion>>({
   temperature: 0,
   synthesis_model_name: "", // NEW
   synthesis_temperature: 0.7, // NEW
+  allow_model_switch: true, // 版本级：是否允许用户在输入框手动切换模型
   system_prompt: "",
   tools: [],
   toolcall_timeout_seconds: null,
@@ -1673,6 +1674,7 @@ const startAgentCreation = () => {
     temperature: globalModelTemperature.value,
     synthesis_model_name: "",
     synthesis_temperature: 0.7,
+    allow_model_switch: true,
     system_prompt: "",
     tools: [],
     toolcall_timeout_seconds: null,
@@ -2061,6 +2063,7 @@ const openVersionModal = (
       temperature: globalModelTemperature.value,
       synthesis_model_name: "",
       synthesis_temperature: 0.7,
+      allow_model_switch: true,
       system_prompt: "",
       tools: [],
       toolcall_timeout_seconds: null,

@@ -1333,7 +1333,7 @@
         :current-user="currentUser"
         :window-width="windowWidth"
         :approval-mode="config.approvalMode"
-        :selected-model="config.overrideModel"
+        :selected-model="effectiveOverrideModel"
         :available-models="availableModels"
         :context-usage="contextUsage"
         :context-compaction-enabled="Boolean(conversationId)"
@@ -1350,6 +1350,7 @@
         :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
         :routing-mode="config.routingMode"
         :expert-agent-id="config.expertAgentId"
+        :allow-model-switch="manualModelSwitchAllowed"
         :is-loading-agents="isLoadingAgents"
         :lock-expert-agent="isRoutingSettingsLocked"
         :sandbox-workspace-status="sandboxWorkspaceStatus"
@@ -2902,6 +2903,22 @@ const hideEmbedLikeDislike = computed(() => {
   const t = ag?.engine_type;
   return t === "RAGFLOW" || t === "OPENCLAW";
 });
+/**
+ * 当前生效智能体的已发布版本是否允许在输入框手动切换模型。
+ * 未选择智能体、无已发布版本或历史数据未配置该字段时一律按「允许」处理。
+ */
+const manualModelSwitchAllowed = computed(() => {
+  const id = String(effectiveEmbedChatAgentId.value || "");
+  if (!id) return true;
+  const agent =
+    allowedAgents.value.find((item: any) => String(item.id) === id)
+    || (pinnedAgent.value && String(pinnedAgent.value.id) === id ? pinnedAgent.value : null);
+  return agent?.allow_model_switch !== false;
+});
+/** 实际生效的模型覆盖：智能体版本禁止手动切换时忽略输入框遗留的覆盖值 */
+const effectiveOverrideModel = computed(() =>
+  manualModelSwitchAllowed.value ? (config.overrideModel || "") : "",
+);
 const chatInputRef = ref<any>(null);
 const userInput = ref("");
 const showWorkspaceDrawer = ref(false);
@@ -5157,7 +5174,7 @@ const {
 } = useContextCompactions();
 const refreshEmbedContextUsage = () => refreshContextUsage({
   conversationId: conversationId.value,
-  modelId: config.overrideModel || undefined,
+  modelId: effectiveOverrideModel.value || undefined,
   headers: embedAuthHeaders(),
 });
 const refreshEmbedContextCompactions = (force = false) => refreshContextCompactions({
@@ -5167,7 +5184,7 @@ const refreshEmbedContextCompactions = (force = false) => refreshContextCompacti
 const manualCompactEmbedContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, mode: "fast" | "smart" = "fast") => {
   try {
     const result = await manuallyCompactContext({ conversationId: conversationId.value, headers: embedAuthHeaders(), retainRatio, mode });
-    await refreshContextUsage({ conversationId: conversationId.value, modelId: config.overrideModel || undefined, headers: embedAuthHeaders() });
+    await refreshContextUsage({ conversationId: conversationId.value, modelId: effectiveOverrideModel.value || undefined, headers: embedAuthHeaders() });
     showToast(result?.compacted ? `上下文已压缩，预计节省 ${Number(result.saved_percent || 0)}%` : "当前没有可压缩的历史内容", result?.compacted ? "success" : "info");
   } catch {
     showToast("上下文压缩失败，请稍后重试", "error");
@@ -5175,13 +5192,13 @@ const manualCompactEmbedContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, m
 };
 
 watch(
-  [conversationId, () => config.overrideModel, () => config.token],
+  [conversationId, () => effectiveOverrideModel.value, () => config.token],
   () => void refreshEmbedContextUsage(),
   { immediate: true },
 );
 
 watch(
-  [conversationId, () => config.overrideModel, () => config.token],
+  [conversationId, () => effectiveOverrideModel.value, () => config.token],
   () => void refreshEmbedContextCompactions(true),
   { immediate: true },
 );
@@ -9923,7 +9940,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       conversation_id: conversationId.value,
       debug_options: {
         injected_context: injectedContext.value,
-        model: config.overrideModel || undefined,
+        // 智能体版本禁止手动切换模型时不接受模型覆盖，避免绕过版本配置
+        model: effectiveOverrideModel.value || undefined,
         enable_sql_plan: config.enableSqlPlan,
         grounding_enabled: config.enableGrounding,
         grounding_block_mode: config.groundingBlockMode,
@@ -9939,13 +9957,15 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         approval_mode: config.approvalMode || "ask",
       },
     };
-    if (thinkingEnableOverride.value !== null) {
+    // 模型切换入口被版本配置禁用时，思考 / 推理强度 / 温度覆盖同样不下发：
+    // 它们都来自模型切换面板，禁用后残留的覆盖值会与版本配置的模型不匹配。
+    if (manualModelSwitchAllowed.value && thinkingEnableOverride.value !== null) {
       (body.debug_options as Record<string, unknown>).thinking_enable = thinkingEnableOverride.value;
     }
-    if (reasoningEffortOverride.value !== null) {
+    if (manualModelSwitchAllowed.value && reasoningEffortOverride.value !== null) {
       (body.debug_options as Record<string, unknown>).reasoning_effort = reasoningEffortOverride.value;
     }
-    if (temperatureOverride.value !== null && temperatureOverride.value !== undefined) {
+    if (manualModelSwitchAllowed.value && temperatureOverride.value !== null && temperatureOverride.value !== undefined) {
       (body.debug_options as Record<string, unknown>).temperature = temperatureOverride.value;
     }
     if (knowledgeDatasetIds.length > 0) {

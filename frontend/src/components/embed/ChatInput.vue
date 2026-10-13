@@ -144,8 +144,11 @@ const props = withDefaults(defineProps<{
   sandboxBackend?: "docker" | "k8s";
   /** 生成中是否展示输入框内的跑道动画（设置面板可关，默认开） */
   showGeneratingAnimation?: boolean;
+  /** 当前生效智能体是否允许手动切换模型；false 时隐藏模型切换入口（历史数据默认允许） */
+  allowModelSwitch?: boolean;
 }>(), {
   showGeneratingAnimation: true,
+  allowModelSwitch: true,
 });
 
 const textareaPaddingRightClass = computed(() => {
@@ -3082,8 +3085,9 @@ defineExpose({
                 </div>
 
                 <div class="min-w-1 flex-1"></div>
-                <!-- Custom Model Dropdown Selector -->
+                <!-- Custom Model Dropdown Selector：智能体版本禁止手动切换模型时整块隐藏 -->
                 <div
+                  v-if="allowModelSwitch"
                   ref="modelDropdownRef"
                   class="relative flex-shrink min-w-0"
                   :class="{ 'z-50': showModelDropdown }"

@@ -174,6 +174,15 @@ const orchestratorTemperatureMismatch = computed(() => {
 
 const orchestratorTemperatureAboveOne = computed(() => Number(props.versionForm.temperature) > 1);
 
+/** 是否允许用户在输入框手动切换模型；历史版本未配置该字段时默认允许 */
+const allowModelSwitch = computed({
+  get: () => props.versionForm.allow_model_switch !== false,
+  set: (enabled: boolean) => {
+    if (!props.canEditVersion) return;
+    props.versionForm.allow_model_switch = enabled;
+  },
+});
+
 const formatTemperature = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : '—';
@@ -891,6 +900,38 @@ const externalCreationMissingFields = computed(() => {
               {{ getModelDisplayName(versionForm.model_name) }} @ {{ versionForm.temperature }}
               <span class="text-gray-400 mx-1">→</span>
               {{ versionForm.synthesis_model_name ? getModelDisplayName(versionForm.synthesis_model_name) + ' @ ' + versionForm.synthesis_temperature : '跟随编排模型' }}
+            </div>
+
+            <!-- 是否允许用户在对话输入框手动切换模型（版本级开关） -->
+            <div class="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3">
+              <div class="min-w-0">
+                <div class="text-sm font-bold text-gray-800">允许在输入框手动切换模型</div>
+                <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
+                  默认开启。关闭后，用户在对话输入框中看不到模型切换入口，只能使用本版本配置的编排模型。
+                </p>
+                <p class="mt-1 text-[11px] text-gray-400">历史版本未配置时同样按「允许切换」处理。</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-600">{{ allowModelSwitch ? '允许切换' : '禁止切换' }}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="allowModelSwitch"
+                  :disabled="!canEditVersion"
+                  aria-label="是否允许在输入框手动切换模型"
+                  @click="allowModelSwitch = !allowModelSwitch"
+                  class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors"
+                  :class="[
+                    allowModelSwitch ? 'bg-primary' : 'bg-gray-300',
+                    canEditVersion ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                  ]"
+                >
+                  <span
+                    class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition mt-0.5"
+                    :class="allowModelSwitch ? 'translate-x-5 ml-0.5' : 'translate-x-0.5'"
+                  />
+                </button>
+              </div>
             </div>
           </div>
 

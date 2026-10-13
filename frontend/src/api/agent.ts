@@ -55,6 +55,8 @@ export interface AIAgent {
   readiness_ready?: boolean
   readiness_missing?: string[]
   onboarding_step?: 'VERSION' | 'RESOURCE' | 'COMPLETE'
+  /** 已发布版本是否允许在输入框手动切换模型；null/undefined 表示无发布版或未配置，前端按允许处理 */
+  allow_model_switch?: boolean | null
 }
 
 export interface AIAgentBase {
@@ -89,6 +91,8 @@ export interface AIAgentVersion {
   temperature: number
   synthesis_model_name?: string
   synthesis_temperature?: number
+  /** 是否允许在输入框手动切换模型；历史版本未配置时按 true（允许）处理 */
+  allow_model_switch?: boolean
   system_prompt: string
   tools: Array<string | ToolConfigItem>
   toolcall_timeout_seconds?: number | null
