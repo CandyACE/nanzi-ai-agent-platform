@@ -96,11 +96,9 @@ class McpSseSession:
                             await sse_session.initialize()
                             self.session = sse_session
 
-                        # ===== zhangwei 2026-09-21 BEGIN =====
                         # 独立任务受 10 秒 wait_for 约束；超时取消握手并进入 Direct HTTP 回退。
                         connect_task = asyncio.create_task(_connect_sse())
                         await asyncio.wait_for(connect_task, timeout=10.0)
-                        # ===== zhangwei 2026-09-21 END =====
                         
                         self.last_used_at = time.time()
                         self.is_direct_http = False
