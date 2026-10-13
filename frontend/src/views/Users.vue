@@ -1153,6 +1153,13 @@
                           class="w-3 h-3"
                         ></span>
                         {{ resourceConfig[type].label }}
+
+                        <span
+                          class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
+                          :class="activeResTab === type ? 'bg-gray-50' : ''"
+                        >
+                          {{ resourceTabCount(type) }}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -2247,6 +2254,7 @@ import {
 } from "../utils/userExtraData";
 import Switch from "../components/Switch.vue";
 import ForbiddenToolCatalog from "../components/system/ForbiddenToolCatalog.vue";
+import { parseForbiddenCommands } from "../utils/forbiddenCommands";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
 import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
@@ -2757,7 +2765,7 @@ const resourceConfig: Record<
   metadata: { label: "数据集", color: "orange", icon: "💾" },
   apis: { label: "外部API", color: "purple", icon: "🔗" },
   models: { label: "可用模型", color: "indigo", icon: "🧠" },
-  forbidden_configs: { label: "禁用工具与命令", color: "red", icon: "🚫" },
+  forbidden_configs: { label: "禁用资源", color: "red", icon: "🚫" },
 };
 
 const loadingResources = ref(false);
@@ -2791,6 +2799,17 @@ const permissionData = ref<{
 });
 
 const forbiddenCommandsText = ref("");
+
+/** 禁用命令数取编辑中的文本：实时反映尚未保存的输入，与保存流程共用同一份解析。 */
+const forbiddenCommandCount = computed(() =>
+  parseForbiddenCommands(forbiddenCommandsText.value).length
+);
+
+/** tab 徽标口径：禁用资源 = 禁用工具数 + 禁用命令数；其余 tab = 已勾选资产数。 */
+const resourceTabCount = (type: string) =>
+  type === "forbidden_configs"
+    ? (permissionData.value.forbidden_tools?.length || 0) + forbiddenCommandCount.value
+    : ((permissionData.value as any)[type]?.length || 0);
 
 // Tree Logic
 const toggleTreeItem = (itemId: string) => {
@@ -3192,10 +3211,9 @@ const saveUser = async () => {
             )
             .map((d: any) => d.id),
         );
-        permissionData.value.forbidden_commands = forbiddenCommandsText.value
-          .split(",")
-          .map(cmd => cmd.trim())
-          .filter(cmd => cmd.length > 0);
+        permissionData.value.forbidden_commands = parseForbiddenCommands(
+          forbiddenCommandsText.value,
+        );
 
         const payload = {
           ...permissionData.value,

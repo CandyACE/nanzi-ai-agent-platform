@@ -428,11 +428,10 @@
                                   />
                                   <span>{{ resourceConfig[type].label }}</span>
                                   <span
-                                      v-if="type !== 'forbidden_configs'"
                                       class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
                                       :class="activeResTab === type ? 'bg-gray-50' : ''"
                                   >
-                                      {{ (permissionData as any)[type].length }}
+                                      {{ resourceTabCount(type) }}
                                   </span>
                               </button>
                           </div>
@@ -1106,6 +1105,7 @@ import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import ForbiddenToolCatalog from '../components/system/ForbiddenToolCatalog.vue'
+import { parseForbiddenCommands } from "../utils/forbiddenCommands"
 
 const { showToast } = useToast()
 
@@ -1275,7 +1275,7 @@ const resourceConfig: Record<typeof resourceTypes[number], { label: string, colo
         icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" /></svg>`
     },
     forbidden_configs: {
-        label: '禁用工具与命令',
+        label: '禁用资源',
         color: 'red',
         tabActive: 'text-red-600 border-red-600 bg-red-50',
         tabTextActive: 'text-red-600',
@@ -1320,6 +1320,17 @@ const permissionData = ref<{
 })
 
 const forbiddenCommandsText = ref("")
+
+/** 禁用命令数取编辑中的文本：实时反映尚未保存的输入，与保存流程共用同一份解析。 */
+const forbiddenCommandCount = computed(() =>
+  parseForbiddenCommands(forbiddenCommandsText.value).length
+);
+
+/** tab 徽标口径：禁用资源 = 禁用工具数 + 禁用命令数；其余 tab = 已勾选资产数。 */
+const resourceTabCount = (type: string) =>
+  type === 'forbidden_configs'
+    ? (permissionData.value.forbidden_tools?.length || 0) + forbiddenCommandCount.value
+    : ((permissionData.value as any)[type]?.length || 0);
 
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
@@ -2188,10 +2199,9 @@ const savePermissions = async () => {
                 .filter((d: any) => d?.is_missing_in_ragflow || d?.status === 'missing')
                 .map((d: any) => d.id)
         )
-        permissionData.value.forbidden_commands = forbiddenCommandsText.value
-          .split(",")
-          .map(cmd => cmd.trim())
-          .filter(cmd => cmd.length > 0)
+        permissionData.value.forbidden_commands = parseForbiddenCommands(
+          forbiddenCommandsText.value,
+        )
 
         const payload = {
             ...permissionData.value,
