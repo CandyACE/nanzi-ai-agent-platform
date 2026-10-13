@@ -227,3 +227,50 @@ return {{
     assert result["realOrphan"] == ["removed_mcp_tool"]
     # 目录还没加载出来（或加载失败）时不能吞掉已配置项，否则用户无法解除
     assert result["emptyCatalog"] == ["write_file"]
+
+
+def test_group_tone_turns_red_only_when_the_group_has_a_selection():
+    """有选中 = 整卡红化；无选中沿用各组基色（内置组灰、API/MCP 组靛蓝）。"""
+    result = _run_typescript(
+        """
+return {
+  selected: api.groupToneClasses(true, 'gray'),
+  selectedIndigo: api.groupToneClasses(true, 'indigo'),
+  plainGray: api.groupToneClasses(false, 'gray'),
+  plainIndigo: api.groupToneClasses(false, 'indigo'),
+};
+"""
+    )
+
+    # 有选中：大组卡片、子分组卡片、子分组头部、标题、计数、箭头、圆点、全选按钮全部转红
+    for tone in (result["selected"], result["selectedIndigo"]):
+        assert "border-red-200" in tone["bigCard"]
+        assert "bg-red-50/40" in tone["bigCard"]
+        assert "border-red-200" in tone["subCard"]
+        assert "bg-red-50" in tone["subHead"]
+        assert tone["title"] == "text-red-700"
+        assert tone["count"] == "text-red-500"
+        assert tone["arrow"] == "text-red-400"
+        assert tone["dot"] == "bg-red-500"
+        assert "text-red-600" in tone["action"]
+
+    # 两种基色在有选中时收敛到同一套红，避免"组不同则红不同"
+    assert result["selected"] == result["selectedIndigo"]
+
+    # 无选中：保持现状，不得残留红色标题/底色
+    assert "border-gray-150" in result["plainGray"]["bigCard"]
+    assert "bg-white" in result["plainGray"]["bigCard"]
+    assert result["plainGray"]["subCard"] == "border-gray-200"
+    assert "bg-gray-50" in result["plainGray"]["subHead"]
+    assert result["plainGray"]["title"] == "text-gray-700"
+    assert result["plainGray"]["count"] == "text-gray-400"
+    # 内置组圆点本来就是红色（沙箱/高危语义），这里不能被"无选中"改掉
+    assert result["plainGray"]["dot"] == "bg-red-500"
+
+    assert result["plainIndigo"]["subCard"] == "border-indigo-100"
+    assert "bg-indigo-50/60" in result["plainIndigo"]["subHead"]
+    assert result["plainIndigo"]["title"] == "text-indigo-700"
+    assert result["plainIndigo"]["count"] == "text-indigo-400"
+    assert result["plainIndigo"]["arrow"] == "text-indigo-400"
+    assert result["plainIndigo"]["dot"] == "bg-indigo-500"
+    assert "text-indigo-600" in result["plainIndigo"]["action"]

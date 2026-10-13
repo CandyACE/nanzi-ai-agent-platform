@@ -94,3 +94,23 @@ def test_component_delegates_grouping_to_pure_functions():
     # 标签与归属由后端决定：前端不得维护类别中文映射
     assert "沙箱命令" not in UTILS
     assert "MCP · " not in UTILS
+
+
+def test_selected_groups_are_toned_red_without_bleeding_into_items_or_orphans():
+    """组卡片由色调映射决定红化；候选条目与 orphan 区必须保持原样。"""
+    source = COMPONENT
+
+    assert "groupToneClasses" in source, "色调应由纯函数决定，不在模板里散落三元"
+    # 两个大组 + 两处子分组，都要走同一个入口
+    assert source.count("toneOf(") >= 4, "大组/子分组未全部接入色调映射"
+    assert "toneOf(builtinVisibleCandidates, 'gray')" in source
+    assert "toneOf(dynamicVisibleCandidates, 'indigo')" in source
+
+    # 候选条目保持中性白底：红化只发生在"组"这一层，否则红成一片看不清勾了哪项
+    # 两处组的候选条目 + orphan 区条目，三处都保持中性白底
+    assert source.count("rounded border bg-white") == 3
+
+    # orphan 区（琥珀色）不参与色调映射
+    orphan_block = source.split("历史遗留：已禁用但已不在目录中的工具")[1].split("</template>")[0]
+    assert "toneOf(" not in orphan_block
+    assert "bg-amber-50/40" in source

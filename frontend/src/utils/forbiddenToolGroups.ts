@@ -138,3 +138,60 @@ export function filterSubGroups(
     )
   })
 }
+
+/** 组卡片的色调：有选中 = 整卡红化（一眼看到"这里已经拉黑了东西"），无选中沿用各组基色。 */
+export interface GroupToneClasses {
+  /** 大组卡片容器 */
+  bigCard: string
+  /** 子分组卡片容器 */
+  subCard: string
+  /** 子分组头部（背景 + 下边框） */
+  subHead: string
+  arrow: string
+  dot: string
+  title: string
+  count: string
+  action: string
+}
+
+export function groupToneClasses(
+  hasSelection: boolean,
+  base: 'gray' | 'indigo' = 'gray',
+): GroupToneClasses {
+  if (hasSelection) {
+    // 两种基色收敛到同一套红：避免"组不同则红不同"，红只表示"有选中"这一件事
+    return {
+      bigCard: 'border-red-200 bg-red-50/40',
+      subCard: 'border-red-200',
+      subHead: 'bg-red-50 border-b border-red-100',
+      arrow: 'text-red-400',
+      dot: 'bg-red-500',
+      title: 'text-red-700',
+      count: 'text-red-500',
+      action: 'text-red-600 hover:text-red-800',
+    }
+  }
+  if (base === 'indigo') {
+    return {
+      bigCard: 'border-gray-150 bg-white',
+      subCard: 'border-indigo-100',
+      subHead: 'bg-indigo-50/60 border-b border-indigo-100/50',
+      arrow: 'text-indigo-400',
+      dot: 'bg-indigo-500',
+      title: 'text-indigo-700',
+      count: 'text-indigo-400',
+      action: 'text-indigo-600 hover:text-indigo-800',
+    }
+  }
+  return {
+    bigCard: 'border-gray-150 bg-white',
+    subCard: 'border-gray-200',
+    subHead: 'bg-gray-50 border-b border-gray-100',
+    arrow: 'text-gray-400',
+    // 内置高危组的圆点本来就是红色（沙箱/命令语义），别被"无选中"改掉
+    dot: 'bg-red-500',
+    title: 'text-gray-700',
+    count: 'text-gray-400',
+    action: 'text-red-600 hover:text-red-800',
+  }
+}

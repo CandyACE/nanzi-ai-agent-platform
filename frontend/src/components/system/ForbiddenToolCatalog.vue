@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-3">
     <!-- 大组 1：内置高危工具（可折叠，子组按 category 分组） -->
-    <div v-show="showBuiltinSection" class="border border-gray-150 rounded-xl p-3 bg-white">
+    <div v-show="showBuiltinSection" class="border rounded-xl p-3" :class="toneOf(builtinVisibleCandidates, 'gray').bigCard">
       <div class="flex items-center justify-between gap-3 mb-2 select-none">
         <button
           type="button"
@@ -11,12 +11,12 @@
           :class="isSearching ? 'cursor-default' : ''"
           class="flex items-center gap-1.5 min-w-0 flex-1 text-left"
         >
-          <svg class="w-3.5 h-3.5 text-gray-400 transition-transform shrink-0" :class="{ 'rotate-90': isExpanded(GROUP_BUILTIN_KEY) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 transition-transform shrink-0" :class="[toneOf(builtinVisibleCandidates, 'gray').arrow, { 'rotate-90': isExpanded(GROUP_BUILTIN_KEY) }]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
-          <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-          <span class="text-xs font-bold text-gray-700 truncate">选择要禁用的工具</span>
-          <span class="text-[10px] text-gray-400 font-normal shrink-0">({{ selectedCountOf(builtinVisibleCandidates) }}/{{ builtinVisibleCandidates.length }})</span>
+          <span class="w-1.5 h-1.5 rounded-full" :class="toneOf(builtinVisibleCandidates, 'gray').dot"></span>
+          <span class="text-xs font-bold truncate" :class="toneOf(builtinVisibleCandidates, 'gray').title">选择要禁用的工具</span>
+          <span class="text-[10px] font-normal shrink-0" :class="toneOf(builtinVisibleCandidates, 'gray').count">({{ selectedCountOf(builtinVisibleCandidates) }}/{{ builtinVisibleCandidates.length }})</span>
         </button>
         <div class="flex items-center gap-2 shrink-0">
           <button
@@ -24,7 +24,7 @@
             type="button"
             :disabled="!builtinVisibleCandidates.length"
             @click.stop="toggleSelection(builtinVisibleCandidates, !isAllSelected(builtinVisibleCandidates))"
-            class="text-[10px] font-bold text-red-600 hover:text-red-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            class="text-[10px] font-bold disabled:opacity-40 disabled:cursor-not-allowed" :class="toneOf(builtinVisibleCandidates, 'gray').action"
           >
             {{ isAllSelected(builtinVisibleCandidates) ? '取消全选' : '全选' }}
           </button>
@@ -42,9 +42,9 @@
         <div
           v-for="sub in visibleBuiltinGroups"
           :key="sub.key"
-          class="rounded-lg border border-gray-200 overflow-hidden"
+          class="rounded-lg border overflow-hidden" :class="toneOf(sub.candidates, 'gray').subCard"
         >
-          <div class="flex items-center justify-between py-1.5 px-2.5 bg-gray-50 border-b border-gray-100">
+          <div class="flex items-center justify-between py-1.5 px-2.5" :class="toneOf(sub.candidates, 'gray').subHead">
             <button
               type="button"
               @click="toggleCollapse(sub.key)"
@@ -53,17 +53,17 @@
               :class="isSearching ? 'cursor-default' : ''"
               class="flex items-center gap-2 min-w-0 flex-1 text-left"
             >
-              <svg class="w-3.5 h-3.5 text-gray-400 transition-transform shrink-0" :class="{ 'rotate-90': isExpanded(sub.key) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-3.5 h-3.5 transition-transform shrink-0" :class="[toneOf(sub.candidates, 'gray').arrow, { 'rotate-90': isExpanded(sub.key) }]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
               </svg>
-              <span class="text-[11px] font-bold text-gray-700 truncate">{{ sub.label }}</span>
-              <span class="text-[10px] text-gray-400 shrink-0">({{ selectedCountOf(sub.candidates) }}/{{ sub.candidates.length }})</span>
+              <span class="text-[11px] font-bold truncate" :class="toneOf(sub.candidates, 'gray').title">{{ sub.label }}</span>
+              <span class="text-[10px] shrink-0" :class="toneOf(sub.candidates, 'gray').count">({{ selectedCountOf(sub.candidates) }}/{{ sub.candidates.length }})</span>
             </button>
             <button
               v-if="!disabled"
               type="button"
               @click.stop="toggleSelection(sub.candidates, !isAllSelected(sub.candidates))"
-              class="text-[10px] font-bold text-red-600 hover:text-red-800 ml-2 shrink-0"
+              class="text-[10px] font-bold ml-2 shrink-0" :class="toneOf(sub.candidates, 'gray').action"
             >
               {{ isAllSelected(sub.candidates) ? '取消全选' : '全选' }}
             </button>
@@ -96,7 +96,7 @@
     </div>
 
     <!-- 大组 2：自定义 API 与 MCP 扩展工具（可折叠；无内滚动，长度交给子组折叠） -->
-    <div v-show="showDynamicSection" class="border border-gray-150 rounded-xl p-3 bg-white">
+    <div v-show="showDynamicSection" class="border rounded-xl p-3" :class="toneOf(dynamicVisibleCandidates, 'indigo').bigCard">
       <div class="flex items-center justify-between gap-3 mb-2 select-none">
         <button
           type="button"
@@ -106,19 +106,19 @@
           :class="isSearching ? 'cursor-default' : ''"
           class="flex items-center gap-1.5 min-w-0 flex-1 text-left"
         >
-          <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': isExpanded(GROUP_DYNAMIC_KEY) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 transition-transform shrink-0" :class="[toneOf(dynamicVisibleCandidates, 'indigo').arrow, { 'rotate-90': isExpanded(GROUP_DYNAMIC_KEY) }]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
-          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
-          <span class="text-xs font-bold text-gray-700 truncate">自定义 API 与 MCP 扩展工具禁用</span>
-          <span class="text-[10px] text-gray-400 font-normal shrink-0">({{ selectedCountOf(dynamicVisibleCandidates) }}/{{ dynamicVisibleCandidates.length }})</span>
+          <span class="w-1.5 h-1.5 rounded-full" :class="toneOf(dynamicVisibleCandidates, 'indigo').dot"></span>
+          <span class="text-xs font-bold truncate" :class="toneOf(dynamicVisibleCandidates, 'indigo').title">自定义 API 与 MCP 扩展工具禁用</span>
+          <span class="text-[10px] font-normal shrink-0" :class="toneOf(dynamicVisibleCandidates, 'indigo').count">({{ selectedCountOf(dynamicVisibleCandidates) }}/{{ dynamicVisibleCandidates.length }})</span>
         </button>
         <button
           v-if="!disabled"
           type="button"
           :disabled="!dynamicVisibleCandidates.length"
           @click.stop="toggleSelection(dynamicVisibleCandidates, !isAllSelected(dynamicVisibleCandidates))"
-          class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="text-[10px] font-bold shrink-0 disabled:opacity-40 disabled:cursor-not-allowed" :class="toneOf(dynamicVisibleCandidates, 'indigo').action"
         >
           {{ isAllSelected(dynamicVisibleCandidates) ? '取消全选' : '全选' }}
         </button>
@@ -127,9 +127,9 @@
         <div
           v-for="sub in visibleDynamicGroups"
           :key="sub.key"
-          class="rounded-lg border border-indigo-100 overflow-hidden"
+          class="rounded-lg border overflow-hidden" :class="toneOf(sub.candidates, 'indigo').subCard"
         >
-          <div class="flex items-center justify-between py-1.5 px-2.5 bg-indigo-50/60 border-b border-indigo-100/50">
+          <div class="flex items-center justify-between py-1.5 px-2.5" :class="toneOf(sub.candidates, 'indigo').subHead">
             <button
               type="button"
               @click="toggleCollapse(sub.key)"
@@ -138,17 +138,17 @@
               :class="isSearching ? 'cursor-default' : ''"
               class="flex items-center gap-2 min-w-0 flex-1 text-left"
             >
-              <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': isExpanded(sub.key) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-3.5 h-3.5 transition-transform shrink-0" :class="[toneOf(sub.candidates, 'indigo').arrow, { 'rotate-90': isExpanded(sub.key) }]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
               </svg>
-              <span class="text-[11px] font-bold text-indigo-700 truncate">{{ sub.label }}</span>
-              <span class="text-[10px] text-indigo-400 shrink-0">({{ selectedCountOf(sub.candidates) }}/{{ sub.candidates.length }})</span>
+              <span class="text-[11px] font-bold truncate" :class="toneOf(sub.candidates, 'indigo').title">{{ sub.label }}</span>
+              <span class="text-[10px] shrink-0" :class="toneOf(sub.candidates, 'indigo').count">({{ selectedCountOf(sub.candidates) }}/{{ sub.candidates.length }})</span>
             </button>
             <button
               v-if="!disabled"
               type="button"
               @click.stop="toggleSelection(sub.candidates, !isAllSelected(sub.candidates))"
-              class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 shrink-0"
+              class="text-[10px] font-bold ml-2 shrink-0" :class="toneOf(sub.candidates, 'indigo').action"
             >
               {{ isAllSelected(sub.candidates) ? '取消全选' : '全选' }}
             </button>
@@ -212,6 +212,7 @@ import {
   filterSubGroups,
   findOrphanIds,
   groupCandidates,
+  groupToneClasses,
   groupSelectedCount,
   type ForbiddenToolCandidate,
   type ForbiddenToolSubGroup,
@@ -279,6 +280,9 @@ const asGroup = (key: string, list: ForbiddenToolCandidate[]): ForbiddenToolSubG
 })
 const selectedCountOf = (list: ForbiddenToolCandidate[]) =>
   groupSelectedCount(asGroup('__selection__', list), selectedIds.value)
+/** 组卡片色调：有选中即整卡红化。判定与 (n/m) 计数同源，搜索态下按可见项判断。 */
+const toneOf = (list: ForbiddenToolCandidate[], base: 'gray' | 'indigo') =>
+  groupToneClasses(selectedCountOf(list) > 0, base)
 const isAllSelected = (list: ForbiddenToolCandidate[]) =>
   list.length > 0 && selectedCountOf(list) === list.length
 const isCandidateSelected = (candidate: ForbiddenToolCandidate) => selectedCountOf([candidate]) > 0
