@@ -291,820 +291,830 @@
     </div>
 
     <!-- Create/Edit Dialog -->
-    <div v-if="showCreateDialog || showEditDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="closeDialogs">
-      <div
-        class="bg-white p-6 w-full max-w-md flex flex-col"
-        :class="isMobile ? 'h-full rounded-none' : 'rounded-lg shadow-2xl'"
-      >
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-bold">{{ showEditDialog ? '编辑角色' : '创建角色' }}</h2>
-            <button v-if="isMobile" @click="closeDialogs" class="p-2 text-gray-400">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+    <Teleport to="body">
+      <div v-if="showCreateDialog || showEditDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="closeDialogs">
+        <div
+          class="bg-white p-6 w-full max-w-md flex flex-col"
+          :class="isMobile ? 'h-full rounded-none' : 'rounded-lg shadow-2xl'"
+        >
+          <div class="flex justify-between items-center mb-4">
+              <h2 class="text-xl font-bold">{{ showEditDialog ? '编辑角色' : '创建角色' }}</h2>
+              <button v-if="isMobile" @click="closeDialogs" class="p-2 text-gray-400">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+          </div>
+
+          <div class="space-y-4 flex-1 overflow-y-auto pr-1">
+              <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase mb-1">角色代码</label>
+                  <input
+                    v-model="formData.code"
+                    type="text"
+                    :disabled="showEditDialog"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-sm"
+                    placeholder="例如: finance_manager"
+                  />
+                  <p class="text-[10px] text-gray-400 mt-1">唯一标识符，创建后不可修改</p>
+              </div>
+
+              <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase mb-1">角色名称</label>
+                  <input
+                    v-model="formData.name"
+                    type="text"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="例如: 财务经理"
+                  />
+              </div>
+
+              <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase mb-1">描述</label>
+                  <textarea
+                    v-model="formData.description"
+                    rows="3"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="角色职责描述..."
+                  ></textarea>
+              </div>
+
+              <div v-if="error" class="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 animate-shake">
+                  {{ error }}
+              </div>
+          </div>
+
+          <div class="mt-6 flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t border-gray-200">
+            <button @click="closeDialogs" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">
+              取消
             </button>
-        </div>
-
-        <div class="space-y-4 flex-1 overflow-y-auto pr-1">
-            <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase mb-1">角色代码</label>
-                <input
-                  v-model="formData.code"
-                  type="text"
-                  :disabled="showEditDialog"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-sm"
-                  placeholder="例如: finance_manager"
-                />
-                <p class="text-[10px] text-gray-400 mt-1">唯一标识符，创建后不可修改</p>
-            </div>
-
-            <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase mb-1">角色名称</label>
-                <input
-                  v-model="formData.name"
-                  type="text"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  placeholder="例如: 财务经理"
-                />
-            </div>
-
-            <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase mb-1">描述</label>
-                <textarea
-                  v-model="formData.description"
-                  rows="3"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  placeholder="角色职责描述..."
-                ></textarea>
-            </div>
-
-            <div v-if="error" class="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 animate-shake">
-                {{ error }}
-            </div>
-        </div>
-
-        <div class="mt-6 flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t border-gray-200">
-          <button @click="closeDialogs" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">
-            取消
-          </button>
-          <button
-            @click="saveRole"
-            :disabled="submitting"
-            class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-md shadow-blue-100"
-          >
-            {{ submitting ? '保存中...' : (showEditDialog ? '保存更新' : '立即创建') }}
-          </button>
+            <button
+              @click="saveRole"
+              :disabled="submitting"
+              class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-md shadow-blue-100"
+            >
+              {{ submitting ? '保存中...' : (showEditDialog ? '保存更新' : '立即创建') }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Permission Dialog -->
-    <div v-if="showPermissionDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="closePermissionDialog">
-        <div
-            class="bg-white flex flex-col shadow-2xl transition-all duration-300 overflow-hidden"
-            :class="isMobile ? 'w-full h-full rounded-none min-h-0' : 'rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] min-h-0'"
-        >
-            <!-- Header -->
-            <div class="flex-shrink-0 px-4 py-4 sm:px-0 sm:pt-0 border-b border-gray-100 sm:border-0 flex justify-between items-center">
-                <div>
-                    <h2 class="text-xl font-bold flex items-center gap-2">
-                        分配权限
-                        <span v-if="!isMobile" class="text-xs font-normal text-gray-400 bg-gray-50 px-2 py-0.5 rounded border">{{ currentRole?.code }}</span>
-                    </h2>
-                    <p class="text-xs text-gray-500 mt-0.5">当前角色: <span class="font-bold text-gray-700">{{ currentRole?.name }}</span></p>
-                </div>
-                <button v-if="isMobile" @click="closePermissionDialog" class="p-2 text-gray-400">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-            </div>
+    <Teleport to="body">
+      <div v-if="showPermissionDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="closePermissionDialog">
+          <div
+              class="bg-white flex flex-col shadow-2xl transition-all duration-300 overflow-hidden"
+              :class="isMobile ? 'w-full h-full rounded-none min-h-0' : 'rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] min-h-0'"
+          >
+              <!-- Header -->
+              <div class="flex-shrink-0 px-4 py-4 sm:px-0 sm:pt-0 border-b border-gray-100 sm:border-0 flex justify-between items-center">
+                  <div>
+                      <h2 class="text-xl font-bold flex items-center gap-2">
+                          分配权限
+                          <span v-if="!isMobile" class="text-xs font-normal text-gray-400 bg-gray-50 px-2 py-0.5 rounded border">{{ currentRole?.code }}</span>
+                      </h2>
+                      <p class="text-xs text-gray-500 mt-0.5">当前角色: <span class="font-bold text-gray-700">{{ currentRole?.name }}</span></p>
+                  </div>
+                  <button v-if="isMobile" @click="closePermissionDialog" class="p-2 text-gray-400">
+                      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+              </div>
 
-            <!-- Main Tabs (Assets vs UI) -->
-            <div class="flex-shrink-0 flex items-center space-x-1 p-1 bg-gray-100 rounded-xl my-4 sm:my-6 w-full max-w-md mx-auto">
-                <button
-                    @click="activeMainTab = 'assets'"
-                    :class="activeMainTab === 'assets' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                    class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
-                >
-                    📦 资产授权
-                </button>
-                <button
-                    @click="activeMainTab = 'ui'"
-                    :class="activeMainTab === 'ui' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                    class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
-                >
-                    🎨 菜单功能
-                </button>
-                <button
-                    @click="activeMainTab = 'quota'"
-                    :class="activeMainTab === 'quota' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                    class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
-                >
-                    📊 额度
-                </button>
-            </div>
+              <!-- Main Tabs (Assets vs UI) -->
+              <div class="flex-shrink-0 flex items-center space-x-1 p-1 bg-gray-100 rounded-xl my-4 sm:my-6 w-full max-w-md mx-auto">
+                  <button
+                      @click="activeMainTab = 'assets'"
+                      :class="activeMainTab === 'assets' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                      class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
+                  >
+                      📦 资产授权
+                  </button>
+                  <button
+                      @click="activeMainTab = 'ui'"
+                      :class="activeMainTab === 'ui' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                      class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
+                  >
+                      🎨 菜单功能
+                  </button>
+                  <button
+                      @click="activeMainTab = 'quota'"
+                      :class="activeMainTab === 'quota' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                      class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
+                  >
+                      📊 额度
+                  </button>
+              </div>
 
-            <div class="flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-0">
-                <!-- Tab 1: Data Assets -->
-                <template v-if="activeMainTab === 'assets'">
-                    <div class="flex flex-col flex-1 min-h-0 gap-2">
-                    <!-- Resource Type Tabs：固定高度，避免被下方列表 flex 挤没 -->
-                    <div class="flex-shrink-0 overflow-x-auto scrollbar-hide">
-                        <div class="inline-flex min-w-full sm:min-w-0 items-center gap-1 p-1 bg-gray-100 rounded-xl">
-                            <button
-                                v-for="type in resourceTypes"
-                                :key="type"
-                                @click="activeResTab = type"
-                                :class="[
-                                    activeResTab === type
-                                        ? 'bg-white shadow-sm ' + resourceConfig[type].tabTextActive
-                                        : 'text-gray-600 hover:text-gray-800 hover:bg-white/50'
-                                ]"
-                                class="shrink-0 px-2.5 sm:px-3 py-2 font-bold text-xs leading-snug transition-all whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg"
-                            >
-                                <span
-                                    class="inline-flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full"
-                                    v-html="resourceConfig[type].icon"
-                                />
-                                <span>{{ resourceConfig[type].label }}</span>
-                                <span
-                                    v-if="type !== 'forbidden_configs'"
-                                    class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
-                                    :class="activeResTab === type ? 'bg-gray-50' : ''"
-                                >
-                                    {{ (permissionData as any)[type].length }}
-                                </span>
-                            </button>
-                        </div>
-                    </div>
+              <div class="flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-0">
+                  <!-- Tab 1: Data Assets -->
+                  <template v-if="activeMainTab === 'assets'">
+                      <div class="flex flex-col flex-1 min-h-0 gap-2">
+                      <!-- Resource Type Tabs：固定高度，避免被下方列表 flex 挤没 -->
+                      <div class="flex-shrink-0 overflow-x-auto scrollbar-hide">
+                          <div class="inline-flex min-w-full sm:min-w-0 items-center gap-1 p-1 bg-gray-100 rounded-xl">
+                              <button
+                                  v-for="type in resourceTypes"
+                                  :key="type"
+                                  @click="activeResTab = type"
+                                  :class="[
+                                      activeResTab === type
+                                          ? 'bg-white shadow-sm ' + resourceConfig[type].tabTextActive
+                                          : 'text-gray-600 hover:text-gray-800 hover:bg-white/50'
+                                  ]"
+                                  class="shrink-0 px-2.5 sm:px-3 py-2 font-bold text-xs leading-snug transition-all whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg"
+                              >
+                                  <span
+                                      class="inline-flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full"
+                                      v-html="resourceConfig[type].icon"
+                                  />
+                                  <span>{{ resourceConfig[type].label }}</span>
+                                  <span
+                                      v-if="type !== 'forbidden_configs'"
+                                      class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
+                                      :class="activeResTab === type ? 'bg-gray-50' : ''"
+                                  >
+                                      {{ (permissionData as any)[type].length }}
+                                  </span>
+                              </button>
+                          </div>
+                      </div>
 
-                    <!-- Checkbox List -->
-                    <div class="flex-1 min-h-0 overflow-y-auto bg-gray-50 p-3 sm:p-4 rounded-xl border border-gray-200">
-                        <!-- Mobile Hint -->
-                        <div v-if="activeResTab === 'agents'" class="mb-3 bg-blue-50 border border-blue-100 rounded-lg p-2.5 flex items-start gap-2">
-                            <svg class="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <p class="text-[10px] sm:text-xs text-blue-700 leading-tight">此处仅配置<b>系统级</b>公共智能体权限。</p>
-                        </div>
+                      <!-- Checkbox List -->
+                      <div class="flex-1 min-h-0 overflow-y-auto bg-gray-50 p-3 sm:p-4 rounded-xl border border-gray-200">
+                          <!-- Mobile Hint -->
+                          <div v-if="activeResTab === 'agents'" class="mb-3 bg-blue-50 border border-blue-100 rounded-lg p-2.5 flex items-start gap-2">
+                              <svg class="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <p class="text-[10px] sm:text-xs text-blue-700 leading-tight">此处仅配置<b>系统级</b>公共智能体权限。</p>
+                          </div>
 
-                        <div v-if="loadingResources" class="flex flex-col items-center justify-center py-12 gap-3">
-                            <div class="relative">
-                                <div class="w-9 h-9 rounded-full border-[3px] border-blue-100"></div>
-                                <div class="absolute inset-0 w-9 h-9 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
-                            </div>
-                            <div class="text-center space-y-0.5">
-                                <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
-                                <p class="text-xs text-gray-400">请稍候…</p>
-                            </div>
-                        </div>
-                        <div v-if="activeResTab === 'forbidden_configs'" class="space-y-4 text-left">
-                            <div class="bg-red-50 border border-red-100 rounded-lg p-2.5 flex items-start gap-2 mb-2 select-none">
-                                <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                                </svg>
-                                <div class="text-[10px] sm:text-xs text-red-700 leading-tight">
-                                    <p class="font-bold mb-0.5">安全策略与黑名单说明</p>
-                                    <p class="opacity-80">配置禁用工具后该角色下的用户完全无法调用该工具。配置禁用命令后，当智能体尝试替该角色下的用户运行含有敏感词的系统命令时，将被运行时强行拦截。</p>
-                                </div>
-                            </div>
+                          <div v-if="loadingResources" class="flex flex-col items-center justify-center py-12 gap-3">
+                              <div class="relative">
+                                  <div class="w-9 h-9 rounded-full border-[3px] border-blue-100"></div>
+                                  <div class="absolute inset-0 w-9 h-9 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
+                              </div>
+                              <div class="text-center space-y-0.5">
+                                  <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
+                                  <p class="text-xs text-gray-400">请稍候…</p>
+                              </div>
+                          </div>
+                          <div v-if="activeResTab === 'forbidden_configs'" class="space-y-4 text-left">
+                              <div class="bg-red-50 border border-red-100 rounded-lg p-2.5 flex items-start gap-2 mb-2 select-none">
+                                  <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                  </svg>
+                                  <div class="text-[10px] sm:text-xs text-red-700 leading-tight">
+                                      <p class="font-bold mb-0.5">安全策略与黑名单说明</p>
+                                      <p class="opacity-80">配置禁用工具后该角色下的用户完全无法调用该工具。配置禁用命令后，当智能体尝试替该角色下的用户运行含有敏感词的系统命令时，将被运行时强行拦截。</p>
+                                  </div>
+                              </div>
 
-                            <!-- 1. 禁用工具 Checkbox 组 -->
-                            <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
-                                <h4 class="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5 select-none">
-                                    <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                                    选择要禁用的工具（全局拉黑）
-                                </h4>
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm bg-white hover:border-red-200 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            :value="tool.id"
-                                            v-model="permissionData.forbidden_tools"
-                                            class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 text-red-600 focus:ring-red-500"
-                                        />
-                                        <div class="ml-2.5 min-w-0 flex-1">
-                                            <p class="font-bold text-gray-900 truncate text-xs leading-tight">{{ tool.name }}</p>
-                                            <span class="text-gray-400 text-[9px] block truncate font-mono mt-0.5">{{ tool.description }}</span>
-                                        </div>
-                                    </label>
-                                </div>
-                            </div>
+                              <!-- 1. 禁用工具 Checkbox 组 -->
+                              <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
+                                  <h4 class="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5 select-none">
+                                      <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                                      选择要禁用的工具（全局拉黑）
+                                  </h4>
+                                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm bg-white hover:border-red-200 cursor-pointer">
+                                          <input
+                                              type="checkbox"
+                                              :value="tool.id"
+                                              v-model="permissionData.forbidden_tools"
+                                              class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 text-red-600 focus:ring-red-500"
+                                          />
+                                          <div class="ml-2.5 min-w-0 flex-1">
+                                              <p class="font-bold text-gray-900 truncate text-xs leading-tight">{{ tool.name }}</p>
+                                              <span class="text-gray-400 text-[9px] block truncate font-mono mt-0.5">{{ tool.description }}</span>
+                                          </div>
+                                      </label>
+                                  </div>
+                              </div>
 
-                            <!-- 1.2 其他自定义与扩展工具禁用 -->
-                            <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
-                                <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
-                                    <span class="flex items-center gap-1.5">
-                                        <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
-                                        自定义 API 与 MCP 扩展工具禁用
-                                    </span>
-                                    <input
-                                        v-model="toolSearchQuery"
-                                        type="search"
-                                        placeholder="搜索工具名..."
-                                        class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
-                                    />
-                                </h4>
-                                <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                    <label v-for="tool in filteredOtherTools" :key="tool.id" class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs">
-                                        <input
-                                            type="checkbox"
-                                            :value="tool.id"
-                                            v-model="permissionData.forbidden_tools"
-                                            class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
-                                        />
-                                        <div class="ml-1.5 min-w-0 flex-1">
-                                            <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
-                                            <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
-                                        </div>
-                                    </label>
-                                </div>
-                            </div>
+                              <!-- 1.2 其他自定义与扩展工具禁用 -->
+                              <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
+                                  <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
+                                      <span class="flex items-center gap-1.5">
+                                          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
+                                          自定义 API 与 MCP 扩展工具禁用
+                                      </span>
+                                      <input
+                                          v-model="toolSearchQuery"
+                                          type="search"
+                                          placeholder="搜索工具名..."
+                                          class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
+                                      />
+                                  </h4>
+                                  <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                      <label v-for="tool in filteredOtherTools" :key="tool.id" class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs">
+                                          <input
+                                              type="checkbox"
+                                              :value="tool.id"
+                                              v-model="permissionData.forbidden_tools"
+                                              class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
+                                          />
+                                          <div class="ml-1.5 min-w-0 flex-1">
+                                              <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
+                                              <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
+                                          </div>
+                                      </label>
+                                  </div>
+                              </div>
 
-                            <!-- 2. 禁用 Bash 命令关键字 -->
-                            <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm flex flex-col">
-                                <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
-                                    <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-                                    自定义禁用命令关键字
-                                </h4>
-                                <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
-                                <textarea
-                                    v-model="forbiddenCommandsText"
-                                    placeholder="例如: rm, shutdown, mv, wget, curl"
-                                    class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[85px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
-                                ></textarea>
-                            </div>
-                        </div>
+                              <!-- 2. 禁用 Bash 命令关键字 -->
+                              <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm flex flex-col">
+                                  <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
+                                      <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+                                      自定义禁用命令关键字
+                                  </h4>
+                                  <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
+                                  <textarea
+                                      v-model="forbiddenCommandsText"
+                                      placeholder="例如: rm, shutdown, mv, wget, curl"
+                                      class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[85px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
+                                  ></textarea>
+                              </div>
+                          </div>
 
-                        <div v-else-if="currentResources.length === 0" class="text-center py-10 text-gray-500 text-xs italic">（暂无资源）</div>
-                        <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
-                            <label
-                                v-for="res in currentResources"
-                                :key="res.id"
-                                class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm group bg-white"
-                                :class="[
-                                    isMissingKnowledgeBase(res)
-                                      ? 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
-                                      : 'cursor-pointer hover:border-blue-200',
-                                    resCardActiveClass(res.id)
-                                ]"
-                                :title="isMissingKnowledgeBase(res) ? '该知识库已在 RAGFlow 失联，不可分配权限' : undefined"
-                            >
-                                <input
-                                    type="checkbox"
-                                    :value="res.id"
-                                    v-model="(permissionData as any)[activeResTab]"
-                                    :disabled="isMissingKnowledgeBase(res)"
-                                    class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                    :class="resCheckboxClass()"
-                                />
-                                <div class="ml-2.5 min-w-0 flex-1">
-                                    <div class="flex items-center gap-1.5 mb-0.5 min-w-0">
-                                        <span class="font-bold text-gray-900 block truncate text-xs leading-tight">{{ res.platform_name || res.display_name || res.name }}</span>
-                                        <span
-                                          v-if="res.method"
-                                          class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
-                                          :class="methodBadgeClass(res.method)"
-                                        >{{ res.method }}</span>
-                                        <span
-                                          v-if="isMissingKnowledgeBase(res)"
-                                          class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
-                                        >失联</span>
-                                    </div>
-                                    <span
-                                      v-if="res.path"
-                                      class="text-gray-500 text-[9px] block truncate font-mono leading-tight"
-                                    >{{ res.path }}</span>
-                                    <span class="text-gray-400 text-[9px] block truncate font-mono">{{ res.description || res.id }}</span>
-                                </div>
-                            </label>
-                        </div>
-                    </div>
-                    <div v-if="activeResTab !== 'forbidden_configs'" class="flex-shrink-0 flex justify-between items-center py-1 text-[10px] text-gray-500 px-1">
-                        <span>已勾选: <b class="text-blue-600">{{ (permissionData as any)[activeResTab].length }}</b></span>
-                        <button
-                            @click="toggleSelectAll"
-                            class="font-black hover:underline text-blue-600"
-                        >
-                            {{ isAllSelected ? '全部取消' : '全选本页' }}
-                        </button>
-                    </div>
-                    </div>
-                </template>
+                          <div v-else-if="currentResources.length === 0" class="text-center py-10 text-gray-500 text-xs italic">（暂无资源）</div>
+                          <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
+                              <label
+                                  v-for="res in currentResources"
+                                  :key="res.id"
+                                  class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm group bg-white"
+                                  :class="[
+                                      isMissingKnowledgeBase(res)
+                                        ? 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
+                                        : 'cursor-pointer hover:border-blue-200',
+                                      resCardActiveClass(res.id)
+                                  ]"
+                                  :title="isMissingKnowledgeBase(res) ? '该知识库已在 RAGFlow 失联，不可分配权限' : undefined"
+                              >
+                                  <input
+                                      type="checkbox"
+                                      :value="res.id"
+                                      v-model="(permissionData as any)[activeResTab]"
+                                      :disabled="isMissingKnowledgeBase(res)"
+                                      class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                      :class="resCheckboxClass()"
+                                  />
+                                  <div class="ml-2.5 min-w-0 flex-1">
+                                      <div class="flex items-center gap-1.5 mb-0.5 min-w-0">
+                                          <span class="font-bold text-gray-900 block truncate text-xs leading-tight">{{ res.platform_name || res.display_name || res.name }}</span>
+                                          <span
+                                            v-if="res.method"
+                                            class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
+                                            :class="methodBadgeClass(res.method)"
+                                          >{{ res.method }}</span>
+                                          <span
+                                            v-if="isMissingKnowledgeBase(res)"
+                                            class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
+                                          >失联</span>
+                                      </div>
+                                      <span
+                                        v-if="res.path"
+                                        class="text-gray-500 text-[9px] block truncate font-mono leading-tight"
+                                      >{{ res.path }}</span>
+                                      <span class="text-gray-400 text-[9px] block truncate font-mono">{{ res.description || res.id }}</span>
+                                  </div>
+                              </label>
+                          </div>
+                      </div>
+                      <div v-if="activeResTab !== 'forbidden_configs'" class="flex-shrink-0 flex justify-between items-center py-1 text-[10px] text-gray-500 px-1">
+                          <span>已勾选: <b class="text-blue-600">{{ (permissionData as any)[activeResTab].length }}</b></span>
+                          <button
+                              @click="toggleSelectAll"
+                              class="font-black hover:underline text-blue-600"
+                          >
+                              {{ isAllSelected ? '全部取消' : '全选本页' }}
+                          </button>
+                      </div>
+                      </div>
+                  </template>
 
-                <!-- Tab 2: UI Interface Permissions -->
-                <template v-else-if="activeMainTab === 'ui'">
-                    <div class="flex-1 overflow-y-auto bg-gray-50 p-3 sm:p-6 rounded-xl border border-gray-200">
-                        <div class="space-y-4">
-                            <div v-for="menu in MENU_TREE" :key="menu.id" class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                                <!-- Menu Parent -->
-                                <div class="px-3 py-2.5 bg-gray-50 flex items-center justify-between border-b border-gray-100">
-                                    <div class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
-                                        </svg>
-                                        <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
-                                        <input
-                                            type="checkbox"
-                                            :checked="isItemSelected(menu.id)"
-                                            :indeterminate="isMenuPartiallySelected(menu.id)"
-                                            @change="toggleTreeItem(menu.id)"
-                                            class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
-                                        />
-                                        <span class="font-black text-gray-800 text-xs sm:text-sm">{{ menu.label }}</span>
-                                    </div>
-                                </div>
+                  <!-- Tab 2: UI Interface Permissions -->
+                  <template v-else-if="activeMainTab === 'ui'">
+                      <div class="flex-1 overflow-y-auto bg-gray-50 p-3 sm:p-6 rounded-xl border border-gray-200">
+                          <div class="space-y-4">
+                              <div v-for="menu in MENU_TREE" :key="menu.id" class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                                  <!-- Menu Parent -->
+                                  <div class="px-3 py-2.5 bg-gray-50 flex items-center justify-between border-b border-gray-100">
+                                      <div class="flex items-center gap-2">
+                                          <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
+                                          </svg>
+                                          <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
+                                          <input
+                                              type="checkbox"
+                                              :checked="isItemSelected(menu.id)"
+                                              :indeterminate="isMenuPartiallySelected(menu.id)"
+                                              @change="toggleTreeItem(menu.id)"
+                                              class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                                          />
+                                          <span class="font-black text-gray-800 text-xs sm:text-sm">{{ menu.label }}</span>
+                                      </div>
+                                  </div>
 
-                                <!-- Children Elements -->
-                                <div v-if="menu.children && menu.children.length > 0" class="p-3">
-                                    <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
-                                        <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
-                                        </svg>
-                                        <span>功能点权限</span>
-                                        <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
-                                    </div>
-                                    <div class="grid grid-cols-1 xs:grid-cols-2 gap-2">
-                                    <div
-                                        v-for="child in menu.children"
-                                        :key="child.id"
-                                        @click="toggleTreeItem(child.id)"
-                                        class="flex items-center gap-2.5 p-2 rounded-lg border border-transparent hover:bg-blue-50 transition-all cursor-pointer group"
-                                        :class="isItemSelected(child.id) ? 'bg-blue-50/50 border-blue-100 shadow-inner' : ''"
-                                    >
-                                        <div
-                                            class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-all"
-                                            :class="isItemSelected(child.id) ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'"
-                                        >
-                                            <svg v-if="isItemSelected(child.id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                                        </div>
-                                        <span class="text-[11px] font-medium text-gray-700 leading-tight">{{ child.label }}</span>
-                                    </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mt-2 mb-2 text-[10px] text-gray-400 italic px-1 flex justify-between">
-                        <span>勾选菜单控制导航，勾选子项控制按钮</span>
-                        <span class="text-blue-600 font-bold">已选菜单: {{ permissionData.menus.length }}</span>
-                    </div>
-                </template>
+                                  <!-- Children Elements -->
+                                  <div v-if="menu.children && menu.children.length > 0" class="p-3">
+                                      <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
+                                          <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
+                                          </svg>
+                                          <span>功能点权限</span>
+                                          <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
+                                      </div>
+                                      <div class="grid grid-cols-1 xs:grid-cols-2 gap-2">
+                                      <div
+                                          v-for="child in menu.children"
+                                          :key="child.id"
+                                          @click="toggleTreeItem(child.id)"
+                                          class="flex items-center gap-2.5 p-2 rounded-lg border border-transparent hover:bg-blue-50 transition-all cursor-pointer group"
+                                          :class="isItemSelected(child.id) ? 'bg-blue-50/50 border-blue-100 shadow-inner' : ''"
+                                      >
+                                          <div
+                                              class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-all"
+                                              :class="isItemSelected(child.id) ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'"
+                                          >
+                                              <svg v-if="isItemSelected(child.id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
+                                          </div>
+                                          <span class="text-[11px] font-medium text-gray-700 leading-tight">{{ child.label }}</span>
+                                      </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                      <div class="mt-2 mb-2 text-[10px] text-gray-400 italic px-1 flex justify-between">
+                          <span>勾选菜单控制导航，勾选子项控制按钮</span>
+                          <span class="text-blue-600 font-bold">已选菜单: {{ permissionData.menus.length }}</span>
+                      </div>
+                  </template>
 
-                <!-- Tab 3: Quota -->
-                <template v-else-if="activeMainTab === 'quota'">
-                    <div class="flex-1 min-h-0 overflow-y-auto px-1">
-                        <QuotaPolicyPanel
-                            v-if="currentRole"
-                            scope-type="role"
-                            :scope-id="currentRole.id"
-                        />
-                    </div>
-                </template>
-            </div>
+                  <!-- Tab 3: Quota -->
+                  <template v-else-if="activeMainTab === 'quota'">
+                      <div class="flex-1 min-h-0 overflow-y-auto px-1">
+                          <QuotaPolicyPanel
+                              v-if="currentRole"
+                              scope-type="role"
+                              :scope-id="currentRole.id"
+                          />
+                      </div>
+                  </template>
+              </div>
 
-            <div class="flex-shrink-0 p-4 sm:p-0 mt-2 sm:mt-6 flex flex-col sm:flex-row justify-end gap-2 sm:pt-4 border-t border-gray-100 sm:border-t-0">
-                <button @click="closePermissionDialog" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">{{ activeMainTab === 'quota' ? '关闭' : '取消' }}</button>
-                <button
-                    v-if="activeMainTab !== 'quota'"
-                    @click="savePermissions"
-                    :disabled="submittingPerms"
-                    class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-lg shadow-blue-200"
-                >
-                    {{ submittingPerms ? '...' : '确认并保存配置' }}
-                </button>
-            </div>
-        </div>
-    </div>
+              <div class="flex-shrink-0 p-4 sm:p-0 mt-2 sm:mt-6 flex flex-col sm:flex-row justify-end gap-2 sm:pt-4 border-t border-gray-100 sm:border-t-0">
+                  <button @click="closePermissionDialog" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">{{ activeMainTab === 'quota' ? '关闭' : '取消' }}</button>
+                  <button
+                      v-if="activeMainTab !== 'quota'"
+                      @click="savePermissions"
+                      :disabled="submittingPerms"
+                      class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-lg shadow-blue-200"
+                  >
+                      {{ submittingPerms ? '...' : '确认并保存配置' }}
+                  </button>
+              </div>
+          </div>
+      </div>
+    </Teleport>
 
     <!-- User Assignment Dialog (Refactored to Dual Column) -->
-    <div v-if="showUserAssignmentDialog" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9990] backdrop-blur-sm" @click.self="requestCloseUserAssignmentDialog">
-        <div
-            class="bg-white flex flex-col shadow-2xl transition-all duration-500 overflow-hidden"
-            :class="isMobile ? 'w-full h-full rounded-none' : 'rounded-2xl p-4 w-full max-w-6xl max-h-[92vh]'"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="assign-users-title"
-        >
-            <!-- Header：标题与角色信息同一行，压缩纵向占用 -->
-            <div class="px-3 py-2 sm:px-1 sm:pt-0 border-b border-gray-100 sm:border-0 flex justify-between items-center gap-3 mb-2">
-                <div class="flex items-center gap-3 flex-wrap min-w-0">
-                    <h2 id="assign-users-title" class="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2 shrink-0">
-                        分配角色用户
-                        <span
-                            v-if="hasUnsavedChanges"
-                            class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700 border border-amber-200"
-                        >未保存</span>
-                    </h2>
-                    <p class="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
-                        <span class="inline-block w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
-                        <span class="shrink-0">当前角色:</span>
-                        <span class="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded truncate">{{ currentRole?.name }} ({{ currentRole?.code }})</span>
-                        <span v-if="loadingAssigned" class="text-gray-400 shrink-0">· 加载成员中...</span>
-                    </p>
-                </div>
-                <button
-                    @click="requestCloseUserAssignmentDialog"
-                    aria-label="关闭分配角色用户弹窗"
-                    class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 transition-all shrink-0"
-                >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-            </div>
+    <Teleport to="body">
+      <div v-if="showUserAssignmentDialog" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9990] backdrop-blur-sm" @click.self="requestCloseUserAssignmentDialog">
+          <div
+              class="bg-white flex flex-col shadow-2xl transition-all duration-500 overflow-hidden"
+              :class="isMobile ? 'w-full h-full rounded-none' : 'rounded-2xl p-4 w-full max-w-6xl max-h-[92vh]'"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="assign-users-title"
+          >
+              <!-- Header：标题与角色信息同一行，压缩纵向占用 -->
+              <div class="px-3 py-2 sm:px-1 sm:pt-0 border-b border-gray-100 sm:border-0 flex justify-between items-center gap-3 mb-2">
+                  <div class="flex items-center gap-3 flex-wrap min-w-0">
+                      <h2 id="assign-users-title" class="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2 shrink-0">
+                          分配角色用户
+                          <span
+                              v-if="hasUnsavedChanges"
+                              class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700 border border-amber-200"
+                          >未保存</span>
+                      </h2>
+                      <p class="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+                          <span class="inline-block w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
+                          <span class="shrink-0">当前角色:</span>
+                          <span class="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded truncate">{{ currentRole?.name }} ({{ currentRole?.code }})</span>
+                          <span v-if="loadingAssigned" class="text-gray-400 shrink-0">· 加载成员中...</span>
+                      </p>
+                  </div>
+                  <button
+                      @click="requestCloseUserAssignmentDialog"
+                      aria-label="关闭分配角色用户弹窗"
+                      class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 transition-all shrink-0"
+                  >
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+              </div>
 
-            <!-- Dual Column Content -->
-            <div class="flex-1 flex flex-col sm:flex-row gap-2 sm:gap-3 min-h-0 px-1">
-                <!-- Left: Available Users -->
-                <div class="flex-1 flex flex-col min-h-0 bg-gray-50/50 rounded-xl border border-gray-100 p-2.5">
-                    <div class="flex items-center justify-between gap-2 mb-1.5 px-1">
-                        <div class="flex items-center gap-1.5 min-w-0">
-                            <span class="text-[11px] font-black text-gray-400 uppercase tracking-widest whitespace-nowrap">可选用户 ·候选</span>
-                            <span class="px-2 py-0.5 bg-gray-200 text-gray-600 text-[9px] font-bold rounded-full shrink-0" aria-live="polite" :title="`候选池共 ${availableTotal} 人，其中 ${pendingAddedCount} 人已在本弹窗中选中待保存`">{{ availableRemaining }}</span>
-                        </div>
-                        <span class="shrink-0 text-[10px] text-gray-400 whitespace-nowrap">仅显示未加入</span>
-                    </div>
+              <!-- Dual Column Content -->
+              <div class="flex-1 flex flex-col sm:flex-row gap-2 sm:gap-3 min-h-0 px-1">
+                  <!-- Left: Available Users -->
+                  <div class="flex-1 flex flex-col min-h-0 bg-gray-50/50 rounded-xl border border-gray-100 p-2.5">
+                      <div class="flex items-center justify-between gap-2 mb-1.5 px-1">
+                          <div class="flex items-center gap-1.5 min-w-0">
+                              <span class="text-[11px] font-black text-gray-400 uppercase tracking-widest whitespace-nowrap">可选用户 ·候选</span>
+                              <span class="px-2 py-0.5 bg-gray-200 text-gray-600 text-[9px] font-bold rounded-full shrink-0" aria-live="polite" :title="`候选池共 ${availableTotal} 人，其中 ${pendingAddedCount} 人已在本弹窗中选中待保存`">{{ availableRemaining }}</span>
+                          </div>
+                          <span class="shrink-0 text-[10px] text-gray-400 whitespace-nowrap">仅显示未加入</span>
+                      </div>
 
-                    <!-- 批量勾选：只改变左栏勾选态，必须再点 »（或双击）才会移到右侧 -->
-                    <div class="flex items-center gap-3 mb-2 px-1 flex-wrap">
-                        <button
-                            type="button"
-                            @click="checkAllVisible"
-                            :disabled="filteredAvailableUsers.length === 0"
-                            class="text-[10px] font-bold text-gray-500 hover:underline py-0.5 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                            title="只勾选当前页显示的用户"
-                        >全选本页</button>
-                        <button
-                            v-if="availableRemaining > 0"
-                            type="button"
-                            @click="requestSelectAllFiltered"
-                            :disabled="selectingAllFiltered"
-                            class="text-[10px] font-bold text-blue-600 hover:underline py-0.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                            :title="`勾选当前筛选出的 ${availableRemaining} 名用户（跨页），不会直接移动`"
-                        >{{ selectingAllFiltered ? '处理中...' : `全选筛选结果(${availableRemaining})` }}</button>
-                        <button
-                            v-if="candidateCheckedCount > 0"
-                            type="button"
-                            @click="deselectAllFiltered"
-                            class="text-[10px] font-bold text-amber-600 hover:underline py-0.5 whitespace-nowrap"
-                            title="取消左栏已勾选的用户（不影响右侧成员）"
-                        >取消全选({{ candidateCheckedCount }})</button>
-                    </div>
+                      <!-- 批量勾选：只改变左栏勾选态，必须再点 »（或双击）才会移到右侧 -->
+                      <div class="flex items-center gap-3 mb-2 px-1 flex-wrap">
+                          <button
+                              type="button"
+                              @click="checkAllVisible"
+                              :disabled="filteredAvailableUsers.length === 0"
+                              class="text-[10px] font-bold text-gray-500 hover:underline py-0.5 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                              title="只勾选当前页显示的用户"
+                          >全选本页</button>
+                          <button
+                              v-if="availableRemaining > 0"
+                              type="button"
+                              @click="requestSelectAllFiltered"
+                              :disabled="selectingAllFiltered"
+                              class="text-[10px] font-bold text-blue-600 hover:underline py-0.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                              :title="`勾选当前筛选出的 ${availableRemaining} 名用户（跨页），不会直接移动`"
+                          >{{ selectingAllFiltered ? '处理中...' : `全选筛选结果(${availableRemaining})` }}</button>
+                          <button
+                              v-if="candidateCheckedCount > 0"
+                              type="button"
+                              @click="deselectAllFiltered"
+                              class="text-[10px] font-bold text-amber-600 hover:underline py-0.5 whitespace-nowrap"
+                              title="取消左栏已勾选的用户（不影响右侧成员）"
+                          >取消全选({{ candidateCheckedCount }})</button>
+                      </div>
 
-                    <div class="relative mb-2">
-                        <input
-                            v-model="userSearchQuery"
-                            @input="debouncedUserSearch"
-                            type="search"
-                            aria-label="搜索候选用户"
-                            placeholder="搜索候选用户..."
-                            class="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
-                        />
-                        <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                    </div>
+                      <div class="relative mb-2">
+                          <input
+                              v-model="userSearchQuery"
+                              @input="debouncedUserSearch"
+                              type="search"
+                              aria-label="搜索候选用户"
+                              placeholder="搜索候选用户..."
+                              class="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                          />
+                          <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                      </div>
 
-                    <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1" role="list">
-                        <div v-if="loadingUsers" class="text-center py-16 text-gray-400 text-xs animate-pulse">正在获取候选库...</div>
-                        <div v-else-if="filteredAvailableUsers.length === 0" class="text-center py-16 text-gray-400 text-xs italic">
-                            <template v-if="userSearchQuery.trim()">没有匹配「{{ userSearchQuery.trim() }}」的用户</template>
-                            <template v-else-if="assignedUserIds.length > 0">全部用户都已加入该角色</template>
-                            <template v-else>暂无可分配用户</template>
-                        </div>
-                        <button
-                            v-for="user in filteredAvailableUsers"
-                            :key="'avail-'+user.id"
-                            type="button"
-                            role="listitem"
-                            @click="toggleCandidateChecked(user.id)"
-                            @dblclick="moveOneToAssigned(user.id)"
-                            :aria-pressed="isCandidateChecked(user.id)"
-                            :aria-label="isCandidateChecked(user.id) ? `取消勾选 ${user.real_name || user.user_name}` : `勾选 ${user.real_name || user.user_name}（双击直接加入）`"
-                            :class="isCandidateChecked(user.id)
-                                ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-500/20'
-                                : 'bg-white border-gray-100 hover:border-blue-300 hover:shadow-md hover:shadow-blue-500/5'"
-                            class="w-full text-left flex items-center p-2 rounded-lg border transition-all cursor-pointer group active:scale-[0.99]"
-                            :title="`单击勾选，双击直接加入`"
-                        >
-                            <span
-                                :class="isCandidateChecked(user.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white text-transparent'"
-                                class="w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors"
-                                aria-hidden="true"
-                            >
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M5 13l4 4L19 7" /></svg>
-                            </span>
-                            <div
-                                class="ml-2.5 w-7 h-7 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-bold text-[11px] shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors"
-                            >
-                                {{ user.real_name?.[0] || user.user_name?.[0] }}
-                            </div>
-                            <div class="ml-3 flex-1 min-w-0">
-                                <div class="font-bold text-gray-800 text-sm truncate flex items-center gap-1.5" :title="user.real_name || user.user_name">
-                                    <span class="truncate">{{ user.real_name || user.user_name }}</span>
-                                    <span
-                                        v-if="isPendingRemoved(user.id)"
-                                        class="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-amber-100 text-amber-600"
-                                        title="本次移出的原有成员，保存后才会真正回到候选池"
-                                    >已移出</span>
-                                    <span
-                                        v-if="isUserDisabled(user)"
-                                        class="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-gray-200 text-gray-500"
-                                        title="该用户已停用，分配后需先启用才能登录"
-                                    >已停用</span>
-                                </div>
-                                <div class="text-[10px] text-gray-400 truncate font-mono" :title="`@${user.user_name}`">@{{ user.user_name }}</div>
-                            </div>
-                            <span class="shrink-0 text-[9px] text-gray-300 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">双击加入</span>
-                        </button>
-                    </div>
+                      <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1" role="list">
+                          <div v-if="loadingUsers" class="text-center py-16 text-gray-400 text-xs animate-pulse">正在获取候选库...</div>
+                          <div v-else-if="filteredAvailableUsers.length === 0" class="text-center py-16 text-gray-400 text-xs italic">
+                              <template v-if="userSearchQuery.trim()">没有匹配「{{ userSearchQuery.trim() }}」的用户</template>
+                              <template v-else-if="assignedUserIds.length > 0">全部用户都已加入该角色</template>
+                              <template v-else>暂无可分配用户</template>
+                          </div>
+                          <button
+                              v-for="user in filteredAvailableUsers"
+                              :key="'avail-'+user.id"
+                              type="button"
+                              role="listitem"
+                              @click="toggleCandidateChecked(user.id)"
+                              @dblclick="moveOneToAssigned(user.id)"
+                              :aria-pressed="isCandidateChecked(user.id)"
+                              :aria-label="isCandidateChecked(user.id) ? `取消勾选 ${user.real_name || user.user_name}` : `勾选 ${user.real_name || user.user_name}（双击直接加入）`"
+                              :class="isCandidateChecked(user.id)
+                                  ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-500/20'
+                                  : 'bg-white border-gray-100 hover:border-blue-300 hover:shadow-md hover:shadow-blue-500/5'"
+                              class="w-full text-left flex items-center p-2 rounded-lg border transition-all cursor-pointer group active:scale-[0.99]"
+                              :title="`单击勾选，双击直接加入`"
+                          >
+                              <span
+                                  :class="isCandidateChecked(user.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white text-transparent'"
+                                  class="w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors"
+                                  aria-hidden="true"
+                              >
+                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M5 13l4 4L19 7" /></svg>
+                              </span>
+                              <div
+                                  class="ml-2.5 w-7 h-7 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-bold text-[11px] shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors"
+                              >
+                                  {{ user.real_name?.[0] || user.user_name?.[0] }}
+                              </div>
+                              <div class="ml-3 flex-1 min-w-0">
+                                  <div class="font-bold text-gray-800 text-sm truncate flex items-center gap-1.5" :title="user.real_name || user.user_name">
+                                      <span class="truncate">{{ user.real_name || user.user_name }}</span>
+                                      <span
+                                          v-if="isPendingRemoved(user.id)"
+                                          class="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-amber-100 text-amber-600"
+                                          title="本次移出的原有成员，保存后才会真正回到候选池"
+                                      >已移出</span>
+                                      <span
+                                          v-if="isUserDisabled(user)"
+                                          class="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-gray-200 text-gray-500"
+                                          title="该用户已停用，分配后需先启用才能登录"
+                                      >已停用</span>
+                                  </div>
+                                  <div class="text-[10px] text-gray-400 truncate font-mono" :title="`@${user.user_name}`">@{{ user.user_name }}</div>
+                              </div>
+                              <span class="shrink-0 text-[9px] text-gray-300 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">双击加入</span>
+                          </button>
+                      </div>
 
-                    <!-- Candidate Pagination：候选池按服务端分页，避免只加载前 1000 条 -->
-                    <div
-                        v-if="availableTotalPages > 1"
-                        class="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100 px-1 shrink-0"
-                    >
-                        <button
-                            type="button"
-                            @click="goAvailablePage(-1)"
-                            :disabled="availablePage <= 1 || loadingUsers"
-                            class="px-3 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        >上一页</button>
-                        <span class="text-[11px] text-gray-500 font-medium whitespace-nowrap">第 {{ availablePage }} / {{ availableTotalPages }} 页</span>
-                        <div class="flex items-center gap-1.5">
-                            <input
-                                v-model="availablePageInput"
-                                @keyup.enter="jumpToAvailablePage"
-                                type="number"
-                                min="1"
-                                :max="availableTotalPages"
-                                aria-label="跳转到指定页"
-                                placeholder="页码"
-                                class="w-16 px-2 py-1.5 text-xs text-center border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                            />
-                            <button
-                                type="button"
-                                @click="jumpToAvailablePage"
-                                :disabled="!availablePageInput || loadingUsers"
-                                class="px-2.5 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >跳转</button>
-                        </div>
-                        <button
-                            type="button"
-                            @click="goAvailablePage(1)"
-                            :disabled="availablePage >= availableTotalPages || loadingUsers"
-                            class="px-3 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        >下一页</button>
-                    </div>
-                </div>
+                      <!-- Candidate Pagination：候选池按服务端分页，避免只加载前 1000 条 -->
+                      <div
+                          v-if="availableTotalPages > 1"
+                          class="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-100 px-1 shrink-0"
+                      >
+                          <button
+                              type="button"
+                              @click="goAvailablePage(-1)"
+                              :disabled="availablePage <= 1 || loadingUsers"
+                              class="px-3 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >上一页</button>
+                          <span class="text-[11px] text-gray-500 font-medium whitespace-nowrap">第 {{ availablePage }} / {{ availableTotalPages }} 页</span>
+                          <div class="flex items-center gap-1.5">
+                              <input
+                                  v-model="availablePageInput"
+                                  @keyup.enter="jumpToAvailablePage"
+                                  type="number"
+                                  min="1"
+                                  :max="availableTotalPages"
+                                  aria-label="跳转到指定页"
+                                  placeholder="页码"
+                                  class="w-16 px-2 py-1.5 text-xs text-center border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                              />
+                              <button
+                                  type="button"
+                                  @click="jumpToAvailablePage"
+                                  :disabled="!availablePageInput || loadingUsers"
+                                  class="px-2.5 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >跳转</button>
+                          </div>
+                          <button
+                              type="button"
+                              @click="goAvailablePage(1)"
+                              :disabled="availablePage >= availableTotalPages || loadingUsers"
+                              class="px-3 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >下一页</button>
+                      </div>
+                  </div>
 
-                <!-- Middle Transfer：只有勾选了才会点亮，点它才真正移动用户 -->
-                <div class="flex flex-row lg:flex-col justify-center items-center gap-3 shrink-0 py-1 lg:py-0">
-                    <button
-                        type="button"
-                        @click="moveCheckedToAssigned"
-                        :disabled="candidateCheckedCount === 0"
-                        :aria-label="candidateCheckedCount > 0 ? `把勾选的 ${candidateCheckedCount} 名用户加入已选` : '请先在左侧勾选用户'"
-                        :title="candidateCheckedCount > 0 ? `把勾选的 ${candidateCheckedCount} 名用户加入已选` : '请先在左侧勾选用户'"
-                        :class="candidateCheckedCount > 0
-                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700'
-                            : 'bg-gray-100 text-gray-300 cursor-not-allowed'"
-                        class="w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95"
-                    >
-                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                    </button>
-                    <button
-                        type="button"
-                        @click="moveCheckedToCandidate"
-                        :disabled="assignedCheckedCount === 0"
-                        :aria-label="assignedCheckedCount > 0 ? `把勾选的 ${assignedCheckedCount} 名用户移出已选` : '请先在右侧勾选用户'"
-                        :title="assignedCheckedCount > 0 ? `把勾选的 ${assignedCheckedCount} 名用户移出已选` : '请先在右侧勾选用户'"
-                        :class="assignedCheckedCount > 0
-                            ? 'bg-white text-blue-600 border border-blue-300 shadow-md hover:bg-blue-50'
-                            : 'bg-gray-100 text-gray-300 cursor-not-allowed'"
-                        class="w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95"
-                    >
-                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-                    </button>
-                </div>
+                  <!-- Middle Transfer：只有勾选了才会点亮，点它才真正移动用户 -->
+                  <div class="flex flex-row lg:flex-col justify-center items-center gap-3 shrink-0 py-1 lg:py-0">
+                      <button
+                          type="button"
+                          @click="moveCheckedToAssigned"
+                          :disabled="candidateCheckedCount === 0"
+                          :aria-label="candidateCheckedCount > 0 ? `把勾选的 ${candidateCheckedCount} 名用户加入已选` : '请先在左侧勾选用户'"
+                          :title="candidateCheckedCount > 0 ? `把勾选的 ${candidateCheckedCount} 名用户加入已选` : '请先在左侧勾选用户'"
+                          :class="candidateCheckedCount > 0
+                              ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700'
+                              : 'bg-gray-100 text-gray-300 cursor-not-allowed'"
+                          class="w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95"
+                      >
+                          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+                      </button>
+                      <button
+                          type="button"
+                          @click="moveCheckedToCandidate"
+                          :disabled="assignedCheckedCount === 0"
+                          :aria-label="assignedCheckedCount > 0 ? `把勾选的 ${assignedCheckedCount} 名用户移出已选` : '请先在右侧勾选用户'"
+                          :title="assignedCheckedCount > 0 ? `把勾选的 ${assignedCheckedCount} 名用户移出已选` : '请先在右侧勾选用户'"
+                          :class="assignedCheckedCount > 0
+                              ? 'bg-white text-blue-600 border border-blue-300 shadow-md hover:bg-blue-50'
+                              : 'bg-gray-100 text-gray-300 cursor-not-allowed'"
+                          class="w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95"
+                      >
+                          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                      </button>
+                  </div>
 
-                <!-- Right: Selected Users -->
-                <div class="flex-1 flex flex-col min-h-0 bg-blue-50/30 rounded-xl border border-blue-100/50 p-2.5 relative overflow-hidden">
-                    <div class="absolute inset-0 bg-grid-slate-100 [mask-image:linear-gradient(0deg,#fff,rgba(255,255,255,0.6))] pointer-events-none"></div>
-                    <div class="flex items-center justify-between mb-3 px-1 relative z-10">
-                        <div class="flex items-center gap-2">
-                            <span class="text-[11px] font-black text-blue-500 uppercase tracking-widest whitespace-nowrap">已选用户 ·成员</span>
-                            <span class="px-2 py-0.5 bg-blue-600 text-white text-[9px] font-bold rounded-full shadow-sm shadow-blue-200 shrink-0" aria-live="polite">{{ assignedUserIds.length }}</span>
-                        </div>
-                        <div class="flex items-center gap-2 shrink-0">
-                            <button
-                                v-if="assignedUsers.length > 0"
-                                type="button"
-                                @click="assignedCheckedCount > 0 ? clearAssignedSelection() : (selectedAssignedIds = assignedUsers.map(u => u.id))"
-                                :class="assignedCheckedCount > 0 ? 'text-amber-600' : 'text-blue-500'"
-                                class="text-[10px] font-bold hover:underline py-0.5 whitespace-nowrap"
-                                :title="assignedCheckedCount > 0 ? `取消已勾选的 ${assignedCheckedCount} 名用户` : '勾选已选列表中的全部用户'"
-                            >{{ assignedCheckedCount > 0 ? `取消勾选(${assignedCheckedCount})` : '全选' }}</button>
-                            <button
-                                v-if="assignedUserIds.length > 0"
-                                type="button"
-                                @click="requestRemoveAll"
-                                class="text-[10px] font-bold text-red-500 hover:underline py-0.5 whitespace-nowrap"
-                                :aria-label="`移除已选的 ${assignedUserIds.length} 名用户`"
-                            >移除已选 {{ assignedUserIds.length }} 人</button>
-                        </div>
-                    </div>
+                  <!-- Right: Selected Users -->
+                  <div class="flex-1 flex flex-col min-h-0 bg-blue-50/30 rounded-xl border border-blue-100/50 p-2.5 relative overflow-hidden">
+                      <div class="absolute inset-0 bg-grid-slate-100 [mask-image:linear-gradient(0deg,#fff,rgba(255,255,255,0.6))] pointer-events-none"></div>
+                      <div class="flex items-center justify-between mb-3 px-1 relative z-10">
+                          <div class="flex items-center gap-2">
+                              <span class="text-[11px] font-black text-blue-500 uppercase tracking-widest whitespace-nowrap">已选用户 ·成员</span>
+                              <span class="px-2 py-0.5 bg-blue-600 text-white text-[9px] font-bold rounded-full shadow-sm shadow-blue-200 shrink-0" aria-live="polite">{{ assignedUserIds.length }}</span>
+                          </div>
+                          <div class="flex items-center gap-2 shrink-0">
+                              <button
+                                  v-if="assignedUsers.length > 0"
+                                  type="button"
+                                  @click="assignedCheckedCount > 0 ? clearAssignedSelection() : (selectedAssignedIds = assignedUsers.map(u => u.id))"
+                                  :class="assignedCheckedCount > 0 ? 'text-amber-600' : 'text-blue-500'"
+                                  class="text-[10px] font-bold hover:underline py-0.5 whitespace-nowrap"
+                                  :title="assignedCheckedCount > 0 ? `取消已勾选的 ${assignedCheckedCount} 名用户` : '勾选已选列表中的全部用户'"
+                              >{{ assignedCheckedCount > 0 ? `取消勾选(${assignedCheckedCount})` : '全选' }}</button>
+                              <button
+                                  v-if="assignedUserIds.length > 0"
+                                  type="button"
+                                  @click="requestRemoveAll"
+                                  class="text-[10px] font-bold text-red-500 hover:underline py-0.5 whitespace-nowrap"
+                                  :aria-label="`移除已选的 ${assignedUserIds.length} 名用户`"
+                              >移除已选 {{ assignedUserIds.length }} 人</button>
+                          </div>
+                      </div>
 
-                    <!-- 批量加入后的撤销入口：只回退本次批量新增的人 -->
-                    <div
-                        v-if="bulkAddedIds.length > 0"
-                        class="flex items-center justify-between gap-2 mb-2 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 relative z-10"
-                    >
-                        <span class="text-[11px] font-medium text-amber-800 truncate">
-                            刚批量加入 {{ bulkAddedIds.length }} 名用户
-                        </span>
-                        <button
-                            type="button"
-                            @click="requestUndoBulkAdd"
-                            class="shrink-0 text-[11px] font-bold text-amber-700 hover:underline py-0.5"
-                        >撤销</button>
-                    </div>
+                      <!-- 批量加入后的撤销入口：只回退本次批量新增的人 -->
+                      <div
+                          v-if="bulkAddedIds.length > 0"
+                          class="flex items-center justify-between gap-2 mb-2 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 relative z-10"
+                      >
+                          <span class="text-[11px] font-medium text-amber-800 truncate">
+                              刚批量加入 {{ bulkAddedIds.length }} 名用户
+                          </span>
+                          <button
+                              type="button"
+                              @click="requestUndoBulkAdd"
+                              class="shrink-0 text-[11px] font-bold text-amber-700 hover:underline py-0.5"
+                          >撤销</button>
+                      </div>
 
-                    <div v-if="assignedUserIds.length > 0" class="relative mb-2 shrink-0 z-10">
-                        <input
-                            v-model="assignedSearchQuery"
-                            type="search"
-                            aria-label="在已选成员中查找"
-                            placeholder="在已选成员中查找..."
-                            class="w-full bg-white border border-blue-100 rounded-xl px-3 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
-                        />
-                        <svg class="w-4 h-4 text-blue-300 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                    </div>
+                      <div v-if="assignedUserIds.length > 0" class="relative mb-2 shrink-0 z-10">
+                          <input
+                              v-model="assignedSearchQuery"
+                              type="search"
+                              aria-label="在已选成员中查找"
+                              placeholder="在已选成员中查找..."
+                              class="w-full bg-white border border-blue-100 rounded-xl px-3 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                          />
+                          <svg class="w-4 h-4 text-blue-300 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                      </div>
 
-                    <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1 relative z-10" role="list">
-                        <!-- 加载中 / 加载失败：必须与“该角色没有成员”区分，否则容易误保存清空成员 -->
-                        <div v-if="loadingAssigned" class="flex flex-col items-center justify-center h-full text-center py-16">
-                            <div class="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                            <span class="text-xs text-blue-400/80 font-medium mt-3">正在加载角色成员...</span>
-                        </div>
-                        <div v-else-if="assignedLoadFailed" class="flex flex-col items-center justify-center h-full text-center py-16 px-4">
-                            <div class="w-12 h-12 bg-red-50 text-red-400 rounded-2xl flex items-center justify-center mb-3">
-                                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                            </div>
-                            <span class="text-xs text-red-500 font-medium">角色成员加载失败，为避免误清空成员，保存已禁用</span>
-                            <button
-                                type="button"
-                                @click="currentRole && fetchRoleUsers(currentRole.id)"
-                                class="mt-3 px-4 py-1.5 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
-                            >重新加载</button>
-                        </div>
-                        <div v-else-if="assignedUserIds.length === 0" class="flex flex-col items-center justify-center h-full text-center py-16">
-                            <div class="w-12 h-12 bg-blue-100 text-blue-400 rounded-2xl flex items-center justify-center mb-3">
-                                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
-                            </div>
-                            <span class="text-xs text-blue-400/80 font-medium">在左侧勾选用户后点 » 加入</span>
-                        </div>
-                        <div
-                            v-else-if="assignedUsers.length === 0"
-                            class="text-center py-16 text-blue-400/80 text-xs italic"
-                        >没有匹配「{{ assignedSearchQuery.trim() }}」的成员</div>
-                        <button
-                            v-for="user in assignedUsers"
-                            :key="'sel-'+user.id"
-                            type="button"
-                            role="listitem"
-                            @click="toggleAssignedChecked(user.id)"
-                            @dblclick="moveOneToCandidate(user.id)"
-                            :aria-pressed="isAssignedChecked(user.id)"
-                            :aria-label="isAssignedChecked(user.id) ? `取消勾选 ${user.real_name || user.user_name}` : `勾选 ${user.real_name || user.user_name}（双击直接移出）`"
-                            :class="isAssignedChecked(user.id)
-                                ? 'border-blue-400 ring-2 ring-blue-500/20'
-                                : 'border-blue-200 hover:border-red-300 ring-1 ring-blue-500/5'"
-                            class="w-full text-left flex items-center p-2 rounded-lg bg-white transition-all cursor-pointer group active:scale-[0.99] hover:shadow-lg hover:shadow-red-500/5"
-                            title="单击勾选，双击直接移出"
-                        >
-                            <span
-                                :class="isAssignedChecked(user.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white text-transparent'"
-                                class="w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors"
-                                aria-hidden="true"
-                            >
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M5 13l4 4L19 7" /></svg>
-                            </span>
-                            <div class="ml-2.5 w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[11px] shadow-md shadow-blue-200 group-hover:bg-red-500 group-hover:shadow-red-200 transition-colors">
-                                {{ user.real_name?.[0] || user.user_name?.[0] }}
-                            </div>
-                            <div class="ml-3 flex-1 min-w-0">
-                                <div class="font-bold text-gray-900 text-sm truncate flex items-center gap-1.5" :title="user.real_name || user.user_name">
-                                    <span class="truncate">{{ user.real_name || user.user_name }}</span>
-                                    <span
-                                        v-if="isUserDisabled(user)"
-                                        class="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-gray-200 text-gray-500"
-                                        title="该用户已停用，分配后需先启用才能登录"
-                                    >已停用</span>
-                                </div>
-                                <div class="text-[10px] text-blue-500/60 truncate font-mono group-hover:text-red-400">
-                                    <span v-if="user.detail_missing" class="text-amber-500">详情未加载 · ID {{ user.id }}</span>
-                                    <span v-else>@{{ user.user_name }}</span>
-                                </div>
-                            </div>
-                            <svg class="w-4 h-4 text-gray-300 group-hover:text-red-500 transition-all opacity-0 group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                    </div>
-                </div>
-            </div>
+                      <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1 relative z-10" role="list">
+                          <!-- 加载中 / 加载失败：必须与“该角色没有成员”区分，否则容易误保存清空成员 -->
+                          <div v-if="loadingAssigned" class="flex flex-col items-center justify-center h-full text-center py-16">
+                              <div class="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                              <span class="text-xs text-blue-400/80 font-medium mt-3">正在加载角色成员...</span>
+                          </div>
+                          <div v-else-if="assignedLoadFailed" class="flex flex-col items-center justify-center h-full text-center py-16 px-4">
+                              <div class="w-12 h-12 bg-red-50 text-red-400 rounded-2xl flex items-center justify-center mb-3">
+                                  <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                              </div>
+                              <span class="text-xs text-red-500 font-medium">角色成员加载失败，为避免误清空成员，保存已禁用</span>
+                              <button
+                                  type="button"
+                                  @click="currentRole && fetchRoleUsers(currentRole.id)"
+                                  class="mt-3 px-4 py-1.5 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                              >重新加载</button>
+                          </div>
+                          <div v-else-if="assignedUserIds.length === 0" class="flex flex-col items-center justify-center h-full text-center py-16">
+                              <div class="w-12 h-12 bg-blue-100 text-blue-400 rounded-2xl flex items-center justify-center mb-3">
+                                  <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
+                              </div>
+                              <span class="text-xs text-blue-400/80 font-medium">在左侧勾选用户后点 » 加入</span>
+                          </div>
+                          <div
+                              v-else-if="assignedUsers.length === 0"
+                              class="text-center py-16 text-blue-400/80 text-xs italic"
+                          >没有匹配「{{ assignedSearchQuery.trim() }}」的成员</div>
+                          <button
+                              v-for="user in assignedUsers"
+                              :key="'sel-'+user.id"
+                              type="button"
+                              role="listitem"
+                              @click="toggleAssignedChecked(user.id)"
+                              @dblclick="moveOneToCandidate(user.id)"
+                              :aria-pressed="isAssignedChecked(user.id)"
+                              :aria-label="isAssignedChecked(user.id) ? `取消勾选 ${user.real_name || user.user_name}` : `勾选 ${user.real_name || user.user_name}（双击直接移出）`"
+                              :class="isAssignedChecked(user.id)
+                                  ? 'border-blue-400 ring-2 ring-blue-500/20'
+                                  : 'border-blue-200 hover:border-red-300 ring-1 ring-blue-500/5'"
+                              class="w-full text-left flex items-center p-2 rounded-lg bg-white transition-all cursor-pointer group active:scale-[0.99] hover:shadow-lg hover:shadow-red-500/5"
+                              title="单击勾选，双击直接移出"
+                          >
+                              <span
+                                  :class="isAssignedChecked(user.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white text-transparent'"
+                                  class="w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors"
+                                  aria-hidden="true"
+                              >
+                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M5 13l4 4L19 7" /></svg>
+                              </span>
+                              <div class="ml-2.5 w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[11px] shadow-md shadow-blue-200 group-hover:bg-red-500 group-hover:shadow-red-200 transition-colors">
+                                  {{ user.real_name?.[0] || user.user_name?.[0] }}
+                              </div>
+                              <div class="ml-3 flex-1 min-w-0">
+                                  <div class="font-bold text-gray-900 text-sm truncate flex items-center gap-1.5" :title="user.real_name || user.user_name">
+                                      <span class="truncate">{{ user.real_name || user.user_name }}</span>
+                                      <span
+                                          v-if="isUserDisabled(user)"
+                                          class="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-gray-200 text-gray-500"
+                                          title="该用户已停用，分配后需先启用才能登录"
+                                      >已停用</span>
+                                  </div>
+                                  <div class="text-[10px] text-blue-500/60 truncate font-mono group-hover:text-red-400">
+                                      <span v-if="user.detail_missing" class="text-amber-500">详情未加载 · ID {{ user.id }}</span>
+                                      <span v-else>@{{ user.user_name }}</span>
+                                  </div>
+                              </div>
+                              <svg class="w-4 h-4 text-gray-300 group-hover:text-red-500 transition-all opacity-0 group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                      </div>
+                  </div>
+              </div>
 
-            <!-- Footer -->
-            <div class="mt-2 flex flex-col sm:flex-row justify-between items-center gap-2 border-t border-gray-100 pt-3 px-1">
-                <div class="flex items-center gap-4">
-                    <div class="flex flex-col">
-                        <span class="text-[10px] font-black text-gray-400 uppercase tracking-tighter">当前选择状态</span>
-                        <span class="text-sm font-bold text-gray-800">
-                            已选 {{ assignedUserIds.length }} 名用户 ·
-                            <span class="text-gray-400">
-                                {{ loadingAssigned ? '正在加载成员...' : `可分配 ${availableRemaining} 人` }}
-                            </span>
-                        </span>
-                        <span v-if="candidateCheckedCount > 0" class="text-[11px] font-bold text-blue-600 mt-0.5" aria-live="polite">
-                            已勾选 {{ candidateCheckedCount }} 人待加入，点 » 移动
-                        </span>
-                        <span v-else-if="assignedCheckedCount > 0" class="text-[11px] font-bold text-amber-600 mt-0.5" aria-live="polite">
-                            已勾选 {{ assignedCheckedCount }} 人待移出，点 « 移动
-                        </span>
-                    </div>
-                </div>
-                <div class="flex gap-3 w-full sm:w-auto">
-                    <button
-                        @click="requestCloseUserAssignmentDialog"
-                        :disabled="submittingUserAssignment"
-                        class="flex-1 sm:flex-none px-5 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 text-sm font-bold text-gray-500 transition-all"
-                    >取消更改</button>
-                    <button
-                        @click="saveUserAssignments"
-                        :disabled="!canSubmitAssignment"
-                        :title="loadingAssigned ? '正在加载角色成员，请稍候' : (assignedLoadFailed ? '成员加载失败，请先重新加载' : '')"
-                        class="flex-1 sm:flex-none px-8 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-black shadow-xl shadow-blue-200 transition-all active:scale-[0.98]"
-                    >
-                        <template v-if="submittingUserAssignment">正在同步...</template>
-                        <template v-else-if="loadingAssigned">加载成员中...</template>
-                        <template v-else>确认分配</template>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
+              <!-- Footer -->
+              <div class="mt-2 flex flex-col sm:flex-row justify-between items-center gap-2 border-t border-gray-100 pt-3 px-1">
+                  <div class="flex items-center gap-4">
+                      <div class="flex flex-col">
+                          <span class="text-[10px] font-black text-gray-400 uppercase tracking-tighter">当前选择状态</span>
+                          <span class="text-sm font-bold text-gray-800">
+                              已选 {{ assignedUserIds.length }} 名用户 ·
+                              <span class="text-gray-400">
+                                  {{ loadingAssigned ? '正在加载成员...' : `可分配 ${availableRemaining} 人` }}
+                              </span>
+                          </span>
+                          <span v-if="candidateCheckedCount > 0" class="text-[11px] font-bold text-blue-600 mt-0.5" aria-live="polite">
+                              已勾选 {{ candidateCheckedCount }} 人待加入，点 » 移动
+                          </span>
+                          <span v-else-if="assignedCheckedCount > 0" class="text-[11px] font-bold text-amber-600 mt-0.5" aria-live="polite">
+                              已勾选 {{ assignedCheckedCount }} 人待移出，点 « 移动
+                          </span>
+                      </div>
+                  </div>
+                  <div class="flex gap-3 w-full sm:w-auto">
+                      <button
+                          @click="requestCloseUserAssignmentDialog"
+                          :disabled="submittingUserAssignment"
+                          class="flex-1 sm:flex-none px-5 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 text-sm font-bold text-gray-500 transition-all"
+                      >取消更改</button>
+                      <button
+                          @click="saveUserAssignments"
+                          :disabled="!canSubmitAssignment"
+                          :title="loadingAssigned ? '正在加载角色成员，请稍候' : (assignedLoadFailed ? '成员加载失败，请先重新加载' : '')"
+                          class="flex-1 sm:flex-none px-8 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-black shadow-xl shadow-blue-200 transition-all active:scale-[0.98]"
+                      >
+                          <template v-if="submittingUserAssignment">正在同步...</template>
+                          <template v-else-if="loadingAssigned">加载成员中...</template>
+                          <template v-else>确认分配</template>
+                      </button>
+                  </div>
+              </div>
+          </div>
+      </div>
+    </Teleport>
 
     <!-- Confirm Dialog：丢弃未保存更改 / 移除全部 / 批量加入 -->
-    <div
-        v-if="confirmDialog"
-        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9995]"
-        @click.self="closeConfirmDialog"
-    >
-        <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl" role="dialog" aria-modal="true">
-            <div class="flex items-start gap-3">
-                <div
-                    :class="confirmDialog.tone === 'danger' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'"
-                    class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                >
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                    </svg>
-                </div>
-                <div class="min-w-0">
-                    <h3 class="text-base font-bold text-gray-900">{{ confirmDialog.title }}</h3>
-                    <p class="text-sm text-gray-500 mt-1.5 leading-relaxed">{{ confirmDialog.message }}</p>
-                </div>
-            </div>
-            <div class="flex justify-end gap-3 mt-6">
-                <button
-                    type="button"
-                    @click="closeConfirmDialog"
-                    class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-600"
-                >取消</button>
-                <button
-                    type="button"
-                    @click="runConfirm"
-                    :class="confirmDialog.tone === 'danger'
-                        ? 'bg-red-600 hover:bg-red-700'
-                        : 'bg-blue-600 hover:bg-blue-700'"
-                    class="px-4 py-2 text-white rounded-lg text-sm font-bold transition-colors"
-                >{{ confirmDialog.confirmText }}</button>
-            </div>
-        </div>
-    </div>
+    <Teleport to="body">
+      <div
+          v-if="confirmDialog"
+          class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9995]"
+          @click.self="closeConfirmDialog"
+      >
+          <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl" role="dialog" aria-modal="true">
+              <div class="flex items-start gap-3">
+                  <div
+                      :class="confirmDialog.tone === 'danger' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'"
+                      class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  >
+                      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                      </svg>
+                  </div>
+                  <div class="min-w-0">
+                      <h3 class="text-base font-bold text-gray-900">{{ confirmDialog.title }}</h3>
+                      <p class="text-sm text-gray-500 mt-1.5 leading-relaxed">{{ confirmDialog.message }}</p>
+                  </div>
+              </div>
+              <div class="flex justify-end gap-3 mt-6">
+                  <button
+                      type="button"
+                      @click="closeConfirmDialog"
+                      class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-600"
+                  >取消</button>
+                  <button
+                      type="button"
+                      @click="runConfirm"
+                      :class="confirmDialog.tone === 'danger'
+                          ? 'bg-red-600 hover:bg-red-700'
+                          : 'bg-blue-600 hover:bg-blue-700'"
+                      class="px-4 py-2 text-white rounded-lg text-sm font-bold transition-colors"
+                  >{{ confirmDialog.confirmText }}</button>
+              </div>
+          </div>
+      </div>
+    </Teleport>
 
     <!-- Delete Confirmation Dialog -->
-    <div v-if="showDeleteDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="showDeleteDialog = false">
-      <div class="bg-white rounded-lg p-6 w-full max-w-md">
-        <h2 class="text-xl font-bold mb-4 text-red-600">确认删除</h2>
-        <p class="text-gray-700 mb-6">确定要删除角色 <strong>{{ roleToDelete?.name }}</strong> 吗？<br><span class="text-sm text-gray-500">删除后，关联该角色的用户将失去相关权限。</span></p>
-        <div class="flex justify-end gap-3">
-          <button @click="showDeleteDialog = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
-            取消
-          </button>
-          <button @click="deleteRole" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
-            确认删除
-          </button>
+    <Teleport to="body">
+      <div v-if="showDeleteDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="showDeleteDialog = false">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md">
+          <h2 class="text-xl font-bold mb-4 text-red-600">确认删除</h2>
+          <p class="text-gray-700 mb-6">确定要删除角色 <strong>{{ roleToDelete?.name }}</strong> 吗？<br><span class="text-sm text-gray-500">删除后，关联该角色的用户将失去相关权限。</span></p>
+          <div class="flex justify-end gap-3">
+            <button @click="showDeleteDialog = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+              取消
+            </button>
+            <button @click="deleteRole" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+              确认删除
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
   </div>
 </template>

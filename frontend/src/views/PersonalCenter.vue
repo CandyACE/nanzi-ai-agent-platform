@@ -1806,110 +1806,112 @@ onMounted(() => {
     </Teleport>
 
     <!-- 重置 API Key 安全确认弹窗 -->
-    <div
-      v-if="showResetKeyModal"
-      class="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-[9990] p-4"
-      @click.self="closeResetApiKeyModal"
-    >
-      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
-        <div class="px-6 py-5 bg-rose-50/60 border-b border-rose-100/80 flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center text-rose-600">
+    <Teleport to="body">
+      <div
+        v-if="showResetKeyModal"
+        class="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-[9990] p-4"
+        @click.self="closeResetApiKeyModal"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
+          <div class="px-6 py-5 bg-rose-50/60 border-b border-rose-100/80 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center text-rose-600">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-gray-900">重置访问凭证 (API Key)</h3>
+                <p class="text-xs text-gray-500">重置后旧凭证将立即永久失效</p>
+              </div>
+            </div>
+            <button @click="closeResetApiKeyModal" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-white/60 transition-colors">
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
-            </div>
-            <div>
-              <h3 class="text-base font-bold text-gray-900">重置访问凭证 (API Key)</h3>
-              <p class="text-xs text-gray-500">重置后旧凭证将立即永久失效</p>
-            </div>
-          </div>
-          <button @click="closeResetApiKeyModal" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-white/60 transition-colors">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div class="p-6 space-y-4">
-          <div class="p-3 bg-amber-50 border border-amber-200/80 rounded-xl text-xs text-amber-800 leading-relaxed">
-            <strong>操作警告：</strong> 重置 API Key 会使之前生成的所有外部调用秘钥立即失效，已配置该 Key 的自动化脚本、应用或 CLI 需同步更换。当前浏览器会话将自动保持在线。
+            </button>
           </div>
 
-          <!-- 若开启二次验证，提供密码与动态码二选一 -->
-          <div v-if="twoFactorEnabled" class="space-y-3">
-            <label class="block text-xs font-bold text-gray-700">安全验证方式（二选一）：</label>
-            <div class="flex items-center gap-3 border-b border-gray-100 pb-3">
-              <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
-                <input type="radio" v-model="resetVerifyType" value="password" class="text-rose-600" />
-                <span>当前登录密码</span>
-              </label>
-              <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
-                <input type="radio" v-model="resetVerifyType" value="code" class="text-rose-600" />
-                <span>Google 动态验证码 (2FA)</span>
-              </label>
+          <div class="p-6 space-y-4">
+            <div class="p-3 bg-amber-50 border border-amber-200/80 rounded-xl text-xs text-amber-800 leading-relaxed">
+              <strong>操作警告：</strong> 重置 API Key 会使之前生成的所有外部调用秘钥立即失效，已配置该 Key 的自动化脚本、应用或 CLI 需同步更换。当前浏览器会话将自动保持在线。
             </div>
 
-            <div v-if="resetVerifyType === 'password'" class="space-y-1.5">
-              <label class="block text-xs font-bold text-gray-600">当前账号登录密码</label>
+            <!-- 若开启二次验证，提供密码与动态码二选一 -->
+            <div v-if="twoFactorEnabled" class="space-y-3">
+              <label class="block text-xs font-bold text-gray-700">安全验证方式（二选一）：</label>
+              <div class="flex items-center gap-3 border-b border-gray-100 pb-3">
+                <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
+                  <input type="radio" v-model="resetVerifyType" value="password" class="text-rose-600" />
+                  <span>当前登录密码</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
+                  <input type="radio" v-model="resetVerifyType" value="code" class="text-rose-600" />
+                  <span>Google 动态验证码 (2FA)</span>
+                </label>
+              </div>
+
+              <div v-if="resetVerifyType === 'password'" class="space-y-1.5">
+                <label class="block text-xs font-bold text-gray-600">当前账号登录密码</label>
+                <input
+                  v-model="resetPassword"
+                  type="password"
+                  placeholder="请输入当前登录密码"
+                  class="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
+                  @keyup.enter="handleResetApiKey"
+                />
+              </div>
+              <div v-else class="space-y-1.5">
+                <label class="block text-xs font-bold text-gray-600">Google 身份验证器 6 位动态码</label>
+                <input
+                  v-model="resetCode"
+                  type="text"
+                  maxlength="6"
+                  placeholder="000000"
+                  class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all font-bold placeholder:text-gray-300 disabled:bg-gray-100"
+                  @keyup.enter="handleResetApiKey"
+                />
+              </div>
+            </div>
+
+            <!-- 未开启二次验证，仅校验登录密码 -->
+            <div v-else class="space-y-1.5">
+              <label class="block text-xs font-bold text-gray-700">当前账号登录密码</label>
               <input
                 v-model="resetPassword"
                 type="password"
-                placeholder="请输入当前登录密码"
+                placeholder="请输入当前登录密码进行身份确认"
                 class="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
                 @keyup.enter="handleResetApiKey"
               />
             </div>
-            <div v-else class="space-y-1.5">
-              <label class="block text-xs font-bold text-gray-600">Google 身份验证器 6 位动态码</label>
-              <input
-                v-model="resetCode"
-                type="text"
-                maxlength="6"
-                placeholder="000000"
-                class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all font-bold placeholder:text-gray-300 disabled:bg-gray-100"
-                @keyup.enter="handleResetApiKey"
-              />
-            </div>
           </div>
 
-          <!-- 未开启二次验证，仅校验登录密码 -->
-          <div v-else class="space-y-1.5">
-            <label class="block text-xs font-bold text-gray-700">当前账号登录密码</label>
-            <input
-              v-model="resetPassword"
-              type="password"
-              placeholder="请输入当前登录密码进行身份确认"
-              class="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
-              @keyup.enter="handleResetApiKey"
-            />
+          <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              @click="closeResetApiKeyModal"
+              :disabled="loadingResetKey"
+              class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-white transition-colors cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              :disabled="loadingResetKey || (twoFactorEnabled ? (resetVerifyType === 'code' ? (!resetCode || resetCode.trim().length !== 6) : !resetPassword) : !resetPassword)"
+              @click="handleResetApiKey"
+              class="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5 cursor-pointer"
+            >
+              <svg v-if="loadingResetKey" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              {{ loadingResetKey ? '重置中...' : '确认重置' }}
+            </button>
           </div>
-        </div>
-
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            @click="closeResetApiKeyModal"
-            :disabled="loadingResetKey"
-            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-white transition-colors cursor-pointer"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            :disabled="loadingResetKey || (twoFactorEnabled ? (resetVerifyType === 'code' ? (!resetCode || resetCode.trim().length !== 6) : !resetPassword) : !resetPassword)"
-            @click="handleResetApiKey"
-            class="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5 cursor-pointer"
-          >
-            <svg v-if="loadingResetKey" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-            </svg>
-            {{ loadingResetKey ? '重置中...' : '确认重置' }}
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <Toast 
       v-if="toast.show" 

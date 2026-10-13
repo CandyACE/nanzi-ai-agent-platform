@@ -4240,100 +4240,102 @@ onUnmounted(() => {
     />
 
     <!-- Session Preview Modal (New Feature) -->
-    <div
-      v-if="showSessionPreview"
-      class="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4"
-      @click.self.stop="showSessionPreview = false"
-    >
-        <div class="bg-white dark:bg-gray-800 w-full flex flex-col overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700 shadow-2xl transition-all duration-300 max-w-3xl h-[80vh] rounded-xl">
-            <!-- Header -->
-            <div class="px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50 flex-shrink-0">
-                <div class="flex items-center gap-3">
-                    <h3 class="text-sm sm:text-lg font-black text-gray-800 dark:text-gray-100 truncate">会话概览 (Session Preview)</h3>
-                    <span v-if="conversationTurns.length" class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{{ conversationTurns.length }} Rounds</span>
-                </div>
-                <div class="flex items-center gap-2 flex-shrink-0">
-                    <button
-                        v-if="conversationTurns.length > 0"
-                        @click.stop="continueChatFromTrace"
-                        class="flex items-center space-x-1.5 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition-all text-xs font-black border border-primary/20"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                        <span>继续调试</span>
-                    </button>
-                    <div class="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-1"></div>
-                    <button @click.stop="showSessionPreview = false" class="p-2 text-gray-500 hover:text-gray-800"><svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
-                </div>
-            </div>
+    <Teleport to="body">
+      <div
+        v-if="showSessionPreview"
+        class="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4"
+        @click.self.stop="showSessionPreview = false"
+      >
+          <div class="bg-white dark:bg-gray-800 w-full flex flex-col overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700 shadow-2xl transition-all duration-300 max-w-3xl h-[80vh] rounded-xl">
+              <!-- Header -->
+              <div class="px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50 flex-shrink-0">
+                  <div class="flex items-center gap-3">
+                      <h3 class="text-sm sm:text-lg font-black text-gray-800 dark:text-gray-100 truncate">会话概览 (Session Preview)</h3>
+                      <span v-if="conversationTurns.length" class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{{ conversationTurns.length }} Rounds</span>
+                  </div>
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                      <button
+                          v-if="conversationTurns.length > 0"
+                          @click.stop="continueChatFromTrace"
+                          class="flex items-center space-x-1.5 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary hover:text-white rounded-lg transition-all text-xs font-black border border-primary/20"
+                      >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                          <span>继续调试</span>
+                      </button>
+                      <div class="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-1"></div>
+                      <button @click.stop="showSessionPreview = false" class="p-2 text-gray-500 hover:text-gray-800"><svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                  </div>
+              </div>
 
-            <!-- Content -->
-            <div class="flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50 dark:bg-gray-900 custom-scrollbar">
-                <div v-if="loadingTrace" class="flex flex-col items-center justify-center h-full text-gray-400 py-20">
-                    <svg class="w-10 h-10 animate-spin mb-3 text-primary" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <p class="text-xs font-bold uppercase tracking-widest">加载会话记录...</p>
-                </div>
-                <div v-else-if="conversationTurns.length > 0" class="space-y-6 pb-10">
-                    <div v-for="(turn, tIdx) in conversationTurns" :key="turn.id"
-                         class="bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm relative overflow-hidden"
-                         :class="{'ring-2 ring-primary/20': turn.trace_id === activeTraceId}"
-                    >
-                        <div class="flex justify-between items-center mb-4">
-                            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                                回合 #{{ tIdx + 1 }}
-                            </span>
-                            <span class="text-[9px] text-gray-400 font-mono">{{ formatDate(turn.created_at) }}</span>
-                        </div>
-                        <div class="space-y-4">
-                            <div>
-                                <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">用户</div>
-                                <div class="text-gray-800 dark:text-gray-200 text-sm font-bold bg-gray-50 p-2 rounded-lg border border-gray-100">{{ turn.query }}</div>
-                            </div>
-                            <div>
-                                <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
-                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" /></div>
-                            </div>
-                        </div>
+              <!-- Content -->
+              <div class="flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50 dark:bg-gray-900 custom-scrollbar">
+                  <div v-if="loadingTrace" class="flex flex-col items-center justify-center h-full text-gray-400 py-20">
+                      <svg class="w-10 h-10 animate-spin mb-3 text-primary" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <p class="text-xs font-bold uppercase tracking-widest">加载会话记录...</p>
+                  </div>
+                  <div v-else-if="conversationTurns.length > 0" class="space-y-6 pb-10">
+                      <div v-for="(turn, tIdx) in conversationTurns" :key="turn.id"
+                           class="bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm relative overflow-hidden"
+                           :class="{'ring-2 ring-primary/20': turn.trace_id === activeTraceId}"
+                      >
+                          <div class="flex justify-between items-center mb-4">
+                              <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                                  回合 #{{ tIdx + 1 }}
+                              </span>
+                              <span class="text-[9px] text-gray-400 font-mono">{{ formatDate(turn.created_at) }}</span>
+                          </div>
+                          <div class="space-y-4">
+                              <div>
+                                  <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">用户</div>
+                                  <div class="text-gray-800 dark:text-gray-200 text-sm font-bold bg-gray-50 p-2 rounded-lg border border-gray-100">{{ turn.query }}</div>
+                              </div>
+                              <div>
+                                  <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
+                                  <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" /></div>
+                              </div>
+                          </div>
 
-                        <!-- Actions & Steps -->
-                        <div class="mt-4 pt-3 border-t border-gray-50">
-                            <div class="flex items-center justify-between">
-                                <button @click="toggleTurnSteps(turn)" class="flex items-center p-2 rounded-lg hover:bg-gray-50 transition-all group">
-                                    <span class="text-[10px] font-black text-gray-500 group-hover:text-primary transition-colors uppercase tracking-widest">执行步骤 (Steps)</span>
-                                    <div class="flex items-center ml-2">
-                                        <div v-if="turn.loading" class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2"></div>
-                                        <svg class="w-4 h-4 text-gray-400 transform transition-transform duration-300" :class="{ 'rotate-180': turn.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
-                                    </div>
-                                </button>
+                          <!-- Actions & Steps -->
+                          <div class="mt-4 pt-3 border-t border-gray-50">
+                              <div class="flex items-center justify-between">
+                                  <button @click="toggleTurnSteps(turn)" class="flex items-center p-2 rounded-lg hover:bg-gray-50 transition-all group">
+                                      <span class="text-[10px] font-black text-gray-500 group-hover:text-primary transition-colors uppercase tracking-widest">执行步骤 (Steps)</span>
+                                      <div class="flex items-center ml-2">
+                                          <div v-if="turn.loading" class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2"></div>
+                                          <svg class="w-4 h-4 text-gray-400 transform transition-transform duration-300" :class="{ 'rotate-180': turn.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
+                                      </div>
+                                  </button>
 
-                                <!-- Link to Full Trace Viewer -->
-                                <button
-                                    @click.stop="openFullLogs(turn.trace_id)"
-                                    class="px-3 py-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-100 transition-colors uppercase tracking-widest flex items-center gap-1"
-                                >
-                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                                    完整链路
-                                </button>
-                            </div>
+                                  <!-- Link to Full Trace Viewer -->
+                                  <button
+                                      @click.stop="openFullLogs(turn.trace_id)"
+                                      class="px-3 py-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-100 transition-colors uppercase tracking-widest flex items-center gap-1"
+                                  >
+                                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                                      完整链路
+                                  </button>
+                              </div>
 
-                            <div v-show="turn.isExpanded" class="mt-3 pl-4 border-l-2 border-gray-100 space-y-3 animate-fade-in">
-                                <div v-if="turn.steps && turn.steps.length > 0" class="space-y-3">
-                                    <div v-for="(step, sIdx) in turn.steps" :key="sIdx" class="bg-white p-3 rounded-xl border border-gray-100 shadow-sm text-xs">
-                                        <div class="flex justify-between items-center mb-2">
-                                            <span class="text-[9px] font-black px-1.5 py-0.5 rounded uppercase bg-blue-100 text-blue-700">{{ step.event_type }}</span>
-                                            <span class="text-[8px] text-gray-400 font-mono">{{ step.execution_time_ms?.toFixed(0) }}ms</span>
-                                        </div>
-                                        <div v-if="step.tool_output?.content" class="text-gray-600 leading-relaxed break-words">{{ step.tool_output.content.slice(0, 300) + (step.tool_output.content.length > 300 ? '...' : '') }}</div>
-                                    </div>
-                                </div>
-                                <div v-else-if="!turn.loading" class="py-2 text-center text-[10px] text-gray-400 italic">暂无记录</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+                              <div v-show="turn.isExpanded" class="mt-3 pl-4 border-l-2 border-gray-100 space-y-3 animate-fade-in">
+                                  <div v-if="turn.steps && turn.steps.length > 0" class="space-y-3">
+                                      <div v-for="(step, sIdx) in turn.steps" :key="sIdx" class="bg-white p-3 rounded-xl border border-gray-100 shadow-sm text-xs">
+                                          <div class="flex justify-between items-center mb-2">
+                                              <span class="text-[9px] font-black px-1.5 py-0.5 rounded uppercase bg-blue-100 text-blue-700">{{ step.event_type }}</span>
+                                              <span class="text-[8px] text-gray-400 font-mono">{{ step.execution_time_ms?.toFixed(0) }}ms</span>
+                                          </div>
+                                          <div v-if="step.tool_output?.content" class="text-gray-600 leading-relaxed break-words">{{ step.tool_output.content.slice(0, 300) + (step.tool_output.content.length > 300 ? '...' : '') }}</div>
+                                      </div>
+                                  </div>
+                                  <div v-else-if="!turn.loading" class="py-2 text-center text-[10px] text-gray-400 italic">暂无记录</div>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </div>
+    </Teleport>
 
     <!-- Left Sidebar: History -->
     <ChatHistorySidebar

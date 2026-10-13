@@ -18,6 +18,7 @@
      数量变化有 aria-live。
 """
 from pathlib import Path
+import re
 
 import pytest
 
@@ -206,7 +207,12 @@ def test_transfer_buttons_are_the_only_way_to_move():
     assert ':disabled="candidateCheckedCount === 0"' in template
     assert ':disabled="assignedCheckedCount === 0"' in template
     # 未勾选时用灰底、勾选后才点亮成蓝色
-    assert "candidateCheckedCount > 0\n                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700'" in template
+    # 用 \s+ 而不是写死缩进：弹层外层再包一层（如 <Teleport>）会整体改变缩进，
+    # 按固定空格匹配会让与本次改动无关的契约假红。
+    assert re.search(
+        r"candidateCheckedCount > 0\s+\? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700'",
+        template,
+    )
     assert "bg-gray-100 text-gray-300 cursor-not-allowed" in template
     # 左栏不再有“点击即加入”的旧行为
     assert "toggleUser(" not in left
@@ -306,8 +312,8 @@ def test_list_items_are_keyboard_accessible_buttons():
     """列表项改为 button 并带 aria-label/aria-pressed，键盘可操作。"""
     template = _template()
 
-    assert '<button\n                            v-for="user in filteredAvailableUsers"' in template
-    assert '<button\n                            v-for="user in assignedUsers"' in template
+    assert re.search(r'<button\s+v-for="user in filteredAvailableUsers"', template)
+    assert re.search(r'<button\s+v-for="user in assignedUsers"', template)
     assert template.count('role="listitem"') == 2
     assert 'role="list"' in template
     assert "勾选 ${user.real_name || user.user_name}（双击直接加入）" in template

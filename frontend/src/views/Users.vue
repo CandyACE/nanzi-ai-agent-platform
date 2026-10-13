@@ -1,14 +1,16 @@
 <template>
   <div class="space-y-5 relative" @click="closeMenus">
     <!-- Full-page Sync Overlay -->
-    <div
-      v-if="syncingSso"
-      class="fixed inset-0 z-[10000] bg-gray-900/60 backdrop-blur-sm flex flex-col items-center justify-center text-white"
-    >
-      <div class="w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-      <h3 class="text-xl font-black">正在同步 SSO 用户数据...</h3>
-      <p class="text-gray-300 mt-2 text-sm">正在为您生成 API Key 并同步权限，请勿刷新页面</p>
-    </div>
+    <Teleport to="body">
+      <div
+        v-if="syncingSso"
+        class="fixed inset-0 z-[10000] bg-gray-900/60 backdrop-blur-sm flex flex-col items-center justify-center text-white"
+      >
+        <div class="w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
+        <h3 class="text-xl font-black">正在同步 SSO 用户数据...</h3>
+        <p class="text-gray-300 mt-2 text-sm">正在为您生成 API Key 并同步权限，请勿刷新页面</p>
+      </div>
+    </Teleport>
 
     <!-- Header：标题一行；窄屏压缩筛选与操作，避免刷新/更多各占一行 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -735,1483 +737,1507 @@
     </Teleport>
 
     <!-- Create/Edit Dialog -->
-    <div
-      v-if="showCreateDialog || showEditDialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="closeDialogs"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white p-4 sm:p-6 w-full max-w-4xl flex flex-col transition-all duration-300"
-        :class="
-          isMobile
-            ? 'h-full rounded-none'
-            : 'max-h-[90vh] rounded-lg shadow-2xl'
-        "
+        v-if="showCreateDialog || showEditDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeDialogs"
       >
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-xl font-bold">
-            {{ showEditDialog ? "编辑用户" : "创建用户" }}
+        <div
+          class="bg-white p-4 sm:p-6 w-full max-w-4xl flex flex-col transition-all duration-300"
+          :class="
+            isMobile
+              ? 'h-full rounded-none'
+              : 'max-h-[90vh] rounded-lg shadow-2xl'
+          "
+        >
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold">
+              {{ showEditDialog ? "编辑用户" : "创建用户" }}
+            </h2>
+            <button
+              v-if="isMobile"
+              @click="closeDialogs"
+              class="p-2 text-gray-400"
+            >
+              <svg
+                class="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Tabs for Edit -->
+          <div
+            v-if="showEditDialog && formData.role === 'user'"
+            class="border-b border-gray-200 mb-4"
+          >
+            <nav
+              class="-mb-px flex overflow-x-auto whitespace-nowrap scrollbar-hide"
+            >
+              <button
+                @click="activeTab = 'info'"
+                :class="
+                  activeTab === 'info'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                "
+                class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
+              >
+                基本信息
+              </button>
+              <button
+                @click="activeTab = 'permissions'"
+                :class="
+                  activeTab === 'permissions'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                "
+                class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
+              >
+                权限配置
+              </button>
+              <button
+                @click="activeTab = 'quota'"
+                :class="
+                  activeTab === 'quota'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                "
+                class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
+              >
+                额度
+              </button>
+            </nav>
+          </div>
+
+          <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 pt-3">
+            <!-- INFO TAB -->
+            <div v-show="activeTab === 'info'" class="space-y-4 py-2">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                    >用户名</label
+                  >
+                  <input
+                    v-model="formData.user_name"
+                    type="text"
+                    :disabled="showEditDialog"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-sm"
+                  />
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                    >真实姓名</label
+                  >
+                  <input
+                    v-model="formData.real_name"
+                    type="text"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="请输入真实姓名"
+                  />
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                    >邮箱</label
+                  >
+                  <input
+                    v-model="formData.email"
+                    type="email"
+                    autocapitalize="none"
+                    autocorrect="off"
+                    spellcheck="false"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="name@example.com（留空表示不设置）"
+                  />
+                  <p class="mt-1 text-[10px] text-gray-400 leading-relaxed">
+                    邮箱全局唯一，用于接收账号审核结果等通知。编辑时清空该框即可删除已设置的邮箱。
+                  </p>
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                    >部门代码</label
+                  >
+                  <input
+                    v-model="formData.dept_code"
+                    type="text"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="部门代码 (如: DEPT001)"
+                  />
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                    >组织全路径</label
+                  >
+                  <input
+                    v-model="formData.org_path"
+                    type="text"
+                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="例如: yovole/sh/dc1"
+                  />
+                </div>
+                <div class="sm:col-span-2">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-xs font-bold text-gray-400 uppercase">
+                      预留扩展数据 (JSON)
+                    </label>
+                    <div class="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+                      <button
+                        type="button"
+                        @click="handleExtraDataTabChange('visual')"
+                        :class="[
+                          extraDataTab === 'visual'
+                            ? 'bg-white text-blue-600 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700',
+                        ]"
+                        class="px-2 py-1 text-[10px] font-black rounded-md transition-all"
+                      >
+                        可视化
+                      </button>
+                      <button
+                        type="button"
+                        @click="handleExtraDataTabChange('json')"
+                        :class="[
+                          extraDataTab === 'json'
+                            ? 'bg-white text-blue-600 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700',
+                        ]"
+                        class="px-2 py-1 text-[10px] font-black rounded-md transition-all"
+                      >
+                        JSON
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Visual Mode -->
+                  <div
+                    v-if="extraDataTab === 'visual'"
+                    class="border border-gray-300 rounded-lg p-3 bg-gray-50 space-y-2"
+                  >
+                    <div
+                      v-for="(pair, index) in extraDataPairs"
+                      :key="index"
+                      class="flex items-center gap-2 animate-fade-in"
+                    >
+                      <input
+                        v-model="pair.key"
+                        type="text"
+                        placeholder="Key"
+                        class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                      />
+                      <span class="text-gray-300 text-xs">:</span>
+                      <input
+                        v-model="pair.value"
+                        type="text"
+                        placeholder="Value"
+                        class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        @click="removeExtraDataPair(index)"
+                        class="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      >
+                        <TrashIcon class="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div v-if="extraDataPairs.length === 0" class="text-center py-2">
+                      <p class="text-[10px] text-gray-400 italic mb-2">暂无扩展数据</p>
+                    </div>
+                    <button
+                      type="button"
+                      @click="addExtraDataPair"
+                      class="w-full py-1.5 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:text-blue-500 hover:border-blue-200 hover:bg-blue-50/30 text-xs font-bold flex items-center justify-center gap-1 transition-all"
+                    >
+                      <PlusIcon class="w-3 h-3" /> 添加键值对
+                    </button>
+                    <p class="text-[10px] text-gray-400 leading-relaxed pt-1">
+                      值统一按字符串保存（如
+                      <code class="font-mono">"teamId": "116573125898872954882"</code>），
+                      避免长数字被当作 number 丢掉精度。
+                    </p>
+                  </div>
+
+                  <!-- JSON Mode -->
+                  <div v-else>
+                    <textarea
+                      v-model="formData.extra_data"
+                      rows="4"
+                      class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+                      placeholder='{"key": "value"}'
+                    ></textarea>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label
+                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                  >系统身份</label
+                >
+                <select
+                  v-model="formData.role"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                >
+                  <option value="user">普通用户</option>
+                  <option value="admin">管理员</option>
+                </select>
+              </div>
+
+              <div v-if="formData.role === 'user'">
+                <div class="flex justify-between items-center mb-1">
+                  <label class="block text-xs font-bold text-gray-400 uppercase"
+                    >业务角色</label
+                  >
+                  <input
+                    v-model="roleSearchQuery"
+                    type="search"
+                    placeholder="搜索角色..."
+                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-32 focus:outline-none focus:border-blue-400"
+                  />
+                </div>
+                <div
+                  class="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto bg-gray-50 grid grid-cols-1 sm:grid-cols-2 gap-2"
+                >
+                  <label
+                    v-for="role in filteredBusinessRoles"
+                    :key="role.id"
+                    class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-100 p-1.5 rounded bg-white sm:bg-transparent shadow-sm sm:shadow-none border sm:border-0 border-gray-100"
+                  >
+                    <input
+                      type="checkbox"
+                      :value="role.id"
+                      v-model="formData.role_ids"
+                      class="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                    />
+                    <span class="text-xs sm:text-sm truncate">{{
+                      role.name
+                    }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                  >备注</label
+                >
+                <textarea
+                  v-model="formData.remark"
+                  rows="3"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  placeholder="备注信息..."
+                ></textarea>
+              </div>
+
+              <!-- API Key Presentation -->
+              <div
+                v-if="createdApiKey"
+                class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 animate-fade-in"
+              >
+                <p
+                  class="text-xs font-bold text-yellow-800 mb-2 uppercase tracking-tight"
+                >
+                  ✅ 用户创建成功！请立即保存 API Key：
+                </p>
+                <div
+                  class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+                >
+                  <code
+                    class="flex-1 bg-white px-3 py-2 rounded border text-[10px] sm:text-xs break-all font-mono select-all"
+                    >{{ createdApiKey }}</code
+                  >
+                  <button
+                    @click="copyApiKey"
+                    class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 whitespace-nowrap text-sm font-bold shadow-sm"
+                  >
+                    复制密钥
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- PERMISSIONS TAB -->
+            <div
+              v-show="activeTab === 'permissions'"
+              class="space-y-4 py-2 flex flex-col h-full min-h-[400px]"
+            >
+              <div
+                v-if="loadingResources"
+                class="flex flex-col items-center justify-center flex-1 min-h-[320px] gap-4"
+              >
+                <div class="relative">
+                  <div class="w-10 h-10 rounded-full border-[3px] border-blue-100"></div>
+                  <div class="absolute inset-0 w-10 h-10 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
+                </div>
+                <div class="text-center space-y-1">
+                  <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
+                  <p class="text-xs text-gray-400">数据资产与界面访问配置即将就绪</p>
+                </div>
+                <div class="w-full max-w-md mt-2 space-y-3 px-6 opacity-60">
+                  <div class="flex gap-2">
+                    <div class="h-7 w-20 rounded-md bg-gray-100 animate-pulse"></div>
+                    <div class="h-7 w-20 rounded-md bg-gray-100 animate-pulse"></div>
+                  </div>
+                  <div class="space-y-2 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                    <div class="h-3 w-2/3 rounded bg-gray-200/80 animate-pulse"></div>
+                    <div class="h-3 w-full rounded bg-gray-200/70 animate-pulse"></div>
+                    <div class="h-3 w-5/6 rounded bg-gray-200/60 animate-pulse"></div>
+                    <div class="h-3 w-1/2 rounded bg-gray-200/50 animate-pulse"></div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="flex flex-col flex-1 overflow-hidden">
+                <!-- Sub Tabs -->
+                <div
+                  class="flex space-x-2 mb-4 border-b border-gray-200 overflow-x-auto whitespace-nowrap"
+                >
+                  <button
+                    @click="activePermissionSubTab = 'assets'"
+                    :class="
+                      activePermissionSubTab === 'assets'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500'
+                    "
+                    class="px-4 py-2 border-b-2 text-sm font-medium"
+                  >
+                    数据资产
+                  </button>
+                  <button
+                    @click="activePermissionSubTab = 'ui'"
+                    :class="
+                      activePermissionSubTab === 'ui'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500'
+                    "
+                    class="px-4 py-2 border-b-2 text-sm font-medium"
+                  >
+                    界面访问
+                  </button>
+                </div>
+
+                <!-- Assets Content -->
+                <div
+                  v-if="activePermissionSubTab === 'assets'"
+                  class="flex-1 flex flex-col overflow-hidden"
+                >
+                  <div
+                    class="flex items-center justify-between mb-2 overflow-x-auto pb-1"
+                  >
+                    <div class="flex space-x-1 sm:space-x-2">
+                      <button
+                        v-for="type in resourceTypes"
+                        :key="type"
+                        @click="activeResTab = type"
+                        :class="[
+                          activeResTab === type
+                            ? `text-${resourceConfig[type].color}-600 border-${resourceConfig[type].color}-600 bg-${resourceConfig[type].color}-50`
+                            : 'text-gray-500 border-transparent',
+                        ]"
+                        class="px-2 sm:px-3 py-1.5 border-b-2 text-[10px] sm:text-xs font-bold flex items-center gap-1 whitespace-nowrap"
+                      >
+                        <span
+                          v-html="resourceConfig[type].icon"
+                          class="w-3 h-3"
+                        ></span>
+                        {{ resourceConfig[type].label }}
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    class="bg-gray-50 p-3 sm:p-4 rounded-lg flex-1 overflow-y-auto border border-gray-200"
+                  >
+                    <!-- Hint Alert -->
+                    <div
+                      v-if="activeResTab === 'agents'"
+                      class="mb-3 bg-blue-50 border border-blue-100 rounded-md p-2.5 flex items-start gap-2"
+                    >
+                      <svg
+                        class="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                      <div
+                        class="text-[10px] sm:text-xs text-blue-700 leading-relaxed"
+                      >
+                        <p class="font-bold mb-0.5">自动授权说明</p>
+                        <p class="opacity-80">
+                          个人创建的智能体自动拥有权限，此处仅配置“系统级”公共智能体。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div
+                      v-if="activeResTab === 'forbidden_configs'"
+                      class="space-y-3 text-left"
+                    >
+                      <div class="bg-red-50 border border-red-100 rounded-md p-2.5 flex items-start gap-2 mb-2 select-none">
+                        <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <div class="text-[10px] sm:text-xs text-red-700 leading-relaxed">
+                          <p class="font-bold mb-0.5">安全策略与黑名单说明</p>
+                          <p class="opacity-80">配置禁用工具后该智能体完全无法调用该工具。配置禁用命令后，当智能体尝试替该用户运行含有敏感词的系统命令时，将被运行时强行拦截。</p>
+                        </div>
+                      </div>
+
+                      <!-- 1. 禁用工具 Checkbox 组 -->
+                      <div class="border border-gray-150 rounded-xl p-3 bg-white">
+                        <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
+                          <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                          选择要禁用的工具（全局拉黑）
+                        </h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer">
+                            <input
+                              type="checkbox"
+                              :value="tool.id"
+                              v-model="permissionData.forbidden_tools"
+                              class="mt-1 h-4 w-4 rounded text-red-600 focus:ring-red-500"
+                            />
+                            <div class="ml-2 min-w-0">
+                              <p class="text-xs sm:text-sm font-bold text-gray-900 truncate">{{ tool.name }}</p>
+                              <p class="text-[9px] text-gray-400 truncate">{{ tool.description }}</p>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      <!-- 1.2 其他自定义与扩展工具禁用 -->
+                      <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white">
+                        <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
+                          <span class="flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
+                            自定义 API 与 MCP 扩展工具禁用
+                          </span>
+                          <input
+                            v-model="toolSearchQuery"
+                            type="search"
+                            placeholder="搜索工具名..."
+                            class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
+                          />
+                        </h4>
+                        <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          <label
+                            v-for="tool in filteredOtherTools"
+                            :key="tool.id"
+                            class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs"
+                          >
+                            <input
+                              type="checkbox"
+                              :value="tool.id"
+                              v-model="permissionData.forbidden_tools"
+                              class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <div class="ml-1.5 min-w-0 flex-1">
+                              <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
+                              <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      <!-- 2. 禁用 Bash 命令关键字 -->
+                      <div class="border border-gray-150 rounded-xl p-3 bg-white flex flex-col">
+                        <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
+                          <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+                          自定义禁用命令关键字
+                        </h4>
+                        <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
+                        <textarea
+                          v-model="forbiddenCommandsText"
+                          placeholder="例如: rm, shutdown, mv, wget, curl"
+                          class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[80px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
+                        ></textarea>
+                      </div>
+                    </div>
+
+                    <div
+                      v-else-if="currentResources.length === 0"
+                      class="text-center py-4 text-gray-500 text-xs"
+                    >
+                      暂无可用资源
+                    </div>
+                    <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <label
+                        v-for="res in currentResources"
+                        :key="res.id"
+                        class="flex items-start p-2 rounded border bg-white transition-colors"
+                        :class="
+                          isMissingKnowledgeBase(res)
+                            ? 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
+                            : 'hover:bg-gray-50 cursor-pointer'
+                        "
+                        :title="
+                          isMissingKnowledgeBase(res)
+                            ? '该知识库已在 RAGFlow 失联，不可分配权限'
+                            : undefined
+                        "
+                      >
+                        <input
+                          type="checkbox"
+                          :value="res.id"
+                          v-model="(permissionData as any)[activeResTab]"
+                          :disabled="isMissingKnowledgeBase(res)"
+                          class="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                        <div class="ml-2 min-w-0 flex-1">
+                          <div class="flex items-center gap-1.5 min-w-0">
+                            <p
+                              class="text-xs sm:text-sm font-bold text-gray-900 truncate"
+                            >
+                              {{ res.platform_name || res.display_name || res.name }}
+                            </p>
+                            <span
+                              v-if="res.method"
+                              class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
+                              :class="methodBadgeClass(res.method)"
+                              >{{ res.method }}</span
+                            >
+                            <span
+                              v-if="isMissingKnowledgeBase(res)"
+                              class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
+                              >失联</span
+                            >
+                          </div>
+                          <p
+                            v-if="res.path"
+                            class="text-[9px] text-gray-500 truncate font-mono leading-tight"
+                          >
+                            {{ res.path }}
+                          </p>
+                          <p class="text-[9px] text-gray-400 truncate font-mono">
+                            {{ res.description || res.id }}
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                  <div
+                    v-if="activeResTab !== 'forbidden_configs'"
+                    class="flex justify-between items-center mt-2 text-[10px] text-gray-500"
+                  >
+                    <span
+                      >已勾选:
+                      <b class="text-blue-600">{{
+                        (permissionData as any)[activeResTab].length
+                      }}</b></span
+                    >
+                    <button
+                      @click="toggleSelectAll"
+                      class="font-black text-blue-600 hover:underline px-2 py-1"
+                    >
+                      {{ isAllSelected ? "全部取消" : "本页全选" }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- UI Content -->
+                <div
+                  v-else
+                  class="flex-1 overflow-y-auto bg-gray-50 p-2 sm:p-4 rounded-lg border border-gray-200"
+                >
+                  <div class="space-y-3">
+                    <div
+                      v-for="menu in MENU_TREE"
+                      :key="menu.id"
+                      class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm"
+                    >
+                      <div
+                        class="px-3 py-2 bg-gray-50 flex items-center gap-2 border-b border-gray-100"
+                      >
+                        <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
+                        </svg>
+                        <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
+                        <input
+                          type="checkbox"
+                          :checked="isItemSelected(menu.id)"
+                          :indeterminate="isMenuPartiallySelected(menu.id)"
+                          @change="toggleTreeItem(menu.id)"
+                          class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                        />
+                        <span
+                          class="text-xs sm:text-sm font-black text-gray-800"
+                          >{{ menu.label }}</span
+                        >
+                      </div>
+                      <div
+                        v-if="menu.children.length > 0"
+                        class="p-2"
+                      >
+                        <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
+                          <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
+                          </svg>
+                          <span>功能点权限</span>
+                          <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
+                        </div>
+                        <div class="grid grid-cols-1 xs:grid-cols-2 gap-1.5">
+                        <div
+                          v-for="child in menu.children"
+                          :key="child.id"
+                          @click="toggleTreeItem(child.id)"
+                          class="flex items-center gap-2 p-1.5 rounded hover:bg-blue-50 cursor-pointer transition-colors"
+                          :class="isItemSelected(child.id) ? 'bg-blue-50' : ''"
+                        >
+                          <div
+                            class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center"
+                            :class="
+                              isItemSelected(child.id)
+                                ? 'bg-blue-600 border-blue-600'
+                                : 'bg-white border-gray-300'
+                            "
+                          >
+                            <svg
+                              v-if="isItemSelected(child.id)"
+                              class="w-2.5 h-2.5 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="3"
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          </div>
+                          <span class="text-[11px] text-gray-600 leading-tight">{{
+                            child.label
+                          }}</span>
+                        </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- QUOTA TAB -->
+            <div v-show="activeTab === 'quota'" class="space-y-4 py-2">
+              <QuotaPolicyPanel
+                v-if="editingUserId"
+                scope-type="user"
+                :scope-id="editingUserId"
+                show-effective
+              />
+            </div>
+          </div>
+
+          <div
+            class="mt-4 sm:mt-6 flex flex-col sm:flex-row sm:items-center justify-end gap-2 pt-4 border-t border-gray-200"
+          >
+            <p
+              v-if="activeTab === 'quota'"
+              class="order-3 sm:order-1 sm:mr-auto text-xs text-gray-400"
+            >
+              额度请在上方点击「保存额度」，与用户信息分开保存
+            </p>
+            <button
+              @click="closeDialogs"
+              class="order-2 sm:order-2 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
+            >
+              {{ activeTab === 'quota' ? '关闭' : '取消' }}
+            </button>
+            <button
+              v-if="!createdApiKey && activeTab !== 'quota'"
+              @click="saveUser"
+              :disabled="submitting"
+              class="order-1 sm:order-3 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-md shadow-blue-100"
+            >
+              {{ showEditDialog ? "保存更新" : "立即创建用户" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- View API Key Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showViewKeyDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeViewKeyDialog"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
+          <h2
+            class="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-600"
+          >
+            <KeyIcon class="w-6 h-6" /> 查看 API Key
           </h2>
-          <button
-            v-if="isMobile"
-            @click="closeDialogs"
-            class="p-2 text-gray-400"
+          <div class="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-6">
+            <div v-if="loadingViewKey" class="text-center py-4 text-gray-500">
+              加载中...
+            </div>
+            <div v-else-if="viewedApiKey" class="flex items-center gap-2">
+              <input
+                type="text"
+                :value="viewedApiKey"
+                readonly
+                class="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-xs font-mon read-only:bg-gray-100o"
+              />
+              <button
+                @click="copyViewedApiKey"
+                class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+              >
+                复制
+              </button>
+            </div>
+          </div>
+          <div class="flex justify-end">
+            <button
+              @click="closeViewKeyDialog"
+              class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Batch Status Confirmation -->
+    <Teleport to="body">
+      <div
+        v-if="showBatchStatusDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeBatchStatusDialog"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
+          <div
+            class="p-3 rounded-full inline-block mb-4"
+            :class="
+              batchStatusTarget === 0
+                ? 'bg-red-100 text-red-600'
+                : 'bg-emerald-100 text-emerald-600'
+            "
           >
             <svg
-              class="w-6 h-6"
+              v-if="batchStatusTarget === 0"
+              class="w-8 h-8"
               fill="none"
-              stroke="currentColor"
               viewBox="0 0 24 24"
+              stroke="currentColor"
             >
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width="2"
-                d="M6 18L18 6M6 6l12 12"
+                d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
               />
             </svg>
-          </button>
-        </div>
-
-        <!-- Tabs for Edit -->
-        <div
-          v-if="showEditDialog && formData.role === 'user'"
-          class="border-b border-gray-200 mb-4"
-        >
-          <nav
-            class="-mb-px flex overflow-x-auto whitespace-nowrap scrollbar-hide"
-          >
-            <button
-              @click="activeTab = 'info'"
-              :class="
-                activeTab === 'info'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              "
-              class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
-            >
-              基本信息
-            </button>
-            <button
-              @click="activeTab = 'permissions'"
-              :class="
-                activeTab === 'permissions'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              "
-              class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
-            >
-              权限配置
-            </button>
-            <button
-              @click="activeTab = 'quota'"
-              :class="
-                activeTab === 'quota'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              "
-              class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
-            >
-              额度
-            </button>
-          </nav>
-        </div>
-
-        <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 pt-3">
-          <!-- INFO TAB -->
-          <div v-show="activeTab === 'info'" class="space-y-4 py-2">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label
-                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                  >用户名</label
-                >
-                <input
-                  v-model="formData.user_name"
-                  type="text"
-                  :disabled="showEditDialog"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-sm"
-                />
-              </div>
-              <div>
-                <label
-                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                  >真实姓名</label
-                >
-                <input
-                  v-model="formData.real_name"
-                  type="text"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  placeholder="请输入真实姓名"
-                />
-              </div>
-              <div>
-                <label
-                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                  >邮箱</label
-                >
-                <input
-                  v-model="formData.email"
-                  type="email"
-                  autocapitalize="none"
-                  autocorrect="off"
-                  spellcheck="false"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  placeholder="name@example.com（留空表示不设置）"
-                />
-                <p class="mt-1 text-[10px] text-gray-400 leading-relaxed">
-                  邮箱全局唯一，用于接收账号审核结果等通知。编辑时清空该框即可删除已设置的邮箱。
-                </p>
-              </div>
-              <div>
-                <label
-                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                  >部门代码</label
-                >
-                <input
-                  v-model="formData.dept_code"
-                  type="text"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  placeholder="部门代码 (如: DEPT001)"
-                />
-              </div>
-              <div>
-                <label
-                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                  >组织全路径</label
-                >
-                <input
-                  v-model="formData.org_path"
-                  type="text"
-                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  placeholder="例如: yovole/sh/dc1"
-                />
-              </div>
-              <div class="sm:col-span-2">
-                <div class="flex items-center justify-between mb-1">
-                  <label class="block text-xs font-bold text-gray-400 uppercase">
-                    预留扩展数据 (JSON)
-                  </label>
-                  <div class="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200">
-                    <button
-                      type="button"
-                      @click="handleExtraDataTabChange('visual')"
-                      :class="[
-                        extraDataTab === 'visual'
-                          ? 'bg-white text-blue-600 shadow-sm'
-                          : 'text-gray-500 hover:text-gray-700',
-                      ]"
-                      class="px-2 py-1 text-[10px] font-black rounded-md transition-all"
-                    >
-                      可视化
-                    </button>
-                    <button
-                      type="button"
-                      @click="handleExtraDataTabChange('json')"
-                      :class="[
-                        extraDataTab === 'json'
-                          ? 'bg-white text-blue-600 shadow-sm'
-                          : 'text-gray-500 hover:text-gray-700',
-                      ]"
-                      class="px-2 py-1 text-[10px] font-black rounded-md transition-all"
-                    >
-                      JSON
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Visual Mode -->
-                <div
-                  v-if="extraDataTab === 'visual'"
-                  class="border border-gray-300 rounded-lg p-3 bg-gray-50 space-y-2"
-                >
-                  <div
-                    v-for="(pair, index) in extraDataPairs"
-                    :key="index"
-                    class="flex items-center gap-2 animate-fade-in"
-                  >
-                    <input
-                      v-model="pair.key"
-                      type="text"
-                      placeholder="Key"
-                      class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    />
-                    <span class="text-gray-300 text-xs">:</span>
-                    <input
-                      v-model="pair.value"
-                      type="text"
-                      placeholder="Value"
-                      class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      @click="removeExtraDataPair(index)"
-                      class="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                    >
-                      <TrashIcon class="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div v-if="extraDataPairs.length === 0" class="text-center py-2">
-                    <p class="text-[10px] text-gray-400 italic mb-2">暂无扩展数据</p>
-                  </div>
-                  <button
-                    type="button"
-                    @click="addExtraDataPair"
-                    class="w-full py-1.5 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:text-blue-500 hover:border-blue-200 hover:bg-blue-50/30 text-xs font-bold flex items-center justify-center gap-1 transition-all"
-                  >
-                    <PlusIcon class="w-3 h-3" /> 添加键值对
-                  </button>
-                  <p class="text-[10px] text-gray-400 leading-relaxed pt-1">
-                    值统一按字符串保存（如
-                    <code class="font-mono">"teamId": "116573125898872954882"</code>），
-                    避免长数字被当作 number 丢掉精度。
-                  </p>
-                </div>
-
-                <!-- JSON Mode -->
-                <div v-else>
-                  <textarea
-                    v-model="formData.extra_data"
-                    rows="4"
-                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
-                    placeholder='{"key": "value"}'
-                  ></textarea>
-                </div>
-              </div>
-            </div>
-            <div>
-              <label
-                class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                >系统身份</label
-              >
-              <select
-                v-model="formData.role"
-                class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              >
-                <option value="user">普通用户</option>
-                <option value="admin">管理员</option>
-              </select>
-            </div>
-
-            <div v-if="formData.role === 'user'">
-              <div class="flex justify-between items-center mb-1">
-                <label class="block text-xs font-bold text-gray-400 uppercase"
-                  >业务角色</label
-                >
-                <input
-                  v-model="roleSearchQuery"
-                  type="search"
-                  placeholder="搜索角色..."
-                  class="text-xs border border-gray-200 rounded px-2 py-0.5 w-32 focus:outline-none focus:border-blue-400"
-                />
-              </div>
-              <div
-                class="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto bg-gray-50 grid grid-cols-1 sm:grid-cols-2 gap-2"
-              >
-                <label
-                  v-for="role in filteredBusinessRoles"
-                  :key="role.id"
-                  class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-100 p-1.5 rounded bg-white sm:bg-transparent shadow-sm sm:shadow-none border sm:border-0 border-gray-100"
-                >
-                  <input
-                    type="checkbox"
-                    :value="role.id"
-                    v-model="formData.role_ids"
-                    class="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span class="text-xs sm:text-sm truncate">{{
-                    role.name
-                  }}</span>
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <label
-                class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                >备注</label
-              >
-              <textarea
-                v-model="formData.remark"
-                rows="3"
-                class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                placeholder="备注信息..."
-              ></textarea>
-            </div>
-
-            <!-- API Key Presentation -->
-            <div
-              v-if="createdApiKey"
-              class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 animate-fade-in"
-            >
-              <p
-                class="text-xs font-bold text-yellow-800 mb-2 uppercase tracking-tight"
-              >
-                ✅ 用户创建成功！请立即保存 API Key：
-              </p>
-              <div
-                class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
-              >
-                <code
-                  class="flex-1 bg-white px-3 py-2 rounded border text-[10px] sm:text-xs break-all font-mono select-all"
-                  >{{ createdApiKey }}</code
-                >
-                <button
-                  @click="copyApiKey"
-                  class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 whitespace-nowrap text-sm font-bold shadow-sm"
-                >
-                  复制密钥
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- PERMISSIONS TAB -->
-          <div
-            v-show="activeTab === 'permissions'"
-            class="space-y-4 py-2 flex flex-col h-full min-h-[400px]"
-          >
-            <div
-              v-if="loadingResources"
-              class="flex flex-col items-center justify-center flex-1 min-h-[320px] gap-4"
-            >
-              <div class="relative">
-                <div class="w-10 h-10 rounded-full border-[3px] border-blue-100"></div>
-                <div class="absolute inset-0 w-10 h-10 rounded-full border-[3px] border-blue-500 border-t-transparent animate-spin"></div>
-              </div>
-              <div class="text-center space-y-1">
-                <p class="text-sm font-medium text-gray-600">正在加载权限资源</p>
-                <p class="text-xs text-gray-400">数据资产与界面访问配置即将就绪</p>
-              </div>
-              <div class="w-full max-w-md mt-2 space-y-3 px-6 opacity-60">
-                <div class="flex gap-2">
-                  <div class="h-7 w-20 rounded-md bg-gray-100 animate-pulse"></div>
-                  <div class="h-7 w-20 rounded-md bg-gray-100 animate-pulse"></div>
-                </div>
-                <div class="space-y-2 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                  <div class="h-3 w-2/3 rounded bg-gray-200/80 animate-pulse"></div>
-                  <div class="h-3 w-full rounded bg-gray-200/70 animate-pulse"></div>
-                  <div class="h-3 w-5/6 rounded bg-gray-200/60 animate-pulse"></div>
-                  <div class="h-3 w-1/2 rounded bg-gray-200/50 animate-pulse"></div>
-                </div>
-              </div>
-            </div>
-            <div v-else class="flex flex-col flex-1 overflow-hidden">
-              <!-- Sub Tabs -->
-              <div
-                class="flex space-x-2 mb-4 border-b border-gray-200 overflow-x-auto whitespace-nowrap"
-              >
-                <button
-                  @click="activePermissionSubTab = 'assets'"
-                  :class="
-                    activePermissionSubTab === 'assets'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500'
-                  "
-                  class="px-4 py-2 border-b-2 text-sm font-medium"
-                >
-                  数据资产
-                </button>
-                <button
-                  @click="activePermissionSubTab = 'ui'"
-                  :class="
-                    activePermissionSubTab === 'ui'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500'
-                  "
-                  class="px-4 py-2 border-b-2 text-sm font-medium"
-                >
-                  界面访问
-                </button>
-              </div>
-
-              <!-- Assets Content -->
-              <div
-                v-if="activePermissionSubTab === 'assets'"
-                class="flex-1 flex flex-col overflow-hidden"
-              >
-                <div
-                  class="flex items-center justify-between mb-2 overflow-x-auto pb-1"
-                >
-                  <div class="flex space-x-1 sm:space-x-2">
-                    <button
-                      v-for="type in resourceTypes"
-                      :key="type"
-                      @click="activeResTab = type"
-                      :class="[
-                        activeResTab === type
-                          ? `text-${resourceConfig[type].color}-600 border-${resourceConfig[type].color}-600 bg-${resourceConfig[type].color}-50`
-                          : 'text-gray-500 border-transparent',
-                      ]"
-                      class="px-2 sm:px-3 py-1.5 border-b-2 text-[10px] sm:text-xs font-bold flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <span
-                        v-html="resourceConfig[type].icon"
-                        class="w-3 h-3"
-                      ></span>
-                      {{ resourceConfig[type].label }}
-                    </button>
-                  </div>
-                </div>
-                <div
-                  class="bg-gray-50 p-3 sm:p-4 rounded-lg flex-1 overflow-y-auto border border-gray-200"
-                >
-                  <!-- Hint Alert -->
-                  <div
-                    v-if="activeResTab === 'agents'"
-                    class="mb-3 bg-blue-50 border border-blue-100 rounded-md p-2.5 flex items-start gap-2"
-                  >
-                    <svg
-                      class="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <div
-                      class="text-[10px] sm:text-xs text-blue-700 leading-relaxed"
-                    >
-                      <p class="font-bold mb-0.5">自动授权说明</p>
-                      <p class="opacity-80">
-                        个人创建的智能体自动拥有权限，此处仅配置“系统级”公共智能体。
-                      </p>
-                    </div>
-                  </div>
-
-                  <div
-                    v-if="activeResTab === 'forbidden_configs'"
-                    class="space-y-3 text-left"
-                  >
-                    <div class="bg-red-50 border border-red-100 rounded-md p-2.5 flex items-start gap-2 mb-2 select-none">
-                      <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                      </svg>
-                      <div class="text-[10px] sm:text-xs text-red-700 leading-relaxed">
-                        <p class="font-bold mb-0.5">安全策略与黑名单说明</p>
-                        <p class="opacity-80">配置禁用工具后该智能体完全无法调用该工具。配置禁用命令后，当智能体尝试替该用户运行含有敏感词的系统命令时，将被运行时强行拦截。</p>
-                      </div>
-                    </div>
-
-                    <!-- 1. 禁用工具 Checkbox 组 -->
-                    <div class="border border-gray-150 rounded-xl p-3 bg-white">
-                      <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
-                        <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                        选择要禁用的工具（全局拉黑）
-                      </h4>
-                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer">
-                          <input
-                            type="checkbox"
-                            :value="tool.id"
-                            v-model="permissionData.forbidden_tools"
-                            class="mt-1 h-4 w-4 rounded text-red-600 focus:ring-red-500"
-                          />
-                          <div class="ml-2 min-w-0">
-                            <p class="text-xs sm:text-sm font-bold text-gray-900 truncate">{{ tool.name }}</p>
-                            <p class="text-[9px] text-gray-400 truncate">{{ tool.description }}</p>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-
-                    <!-- 1.2 其他自定义与扩展工具禁用 -->
-                    <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white">
-                      <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
-                        <span class="flex items-center gap-1.5">
-                          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
-                          自定义 API 与 MCP 扩展工具禁用
-                        </span>
-                        <input
-                          v-model="toolSearchQuery"
-                          type="search"
-                          placeholder="搜索工具名..."
-                          class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
-                        />
-                      </h4>
-                      <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        <label
-                          v-for="tool in filteredOtherTools"
-                          :key="tool.id"
-                          class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs"
-                        >
-                          <input
-                            type="checkbox"
-                            :value="tool.id"
-                            v-model="permissionData.forbidden_tools"
-                            class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <div class="ml-1.5 min-w-0 flex-1">
-                            <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
-                            <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-
-                    <!-- 2. 禁用 Bash 命令关键字 -->
-                    <div class="border border-gray-150 rounded-xl p-3 bg-white flex flex-col">
-                      <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
-                        <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-                        自定义禁用命令关键字
-                      </h4>
-                      <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
-                      <textarea
-                        v-model="forbiddenCommandsText"
-                        placeholder="例如: rm, shutdown, mv, wget, curl"
-                        class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[80px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
-                      ></textarea>
-                    </div>
-                  </div>
-
-                  <div
-                    v-else-if="currentResources.length === 0"
-                    class="text-center py-4 text-gray-500 text-xs"
-                  >
-                    暂无可用资源
-                  </div>
-                  <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <label
-                      v-for="res in currentResources"
-                      :key="res.id"
-                      class="flex items-start p-2 rounded border bg-white transition-colors"
-                      :class="
-                        isMissingKnowledgeBase(res)
-                          ? 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
-                          : 'hover:bg-gray-50 cursor-pointer'
-                      "
-                      :title="
-                        isMissingKnowledgeBase(res)
-                          ? '该知识库已在 RAGFlow 失联，不可分配权限'
-                          : undefined
-                      "
-                    >
-                      <input
-                        type="checkbox"
-                        :value="res.id"
-                        v-model="(permissionData as any)[activeResTab]"
-                        :disabled="isMissingKnowledgeBase(res)"
-                        class="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                      <div class="ml-2 min-w-0 flex-1">
-                        <div class="flex items-center gap-1.5 min-w-0">
-                          <p
-                            class="text-xs sm:text-sm font-bold text-gray-900 truncate"
-                          >
-                            {{ res.platform_name || res.display_name || res.name }}
-                          </p>
-                          <span
-                            v-if="res.method"
-                            class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
-                            :class="methodBadgeClass(res.method)"
-                            >{{ res.method }}</span
-                          >
-                          <span
-                            v-if="isMissingKnowledgeBase(res)"
-                            class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
-                            >失联</span
-                          >
-                        </div>
-                        <p
-                          v-if="res.path"
-                          class="text-[9px] text-gray-500 truncate font-mono leading-tight"
-                        >
-                          {{ res.path }}
-                        </p>
-                        <p class="text-[9px] text-gray-400 truncate font-mono">
-                          {{ res.description || res.id }}
-                        </p>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-                <div
-                  v-if="activeResTab !== 'forbidden_configs'"
-                  class="flex justify-between items-center mt-2 text-[10px] text-gray-500"
-                >
-                  <span
-                    >已勾选:
-                    <b class="text-blue-600">{{
-                      (permissionData as any)[activeResTab].length
-                    }}</b></span
-                  >
-                  <button
-                    @click="toggleSelectAll"
-                    class="font-black text-blue-600 hover:underline px-2 py-1"
-                  >
-                    {{ isAllSelected ? "全部取消" : "本页全选" }}
-                  </button>
-                </div>
-              </div>
-
-              <!-- UI Content -->
-              <div
-                v-else
-                class="flex-1 overflow-y-auto bg-gray-50 p-2 sm:p-4 rounded-lg border border-gray-200"
-              >
-                <div class="space-y-3">
-                  <div
-                    v-for="menu in MENU_TREE"
-                    :key="menu.id"
-                    class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm"
-                  >
-                    <div
-                      class="px-3 py-2 bg-gray-50 flex items-center gap-2 border-b border-gray-100"
-                    >
-                      <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
-                      </svg>
-                      <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
-                      <input
-                        type="checkbox"
-                        :checked="isItemSelected(menu.id)"
-                        :indeterminate="isMenuPartiallySelected(menu.id)"
-                        @change="toggleTreeItem(menu.id)"
-                        class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                      />
-                      <span
-                        class="text-xs sm:text-sm font-black text-gray-800"
-                        >{{ menu.label }}</span
-                      >
-                    </div>
-                    <div
-                      v-if="menu.children.length > 0"
-                      class="p-2"
-                    >
-                      <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
-                        <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
-                        </svg>
-                        <span>功能点权限</span>
-                        <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
-                      </div>
-                      <div class="grid grid-cols-1 xs:grid-cols-2 gap-1.5">
-                      <div
-                        v-for="child in menu.children"
-                        :key="child.id"
-                        @click="toggleTreeItem(child.id)"
-                        class="flex items-center gap-2 p-1.5 rounded hover:bg-blue-50 cursor-pointer transition-colors"
-                        :class="isItemSelected(child.id) ? 'bg-blue-50' : ''"
-                      >
-                        <div
-                          class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center"
-                          :class="
-                            isItemSelected(child.id)
-                              ? 'bg-blue-600 border-blue-600'
-                              : 'bg-white border-gray-300'
-                          "
-                        >
-                          <svg
-                            v-if="isItemSelected(child.id)"
-                            class="w-2.5 h-2.5 text-white"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              stroke-width="3"
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                        </div>
-                        <span class="text-[11px] text-gray-600 leading-tight">{{
-                          child.label
-                        }}</span>
-                      </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- QUOTA TAB -->
-          <div v-show="activeTab === 'quota'" class="space-y-4 py-2">
-            <QuotaPolicyPanel
-              v-if="editingUserId"
-              scope-type="user"
-              :scope-id="editingUserId"
-              show-effective
-            />
-          </div>
-        </div>
-
-        <div
-          class="mt-4 sm:mt-6 flex flex-col sm:flex-row sm:items-center justify-end gap-2 pt-4 border-t border-gray-200"
-        >
-          <p
-            v-if="activeTab === 'quota'"
-            class="order-3 sm:order-1 sm:mr-auto text-xs text-gray-400"
-          >
-            额度请在上方点击「保存额度」，与用户信息分开保存
-          </p>
-          <button
-            @click="closeDialogs"
-            class="order-2 sm:order-2 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
-          >
-            {{ activeTab === 'quota' ? '关闭' : '取消' }}
-          </button>
-          <button
-            v-if="!createdApiKey && activeTab !== 'quota'"
-            @click="saveUser"
-            :disabled="submitting"
-            class="order-1 sm:order-3 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-md shadow-blue-100"
-          >
-            {{ showEditDialog ? "保存更新" : "立即创建用户" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- View API Key Dialog -->
-    <div
-      v-if="showViewKeyDialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="closeViewKeyDialog"
-    >
-      <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
-        <h2
-          class="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-600"
-        >
-          <KeyIcon class="w-6 h-6" /> 查看 API Key
-        </h2>
-        <div class="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-6">
-          <div v-if="loadingViewKey" class="text-center py-4 text-gray-500">
-            加载中...
-          </div>
-          <div v-else-if="viewedApiKey" class="flex items-center gap-2">
-            <input
-              type="text"
-              :value="viewedApiKey"
-              readonly
-              class="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-xs font-mon read-only:bg-gray-100o"
-            />
-            <button
-              @click="copyViewedApiKey"
-              class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
-            >
-              复制
-            </button>
-          </div>
-        </div>
-        <div class="flex justify-end">
-          <button
-            @click="closeViewKeyDialog"
-            class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-          >
-            关闭
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Batch Status Confirmation -->
-    <div
-      v-if="showBatchStatusDialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="closeBatchStatusDialog"
-    >
-      <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
-        <div
-          class="p-3 rounded-full inline-block mb-4"
-          :class="
-            batchStatusTarget === 0
-              ? 'bg-red-100 text-red-600'
-              : 'bg-emerald-100 text-emerald-600'
-          "
-        >
-          <svg
-            v-if="batchStatusTarget === 0"
-            class="w-8 h-8"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-            />
-          </svg>
-          <svg v-else class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-        </div>
-        <h2 class="text-xl font-bold mb-2 text-gray-900">
-          {{ batchStatusTarget === 0 ? "确认批量禁用" : "确认批量启用" }}
-        </h2>
-        <p class="text-gray-500 mb-2">
-          将对
-          <strong class="text-gray-900">{{ selectedUserIds.length }}</strong>
-          个用户执行「{{ batchStatusTarget === 0 ? "禁用" : "启用" }}」。
-        </p>
-        <p
-          v-if="batchStatusTarget === 0"
-          class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left"
-        >
-          禁用后这些用户将<strong>无法登录系统</strong>，已登录的会话会被立即踢出。请确认无误后再继续。
-        </p>
-        <p v-else class="text-xs text-gray-400 mb-6">
-          启用后这些用户可正常登录系统，权限按原有配置恢复。
-        </p>
-        <div class="flex justify-center gap-3">
-          <button
-            :disabled="batchSubmitting"
-            class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
-            @click="closeBatchStatusDialog"
-          >
-            取消
-          </button>
-          <button
-            :disabled="batchSubmitting"
-            class="px-6 py-2 text-white rounded-lg font-medium disabled:opacity-50"
-            :class="
-              batchStatusTarget === 0
-                ? 'bg-red-600 hover:bg-red-700'
-                : 'bg-emerald-600 hover:bg-emerald-700'
-            "
-            @click="submitBatchStatus"
-          >
-            {{ batchSubmitting ? "处理中..." : batchStatusTarget === 0 ? "确认禁用" : "确认启用" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 审核通过确认：可选分配业务角色 -->
-    <div
-      v-if="reviewApproveTarget"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] px-4"
-      @click.self="closeApproveDialog"
-    >
-      <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
-        <h2 class="text-xl font-bold mb-1 text-gray-900">审核通过并启用</h2>
-        <p class="text-sm text-gray-500 mb-4">
-          将为
-          <strong class="text-gray-900">{{ reviewApproveTarget.user_name }}</strong>
-          （{{ reviewApproveTarget.real_name || "未设置姓名" }}）启用账号，该用户即可使用账号密码登录。
-        </p>
-
-        <div class="mb-5">
-          <div class="flex items-center justify-between mb-2">
-            <label class="text-xs font-semibold text-gray-600">业务角色（可选）</label>
-            <span class="text-[11px] text-gray-400">不选则先不分配，稍后可在角色管理中补充</span>
-          </div>
-
-          <div v-if="businessRoles.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-500">
-            无可分配的业务角色（需具备角色管理权限），可直接通过审核。
-          </div>
-
-          <div v-else class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
-            <label
-              v-for="role in businessRoles"
-              :key="role.id"
-              class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50"
-            >
-              <input
-                type="checkbox"
-                class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary/30"
-                :value="role.id"
-                v-model="reviewRoleIds"
+            <svg v-else class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
-              <span class="min-w-0">
-                <span class="block text-sm text-gray-800 truncate">{{ role.name }}</span>
-                <span v-if="role.code" class="block text-[10px] text-gray-400 font-mono truncate">{{ role.code }}</span>
-              </span>
-            </label>
+            </svg>
           </div>
-        </div>
-
-        <div class="flex justify-end gap-3">
-          <button
-            type="button"
-            :disabled="reviewSubmitting"
-            class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
-            @click="closeApproveDialog"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            :disabled="reviewSubmitting"
-            class="px-5 py-2 text-white rounded-lg font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-            @click="approveUser"
-          >
-            {{ reviewSubmitting ? "处理中..." : "确认通过并启用" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 审核禁用（拒绝）确认 -->
-    <div
-      v-if="reviewRejectTarget"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] px-4"
-      @click.self="closeRejectDialog"
-    >
-      <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
-        <div class="p-3 rounded-full inline-block mb-4 bg-red-100 text-red-600">
-          <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-          </svg>
-        </div>
-        <h2 class="text-xl font-bold mb-2 text-gray-900">确认禁用该申请</h2>
-        <p class="text-gray-500 mb-2">
-          将对
-          <strong class="text-gray-900">{{ reviewRejectTarget.user_name }}</strong>
-          执行「禁用」。
-        </p>
-        <p class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left">
-          该用户将<strong>无法登录系统</strong>，且账号名<strong>永久占用</strong>——被禁用的账号不会释放账号名，该用户无法用同名账号重新申请。请确认无误后再继续。
-        </p>
-        <div class="flex justify-center gap-3">
-          <button
-            type="button"
-            :disabled="reviewSubmitting"
-            class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
-            @click="closeRejectDialog"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            :disabled="reviewSubmitting"
-            class="px-6 py-2 text-white rounded-lg font-medium bg-red-600 hover:bg-red-700 disabled:opacity-50"
-            @click="rejectUser"
-          >
-            {{ reviewSubmitting ? "处理中..." : "确认禁用" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Delete Confirmation -->
-    <div
-      v-if="showDeleteDialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="showDeleteDialog = false"
-    >
-      <div
-        class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center"
-      >
-        <div class="p-3 bg-red-100 rounded-full inline-block mb-4 text-red-600">
-          <TrashIcon class="w-8 h-8" />
-        </div>
-        <h2 class="text-xl font-bold mb-2 text-gray-900">确认删除用户</h2>
-        <p class="text-gray-500 mb-6">
-          您确定要注销账号 <strong>{{ userToDelete?.user_name }}</strong> 吗？
-        </p>
-        <div class="flex justify-center gap-3">
-          <button
-            @click="showDeleteDialog = false"
-            class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
-          >
-            取消
-          </button>
-          <button
-            @click="deleteUser"
-            class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
-          >
-            确认删除
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Set Password Dialog -->
-    <div
-      v-if="showSetPasswordDialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="closeSetPasswordDialog"
-    >
-      <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold text-emerald-700 flex items-center gap-1.5">
-            <span>设置密码</span>
+          <h2 class="text-xl font-bold mb-2 text-gray-900">
+            {{ batchStatusTarget === 0 ? "确认批量禁用" : "确认批量启用" }}
           </h2>
-          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-            <svg class="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
-            <span>等保三级规范</span>
-          </span>
-        </div>
-
-        <p class="text-xs text-gray-500">
-          为用户 <strong class="text-gray-800 font-semibold">{{ userToSetPassword?.user_name }}</strong> 设置登录密码
-        </p>
-
-        <!-- 等保密码复杂度规则文案说明 -->
-        <div class="p-3 bg-emerald-50/70 border border-emerald-100 rounded-lg text-xs space-y-1">
-          <div class="flex items-center gap-1.5 font-semibold text-emerald-900">
-            <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>密码复杂度规则说明</span>
-          </div>
-          <p class="text-emerald-800/90 leading-relaxed pl-5">
-            长度须为 <strong>8-32 位</strong>，至少包含<strong>大写字母</strong>、<strong>小写字母</strong>、<strong>数字</strong>、<strong>特殊符号</strong>中的 <strong>3 种</strong>，且不能包含空格或用户名。
+          <p class="text-gray-500 mb-2">
+            将对
+            <strong class="text-gray-900">{{ selectedUserIds.length }}</strong>
+            个用户执行「{{ batchStatusTarget === 0 ? "禁用" : "启用" }}」。
           </p>
-        </div>
-
-        <div class="space-y-3">
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1">新密码</label>
-            <input
-              v-model="setPasswordForm.password"
-              type="password"
-              placeholder="输入新密码（8-32位，含3种字符类别）"
-              class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-              :class="setPasswordForm.password ? (userSetPasswordPolicy.valid ? 'border-emerald-400 bg-emerald-50/20' : 'border-amber-300 bg-amber-50/20') : 'border-gray-300'"
-              @keyup.enter="executeSetPassword"
-            />
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1">确认密码</label>
-            <input
-              v-model="setPasswordForm.confirm"
-              type="password"
-              placeholder="再次输入新密码"
-              class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-              :class="setPasswordForm.confirm ? (setPasswordForm.confirm === setPasswordForm.password ? 'border-emerald-400 bg-emerald-50/20' : 'border-red-300 bg-red-50/20') : 'border-gray-300'"
-              @keyup.enter="executeSetPassword"
-            />
-          </div>
-        </div>
-
-        <!-- 实时合规指标卡片 -->
-        <div v-if="setPasswordForm.password" class="p-2.5 bg-gray-50 border border-gray-200/80 rounded-lg space-y-1.5 text-xs">
-          <div class="flex items-center justify-between text-gray-600 gap-2">
-            <span class="font-medium whitespace-nowrap shrink-0">合规检测：</span>
-            <span class="truncate font-medium text-right" :class="userSetPasswordPolicy.valid ? 'text-emerald-600 font-semibold' : 'text-amber-600'">
-              {{ userSetPasswordPolicy.valid ? '✓ 符合等保要求' : userSetPasswordPolicy.shortMessage }}
-            </span>
-          </div>
-          <div class="grid grid-cols-3 gap-1.5 text-[11px]">
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasLength ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-              <span>{{ userSetPasswordPolicy.hasLength ? '✓' : '○' }}</span>
-              <span>8-32位</span>
-            </div>
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasUpper ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-              <span>{{ userSetPasswordPolicy.hasUpper ? '✓' : '○' }}</span>
-              <span>大写字母</span>
-            </div>
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasLower ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-              <span>{{ userSetPasswordPolicy.hasLower ? '✓' : '○' }}</span>
-              <span>小写字母</span>
-            </div>
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasDigit ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-              <span>{{ userSetPasswordPolicy.hasDigit ? '✓' : '○' }}</span>
-              <span>数字</span>
-            </div>
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasSpecial ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-              <span>{{ userSetPasswordPolicy.hasSpecial ? '✓' : '○' }}</span>
-              <span>特殊符号</span>
-            </div>
-            <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.categoryCount >= 3 ? 'bg-emerald-100 text-emerald-800 font-semibold' : 'bg-gray-200/70 text-gray-500'">
-              <span>{{ userSetPasswordPolicy.categoryCount >= 3 ? '✓' : '○' }}</span>
-              <span>命中 {{ userSetPasswordPolicy.categoryCount }}/4 类</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="flex justify-end gap-3 pt-2">
-          <button
-            @click="closeSetPasswordDialog"
-            class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors cursor-pointer"
-            :disabled="settingPassword"
+          <p
+            v-if="batchStatusTarget === 0"
+            class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left"
           >
-            取消
-          </button>
-          <button
-            @click="executeSetPassword"
-            class="px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
-            :disabled="settingPassword || !setPasswordForm.password || !userSetPasswordPolicy.valid || setPasswordForm.password !== setPasswordForm.confirm"
-          >
-            {{ settingPassword ? "提交中..." : "确认设置" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Regenerate Key Dialog -->
-    <div
-      v-if="showRegenerateDialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="closeRegenerateDialog"
-    >
-      <div
-        class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl text-center"
-      >
-        <h2 class="text-xl font-bold mb-4 text-amber-600">重置 API Key</h2>
-        <div v-if="!regeneratedApiKey" class="space-y-4">
-          <p class="text-gray-600">
-            确定要重置用户
-            <strong>{{ userToRegenerate?.user_name }}</strong>
-            的密钥吗？旧密钥将立即失效。
+            禁用后这些用户将<strong>无法登录系统</strong>，已登录的会话会被立即踢出。请确认无误后再继续。
+          </p>
+          <p v-else class="text-xs text-gray-400 mb-6">
+            启用后这些用户可正常登录系统，权限按原有配置恢复。
           </p>
           <div class="flex justify-center gap-3">
             <button
-              @click="closeRegenerateDialog"
-              class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              :disabled="batchSubmitting"
+              class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+              @click="closeBatchStatusDialog"
             >
               取消
             </button>
             <button
-              @click="executeRegenerateApiKey"
-              class="px-6 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium"
+              :disabled="batchSubmitting"
+              class="px-6 py-2 text-white rounded-lg font-medium disabled:opacity-50"
+              :class="
+                batchStatusTarget === 0
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              "
+              @click="submitBatchStatus"
             >
-              确认重置
+              {{ batchSubmitting ? "处理中..." : batchStatusTarget === 0 ? "确认禁用" : "确认启用" }}
             </button>
           </div>
-        </div>
-        <div v-else class="space-y-4">
-          <p class="text-sm font-bold text-green-600">新密钥生成成功！</p>
-          <div class="flex items-center gap-2">
-            <code
-              class="flex-1 bg-gray-50 p-2 rounded border text-xs break-all font-mono select-all"
-              >{{ regeneratedApiKey }}</code
-            >
-            <button
-              @click="copyRegeneratedApiKey"
-              class="px-3 py-1.5 bg-green-600 text-white rounded text-xs"
-            >
-              复制
-            </button>
-          </div>
-          <button
-            @click="closeRegenerateDialog"
-            class="w-full py-2 bg-gray-900 text-white rounded font-bold"
-          >
-            已保存，关闭
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
+
+    <!-- 审核通过确认：可选分配业务角色 -->
+    <Teleport to="body">
+      <div
+        v-if="reviewApproveTarget"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] px-4"
+        @click.self="closeApproveDialog"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
+          <h2 class="text-xl font-bold mb-1 text-gray-900">审核通过并启用</h2>
+          <p class="text-sm text-gray-500 mb-4">
+            将为
+            <strong class="text-gray-900">{{ reviewApproveTarget.user_name }}</strong>
+            （{{ reviewApproveTarget.real_name || "未设置姓名" }}）启用账号，该用户即可使用账号密码登录。
+          </p>
+
+          <div class="mb-5">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-semibold text-gray-600">业务角色（可选）</label>
+              <span class="text-[11px] text-gray-400">不选则先不分配，稍后可在角色管理中补充</span>
+            </div>
+
+            <div v-if="businessRoles.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-500">
+              无可分配的业务角色（需具备角色管理权限），可直接通过审核。
+            </div>
+
+            <div v-else class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+              <label
+                v-for="role in businessRoles"
+                :key="role.id"
+                class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50"
+              >
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary/30"
+                  :value="role.id"
+                  v-model="reviewRoleIds"
+                />
+                <span class="min-w-0">
+                  <span class="block text-sm text-gray-800 truncate">{{ role.name }}</span>
+                  <span v-if="role.code" class="block text-[10px] text-gray-400 font-mono truncate">{{ role.code }}</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              :disabled="reviewSubmitting"
+              class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+              @click="closeApproveDialog"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              :disabled="reviewSubmitting"
+              class="px-5 py-2 text-white rounded-lg font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+              @click="approveUser"
+            >
+              {{ reviewSubmitting ? "处理中..." : "确认通过并启用" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 审核禁用（拒绝）确认 -->
+    <Teleport to="body">
+      <div
+        v-if="reviewRejectTarget"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] px-4"
+        @click.self="closeRejectDialog"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
+          <div class="p-3 rounded-full inline-block mb-4 bg-red-100 text-red-600">
+            <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+          </div>
+          <h2 class="text-xl font-bold mb-2 text-gray-900">确认禁用该申请</h2>
+          <p class="text-gray-500 mb-2">
+            将对
+            <strong class="text-gray-900">{{ reviewRejectTarget.user_name }}</strong>
+            执行「禁用」。
+          </p>
+          <p class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left">
+            该用户将<strong>无法登录系统</strong>，且账号名<strong>永久占用</strong>——被禁用的账号不会释放账号名，该用户无法用同名账号重新申请。请确认无误后再继续。
+          </p>
+          <div class="flex justify-center gap-3">
+            <button
+              type="button"
+              :disabled="reviewSubmitting"
+              class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+              @click="closeRejectDialog"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              :disabled="reviewSubmitting"
+              class="px-6 py-2 text-white rounded-lg font-medium bg-red-600 hover:bg-red-700 disabled:opacity-50"
+              @click="rejectUser"
+            >
+              {{ reviewSubmitting ? "处理中..." : "确认禁用" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Delete Confirmation -->
+    <Teleport to="body">
+      <div
+        v-if="showDeleteDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="showDeleteDialog = false"
+      >
+        <div
+          class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center"
+        >
+          <div class="p-3 bg-red-100 rounded-full inline-block mb-4 text-red-600">
+            <TrashIcon class="w-8 h-8" />
+          </div>
+          <h2 class="text-xl font-bold mb-2 text-gray-900">确认删除用户</h2>
+          <p class="text-gray-500 mb-6">
+            您确定要注销账号 <strong>{{ userToDelete?.user_name }}</strong> 吗？
+          </p>
+          <div class="flex justify-center gap-3">
+            <button
+              @click="showDeleteDialog = false"
+              class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+            >
+              取消
+            </button>
+            <button
+              @click="deleteUser"
+              class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+            >
+              确认删除
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Set Password Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showSetPasswordDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeSetPasswordDialog"
+      >
+        <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold text-emerald-700 flex items-center gap-1.5">
+              <span>设置密码</span>
+            </h2>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+              <svg class="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>等保三级规范</span>
+            </span>
+          </div>
+
+          <p class="text-xs text-gray-500">
+            为用户 <strong class="text-gray-800 font-semibold">{{ userToSetPassword?.user_name }}</strong> 设置登录密码
+          </p>
+
+          <!-- 等保密码复杂度规则文案说明 -->
+          <div class="p-3 bg-emerald-50/70 border border-emerald-100 rounded-lg text-xs space-y-1">
+            <div class="flex items-center gap-1.5 font-semibold text-emerald-900">
+              <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>密码复杂度规则说明</span>
+            </div>
+            <p class="text-emerald-800/90 leading-relaxed pl-5">
+              长度须为 <strong>8-32 位</strong>，至少包含<strong>大写字母</strong>、<strong>小写字母</strong>、<strong>数字</strong>、<strong>特殊符号</strong>中的 <strong>3 种</strong>，且不能包含空格或用户名。
+            </p>
+          </div>
+
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">新密码</label>
+              <input
+                v-model="setPasswordForm.password"
+                type="password"
+                placeholder="输入新密码（8-32位，含3种字符类别）"
+                class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                :class="setPasswordForm.password ? (userSetPasswordPolicy.valid ? 'border-emerald-400 bg-emerald-50/20' : 'border-amber-300 bg-amber-50/20') : 'border-gray-300'"
+                @keyup.enter="executeSetPassword"
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">确认密码</label>
+              <input
+                v-model="setPasswordForm.confirm"
+                type="password"
+                placeholder="再次输入新密码"
+                class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                :class="setPasswordForm.confirm ? (setPasswordForm.confirm === setPasswordForm.password ? 'border-emerald-400 bg-emerald-50/20' : 'border-red-300 bg-red-50/20') : 'border-gray-300'"
+                @keyup.enter="executeSetPassword"
+              />
+            </div>
+          </div>
+
+          <!-- 实时合规指标卡片 -->
+          <div v-if="setPasswordForm.password" class="p-2.5 bg-gray-50 border border-gray-200/80 rounded-lg space-y-1.5 text-xs">
+            <div class="flex items-center justify-between text-gray-600 gap-2">
+              <span class="font-medium whitespace-nowrap shrink-0">合规检测：</span>
+              <span class="truncate font-medium text-right" :class="userSetPasswordPolicy.valid ? 'text-emerald-600 font-semibold' : 'text-amber-600'">
+                {{ userSetPasswordPolicy.valid ? '✓ 符合等保要求' : userSetPasswordPolicy.shortMessage }}
+              </span>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5 text-[11px]">
+              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasLength ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
+                <span>{{ userSetPasswordPolicy.hasLength ? '✓' : '○' }}</span>
+                <span>8-32位</span>
+              </div>
+              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasUpper ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
+                <span>{{ userSetPasswordPolicy.hasUpper ? '✓' : '○' }}</span>
+                <span>大写字母</span>
+              </div>
+              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasLower ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
+                <span>{{ userSetPasswordPolicy.hasLower ? '✓' : '○' }}</span>
+                <span>小写字母</span>
+              </div>
+              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasDigit ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
+                <span>{{ userSetPasswordPolicy.hasDigit ? '✓' : '○' }}</span>
+                <span>数字</span>
+              </div>
+              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasSpecial ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
+                <span>{{ userSetPasswordPolicy.hasSpecial ? '✓' : '○' }}</span>
+                <span>特殊符号</span>
+              </div>
+              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.categoryCount >= 3 ? 'bg-emerald-100 text-emerald-800 font-semibold' : 'bg-gray-200/70 text-gray-500'">
+                <span>{{ userSetPasswordPolicy.categoryCount >= 3 ? '✓' : '○' }}</span>
+                <span>命中 {{ userSetPasswordPolicy.categoryCount }}/4 类</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-3 pt-2">
+            <button
+              @click="closeSetPasswordDialog"
+              class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors cursor-pointer"
+              :disabled="settingPassword"
+            >
+              取消
+            </button>
+            <button
+              @click="executeSetPassword"
+              class="px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
+              :disabled="settingPassword || !setPasswordForm.password || !userSetPasswordPolicy.valid || setPasswordForm.password !== setPasswordForm.confirm"
+            >
+              {{ settingPassword ? "提交中..." : "确认设置" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Regenerate Key Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showRegenerateDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeRegenerateDialog"
+      >
+        <div
+          class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl text-center"
+        >
+          <h2 class="text-xl font-bold mb-4 text-amber-600">重置 API Key</h2>
+          <div v-if="!regeneratedApiKey" class="space-y-4">
+            <p class="text-gray-600">
+              确定要重置用户
+              <strong>{{ userToRegenerate?.user_name }}</strong>
+              的密钥吗？旧密钥将立即失效。
+            </p>
+            <div class="flex justify-center gap-3">
+              <button
+                @click="closeRegenerateDialog"
+                class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                @click="executeRegenerateApiKey"
+                class="px-6 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium"
+              >
+                确认重置
+              </button>
+            </div>
+          </div>
+          <div v-else class="space-y-4">
+            <p class="text-sm font-bold text-green-600">新密钥生成成功！</p>
+            <div class="flex items-center gap-2">
+              <code
+                class="flex-1 bg-gray-50 p-2 rounded border text-xs break-all font-mono select-all"
+                >{{ regeneratedApiKey }}</code
+              >
+              <button
+                @click="copyRegeneratedApiKey"
+                class="px-3 py-1.5 bg-green-600 text-white rounded text-xs"
+              >
+                复制
+              </button>
+            </div>
+            <button
+              @click="closeRegenerateDialog"
+              class="w-full py-2 bg-gray-900 text-white rounded font-bold"
+            >
+              已保存，关闭
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Disable 2FA Dialog -->
-    <div
-      v-if="showDisable2FADialog"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="closeDisable2FADialog"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl text-center"
+        v-if="showDisable2FADialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeDisable2FADialog"
       >
-        <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mx-auto mb-3">
-          <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-          </svg>
-        </div>
-        <h2 class="text-lg font-bold mb-2 text-gray-900">关闭两步验证 (2FA)</h2>
-        <p class="text-sm text-gray-600 leading-relaxed mb-6">
-          确定要为用户
-          <strong class="text-gray-900 font-semibold">{{ userToDisable2FA?.user_name }}</strong>
-          强制关闭两步验证吗？<br />
-          <span class="text-xs text-gray-400 mt-1 block">关闭后该用户将不再需要动态验证码，恢复为仅凭账号密码登录。</span>
-        </p>
-        <div class="flex justify-center gap-3">
-          <button
-            type="button"
-            @click="closeDisable2FADialog"
-            :disabled="disabling2FA"
-            class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:opacity-50"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            @click="executeDisable2FA"
-            :disabled="disabling2FA"
-            class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
-          >
-            <span v-if="disabling2FA" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
-            <span>{{ disabling2FA ? '关闭中...' : '确认关闭' }}</span>
-          </button>
+        <div
+          class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl text-center"
+        >
+          <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mx-auto mb-3">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h2 class="text-lg font-bold mb-2 text-gray-900">关闭两步验证 (2FA)</h2>
+          <p class="text-sm text-gray-600 leading-relaxed mb-6">
+            确定要为用户
+            <strong class="text-gray-900 font-semibold">{{ userToDisable2FA?.user_name }}</strong>
+            强制关闭两步验证吗？<br />
+            <span class="text-xs text-gray-400 mt-1 block">关闭后该用户将不再需要动态验证码，恢复为仅凭账号密码登录。</span>
+          </p>
+          <div class="flex justify-center gap-3">
+            <button
+              type="button"
+              @click="closeDisable2FADialog"
+              :disabled="disabling2FA"
+              class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              @click="executeDisable2FA"
+              :disabled="disabling2FA"
+              class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <span v-if="disabling2FA" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+              <span>{{ disabling2FA ? '关闭中...' : '确认关闭' }}</span>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- SSO Sync Modal -->
-    <div
-      v-if="showSsoModal"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-      @click.self="showSsoModal = false"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-lg shadow-2xl flex flex-col transition-all"
-        :class="isMobile ? 'w-full h-full rounded-none' : 'w-[800px] max-h-[85vh]'"
+        v-if="showSsoModal"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="showSsoModal = false"
       >
-        <!-- Modal Header -->
-        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-          <div>
-            <h2 class="text-xl font-black text-gray-900 flex items-center gap-2">
-              <UserGroupIcon class="w-6 h-6 text-indigo-600" />
-              同步 SSO 用户
-            </h2>
-            <p class="text-xs text-gray-400 mt-0.5">从 Laplace SSO 中心同步用户，默认分配“普通用户”身份。</p>
+        <div
+          class="bg-white rounded-lg shadow-2xl flex flex-col transition-all"
+          :class="isMobile ? 'w-full h-full rounded-none' : 'w-[800px] max-h-[85vh]'"
+        >
+          <!-- Modal Header -->
+          <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+            <div>
+              <h2 class="text-xl font-black text-gray-900 flex items-center gap-2">
+                <UserGroupIcon class="w-6 h-6 text-indigo-600" />
+                同步 SSO 用户
+              </h2>
+              <p class="text-xs text-gray-400 mt-0.5">从 Laplace SSO 中心同步用户，默认分配“普通用户”身份。</p>
+            </div>
+            <button @click="showSsoModal = false" class="p-2 hover:bg-gray-100 rounded-full transition-colors">
+              <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <button @click="showSsoModal = false" class="p-2 hover:bg-gray-100 rounded-full transition-colors">
-            <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+
+          <!-- Modal Toolbar -->
+          <div class="px-6 py-3 bg-gray-50 flex flex-col sm:flex-row gap-3 items-center">
+            <div class="relative flex-1 w-full">
+              <input
+                v-model="ssoSearchQuery"
+                type="search"
+                placeholder="搜索用户名、姓名或部门..."
+                class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all"
+              />
+              <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <div class="flex items-center gap-4">
+              <label class="flex items-center gap-2 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  v-model="hideSynced"
+                  class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                />
+                <span class="text-xs font-bold text-gray-500 group-hover:text-gray-700 transition-colors">隐藏已同步</span>
+              </label>
+              <div class="text-[11px] text-gray-400 whitespace-nowrap border-l border-gray-200 pl-4">
+                已选 <span class="text-indigo-600 font-bold">{{ selectedSsoUsernames.length }}</span> 人
+              </div>
+            </div>
+          </div>
+
+          <!-- Modal Content -->
+          <div class="flex-1 overflow-y-auto p-0 min-h-[300px]">
+            <div v-if="loadingSso" class="h-64 flex flex-col items-center justify-center text-gray-500">
+              <div class="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              <p class="mt-4 text-sm font-medium">正在获取 SSO 数据...</p>
+            </div>
+
+            <div v-else-if="filteredSsoUsers.length === 0" class="h-64 flex flex-col items-center justify-center text-gray-400">
+              <svg class="w-12 h-12 opacity-20 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <p class="text-sm">未找到匹配的用户</p>
+            </div>
+
+            <table v-else class="min-w-full divide-y divide-gray-100">
+              <thead class="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                  <th class="px-6 py-3 text-left w-10">
+                    <input
+                      type="checkbox"
+                      :checked="isAllSsoSelected"
+                      @change="toggleSsoSelectAll"
+                      class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                    />
+                  </th>
+                  <th class="px-4 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-wider">用户名/姓名</th>
+                  <th class="px-4 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-wider">部门/职位</th>
+                  <th class="px-4 py-3 text-right text-[11px] font-bold text-gray-400 uppercase tracking-wider">状态</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr
+                  v-for="user in filteredSsoUsers"
+                  :key="user.code"
+                  class="hover:bg-indigo-50/30 transition-colors"
+                  :class="user.is_synced ? 'opacity-50 grayscale-[0.5]' : 'cursor-pointer'"
+                  @click="!user.is_synced && (selectedSsoUsernames.includes(user.code) ? selectedSsoUsernames = selectedSsoUsernames.filter(c => c !== user.code) : selectedSsoUsernames.push(user.code))"
+                >
+                  <td class="px-6 py-3" @click.stop>
+                    <input
+                      v-if="!user.is_synced"
+                      type="checkbox"
+                      :value="user.code"
+                      v-model="selectedSsoUsernames"
+                      class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                    />
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="flex flex-col">
+                      <span class="text-sm font-bold text-gray-900">{{ user.name }}</span>
+                      <span class="text-[10px] font-mono text-gray-400 uppercase tracking-tight">{{ user.code }}</span>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="flex flex-col max-w-[200px] overflow-hidden">
+                      <span class="text-[11px] text-gray-600 truncate">{{ user.department || '-' }}</span>
+                      <span class="text-[10px] text-gray-400 truncate">{{ user.position || '-' }}</span>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    <span
+                      v-if="user.is_synced"
+                      class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-gray-100 text-gray-400 border border-gray-200"
+                    >
+                      已同步
+                    </span>
+                    <span
+                      v-else
+                      class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-green-100 text-green-700 border border-green-200"
+                    >
+                      待同步
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Modal Footer -->
+          <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 rounded-b-lg">
+            <button
+              @click="showSsoModal = false"
+              class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium transition-all"
+            >
+              关闭
+            </button>
+            <button
+              @click="executeSsoSync"
+              :disabled="selectedSsoUsernames.length === 0 || syncingSso"
+              class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold shadow-lg shadow-indigo-100 flex items-center gap-2"
+            >
+              <span v-if="syncingSso" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              立即同步选中的 {{ selectedSsoUsernames.length }} 个用户
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- SSO Sync Confirmation Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showSsoConfirmModal"
+        class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9995]"
+        @click.self="showSsoConfirmModal = false"
+      >
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
+          <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+            <h3 class="text-lg font-black text-gray-900 flex items-center gap-2">
+              <UserGroupIcon class="w-5 h-5 text-indigo-600" />
+              确认同步配置
+            </h3>
+          </div>
+
+          <div class="p-6 space-y-5">
+            <div class="bg-indigo-50/50 p-4 rounded-lg border border-indigo-100">
+              <p class="text-sm text-indigo-900 font-bold mb-1">已选择 {{ selectedSsoUsernames.length }} 个用户</p>
+              <div class="flex flex-wrap gap-1 mt-2">
+                <span v-for="uname in selectedSsoUsernames.slice(0, 10)" :key="uname" class="text-[10px] bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-600 font-mono">{{ uname }}</span>
+                <span v-if="selectedSsoUsernames.length > 10" class="text-[10px] text-gray-400 self-center">...及其他 {{ selectedSsoUsernames.length - 10 }} 人</span>
+              </div>
+            </div>
+
+            <!-- Role Assignment -->
+            <div class="space-y-4">
+              <div>
+                <label class="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">分配系统身份</label>
+                <select
+                  v-model="ssoSyncRole"
+                  class="w-full border border-gray-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
+                >
+                  <option value="user">普通用户 (User)</option>
+                  <option value="admin">管理员 (Admin)</option>
+                </select>
+              </div>
+
+              <div>
+                <div class="flex justify-between items-center mb-2">
+                  <label class="block text-xs font-black text-gray-400 uppercase tracking-widest">分配业务角色</label>
+                  <span class="text-[10px] text-gray-400">可选</span>
+                </div>
+                <div class="border border-gray-100 rounded-lg p-3 max-h-48 overflow-y-auto bg-gray-50/30 grid grid-cols-1 gap-2">
+                  <label
+                    v-for="role in businessRoles"
+                    :key="role.id"
+                    class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-white p-2 rounded transition-colors"
+                    :class="ssoSyncRoleIds.includes(role.id) ? 'bg-white shadow-sm ring-1 ring-indigo-500/20' : ''"
+                  >
+                    <input
+                      type="checkbox"
+                      :value="role.id"
+                      v-model="ssoSyncRoleIds"
+                      class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span class="text-xs font-bold" :class="ssoSyncRoleIds.includes(role.id) ? 'text-indigo-600' : 'text-gray-600'">{{ role.name }}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+            <button
+              @click="showSsoConfirmModal = false"
+              class="px-6 py-2 text-gray-500 hover:text-gray-700 font-medium text-sm"
+            >
+              返回调整
+            </button>
+            <button
+              @click="confirmExecuteSsoSync"
+              :disabled="syncingSso"
+              class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm font-black shadow-lg shadow-indigo-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5"
+            >
+              <span v-if="syncingSso" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              确认同步入库
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+  </div>
+
+  <!-- System Default Quota Modal -->
+  <Teleport to="body">
+    <div
+      v-if="showSystemQuotaModal"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] p-4"
+      @click.self="showSystemQuotaModal = false"
+    >
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-xl font-bold text-gray-900">系统默认额度</h2>
+            <p class="text-xs text-gray-500 mt-1">未配置用户/角色策略时的全局月 Token 上限</p>
+          </div>
+          <button
+            @click="showSystemQuotaModal = false"
+            class="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-
-        <!-- Modal Toolbar -->
-        <div class="px-6 py-3 bg-gray-50 flex flex-col sm:flex-row gap-3 items-center">
-          <div class="relative flex-1 w-full">
-            <input
-              v-model="ssoSearchQuery"
-              type="search"
-              placeholder="搜索用户名、姓名或部门..."
-              class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all"
-            />
-            <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-          <div class="flex items-center gap-4">
-            <label class="flex items-center gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                v-model="hideSynced"
-                class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-              />
-              <span class="text-xs font-bold text-gray-500 group-hover:text-gray-700 transition-colors">隐藏已同步</span>
-            </label>
-            <div class="text-[11px] text-gray-400 whitespace-nowrap border-l border-gray-200 pl-4">
-              已选 <span class="text-indigo-600 font-bold">{{ selectedSsoUsernames.length }}</span> 人
-            </div>
-          </div>
-        </div>
-
-        <!-- Modal Content -->
-        <div class="flex-1 overflow-y-auto p-0 min-h-[300px]">
-          <div v-if="loadingSso" class="h-64 flex flex-col items-center justify-center text-gray-500">
-            <div class="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-            <p class="mt-4 text-sm font-medium">正在获取 SSO 数据...</p>
-          </div>
-
-          <div v-else-if="filteredSsoUsers.length === 0" class="h-64 flex flex-col items-center justify-center text-gray-400">
-            <svg class="w-12 h-12 opacity-20 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-            <p class="text-sm">未找到匹配的用户</p>
-          </div>
-
-          <table v-else class="min-w-full divide-y divide-gray-100">
-            <thead class="bg-gray-50 sticky top-0 z-10">
-              <tr>
-                <th class="px-6 py-3 text-left w-10">
-                  <input
-                    type="checkbox"
-                    :checked="isAllSsoSelected"
-                    @change="toggleSsoSelectAll"
-                    class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                  />
-                </th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-wider">用户名/姓名</th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-wider">部门/职位</th>
-                <th class="px-4 py-3 text-right text-[11px] font-bold text-gray-400 uppercase tracking-wider">状态</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-              <tr
-                v-for="user in filteredSsoUsers"
-                :key="user.code"
-                class="hover:bg-indigo-50/30 transition-colors"
-                :class="user.is_synced ? 'opacity-50 grayscale-[0.5]' : 'cursor-pointer'"
-                @click="!user.is_synced && (selectedSsoUsernames.includes(user.code) ? selectedSsoUsernames = selectedSsoUsernames.filter(c => c !== user.code) : selectedSsoUsernames.push(user.code))"
-              >
-                <td class="px-6 py-3" @click.stop>
-                  <input
-                    v-if="!user.is_synced"
-                    type="checkbox"
-                    :value="user.code"
-                    v-model="selectedSsoUsernames"
-                    class="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                  />
-                </td>
-                <td class="px-4 py-3">
-                  <div class="flex flex-col">
-                    <span class="text-sm font-bold text-gray-900">{{ user.name }}</span>
-                    <span class="text-[10px] font-mono text-gray-400 uppercase tracking-tight">{{ user.code }}</span>
-                  </div>
-                </td>
-                <td class="px-4 py-3">
-                  <div class="flex flex-col max-w-[200px] overflow-hidden">
-                    <span class="text-[11px] text-gray-600 truncate">{{ user.department || '-' }}</span>
-                    <span class="text-[10px] text-gray-400 truncate">{{ user.position || '-' }}</span>
-                  </div>
-                </td>
-                <td class="px-4 py-3 text-right">
-                  <span
-                    v-if="user.is_synced"
-                    class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-gray-100 text-gray-400 border border-gray-200"
-                  >
-                    已同步
-                  </span>
-                  <span
-                    v-else
-                    class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black bg-green-100 text-green-700 border border-green-200"
-                  >
-                    待同步
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Modal Footer -->
-        <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50 rounded-b-lg">
+        <QuotaPolicyPanel scope-type="system" />
+        <div class="mt-6 flex justify-end pt-4 border-t border-gray-100">
           <button
-            @click="showSsoModal = false"
-            class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium transition-all"
+            type="button"
+            @click="showSystemQuotaModal = false"
+            class="px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
           >
             关闭
           </button>
-          <button
-            @click="executeSsoSync"
-            :disabled="selectedSsoUsernames.length === 0 || syncingSso"
-            class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold shadow-lg shadow-indigo-100 flex items-center gap-2"
-          >
-            <span v-if="syncingSso" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-            立即同步选中的 {{ selectedSsoUsernames.length }} 个用户
-          </button>
         </div>
       </div>
     </div>
-
-    <!-- SSO Sync Confirmation Modal -->
-    <div
-      v-if="showSsoConfirmModal"
-      class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9995]"
-      @click.self="showSsoConfirmModal = false"
-    >
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
-        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
-          <h3 class="text-lg font-black text-gray-900 flex items-center gap-2">
-            <UserGroupIcon class="w-5 h-5 text-indigo-600" />
-            确认同步配置
-          </h3>
-        </div>
-
-        <div class="p-6 space-y-5">
-          <div class="bg-indigo-50/50 p-4 rounded-lg border border-indigo-100">
-            <p class="text-sm text-indigo-900 font-bold mb-1">已选择 {{ selectedSsoUsernames.length }} 个用户</p>
-            <div class="flex flex-wrap gap-1 mt-2">
-              <span v-for="uname in selectedSsoUsernames.slice(0, 10)" :key="uname" class="text-[10px] bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-600 font-mono">{{ uname }}</span>
-              <span v-if="selectedSsoUsernames.length > 10" class="text-[10px] text-gray-400 self-center">...及其他 {{ selectedSsoUsernames.length - 10 }} 人</span>
-            </div>
-          </div>
-
-          <!-- Role Assignment -->
-          <div class="space-y-4">
-            <div>
-              <label class="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">分配系统身份</label>
-              <select
-                v-model="ssoSyncRole"
-                class="w-full border border-gray-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-              >
-                <option value="user">普通用户 (User)</option>
-                <option value="admin">管理员 (Admin)</option>
-              </select>
-            </div>
-
-            <div>
-              <div class="flex justify-between items-center mb-2">
-                <label class="block text-xs font-black text-gray-400 uppercase tracking-widest">分配业务角色</label>
-                <span class="text-[10px] text-gray-400">可选</span>
-              </div>
-              <div class="border border-gray-100 rounded-lg p-3 max-h-48 overflow-y-auto bg-gray-50/30 grid grid-cols-1 gap-2">
-                <label
-                  v-for="role in businessRoles"
-                  :key="role.id"
-                  class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-white p-2 rounded transition-colors"
-                  :class="ssoSyncRoleIds.includes(role.id) ? 'bg-white shadow-sm ring-1 ring-indigo-500/20' : ''"
-                >
-                  <input
-                    type="checkbox"
-                    :value="role.id"
-                    v-model="ssoSyncRoleIds"
-                    class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span class="text-xs font-bold" :class="ssoSyncRoleIds.includes(role.id) ? 'text-indigo-600' : 'text-gray-600'">{{ role.name }}</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
-          <button
-            @click="showSsoConfirmModal = false"
-            class="px-6 py-2 text-gray-500 hover:text-gray-700 font-medium text-sm"
-          >
-            返回调整
-          </button>
-          <button
-            @click="confirmExecuteSsoSync"
-            :disabled="syncingSso"
-            class="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm font-black shadow-lg shadow-indigo-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5"
-          >
-            <span v-if="syncingSso" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-            确认同步入库
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- System Default Quota Modal -->
-  <div
-    v-if="showSystemQuotaModal"
-    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] p-4"
-    @click.self="showSystemQuotaModal = false"
-  >
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h2 class="text-xl font-bold text-gray-900">系统默认额度</h2>
-          <p class="text-xs text-gray-500 mt-1">未配置用户/角色策略时的全局月 Token 上限</p>
-        </div>
-        <button
-          @click="showSystemQuotaModal = false"
-          class="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <QuotaPolicyPanel scope-type="system" />
-      <div class="mt-6 flex justify-end pt-4 border-t border-gray-100">
-        <button
-          type="button"
-          @click="showSystemQuotaModal = false"
-          class="px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
-        >
-          关闭
-        </button>
-      </div>
-    </div>
-  </div>
+  </Teleport>
 
   <ThirdPartyUserSyncDrawer
     :visible="showThirdPartyDrawer"

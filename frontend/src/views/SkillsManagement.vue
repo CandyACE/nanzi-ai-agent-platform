@@ -2369,86 +2369,88 @@ onUnmounted(() => {
     </Teleport>
 
     <!-- 新建技能 Modal -->
-    <div 
-      v-if="showCreateModal" 
-      class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9990] flex items-center justify-center p-4 animate-fade-in"
-      @click.self="showCreateModal = false"
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-create-title"
-        class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-200"
+    <Teleport to="body">
+      <div 
+        v-if="showCreateModal" 
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9990] flex items-center justify-center p-4 animate-fade-in"
+        @click.self="showCreateModal = false"
       >
-        <h2 id="skill-create-title" class="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2">
-          <svg class="w-5 h-5" :class="activeScope === 'personal' ? 'text-emerald-500' : 'text-blue-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-          初始化智能体技能
-        </h2>
-        <p class="text-xs text-gray-500 mb-4">
-          将创建到<strong>{{ activeScope === 'personal' ? '我的技能（个人）' : '平台技能（全局）' }}</strong>目录
-        </p>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">
-              唯一识别 ID (英文标识) <span class="text-red-500">*</span>
-            </label>
-            <input 
-              v-model="newSkill.id"
-              type="text" 
-              placeholder="例如: search-helper" 
-              class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-              :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
-            />
-            <span class="text-[10px] text-gray-400 mt-1 block">物理目录名，创建后不可修改</span>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-create-title"
+          class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-200"
+        >
+          <h2 id="skill-create-title" class="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2">
+            <svg class="w-5 h-5" :class="activeScope === 'personal' ? 'text-emerald-500' : 'text-blue-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            初始化智能体技能
+          </h2>
+          <p class="text-xs text-gray-500 mb-4">
+            将创建到<strong>{{ activeScope === 'personal' ? '我的技能（个人）' : '平台技能（全局）' }}</strong>目录
+          </p>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-500 uppercase mb-1">
+                唯一识别 ID (英文标识) <span class="text-red-500">*</span>
+              </label>
+              <input 
+                v-model="newSkill.id"
+                type="text" 
+                placeholder="例如: search-helper" 
+                class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+              />
+              <span class="text-[10px] text-gray-400 mt-1 block">物理目录名，创建后不可修改</span>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-gray-500 uppercase mb-1">
+                技能名称 <span class="text-red-500">*</span>
+              </label>
+              <input 
+                v-model="newSkill.name"
+                type="text" 
+                placeholder="例如: 全局网页搜索辅助" 
+                class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+              />
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-gray-500 uppercase mb-1">
+                描述说明
+              </label>
+              <textarea 
+                v-model="newSkill.description"
+                rows="3"
+                placeholder="描述此技能的核心能力或针对的典型任务约束..." 
+                class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
+                :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
+              ></textarea>
+            </div>
           </div>
 
-          <div>
-            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">
-              技能名称 <span class="text-red-500">*</span>
-            </label>
-            <input 
-              v-model="newSkill.name"
-              type="text" 
-              placeholder="例如: 全局网页搜索辅助" 
-              class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-              :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
-            />
+          <div class="flex justify-end gap-3 mt-6 border-t border-gray-100 pt-4">
+            <button 
+              @click="showCreateModal = false"
+              class="px-4 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium"
+            >
+              取消
+            </button>
+            <button 
+              @click="createSkill"
+              :disabled="creating"
+              class="px-4 py-2 disabled:opacity-50 text-white rounded-xl transition-colors text-sm font-medium"
+              :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
+            >
+              {{ creating ? '创建中...' : (activeScope === 'personal' ? '创建到我的技能' : '创建到平台技能') }}
+            </button>
           </div>
-
-          <div>
-            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">
-              描述说明
-            </label>
-            <textarea 
-              v-model="newSkill.description"
-              rows="3"
-              placeholder="描述此技能的核心能力或针对的典型任务约束..." 
-              class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
-              :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
-            ></textarea>
-          </div>
-        </div>
-
-        <div class="flex justify-end gap-3 mt-6 border-t border-gray-100 pt-4">
-          <button 
-            @click="showCreateModal = false"
-            class="px-4 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium"
-          >
-            取消
-          </button>
-          <button 
-            @click="createSkill"
-            :disabled="creating"
-            class="px-4 py-2 disabled:opacity-50 text-white rounded-xl transition-colors text-sm font-medium"
-            :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
-          >
-            {{ creating ? '创建中...' : (activeScope === 'personal' ? '创建到我的技能' : '创建到平台技能') }}
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 详情大抽屉 Drawer (从右侧滑出) -->
     <div 
@@ -2745,172 +2747,176 @@ onUnmounted(() => {
   </div>
 
   <!-- 新建技能资产 Modal -->
-  <div
-    v-if="showCreateAssetModal"
-    class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
-    @click.self="showCreateAssetModal = false"
-  >
+  <Teleport to="body">
     <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-asset-title"
-        class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 border border-gray-200"
-      >
-      <div class="flex items-center justify-between mb-4">
-        <h2 id="skill-asset-title" class="text-base font-bold text-gray-800">
-          新建{{ createAssetType === 'file' ? '文件' : '文件夹' }}
-        </h2>
-        <button
-          @click="showCreateAssetModal = false"
-          class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
-          aria-label="关闭"
+      v-if="showCreateAssetModal"
+      class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
+      @click.self="showCreateAssetModal = false"
+    >
+      <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-asset-title"
+          class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 border border-gray-200"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+        <div class="flex items-center justify-between mb-4">
+          <h2 id="skill-asset-title" class="text-base font-bold text-gray-800">
+            新建{{ createAssetType === 'file' ? '文件' : '文件夹' }}
+          </h2>
+          <button
+            @click="showCreateAssetModal = false"
+            class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+            aria-label="关闭"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
-      <div class="mb-4 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
-        <p class="text-[10px] text-gray-400 font-bold mb-1">创建位置</p>
-        <p class="text-xs text-slate-600 font-mono break-all">{{ createAssetTargetLabel }}</p>
-      </div>
+        <div class="mb-4 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+          <p class="text-[10px] text-gray-400 font-bold mb-1">创建位置</p>
+          <p class="text-xs text-slate-600 font-mono break-all">{{ createAssetTargetLabel }}</p>
+        </div>
 
-      <label class="block text-xs font-bold text-gray-600 mb-1.5">
-        {{ createAssetType === 'file' ? '文件名（需包含文本扩展名）' : '文件夹名称' }}
-      </label>
-      <input
-        v-model="createAssetName"
-        type="text"
-        :placeholder="createAssetType === 'file' ? '例如: guide.md' : '例如: references'"
-        class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-mono"
-        @keyup.enter="createSkillAsset"
-      />
-      <p class="mt-1.5 text-[10px] text-gray-400">请输入单级名称，不支持 /、\ 或隐藏名称。</p>
+        <label class="block text-xs font-bold text-gray-600 mb-1.5">
+          {{ createAssetType === 'file' ? '文件名（需包含文本扩展名）' : '文件夹名称' }}
+        </label>
+        <input
+          v-model="createAssetName"
+          type="text"
+          :placeholder="createAssetType === 'file' ? '例如: guide.md' : '例如: references'"
+          class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-mono"
+          @keyup.enter="createSkillAsset"
+        />
+        <p class="mt-1.5 text-[10px] text-gray-400">请输入单级名称，不支持 /、\ 或隐藏名称。</p>
 
-      <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
-        <button
-          @click="showCreateAssetModal = false"
-          class="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-        >
-          取消
-        </button>
-        <button
-          @click="createSkillAsset"
-          :disabled="creatingAsset"
-          class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
-        >
-          {{ creatingAsset ? '创建中...' : '确认创建' }}
-        </button>
+        <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
+          <button
+            @click="showCreateAssetModal = false"
+            class="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            取消
+          </button>
+          <button
+            @click="createSkillAsset"
+            :disabled="creatingAsset"
+            class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
+          >
+            {{ creatingAsset ? '创建中...' : '确认创建' }}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 
   <!-- 导入技能包 Modal -->
-  <div
-    v-if="showImportModal"
-    class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
-    @click.self="showImportModal = false"
-  >
+  <Teleport to="body">
     <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-import-title"
-        class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-gray-200 relative"
-      >
-      <div class="flex items-center justify-between mb-2">
-        <h2 id="skill-import-title" class="text-base font-bold text-gray-800 flex items-center gap-1.5">
-          <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-          </svg>
-          导入智能体技能压缩包
-        </h2>
-        <button
-          @click="showImportModal = false"
-          class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
-          aria-label="关闭"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <p class="text-xs text-gray-500 mb-4">
-        将导入至<strong>{{ activeScope === 'personal' ? '我的技能（个人）' : '平台技能（全局）' }}</strong>目录
-      </p>
-
-      <!-- 拖拽上传区域 -->
+      v-if="showImportModal"
+      class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
+      @click.self="showImportModal = false"
+    >
       <div
-        @dragover="handleImportDragOver"
-        @dragleave="handleImportDragLeave"
-        @drop="handleImportDrop"
-        @click="openImportFilePicker"
-        class="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center"
-        :class="[
-          importDragActive 
-            ? 'border-blue-500 bg-blue-50/50' 
-            : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-        ]"
-      >
-        <input
-          type="file"
-          ref="importFileInput"
-          accept=".zip,.tar,.gz,.tgz,.bz2"
-          @change="handleImportFileChange"
-          class="hidden"
-        />
-        
-        <template v-if="!importFile">
-          <svg class="w-10 h-10 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          <span class="text-xs text-gray-600 font-bold">拖拽压缩包至此，或点击选择文件</span>
-          <span class="text-[10px] text-gray-400 mt-1.5">仅支持 .zip, .tar, .tar.gz, .tgz 等压缩文件，最大 20MB</span>
-        </template>
-        
-        <template v-else>
-          <svg class="w-10 h-10 text-blue-500 mb-3 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <span class="text-xs text-gray-800 font-bold truncate max-w-full px-4">{{ importFile.name }}</span>
-          <span class="text-[10px] text-gray-500 mt-1">{{ (importFile.size / 1024 / 1024).toFixed(2) }} MB</span>
-          <span class="text-[10px] text-blue-600 mt-2 hover:underline">重新选择文件</span>
-        </template>
-      </div>
-
-      <!-- 选项配置 -->
-      <div class="mt-4 flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-xl p-3 select-none">
-        <input
-          type="checkbox"
-          id="import-overwrite-checkbox"
-          v-model="importOverwrite"
-          class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
-        />
-        <label for="import-overwrite-checkbox" class="text-xs font-semibold text-gray-700 cursor-pointer">
-          覆盖已存在的同名技能 (Overwrite Existing)
-        </label>
-      </div>
-      <p class="mt-1.5 text-[10px] text-gray-400">若技能包解压后根目录不含 <b>SKILL.md</b> 规范文档，系统将自动拒绝并回滚清理。</p>
-
-      <!-- 操作按钮 -->
-      <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
-        <button
-          @click="showImportModal = false"
-          class="px-4 py-2 text-xs font-semibold text-gray-600 border border-gray-300 rounded-xl hover:bg-gray-50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-import-title"
+          class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-gray-200 relative"
         >
-          取消
-        </button>
-        <button
-          @click="submitImportSkill"
-          :disabled="importingSkill || !importFile"
-          class="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+        <div class="flex items-center justify-between mb-2">
+          <h2 id="skill-import-title" class="text-base font-bold text-gray-800 flex items-center gap-1.5">
+            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            导入智能体技能压缩包
+          </h2>
+          <button
+            @click="showImportModal = false"
+            class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+            aria-label="关闭"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 mb-4">
+          将导入至<strong>{{ activeScope === 'personal' ? '我的技能（个人）' : '平台技能（全局）' }}</strong>目录
+        </p>
+
+        <!-- 拖拽上传区域 -->
+        <div
+          @dragover="handleImportDragOver"
+          @dragleave="handleImportDragLeave"
+          @drop="handleImportDrop"
+          @click="openImportFilePicker"
+          class="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center"
+          :class="[
+            importDragActive 
+              ? 'border-blue-500 bg-blue-50/50' 
+              : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+          ]"
         >
-          <span v-if="importingSkill" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-          {{ importingSkill ? '正在导入解压...' : '确认导入' }}
-        </button>
+          <input
+            type="file"
+            ref="importFileInput"
+            accept=".zip,.tar,.gz,.tgz,.bz2"
+            @change="handleImportFileChange"
+            class="hidden"
+          />
+        
+          <template v-if="!importFile">
+            <svg class="w-10 h-10 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <span class="text-xs text-gray-600 font-bold">拖拽压缩包至此，或点击选择文件</span>
+            <span class="text-[10px] text-gray-400 mt-1.5">仅支持 .zip, .tar, .tar.gz, .tgz 等压缩文件，最大 20MB</span>
+          </template>
+        
+          <template v-else>
+            <svg class="w-10 h-10 text-blue-500 mb-3 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span class="text-xs text-gray-800 font-bold truncate max-w-full px-4">{{ importFile.name }}</span>
+            <span class="text-[10px] text-gray-500 mt-1">{{ (importFile.size / 1024 / 1024).toFixed(2) }} MB</span>
+            <span class="text-[10px] text-blue-600 mt-2 hover:underline">重新选择文件</span>
+          </template>
+        </div>
+
+        <!-- 选项配置 -->
+        <div class="mt-4 flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-xl p-3 select-none">
+          <input
+            type="checkbox"
+            id="import-overwrite-checkbox"
+            v-model="importOverwrite"
+            class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+          />
+          <label for="import-overwrite-checkbox" class="text-xs font-semibold text-gray-700 cursor-pointer">
+            覆盖已存在的同名技能 (Overwrite Existing)
+          </label>
+        </div>
+        <p class="mt-1.5 text-[10px] text-gray-400">若技能包解压后根目录不含 <b>SKILL.md</b> 规范文档，系统将自动拒绝并回滚清理。</p>
+
+        <!-- 操作按钮 -->
+        <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
+          <button
+            @click="showImportModal = false"
+            class="px-4 py-2 text-xs font-semibold text-gray-600 border border-gray-300 rounded-xl hover:bg-gray-50"
+          >
+            取消
+          </button>
+          <button
+            @click="submitImportSkill"
+            :disabled="importingSkill || !importFile"
+            class="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+          >
+            <span v-if="importingSkill" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            {{ importingSkill ? '正在导入解压...' : '确认导入' }}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 
   <ConfirmModal
     v-if="confirmState.show"
@@ -2922,158 +2928,162 @@ onUnmounted(() => {
   />
 
   <!-- 显式绑定智能体 Modal -->
-  <div
-    v-if="showBindingsModal && bindingsModalSkill"
-    class="fixed inset-0 z-[9990] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in"
-    @click.self="closeBindingsModal"
-  >
+  <Teleport to="body">
     <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-bindings-title"
-        class="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl"
-      >
-      <div class="mb-4 flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 pb-3">
-        <div class="min-w-0">
-          <h2 id="skill-bindings-title" class="truncate text-lg font-bold text-gray-800">显式绑定智能体</h2>
-          <p class="mt-0.5 truncate text-xs text-gray-500">
-            {{ bindingsModalSkill.name }}
-            <span class="font-mono text-gray-400">· {{ bindingsModalSkill.id }}</span>
-          </p>
-        </div>
-        <button type="button" class="shrink-0 text-gray-400 transition-colors hover:text-gray-600" @click="closeBindingsModal">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
+      v-if="showBindingsModal && bindingsModalSkill"
+      class="fixed inset-0 z-[9990] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in"
+      @click.self="closeBindingsModal"
+    >
       <div
-        v-if="getBindingEntry(bindingsModalSkill.id).count === 0"
-        class="flex flex-1 flex-col items-center justify-center py-12 text-center text-gray-400"
-      >
-        <p class="text-sm font-medium text-gray-500">暂无智能体显式绑定此技能</p>
-        <p class="mt-1 text-xs text-gray-400">仅统计开启自定义 Skills 白名单的智能体</p>
-      </div>
-      <ul v-else class="custom-scrollbar flex-1 space-y-2 overflow-y-auto pr-1">
-        <li
-          v-for="agent in getBindingEntry(bindingsModalSkill.id).agents"
-          :key="agent.id"
-          class="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-2.5"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-bindings-title"
+          class="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl"
         >
+        <div class="mb-4 flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 pb-3">
           <div class="min-w-0">
-            <p class="truncate text-sm font-semibold text-gray-800">{{ agent.name }}</p>
-            <p class="mt-0.5 font-mono text-[10px] text-gray-400">v{{ agent.version_number }}</p>
+            <h2 id="skill-bindings-title" class="truncate text-lg font-bold text-gray-800">显式绑定智能体</h2>
+            <p class="mt-0.5 truncate text-xs text-gray-500">
+              {{ bindingsModalSkill.name }}
+              <span class="font-mono text-gray-400">· {{ bindingsModalSkill.id }}</span>
+            </p>
           </div>
-          <span
-            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            :class="agent.version_status === 'DRAFT'
-              ? 'bg-amber-50 text-amber-700'
-              : 'bg-emerald-50 text-emerald-700'"
-          >
-            {{ agent.version_status === 'DRAFT' ? '草稿' : '已发布' }}
-          </span>
-        </li>
-      </ul>
+          <button type="button" class="shrink-0 text-gray-400 transition-colors hover:text-gray-600" @click="closeBindingsModal">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
-      <div class="mt-4 flex shrink-0 justify-end border-t border-gray-100 pt-3">
-        <button
-          type="button"
-          class="rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-200"
-          @click="closeBindingsModal"
+        <div
+          v-if="getBindingEntry(bindingsModalSkill.id).count === 0"
+          class="flex flex-1 flex-col items-center justify-center py-12 text-center text-gray-400"
         >
-          关闭
-        </button>
+          <p class="text-sm font-medium text-gray-500">暂无智能体显式绑定此技能</p>
+          <p class="mt-1 text-xs text-gray-400">仅统计开启自定义 Skills 白名单的智能体</p>
+        </div>
+        <ul v-else class="custom-scrollbar flex-1 space-y-2 overflow-y-auto pr-1">
+          <li
+            v-for="agent in getBindingEntry(bindingsModalSkill.id).agents"
+            :key="agent.id"
+            class="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-2.5"
+          >
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-gray-800">{{ agent.name }}</p>
+              <p class="mt-0.5 font-mono text-[10px] text-gray-400">v{{ agent.version_number }}</p>
+            </div>
+            <span
+              class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              :class="agent.version_status === 'DRAFT'
+                ? 'bg-amber-50 text-amber-700'
+                : 'bg-emerald-50 text-emerald-700'"
+            >
+              {{ agent.version_status === 'DRAFT' ? '草稿' : '已发布' }}
+            </span>
+          </li>
+        </ul>
+
+        <div class="mt-4 flex shrink-0 justify-end border-t border-gray-100 pt-3">
+          <button
+            type="button"
+            class="rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-200"
+            @click="closeBindingsModal"
+          >
+            关闭
+          </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 
   <!-- 统计查看 Modal -->
-  <div 
-    v-if="showStatsModal" 
-    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9990] flex items-center justify-center p-4 animate-fade-in"
-    @click.self="closeStatsModal"
-  >
-    <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-stats-title"
-        class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 border border-gray-200 flex flex-col max-h-[90vh]"
-      >
-      <div class="flex items-center justify-between border-b border-gray-100 pb-4 mb-4 select-none shrink-0">
-        <h2 id="skill-stats-title" class="text-xl font-bold text-gray-800 flex items-center gap-2">
-          <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-          </svg>
-          技能激活与调用统计
-        </h2>
-        <button @click="closeStatsModal" class="text-gray-400 hover:text-gray-600 transition-colors">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
-      <div v-if="loadingStats" class="flex flex-col items-center justify-center py-20 flex-1">
-        <div class="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-        <p class="text-sm text-gray-500 mt-4 font-medium">正在拉取统计数据...</p>
-      </div>
-      <div v-else-if="!hasStatsData" class="flex flex-col items-center justify-center py-20 flex-1 text-gray-400 select-none">
-        <svg class="w-16 h-16 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0a2 2 0 01-2 2H6a2 2 0 01-2-2m16 0V9a2 2 0 00-2-2H6a2 2 0 00-2 2v4m16 0a2 2 0 01-2 2H6a2 2 0 01-2-2" />
-        </svg>
-        <p class="text-sm font-medium">暂无任何技能的激活和调用数据</p>
-        <p class="text-xs text-gray-400 mt-1">在智能体对话中触发技能后，统计系统会自动开始记录</p>
-      </div>
-      <div v-else class="flex-1 flex flex-col min-h-[400px] overflow-hidden">
-        <!-- Tab 切换菜单 -->
-        <div class="flex border-b border-gray-200 mb-4 shrink-0 select-none gap-2">
-          <button 
-            @click="switchTab('distribution')"
-            class="px-5 py-2.5 font-bold text-sm transition-all border-b-2 -mb-[2px]"
-            :class="activeTab === 'distribution' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
-          >
-            总量占比与分布
-          </button>
-          <button 
-            @click="switchTab('trend')"
-            class="px-5 py-2.5 font-bold text-sm transition-all border-b-2 -mb-[2px]"
-            :class="activeTab === 'trend' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
-          >
-            近30天激活趋势
-          </button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto pr-1 py-1 custom-scrollbar">
-          <!-- 分布图 -->
-          <div v-show="activeTab === 'distribution'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
-            <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
-              <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
-              技能总调用占比与分布
-            </h3>
-            <div ref="distributionChartRef" class="w-full flex-1 min-h-[320px]"></div>
-          </div>
-          <!-- 趋势图 -->
-          <div v-show="activeTab === 'trend'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
-            <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
-              <span class="w-2 h-2 bg-indigo-500 rounded-full"></span>
-              近30天激活趋势变化
-            </h3>
-            <div ref="trendChartRef" class="w-full flex-1 min-h-[320px]"></div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="flex justify-end gap-3 mt-6 border-t border-gray-100 pt-4 shrink-0">
-        <button 
-          @click="closeStatsModal"
-          class="px-5 py-2.5 bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors text-sm font-semibold rounded-xl"
+  <Teleport to="body">
+    <div 
+      v-if="showStatsModal" 
+      class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9990] flex items-center justify-center p-4 animate-fade-in"
+      @click.self="closeStatsModal"
+    >
+      <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-stats-title"
+          class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 border border-gray-200 flex flex-col max-h-[90vh]"
         >
-          关闭
-        </button>
+        <div class="flex items-center justify-between border-b border-gray-100 pb-4 mb-4 select-none shrink-0">
+          <h2 id="skill-stats-title" class="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            技能激活与调用统计
+          </h2>
+          <button @click="closeStatsModal" class="text-gray-400 hover:text-gray-600 transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div v-if="loadingStats" class="flex flex-col items-center justify-center py-20 flex-1">
+          <div class="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <p class="text-sm text-gray-500 mt-4 font-medium">正在拉取统计数据...</p>
+        </div>
+        <div v-else-if="!hasStatsData" class="flex flex-col items-center justify-center py-20 flex-1 text-gray-400 select-none">
+          <svg class="w-16 h-16 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0a2 2 0 01-2 2H6a2 2 0 01-2-2m16 0V9a2 2 0 00-2-2H6a2 2 0 00-2 2v4m16 0a2 2 0 01-2 2H6a2 2 0 01-2-2" />
+          </svg>
+          <p class="text-sm font-medium">暂无任何技能的激活和调用数据</p>
+          <p class="text-xs text-gray-400 mt-1">在智能体对话中触发技能后，统计系统会自动开始记录</p>
+        </div>
+        <div v-else class="flex-1 flex flex-col min-h-[400px] overflow-hidden">
+          <!-- Tab 切换菜单 -->
+          <div class="flex border-b border-gray-200 mb-4 shrink-0 select-none gap-2">
+            <button 
+              @click="switchTab('distribution')"
+              class="px-5 py-2.5 font-bold text-sm transition-all border-b-2 -mb-[2px]"
+              :class="activeTab === 'distribution' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
+            >
+              总量占比与分布
+            </button>
+            <button 
+              @click="switchTab('trend')"
+              class="px-5 py-2.5 font-bold text-sm transition-all border-b-2 -mb-[2px]"
+              :class="activeTab === 'trend' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
+            >
+              近30天激活趋势
+            </button>
+          </div>
+
+          <div class="flex-1 overflow-y-auto pr-1 py-1 custom-scrollbar">
+            <!-- 分布图 -->
+            <div v-show="activeTab === 'distribution'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
+              <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
+                <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+                技能总调用占比与分布
+              </h3>
+              <div ref="distributionChartRef" class="w-full flex-1 min-h-[320px]"></div>
+            </div>
+            <!-- 趋势图 -->
+            <div v-show="activeTab === 'trend'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
+              <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
+                <span class="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                近30天激活趋势变化
+              </h3>
+              <div ref="trendChartRef" class="w-full flex-1 min-h-[320px]"></div>
+            </div>
+          </div>
+        </div>
+      
+        <div class="flex justify-end gap-3 mt-6 border-t border-gray-100 pt-4 shrink-0">
+          <button 
+            @click="closeStatsModal"
+            class="px-5 py-2.5 bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors text-sm font-semibold rounded-xl"
+          >
+            关闭
+          </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 
   <!-- 右键菜单 -->
   <div
