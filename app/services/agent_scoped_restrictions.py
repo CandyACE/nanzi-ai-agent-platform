@@ -189,21 +189,21 @@ async def build_restrictable_resources(
     except Exception:  # noqa: BLE001 —— 仅影响副标题，取不到就退回显示 id
         logger.debug("[agent-scope] failed to build builtin descriptions", exc_info=True)
 
-    # MCP 工具描述：缓存表里同步过就带上（(server_id, tool_name) → 描述）
-    mcp_tool_descriptions: Dict[tuple[str, str], str] = {}
+    # MCP 工具描述：缓存表的 tool_name 是「server_name:工具段」的**完整名**
+    # （如 `mcp-private-admin-55555:get-current-date`），而版本绑定里只存工具段
+    # （`get-current-date`）。所以按完整名建索引，取用时再把前缀拼回去——
+    # 按 (server_id, tool_name) 建索引永远匹配不上，描述明明存在也会显示成裸 id。
+    mcp_tool_descriptions: Dict[str, str] = {}
     try:
-        for sid, tname, tdesc in (
+        for tname, tdesc in (
             await db.execute(
-                select(
-                    McpToolCache.server_id,
-                    McpToolCache.tool_name,
-                    McpToolCache.tool_description,
-                )
+                select(McpToolCache.tool_name, McpToolCache.tool_description)
             )
         ).all():
+            clean_name = str(tname or "").strip()
             clean_description = str(tdesc or "").strip()
-            if clean_description:
-                mcp_tool_descriptions[(str(sid), str(tname))] = clean_description
+            if clean_name and clean_description:
+                mcp_tool_descriptions[clean_name] = clean_description
     except Exception:  # noqa: BLE001
         logger.debug("[agent-scope] failed to read mcp descriptions", exc_info=True)
 
@@ -247,48 +247,58 @@ async def build_restrictable_resources(
         )
 
     if mcp_pairs:
-        # 分组标题用 MCP 名称，取不到就退回 server_id（不能因此不展示，否则用户配不了）
-        server_ids = list(dict.fromkeys(server_id for server_id, _ in mcp_pairs))
-        server_labels: Dict[str, str] = {}
-        cache_rows = (
-            await db.execute(
-                select(McpToolCache.server_id, McpToolCache.tool_name)
-            )
-        ).all()
-        server_tool_index = {(sid, tname) for sid, tname in cache_rows}
-        for server_id in server_ids:
-            server_labels[server_id] = server_id
+        # 绑定里的 MCP 前缀不等于 `McpServer.id`：线上数据是 server_name，且常常是
+        # 去掉开头 `mcp-` 的 server_name（如绑定 `private-admin-55555` 对应
+        # server_name=`mcp-private-admin-55555`）。两种写法都建索引，才能既解析出
+        # 分组名称、又拼出缓存表里的完整工具名。取不到就退回前缀本身（不能因此不展示，
+        # 否则用户配不了）。
+        mcp_prefixes = list(dict.fromkeys(prefix for prefix, _ in mcp_pairs))
+        server_by_prefix: Dict[str, Dict[str, str]] = {}
         try:
             from app.models.mcp import McpServer
 
-            for server in (
-                await db.execute(select(McpServer).where(McpServer.id.in_(server_ids)))
-            ).scalars().all():
-                if getattr(server, "server_name", None):
-                    server_labels[server.id] = server.server_name
-        except Exception:  # noqa: BLE001 —— 仅影响分组标题，取不到就用 id
-            logger.debug("[agent-scope] failed to resolve MCP server labels", exc_info=True)
+            server_rows = (
+                await db.execute(select(McpServer.id, McpServer.server_name))
+            ).all()
+            for sid, sname in server_rows:
+                clean_id = str(sid).strip()
+                clean_name = str(sname or "").strip()
+                record = {"id": clean_id, "name": clean_name}
+                if clean_name:
+                    server_by_prefix.setdefault(clean_name, record)
+                    server_by_prefix.setdefault(
+                        clean_name.removeprefix(MCP_TOOL_PREFIX), record
+                    )
+                if clean_id:
+                    server_by_prefix.setdefault(clean_id, record)
+        except Exception:  # noqa: BLE001 —— 仅影响分组标题，取不到就用前缀
+            logger.debug("[agent-scope] failed to resolve MCP servers", exc_info=True)
 
-        for server_id in server_ids:
+        for prefix in mcp_prefixes:
+            resolved = server_by_prefix.get(prefix) or {}
+            server_name = str(resolved.get("name") or "")
             items = []
-            for sid, tool_name in mcp_pairs:
-                if sid != server_id:
+            for bound_prefix, tool_name in mcp_pairs:
+                if bound_prefix != prefix:
                     continue
-                # McpToolCache 里没有的工具说明缓存未同步，仍然展示（用户可见集合以绑定为准）
-                if (sid, tool_name) not in server_tool_index:
+                # 缓存表用「server_name:工具段」作完整名；缓存未同步时仍然展示
+                # （用户可见集合以绑定为准），只是没有描述可显示。
+                full_name = f"{server_name}:{tool_name}" if server_name else tool_name
+                description = mcp_tool_descriptions.get(full_name) or mcp_tool_descriptions.get(
+                    tool_name, ""
+                )
+                if not description:
                     logger.debug(
-                        "[agent-scope] bound MCP tool %s/%s not in cache; showing anyway",
-                        sid,
+                        "[agent-scope] no cached description for bound MCP tool %s/%s",
+                        prefix,
                         tool_name,
                     )
-                items.append(
-                    tool_item(tool_name, mcp_tool_descriptions.get((sid, tool_name), ""))
-                )
+                items.append(tool_item(tool_name, description))
             if items:
                 groups.append(
                     {
-                        "key": f"mcp:{server_id}",
-                        "label": server_labels.get(server_id) or server_id,
+                        "key": f"mcp:{prefix}",
+                        "label": server_name or prefix,
                         "items": items,
                     }
                 )

@@ -321,7 +321,11 @@ async def test_agent_scope_filters_degrade_when_column_missing(db_session, monke
 
 
 def test_split_agent_tool_bindings_handles_real_shapes():
-    """真实数据里 MCP 的形态是 ``mcp-<server_id>:<tool_name>``。"""
+    """真实数据里 MCP 的形态是 ``mcp-<server 标识>:<tool_name>``。
+
+    前缀是 **server_name**（且常被去掉开头 ``mcp-``），不是 ``McpServer.id``——
+    见 test_mcp_items_resolve_description_and_server_label 里对线上形态的固化。
+    """
     from app.services.agent_scoped_restrictions import split_agent_tool_bindings
 
     plain, mcp = split_agent_tool_bindings(
@@ -885,3 +889,94 @@ async def test_catalog_reports_the_source_version(db_session):
     assert draft_result["source_version"]["is_published"] is False, (
         "从未发布时退回最新版本，但要标明尚未发布"
     )
+
+
+# ---------------------------------------------------------------------------
+# MCP：描述与分组名
+#
+# 线上数据里，绑定前缀既不是 McpServer.id，也不是完整的 server_name：
+#   McpServer.server_name        = 'mcp-private-admin-55555'
+#   AIAgentVersion.tools 里的项   = 'mcp-private-admin-55555:get-current-date'
+#   McpToolCache.tool_name       = 'mcp-private-admin-55555:get-current-date'
+# 也就是说：绑定前缀是**去掉开头 mcp- 的 server_name**，而缓存表的 tool_name 用的是
+# **完整 server_name** 作前缀。按 (server_id, 工具段) 建索引永远匹配不上，
+# 于是描述明明存在，弹框里却只显示一行裸 id。
+# ---------------------------------------------------------------------------
+
+
+async def _make_mcp_server_with_tool(db_session, server_name: str, tool: str, description: str):
+    from app.models.mcp import McpServer, McpToolCache
+
+    server_id = str(uuid.uuid4())
+    db_session.add(
+        McpServer(id=server_id, server_name=server_name, sse_url="https://example.invalid/sse")
+    )
+    db_session.add(
+        McpToolCache(
+            id=str(uuid.uuid4()),
+            server_id=server_id,
+            tool_name=f"{server_name}:{tool}",
+            tool_description=description,
+        )
+    )
+    await db_session.flush()
+    return server_id
+
+
+@pytest.mark.asyncio
+async def test_mcp_items_resolve_description_and_server_label(db_session):
+    from app.services import agent_scoped_restrictions as module
+
+    # server_name 上有唯一约束，用真实存在的名字会撞库；后缀保证唯一，形态保持一致
+    server_name = f"mcp-private-admin-{uuid.uuid4().hex[:6]}"
+    await _make_mcp_server_with_tool(
+        db_session, server_name, "get-current-date", "获取当前日期，以上海时区（UTC+8）为准"
+    )
+    # 线上的绑定原文就是「完整 server_name + : + 工具段」，解析时才去掉 mcp- 前缀
+    agent = await _make_agent_with_version(
+        db_session, tools=[f"{server_name}:get-current-date"]
+    )
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    group = next(g for g in result["groups"] if g["key"].startswith("mcp:"))
+    assert group["label"] == server_name, "分组标题要用完整 server_name，而不是被去掉 mcp- 的前缀"
+    item = group["items"][0]
+    assert item["id"] == "get-current-date", "条目标题是工具段，不带 server 前缀"
+    assert item["description"] == "获取当前日期，以上海时区（UTC+8）为准", (
+        "缓存表用「server_name:工具段」作完整名，必须把前缀拼回去才查得到描述"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_prefix_may_be_the_server_uuid(db_session):
+    """绑定的 server 段写成 McpServer.id 时（早期形态）同样要能解析出名称与描述。"""
+    from app.services import agent_scoped_restrictions as module
+
+    server_name = f"mcp-public-admin-{uuid.uuid4().hex[:6]}"
+    server_id = await _make_mcp_server_with_tool(db_session, server_name, "get-tickets", "查询余票")
+    agent = await _make_agent_with_version(db_session, tools=[f"mcp-{server_id}:get-tickets"])
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    group = next(g for g in result["groups"] if g["key"].startswith("mcp:"))
+    assert group["key"] == f"mcp:{server_id}"
+    assert group["label"] == server_name, "UUID 前缀也要反查回 server_name"
+    assert group["items"][0]["description"] == "查询余票"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_without_cache_row_is_still_listed(db_session):
+    """缓存未同步（甚至 server 已被删）时仍要展示，只是没有描述——不能因此漏配。"""
+    from app.services import agent_scoped_restrictions as module
+
+    agent = await _make_agent_with_version(
+        db_session, tools=["mcp-ghost-server:do_thing"]
+    )
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    group = next(g for g in result["groups"] if g["key"].startswith("mcp:"))
+    assert group["items"][0]["id"] == "do_thing"
+    assert "description" not in group["items"][0], "没有缓存描述就不要编一个"
+    assert group["label"] == "ghost-server", "server 解析不到就退回前缀本身"

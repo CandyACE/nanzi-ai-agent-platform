@@ -253,3 +253,20 @@ def test_dialog_explains_where_the_candidates_come_from():
     assert "sourceVersion.value = catalog.sourceVersion" in source
     # 来源版本要能区分"已发布"与"草稿"，否则解释不了运行时到底用哪份
     assert "已发布版本" in source and "尚未发布" in source
+
+
+def test_scope_notice_is_listed_and_highlighted():
+    """作用域说明必须分条 + 带高亮底色。
+
+    之前挤成一段灰色小字，管理员会直接略过，进而误以为这个弹框改的是全局禁用配置。
+    两条分别是「影响到谁」和「改不了了怎么办」，各自独立成行。
+    """
+    source = (
+        ROOT / "frontend/src/components/system/AgentRestrictionDialog.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "border-indigo-200 bg-indigo-50" in source, "说明区要有高亮底色，不能只是灰字"
+    assert "只对「{{ scopeNoun }} × 该智能体」生效" in source
+    assert "已全局禁用的项在此只读，需到「禁用资源」里调整。" in source
+    # 两条各自是独立段落，靠圆点分列，而不是一句连排
+    assert source.count('<span class="shrink-0 font-bold">•</span>') >= 2, "两条说明要各自带圆点分列"

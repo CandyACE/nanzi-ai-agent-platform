@@ -14,10 +14,20 @@
             <h3 class="text-sm sm:text-base font-bold text-gray-900 truncate">
               功能限定<span v-if="agentLabel"> · {{ agentLabel }}</span>
             </h3>
-            <p class="mt-1 text-[10px] sm:text-xs text-gray-500 leading-relaxed">
-              只对「{{ scopeNoun }} × 该智能体」生效：勾选的资源在该智能体里不可用，在其它智能体里仍然可用。
-              已全局禁用的项在此只读，需到「禁用资源」里调整。
-            </p>
+            <!-- 作用域与只读语义分条 + 高亮底色：挤成一段灰字时管理员会略过，
+                 从而误以为这里改的是全局禁用。两条分别是「影响到谁」和「改不了了怎么办」。 -->
+            <div
+              class="mt-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-2 space-y-1"
+            >
+              <p class="flex gap-1.5 text-[10px] sm:text-xs text-indigo-800 leading-relaxed">
+                <span class="shrink-0 font-bold">•</span>
+                <span>只对「{{ scopeNoun }} × 该智能体」生效：勾选的资源在该智能体里不可用，在其它智能体里仍然可用。</span>
+              </p>
+              <p class="flex gap-1.5 text-[10px] sm:text-xs text-indigo-800 leading-relaxed">
+                <span class="shrink-0 font-bold">•</span>
+                <span>已全局禁用的项在此只读，需到「禁用资源」里调整。</span>
+              </p>
+            </div>
           </div>
           <button
             type="button"
