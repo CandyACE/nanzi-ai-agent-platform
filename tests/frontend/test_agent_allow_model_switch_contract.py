@@ -54,8 +54,11 @@ def test_chat_input_hides_model_switcher_when_agent_forbids_switching():
 def test_embed_chat_passes_flag_and_ignores_model_override():
     source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
 
-    assert ':allow-model-switch="manualModelSwitchAllowed"' in source
-    assert "agent?.allow_model_switch !== false" in source
+    # 可见性由 chatModelSwitch 统一裁决（版本开关 × 模型白名单候选，见模型白名单设计 §4.8）
+    assert ':allow-model-switch="chatModelSwitch.visible"' in source
+    assert "versionAllowsSwitch: manualModelSwitchAllowed.value" in source
+    # 智能体查找收敛到 effectiveChatAgent，开关与「已发布版本模型名」共用同一次查找
+    assert "effectiveChatAgent.value?.allow_model_switch !== false" in source
     # 禁用后不再下发输入框遗留的模型覆盖与模型参数覆盖
     assert "model: effectiveOverrideModel.value || undefined" in source
     assert "manualModelSwitchAllowed.value && thinkingEnableOverride.value !== null" in source

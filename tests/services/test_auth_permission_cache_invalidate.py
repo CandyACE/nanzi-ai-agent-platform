@@ -53,7 +53,7 @@ async def test_permission_invalidate_also_clears_auth_cache_and_legacy_v2_key():
     ):
         await service._invalidate_user_cache(42)
 
-    redis.delete.assert_any_await("sys:auth:permissions:v3:user:42")
+    redis.delete.assert_any_await("sys:auth:permissions:v4:user:42")
     redis.delete.assert_any_await("sys:auth:permissions:v2:user:42")
     invalidate_auth.assert_awaited_once()
     assert invalidate_auth.await_args.args[0] == 42

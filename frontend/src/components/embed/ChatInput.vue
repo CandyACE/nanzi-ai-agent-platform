@@ -146,6 +146,8 @@ const props = withDefaults(defineProps<{
   showGeneratingAnimation?: boolean;
   /** 当前生效智能体是否允许手动切换模型；false 时隐藏模型切换入口（历史数据默认允许） */
   allowModelSwitch?: boolean;
+  /** 候选为空时占用切换器位置的只读提示（例如「你的可用模型已全部停用，请联系管理员」） */
+  modelSwitchHint?: string;
 }>(), {
   showGeneratingAnimation: true,
   allowModelSwitch: true,
@@ -3085,7 +3087,13 @@ defineExpose({
                 </div>
 
                 <div class="min-w-1 flex-1"></div>
-                <!-- Custom Model Dropdown Selector：智能体版本禁止手动切换模型时整块隐藏 -->
+                <!-- 候选为空时的兜底：在原切换器位置显示只读提示，避免"白名单生效"被误判成功能坏了 -->
+                <span
+                  v-if="!allowModelSwitch && modelSwitchHint"
+                  class="flex-shrink min-w-0 truncate px-2 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+                  :title="modelSwitchHint"
+                >{{ modelSwitchHint }}</span>
+                <!-- Custom Model Dropdown Selector：版本级开关或候选并集不满足时整块隐藏 -->
                 <div
                   v-if="allowModelSwitch"
                   ref="modelDropdownRef"

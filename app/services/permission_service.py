@@ -1,10 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, distinct
+from sqlalchemy import select, delete, distinct, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.models.user import User
 from app.models.agent import AIAgent
+from app.models.ai_model import AIModel
 from app.models.metadata import MetaDataset
 from app.models.knowledge import KnowledgeBaseMetadata
 from app.models.tool import SysApiTool
@@ -28,8 +29,9 @@ class PermissionService:
         return self._redis
 
     async def _get_cache_key(self, user_id: int) -> str:
-        # v3: 知识库 details 关联 knowledge_base_metadata.name
-        return f"sys:auth:permissions:v3:user:{user_id}"
+        # v4: 新增 models（聊天模型白名单）。旧缓存缺该字段会解析成空列表 = 不限制，
+        # 会让「刚配好的白名单不生效」难以排查，因此升版本强制回源。
+        return f"sys:auth:permissions:v4:user:{user_id}"
 
     async def get_user_permissions(self, user_id: int) -> UserPermissionsResponse:
         try:
@@ -547,6 +549,16 @@ class PermissionService:
                 for cmd in perm_set.forbidden_commands
             ]
 
+        if perm_set.models:
+            model_stmt = select(AIModel.model_id, AIModel.name).where(
+                AIModel.model_id.in_(perm_set.models)
+            )
+            for model_id, model_name in (await self.db.execute(model_stmt)).all():
+                label = str(model_name or model_id)
+                details.models.append(
+                    ResourceDetail(id=str(model_id), name=label, display_name=label)
+                )
+
         return details
 
     def _aggregate_permissions(self, perm_set: PermissionSet, perms: list[ResourcePermission]):
@@ -575,11 +587,60 @@ class PermissionService:
             elif p.resource_type == "forbidden_command":
                 if p.resource_id not in perm_set.forbidden_commands:
                     perm_set.forbidden_commands.append(p.resource_id)
+            elif p.resource_type == "model":
+                # 聊天模型白名单：空 = 不限制（由 _resolve_allowed_model_ids 统一判定）
+                if p.resource_id not in perm_set.models:
+                    perm_set.models.append(p.resource_id)
+
+    @staticmethod
+    def _resolve_allowed_model_ids(user_role: str, model_ids: list[str]) -> Optional[set[str]]:
+        """聊天模型白名单唯一判据：None = 不限制。
+
+        与 element:/menu: 的「列出才有权限」相反——未配置（含并集为空）表示不限制；
+        管理员直通，避免管理员把自己锁在门外。
+        """
+        if str(user_role or "").strip() == "admin":
+            return None
+        normalized = {str(model_id).strip() for model_id in model_ids if str(model_id).strip()}
+        return normalized or None
+
+    async def get_chat_allowed_model_ids(self, user_id) -> Optional[set[str]]:
+        """返回该用户聊天可手动切换的模型集合；None 表示不限制（未配置）。"""
+        try:
+            parsed_uid = int(user_id)
+        except (TypeError, ValueError):
+            parsed_uid = user_id
+
+        role_stmt = select(User.role).where(User.id == parsed_uid)
+        user_role = (await self.db.execute(role_stmt)).scalar_one_or_none()
+        if str(user_role or "").strip() == "admin":
+            return None
+
+        model_stmt = (
+            select(distinct(ResourcePermission.resource_id))
+            .outerjoin(
+                UserRoleRelation,
+                ResourcePermission.role_id == UserRoleRelation.role_id,
+            )
+            .where(
+                ResourcePermission.enabled == True,  # noqa: E712 - 与文件内既有写法一致
+                ResourcePermission.resource_type == "model",
+                or_(
+                    ResourcePermission.user_id == parsed_uid,
+                    UserRoleRelation.user_id == parsed_uid,
+                ),
+            )
+        )
+        rows = (await self.db.execute(model_stmt)).scalars().all()
+        return self._resolve_allowed_model_ids(user_role, list(rows))
 
     async def update_user_permissions(self, user_id: int, updates: PermissionUpdate):
         """Update DIRECT user permissions"""
         try:
             types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command"]
+            # 未显式提交 models（旧客户端）时不触碰 model 记录，避免静默清空白名单
+            if "models" in updates.model_fields_set:
+                types_to_update = [*types_to_update, "model"]
             await self.db.execute(
                 delete(ResourcePermission).where(
                     ResourcePermission.user_id == user_id,
@@ -604,6 +665,8 @@ class PermissionService:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_tool", resource_id=t_id))
             for cmd in updates.forbidden_commands:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_command", resource_id=cmd))
+            for model_id in (updates.models if "models" in updates.model_fields_set else []):
+                new_perms.append(ResourcePermission(user_id=user_id, resource_type="model", resource_id=str(model_id)))
 
             if new_perms:
                 self.db.add_all(new_perms)
@@ -660,6 +723,9 @@ class PermissionService:
         """Update Role Permissions"""
         try:
             types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command"]
+            # 未显式提交 models（旧客户端）时不触碰 model 记录，避免静默清空白名单
+            if "models" in updates.model_fields_set:
+                types_to_update = [*types_to_update, "model"]
             await self.db.execute(
                 delete(ResourcePermission).where(
                     ResourcePermission.role_id == role_id,
@@ -684,6 +750,8 @@ class PermissionService:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_tool", resource_id=t_id))
             for cmd in updates.forbidden_commands:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_command", resource_id=cmd))
+            for model_id in (updates.models if "models" in updates.model_fields_set else []):
+                new_perms.append(ResourcePermission(role_id=role_id, resource_type="model", resource_id=str(model_id)))
 
             if new_perms:
                 self.db.add_all(new_perms)

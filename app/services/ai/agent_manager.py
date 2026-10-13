@@ -823,6 +823,42 @@ class AgentManagerService:
         return list(agents or [])
 
     @staticmethod
+    async def published_agent_model_name(
+        session: AsyncSession,
+        agent_id: Optional[str],
+        version_id: Optional[str] = None,
+    ) -> str:
+        """返回该智能体「已发布版本」配置的编排模型名；查不到返回空串。
+
+        仅供聊天模型白名单的豁免判断使用：白名单限制用户手动切换，但不能连
+        智能体自己指定的模型都拦掉。异常一律降级为空串，不阻断聊天主流程。
+        """
+        if not agent_id:
+            return ""
+        try:
+            if version_id:
+                stmt = select(AIAgentVersion.model_name).where(
+                    AIAgentVersion.id == version_id
+                )
+            else:
+                stmt = (
+                    select(AIAgentVersion.model_name)
+                    .where(
+                        AIAgentVersion.agent_id == agent_id,
+                        AIAgentVersion.status == "PUBLISHED",
+                    )
+                    .order_by(AIAgentVersion.version_number.desc())
+                    .limit(1)
+                )
+            row = (await session.execute(stmt)).first()
+            return str(row[0] or "").strip() if row else ""
+        except Exception as exc:  # noqa: BLE001 - 豁免查询失败不应阻断聊天
+            logger.warning(
+                "Failed to resolve published model for agent %s: %s", agent_id, exc
+            )
+            return ""
+
+    @staticmethod
     async def create_agent(session: AsyncSession, data: AIAgentBase, user: Any = None) -> AIAgent:
         """Create a new agent metadata entry"""
         if isinstance(user, dict):

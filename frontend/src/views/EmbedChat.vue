@@ -1334,7 +1334,7 @@
         :window-width="windowWidth"
         :approval-mode="config.approvalMode"
         :selected-model="effectiveOverrideModel"
-        :available-models="availableModels"
+        :available-models="chatInputModelOptions"
         :context-usage="contextUsage"
         :context-compaction-enabled="Boolean(conversationId)"
         :context-compaction-count="contextCompactionCount"
@@ -1350,7 +1350,8 @@
         :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
         :routing-mode="config.routingMode"
         :expert-agent-id="config.expertAgentId"
-        :allow-model-switch="manualModelSwitchAllowed"
+        :allow-model-switch="chatModelSwitch.visible"
+        :model-switch-hint="chatModelSwitch.emptyHint"
         :is-loading-agents="isLoadingAgents"
         :lock-expert-agent="isRoutingSettingsLocked"
         :sandbox-workspace-status="sandboxWorkspaceStatus"
@@ -2480,6 +2481,7 @@ import {
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { modelApi, type AIModel, type ReasoningEffort } from "@/api/model";
+import { resolveChatModelSwitch } from "@/utils/modelSelect";
 import {
   type TurnType,
 } from "@/utils/turnLogDisplay";
@@ -2904,17 +2906,20 @@ const hideEmbedLikeDislike = computed(() => {
   return t === "RAGFLOW" || t === "OPENCLAW";
 });
 /**
+ * 当前生效智能体对象：模型切换开关与「已发布版本编排模型名」共用同一次查找，
+ * 避免两处选中不同智能体（pinnedAgent 是 URL 深链锁定时的兜底来源）。
+ */
+const effectiveChatAgent = computed(() => {
+  const id = String(effectiveEmbedChatAgentId.value || "");
+  if (!id) return null;
+  return allowedAgents.value.find((item: any) => String(item.id) === id)
+    || (pinnedAgent.value && String(pinnedAgent.value.id) === id ? pinnedAgent.value : null);
+});
+/**
  * 当前生效智能体的已发布版本是否允许在输入框手动切换模型。
  * 未选择智能体、无已发布版本或历史数据未配置该字段时一律按「允许」处理。
  */
-const manualModelSwitchAllowed = computed(() => {
-  const id = String(effectiveEmbedChatAgentId.value || "");
-  if (!id) return true;
-  const agent =
-    allowedAgents.value.find((item: any) => String(item.id) === id)
-    || (pinnedAgent.value && String(pinnedAgent.value.id) === id ? pinnedAgent.value : null);
-  return agent?.allow_model_switch !== false;
-});
+const manualModelSwitchAllowed = computed(() => effectiveChatAgent.value?.allow_model_switch !== false);
 /** 实际生效的模型覆盖：智能体版本禁止手动切换时忽略输入框遗留的覆盖值 */
 const effectiveOverrideModel = computed(() =>
   manualModelSwitchAllowed.value ? (config.overrideModel || "") : "",
@@ -3946,7 +3951,8 @@ const handleEmbedModelSelection = (model: string) => {
     temperatureOverride.value = null;
     saveRoutingSettings();
     if (model) {
-        const found = availableModels.value.find((m) => m.model_id === model);
+        // 用输入框实际候选取展示名：智能体默认模型可能不在白名单候选里，但同样要显示名称
+        const found = chatInputModelOptions.value.find((m) => m.model_id === model);
         const displayName = found?.name || model;
         showToast(`已切换模型为: ${displayName}`, "success");
     } else {
@@ -6978,7 +6984,54 @@ const handleMemoryCleared = (payload: { conversationIds: string[]; all?: boolean
 };
 
 
+/** 聊天作用域候选（GET /api/portal/models?scope=chat，后端已按白名单收窄；未配置白名单 = 全量） */
+const chatScopedModels = ref<AIModel[]>([]);
+/** 既有 UI 使用的候选：只保留可聊天的 llm / multimodal */
 const availableModels = ref<AIModel[]>([]);
+/** 版本开关 × 白名单候选 → 切换器可见性、候选与空态提示（设计 §4.8） */
+const chatModelSwitch = computed(() =>
+  resolveChatModelSwitch({
+    versionAllowsSwitch: manualModelSwitchAllowed.value,
+    chatModels: availableModels.value,
+  }),
+);
+/**
+ * 传给 ChatInput 的候选：字段名以组件 props 的 ModelOption 为准（model_id / name / type …）。
+ * 以完整 AIModel 为基底，保留思考、温度等配置。
+ */
+const chatInputModelOptions = computed(() =>
+  chatModelSwitch.value.options.map((option) => {
+    const matched = availableModels.value.find((model) => model.model_id === option.value);
+    return {
+      ...(matched || { model_id: option.value, type: "" }),
+      model_id: option.value,
+      name: matched?.name || option.label,
+    };
+  }),
+);
+/** 清掉本机模型覆盖，回落到智能体默认模型（越权被拒 / 覆盖已不在候选里时调用） */
+const clearLocalModelOverride = () => {
+  config.overrideModel = "";
+  localStorage.removeItem("yovole_override_model");
+};
+/** 候选是否已可用于判断「残留覆盖」：模型列表与智能体信息都已到位，避免误清用户的选择 */
+const chatModelCandidatesReady = computed(() => {
+  if (chatScopedModels.value.length === 0) return false;
+  const id = String(effectiveEmbedChatAgentId.value || "");
+  if (id && !effectiveChatAgent.value) return false;
+  return true;
+});
+// 设计 §4.8 第 3 条：当前覆盖已不在候选里（白名单收窄、智能体切换、模型被停用）时，
+// 清掉本机覆盖并回落到智能体默认模型。只在候选就绪且切换器可见时判断：
+// 「候选 ≤1」与「并集为空」两种隐藏态交给 403 兜底，避免无声撤销用户的唯一选择。
+watch([chatModelSwitch, chatModelCandidatesReady], () => {
+  if (!chatModelCandidatesReady.value || !manualModelSwitchAllowed.value) return;
+  if (!chatModelSwitch.value.visible) return;
+  const current = String(config.overrideModel || "");
+  if (current && !chatModelSwitch.value.options.some((option) => option.value === current)) {
+    clearLocalModelOverride();
+  }
+});
 const currentUser = ref<any>(null);
 const accountInfo = ref<any>(null); // System account info from /me
 const showShortcutsHint = ref(false);
@@ -7598,10 +7651,12 @@ const fetchSlashCommands = async () => {
 };
 const fetchModels = async () => {
   try {
-    const res = await modelApi.list();
+    // 聊天场景走 scope=chat：非管理员按模型白名单收窄（未配置白名单 = 全量，行为与今天一致）
+    const res = await modelApi.listAvailableForChat();
     if (res.data) {
-      availableModels.value = res.data.filter(
-        (m) => (m.type === "llm" || m.type === "multimodal") && m.is_active
+      chatScopedModels.value = res.data.filter((m) => m.is_active);
+      availableModels.value = chatScopedModels.value.filter(
+        (m) => m.type === "llm" || m.type === "multimodal"
       );
     }
   } catch (e) {
@@ -9994,7 +10049,15 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       signal: abortController.signal,
       credentials: "include"
     });
-    if (!response.ok) throw new Error(await parseFetchErrorMessage(response));
+    if (!response.ok) {
+      const errorMessage = await parseFetchErrorMessage(response);
+      // 403 有多种来源（会话归属、智能体权限…），只认后端那条「模型越权」文案：
+      // 此时除既有错误提示外，清掉本机覆盖回落到智能体默认模型，避免每次都撞同一堵墙。
+      if (response.status === 403 && effectiveOverrideModel.value && errorMessage.includes("可用范围")) {
+        clearLocalModelOverride();
+      }
+      throw new Error(errorMessage);
+    }
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
     if (!reader) throw new Error("No body");

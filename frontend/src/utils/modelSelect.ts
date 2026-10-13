@@ -107,6 +107,49 @@ export type ModelSelectionLabelOptions = {
   unknownOptionLabel?: string;
 };
 
+export interface ChatModelSwitchInput {
+  versionAllowsSwitch: boolean;
+  chatModels: SelectableModel[];
+}
+
+export interface ChatModelSwitchDecision {
+  visible: boolean;
+  options: ModelSelectOption[];
+  emptyHint: string;
+}
+
+/** 候选为空时的兜底文案：白名单里勾选的模型后来全被停用。 */
+const CHAT_MODEL_EMPTY_HINT = '你的可用模型已全部停用，请联系管理员';
+
+/**
+ * 输入框候选 = 白名单候选（后端 scope=chat 已过滤）。
+ *
+ * **不并入智能体默认模型**：下拉第一项固定是「使用默认模型」（不覆盖 = 跟随智能体/平台默认），
+ * 再把默认模型单列成一个可选项是重复的——两者点下去的效果完全一样。
+ * 因此只要候选 ≥1（下拉里「使用默认模型」+ 至少一个模型 = 至少两项可选）就显示切换器；
+ * 候选为空时返回 emptyHint，让「白名单生效了」与「功能坏了」可区分，而不是静默消失。
+ */
+export function resolveChatModelSwitch(input: ChatModelSwitchInput): ChatModelSwitchDecision {
+  if (!input.versionAllowsSwitch) {
+    return { visible: false, options: [], emptyHint: '' };
+  }
+
+  const chatModels = input.chatModels || [];
+  const options: ModelSelectOption[] = [];
+  const seen = new Set<string>();
+
+  for (const model of chatModels) {
+    if (seen.has(model.model_id)) continue;
+    seen.add(model.model_id);
+    options.push({ value: model.model_id, label: modelOptionLabel(model) });
+  }
+
+  if (options.length === 0) {
+    return { visible: false, options: [], emptyHint: CHAT_MODEL_EMPTY_HINT };
+  }
+  return { visible: true, options, emptyHint: '' };
+}
+
 /**
  * 触发器上显示的文案：
  * - 有值时显示命中模型的标签（找不到定义时回退原始 model_id，避免空白触发器）；
@@ -123,4 +166,64 @@ export function resolveModelSelectionLabel(
   const matched = (models || []).find((model) => model.model_id === modelValue);
   if (matched) return modelOptionLabel(matched, { showModelId: options.showModelId });
   return options.unknownOptionLabel ? `${modelValue} (${options.unknownOptionLabel})` : modelValue;
+}
+
+/** 权限弹窗模型资源项的最小形态：资源接口的 id 即 model_id，name/description 为展示名 */
+export interface PermissionModelLike {
+  id?: string;
+  model_id?: string;
+  name?: string | null;
+  display_name?: string | null;
+  platform_name?: string | null;
+}
+
+export interface PermissionModelGroups<T> {
+  /** 已勾选：按列表原序返回，且**无论是否匹配搜索词都保留**——搜索时也不能让用户以为配置丢了 */
+  selected: T[];
+  /** 未勾选且匹配搜索词的；搜索词为空时就是全部未勾选项 */
+  others: T[];
+}
+
+/**
+ * 权限弹窗「可用模型」页的分组：模型动辄几十条，已勾选项若混在原序里会被淹没，
+ * 因此拆成「已选」与「其余」两段，由界面各带一个小标题渲染。
+ *
+ * - 已选段按列表原序（不是勾选顺序），搜索时**不做过滤**；
+ * - 其余段按名称（name / display_name / platform_name）与 ID（model_id / id）大小写不敏感匹配；
+ * - 不修改入参，`models` 为 null 时返回两个空数组。
+ */
+export function groupPermissionModels<T extends PermissionModelLike>(
+  models: T[] | null | undefined,
+  query: string,
+  selectedIds?: string[] | null,
+): PermissionModelGroups<T> {
+  const list = models || [];
+  const selected = new Set((selectedIds || []).map((id) => String(id)));
+
+  const idOf = (model: T): string => String(model.model_id ?? model.id ?? '');
+  const labelsOf = (model: T): string[] =>
+    [model.name, model.display_name, model.platform_name]
+      .filter((value) => value !== null && value !== undefined && String(value) !== '')
+      .map((value) => String(value).toLowerCase());
+
+  const keyword = String(query ?? '').trim().toLowerCase();
+  const chosen: T[] = [];
+  const others: T[] = [];
+
+  for (const model of list) {
+    if (selected.has(idOf(model))) {
+      chosen.push(model);
+      continue;
+    }
+    if (!keyword) {
+      others.push(model);
+      continue;
+    }
+    const hit =
+      idOf(model).toLowerCase().includes(keyword) ||
+      labelsOf(model).some((label) => label.includes(keyword));
+    if (hit) others.push(model);
+  }
+
+  return { selected: chosen, others };
 }
