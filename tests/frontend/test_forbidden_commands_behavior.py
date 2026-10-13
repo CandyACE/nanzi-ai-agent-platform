@@ -1,6 +1,8 @@
-"""禁用命令关键字的解析行为：与保存流程原本的内联实现逐字等价。
+"""禁用命令关键字的解析行为：保存与徽标计数共用的唯一解析口径。
 
 抽成共享函数是为了让「保存」与「tab 徽标计数」不再各写一份解析（两份必然漂移）。
+分隔符集合按本次修复放宽：只认英文逗号时，中文逗号输入会存成一个永远不会被
+shlex 命中的关键字——保存成功、界面无异常、运行时完全不拦截。
 """
 
 import json
@@ -60,18 +62,47 @@ return {
     assert result["single"] == ["rm"]
 
 
-def test_parse_matches_the_original_inline_semantics():
-    """原实现只按英文逗号切分：中文逗号仍属于命令的一部分，不得"顺便"改掉。"""
+def test_parse_accepts_every_separator_a_human_would_type():
+    """分隔符必须是「人真的会输入的那些」：中英文逗号、顿号、分号、换行。
+
+    只认英文逗号时，「rm，shutdown」会存成一个永不命中 shlex 分词的关键字——
+    保存成功、界面无异常、运行时完全不拦截，属于静默失效。
+    """
     result = _run_typescript(
         """
 return {
   chineseComma: api.parseForbiddenCommands('rm，shutdown'),
+  enumerationComma: api.parseForbiddenCommands('rm、shutdown'),
+  semicolon: api.parseForbiddenCommands('rm;shutdown'),
+  newline: api.parseForbiddenCommands('rm\\nshutdown\\r\\nmv'),
+  mixed: api.parseForbiddenCommands('rm，shutdown、mv;wget\\ncurl'),
   count: api.countForbiddenCommands('rm, shutdown, mv'),
   countEmpty: api.countForbiddenCommands(''),
 };
 """
     )
 
-    assert result["chineseComma"] == ["rm，shutdown"]
+    assert result["chineseComma"] == ["rm", "shutdown"]
+    assert result["enumerationComma"] == ["rm", "shutdown"]
+    assert result["semicolon"] == ["rm", "shutdown"]
+    assert result["newline"] == ["rm", "shutdown", "mv"]
+    assert result["mixed"] == ["rm", "shutdown", "mv", "wget", "curl"]
     assert result["count"] == 3
     assert result["countEmpty"] == 0
+
+
+def test_parse_still_trims_and_drops_blank_items_across_separators():
+    """换分隔符不能把既有的去空白 / 丢空项行为弄丢。"""
+    result = _run_typescript(
+        """
+return {
+  blanks: api.parseForbiddenCommands(' ，、;\\n '),
+  padded: api.parseForbiddenCommands('  rm ，  shutdown  '),
+  repeated: api.parseForbiddenCommands('rm,,,，；shutdown'),
+};
+"""
+    )
+
+    assert result["blanks"] == []
+    assert result["padded"] == ["rm", "shutdown"]
+    assert result["repeated"] == ["rm", "shutdown"]

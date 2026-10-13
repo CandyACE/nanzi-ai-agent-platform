@@ -315,6 +315,7 @@ import {
   type ForbiddenToolCandidate,
   type ForbiddenToolSubGroup,
 } from '../../utils/forbiddenToolGroups'
+import { loadForbiddenCatalog } from '../../utils/forbiddenCatalogCache'
 
 const props = withDefaults(
   defineProps<{ modelValue: string[]; disabled?: boolean; resource?: 'tools' | 'skills' }>(),
@@ -454,14 +455,25 @@ const showSkillSection = computed(() =>
   || visibleSkillGroups.value.length > 0,
 )
 
+/**
+ * 目录加载走共享缓存：同一页里工具实例与技能实例请求的是**同一个接口**
+ * （只是取响应的不同字段），原先各发一次——打开一次弹窗就打两次网。
+ * 缓存模块负责 in-flight 复用与短 TTL（见 utils/forbiddenCatalogCache.ts）：这里只注入
+ * 真正的请求；加载成功后由缓存模块把快照广播出去（页面徽标计数要靠候选判断别名组）。
+ */
 const fetchCatalog = async () => {
   loading.value = true
   loadError.value = ''
   try {
-    const response = await axios.get('/api/portal/tools/forbidden-catalog')
+    const snapshot = await loadForbiddenCatalog(async () => {
+      const response = await axios.get('/api/portal/tools/forbidden-catalog')
+      return {
+        candidates: response.data?.candidates,
+        skillCandidates: response.data?.skill_candidates,
+      }
+    })
     // 两种资源同一个接口：tools 取 candidates，skills 取 skill_candidates
-    const list = isSkillsMode.value ? response.data?.skill_candidates : response.data?.candidates
-    candidates.value = Array.isArray(list) ? list : []
+    candidates.value = isSkillsMode.value ? snapshot.skillCandidates : snapshot.candidates
   } catch (error) {
     loadError.value = loadErrorText.value
   } finally {

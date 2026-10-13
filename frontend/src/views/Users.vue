@@ -776,9 +776,10 @@
             </button>
           </div>
 
-          <!-- Tabs for Edit -->
+          <!-- Tabs for Edit：权限 tab 只对「打开时后端角色就是普通用户」的账号出现，
+               与拉取 / 保存共用同一份真实身份（canEditPermissions） -->
           <div
-            v-if="showEditDialog && formData.role === 'user'"
+            v-if="canEditPermissions"
             class="border-b border-gray-200 mb-4"
           >
             <nav
@@ -1069,9 +1070,9 @@
               </div>
             </div>
 
-            <!-- PERMISSIONS TAB -->
+            <!-- PERMISSIONS TAB：内容区同样以真实身份为条件，避免 tab 隐藏后仍可能被渲染/提交 -->
             <div
-              v-show="activeTab === 'permissions'"
+              v-show="activeTab === 'permissions' && canEditPermissions"
               class="space-y-4 py-2 flex flex-col h-full min-h-[400px]"
             >
               <div
@@ -1100,6 +1101,17 @@
                 </div>
               </div>
               <div v-else class="flex flex-col flex-1 overflow-hidden">
+                <!-- 权限没加载成功时必须说清楚，并让用户知道"现在保存不会动权限"：
+                     否则他看到的是空配置，一保存就把真实配置清了（见 saveUser 的守卫） -->
+                <div
+                  v-if="permissionsLoadError"
+                  class="mb-3 bg-red-50 border border-red-200 rounded-lg p-2.5 text-[11px] sm:text-xs text-red-700 leading-relaxed"
+                >
+                  <p class="font-bold mb-0.5">权限配置加载失败</p>
+                  <p class="opacity-80">
+                    {{ permissionsLoadError }}。为避免覆盖现有配置，加载成功前不会提交权限修改。
+                  </p>
+                </div>
                 <!-- Sub Tabs -->
                 <div
                   class="flex space-x-2 mb-4 border-b border-gray-200 overflow-x-auto whitespace-nowrap"
@@ -1227,6 +1239,33 @@
                         </div>
                       </div>
 
+                      <!-- 角色来源的禁用项（只读）：并集里有、直配里没有的部分，只展示不提交 -->
+                      <div
+                        v-if="inheritedForbiddenRows.length"
+                        class="border border-gray-200 rounded-xl p-3 bg-gray-50"
+                      >
+                        <h4
+                          class="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5 select-none"
+                        >
+                          <span class="w-1.5 h-1.5 bg-gray-400 rounded-full"></span>
+                          来自角色（只读）
+                        </h4>
+                        <p class="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                          该禁用来自角色，需到角色页调整；这里只能查看，保存本页不会改动它们（本页只提交该用户的直配项）。
+                        </p>
+                        <div class="space-y-1.5">
+                          <div
+                            v-for="row in inheritedForbiddenRows"
+                            :key="row.key"
+                            class="flex items-start gap-2 text-[11px] leading-snug"
+                          >
+                            <span class="shrink-0 font-bold text-gray-500">{{ row.label }}</span>
+                            <span class="min-w-0 font-mono text-gray-600 break-all">{{ row.items.join('、') }}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 直配可编辑：禁用工具 / 技能 / 命令 -->
                       <ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />
                       <!-- 公共技能与工具并列：同一个组件泛化出 skills 模式，候选来自 skill_candidates -->
                       <ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />
@@ -1237,7 +1276,7 @@
                           <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
                           自定义禁用命令关键字
                         </h4>
-                        <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
+                        <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），可用英文逗号、中文逗号、顿号、分号或换行分隔。</p>
                         <textarea
                           v-model="forbiddenCommandsText"
                           placeholder="例如: rm, shutdown, mv, wget, curl"
@@ -2257,6 +2296,19 @@ import {
 import Switch from "../components/Switch.vue";
 import ForbiddenToolCatalog from "../components/system/ForbiddenToolCatalog.vue";
 import { parseForbiddenCommands } from "../utils/forbiddenCommands";
+import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge";
+import {
+  peekForbiddenCatalog,
+  subscribeForbiddenCatalog,
+  type ForbiddenCatalogSnapshot,
+} from "../utils/forbiddenCatalogCache";
+import {
+  buildUserPermissionPayload,
+  emptyPermissionLists,
+  resolveUserPermissionEditState,
+  type InheritedForbiddenLists,
+} from "../utils/permissionLists";
+import { extractApiErrorDetail } from "../utils/apiErrorDetail";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
 import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
@@ -2804,19 +2856,117 @@ const permissionData = ref<{
 
 const forbiddenCommandsText = ref("");
 
-/** 禁用命令数取编辑中的文本：实时反映尚未保存的输入，与保存流程共用同一份解析。 */
-const forbiddenCommandCount = computed(() =>
-  parseForbiddenCommands(forbiddenCommandsText.value).length
+/**
+ * 角色来源的禁用项（只读）：`permissions`（用户 ∪ 角色）里有、`direct_permissions` 里没有的
+ * 部分。它们只用于展示——payload 只由 permissionData（直配缓冲）构建，所以这里没有回写通道。
+ * 旧后端不返回 `direct_permissions` 时这里恒为空，全部按直配处理（见 permissionLists.ts）。
+ */
+const inheritedForbidden = ref<InheritedForbiddenLists>({
+  forbidden_tools: [],
+  forbidden_commands: [],
+  forbidden_skills: [],
+});
+
+/** 只读区展示用：按「工具 / 命令 / 技能」三行渲染，没有内容不占位。 */
+const inheritedForbiddenRows = computed(() =>
+  [
+    {
+      key: "forbidden_tools",
+      label: "禁用工具",
+      items: inheritedForbidden.value.forbidden_tools,
+    },
+    {
+      key: "forbidden_commands",
+      label: "禁用命令关键字",
+      items: inheritedForbidden.value.forbidden_commands,
+    },
+    {
+      key: "forbidden_skills",
+      label: "禁用技能",
+      items: inheritedForbidden.value.forbidden_skills,
+    },
+  ].filter((row) => (row.items || []).length > 0),
 );
 
-/** tab 徽标口径：禁用资源 = 禁用工具数 + 禁用命令数 + 禁用技能数；其余 tab = 已勾选资产数。 */
+/**
+ * 禁用目录快照（工具 / 技能候选），只用于徽标计数：要判断"哪些选中项属于同一个别名组"
+ * 就必须有目录。这里只订阅共享缓存，不额外发请求——目录由 ForbiddenToolCatalog 统一加载，
+ * 一页里的两个实例共享同一次请求（见 utils/forbiddenCatalogCache.ts）。
+ */
+const forbiddenCatalogSnapshot = ref<ForbiddenCatalogSnapshot>({
+  candidates: [],
+  skillCandidates: [],
+});
+const syncForbiddenCatalogSnapshot = () => {
+  const snapshot = peekForbiddenCatalog();
+  if (snapshot) forbiddenCatalogSnapshot.value = snapshot;
+};
+let unsubscribeForbiddenCatalog: (() => void) | null = null;
+
+/**
+ * tab 徽标口径：禁用资源 = 工具条目数 + 命令条目数 + 技能条目数（用户视角，一个别名组算 1），
+ * 其余 tab = 已勾选资产数。计数与角色页共用同一个纯函数，避免两页数字对不上。
+ */
 const resourceTabCount = (type: string) =>
   type === "forbidden_configs"
-    ? (permissionData.value.forbidden_tools?.length || 0) +
-      forbiddenCommandCount.value +
-      // 技能是勾选式数组：直接用已勾选个数，不需要像命令那样实时解析文本
-      (permissionData.value.forbidden_skills?.length || 0)
+    ? countForbiddenResourceBadge({
+        forbiddenTools: permissionData.value.forbidden_tools,
+        toolCandidates: forbiddenCatalogSnapshot.value.candidates,
+        forbiddenCommandsText: forbiddenCommandsText.value,
+        forbiddenSkills: permissionData.value.forbidden_skills,
+        skillCandidates: forbiddenCatalogSnapshot.value.skillCandidates,
+      })
     : ((permissionData.value as any)[type]?.length || 0);
+
+/**
+ * 打开对话框时冻结的「真实身份」：权限只对"后端返回的就是普通用户"的账号有意义。
+ * 不能用可编辑的 formData.role —— 把管理员改成普通用户时它已经是 user，但权限从未拉过，
+ * 于是空的 / 上一个用户残留的 permissionData 会被整表 PUT 出去（越权复制 + 清空黑名单）。
+ */
+const permissionSubjectRole = ref("");
+/** 权限是否已成功加载：没加载成功就禁止提交，否则一次网络抖动会把真实配置整体清掉。 */
+const permissionsLoaded = ref(false);
+const permissionsLoadError = ref("");
+const canEditPermissions = computed(
+  () => showEditDialog.value && permissionSubjectRole.value === "user",
+);
+
+/** 清空权限编辑缓冲：打开 / 关闭对话框、以及身份切换时都要调用，杜绝跨用户残留。 */
+const resetPermissionBuffers = () => {
+  permissionData.value = emptyPermissionLists();
+  inheritedForbidden.value = {
+    forbidden_tools: [],
+    forbidden_commands: [],
+    forbidden_skills: [],
+  };
+  forbiddenCommandsText.value = "";
+  permissionsLoaded.value = false;
+  permissionsLoadError.value = "";
+};
+
+// F3：身份一变就清空缓冲。切到非 user 时尤其重要——保存判定虽然已经基于真实身份，
+// 但残留数据留在内存里迟早会被某条新路径写出去。
+watch(
+  () => formData.value.role,
+  (nextRole) => {
+    if (nextRole === permissionSubjectRole.value) return;
+    resetPermissionBuffers();
+    // 权限 tab 会随身份消失：停在权限页的用户要被送回基本信息，
+    // 否则两个 tab 内容区的 v-show 同时为 false，弹窗看起来是一片空白。
+    if (activeTab.value === "permissions") activeTab.value = "info";
+  },
+);
+
+// F8：徽标计数需要候选目录（判断哪些选中项属于同一个别名组），目录由 ForbiddenToolCatalog
+// 加载，这里只订阅共享缓存；卸载必须退订，否则回调会一直持有本页状态。
+onMounted(() => {
+  syncForbiddenCatalogSnapshot();
+  unsubscribeForbiddenCatalog = subscribeForbiddenCatalog(syncForbiddenCatalogSnapshot);
+});
+onUnmounted(() => {
+  unsubscribeForbiddenCatalog?.();
+  unsubscribeForbiddenCatalog = null;
+});
 
 // Tree Logic
 const toggleTreeItem = (itemId: string) => {
@@ -3117,48 +3267,45 @@ const fetchResources = async () => {
   }
 };
 
+/**
+ * 已在 RAGFlow 失联的知识库：回显时剔除（不可再授权），保存时也不写回 payload，
+ * 否则会把一个已经坏掉的授权反复提交上去。
+ */
+const collectMissingDatasetIds = (): Set<string> =>
+  new Set(
+    (allResources.value.datasets || [])
+      .filter((d: any) => d?.is_missing_in_ragflow || d?.status === "missing")
+      .map((d: any) => d.id),
+  );
+
 const fetchUserPermissions = async (userId: number) => {
+  permissionsLoaded.value = false;
+  permissionsLoadError.value = "";
   try {
     const response = await axios.get(
       `/api/portal/management/users/${userId}/permissions`,
     );
-    const perms = response.data.permissions;
-    const missingIds = new Set(
-      (allResources.value.datasets || [])
-        .filter(
-          (d: any) => d?.is_missing_in_ragflow || d?.status === "missing",
-        )
-        .map((d: any) => d.id),
+    // 回显取「直配」，并集（permissions）只用来算角色来源项。
+    // 直接拿并集回显再整份 PUT，会把角色级禁用固化成用户级记录：角色页之后取消禁用，
+    // 该用户仍被禁；反方向在用户页取消角色级禁用也无效，却提示成功。
+    const state = resolveUserPermissionEditState(response.data);
+    const missingIds = collectMissingDatasetIds();
+    permissionData.value = {
+      ...state.direct,
+      datasets: state.direct.datasets.filter((id: string) => !missingIds.has(id)),
+    };
+    inheritedForbidden.value = state.inherited;
+    forbiddenCommandsText.value = (state.direct.forbidden_commands || []).join(", ");
+    permissionsLoaded.value = true;
+  } catch (e: any) {
+    // 这里原先连 toast 都没有，只把 permissionData 清空——用户看到空配置，
+    // 一保存就把真实配置清了。现在明确提示，并由 permissionsLoaded 挡住提交。
+    resetPermissionBuffers();
+    permissionsLoadError.value = extractApiErrorDetail(
+      e?.response?.data,
+      "权限配置加载失败，请关闭后重新打开重试",
     );
-    permissionData.value = {
-      agents: perms.agents || [],
-      datasets: (perms.datasets || []).filter(
-        (id: string) => !missingIds.has(id),
-      ),
-      metadata: perms.metadata || [],
-      apis: perms.apis || [],
-      menus: perms.menus || [],
-      elements: perms.elements || [],
-      forbidden_tools: perms.forbidden_tools || [],
-      forbidden_commands: perms.forbidden_commands || [],
-      forbidden_skills: perms.forbidden_skills || [],
-      models: perms.models || [],
-    };
-    forbiddenCommandsText.value = (perms.forbidden_commands || []).join(", ");
-  } catch (e) {
-    permissionData.value = {
-      agents: [],
-      datasets: [],
-      metadata: [],
-      apis: [],
-      menus: [],
-      elements: [],
-      forbidden_tools: [],
-      forbidden_commands: [],
-      forbidden_skills: [],
-      models: [],
-    };
-    forbiddenCommandsText.value = "";
+    showToast(permissionsLoadError.value, "error");
   }
 };
 
@@ -3187,7 +3334,54 @@ const saveUser = async () => {
         role_ids: formData.value.role_ids,
         remark: formData.value.remark,
       };
-      await axios.put(`/api/portal/management/users/${editingUserId.value}`, updatePayload);
+      // F4：先权限后资料。原先资料先提交、权限后提交，权限失败时用户看到「失败」，
+      // 但资料其实已经改了——提示与最终状态互相矛盾。
+      //
+      // 提交权限要同时满足两件事：打开时后端角色就是 user（canEditPermissions，
+      // 否则权限从没拉过，提交出去的是空表），并且这次保存之后仍然是 user——
+      // 改成管理员时权限没有意义，而且身份切换已经按 F3 清空了缓冲。
+      const submitsPermissions =
+        canEditPermissions.value && formData.value.role === "user";
+      if (submitsPermissions) {
+        // F7：权限没成功加载就不能提交。空缓冲写回去等于把用户真实配置整体清掉，
+        // 而这次操作的本意可能只是改个备注。
+        if (!permissionsLoaded.value) {
+          showToast(
+            permissionsLoadError.value ||
+              "权限配置尚未成功加载，已取消保存以免覆盖现有配置，请关闭后重新打开重试",
+            "warning",
+          );
+          return;
+        }
+        permissionData.value.forbidden_commands = parseForbiddenCommands(
+          forbiddenCommandsText.value,
+        );
+        // payload 只由直配缓冲构建：角色来源的禁用项没有任何进 payload 的通道。
+        const permissionPayload = buildUserPermissionPayload(
+          permissionData.value,
+          { missingDatasetIds: Array.from(collectMissingDatasetIds()) },
+        );
+        try {
+          await axios.put(
+            `/api/portal/management/users/${editingUserId.value}/permissions`,
+            permissionPayload,
+          );
+        } catch (permError: any) {
+          // 权限没保存成功就不动资料，避免「提示失败但资料已改」。
+          const reason = extractApiErrorDetail(
+            permError?.response?.data,
+            "操作失败",
+          );
+          error.value = reason;
+          showToast(`权限保存失败：${reason}`, "error");
+          return;
+        }
+      }
+
+      await axios.put(
+        `/api/portal/management/users/${editingUserId.value}`,
+        updatePayload,
+      );
 
       // Sync LocalStorage if updating CURRENT USER
       try {
@@ -3210,34 +3404,6 @@ const saveUser = async () => {
         }
       } catch (syncErr) {
         console.warn('LocalStorage Sync Error:', syncErr);
-      }
-      if (formData.value.role === "user") {
-        const missingIds = new Set(
-          (allResources.value.datasets || [])
-            .filter(
-              (d: any) =>
-                d?.is_missing_in_ragflow || d?.status === "missing",
-            )
-            .map((d: any) => d.id),
-        );
-        permissionData.value.forbidden_commands = parseForbiddenCommands(
-          forbiddenCommandsText.value,
-        );
-
-        const payload = {
-          ...permissionData.value,
-          datasets: (permissionData.value.datasets || []).filter(
-            (id: string) => !missingIds.has(id),
-          ),
-          // 字段名必须与后端 PermissionUpdate.models 一致（字符串数组，空 = 不限制）
-          models: [...(permissionData.value.models || [])],
-          // 技能是勾选式数组：显式带上，字段名与后端 PermissionUpdate.forbidden_skills 一致
-          forbidden_skills: [...(permissionData.value.forbidden_skills || [])],
-        };
-        await axios.put(
-          `/api/portal/management/users/${editingUserId.value}/permissions`,
-          payload,
-        );
       }
       showToast("更新成功", "success");
       closeDialogs();
@@ -3268,7 +3434,8 @@ const saveUser = async () => {
   } catch (e: any) {
     // `error` 没有对应的模板出口，只赋值等于静默失败——管理员看不到
     // 「该邮箱已被其他账号使用」这类 400 detail，只会以为没反应。
-    error.value = e.response?.data?.detail || e.response?.data?.message || "操作失败";
+    // 422 的 detail 是数组，必须经提取函数变成人话，否则 toast 上显示 `[object Object]`。
+    error.value = extractApiErrorDetail(e?.response?.data, "操作失败");
     showToast(error.value, "error");
   } finally {
     submitting.value = false;
@@ -3534,7 +3701,11 @@ const editUser = async (user: any) => {
   showEditDialog.value = true;
   activeTab.value = "info";
   roleSearchQuery.value = "";
-  if (user.role === "user") {
+  // 真实身份来自后端行数据，并在打开时冻结：之后表单里改角色不再影响权限归属，
+  // 否则「管理员改成普通用户再保存」会拿空的/残缺的缓冲整表覆盖权限。
+  permissionSubjectRole.value = String(user.role || "");
+  resetPermissionBuffers();
+  if (canEditPermissions.value) {
     await Promise.all([fetchResources(), fetchUserPermissions(user.id)]);
   }
 };
@@ -3544,6 +3715,9 @@ const closeDialogs = () => {
   error.value = "";
   createdApiKey.value = "";
   editingUserId.value = null;
+  // 关闭时连同真实身份一起复位：上一个用户的残留不能跨用户存活
+  permissionSubjectRole.value = "";
+  resetPermissionBuffers();
 };
 const closeViewKeyDialog = () => {
   showViewKeyDialog.value = false;

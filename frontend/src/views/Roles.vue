@@ -494,7 +494,7 @@
                                       <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
                                       自定义禁用命令关键字
                                   </h4>
-                                  <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
+                                  <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），可用英文逗号、中文逗号、顿号、分号或换行分隔。</p>
                                   <textarea
                                       v-model="forbiddenCommandsText"
                                       placeholder="例如: rm, shutdown, mv, wget, curl"
@@ -1108,6 +1108,13 @@ import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import ForbiddenToolCatalog from '../components/system/ForbiddenToolCatalog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
+import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge"
+import {
+    peekForbiddenCatalog,
+    subscribeForbiddenCatalog,
+    type ForbiddenCatalogSnapshot,
+} from "../utils/forbiddenCatalogCache"
+import { extractApiErrorDetail } from "../utils/apiErrorDetail"
 
 const { showToast } = useToast()
 
@@ -1325,19 +1332,45 @@ const permissionData = ref<{
 
 const forbiddenCommandsText = ref("")
 
-/** 禁用命令数取编辑中的文本：实时反映尚未保存的输入，与保存流程共用同一份解析。 */
-const forbiddenCommandCount = computed(() =>
-  parseForbiddenCommands(forbiddenCommandsText.value).length
-);
+/**
+ * 禁用目录快照（工具 / 技能候选），只用于徽标计数：判断"哪些选中项属于同一个别名组"
+ * 必须有目录。这里只订阅共享缓存，不额外发请求——目录由 ForbiddenToolCatalog 统一加载。
+ */
+const forbiddenCatalogSnapshot = ref<ForbiddenCatalogSnapshot>({
+    candidates: [],
+    skillCandidates: [],
+})
+const syncForbiddenCatalogSnapshot = () => {
+    const snapshot = peekForbiddenCatalog()
+    if (snapshot) forbiddenCatalogSnapshot.value = snapshot
+}
+let unsubscribeForbiddenCatalog: (() => void) | null = null
 
-/** tab 徽标口径：禁用资源 = 禁用工具数 + 禁用命令数 + 禁用技能数；其余 tab = 已勾选资产数。 */
+/**
+ * tab 徽标口径：禁用资源 = 工具条目数 + 命令条目数 + 技能条目数（用户视角，一个别名组算 1），
+ * 其余 tab = 已勾选资产数。口径与用户页共用同一个纯函数——各写一份必然漂移成两个数字。
+ * 角色页读的是角色行自己的权限，没有「直配 / 继承」两级作用域的并集问题，语义不变。
+ */
 const resourceTabCount = (type: string) =>
   type === 'forbidden_configs'
-    ? (permissionData.value.forbidden_tools?.length || 0) +
-      forbiddenCommandCount.value +
-      // 技能是勾选式数组：直接用已勾选个数，不需要像命令那样实时解析文本
-      (permissionData.value.forbidden_skills?.length || 0)
+    ? countForbiddenResourceBadge({
+        forbiddenTools: permissionData.value.forbidden_tools,
+        toolCandidates: forbiddenCatalogSnapshot.value.candidates,
+        forbiddenCommandsText: forbiddenCommandsText.value,
+        forbiddenSkills: permissionData.value.forbidden_skills,
+        skillCandidates: forbiddenCatalogSnapshot.value.skillCandidates,
+      })
     : ((permissionData.value as any)[type]?.length || 0);
+
+// 目录由 ForbiddenToolCatalog 加载，这里只订阅；卸载必须退订，否则回调一直持有本页状态
+onMounted(() => {
+    syncForbiddenCatalogSnapshot()
+    unsubscribeForbiddenCatalog = subscribeForbiddenCatalog(syncForbiddenCatalogSnapshot)
+})
+onUnmounted(() => {
+    unsubscribeForbiddenCatalog?.()
+    unsubscribeForbiddenCatalog = null
+})
 
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
@@ -2227,7 +2260,10 @@ const savePermissions = async () => {
         showToast('权限保存成功', 'success')
         closePermissionDialog()
     } catch (e: any) {
-        showToast('保存权限失败', 'error')
+        // 原先只说「保存权限失败」：管理员既不知道坏在哪一项，也不知道是不是自己的输入问题。
+        // 422 的 detail 是数组，经提取函数拼成一句人话（例如「禁用技能长度不能超过 255 个字符」）。
+        const reason = extractApiErrorDetail(e?.response?.data, '操作失败')
+        showToast(`权限保存失败：${reason}`, 'error')
     } finally {
         submittingPerms.value = false
     }

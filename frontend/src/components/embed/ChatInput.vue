@@ -1680,6 +1680,10 @@ const mountSkillFromCascade = (skill: SkillItem) => {
       name: skill.name,
       description: skill.description || "",
       scope,
+      // 把「已禁用」随挂载一起带到附件上：后端会在写历史前清洗被禁技能的挂载提示，
+      // 前端也要据此不再生成「绝对路径可直接读」的提示（见 useChatAttachments）。
+      // 个人技能不带该字段，缺失一律按未禁用处理。
+      forbidden: skill.forbidden === true,
     },
   });
   showSkillCascade.value = false;

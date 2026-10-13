@@ -187,13 +187,30 @@ def test_both_views_mount_a_skills_catalog_next_to_the_tools_catalog():
 
 
 def test_both_views_persist_and_hydrate_forbidden_skills():
-    """技能与工具、命令并列：默认空数组、读取回显、失败重置、保存 payload 显式带上。"""
-    for view in (USERS, ROLES):
-        source = view.read_text(encoding="utf-8")
-        assert "forbidden_skills: string[]" in source, f"{view} 的 permissionData 缺技能字段类型"
-        assert source.count("forbidden_skills: []") == 2, f"{view} 的默认值与失败重置不完整"
-        assert "forbidden_skills: perms.forbidden_skills || []" in source, f"{view} 没回显已保存的技能"
-        assert (
-            "forbidden_skills: [...(permissionData.value.forbidden_skills || [])]" in source
-        ), f"{view} 的保存 payload 没带技能"
-        assert "...permissionData.value" in source, "保存 payload 仍应是 permissionData 的结构"
+    """技能与工具、命令并列：默认空数组、读取回显、失败重置、保存 payload 显式带上。
+
+    两页的**读写路径**已经不同，断言也分开：
+    - 用户页按 F1 只提交直配项，回显 / payload 走 permissionLists 的纯函数；
+    - 角色页读的就是角色行本身（没有并集问题），保持原样的 perms 回显 + permissionData payload。
+    共同点是「技能与工具、命令同级」，这条不能变。
+    """
+    users = USERS.read_text(encoding="utf-8")
+    assert "forbidden_skills: string[]" in users, "用户页的 permissionData 缺技能字段类型"
+    assert "forbidden_skills: []" in users, "用户页的技能默认值 / 重置缺失"
+    assert "resolveUserPermissionEditState(" in users, "用户页技能必须随直配项回显"
+    assert "inheritedForbidden.value = state.inherited" in users, "角色来源的技能要进只读区"
+    assert "buildUserPermissionPayload(" in users, "用户页技能必须随直配 payload 提交"
+
+    payload_builder = (ROOT / "frontend/src/utils/permissionLists.ts").read_text(encoding="utf-8")
+    assert (
+        "forbidden_skills: [...(direct.forbidden_skills || [])]" in payload_builder
+    ), "用户页的 payload 构建器没带技能"
+
+    roles = ROLES.read_text(encoding="utf-8")
+    assert "forbidden_skills: string[]" in roles, "角色页的 permissionData 缺技能字段类型"
+    assert roles.count("forbidden_skills: []") == 2, "角色页的默认值与失败重置不完整"
+    assert "forbidden_skills: perms.forbidden_skills || []" in roles, "角色页没回显已保存的技能"
+    assert (
+        "forbidden_skills: [...(permissionData.value.forbidden_skills || [])]" in roles
+    ), "角色页的保存 payload 没带技能"
+    assert "...permissionData.value" in roles, "角色页保存 payload 仍应是 permissionData 的结构"

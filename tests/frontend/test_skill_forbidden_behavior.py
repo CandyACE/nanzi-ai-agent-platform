@@ -1,4 +1,4 @@
-"""公共技能「管理员已禁用」判定的纯函数行为。
+"""公共技能「已禁用」判定的纯函数行为。
 
 三处挂载入口（会话输入框技能中心、会话固定资源弹窗、任务提示词编辑器）共用这一份判定，
 所以直接在 node harness 里跑真实 TypeScript 实现，不挂载组件——组件只管渲染。
@@ -101,12 +101,12 @@ return {
 """
     )
 
-    assert result["badge"] == "管理员已禁用"
+    assert result["badge"] == "已禁用"
     for key in ("forbiddenDefault", "forbiddenMount", "forbiddenCheck"):
-        assert "管理员已禁用" in result[key], f"{key} 必须写明禁用原因"
-    assert result["forbiddenDefault"] == "管理员已禁用该技能，无法挂载", "默认动作是「挂载」"
+        assert "已禁用" in result[key], f"{key} 必须写明禁用原因"
+    assert result["forbiddenDefault"] == "已禁用，无法挂载", "默认动作是「挂载」"
     assert result["forbiddenMount"] == result["forbiddenDefault"]
-    assert result["forbiddenCheck"] == "管理员已禁用该技能，无法勾选", "资源网格里动作是「勾选」"
+    assert result["forbiddenCheck"] == "已禁用，无法勾选", "资源网格里动作是「勾选」"
     assert result["available"] == ""
     assert result["missingField"] == "", "缺字段（旧接口 / 个人技能）不产生任何提示"
     assert result["nullSkill"] == ""

@@ -1,3 +1,5 @@
+import { isSkillForbidden, type SkillForbiddenLike } from "./skillForbidden";
+
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 
 export function normalizeAttachmentExt(ext?: string, url?: string): string {
@@ -47,8 +49,14 @@ export function getServerAttachmentPath(file: {
   type?: string;
   url?: string;
   filename?: string;
+  forbidden?: boolean | null;
+  skillMeta?: SkillForbiddenLike | null;
 }): string {
   if (file.type === "skill") {
+    // 被管理员禁用的公共技能不给出任何绝对路径：提示里带路径等于教模型去读被禁技能的
+    // 正文，而运行时的读判定（Read/Glob/Grep 与 /api/v1/chat/fs）也会直接拒绝这条路径。
+    // 判定与「技能入口置灰」共用 skillForbidden，缺字段一律按未禁用处理。
+    if (isSkillForbidden(file) || isSkillForbidden(file.skillMeta)) return "";
     return `/app/data/skills/${file.url}/SKILL.md`;
   }
   if (file.type === "local_file" || file.type === "local_dir") {

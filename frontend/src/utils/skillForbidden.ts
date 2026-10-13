@@ -1,5 +1,5 @@
 /**
- * 公共技能「管理员已禁用」的统一判定口径。
+ * 公共技能「已禁用」的统一判定口径。
  *
  * 后端 `GET /api/portal/skills` 在每条数据上新增 `forbidden: boolean`；管理员恒为 false，
  * 个人技能接口（`/skills/personal`）不带该字段。三处用户挂载入口——会话输入框技能中心、
@@ -15,8 +15,9 @@ export interface SkillForbiddenLike {
   forbidden?: boolean | null
 }
 
-/** 「管理员已禁用」小标签文案：三处入口共用，避免同一个状态各写各的说法 */
-export const FORBIDDEN_SKILL_BADGE = '管理员已禁用'
+/** 「已禁用」小标签文案：三处入口共用，避免同一个状态各写各的说法。
+ * 只写状态本身，不写「管理员」——徽标位置窄，且用户只需要知道「这个用不了」。 */
+export const FORBIDDEN_SKILL_BADGE = '已禁用'
 
 /**
  * 严格判等：只有布尔 `true` 算被禁。
@@ -36,5 +37,5 @@ export function forbiddenSkillReason(
   action = '挂载',
 ): string {
   if (!isSkillForbidden(skill)) return ''
-  return `管理员已禁用该技能，无法${action}`
+  return `已禁用，无法${action}`
 }

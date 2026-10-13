@@ -1,10 +1,13 @@
 import { getServerAttachmentPath, isImageAttachment } from "@/utils/attachmentImages";
+import { forbiddenSkillReason, isSkillForbidden } from "@/utils/skillForbidden";
 
 export const USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n";
 
 interface AttachmentSkillMeta {
   name?: string;
   description?: string;
+  /** 后端 /api/portal/skills 下发的禁用标记（个人技能不带该字段） */
+  forbidden?: boolean | null;
 }
 
 interface AttachmentMemoryMeta {
@@ -16,6 +19,9 @@ export interface ChatAttachment {
   type?: string;
   url: string;
   filename: string;
+  scope?: string;
+  /** 禁用标记也可能直接挂在附件上（历史消息 / 旧缓存两条来源都要认） */
+  forbidden?: boolean | null;
   skillMeta?: AttachmentSkillMeta;
   memoryMeta?: AttachmentMemoryMeta[];
 }
@@ -63,6 +69,17 @@ export const useChatAttachments = ({
     return hint;
   };
 
+  const buildForbiddenSkillAttachmentHint = (file: ChatAttachment) => {
+    const skillName = file.filename.replace(" (技能)", "") || file.url;
+    const reason = forbiddenSkillReason(
+      isSkillForbidden(file.skillMeta) ? file.skillMeta : file,
+      "使用",
+    );
+    // 与后端 utils/skill_metadata.sanitize_forbidden_skill_context 的措辞同源：
+    // 明确「不可用、不可读」，且**不带任何绝对路径**——带路径就是在教模型去读被禁技能的正文。
+    return `用户本轮挂载的技能「${skillName}」：${reason}；其技能描述文件不可读取，禁止尝试读取或检索该技能的任何文件。`;
+  };
+
   const appendAttachmentContext = (content: string, files: ChatAttachment[]) => {
     if (files.length === 0) return content;
 
@@ -88,6 +105,10 @@ export const useChatAttachments = ({
       }
       const path = getServerAttachmentPath(file);
       if (file.type === "skill") {
+        // 被禁技能：不给路径，改给明确的不可用说明（后端还会在写历史前再清洗一次）
+        if (isSkillForbidden(file) || isSkillForbidden(file.skillMeta)) {
+          return buildForbiddenSkillAttachmentHint(file);
+        }
         return buildSkillAttachmentHint(file, path);
       }
       if (isImageAttachment(file)) {
@@ -113,5 +134,6 @@ export const useChatAttachments = ({
     appendAttachmentContext,
     buildImageAttachmentHint,
     buildSkillAttachmentHint,
+    buildForbiddenSkillAttachmentHint,
   };
 };

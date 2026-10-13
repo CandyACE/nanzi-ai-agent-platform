@@ -1,4 +1,4 @@
-"""公共技能「管理员已禁用」的三处挂载入口接线契约。
+"""公共技能「已禁用」的三处挂载入口接线契约。
 
 产品口径：**看得见、但置灰不可选，并写明原因**——不从列表里移除（移除会让用户以为技能丢了）。
 判定口径必须单一：三处入口（外加渲染 EmbedChat 技能网格的子组件）都调
@@ -45,7 +45,7 @@ def test_judgement_lives_in_one_place_and_every_entry_point_uses_it():
     """纯函数是唯一判定来源；四个文件都 import 并调用它，且不得内联字段比较。"""
     assert "export function isSkillForbidden(" in UTILS
     assert "export function forbiddenSkillReason(" in UTILS
-    assert "export const FORBIDDEN_SKILL_BADGE = '管理员已禁用'" in UTILS
+    assert "export const FORBIDDEN_SKILL_BADGE = '已禁用'" in UTILS
     assert "skill?.forbidden === true" in UTILS, "必须严格判等，缺字段 / 字符串一律按未禁用"
 
     for path in CONSUMERS:
@@ -56,7 +56,7 @@ def test_judgement_lives_in_one_place_and_every_entry_point_uses_it():
 
 
 def test_skill_center_shows_forbidden_skills_but_blocks_mounting():
-    """会话输入框技能中心：置灰 + 不可点 + 红色「管理员已禁用」标签 + title 说明原因。"""
+    """会话输入框技能中心：置灰 + 不可点 + 红色「已禁用」标签 + title 说明原因。"""
     source = _source(SKILL_CENTER)
 
     assert "forbidden?: boolean" in source, "SkillItem 必须声明后端新增字段"
@@ -148,4 +148,4 @@ def test_admin_views_are_out_of_scope():
     for path in (AGENT_MANAGEMENT, SKILLS_MANAGEMENT):
         source = _source(path)
         assert "forbidden" not in source.lower(), f"{path.name} 不该出现禁用态处理"
-        assert "管理员已禁用" not in source, f"{path.name} 不该出现用户侧禁用文案"
+        assert "FORBIDDEN_SKILL_BADGE" not in source, f"{path.name} 不该出现用户侧禁用文案"

@@ -41,19 +41,23 @@ def test_roles_no_longer_excludes_forbidden_configs_from_the_badge():
 
 
 def test_badge_count_for_disabled_resources_covers_tools_commands_and_skills():
+    """徽标口径（F8 后）= 工具条目数 + 命令条目数 + 技能条目数，且两页共用同一个纯函数。
+
+    「条目数」是用户视角的：勾一个内置能力会写入整组别名，按数组长度算会虚高，
+    所以计数必须拿到候选目录（candidates）来判断别名组。
+    """
     for view in (USERS, ROLES):
         source = _source(view)
-        assert "forbiddenCommandCount" in source, f"{view} 的徽标没算禁用命令"
+        assert "countForbiddenResourceBadge(" in source, f"{view} 的徽标没走共享计数函数"
         assert "forbidden_tools" in source
-        # 命令数取编辑中的文本，实时反映尚未保存的输入
-        assert "forbiddenCommandsText.value" in source
+        # 命令数取编辑中的文本，实时反映尚未保存的输入（解析在 forbiddenCommands.ts 里）
+        assert "forbiddenCommandsText" in source
 
-        # 技能是勾选式数组：直接用已勾选个数，不需要像命令那样实时解析文本
-        badge = source.split("const resourceTabCount", 1)[1].split(";", 1)[0]
-        assert "forbidden_tools" in badge, f"{view} 的徽标没算禁用工具"
-        assert "forbiddenCommandCount" in badge, f"{view} 的徽标没算禁用命令"
-        assert "forbidden_skills" in badge, f"{view} 的徽标没算禁用技能"
-        assert "parseForbiddenCommands" not in badge, "技能数不该走命令的文本解析"
+        badge = source.split("const resourceTabCount", 1)[1].split("\n\n", 1)[0]
+        assert "forbiddenTools" in badge, f"{view} 的徽标没算禁用工具"
+        assert "forbiddenCommandsText" in badge, f"{view} 的徽标没算禁用命令"
+        assert "forbiddenSkills" in badge, f"{view} 的徽标没算禁用技能"
+        assert "candidates" in badge, f"{view} 的徽标没拿候选目录，别名组会被重复计数"
 
 
 def test_command_parsing_has_a_single_shared_source():
