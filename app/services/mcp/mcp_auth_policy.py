@@ -106,6 +106,60 @@ def load_mcp_private_key(server: Any) -> Any:
     return load_pem_private_key(raw_key.encode("utf-8"), password=None)
 
 
+def build_mcp_user_assertion_headers(
+    server: Any,
+    *,
+    user_info: Mapping[str, Any] | None = None,
+    agent_info: Mapping[str, Any] | None = None,
+    request_id: str | None = None,
+    private_key: Any = None,
+    issuer: str | None = None,
+    assertion_header: str | None = None,
+    audience: str | None = None,
+) -> dict[str, str]:
+    """只构造用户身份断言 Header；未开启开关时返回空字典。
+
+    签名私钥与 key_id 只能来自已保存的 MCP 配置，Header 名、audience、issuer
+    允许调用方覆盖，用于编辑态在保存前预览探测结果。
+    """
+    if not bool(getattr(server, "user_assertion_enabled", False)):
+        return {}
+
+    effective_audience = str(
+        audience or getattr(server, "user_assertion_audience", "") or ""
+    ).strip()
+    key_id = str(getattr(server, "user_assertion_key_id", "") or "").strip()
+    effective_header = str(
+        assertion_header
+        or getattr(server, "user_assertion_header", None)
+        or DEFAULT_ASSERTION_HEADER
+    ).strip()
+    effective_issuer = str(
+        getattr(server, "user_assertion_issuer", None) or issuer or "nanzi-platform"
+    )
+    private_key = private_key or load_mcp_private_key(server)
+    if not private_key:
+        raise ValueError("MCP UserContext private key is required")
+    if not effective_audience:
+        raise ValueError("MCP UserContext audience is required")
+    if not key_id:
+        raise ValueError("MCP UserContext key ID is required")
+    if not effective_header or effective_header.lower() == "authorization":
+        raise ValueError("MCP UserContext header cannot be Authorization")
+
+    effective_request_id = str(request_id or uuid.uuid4())
+    assertion = issue_user_assertion(
+        user_info=user_info or {},
+        agent_info=agent_info or {},
+        audience=effective_audience,
+        request_id=effective_request_id,
+        private_key=private_key,
+        key_id=key_id,
+        issuer=effective_issuer,
+    )
+    return {effective_header: assertion, "X-Request-ID": effective_request_id}
+
+
 def build_mcp_headers(
     server: Any,
     *,
@@ -122,35 +176,14 @@ def build_mcp_headers(
     headers = resolve_mcp_auth_headers(server)
     # UserContext 透传独立于 MCP 自身认证方式。MCP 可以没有
     # Authorization Bearer Token，但只要开启该开关，仍应发送用户断言。
-    enabled = bool(getattr(server, "user_assertion_enabled", False))
-    if not enabled:
-        return headers
-
-    audience = str(getattr(server, "user_assertion_audience", "") or "").strip()
-    key_id = str(getattr(server, "user_assertion_key_id", "") or "").strip()
-    assertion_header = str(
-        getattr(server, "user_assertion_header", None) or DEFAULT_ASSERTION_HEADER
-    ).strip()
-    private_key = private_key or load_mcp_private_key(server)
-    if not private_key:
-        raise ValueError("MCP UserContext private key is required")
-    if not audience:
-        raise ValueError("MCP UserContext audience is required")
-    if not key_id:
-        raise ValueError("MCP UserContext key ID is required")
-    if not assertion_header or assertion_header.lower() == "authorization":
-        raise ValueError("MCP UserContext header cannot be Authorization")
-
-    effective_request_id = str(request_id or uuid.uuid4())
-    assertion = issue_user_assertion(
-        user_info=user_info or {},
-        agent_info=agent_info or {},
-        audience=audience,
-        request_id=effective_request_id,
-        private_key=private_key,
-        key_id=key_id,
-        issuer=str(getattr(server, "user_assertion_issuer", None) or issuer),
+    headers.update(
+        build_mcp_user_assertion_headers(
+            server,
+            user_info=user_info,
+            agent_info=agent_info,
+            request_id=request_id,
+            private_key=private_key,
+            issuer=issuer,
+        )
     )
-    headers[assertion_header] = assertion
-    headers["X-Request-ID"] = effective_request_id
     return headers
