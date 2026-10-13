@@ -109,11 +109,12 @@ def _list_forbidden_skill_candidates() -> list[dict[str, Any]]:
 @router.get("/forbidden-catalog", response_model=Dict[str, Any])
 async def list_forbidden_tool_catalog(
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_api_key),
+    user: Dict = Depends(require_permission("element", "element:user:edit")),
 ):
-    """返回可禁用的工具候选：内置高危工具（含运行时别名）+ 自定义 API 与已发布 MCP 工具。
+    """返回可禁用的工具候选：内置高危工具（含运行时别名）+ 自定义 API 与已发布 MCP 工具 + 公共技能。
 
     只读、幂等；不返回任何用户已配置的禁用项（已选项由权限接口回显）。
+    权限与"保存禁用项"的接口保持一致：能配禁用才需要看候选，避免任意登录用户枚举全部工具/MCP/技能清单。
     """
     api_tools = (
         await db.execute(select(SysApiTool).order_by(SysApiTool.created_at.desc()))

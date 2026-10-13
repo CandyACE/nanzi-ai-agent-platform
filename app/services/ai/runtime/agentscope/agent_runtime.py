@@ -87,14 +87,27 @@ def build_runtime_middlewares(
         decision: Any,
     ) -> Any:
         del agent, decision
-        from app.services.ai.runtime.agentscope.tools import enforce_tool_forbidden
+        from app.services.ai.runtime.agentscope.tools import (
+            enforce_command_forbidden,
+            enforce_tool_forbidden,
+        )
 
         tool = input_kwargs.get("tool")
         tool_call = input_kwargs.get("tool_call")
         tool_name = getattr(tool, "name", None) or getattr(tool_call, "name", None)
         if not tool_name:
             return None
-        return await enforce_tool_forbidden(str(tool_name), user_id)
+        tool_decision = await enforce_tool_forbidden(str(tool_name), user_id)
+        if tool_decision is not None:
+            return tool_decision
+        # 命令黑名单必须在这里再拦一次：引擎的「只读快速通道」(Step 3) 会先于工具的
+        # check_permissions (Step 4) 直接返回 ALLOW，而平台的命令校验原先只挂在后者，
+        # 于是 `cat /etc/passwd` 这类只读命令完全绕过禁用。deny_override 包裹在整个权限
+        # 解析之外，是唯一能覆盖快速通道的位置。
+        tool_input = input_kwargs.get("tool_input")
+        if isinstance(tool_input, dict):
+            return await enforce_command_forbidden(str(tool_name), tool_input, user_id)
+        return None
 
     middlewares: list[Any] = [
         ToolPermissionMiddleware(

@@ -35,8 +35,10 @@ class PermissionSet(BaseModel):
             entry = str(raw_entry).strip()
             if not entry:
                 continue
-            if len(entry) > 100:
-                raise ValueError("Forbidden policy entries cannot exceed 100 characters")
+            # 上限与工具名对齐（SysApiTool.name 与外部 MCP 工具名可达 255）。此前是 100，
+            # 一个超长工具名被勾中就会让整页权限（含菜单/元素/命令/技能）保存 422，且永远禁不掉。
+            if len(entry) > 255:
+                raise ValueError("Forbidden policy entries cannot exceed 255 characters")
             dedupe_key = entry.casefold()
             if dedupe_key in seen:
                 continue
@@ -67,6 +69,14 @@ class UserPermissionsResponse(BaseModel):
     roles: List[str] = Field(default_factory=list, description="Assigned roles (reserved)")
     permissions: PermissionSet
     details: Optional[PermissionSetDetail] = None
+    direct_permissions: Optional[PermissionSet] = Field(
+        default=None,
+        description=(
+            "仅该用户直配的权限（不含角色继承）。禁用资源页必须用它回显与提交："
+            "permissions 是「用户 ∪ 角色」的有效权限，直接整份写回会把角色级禁用固化成"
+            "用户级记录，导致角色侧取消后用户仍被禁（黑名单收不回来）。"
+        ),
+    )
 
 class PermissionUpdate(PermissionSet):
     """Payload for updating user permissions"""

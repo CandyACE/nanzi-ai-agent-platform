@@ -337,6 +337,13 @@ async def get_user_permissions(
         request.app,
         response.permissions.apis or [],
     )
+    # 禁用资源页要的是「用户直配」而不是这个并集：拿并集整份写回会把角色级禁用固化成
+    # 用户级记录（角色侧取消后用户仍被禁）。apis 同样归一，保持两份结构可比。
+    response.direct_permissions = await service.get_user_direct_permissions(user_id)
+    response.direct_permissions.apis = normalize_api_permission_ids(
+        request.app,
+        response.direct_permissions.apis or [],
+    )
     return response
 
 @router.put("/users/{user_id}/permissions")

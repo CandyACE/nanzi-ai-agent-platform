@@ -1089,6 +1089,16 @@ class AgentService:
         # 入口把缺失身份降级为 anonymous 后继续执行。
         required_user_id = require_user_id(user_info)
 
+        # 预热「禁用公共技能」的同步读缓存：原生 Read/Glob/Grep 与 /api/v1/chat/fs 的读判定
+        # 是同步函数，只能读进程内缓存；会话开始时先填一次，否则本轮的读判定会落在
+        # "缓存未命中即放行"的窗口里。查询失败只降级放行，不影响会话（见 policy.prime_*）。
+        try:
+            from app.services.ai.skills.policy import prime_forbidden_skill_cache
+
+            await prime_forbidden_skill_cache(required_user_id, max_age_seconds=0)
+        except Exception:
+            logger.debug("[AgentService] priming forbidden skill cache failed", exc_info=True)
+
         trace_id = str(uuid.uuid4())
         trace_buffer: List[AgentExecutionStep] = []
         if shared_state is None:

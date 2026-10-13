@@ -108,6 +108,8 @@ def test_save_and_read_paths_cover_forbidden_skill():
     source = Path("app/services/permission_service.py").read_text(encoding="utf-8")
 
     assert source.count('resource_type="forbidden_skill"') == 2, "用户级与角色级保存各需一处"
-    assert '"forbidden_skill"' in source.split("types_to_update = ")[1].split("]")[0]
+    # 删除范围现在是按 model_fields_set 条件追加的映射表（F5：未提交的字段不重建记录），
+    # 用户级与角色级各有一份。
+    assert source.count('("forbidden_skills", "forbidden_skill"),') == 2
     assert 'p.resource_type == "forbidden_skill"' in source
     assert "details.forbidden_skills = [" in source

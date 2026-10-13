@@ -1662,6 +1662,14 @@ async def enforce_tool_forbidden(
     if explicit_user_id is None and agent_ctx and agent_ctx.is_admin:
         return None
 
+    if not user_id:
+        # 「查不到身份」此前是静默放行：与查询失败的 fail-closed 行为相反，又没有任何痕迹，
+        # 线上无法区分「没禁」和「没身份所以没查」。至少留下可告警的日志。
+        logger.warning(
+            "[forbidden] No user identity when enforcing tool blacklist for tool=%s; allowing",
+            tool_name,
+        )
+
     if user_id:
         try:
             from app.core.orm import AsyncSessionLocal
@@ -1717,6 +1725,13 @@ async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any],
     if explicit_user_id is None and agent_ctx and agent_ctx.is_admin:
         return None
 
+    if not user_id:
+        # 同工具侧：身份缺失是静默放行，必须留痕，否则无法区分「没禁」与「没查」
+        logger.warning(
+            "[forbidden] No user identity when enforcing command blacklist for tool=%s; allowing",
+            tool_name,
+        )
+
     if user_id:
         try:
             from app.core.orm import AsyncSessionLocal
@@ -1734,6 +1749,12 @@ async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any],
                     command_str = str(tool_input.get("command", ""))
                     for w in forbidden_cmds:
                         if _matches_forbidden_command(command_str, w):
+                            logger.warning(
+                                "[forbidden] Command blacklist hit user=%s tool=%s rule=%s",
+                                user_id,
+                                tool_name,
+                                w,
+                            )
                             return PermissionDecision(
                                 behavior=PermissionBehavior.DENY,
                                 message=f"安全策略拦截：您的账号已被禁止在该智能体中执行包含 '{w}' 的命令。",
@@ -1744,6 +1765,10 @@ async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any],
             logger.exception("Failed to enforce forbidden commands for user %s", user_id)
             return _permission_policy_unavailable_decision()
     return None
+
+
+# 公开名：deny_override 需要在引擎只读快速通道之上再拦一次命令（见 agent_runtime）。
+enforce_command_forbidden = _enforce_command_blacklist
 
 
 def _permission_policy_unavailable_decision() -> Any:

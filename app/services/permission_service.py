@@ -29,9 +29,10 @@ class PermissionService:
         return self._redis
 
     async def _get_cache_key(self, user_id: int) -> str:
-        # v4: 新增 models（聊天模型白名单）。旧缓存缺该字段会解析成空列表 = 不限制，
-        # 会让「刚配好的白名单不生效」难以排查，因此升版本强制回源。
-        return f"sys:auth:permissions:v4:user:{user_id}"
+        # v5: 新增 forbidden_skills（禁用公共技能）。理由与 v4 相同——旧缓存缺该字段会解析成
+        # 空列表 = 未禁用，会让「刚配好的禁用不生效」难以排查，因此升版本强制回源。
+        # 版本沿革：v2（仍在失效列表里兼容清理）、v4（新增 models）、v5（新增禁用技能）。
+        return f"sys:auth:permissions:v5:user:{user_id}"
 
     async def get_user_permissions(self, user_id: int) -> UserPermissionsResponse:
         try:
@@ -108,6 +109,39 @@ class PermissionService:
             )
 
         return response
+
+    async def get_user_direct_permissions(self, user_id: int) -> PermissionSet:
+        """仅该用户直配的权限（不含角色继承）。
+
+        禁用资源页必须基于它回显与提交：``get_user_permissions`` 返回的是「用户 ∪ 角色」的
+        有效权限，拿它整份写回会把角色级禁用固化成用户级记录——角色侧随后取消禁用，
+        用户依旧被禁（黑名单收不回来）。
+        """
+        try:
+            parsed_uid = int(user_id)
+        except (TypeError, ValueError):
+            parsed_uid = user_id
+        stmt = select(ResourcePermission).where(
+            ResourcePermission.user_id == parsed_uid,
+            ResourcePermission.enabled == True,
+        )
+        rows = (await self.db.execute(stmt)).scalars().all()
+        perm_set = PermissionSet()
+        self._aggregate_permissions(perm_set, rows)
+        return perm_set
+
+    async def _role_derived_forbidden_ids(self, user_id: int, resource_type: str) -> set[str]:
+        """该用户经角色继承到的禁用项（用于避免在用户级重复落库）。"""
+        stmt = (
+            select(ResourcePermission.resource_id)
+            .join(UserRoleRelation, ResourcePermission.role_id == UserRoleRelation.role_id)
+            .where(
+                UserRoleRelation.user_id == user_id,
+                ResourcePermission.resource_type == resource_type,
+                ResourcePermission.enabled == True,
+            )
+        )
+        return {str(value) for value in (await self.db.execute(stmt)).scalars().all()}
 
     async def get_accessible_dataset_ids_csv(self, user_id: int) -> str:
         """
@@ -647,8 +681,16 @@ class PermissionService:
     async def update_user_permissions(self, user_id: int, updates: PermissionUpdate):
         """Update DIRECT user permissions"""
         try:
-            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command", "forbidden_skill"]
-            # 未显式提交 models（旧客户端）时不触碰 model 记录，避免静默清空白名单
+            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element"]
+            # 未显式提交的字段一律不触碰对应记录：旧 bundle / 外部脚本整份 PUT 时会缺这些字段，
+            # 若照旧重建就会静默清空禁用项与模型白名单（这两类"少了等于放开"，代价最大）。
+            for field, resource_type in (
+                ("forbidden_tools", "forbidden_tool"),
+                ("forbidden_commands", "forbidden_command"),
+                ("forbidden_skills", "forbidden_skill"),
+            ):
+                if field in updates.model_fields_set:
+                    types_to_update.append(resource_type)
             if "models" in updates.model_fields_set:
                 types_to_update = [*types_to_update, "model"]
             await self.db.execute(
@@ -671,11 +713,25 @@ class PermissionService:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="menu", resource_id=menu_id))
             for element_id in updates.elements:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="element", resource_id=element_id))
+            # 防御旧前端：它回显「用户 ∪ 角色」的并集并整份提交，若不剔除角色级已有的项，
+            # 角色级禁用会被固化成用户级记录（角色侧取消后用户仍被禁）。新前端只提交直配项，
+            # 因此这里的剔除对它是空操作；对旧前端则是"不制造不可回收的黑名单"的兜底。
+            _uid = int(user_id) if str(user_id).isdigit() else user_id
+            derived_forbidden = {
+                rt: await self._role_derived_forbidden_ids(_uid, rt)
+                for rt in ("forbidden_tool", "forbidden_command", "forbidden_skill")
+            }
             for t_id in updates.forbidden_tools:
+                if t_id in derived_forbidden["forbidden_tool"]:
+                    continue
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_tool", resource_id=t_id))
             for cmd in updates.forbidden_commands:
+                if cmd in derived_forbidden["forbidden_command"]:
+                    continue
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_command", resource_id=cmd))
             for skill_id in updates.forbidden_skills:
+                if skill_id in derived_forbidden["forbidden_skill"]:
+                    continue
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_skill", resource_id=skill_id))
             for model_id in (updates.models if "models" in updates.model_fields_set else []):
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="model", resource_id=str(model_id)))
@@ -734,8 +790,16 @@ class PermissionService:
     async def update_role_permissions(self, role_id: int, updates: PermissionUpdate):
         """Update Role Permissions"""
         try:
-            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command", "forbidden_skill"]
-            # 未显式提交 models（旧客户端）时不触碰 model 记录，避免静默清空白名单
+            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element"]
+            # 未显式提交的字段一律不触碰对应记录：旧 bundle / 外部脚本整份 PUT 时会缺这些字段，
+            # 若照旧重建就会静默清空禁用项与模型白名单（这两类"少了等于放开"，代价最大）。
+            for field, resource_type in (
+                ("forbidden_tools", "forbidden_tool"),
+                ("forbidden_commands", "forbidden_command"),
+                ("forbidden_skills", "forbidden_skill"),
+            ):
+                if field in updates.model_fields_set:
+                    types_to_update.append(resource_type)
             if "models" in updates.model_fields_set:
                 types_to_update = [*types_to_update, "model"]
             await self.db.execute(
@@ -790,8 +854,9 @@ class PermissionService:
         redis = await self._get_redis()
         if redis:
             await redis.delete(await self._get_cache_key(user_id))
-            # 兼容历史 v2 key，避免旧缓存继续命中
+            # 兼容历史 v2 / v4 key，避免旧缓存继续命中
             await redis.delete(f"sys:auth:permissions:v2:user:{user_id}")
+            await redis.delete(f"sys:auth:permissions:v4:user:{user_id}")
             try:
                 from app.services.ai.config import AgentConfigProvider
                 await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=user_id)

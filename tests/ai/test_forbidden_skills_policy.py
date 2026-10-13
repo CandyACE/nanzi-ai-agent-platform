@@ -218,24 +218,62 @@ def test_preseed_prunes_skills_that_became_forbidden(tmp_path, skills_env):
     _preseed_session_skills(workdir, [alpha, beta])
     assert len(_seeded_index(workdir)) == 2
 
-    # beta 之后被禁用 → 只传 alpha：索引与磁盘目录都要少一个
-    _preseed_session_skills(workdir, [alpha])
+    # beta 之后被禁用：清理以**禁用集合**为权威，而不是"当前可用集合"
+    _preseed_session_skills(workdir, [alpha], forbidden_skill_ids={"beta"})
 
     assert len(_seeded_index(workdir)) == 1
     assert len(_seeded_dirs(workdir)) == 1
 
 
-def test_preseed_keeps_snapshot_when_the_available_set_is_empty(tmp_path, skills_env):
-    """可用集合为空更可能是技能源目录临时读不到，此时宁可留着也不误删整份快照。"""
+def test_preseed_keeps_snapshot_when_nothing_is_forbidden(tmp_path, skills_env):
+    """没有被禁技能时不做任何清理：源目录临时读不到之类的抖动不能误删整份快照。"""
     from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
 
     workdir = tmp_path / "session"
     _preseed_session_skills(workdir, [str(skills_env.global_root / "alpha")])
 
-    _preseed_session_skills(workdir, [])
+    _preseed_session_skills(workdir, [], forbidden_skill_ids=set())
 
     assert len(_seeded_index(workdir)) == 1
     assert len(_seeded_dirs(workdir)) == 1
+
+
+def test_preseed_does_not_delete_another_agents_skills_in_the_same_session(tmp_path, skills_env):
+    """同一会话里不同智能体各有自己的可用集合，清理绝不能以"当前可用集合"为权威。
+
+    曾经的实现正是那样：智能体 A 铺了 alpha+beta，随后路由到白名单只有 alpha 的智能体 B，
+    B 这次播种会把 beta 目录一并删掉（workdir 是会话级共享的），A 回到会话时技能静默变少。
+    """
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    workdir = tmp_path / "session"
+    alpha = str(skills_env.global_root / "alpha")
+    beta = str(skills_env.global_root / "beta")
+
+    _preseed_session_skills(workdir, [alpha, beta])  # 智能体 A：全量
+    _preseed_session_skills(workdir, [alpha])  # 智能体 B：窄白名单，且没有人被禁
+
+    assert len(_seeded_dirs(workdir)) == 2, "别的智能体的技能不该被删掉"
+    assert len(_seeded_index(workdir)) == 2
+
+
+def test_prune_targets_only_the_forbidden_skill(tmp_path, skills_env):
+    """窄白名单与部分禁用同时出现时，只删被禁的那个。"""
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    workdir = tmp_path / "session"
+    alpha = str(skills_env.global_root / "alpha")
+    beta = str(skills_env.global_root / "beta")
+
+    _preseed_session_skills(workdir, [alpha, beta])
+    _preseed_session_skills(workdir, [alpha], forbidden_skill_ids={"beta"})
+
+    remaining = _seeded_dirs(workdir)
+    assert len(remaining) == 1
+    kept = workdir / "skills" / next(iter(remaining)) / "SKILL.md"
+    assert kept.read_text(encoding="utf-8") == (
+        skills_env.global_root / "alpha" / "SKILL.md"
+    ).read_text(encoding="utf-8"), "留下的应当正是未被禁的 alpha"
 
 
 def test_injector_wires_forbidden_skills_into_every_injection_path():

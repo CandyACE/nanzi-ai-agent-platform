@@ -147,3 +147,129 @@ def enrich_messages_with_skill_meta(messages: List[Dict[str, Any]]) -> None:
         last["content"] = f"{content.strip()}{USER_MESSAGE_CONTEXT_DIVIDER}{context_block}"
     else:
         last["content"] = f"{USER_MESSAGE_CONTEXT_DIVIDER}{context_block}"
+
+
+# 隐式指令里的技能正文路径：前端 getServerAttachmentPath 与本模块 build_skill_attachment_hint
+# 都写死成这一种形状（"/app/data/skills/<技能 id>/SKILL.md"），因此按它识别"这条提示指向哪个技能"。
+SKILL_MD_ABSOLUTE_PATH_RE = re.compile(r"/app/data/skills/([^/\s]+)/SKILL\.md")
+
+# 上下文块内部各条附件提示之间的分隔（前端 contextLines.join("\n\n") 与本模块 hints 拼接同源）
+_CONTEXT_HINT_SEPARATOR = "\n\n"
+
+FORBIDDEN_SKILL_ATTACHMENT_NOTICE = (
+    "用户本轮挂载的技能「{skill_id}」已被管理员禁用，不可使用；"
+    "其技能描述文件不可读取，禁止尝试读取或检索该技能的任何文件。"
+)
+
+
+def forbidden_skill_attachment_notice(skill_id: str) -> str:
+    """被禁技能的挂载说明：明确"不可用、不可读"，且**不带任何绝对路径**。"""
+    return FORBIDDEN_SKILL_ATTACHMENT_NOTICE.format(skill_id=str(skill_id or "").strip())
+
+
+def _skill_attachment_id(item: Any) -> str:
+    if not isinstance(item, dict) or item.get("type") != "skill":
+        return ""
+    return str(item.get("url") or "").strip()
+
+
+def _skill_attachment_is_personal(item: Any) -> bool:
+    """挂载项是否指向**个人技能**（个人技能与公共技能可能同名）。"""
+    if not isinstance(item, dict):
+        return False
+    scopes = [item.get("scope")]
+    meta = item.get("skillMeta") or item.get("skill_meta")
+    if isinstance(meta, dict):
+        scopes.append(meta.get("scope"))
+    return any(str(scope or "").strip().lower() == "personal" for scope in scopes)
+
+
+def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:
+    if not blocked_ids:
+        return content
+    parts = content.split(_CONTEXT_HINT_SEPARATOR)
+    rewritten: list[str] = []
+    changed = False
+    for part in parts:
+        hit_ids = {
+            skill_id
+            for skill_id in SKILL_MD_ABSOLUTE_PATH_RE.findall(part)
+            if skill_id in blocked_ids
+        }
+        if not hit_ids:
+            rewritten.append(part)
+            continue
+        changed = True
+        rewritten.append(
+            "\n".join(forbidden_skill_attachment_notice(skill_id) for skill_id in sorted(hit_ids))
+        )
+    if not changed:
+        return content
+    return _CONTEXT_HINT_SEPARATOR.join(rewritten)
+
+
+def sanitize_forbidden_skill_context(
+    messages: List[Dict[str, Any]],
+    forbidden_ids: Optional[Any],
+) -> int:
+    """就地清洗被禁技能的挂载项与提示文本，返回被移除的附件个数。
+
+    必须在 ``memory_service.add_message``（落库）与 ``enrich_messages_with_skill_meta``
+    （依据 files 重建提示）**之前**调用：挂载提示里带着被禁技能 SKILL.md 的绝对路径，
+    等于在提示词里教模型去读被禁技能的正文；落库之后这条路径还会永久留在会话历史里。
+
+    两条处理，缺一不可：
+    1. ``files`` 里被禁技能附件直接移除（模型看不到"已挂载"这件事）；
+    2. 已生成的提示文本整条改写成明确的不可用说明——只删附件不改文本的话，历史里
+       旧提示拼接出来的绝对路径仍然会进模型。
+
+    个人技能（scope=personal）不受影响：产品口径是"禁的是平台发布的那一份"，
+    用户自建的同名技能照旧可用，因此同名 id 先按 scope 排除再算禁用集合。
+    """
+    forbidden = {
+        str(skill_id).strip()
+        for skill_id in (forbidden_ids or ())
+        if str(skill_id).strip()
+    }
+    if not forbidden or not messages:
+        return 0
+
+    removed = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        files = message.get("files")
+        skill_items = (
+            [item for item in files if isinstance(item, dict) and item.get("type") == "skill"]
+            if isinstance(files, list)
+            else []
+        )
+        personal_ids = {
+            _skill_attachment_id(item)
+            for item in skill_items
+            if _skill_attachment_is_personal(item)
+        }
+        blocked_ids = forbidden - personal_ids
+        if not blocked_ids:
+            continue
+
+        if isinstance(files, list):
+            kept = [
+                item
+                for item in files
+                if not (
+                    isinstance(item, dict)
+                    and item.get("type") == "skill"
+                    and _skill_attachment_id(item) in blocked_ids
+                )
+            ]
+            if len(kept) != len(files):
+                removed += len(files) - len(kept)
+                message["files"] = kept
+
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            rewritten = _rewrite_forbidden_skill_hints(content, blocked_ids)
+            if rewritten != content:
+                message["content"] = rewritten
+    return removed

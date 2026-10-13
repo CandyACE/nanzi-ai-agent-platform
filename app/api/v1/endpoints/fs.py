@@ -33,9 +33,27 @@ from app.utils.fs_access import (
     resolve_parent_path,
 )
 
-router = APIRouter()
-
 logger = logging.getLogger(__name__)
+
+
+async def _prime_forbidden_skill_cache(
+    user_info: Dict[str, Any] = Depends(require_api_key),
+) -> None:
+    """文件系统接口的前置预热：被禁技能的读判定是同步函数，只能读进程内缓存。
+
+    不带这层预热时，用户直接调 /api/v1/chat/fs/* 会落在"缓存未命中即放行"的窗口里，
+    被禁技能的 SKILL.md 仍然读得到。依赖对象与各端点自身的 require_api_key 相同，
+    FastAPI 复用同一份认证结果（不会重复认证）；查询失败只降级放行，不阻断接口。
+    """
+    try:
+        from app.services.ai.skills.policy import prime_forbidden_skill_cache
+
+        await prime_forbidden_skill_cache(user_info=user_info)
+    except Exception:
+        logger.debug("[fs] priming forbidden skill cache failed", exc_info=True)
+
+
+router = APIRouter(dependencies=[Depends(_prime_forbidden_skill_cache)])
 
 TRASH_DIR_NAME = ".trash"
 WORKSPACE_RECENT_FILES_MAX = 20
