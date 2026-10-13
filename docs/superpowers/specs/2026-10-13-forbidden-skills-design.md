@@ -141,7 +141,7 @@
 | A2 | **被禁技能正文仍可读**：`SKILLS_DIR` 整体在公共可读根里（`list_accessible_directories` 还主动指路），且显式挂载时提示词里仍写着 `/app/data/skills/<id>/SKILL.md` 绝对路径——首版只拦住了"注入"这一层 | 读权限按当前用户可用技能收口（`fs_access.is_forbidden_platform_skill_path` 插在**白名单之前**，只认平台技能根且只比第一段完整目录名，避免 `alpha_1` 被 `alpha` 误伤；管理员豁免）；同步判定走 policy 侧 60s 进程内缓存，**拿不到集合即放行**（不能把权限抖动放大成"所有技能都读不到"），失败不写缓存；挂载提示按禁用集合清洗（含写入历史之前），前端也不再为被禁技能生成"绝对路径可读"的提示 |
 | A3 | 快照清理只在**工作区创建**分支执行，缓存命中直接 `return` → 权限收紧后旧快照在进程存活期内一直可读（首版"修掉老会话残留"只做了一半） | 缓存命中分支同样按当前禁用集合清理一次 |
 | A4 | **清理的权威集合选错了**：原来拿"当前请求可用的技能集合"去删共享的 `<workdir>/skills`，而 `workdir` 是会话级共享、`skills_fp` 是按智能体区分的——同一会话切到窄白名单智能体，会把**别的智能体**的技能删掉 | 改为只按**被禁技能的内容哈希**清理：只删"确定被禁"的项，绝不把"本次没允许的"当陈旧 |
-| A5 | 命令黑名单只认 `{exec_command, bash}` 两个名字；沙箱终端 HTTP 接口执行命令完全不走黑名单 | 记为待办（本轮未修） |
+| A5 | 命令黑名单只认 `{exec_command, bash}` 两个名字——沙箱容器里的 shell 是 MCP 工具 `mcp_sandbox_bash_<hash>`（模型侧名字由 `build_model_tool_name` 生成），那条路径完全不校验；沙箱终端 HTTP 接口（`/sandbox/docker/workspace/exec`、`/sandbox/k8s/workspace/exec`，前端 Terminal 面板在用）直接调运行时执行函数，一次都没查 `forbidden_commands`。同一个「执行命令」动作，走 `code_execution_service` 有校验、走终端面板没有 | 命令策略收敛为单一来源 `runtime/command_policy.py`（查询、匹配、文案各一份），三个入口共用；工具名判定由两个硬编码名字改为 `is_shell_like_tool_name`（精确名集合 + `mcp_*` 中含 bash/shell/exec）；沙箱两个终端端点在真正下发执行前校验，命中 403、策略不可用 503（fail-closed）。顺带发现 `_shell_deletion_permission_decision`（删除保护）有同一个 gate，一并修正 |
 | A6 | 无身份时三类禁用**静默 fail-open 且无日志**；技能侧查询失败 fail-open、工具/命令 fail-closed，方向不一致且不可观测 | 身份缺失与失败都留 warning/error 日志。技能侧**刻意保持 fail-open**：工具拒绝的是"这一次调用"，技能侧 fail-closed 会让整个技能清单不可用，代价不对称——用 error 级别保证可告警 |
 | B1 | `current_user_info` 回退读 `u_id_val`/`id`，而生产只塞 `user_id` → 该回退是**死代码**，只能靠 ctx 兜底 | 身份抽取收敛到一个辅助函数，键顺序补 `user_id`/`uid` |
 | B2 | 技能被丢弃零日志、零审计，用户侧也看不到原因 | 丢弃挂载时留 warning（列出被丢的技能 id） |

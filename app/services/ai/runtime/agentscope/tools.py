@@ -36,6 +36,12 @@ from app.services.ai.runtime.agentscope.tool_parallel import (
 
 logger = logging.getLogger(__name__)
 
+from app.services.ai.runtime.command_policy import (  # noqa: E402
+    is_shell_like_tool_name,
+    matches_forbidden_command,
+    shell_command_tokens,
+)
+
 
 ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
 RuntimePermissionScope = Literal["read", "write", "ask", "dangerous"]
@@ -1621,7 +1627,9 @@ def _shell_deletion_permission_decision(
     *,
     cwd: str,
 ) -> Any:
-    if tool_name.lower() not in {"exec_command", "bash"}:
+    # 与命令黑名单同一套识别：只认两个名字会让沙箱 MCP 的 shell
+    # （mcp_sandbox_bash_<hash>）绕过删除保护
+    if not is_shell_like_tool_name(tool_name):
         return None
 
     from agentscope.permission import PermissionBehavior, PermissionDecision
@@ -1715,7 +1723,22 @@ _enforce_tool_forbidden = enforce_tool_forbidden
 
 
 async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any], explicit_user_id: int | str | None = None) -> Any:
-    if tool_name.lower() not in {"exec_command", "bash"}:
+    """命令禁用判定（工具链入口）。
+
+    工具名判定走 ``is_shell_like_tool_name`` 而不是硬编码的 ``{exec_command, bash}``：
+    沙箱容器里的 shell 是 MCP 工具 ``mcp_sandbox_bash_<hash>``（模型侧名字由
+    ``build_model_tool_name`` 生成），只认两个名字会让那条路径完全不校验。
+
+    查询与匹配委托 ``runtime.command_policy``，与代码执行服务、沙箱终端接口同源。
+    """
+    from app.services.ai.runtime.command_policy import (
+        CommandPolicyUnavailable,
+        command_forbidden_message,
+        find_forbidden_command_rule,
+        is_shell_like_tool_name,
+    )
+
+    if not is_shell_like_tool_name(tool_name):
         return None
 
     from app.core.context import get_current_agent_context
@@ -1726,45 +1749,32 @@ async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any],
         return None
 
     if not user_id:
-        # 同工具侧：身份缺失是静默放行，必须留痕，否则无法区分「没禁」与「没查」
+        # 身份缺失是静默放行，必须留痕，否则无法区分「没禁」与「没查」
         logger.warning(
             "[forbidden] No user identity when enforcing command blacklist for tool=%s; allowing",
             tool_name,
         )
+        return None
 
-    if user_id:
-        try:
-            from app.core.orm import AsyncSessionLocal
-            from app.services.permission_service import PermissionService
-            from agentscope.permission import PermissionBehavior, PermissionDecision
+    from agentscope.permission import PermissionBehavior, PermissionDecision
 
-            async with AsyncSessionLocal() as session:
-                perm_service = PermissionService(session)
-                perms = await perm_service.get_user_permissions(int(user_id))
-                if "admin" in perms.roles:
-                    return None
+    try:
+        rule = await find_forbidden_command_rule(user_id, [tool_input.get("command", "")])
+    except CommandPolicyUnavailable:
+        # 与工具/命令侧既有约定一致：策略查不到就拒绝这一次调用
+        return _permission_policy_unavailable_decision()
+    except Exception:
+        logger.exception("Failed to enforce forbidden commands for user %s", user_id)
+        return _permission_policy_unavailable_decision()
 
-                forbidden_cmds = [cmd.lower().strip() for cmd in (perms.permissions.forbidden_commands or []) if cmd.strip()]
-                if forbidden_cmds:
-                    command_str = str(tool_input.get("command", ""))
-                    for w in forbidden_cmds:
-                        if _matches_forbidden_command(command_str, w):
-                            logger.warning(
-                                "[forbidden] Command blacklist hit user=%s tool=%s rule=%s",
-                                user_id,
-                                tool_name,
-                                w,
-                            )
-                            return PermissionDecision(
-                                behavior=PermissionBehavior.DENY,
-                                message=f"安全策略拦截：您的账号已被禁止在该智能体中执行包含 '{w}' 的命令。",
-                                decision_reason="hit_user_command_blacklist",
-                                bypass_immune=True,
-                            )
-        except Exception as err:
-            logger.exception("Failed to enforce forbidden commands for user %s", user_id)
-            return _permission_policy_unavailable_decision()
-    return None
+    if not rule:
+        return None
+    return PermissionDecision(
+        behavior=PermissionBehavior.DENY,
+        message=command_forbidden_message(rule),
+        decision_reason="hit_user_command_blacklist",
+        bypass_immune=True,
+    )
 
 
 # 公开名：deny_override 需要在引擎只读快速通道之上再拦一次命令（见 agent_runtime）。
@@ -1782,18 +1792,10 @@ def _permission_policy_unavailable_decision() -> Any:
     )
 
 
-def _shell_command_tokens(command: str) -> list[str]:
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
-        lexer.whitespace_split = True
-        raw_tokens = list(lexer)
-    except ValueError:
-        raw_tokens = command.split()
-    return [
-        os.path.basename(token).lower()
-        for token in raw_tokens
-        if token and not all(char in ";&|()" for char in token)
-    ]
+# 匹配实现已收敛到 runtime.command_policy；这里 re-export 以保持既有导入路径可用
+# （tests/ai/runtime/test_agentscope_tooling.py 直接导入 _matches_forbidden_command）。
+_shell_command_tokens = shell_command_tokens
+_matches_forbidden_command = matches_forbidden_command
 
 
 def _matches_forbidden_command(command: str, rule: str) -> bool:

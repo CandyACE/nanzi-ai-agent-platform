@@ -37,6 +37,7 @@ from app.services.ai.runtime.agentscope.docker_prebuild import (
     docker_workspace_prebuild_status,
     prebuild_docker_workspace_image,
 )
+from app.services.ai.runtime.command_policy import enforce_command_policy_for_http
 from app.services.ai.runtime.agentscope.workspace import (
     DockerSandboxUnavailableError,
     build_sandbox_workspace_for_test,
@@ -419,6 +420,13 @@ async def exec_docker_workspace_endpoint(
     if not conversation_id:
         raise HTTPException(status_code=400, detail="conversation_id 不能为空")
 
+    # 终端面板执行命令同样受 forbidden_commands 约束：这个入口以前完全不校验，
+    # 于是「禁了某命令」的用户换到终端面板就能跑（与 code_execution_service 口径不一致）。
+    await enforce_command_policy_for_http(
+        user_id=user_info.get("user_id") or user_info.get("id"),
+        commands=[body.command],
+    )
+
     try:
         result = await exec_docker_workspace_command_runtime(
             user_id=user_info.get("user_id") or user_info.get("id"),
@@ -652,6 +660,12 @@ async def exec_k8s_workspace_endpoint(
     conversation_id = body.conversation_id.strip()
     if not conversation_id:
         raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    # 同 docker 端点：k8s 交互终端也必须过同一套命令禁用策略
+    await enforce_command_policy_for_http(
+        user_id=user_info.get("user_id") or user_info.get("id"),
+        commands=[body.command],
+    )
 
     try:
         result = await exec_k8s_workspace_command_runtime(
