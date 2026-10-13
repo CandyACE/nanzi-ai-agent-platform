@@ -638,3 +638,100 @@ return {
     assert result["stringNumber"]["version_number"] == 9, "字符串版本号要能解析"
     assert result["bogusNumber"]["version_number"] is None, "解析不出来就是 null，不要出现 NaN"
     assert result["missingPublishedFlag"]["is_published"] is False, "缺省按未发布处理"
+
+
+# ---------------------------------------------------------------------------
+# 「不可限定」项（个人技能）：置灰只读，且永不进入本层记录
+#
+# 后端对个人技能打 not_restrictable 标记，因为权限侧三处过滤全部排除个人技能
+# （与公共技能可能同名，只按 id 判定会连坐用户自建的那一份）。界面上它必须
+# 既不参与勾选计数，也不能被保存——否则就是"勾了能存、运行时不读"的空转。
+# ---------------------------------------------------------------------------
+
+GROUPS_WITH_PERSONAL_JSON = json.dumps(
+    [
+        {
+            "key": "public_skills",
+            "label": "公共技能",
+            "items": [
+                {"id": "pdf", "label": "PDF 处理", "forbidden_globally": False},
+                {"id": "legacy_report", "label": "报表", "forbidden_globally": True},
+            ],
+        },
+        {
+            "key": "personal_skills",
+            "label": "个人技能",
+            "items": [
+                {
+                    "id": "my_skill",
+                    "label": "我的技能",
+                    "forbidden_globally": False,
+                    "not_restrictable": True,
+                    "not_restrictable_reason": "个人技能不支持限定：权限侧只对公共技能生效",
+                },
+            ],
+        },
+    ]
+)
+
+
+def test_not_restrictable_items_are_not_selectable():
+    """可勾选集合排除不可限定项：页签与分组分母都由它推导。"""
+    result = _run_typescript(
+        f"""
+const groups = api.normalizeRestrictableGroups({{ groups: {GROUPS_WITH_PERSONAL_JSON} }});
+const personal = groups.find((group) => group.key === 'personal_skills');
+return {{
+  personalSelectable: api.selectableItems(personal.items).length,
+  personalTotal: personal.items.length,
+  personalState: api.groupSelectionState(['my_skill'], personal.items),
+  flagPassedThrough: personal.items[0].not_restrictable === true,
+  reason: personal.items[0].not_restrictable_reason,
+}};
+"""
+    )
+    assert result["personalSelectable"] == 0, "个人技能不可勾选，否则仍是空转"
+    assert result["personalTotal"] == 1, "但要保留在列表里（管理员需要看到）"
+    assert result["personalState"]["selectable"] == 0
+    assert result["personalState"]["selected"] == 0, "已存的历史记录也不该计入已选"
+    assert result["flagPassedThrough"] is True, "归一化必须透传标记"
+    assert "公共技能" in result["reason"], "原因文案要透传到界面"
+
+
+def test_not_restrictable_items_are_stripped_from_payload_and_count():
+    """保存与计数都要剥离：不能出现「角标算进去了但保存不提交」的口径漂移。"""
+    result = _run_typescript(
+        f"""
+const groups = api.normalizeRestrictableGroups({{ groups: {GROUPS_WITH_PERSONAL_JSON} }});
+const selected = ['pdf', 'my_skill', 'legacy_report'];
+return {{
+  payload: api.buildAgentRestrictionPayload({{ forbidden_skills: selected }}, groups),
+  sanitized: api.sanitizeAgentRestrictionLists({{ forbidden_skills: selected }}, groups),
+  counted: api.countRestrictionEntries(selected, groups),
+  badge: api.countAgentRestrictionBadge({{ forbidden_skills: selected }}, groups),
+}};
+"""
+    )
+    # pdf 保留；my_skill（不可限定）与 legacy_report（全局禁用）都要剥离
+    assert result["payload"]["forbidden_skills"] == ["pdf"]
+    assert result["sanitized"]["forbidden_skills"] == ["pdf"]
+    assert result["counted"] == 1
+    assert result["badge"] == 1
+
+
+def test_personal_skill_marked_when_also_globally_forbidden():
+    """个人技能与同名公共技能可能同时「被全局禁用 + 不可限定」，两个标记都要透传。"""
+    result = _run_typescript(
+        """
+const groups = api.normalizeRestrictableGroups({ groups: [
+  { key: 'personal_skills', label: '个人技能', items: [
+    { id: 'same_name', label: '同名技能', forbidden_globally: true, not_restrictable: true,
+      not_restrictable_reason: '个人技能不支持限定：权限侧只对公共技能生效' },
+  ] },
+] });
+const item = groups[0].items[0];
+return { globally: item.forbidden_globally, notRestrictable: item.not_restrictable };
+"""
+    )
+    assert result["globally"] is True
+    assert result["notRestrictable"] is True

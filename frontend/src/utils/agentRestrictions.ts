@@ -31,6 +31,17 @@ export interface RestrictableResourceItem {
    * 管理员根本看不出这是什么工具——而智能体编辑页一直显示的是描述。
    */
   description?: string
+  /**
+   * 本层无法限定该资源（目前只有个人技能）。
+   *
+   * 权限侧三处过滤全部把个人技能排除在外（清单 `excluded_skill_ids`、显式挂载
+   * `drop_forbidden_skill_items`、上下文清洗），因为个人技能与公共技能可能同名，
+   * 只按 id 判定会连坐用户自建的那一份。此前界面允许勾选并真的写库，运行时却
+   * 任何一处都不读——勾了不生效且查不出原因，所以改为置灰只读。
+   */
+  not_restrictable?: boolean
+  /** 置灰原因，直接展示给管理员 */
+  not_restrictable_reason?: string
 }
 
 /** 候选清单来自具体某个版本；运行时生效的是已发布版本。 */
@@ -100,12 +111,15 @@ function normalizeItem(raw: unknown): RestrictableResourceItem | null {
   const label = String(record.label ?? '').trim() || id
   const groupName = String(record.group_name ?? '').trim()
   const description = String(record.description ?? '').trim()
+  const notRestrictableReason = String(record.not_restrictable_reason ?? '').trim()
   return {
     id,
     label,
     forbidden_globally: Boolean(record.forbidden_globally),
     ...(groupName ? { group_name: groupName } : {}),
     ...(description ? { description } : {}),
+    ...(record.not_restrictable ? { not_restrictable: true } : {}),
+    ...(notRestrictableReason ? { not_restrictable_reason: notRestrictableReason } : {}),
   }
 }
 
@@ -183,22 +197,32 @@ export function isGloballyForbidden(item: RestrictableResourceItem | null | unde
   return Boolean(item?.forbidden_globally)
 }
 
-/** 全局禁用项 id 集合：计数与 payload 都要用它把「全局项」从本层剥离。 */
-function globallyForbiddenIds(groups: RestrictableResourceGroup[]): Set<string> {
+/** 本层无法限定的项（个人技能）：置灰只读，且永不写入 payload。 */
+export function isNotRestrictable(item: RestrictableResourceItem | null | undefined): boolean {
+  return Boolean(item?.not_restrictable)
+}
+
+/**
+ * 不该出现在本层记录里的 id 集合：全局禁用项（并集语义下由全局层负责，写进来毫无意义）
+ * 与不可限定项（个人技能，运行时任何一处都不读）。
+ *
+ * 计数、payload、回显清洗共用这一份，避免出现「角标算进去了但保存不提交」这类口径漂移。
+ */
+function strippedIds(groups: RestrictableResourceGroup[]): Set<string> {
   const ids = new Set<string>()
   ;(groups || []).forEach((group) => {
     ;(group?.items || []).forEach((item) => {
-      if (item && item.forbidden_globally) ids.add(String(item.id))
+      if (item && (item.forbidden_globally || item.not_restrictable)) ids.add(String(item.id))
     })
   })
   return ids
 }
 
-/** 可勾选项 = 非全局禁用项。 */
+/** 可勾选项 = 既非全局禁用、也非不可限定（个人技能）。页签与分组分母由此而来。 */
 export function selectableItems(
   items: RestrictableResourceItem[] | null | undefined,
 ): RestrictableResourceItem[] {
-  return (items || []).filter((item) => !isGloballyForbidden(item))
+  return (items || []).filter((item) => !isGloballyForbidden(item) && !isNotRestrictable(item))
 }
 
 /**
@@ -322,8 +346,8 @@ export function sanitizeAgentRestrictionLists(
   groups: RestrictableResourceGroup[] | null | undefined,
 ): AgentRestrictionLists {
   const normalized = normalizeAgentRestriction(lists)
-  const forbidden = globallyForbiddenIds(groups || [])
-  const keep = (ids: string[]) => ids.filter((id) => !forbidden.has(id))
+  const stripped = strippedIds(groups || [])
+  const keep = (ids: string[]) => ids.filter((id) => !stripped.has(id))
   return {
     forbidden_tools: keep(normalized.forbidden_tools),
     forbidden_skills: keep(normalized.forbidden_skills),
@@ -343,8 +367,8 @@ export function countRestrictionEntries(
   const ids = normalizeSelectedIds(selected)
   const known = (groups || []).length > 0
   if (!known) return ids.length
-  const forbidden = globallyForbiddenIds(groups || [])
-  return ids.filter((id) => !forbidden.has(id)).length
+  const stripped = strippedIds(groups || [])
+  return ids.filter((id) => !stripped.has(id)).length
 }
 
 /** 卡片角标总数 = 该智能体禁用的工具数 + 技能数（口径与弹框一致）。 */
@@ -460,8 +484,8 @@ export function buildAgentRestrictionPayload(
   groups?: RestrictableResourceGroup[] | null,
 ): AgentRestrictionPayload {
   const normalized = normalizeAgentRestriction(lists)
-  const forbidden = globallyForbiddenIds(groups || [])
-  const keep = (ids: string[]) => ids.filter((id) => !forbidden.has(id))
+  const stripped = strippedIds(groups || [])
+  const keep = (ids: string[]) => ids.filter((id) => !stripped.has(id))
   return {
     forbidden_tools: keep(normalized.forbidden_tools),
     forbidden_skills: keep(normalized.forbidden_skills),

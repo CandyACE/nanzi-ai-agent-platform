@@ -980,3 +980,76 @@ async def test_mcp_tool_without_cache_row_is_still_listed(db_session):
     assert group["items"][0]["id"] == "do_thing"
     assert "description" not in group["items"][0], "没有缓存描述就不要编一个"
     assert group["label"] == "ghost-server", "server 解析不到就退回前缀本身"
+
+
+# ---------------------------------------------------------------------------
+# 个人技能必须标记为「不可限定」
+#
+# 权限侧三处过滤（清单 excluded_skill_ids、显式挂载 drop_forbidden_skill_items、
+# 上下文清洗 sanitize_forbidden_skill_context）**全部**把个人技能排除在外，理由是个人技能
+# 与公共技能可能同名，只按 id 判定会连坐用户自建的那一份。
+#
+# 所以弹框里允许勾选个人技能是个空转：能保存、库里也真写了，运行时任何一处都不读，
+# 而且界面不给任何反馈——管理员只会看到"禁了但没生效"。改为置灰 + 说明原因。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_personal_skills_are_marked_not_restrictable(db_session, monkeypatch):
+    """个人技能仍列出（管理员要看得到），但必须带不可限定标记与原因。"""
+    from app.services import agent_scoped_restrictions as module
+    from app.services.ai import skill_resolver
+
+    monkeypatch.setattr(
+        skill_resolver,
+        "list_global_skill_metas",
+        lambda: [{"id": "pdf", "name": "PDF 处理"}],
+    )
+    agent = await _make_agent_with_version(
+        db_session, tools=[], skills=[], skills_custom=False
+    )
+
+    result = await module.build_restrictable_resources(
+        db_session,
+        agent_id=agent.id,
+        personal_skills=[{"id": "my_skill", "name": "我的技能", "description": "私有"}],
+    )
+
+    personal = [group for group in result["groups"] if group["key"] == "personal_skills"]
+    assert personal, "个人技能仍要列出来，管理员需要知道该用户有哪些个人技能"
+    items = personal[0]["items"]
+    assert [item["id"] for item in items] == ["my_skill"]
+    assert all(item.get("not_restrictable") is True for item in items), (
+        "个人技能必须标记为不可限定，否则界面仍可勾选并写库"
+    )
+    assert "公共技能" in items[0]["not_restrictable_reason"], "原因要说明只对公共技能生效"
+    assert items[0]["description"] == "私有", "标记不应影响描述透传"
+
+
+@pytest.mark.asyncio
+async def test_public_skills_are_still_restrictable(db_session, monkeypatch):
+    """标记不能误伤公共技能——它是本功能唯一真正生效的目标。"""
+    from app.services import agent_scoped_restrictions as module
+    from app.services.ai import skill_resolver
+
+    monkeypatch.setattr(
+        skill_resolver,
+        "list_global_skill_metas",
+        lambda: [{"id": "pdf", "name": "PDF 处理"}],
+    )
+    agent = await _make_agent_with_version(
+        db_session, tools=[], skills=[], skills_custom=False
+    )
+
+    result = await module.build_restrictable_resources(
+        db_session,
+        agent_id=agent.id,
+        personal_skills=[{"id": "my_skill", "name": "我的技能"}],
+    )
+
+    public = [group for group in result["groups"] if group["key"] == "public_skills"]
+    assert public, "公共技能必须仍然列出"
+    assert [item["id"] for item in public[0]["items"]] == ["pdf"]
+    assert public[0]["items"][0].get("not_restrictable") is None, (
+        "公共技能不得被标记为不可限定"
+    )

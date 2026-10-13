@@ -170,14 +170,16 @@
                     v-for="item in group.items"
                     :key="item.id"
                     class="flex items-start gap-2 p-2 rounded-lg border bg-white transition-colors"
-                    :class="item.forbidden_globally ? 'opacity-60 cursor-not-allowed border-gray-200' : 'hover:bg-gray-50 cursor-pointer border-gray-200'"
-                    :title="item.forbidden_globally ? '该项已被全局禁用，无法在此放开，也不能重复勾选' : item.id"
+                    :class="item.forbidden_globally || item.not_restrictable ? 'opacity-60 cursor-not-allowed border-gray-200' : 'hover:bg-gray-50 cursor-pointer border-gray-200'"
+                    :title="item.not_restrictable
+                      ? (item.not_restrictable_reason || '该项不支持限定')
+                      : (item.forbidden_globally ? '该项已被全局禁用，无法在此放开，也不能重复勾选' : item.id)"
                   >
                     <input
                       type="checkbox"
                       class="mt-0.5 h-4 w-4 rounded text-red-600 focus:ring-red-500 disabled:cursor-not-allowed"
                       :checked="isItemSelected(group, item)"
-                      :disabled="item.forbidden_globally"
+                      :disabled="item.forbidden_globally || item.not_restrictable"
                       @change="toggleItem(group, item, ($event.target as HTMLInputElement).checked)"
                     />
                     <div class="min-w-0 flex-1">
@@ -190,7 +192,11 @@
                       >{{ item.description || item.id }}</p>
                     </div>
                     <span
-                      v-if="item.forbidden_globally"
+                      v-if="item.not_restrictable"
+                      class="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold leading-none"
+                    >不支持限定</span>
+                    <span
+                      v-else-if="item.forbidden_globally"
                       class="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold leading-none"
                     >已全局禁用</span>
                   </label>

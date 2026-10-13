@@ -135,7 +135,11 @@ def test_dialog_marks_globally_forbidden_items_readonly():
     source = _source(DIALOG)
 
     assert "已全局禁用" in source, "全局禁用项必须有徽标说明为什么点不动"
-    assert ':disabled="item.forbidden_globally"' in source, "全局禁用项必须置灰不可勾选"
+    # 只读原因有两种：全局禁用（并集语义，本层无从放开）与不可限定（个人技能，
+    # 运行时任何一处都不读）。二者共用同一处置灰/禁用判定，避免只覆盖一半。
+    assert "item.forbidden_globally || item.not_restrictable" in source, (
+        "全局禁用项必须置灰不可勾选"
+    )
     assert "applyGroupRestrictionSelection(" in source, "全选/取消全选必须走共享纯函数"
     assert "groupSelectionState(" in source, "分区计数与「已全选」判定必须走共享纯函数"
     assert "sanitizeAgentRestrictionLists(" in source, (
@@ -270,3 +274,41 @@ def test_scope_notice_is_listed_and_highlighted():
     assert "已全局禁用的项在此只读，需到「禁用资源」里调整。" in source
     # 两条各自是独立段落，靠圆点分列，而不是一句连排
     assert source.count('<span class="shrink-0 font-bold">•</span>') >= 2, "两条说明要各自带圆点分列"
+
+
+def test_dialog_marks_not_restrictable_items_readonly_with_reason():
+    """个人技能必须置灰只读 + 标注原因。
+
+    权限侧三处过滤全部排除个人技能，所以在此勾选是空转（能存、运行时不读）。
+    界面上要同时做到三件事，缺一个管理员就会以为"禁了但没效果"：
+      1. 与全局禁用项一样置灰、禁用 checkbox；
+      2. 角标写明「不支持限定」（不是「已全局禁用」——原因不同）；
+      3. 悬停给出原因文案。
+    """
+    source = _source(DIALOG)
+
+    assert "item.not_restrictable" in source, "模板必须识别不可限定标记"
+    assert "不支持限定" in source, "角标文案要与「已全局禁用」区分"
+    assert "not_restrictable_reason" in source, "原因文案要展示出来"
+    assert (
+        "item.forbidden_globally || item.not_restrictable" in source
+    ), "置灰、禁用 cursor、禁用 checkbox 三处必须同时覆盖两种只读原因"
+    # 角标顺序：不可限定优先（同名个人技能可能两者皆为真，此时本质原因是不支持限定）
+    assert source.index("v-if=\"item.not_restrictable\"") < source.index(
+        "v-else-if=\"item.forbidden_globally\""
+    ), "不可限定角标要排在「已全局禁用」之前"
+
+
+def test_dialog_reads_restrictability_from_shared_pure_functions():
+    """可选计数与保存都走 agentRestrictions.ts，不在组件里另写一套判定。"""
+    dialog = _source(DIALOG)
+    utils = _source(UTILS)
+
+    assert "isNotRestrictable" in utils, "判定函数只能有一份"
+    assert "!isGloballyForbidden(item) && !isNotRestrictable(item)" in utils, (
+        "可勾选集合要同时排除全局禁用与不可限定，页签分母才不会虚高"
+    )
+    assert "strippedIds" in utils, "剥离集合要统一命名，供计数/清洗/payload 共用"
+    # 组件不得自行拼装剥离逻辑
+    assert "globallyForbiddenIds" not in dialog
+    assert "not_restrictable" in dialog or "not_restrictable" in utils

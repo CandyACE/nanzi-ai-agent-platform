@@ -326,6 +326,13 @@ async def build_restrictable_resources(
             "id": skill_id,
             "label": str(meta.get("name") or skill_id),
             "forbidden_globally": skill_id in globally_forbidden_skills,
+            # 个人技能**永远**不受限：权限侧三处过滤（清单 excluded_skill_ids、显式挂载
+            # drop_forbidden_skill_items、上下文清洗）全部把个人技能排除在外，理由是个人技能
+            # 与公共技能可能同名，只按 id 判定会连坐用户自建的那一份。
+            # 所以这里必须标记为不可限定——否则管理员勾了能保存、库里也真写了，
+            # 运行时却任何一处都不读，是个查不出原因的空转。
+            "not_restrictable": True,
+            "not_restrictable_reason": "个人技能不支持限定：权限侧只对公共技能生效",
         }
         description = str(meta.get("description") or "").strip()
         if description:
