@@ -132,3 +132,91 @@ def test_every_full_screen_overlay_sits_inside_a_teleport():
             if prefix.count("<Teleport") <= prefix.count("</Teleport>"):
                 missing.append(f"{path.relative_to(ROOT)}:{prefix.count(chr(10)) + 1}")
     assert not missing, f"这些遮罩只提了层级、没有 Teleport 到 body: {missing}"
+
+
+# --------------------------------------------------------------------------- #
+# 业务弹窗遮罩：带遮罩背景色的全屏弹层（z ≥ 100）同样必须 Teleport 到 body
+#
+# 2026-10-13 排查：角色管理页「编辑角色」弹窗的遮罩又一次没铺满（用户第三次
+# 反馈同类问题）。根因与前两次相同——弹层留在内容区里，祖先一旦带上 transform
+# （Dashboard 的 `.page-enter-from { transform: translateY(4px) }`）就改写了
+# `position: fixed` 的包含块，遮罩只盖得住内容区。
+#
+# 前两次修复之所以没覆盖到它，是因为契约的判据只认 `z-50` / `z-[50]` / `z-[100]`
+# 这几个字面层级，而系统管理页（角色管理、用户管理）的业务弹窗用的是
+# `bg-black bg-opacity-50 ... z-[9990]` 这一套——层级够高，位置仍然在内容区里。
+#
+# 判据放宽到「带遮罩背景色 + z ≥ 100」：层级够高只说明盖得住布局层，
+# 与「是否挂在 body 下」是两件事，后者才是遮罩能不能铺满视口的决定因素。
+# --------------------------------------------------------------------------- #
+
+#: `fixed inset-0` 且带遮罩背景色的弹层容器（静态 class，动态 :class 不在此列）
+_MASKED_OVERLAY = re.compile(r'(?<!:)class="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*)"')
+_MASKED_BG = re.compile(r"bg-(?:black|gray-\d+|slate-\d+)")
+
+#: components/ 下尚未收敛的历史遗留（抽屉/面板内的弹层，层级依赖需单独评估）。
+#: 棘轮语义：只允许减少，不允许新增；修掉一处就把它从清单里删掉。
+_PENDING_MASKED_OVERLAYS = {
+    "frontend/src/components/PortalNotificationBell.vue:370",
+    "frontend/src/components/PortalNotificationBell.vue:433",
+    "frontend/src/components/PortalNotificationBell.vue:489",
+    "frontend/src/components/SessionTraceModal.vue:39",
+    "frontend/src/components/ThirdPartyUserSyncDrawer.vue:4",
+    "frontend/src/components/ThirdPartyUserSyncDrawer.vue:443",
+    "frontend/src/components/chatbi/DatasetCapabilityMenu.vue:552",
+    "frontend/src/components/chatbi/DatasetCapabilityMenu.vue:573",
+    "frontend/src/components/data-portal/DataPortalReportCreateModal.vue:921",
+    "frontend/src/components/data-portal/DataPortalReportCreateModal.vue:1288",
+    "frontend/src/components/embed/ChatCanvas.vue:1245",
+    "frontend/src/components/embed/MemoryBrowserDrawer.vue:511",
+    "frontend/src/components/embed/MemoryBrowserDrawer.vue:572",
+    "frontend/src/components/embed/MemoryBrowserDrawer.vue:591",
+    "frontend/src/components/embed/WorkspaceDirectorySaveDialog.vue:114",
+    "frontend/src/components/knowledge/KnowledgePortalDrawer.vue:950",
+}
+
+
+def _unteleported_masked_overlays(paths):
+    """返回「带遮罩色的全屏弹层（z ≥ 100）但不在 Teleport 内」的 `文件:行号` 列表。"""
+    offenders = []
+    for path in sorted(paths):
+        text = path.read_text(encoding="utf-8")
+        for match in _MASKED_OVERLAY.finditer(text):
+            cls = match.group(1)
+            z = re.search(r"\bz-\[?(\d+)\]?", cls)
+            if not z or int(z.group(1)) < 100:
+                continue
+            if not _MASKED_BG.search(cls):
+                continue
+            prefix = text[: match.start()]
+            if prefix.count("<Teleport") - prefix.count("</Teleport>") > 0:
+                continue
+            offenders.append(f"{path.relative_to(ROOT)}:{prefix.count(chr(10)) + 1}")
+    return offenders
+
+
+def test_masked_dialog_overlays_in_views_are_teleported():
+    """views/ 下所有带遮罩色的全屏弹层都必须 Teleport 到 body。
+
+    这些弹层直接渲染在 Dashboard 的 `<main>` 内，祖先链上只要出现 transform
+    （页面过渡的 `.page-enter-from` 就是），遮罩就只盖得住内容区：
+    顶部导航栏与左侧边栏压不暗——用户看到的正是这个现象。
+    层级停在 z-[9990] 并不能解决，因为包含块已经被改掉了。
+    """
+    offenders = _unteleported_masked_overlays((ROOT / "frontend/src/views").glob("*.vue"))
+    assert not offenders, (
+        "这些业务弹窗遮罩没有 Teleport 到 body，祖先一旦带上 transform 就遮不满视口，"
+        f"请照抄 `Teleport to=\"body\"` 的既有写法: {offenders}"
+    )
+
+
+def test_no_new_unteleported_masked_overlay_in_components():
+    """components/ 下的同类漏网只减不增（历史遗留见 `_PENDING_MASKED_OVERLAYS`）。"""
+    current = set(_unteleported_masked_overlays((ROOT / "frontend/src/components").rglob("*.vue")))
+    added = sorted(current - _PENDING_MASKED_OVERLAYS)
+    assert not added, (
+        f"新增了没有 Teleport 的全屏遮罩弹层: {added}；"
+        "新增弹层请用 `<Teleport to=\"body\">` 包裹"
+    )
+    fixed = sorted(_PENDING_MASKED_OVERLAYS - current)
+    assert not fixed, f"这些遮罩已经修好了，请从 _PENDING_MASKED_OVERLAYS 清单里删掉: {fixed}"

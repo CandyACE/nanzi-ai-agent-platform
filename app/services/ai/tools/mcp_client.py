@@ -69,7 +69,7 @@ class McpSseSession:
             return True
 
     async def connect(self):
-        """Establishes connection with protocol detection"""
+        """Initialize a transport; publish SSE state only after its handshake succeeds."""
         async with self._lock:
             if self.session or self.mcp_session_id:
                 return
@@ -90,12 +90,15 @@ class McpSseSession:
                             read_stream, write_stream = await self._exit_stack.enter_async_context(
                                 sse_client(url=self.sse_url, headers=self.auth_headers)
                             )
-                            self.session = await self._exit_stack.enter_async_context(
+                            sse_session = await self._exit_stack.enter_async_context(
                                 ClientSession(read_stream, write_stream)
                             )
-                            await self.session.initialize()
+                            await sse_session.initialize()
+                            self.session = sse_session
 
-                        await asyncio.wait_for(_connect_sse(), timeout=10.0)
+                        # 独立任务受 10 秒 wait_for 约束；超时取消握手并进入 Direct HTTP 回退。
+                        connect_task = asyncio.create_task(_connect_sse())
+                        await asyncio.wait_for(connect_task, timeout=10.0)
                         
                         self.last_used_at = time.time()
                         self.is_direct_http = False
@@ -103,6 +106,8 @@ class McpSseSession:
                         return
                     except Exception as sse_err:
                         # 多数网关（如 ModelScope）返回 JSON/HTTP 而非 SSE；探测失败后降级，不打堆栈。
+                        self.session = None
+                        self.mcp_session_id = None
                         logger.warning(
                             "[MCP] Standard SSE unavailable for %s (%s); falling back to Direct HTTP",
                             self.server_id,
@@ -230,8 +235,11 @@ class McpClientService:
         session_mgr = await cls.get_session(server_id)
         
         if not session_mgr.is_direct_http:
+            session = session_mgr.session
+            if session is None:
+                raise RuntimeError("MCP SSE session is unavailable")
             try:
-                response = await session_mgr.session.list_tools()
+                response = await session.list_tools()
             except Exception as exc:
                 logger.warning(
                     "[MCP] Tool listing failed for %s; reconnecting once: %s",
@@ -246,7 +254,10 @@ class McpClientService:
                     if isinstance(res, dict) and "tools" in res:
                         return res["tools"]
                     return res if isinstance(res, list) else []
-                response = await session_mgr.session.list_tools()
+                session = session_mgr.session
+                if session is None:
+                    raise RuntimeError("MCP SSE session is unavailable after reconnect")
+                response = await session.list_tools()
             return response.tools
         else:
             await cls._ensure_direct_http_initialized(session_mgr)
@@ -348,8 +359,11 @@ class McpClientService:
             if not session_mgr.is_direct_http:
                 transport_retry = False
                 try:
+                    session = session_mgr.session
+                    if session is None:
+                        raise RuntimeError("MCP SSE session is unavailable")
                     response = await asyncio.wait_for(
-                        session_mgr.session.call_tool(tool_name, arguments),
+                        session.call_tool(tool_name, arguments),
                         timeout=120.0,
                     )
                     text = "".join(
@@ -379,8 +393,25 @@ class McpClientService:
                         try:
                             await session_mgr.close()
                             await session_mgr.connect()
+                            if session_mgr.is_direct_http:
+                                # 网关重连后已不再提供 SSE：本次调用改用 Direct HTTP 完成，
+                                # 与 list_remote_tools 的降级口径一致，而不是让这次调用白失败。
+                                logger.warning(
+                                    "[MCP] SSE reconnect for %s switched to Direct HTTP; retrying '%s' over Direct HTTP",
+                                    session_mgr.server_id,
+                                    tool_name,
+                                )
+                                call_result = await cls._call_direct_http_tool(
+                                    session_mgr,
+                                    tool_name,
+                                    arguments,
+                                )
+                                return call_result
+                            session = session_mgr.session
+                            if session is None:
+                                raise RuntimeError("MCP SSE session is unavailable after reconnect")
                             response = await asyncio.wait_for(
-                                session_mgr.session.call_tool(tool_name, arguments),
+                                session.call_tool(tool_name, arguments),
                                 timeout=120.0,
                             )
                             text = "".join(
@@ -415,45 +446,11 @@ class McpClientService:
                         await session_mgr.close()
                     raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e
             else:
-                await cls._ensure_direct_http_initialized(session_mgr)
-
-                res = await cls._direct_http_rpc(session_mgr, "tools/call", {
-                    "name": tool_name,
-                    "arguments": arguments
-                })
-                if isinstance(res, dict) and bool(res.get("isError") or res.get("is_error")):
-                    error_text = "".join(
-                        c.get("text", "")
-                        for c in res.get("content") or []
-                        if isinstance(c, dict) and c.get("type") == "text"
-                    )
-                    raise RuntimeError(
-                        error_text
-                        or str(res.get("message") or res.get("error") or "")
-                        or f"MCP tool '{tool_name}' returned an error"
-                    )
-                if isinstance(res, dict) and "content" in res:
-                    text = "".join(
-                        c.get("text", "")
-                        for c in (res.get("content") or [])
-                        if isinstance(c, dict) and c.get("type") == "text"
-                    )
-                    structured_content = res.get("structuredContent")
-                    if structured_content is None:
-                        structured_content = res.get("structured_content")
-                    if structured_content is not None:
-                        call_result = {
-                            "success": True,
-                            "content": text,
-                            "structured_content": structured_content,
-                        }
-                        return call_result
-                    call_result = text if text else {"success": True, "content": ""}
-                    return call_result
-                if res is None:
-                    call_result = {"success": True, "content": ""}
-                    return call_result
-                call_result = str(res)
+                call_result = await cls._call_direct_http_tool(
+                    session_mgr,
+                    tool_name,
+                    arguments,
+                )
                 return call_result
         except Exception as call_exc:
             call_status = "failed"
@@ -661,6 +658,54 @@ class McpClientService:
 
         logger.error(f"[MCP-Direct] Error Response Body: {resp.text[:500]}")
         raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+
+    @classmethod
+    async def _call_direct_http_tool(
+        cls,
+        session_mgr: McpSseSession,
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> Any:
+        """Invoke one tool over the Direct HTTP gateway and normalize its result.
+
+        Shared by the native Direct HTTP path and the SSE-to-HTTP fallback, so both
+        produce identical payloads and identical error semantics.
+        """
+        await cls._ensure_direct_http_initialized(session_mgr)
+        res = await cls._direct_http_rpc(session_mgr, "tools/call", {
+            "name": tool_name,
+            "arguments": arguments
+        })
+        if isinstance(res, dict) and bool(res.get("isError") or res.get("is_error")):
+            error_text = "".join(
+                c.get("text", "")
+                for c in res.get("content") or []
+                if isinstance(c, dict) and c.get("type") == "text"
+            )
+            raise RuntimeError(
+                error_text
+                or str(res.get("message") or res.get("error") or "")
+                or f"MCP tool '{tool_name}' returned an error"
+            )
+        if isinstance(res, dict) and "content" in res:
+            text = "".join(
+                c.get("text", "")
+                for c in (res.get("content") or [])
+                if isinstance(c, dict) and c.get("type") == "text"
+            )
+            structured_content = res.get("structuredContent")
+            if structured_content is None:
+                structured_content = res.get("structured_content")
+            if structured_content is not None:
+                return {
+                    "success": True,
+                    "content": text,
+                    "structured_content": structured_content,
+                }
+            return text if text else {"success": True, "content": ""}
+        if res is None:
+            return {"success": True, "content": ""}
+        return str(res)
 
     @classmethod
     async def sync_tools(cls, server_id: str):
