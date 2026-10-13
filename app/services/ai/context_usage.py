@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 # （由 `_runtime_context_metadata` 产出），而不是新增一个全局配置项。
 CONTEXT_OVERHEAD_RESERVATION_TOKENS = 8192
 
+# 展示值实测校准（P2）的护栏。样本对话部分太小、或「实测 ÷ 估算」的比值过于异常时
+# 宁可不校准，也不要把一个异常样本放大到用户看到的水位上。
+MIN_CALIBRATION_SAMPLE_TOKENS = 1000
+MIN_CALIBRATION_RATIO = 0.5
+MAX_CALIBRATION_RATIO = 5.0
+
 
 def _empty_context_breakdown() -> dict[str, Any]:
     return {
@@ -41,9 +47,20 @@ def _empty_context_breakdown() -> dict[str, Any]:
     }
 
 
+def _empty_calibration() -> dict[str, Any]:
+    """未校准（无样本或未开启）时的固定形状，前端只需判断 applied。"""
+    return {
+        "applied": False,
+        "ratio": None,
+        "sample_estimated_tokens": None,
+        "sample_actual_tokens": None,
+    }
+
+
 def empty_context_usage() -> dict[str, Any]:
     return {
         "estimated_current_tokens": None,
+        "current_tokens": None,
         "estimated_remaining_tokens": None,
         "context_messages": None,
         "token_budget": None,
@@ -55,15 +72,21 @@ def empty_context_usage() -> dict[str, Any]:
         "overhead_reservation_tokens": None,
         "usage_percentage": None,
         "context_breakdown": None,
+        "calibration": _empty_calibration(),
     }
 
 
-async def _latest_runtime_context_breakdown(
+async def _latest_runtime_context_sample(
     *,
     user_id: Any,
     conversation_id: str,
 ) -> dict[str, Any] | None:
-    """读取最近一次运行上下文的固定开销，供会话总量只合并一次。"""
+    """读取最近一次模型调用的「运行时构成 + 该次真实用量」。
+
+    一条调用记录里同时含当次的 `context_breakdown.total_tokens`（估算）与 `input_tokens`
+    （模型返回的真实 usage），因此展示值校准所需的「实测 ÷ 估算」比值**无需新增采集**。
+    前两个字段用于把会话总量里的固定开销只合并一次；后两个字段仅用于校准。
+    """
     if user_id is None or not conversation_id:
         return None
 
@@ -89,13 +112,52 @@ async def _latest_runtime_context_breakdown(
         normalized = {
             "system_prompt_tokens": max(0, int(breakdown.get("system_prompt_tokens") or 0)),
             "tools_tokens": max(0, int(breakdown.get("tools_tokens") or 0)),
+            "estimated_total_tokens": max(0, int(breakdown.get("total_tokens") or 0)),
+            "actual_input_tokens": max(0, int(record.get("input_tokens") or 0)),
         }
-        if not any(normalized.values()):
+        if not any(
+            (normalized["system_prompt_tokens"], normalized["tools_tokens"])
+        ):
             return None
         return normalized
     except Exception as exc:
         logger.debug("读取最近运行上下文构成失败: %s", exc)
         return None
+
+
+def _conversation_calibration_ratio(
+    sample: Mapping[str, Any] | None,
+    *,
+    system_prompt_tokens: int,
+    tools_tokens: int,
+) -> float | None:
+    """按最近一次调用的「实测 ÷ 估算」得到对话部分的校准系数。
+
+    只校准对话消息：system 提示词与工具 schema 两项本来就是 AgentScope `count_tokens`
+    的真实计数，把它们一起缩放会重复放大误差。样本异常（缺实测、对话部分太小、
+    比值越界）时返回 None，调用方退回纯估算。
+    """
+    if not sample:
+        return None
+    try:
+        estimated_total = int(sample.get("estimated_total_tokens") or 0)
+        actual_total = int(sample.get("actual_input_tokens") or 0)
+    except (TypeError, ValueError):
+        return None
+    if estimated_total <= 0 or actual_total <= 0:
+        return None
+    fixed_overhead = max(0, int(system_prompt_tokens)) + max(0, int(tools_tokens))
+    estimated_conversation = max(0, estimated_total - fixed_overhead)
+    actual_conversation = max(0, actual_total - fixed_overhead)
+    if (
+        estimated_conversation < MIN_CALIBRATION_SAMPLE_TOKENS
+        or actual_conversation <= 0
+    ):
+        return None
+    ratio = actual_conversation / estimated_conversation
+    if not (MIN_CALIBRATION_RATIO <= ratio <= MAX_CALIBRATION_RATIO):
+        return None
+    return ratio
 
 
 async def estimate_context_usage(
@@ -105,11 +167,18 @@ async def estimate_context_usage(
     runtime_model_info: Mapping[str, Any] | None = None,
     history: Sequence[Mapping[str, Any]] | None = None,
     empty_history_is_zero: bool = False,
+    calibrate: bool = False,
 ) -> dict[str, Any]:
     """按 session_status 的口径估算当前会话上下文使用情况。
 
     ``empty_history_is_zero`` 供输入框状态接口使用：新会话也返回预算和 0 使用量；
     session_status 默认保持原有语义，无法取得历史时返回 null 占位。
+
+    ``calibrate`` **只给展示层用**（输入框浮标端点）：用最近一次模型调用的真实 usage
+    校准对话部分的估算，结果放在 ``current_tokens``，纯估算仍保留在
+    ``estimated_current_tokens``。默认 False，因此 session_status 工具与运行时裁剪
+    判定看到的水位不变——`estimate_text_tokens` 的注释要求裁剪水位线、占用展示与
+    AgentScope 内部压缩使用同一度量，单独改判定会与它打架。
     """
     empty = empty_context_usage()
     if not conversation_id:
@@ -136,19 +205,47 @@ async def estimate_context_usage(
             )
         )
 
-        runtime_breakdown = await _latest_runtime_context_breakdown(
+        runtime_sample = await _latest_runtime_context_sample(
             user_id=user_id,
             conversation_id=conversation_id,
         )
-        if runtime_breakdown:
+        sample_system_tokens = int(runtime_sample["system_prompt_tokens"]) if runtime_sample else 0
+        sample_tools_tokens = int(runtime_sample["tools_tokens"]) if runtime_sample else 0
+        # 纯估算：始终是「当前历史 + 最近一次运行的固定开销」，不受校准影响
+        estimated_total_tokens = sample_system_tokens + sample_tools_tokens + history_tokens
+
+        ratio = (
+            _conversation_calibration_ratio(
+                runtime_sample,
+                system_prompt_tokens=sample_system_tokens,
+                tools_tokens=sample_tools_tokens,
+            )
+            if calibrate
+            else None
+        )
+        if ratio is not None and runtime_sample is not None:
+            conversation_tokens = int(round(history_tokens * ratio))
+            calibration = {
+                "applied": True,
+                "ratio": ratio,
+                "sample_estimated_tokens": int(
+                    runtime_sample.get("estimated_total_tokens") or 0
+                ),
+                "sample_actual_tokens": int(
+                    runtime_sample.get("actual_input_tokens") or 0
+                ),
+            }
+        else:
+            conversation_tokens = history_tokens
+            calibration = _empty_calibration()
+
+        if runtime_sample:
             context_breakdown = {
-                "system_prompt_tokens": runtime_breakdown["system_prompt_tokens"],
-                "tools_tokens": runtime_breakdown["tools_tokens"],
-                "conversation_tokens": history_tokens,
+                "system_prompt_tokens": sample_system_tokens,
+                "tools_tokens": sample_tools_tokens,
+                "conversation_tokens": conversation_tokens,
                 "total_tokens": (
-                    runtime_breakdown["system_prompt_tokens"]
-                    + runtime_breakdown["tools_tokens"]
-                    + history_tokens
+                    sample_system_tokens + sample_tools_tokens + conversation_tokens
                 ),
                 "estimated": True,
                 "source": "session_history_plus_latest_runtime_context",
@@ -156,11 +253,12 @@ async def estimate_context_usage(
         else:
             context_breakdown = {
                 **_empty_context_breakdown(),
-                "conversation_tokens": history_tokens,
-                "total_tokens": history_tokens,
+                "conversation_tokens": conversation_tokens,
+                "total_tokens": conversation_tokens,
                 "estimated": True,
                 "source": "session_history_estimate",
             }
+        # 下游（剩余量 / 百分比）一律用展示值，保证面板自洽
         total_tokens = context_breakdown["total_tokens"]
 
         try:
@@ -231,7 +329,8 @@ async def estimate_context_usage(
         remaining = max(0, budget - total_tokens)
         percentage = round(total_tokens / budget * 100, 1) if budget > 0 else 0.0
         return {
-            "estimated_current_tokens": total_tokens,
+            "estimated_current_tokens": estimated_total_tokens,
+            "current_tokens": total_tokens,
             "estimated_remaining_tokens": remaining,
             "context_messages": len(history),
             "token_budget": budget,
@@ -243,6 +342,7 @@ async def estimate_context_usage(
             "overhead_reservation_tokens": overhead,
             "usage_percentage": percentage,
             "context_breakdown": context_breakdown,
+            "calibration": calibration,
         }
     except Exception:
         return empty

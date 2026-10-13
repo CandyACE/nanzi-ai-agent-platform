@@ -163,8 +163,31 @@ const textareaPaddingRightClass = computed(() => {
 
 const isInteractionLocked = computed(() => props.isProcessing || props.isSubmitting === true);
 
+/**
+ * 展示用当前占用：后端用最近一次模型调用的实测样本校准后给 current_tokens，
+ * 未校准 / 无样本时它等于 estimated_current_tokens，这里再兜一层 ?? 以兼容旧响应。
+ */
+const contextCurrentTokens = computed(() =>
+  Number(props.contextUsage?.current_tokens ?? props.contextUsage?.estimated_current_tokens ?? 0),
+);
+
+/** 浮标与面板顶部的基础读数（校准说明另起一行，避免 tooltip 过长）。 */
+const contextUsageReadingLabel = computed(
+  () =>
+    `上下文使用 ${formatContextTokens(contextCurrentTokens.value)} / ${formatContextTokens(props.contextUsage?.physical_window)}`,
+);
+
+/** 校准说明：只有后端确实用实测样本校准过才展示，避免把纯估算说成"实测"。 */
+const contextCalibrationNote = computed(() => {
+  const calibration = props.contextUsage?.calibration;
+  if (!calibration?.applied) return "";
+  const estimated = formatContextTokens(calibration.sample_estimated_tokens);
+  const actual = formatContextTokens(calibration.sample_actual_tokens);
+  return `已按最近一次模型调用实测校准（估算 ${estimated} · 实测 ${actual}）`;
+});
+
 const contextUsagePercent = computed(() => {
-  const current = Number(props.contextUsage?.estimated_current_tokens || 0);
+  const current = contextCurrentTokens.value;
   const physicalWindow = Number(props.contextUsage?.physical_window || 0);
   if (!physicalWindow) return 0;
   const usage = (current / physicalWindow) * 100;
@@ -226,7 +249,7 @@ const contextRequestInputPercent = computed(() => {
 });
 
 const contextUsageTone = computed(() => {
-  const current = Number(props.contextUsage?.estimated_current_tokens || 0);
+  const current = contextCurrentTokens.value;
   const requestInputBudget = Number(props.contextUsage?.request_input_budget || 0);
   if (requestInputBudget > 0 && current >= requestInputBudget) {
     return {
@@ -256,7 +279,7 @@ const contextUsageTone = computed(() => {
 });
 
 const contextUsageStatusLabel = computed(() => {
-  const current = Number(props.contextUsage?.estimated_current_tokens || 0);
+  const current = contextCurrentTokens.value;
   const requestInputBudget = Number(props.contextUsage?.request_input_budget || 0);
   if (!requestInputBudget) return "暂无输入上限";
   if (current >= requestInputBudget) return "已达输入上限";
@@ -2068,12 +2091,12 @@ defineExpose({
                   :aria-expanded="showContextUsageDetails"
                   aria-haspopup="dialog"
                   aria-controls="context-usage-details"
-                  :aria-label="`上下文使用 ${formatContextTokens(contextUsage.estimated_current_tokens)} / ${formatContextTokens(contextUsage.physical_window)}`"
-                  :title="`上下文使用 ${formatContextTokens(contextUsage.estimated_current_tokens)} / ${formatContextTokens(contextUsage.physical_window)}`"
+                  :aria-label="contextUsageReadingLabel"
+                  :title="contextCalibrationNote ? `${contextUsageReadingLabel} · ${contextCalibrationNote}` : contextUsageReadingLabel"
                   @click.stop="toggleContextUsageDetails"
                 >
                     <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full" :class="contextUsageTone.dot" />
-                    <span>{{ formatContextTokens(contextUsage.estimated_current_tokens) }}</span>
+                    <span>{{ formatContextTokens(contextCurrentTokens) }}</span>
                     <span class="font-mono tabular-nums opacity-70">/ {{ formatContextTokens(contextUsage.physical_window) }}</span>
                 </button>
 
@@ -2102,13 +2125,20 @@ defineExpose({
                             </span>
                             <span class="flex items-center gap-1.5 font-mono tabular-nums" :class="contextUsageTone.text">
                             <span>
-                                {{ formatContextTokens(contextUsage.estimated_current_tokens) }} /
+                                {{ formatContextTokens(contextCurrentTokens) }} /
                                 {{ formatContextTokens(contextUsage.physical_window) }}
                             </span>
                             <span class="opacity-75">· {{ contextUsagePercentLabel }}</span>
                             </span>
                         </span>
                     </div>
+                    <p
+                      v-if="contextCalibrationNote"
+                      data-testid="context-usage-calibration-note"
+                      class="mt-1 text-[9px] leading-tight text-amber-600 dark:text-amber-400"
+                    >
+                      {{ contextCalibrationNote }}
+                    </p>
                     <div
                       class="relative mt-2 h-1 overflow-visible rounded-full bg-gray-100 dark:bg-gray-700"
                       role="progressbar"
