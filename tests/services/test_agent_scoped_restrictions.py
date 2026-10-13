@@ -789,3 +789,99 @@ def test_boolean_literals_survive_both_dialects():
     for dialect in (mysql.dialect(), postgresql.dialect(), sqlite.dialect()):
         compiled = str(statement.compile(dialect=dialect))
         assert "TRUE" in compiled.upper() or "1" in compiled
+
+
+# ---------------------------------------------------------------------------
+# 候选条目必须带中文描述
+#
+# 没有描述，弹框里每个工具就只是一行裸 id（`system_http_request`），管理员看不出这是
+# 什么工具；而智能体编辑页一直显示的是描述。两边信息量必须对齐。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_builtin_tool_items_carry_chinese_descriptions(db_session):
+    from app.services import agent_scoped_restrictions as module
+    from app.services.ai.tools.forbidden_catalog import BUILTIN_FORBIDDEN_TOOL_CANDIDATES
+
+    expected = {
+        str(candidate.id): str(candidate.description).strip()
+        for candidate in BUILTIN_FORBIDDEN_TOOL_CANDIDATES
+        if str(candidate.description or "").strip()
+    }
+    assert expected, "内置候选本身必须带描述，否则这条断言没有意义"
+    sample = "read_file"
+    assert sample in expected, "read_file 应有内置中文描述"
+
+    agent = await _make_agent_with_version(db_session, tools=[sample])
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    builtin = next(group for group in result["groups"] if group["key"] == "builtin_tools")
+    item = next(entry for entry in builtin["items"] if entry["id"] == sample)
+    assert item["description"] == expected[sample], "内置工具的副标题要显示中文描述"
+    assert item["label"] == sample, "主标题仍是规范 id，与全局禁用候选保持一致"
+
+
+@pytest.mark.asyncio
+async def test_api_tool_items_carry_registry_descriptions(db_session):
+    from app.models.tool import SysApiTool
+    from app.services import agent_scoped_restrictions as module
+
+    name = f"crm_sync_{uuid.uuid4().hex[:8]}"
+    db_session.add(
+        SysApiTool(
+            id=str(uuid.uuid4()),
+            name=name,
+            description="同步 CRM 客户主数据",
+            group_name="客户域",
+            method="GET",
+            url_template="https://example.invalid/crm",
+        )
+    )
+    await db_session.flush()
+    agent = await _make_agent_with_version(db_session, tools=[name])
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    api_group = next(group for group in result["groups"] if group["key"] == "api_tools")
+    assert api_group["items"][0]["description"] == "同步 CRM 客户主数据"
+
+
+@pytest.mark.asyncio
+async def test_public_skill_items_carry_descriptions(db_session, monkeypatch):
+    from app.services import agent_scoped_restrictions as module
+    from app.services.ai import skill_resolver
+
+    monkeypatch.setattr(
+        skill_resolver,
+        "list_global_skill_metas",
+        lambda: [{"id": "pdf", "name": "PDF 处理", "description": "拆分与合并 PDF"}],
+    )
+    agent = await _make_agent_with_version(db_session, tools=[], skills=[], skills_custom=False)
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    skills = next(group for group in result["groups"] if group["key"] == "public_skills")
+    assert skills["items"][0]["description"] == "拆分与合并 PDF"
+
+
+@pytest.mark.asyncio
+async def test_catalog_reports_the_source_version(db_session):
+    """候选来自哪个版本必须显式返回：编辑页看的是草稿，数量差异需要能解释。"""
+    from app.services import agent_scoped_restrictions as module
+
+    agent = await _make_agent_with_version(db_session, tools=["read_file"], status="PUBLISHED")
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+
+    source = result["source_version"]
+    assert source["version_number"] == 1
+    assert source["status"] == "PUBLISHED"
+    assert source["is_published"] is True
+
+    draft = await _make_agent_with_version(db_session, tools=["read_file"], status="DRAFT")
+    draft_result = await module.build_restrictable_resources(db_session, agent_id=draft.id)
+    assert draft_result["source_version"]["is_published"] is False, (
+        "从未发布时退回最新版本，但要标明尚未发布"
+    )

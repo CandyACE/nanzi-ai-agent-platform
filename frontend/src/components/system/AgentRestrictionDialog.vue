@@ -34,7 +34,7 @@
         <!-- 工具栏：搜索 + 视图说明 -->
         <div class="px-4 sm:px-5 py-2 border-b border-gray-100 flex items-center justify-between gap-3">
           <p class="text-[10px] text-gray-400 truncate">
-            条目来自该智能体实际绑定的资源；保存为覆盖式，取消勾选即解除限制。
+            条目来自该智能体实际绑定的资源<template v-if="sourceVersionLabel">（{{ sourceVersionLabel }}）</template>；保存为覆盖式，取消勾选即解除限制。已全局禁用的项在列表里置灰，不计入页签的可选数量。
           </p>
           <input
             v-model="searchQuery"
@@ -172,7 +172,12 @@
                     />
                     <div class="min-w-0 flex-1">
                       <p class="text-xs font-bold text-gray-900 truncate">{{ item.label }}</p>
-                      <p class="text-[9px] text-gray-400 truncate font-mono">{{ item.id }}</p>
+                      <!-- 有中文描述就显示描述（与智能体编辑页一致）；没有才退回等宽 id -->
+                      <p
+                        class="text-[9px] text-gray-400 truncate"
+                        :class="item.description ? '' : 'font-mono'"
+                        :title="item.description || item.id"
+                      >{{ item.description || item.id }}</p>
                     </div>
                     <span
                       v-if="item.forbidden_globally"
@@ -269,6 +274,7 @@ import {
   sanitizeAgentRestrictionLists,
   type AgentRestrictionLists,
   type AgentRestrictionScopeKind,
+  type AgentRestrictionSourceVersion,
   type AgentRestrictionTab,
   type AgentRestrictionTabKey,
   type RestrictableResourceGroup,
@@ -315,6 +321,12 @@ const emit = defineEmits<{
 const scopeNoun = computed(() => (props.kind === 'role' ? '该角色' : '该用户'))
 
 const groups = ref<RestrictableResourceGroup[]>([])
+/**
+ * 候选清单来自哪个版本。它必须显示出来：限制是按 agent 维度配的，而候选必然取自某个
+ * 具体版本（优先已发布）。管理员在智能体编辑页改的是草稿版本，两个页面的数量天然可能不同，
+ * 不写清来源就会被当成 bug。
+ */
+const sourceVersion = ref<AgentRestrictionSourceVersion | null>(null)
 const selectedTools = ref<string[]>([])
 const selectedSkills = ref<string[]>([])
 const searchQuery = ref('')
@@ -342,6 +354,14 @@ const isSearching = computed(() => searchQuery.value.trim().length > 0)
 const tabs = computed(() => groupRestrictionTabs(groups.value))
 const activeTab = ref<AgentRestrictionTabKey>('tools')
 const tabState = (tab: AgentRestrictionTab) => tabSelectionState(tab, selectedIds.value)
+
+/** 「已发布版本 v3」/「草稿版本 v4（尚未发布）」；未知时返回空串，不编造。 */
+const sourceVersionLabel = computed(() => {
+  const version = sourceVersion.value
+  if (!version) return ''
+  const numberPart = version.version_number ? `v${version.version_number}` : '未编号版本'
+  return version.is_published ? `已发布版本 ${numberPart}` : `${numberPart}（尚未发布）`
+})
 
 /**
  * 当前页签内、按搜索词过滤后的分组。
@@ -460,9 +480,10 @@ const load = async () => {
         return response.data
       }),
     ])
-    groups.value = catalog
+    groups.value = catalog.groups
+    sourceVersion.value = catalog.sourceVersion
     // 回显清洗：全局已禁项不写成智能体级记录（界面上它们是灰的、不可勾选）
-    const clean = sanitizeAgentRestrictionLists(lists, catalog)
+    const clean = sanitizeAgentRestrictionLists(lists, catalog.groups)
     selectedTools.value = clean.forbidden_tools
     selectedSkills.value = clean.forbidden_skills
     loaded.value = true

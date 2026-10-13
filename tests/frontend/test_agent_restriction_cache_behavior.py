@@ -209,7 +209,11 @@ def test_catalog_loads_are_deduped_per_scope_and_agent():
 let calls = 0;
 const fetcher = async () => {
   calls += 1;
-  return { agent_id: 'agent-1', groups: [{ key: 'builtin_tools', label: '内置工具', items: [{ id: 'read_file', label: 'read_file' }] }] };
+  return {
+    agent_id: 'agent-1',
+    groups: [{ key: 'builtin_tools', label: '内置工具', items: [{ id: 'read_file', label: 'read_file' }] }],
+    source_version: { id: 'ver-3', version_number: 3, status: 'PUBLISHED', is_published: true },
+  };
 };
 const keyUserA = 'catalog:user:1:agent-1';
 const keyUserB = 'catalog:user:2:agent-1';
@@ -221,12 +225,14 @@ await api.loadAgentRestrictableCatalog(keyUserB, fetcher);
 const bad = await api.loadAgentRestrictableCatalog('catalog:user:1:agent-2', async () => null);
 return {
   calls,
-  groups: first.map((group) => group.key),
+  groups: first.groups.map((group) => group.key),
+  sourceVersion: first.sourceVersion,
   sameReference: first === second,
-  peeked: api.peekAgentRestrictableCatalog(keyUserA).map((group) => group.key),
-  otherScope: api.peekAgentRestrictableCatalog(keyUserB).map((group) => group.key),
-  bad: bad.length,
-  peekedBad: api.peekAgentRestrictableCatalog('catalog:user:1:agent-2').length,
+  peeked: api.peekAgentRestrictableCatalog(keyUserA).groups.map((group) => group.key),
+  otherScope: api.peekAgentRestrictableCatalog(keyUserB).groups.map((group) => group.key),
+  bad: bad.groups.length,
+  badSourceVersion: bad.sourceVersion,
+  peekedBad: api.peekAgentRestrictableCatalog('catalog:user:1:agent-2').groups.length,
 };
 """
     )
@@ -236,6 +242,13 @@ return {
     )
     assert result["groups"] == ["builtin_tools"]
     assert result["sameReference"] is True, "同一键的并发必须共用同一个 Promise 的结果"
+    assert result["sourceVersion"] == {
+        "id": "ver-3",
+        "version_number": 3,
+        "status": "PUBLISHED",
+        "is_published": True,
+    }, "候选来源版本要跟着目录一起缓存，否则弹框无法解释数量与编辑页的差异"
+    assert result["badSourceVersion"] is None, "老响应没有 source_version 时返回 null，不编造"
     assert result["peeked"] == ["builtin_tools"]
     assert result["otherScope"] == ["builtin_tools"], "不同视角各自缓存，互不覆盖"
     assert result["bad"] == 0 and result["peekedBad"] == 0

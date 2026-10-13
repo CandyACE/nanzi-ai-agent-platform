@@ -136,6 +136,11 @@ async def build_restrictable_resources(
         for meta in public_skill_metas
         if str(meta.get("id") or "").strip()
     }
+    public_skill_descriptions = {
+        str(meta.get("id")): str(meta.get("description") or "").strip()
+        for meta in public_skill_metas
+        if str(meta.get("id") or "").strip() and str(meta.get("description") or "").strip()
+    }
 
     if custom_skills:
         # 白名单：只列它真正会加载的那些
@@ -152,18 +157,57 @@ async def build_restrictable_resources(
             # 目录不可用时的兜底：至少把已绑定的列出来
             candidate_skill_ids = list(bound_skill_ids)
 
-    # 自定义 API 工具：名字 → 注册表里填的业务分组。
-    # 前端要按「业务分组优先、否则按关键字猜能力域」展示——与智能体编辑页同一套规则，
-    # 所以必须把 group_name 带出去，否则弹框只能退回关键字，两个页面分组会对不上。
-    api_tool_rows = (await db.execute(select(SysApiTool.name, SysApiTool.group_name))).all()
+    # 自定义 API 工具：名字 → 注册表里填的业务分组 + 描述。
+    # 分组要带出去，前端才能按「业务分组优先、否则按关键字猜能力域」展示（与智能体编辑页
+    # 同一套规则）；描述要带出去，弹框才不至于只显示一个裸 id 而看不出这是什么工具。
+    api_tool_rows = (
+        await db.execute(select(SysApiTool.name, SysApiTool.group_name, SysApiTool.description))
+    ).all()
     api_group_names: Dict[str, str] = {}
-    for name, group_name in api_tool_rows:
+    api_tool_descriptions: Dict[str, str] = {}
+    for name, group_name, description in api_tool_rows:
         clean_name = str(name or "").strip()
-        if clean_name:
-            api_group_names[clean_name] = str(group_name or "").strip()
+        if not clean_name:
+            continue
+        api_group_names[clean_name] = str(group_name or "").strip()
+        clean_description = str(description or "").strip()
+        if clean_description:
+            api_tool_descriptions[clean_name] = clean_description
     api_names = set(api_group_names)
 
-    def tool_item(tool_id: str) -> Dict[str, Any]:
+    # 内置工具的中文描述：与全局禁用资源的候选同源，复用同一份口径而不另抄一份。
+    builtin_tool_descriptions: Dict[str, str] = {}
+    try:
+        from app.services.ai.tools.forbidden_catalog import (
+            BUILTIN_FORBIDDEN_TOOL_CANDIDATES,
+        )
+
+        for candidate in BUILTIN_FORBIDDEN_TOOL_CANDIDATES:
+            description = str(getattr(candidate, "description", "") or "").strip()
+            if description:
+                builtin_tool_descriptions[str(candidate.id)] = description
+    except Exception:  # noqa: BLE001 —— 仅影响副标题，取不到就退回显示 id
+        logger.debug("[agent-scope] failed to build builtin descriptions", exc_info=True)
+
+    # MCP 工具描述：缓存表里同步过就带上（(server_id, tool_name) → 描述）
+    mcp_tool_descriptions: Dict[tuple[str, str], str] = {}
+    try:
+        for sid, tname, tdesc in (
+            await db.execute(
+                select(
+                    McpToolCache.server_id,
+                    McpToolCache.tool_name,
+                    McpToolCache.tool_description,
+                )
+            )
+        ).all():
+            clean_description = str(tdesc or "").strip()
+            if clean_description:
+                mcp_tool_descriptions[(str(sid), str(tname))] = clean_description
+    except Exception:  # noqa: BLE001
+        logger.debug("[agent-scope] failed to read mcp descriptions", exc_info=True)
+
+    def tool_item(tool_id: str, description: str = "") -> Dict[str, Any]:
         item: Dict[str, Any] = {
             "id": tool_id,
             "label": tool_id,
@@ -172,6 +216,9 @@ async def build_restrictable_resources(
         group_name = api_group_names.get(tool_id)
         if group_name:
             item["group_name"] = group_name
+        clean_description = str(description or "").strip()
+        if clean_description:
+            item["description"] = clean_description
         return item
 
     groups: List[Dict[str, Any]] = []
@@ -179,9 +226,25 @@ async def build_restrictable_resources(
     builtin = [t for t in plain_tools if t not in api_names]
     api_tools = [t for t in plain_tools if t in api_names]
     if builtin:
-        groups.append({"key": "builtin_tools", "label": "内置工具", "items": [tool_item(t) for t in builtin]})
+        groups.append(
+            {
+                "key": "builtin_tools",
+                "label": "内置工具",
+                "items": [
+                    tool_item(name, builtin_tool_descriptions.get(name, "")) for name in builtin
+                ],
+            }
+        )
     if api_tools:
-        groups.append({"key": "api_tools", "label": "自定义 API 工具", "items": [tool_item(t) for t in api_tools]})
+        groups.append(
+            {
+                "key": "api_tools",
+                "label": "自定义 API 工具",
+                "items": [
+                    tool_item(name, api_tool_descriptions.get(name, "")) for name in api_tools
+                ],
+            }
+        )
 
     if mcp_pairs:
         # 分组标题用 MCP 名称，取不到就退回 server_id（不能因此不展示，否则用户配不了）
@@ -218,7 +281,9 @@ async def build_restrictable_resources(
                         sid,
                         tool_name,
                     )
-                items.append(tool_item(tool_name))
+                items.append(
+                    tool_item(tool_name, mcp_tool_descriptions.get((sid, tool_name), ""))
+                )
             if items:
                 groups.append(
                     {
@@ -229,14 +294,17 @@ async def build_restrictable_resources(
                 )
 
     if candidate_skill_ids:
-        public_items = [
-            {
+        public_items: List[Dict[str, Any]] = []
+        for skill_id in candidate_skill_ids:
+            item: Dict[str, Any] = {
                 "id": skill_id,
                 "label": public_skill_labels.get(skill_id) or skill_id,
                 "forbidden_globally": skill_id in globally_forbidden_skills,
             }
-            for skill_id in candidate_skill_ids
-        ]
+            description = public_skill_descriptions.get(skill_id, "")
+            if description:
+                item["description"] = description
+            public_items.append(item)
         groups.append({"key": "public_skills", "label": "公共技能", "items": public_items})
 
     personal_items = []
@@ -244,17 +312,31 @@ async def build_restrictable_resources(
         skill_id = str(meta.get("id") or "").strip()
         if not skill_id:
             continue
-        personal_items.append(
-            {
-                "id": skill_id,
-                "label": str(meta.get("name") or skill_id),
-                "forbidden_globally": skill_id in globally_forbidden_skills,
-            }
-        )
+        item: Dict[str, Any] = {
+            "id": skill_id,
+            "label": str(meta.get("name") or skill_id),
+            "forbidden_globally": skill_id in globally_forbidden_skills,
+        }
+        description = str(meta.get("description") or "").strip()
+        if description:
+            item["description"] = description
+        personal_items.append(item)
     if personal_items:
         groups.append({"key": "personal_skills", "label": "个人技能", "items": personal_items})
 
-    return {"agent_id": agent_id, "groups": groups}
+    # 候选清单来自**某一个具体版本**，而弹框是按 agent 维度配置限制的。把来源版本一并返回，
+    # 前端才能解释"为什么这里的数量与智能体编辑页不同"——编辑页看的是正在编辑的草稿版本。
+    source_version: Dict[str, Any] = {}
+    if version is not None:
+        source_version = {
+            "id": version.id,
+            "version_number": version.version_number,
+            "status": str(version.status or ""),
+            # 运行时实际生效的是已发布版本，取不到已发布才退回最新版本
+            "is_published": str(version.status or "").upper() == "PUBLISHED",
+        }
+
+    return {"agent_id": agent_id, "groups": groups, "source_version": source_version}
 
 
 def list_personal_skill_metas(user_info: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:

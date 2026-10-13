@@ -568,3 +568,73 @@ return keys.map((key) => api.resourceKindOfGroup({ key, label: key, items: [] })
     )
 
     assert result == ["tools", "tools", "tools"], "新组键必须仍归工具列"
+
+
+def test_descriptions_and_source_version_survive_normalization():
+    """描述与来源版本都必须透传：前者决定副标题显示什么，后者解释数量差异。"""
+    result = _run_typescript(
+        """
+const catalog = api.normalizeAgentRestrictableCatalog({
+  agent_id: 'a1',
+  source_version: { id: 'v3', version_number: 3, status: 'PUBLISHED', is_published: true },
+  groups: [
+    { key: 'builtin_tools', label: '内置工具', items: [
+      { id: 'read_file', label: 'read_file', description: '按行读取文件内容' },
+      { id: 'no_desc', label: 'no_desc', description: '   ' },
+      { id: 'missing', label: 'missing' },
+    ] },
+  ],
+});
+const group = catalog.groups[0];
+return {
+  withDescription: group.items[0].description,
+  blankDropped: 'description' in group.items[1],
+  missingDropped: 'description' in group.items[2],
+  sourceVersion: catalog.sourceVersion,
+  groupsKept: catalog.groups.length,
+};
+"""
+    )
+
+    assert result["withDescription"] == "按行读取文件内容"
+    assert result["blankDropped"] is False, "空白描述不要留下空串，前端会显示成空白行"
+    assert result["missingDropped"] is False
+    assert result["groupsKept"] == 1, "目录归一化不能丢掉分组"
+    assert result["sourceVersion"] == {
+        "id": "v3",
+        "version_number": 3,
+        "status": "PUBLISHED",
+        "is_published": True,
+    }
+
+
+def test_source_version_tolerates_dirty_and_missing_payloads():
+    """来源版本是展示信息，坏数据必须降级为 null，绝不能挡住弹框。"""
+    result = _run_typescript(
+        """
+const cases = [
+  undefined,
+  null,
+  'nope',
+  {},
+  { source_version: null },
+  { source_version: {} },
+  { source_version: { id: '  ' } },
+];
+return {
+  allNull: cases.map((value) => api.readSourceVersion(value)),
+  stringNumber: api.readSourceVersion({
+    source_version: { id: 'v9', version_number: '9', status: 'DRAFT', is_published: false },
+  }),
+  bogusNumber: api.readSourceVersion({
+    source_version: { id: 'v9', version_number: 'abc', status: 'DRAFT' },
+  }),
+  missingPublishedFlag: api.readSourceVersion({ source_version: { id: 'v9' } }),
+};
+"""
+    )
+
+    assert result["allNull"] == [None] * 7, "没有可用 id 时一律 null"
+    assert result["stringNumber"]["version_number"] == 9, "字符串版本号要能解析"
+    assert result["bogusNumber"]["version_number"] is None, "解析不出来就是 null，不要出现 NaN"
+    assert result["missingPublishedFlag"]["is_published"] is False, "缺省按未发布处理"

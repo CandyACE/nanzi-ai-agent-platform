@@ -26,6 +26,25 @@ export interface RestrictableResourceItem {
   forbidden_globally: boolean
   /** 自定义 API 工具在注册表里填的业务分组；工具页签据此与智能体编辑页保持同一套分组 */
   group_name?: string
+  /**
+   * 中文描述。没有它，弹框里每个工具就只是一行裸 id（`system_http_request`），
+   * 管理员根本看不出这是什么工具——而智能体编辑页一直显示的是描述。
+   */
+  description?: string
+}
+
+/** 候选清单来自具体某个版本；运行时生效的是已发布版本。 */
+export interface AgentRestrictionSourceVersion {
+  id: string
+  version_number: number | null
+  status: string
+  is_published: boolean
+}
+
+/** 候选目录：分组 + 它来自哪个版本（数量与编辑页对不上时，靠它解释）。 */
+export interface AgentRestrictableCatalog {
+  groups: RestrictableResourceGroup[]
+  sourceVersion: AgentRestrictionSourceVersion | null
 }
 
 /** 分组：内置工具 / 自定义 API 工具 / MCP（按 server 一个组）/ 公共技能 / 个人技能……绑什么才有什么，数量由接口决定 */
@@ -80,11 +99,48 @@ function normalizeItem(raw: unknown): RestrictableResourceItem | null {
   if (!id) return null
   const label = String(record.label ?? '').trim() || id
   const groupName = String(record.group_name ?? '').trim()
+  const description = String(record.description ?? '').trim()
   return {
     id,
     label,
     forbidden_globally: Boolean(record.forbidden_globally),
     ...(groupName ? { group_name: groupName } : {}),
+    ...(description ? { description } : {}),
+  }
+}
+
+/**
+ * 接口响应 → 候选来源版本（老响应没有该字段时返回 null，不编造）。
+ *
+ * 为什么需要：候选清单来自**某一个具体版本**（优先已发布），而限制是按 agent 维度配的。
+ * 管理员正在编辑页改的是草稿版本，两个页面的数量天然可能不同；把来源版本显示出来，
+ * 这个差异才是可解释的，而不是看起来像个 bug。
+ */
+export function readSourceVersion(raw: unknown): AgentRestrictionSourceVersion | null {
+  if (!raw || typeof raw !== 'object') return null
+  const record = (raw as Record<string, unknown>).source_version
+  if (!record || typeof record !== 'object') return null
+  const version = record as Record<string, unknown>
+  const id = String(version.id ?? '').trim()
+  if (!id) return null
+  const rawNumber = version.version_number
+  const parsedNumber =
+    typeof rawNumber === 'number' && Number.isFinite(rawNumber)
+      ? rawNumber
+      : Number.parseInt(String(rawNumber ?? ''), 10)
+  return {
+    id,
+    version_number: Number.isFinite(parsedNumber) ? parsedNumber : null,
+    status: String(version.status ?? '').trim(),
+    is_published: Boolean(version.is_published),
+  }
+}
+
+/** 接口响应 → 候选目录（分组 + 来源版本）。 */
+export function normalizeAgentRestrictableCatalog(raw: unknown): AgentRestrictableCatalog {
+  return {
+    groups: normalizeRestrictableGroups(raw),
+    sourceVersion: readSourceVersion(raw),
   }
 }
 

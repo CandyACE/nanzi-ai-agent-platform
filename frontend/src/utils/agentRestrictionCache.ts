@@ -21,9 +21,9 @@
 
 import {
   normalizeAgentRestriction,
-  normalizeRestrictableGroups,
+  normalizeAgentRestrictableCatalog,
   type AgentRestrictionLists,
-  type RestrictableResourceGroup,
+  type AgentRestrictableCatalog,
 } from './agentRestrictions'
 
 export const AGENT_RESTRICTION_TTL_MS = 30_000
@@ -45,8 +45,8 @@ interface CacheEntry<T> {
 
 const listsCache = new Map<string, CacheEntry<AgentRestrictionLists>>()
 const listsInFlight = new Map<string, Promise<AgentRestrictionLists>>()
-const catalogCache = new Map<string, CacheEntry<RestrictableResourceGroup[]>>()
-const catalogInFlight = new Map<string, Promise<RestrictableResourceGroup[]>>()
+const catalogCache = new Map<string, CacheEntry<AgentRestrictableCatalog>>()
+const catalogInFlight = new Map<string, Promise<AgentRestrictableCatalog>>()
 
 /** 同步读取已缓存的限制（未加载 / 已失效返回 null），供角标计数等渲染路径使用。 */
 export function peekAgentRestriction(key: string): AgentRestrictionLists | null {
@@ -59,7 +59,7 @@ export function peekAgentRestriction(key: string): AgentRestrictionLists | null 
  * `key` 用 `agentRestrictableCatalogCacheKey(kind, scopeId, agentId)`：
  * `forbidden_globally` 随用户 / 角色而异，只按 agent_id 缓存会串号。
  */
-export function peekAgentRestrictableCatalog(key: string): RestrictableResourceGroup[] | null {
+export function peekAgentRestrictableCatalog(key: string): AgentRestrictableCatalog | null {
   const entry = catalogCache.get(key)
   return entry ? entry.snapshot : null
 }
@@ -118,7 +118,7 @@ export function loadAgentRestrictableCatalog(
   key: string,
   fetcher: AgentResourceFetcher,
   options: AgentRestrictionLoadOptions = {},
-): Promise<RestrictableResourceGroup[]> {
+): Promise<AgentRestrictableCatalog> {
   const ttlMs = options.ttlMs ?? AGENT_RESTRICTION_TTL_MS
   const now = options.now ?? Date.now
 
@@ -130,7 +130,7 @@ export function loadAgentRestrictableCatalog(
   const request = Promise.resolve()
     .then(() => fetcher())
     .then((raw) => {
-      const snapshot = normalizeRestrictableGroups(raw)
+      const snapshot = normalizeAgentRestrictableCatalog(raw)
       catalogCache.set(key, { snapshot, storedAt: now() })
       catalogInFlight.delete(key)
       return snapshot

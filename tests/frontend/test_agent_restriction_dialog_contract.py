@@ -219,3 +219,37 @@ def test_views_do_not_reimplement_the_restriction_logic():
             f"{page} 内联了全局禁用项判定，应放在 agentRestrictions.ts"
         )
         assert "agentRestrictionCacheKey(" in source, f"{page} 必须用共享缓存键"
+
+
+def test_dialog_shows_chinese_descriptions_instead_of_bare_ids():
+    """条目副标题必须显示中文描述。
+
+    改造前副标题固定是等宽 id，于是弹框里每个工具都是一行 `system_http_request`——
+    管理员看不出这是什么工具；而智能体编辑页显示的一直是描述。
+    """
+    source = (
+        ROOT / "frontend/src/components/system/AgentRestrictionDialog.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "item.description || item.id" in source, "有描述显示描述，没有才退回 id"
+    assert ":class=\"item.description ? '' : 'font-mono'\"" in source, (
+        "中文描述不该用等宽字体；只有回退成 id 时才用"
+    )
+
+
+def test_dialog_explains_where_the_candidates_come_from():
+    """弹框必须说明候选来源版本，以及"全局禁用项不计入可选数"。
+
+    这两句直接回答管理员的疑问："为什么这里的数量和智能体编辑页不一样"。候选取自某个
+    具体版本（优先已发布），而编辑页改的是草稿；全局禁用项又会从可选数里剔除。
+    """
+    source = (
+        ROOT / "frontend/src/components/system/AgentRestrictionDialog.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "sourceVersionLabel" in source
+    assert "已全局禁用的项在列表里置灰，不计入页签的可选数量" in source
+    assert "const sourceVersion = ref<AgentRestrictionSourceVersion | null>(null)" in source
+    assert "sourceVersion.value = catalog.sourceVersion" in source
+    # 来源版本要能区分"已发布"与"草稿"，否则解释不了运行时到底用哪份
+    assert "已发布版本" in source and "尚未发布" in source
