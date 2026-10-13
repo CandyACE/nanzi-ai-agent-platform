@@ -98,7 +98,9 @@ def test_agent_version_temperature_defaults_from_selected_model():
     assert "globalModelTemperature" in source
     assert "setOrchestratorModel" in drawer
     assert "selectedModel.temperature" in drawer
-    assert "@change=\"setOrchestratorModel" in drawer
+    # 编排模型下拉换成可搜索组件后，选择变化仍必须联动模型默认温度
+    assert "const setOrchestratorModel = (modelName: string)" in drawer
+    assert "@update:model-value=\"setOrchestratorModel\"" in drawer
 
 
 def test_agent_version_shows_temperature_difference_hint_below_slider():

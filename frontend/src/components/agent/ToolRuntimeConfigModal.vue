@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import Modal from "../Modal.vue";
+import ModelSelect from "../common/ModelSelect.vue";
 import type { AIModel } from "../../api/model";
 
 interface ToolConfig {
@@ -61,20 +62,17 @@ const handleSave = () => {
           <!-- Model Selection -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">执行模型 (Override Model)</label>
-            <select
-              v-model="localConfig.model_name"
+            <ModelSelect
+              :model-value="localConfig.model_name || ''"
+              :models="availableModels"
               :disabled="readonly"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-primary bg-white text-sm disabled:bg-gray-50 disabled:text-gray-50 read-only:bg-gray-1000"
-            >
-              <option value="">跟随智能体默认配置</option>
-              <option
-                v-for="m in availableModels"
-                :key="m.id"
-                :value="m.model_id"
-              >
-                {{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }} ({{ m.model_id }})
-              </option>
-            </select>
+              allow-empty
+              empty-label="跟随智能体默认配置"
+              placeholder="跟随智能体默认配置"
+              show-model-id
+              disabled-hint="当前为只读模式，无法修改工具执行模型"
+              @update:model-value="localConfig.model_name = $event"
+            />
             <p class="text-[10px] text-gray-400 mt-1">
               指定该工具执行时使用的特定模型。例如 SQL 生成建议使用 Coder 模型。
             </p>

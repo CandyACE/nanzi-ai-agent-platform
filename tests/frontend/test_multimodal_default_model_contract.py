@@ -46,11 +46,15 @@ def test_default_llm_dropdown_also_lists_multimodal_models():
     assert "isMultimodalModel" in body, "默认大模型候选必须放行多模态模型"
 
     # 模板必须真正消费该候选，而不是就地再写一遍过滤
-    assert 'v-for="m in llmModelsForConfig"' in SYSTEM_CONFIG
+    assert ':models="llmModelsForConfig"' in SYSTEM_CONFIG
     assert "x.type === 'llm' && x.is_active" not in SYSTEM_CONFIG
 
 
 def test_multimodal_type_list_has_a_single_source():
     """多模态类型判定收敛为单一常量，避免下拉与判定两处列表各自漂移。"""
-    assert "MULTIMODAL_MODEL_TYPES = ['multimodal', 'vision', 'image2text']" in SYSTEM_CONFIG
+    utils = (ROOT / "frontend/src/utils/modelSelect.ts").read_text(encoding="utf-8")
+    assert "MULTIMODAL_MODEL_TYPES = ['multimodal', 'vision', 'image2text']" in utils
+    # 页面侧改为复用 utils 的判定，不得再各留一份类型清单
+    assert "MULTIMODAL_MODEL_TYPES" not in SYSTEM_CONFIG
+    assert "isMultimodalModelType" in SYSTEM_CONFIG
     assert "['multimodal', 'vision', 'image2text'].includes" not in SYSTEM_CONFIG

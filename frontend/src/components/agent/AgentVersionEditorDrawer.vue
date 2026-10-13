@@ -5,11 +5,13 @@ import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
+import ModelSelect from '../common/ModelSelect.vue';
 import AgentAvatarField from './AgentAvatarField.vue';
 import AgentNameField from './AgentNameField.vue';
 import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
 import { getTemperatureGuidance } from '../../utils/temperatureGuidance';
+import { selectableLlmModels } from '../../utils/modelSelect';
 
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
@@ -144,10 +146,9 @@ watch(
   { immediate: true }
 );
 
-const llmModels = () => props.models.filter((m) => (m.type === 'llm' || m.type === 'multimodal') && m.is_active);
+const llmModels = () => selectableLlmModels(props.models);
 
-const setOrchestratorModel = (event: Event) => {
-  const modelName = (event.target as HTMLSelectElement).value;
+const setOrchestratorModel = (modelName: string) => {
   props.versionForm.model_name = modelName;
   const selectedModel = llmModels().find((model) => model.model_id === modelName);
   if (selectedModel) {
@@ -815,15 +816,14 @@ const externalCreationMissingFields = computed(() => {
                 <p class="text-[11px] text-gray-500 mb-3 leading-relaxed">
                   负责任务拆解、逻辑推理及工具调用
                 </p>
-                <select
-                  :value="versionForm.model_name"
-                  @change="setOrchestratorModel"
+                <ModelSelect
+                  :model-value="versionForm.model_name || ''"
+                  :models="llmModels()"
                   :disabled="!canEditVersion"
-                  class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-primary/30 bg-white text-sm"
-                >
-                  <option value="" disabled>选择编排模型...</option>
-                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }}</option>
-                </select>
+                  placeholder="选择编排模型..."
+                  disabled-hint="当前版本不可编辑，无法切换模型"
+                  @update:model-value="setOrchestratorModel"
+                />
                 <div class="mt-3">
                   <div class="flex justify-between items-center mb-1">
                     <label class="text-[11px] font-medium text-gray-600">采样温度 {{ versionForm.temperature }}</label>
@@ -860,15 +860,17 @@ const externalCreationMissingFields = computed(() => {
                 <p class="text-[11px] text-gray-500 mb-3 leading-relaxed">
                   负责整合工具结果并组织语言回复，留空则跟随编排模型
                 </p>
-                <select
-                  :value="versionForm.synthesis_model_name"
-                  @change="versionForm.synthesis_model_name = ($event.target as HTMLSelectElement).value"
+                <ModelSelect
+                  :model-value="versionForm.synthesis_model_name || ''"
+                  :models="llmModels()"
                   :disabled="!canEditVersion"
-                  class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 bg-white text-sm"
-                >
-                  <option value="">跟随编排模型</option>
-                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }}</option>
-                </select>
+                  allow-empty
+                  empty-label="跟随编排模型"
+                  placeholder="跟随编排模型"
+                  accent="emerald"
+                  disabled-hint="当前版本不可编辑，无法切换模型"
+                  @update:model-value="versionForm.synthesis_model_name = $event"
+                />
                 <div v-if="versionForm.synthesis_model_name" class="mt-3">
                   <div class="flex justify-between items-center mb-1">
                     <label class="text-[11px] font-medium text-gray-600">采样温度 {{ versionForm.synthesis_temperature }}</label>
