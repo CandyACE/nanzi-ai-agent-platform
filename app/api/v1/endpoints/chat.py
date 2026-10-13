@@ -1348,6 +1348,9 @@ async def get_conversation_context_usage(
         conversation_id=conversation_id,
         runtime_model_info=runtime_model_info,
         empty_history_is_zero=True,
+        # 展示层专用：用最近一次模型调用的真实 usage 校准对话部分估算（实测低约 20%）。
+        # 这是本函数**唯一**开启校准的调用点；session_status 与运行时裁剪判定保持纯估算。
+        calibrate=True,
     )
     try:
         from app.services.config_service import resolve_effective_sandbox_policy

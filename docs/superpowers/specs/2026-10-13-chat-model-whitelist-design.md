@@ -241,6 +241,43 @@ async def published_agent_model_name(
 
 - 语义边界：白名单**放宽不了**智能体的默认模型，也**收紧不了**它——用户不手动切换时，用的永远是智能体版本指定的模型。
 
+
+### 4.9 上下文计量的两处修正（用户实测反馈，独立于白名单）
+
+用户在一次 24 次模型调用的会话里对照了三处数字，要求核对「浮标的上下文计数对不对」。
+
+**实测证据（同一会话）**：输入框浮标 `47k / 256k · 18%`；明细弹框 #1 输入 44793 / 窗口 262144 / 占用 17.09%；#24 估算 97k · 实际输入 123k / 占用 47.11%；AI 消息下 `用量 2.1M tok`。
+自洽性核对全部通过（`44793/262144 = 17.09%`、`12k+11k+74k = 97k`、`总输入 2081680 + 总输出 25310 = 2.1M`），但由此暴露两个问题。
+
+#### P1：同一数值在两处显示不同（已确证）
+
+- 输入框面板 `formatContextTokens()`（`frontend/src/composables/useContextUsage.ts`）：`≥65536 且为 1024 倍数`时按 **÷1024** → `262144` 显示 `256k`、`253952` 显示 `248k`；
+- 明细弹框 `formatTokens()`（`frontend/src/components/chat/ChatModelCallStatsModal.vue`）：一律 **÷1000** → 同一数值显示 `262k` / `254k`。
+
+**修正（用户选定 ÷1024 口径）**：把两套函数的分工固定下来，明细弹框里窗口/预算类的 5 处引用切到 `formatContextTokens`：
+
+- `formatContextTokens`：**模型窗口与预算**（物理窗口、历史 compact 预算、请求输入上限、输出预留）——2 的幂感知；
+- `formatTokens`：**用量计数器**（累计输入/输出、缓存命中量、单次调用量）——十进制。
+
+#### P2：浮标显示的不是真实占用（已确证，用户选定「只修显示层」）
+
+浮标显示的是 `estimate_context_usage()` 的估算值（`estimate_text_tokens()` 的「UTF-8 字节 ÷ 4」口径），与该次调用的真实 `input_tokens` 存在偏差，且**方向不固定**：同一会话早段估算 47k / 实测 44793（偏高约 5%），末段估算 97k / 实测 123k（偏低约 21%，工具结果堆积后偏差放大）。因此校准采用「实测 ÷ 估算」的比值缩放，而不是加一个固定偏移——比值能同时覆盖两个方向。校准所需数据**已经存在**：`middleware` 写入的每条调用记录同时含真实 `input_tokens` 与当次的 `context_breakdown.total_tokens`（同一时刻的实测与估算），**零新增采集**。
+
+**修正**：
+
+1. `estimate_context_usage(..., calibrate: bool = False)` 新增开关，**只有**输入框浮标端点（`GET /chat/conversation/{id}/context-usage`）传 `True`；`session_status` 工具保持 `False`——LLM 看到的水位与运行时裁剪判定口径**完全不变**。
+2. 校准只作用于**对话消息**部分（`system_prompt_tokens` / `tools_tokens` 本就是 AgentScope `count_tokens` 的真实计数）：
+   `ratio = (样本实测 input − system − tools) / (样本估算 total − system − tools)`；
+   护栏：样本估算对话部分 `≥1000`、`ratio ∈ [0.5, 5.0]`，否则不校准（样本异常时不放大误差）。
+3. 展示值 = 当前估算对话部分 × ratio + system + tools。
+4. 响应新增字段，**不改**既有字段语义（向后兼容）：
+   - `current_tokens`：展示值（无样本或 `calibrate=False` 时等于 `estimated_current_tokens`）；
+   - `calibration: { applied, ratio, sample_estimated_tokens, sample_actual_tokens }`；
+   - `estimated_current_tokens` 仍是**纯估算**；
+   - `calibrate=True` 时 `usage_percentage` / `estimated_remaining_tokens` / `context_breakdown` 与展示值自洽。
+5. 前端：浮标与面板改用 `current_tokens ?? estimated_current_tokens`，校准生效时给出「已按最近一次模型调用实测校准」说明。
+6. **明确不改**：`window_for_context` 裁剪水位线与自动压缩触发判定。`estimate_text_tokens()` 的注释要求"平台裁剪水位线、上下文占用展示、AgentScope 内部压缩三者同一度量"，单独把判定改成校准值会与 AgentScope 内部压缩打架（这是本次刻意保留的技术债，若线上出现真实超窗再单独评估）。
+
 ## 5. 兼容性与回归保证
 
 1. **存量用户零变化**：没有任何 `model` 记录 → 判据返回 `None` → 过滤接口不加条件、校验点直接放行。这是本次设计最关键的一条。

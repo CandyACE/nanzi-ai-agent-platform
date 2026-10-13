@@ -10,8 +10,19 @@ export interface ContextBreakdown {
   source: string;
 }
 
+export interface ContextUsageCalibration {
+  applied: boolean;
+  ratio: number | null;
+  sample_estimated_tokens: number | null;
+  sample_actual_tokens: number | null;
+}
+
 export interface ContextUsage {
   estimated_current_tokens: number | null;
+  /** 展示值：后端按最近一次模型调用校准后的占用；无样本 / 未校准时等于 estimated_current_tokens。 */
+  current_tokens?: number | null;
+  /** 校准信息：applied=false 时无样本，ratio / sample_* 为 null。 */
+  calibration?: ContextUsageCalibration | null;
   estimated_remaining_tokens: number | null;
   context_messages: number | null;
   token_budget: number | null;
@@ -34,6 +45,11 @@ export interface RefreshContextUsageOptions {
   headers?: Record<string, string>;
 }
 
+/**
+ * 分工（别混用）：
+ * - 窗口与预算（物理窗口、compact 预算、请求输入上限、输出预留）→ 本函数，2 的幂感知；
+ * - 用量计数器（累计输入/输出、缓存命中量、单次调用量）→ 明细弹框里的十进制 formatTokens。
+ */
 export const formatContextTokens = (value: number | null | undefined): string => {
   const tokens = Number(value || 0);
   if (!Number.isFinite(tokens) || tokens <= 0) return "0";

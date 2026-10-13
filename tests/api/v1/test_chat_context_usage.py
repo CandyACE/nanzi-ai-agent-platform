@@ -24,6 +24,8 @@ async def test_context_usage_endpoint_returns_shared_estimate_and_effective_sand
         assert kwargs["user_id"] == "user-1"
         assert kwargs["conversation_id"] == "conversation-1"
         assert kwargs["empty_history_is_zero"] is True
+        # 浮标是唯一的校准开启点（展示层）
+        assert kwargs["calibrate"] is True
         return expected
 
     async def fake_config_get(key, default=None):

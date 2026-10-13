@@ -17,6 +17,7 @@ from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.mcp.mcp_auth_policy import (
     _parse_auth_headers,
+    build_mcp_user_assertion_headers,
     encrypt_mcp_auth_headers,
     generate_mcp_private_key_pem,
     mcp_auth_headers_configured,
@@ -71,6 +72,12 @@ class McpServerWrite(McpServerBase):
         if str(self.user_assertion_header or "").strip().lower() == "authorization":
             raise ValueError("UserContext Header 不能使用 Authorization")
         return self
+
+
+class McpVerifyRequest(McpServerWrite):
+    """连接测试请求；编辑态携带 server_id，用于复用已保存的凭据。"""
+
+    server_id: Optional[str] = None
 
 
 def _normalized_remark(value: Optional[str]) -> Optional[str]:
@@ -290,19 +297,95 @@ def _apply_mcp_auth_update(server: McpServer, data: McpServerWrite) -> None:
         _remove_header_case_insensitive(headers, "Authorization")
     server.auth_headers = encrypt_mcp_auth_headers(headers)
 
+
+async def _load_verify_saved_server(
+    db: AsyncSession,
+    data: McpVerifyRequest,
+    user: Dict,
+) -> Optional[McpServer]:
+    """编辑态探测的凭据来源；地址变更时不返回，避免旧凭据被发往新地址。"""
+    server_id = str(data.server_id or "").strip()
+    if not server_id:
+        return None
+
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == server_id))
+    ).scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _ensure_server_control_access(server, user)
+    if str(data.sse_url or "").strip() != str(server.sse_url or "").strip():
+        # 地址已改：不复用旧凭据，必须由本次请求显式提供 Token。
+        return None
+    return server
+
+
+def _build_verify_auth_headers(
+    server: Optional[McpServer],
+    data: McpVerifyRequest,
+) -> Dict[str, str]:
+    """构造探测请求的出站 Header；编辑态未改动的凭据沿用已保存配置。"""
+    if server is None:
+        headers = _parse_auth_headers(data.auth_headers)
+    else:
+        headers = resolve_mcp_auth_headers(server)
+        if "auth_headers" in data.model_fields_set and data.auth_headers:
+            headers.update(_parse_auth_headers(data.auth_headers))
+
+    for key, value in (data.auth_headers_patch or {}).items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        if normalized_key.casefold() == "authorization":
+            raise HTTPException(status_code=400, detail="Authorization 请通过独立开关配置")
+        if value is None:
+            _remove_header_case_insensitive(headers, normalized_key)
+        else:
+            _set_header_case_insensitive(headers, normalized_key, str(value))
+
+    if data.authorization_enabled is False:
+        _remove_header_case_insensitive(headers, "Authorization")
+    elif data.fixed_token:
+        _set_header_case_insensitive(headers, "Authorization", f"Bearer {data.fixed_token}")
+    return headers
+
+
+def _build_verify_user_assertion_headers(
+    server: Optional[McpServer],
+    data: McpVerifyRequest,
+    user: Dict,
+) -> Dict[str, str]:
+    """编辑态探测时按已保存私钥签发用户断言，保持与真实调用一致。"""
+    if not data.user_assertion_enabled:
+        return {}
+    if server is None or not bool(getattr(server, "user_assertion_enabled", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="开启用户身份传递后需先保存 MCP 生成签名密钥，保存后再测试连接",
+        )
+    try:
+        return build_mcp_user_assertion_headers(
+            server,
+            user_info=user,
+            agent_info={"agent_id": "mcp-connection-test", "agent_name": "MCP 连接测试"},
+            assertion_header=data.user_assertion_header,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"用户身份传递配置无效: {exc}")
+
+
 @router.post("/verify")
 async def verify_mcp_server(
-    data: McpServerWrite,
+    data: McpVerifyRequest,
+    db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key)
 ):
     """Test connection and return discovered tools without saving"""
-    temp_id = f"verify_{uuid.uuid4().hex[:8]}"
-    auth_headers = _parse_auth_headers(data.auth_headers)
-    if data.authorization_enabled is False:
-        _remove_header_case_insensitive(auth_headers, "Authorization")
-    if data.fixed_token:
-        _set_header_case_insensitive(auth_headers, "Authorization", f"Bearer {data.fixed_token}")
+    saved_server = await _load_verify_saved_server(db, data, user)
+    auth_headers = _build_verify_auth_headers(saved_server, data)
+    auth_headers.update(_build_verify_user_assertion_headers(saved_server, data, user))
 
+    temp_id = f"verify_{uuid.uuid4().hex[:8]}"
     McpClientService._sessions[temp_id] = McpSseSession(temp_id, data.sse_url, auth_headers)
     
     try:

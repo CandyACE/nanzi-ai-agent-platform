@@ -287,6 +287,22 @@ const authHeadersTouched = ref(false)
 const authorizationEnabled = ref(false)
 const authorizationEditing = ref(false)
 const authorizationToken = ref('')
+// 编辑态记录已保存地址：地址未变时连接测试可复用已保存凭据，地址变更后必须重新输入 Token。
+const savedSseUrl = ref('')
+
+const verifyReusesSavedAuth = computed(() => (
+  isEditing.value
+  && Boolean(editingId.value)
+  && Boolean(savedSseUrl.value)
+  && newServer.value.sse_url.trim() === savedSseUrl.value
+))
+
+const verifyAddressChanged = computed(() => (
+  isEditing.value
+  && Boolean(editingId.value)
+  && Boolean(savedSseUrl.value)
+  && newServer.value.sse_url.trim() !== savedSseUrl.value
+))
 
 const isAuthorizationHeader = (key: string) => key.trim().toLowerCase() === 'authorization'
 
@@ -733,6 +749,7 @@ const resetWizard = () => {
   authorizationEnabled.value = false
   authorizationEditing.value = false
   authorizationToken.value = ''
+  savedSseUrl.value = ''
 }
 
 const closeWizard = () => {
@@ -777,6 +794,7 @@ const openEditModal = (server: any) => {
   authorizationEnabled.value = Boolean(server.authorization_configured)
   authorizationEditing.value = false
   authorizationToken.value = ''
+  savedSseUrl.value = String(server.sse_url || '').trim()
   const maskedHeaders = Object.entries(server.masked_auth_headers || {})
   headerPairs.value = maskedHeaders.length
     ? maskedHeaders.map(([key, value]) => ({
@@ -950,7 +968,15 @@ const handleVerify = async () => {
   
   verifying.value = true
   try {
-    const res = await axios.post('/api/portal/mcp/verify', buildServerPayload(newServer.value))
+    const payload = buildServerPayload(newServer.value)
+    if (isEditing.value && editingId.value) {
+      // 编辑态带上 server_id：地址未变时后端复用已保存的凭据完成探测。
+      payload.server_id = editingId.value
+    }
+    if (verifyAddressChanged.value && authorizationEnabled.value && !authorizationEditing.value) {
+      showToast('服务地址已变更：已保存的 Token 不会用于新地址，请点击“编辑”重新输入 Token 后再测试', 'warning')
+    }
+    const res = await axios.post('/api/portal/mcp/verify', payload)
     discoveredTools.value = res.data.tools
     wizardStep.value = 2
     if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
@@ -1840,6 +1866,8 @@ onMounted(fetchServers)
                 >取消</button>
               </div>
               <p v-if="isEditing && authorizationEnabled" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
+              <p v-if="verifyReusesSavedAuth && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址未修改时，“连接并发现工具”会沿用已保存的 Token。</p>
+              <p v-if="verifyAddressChanged && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-amber-600">服务地址已变更，已保存的 Token 不会用于新地址；请点击“编辑”重新输入 Token。</p>
             </div>
 
             <!-- Dynamic Headers Editor -->
