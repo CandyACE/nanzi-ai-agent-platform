@@ -2309,6 +2309,7 @@ import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
 import { isApiSuccess } from "@/utils/apiEnvelope";
+import { isSkillForbidden } from "@/utils/skillForbidden";
 import { planHistorySync } from "@/utils/runRecoverySync";
 import {
   planStreamReplay,
@@ -4301,6 +4302,9 @@ const buildModalDraftOptionItem = (option: any) => ({
 
 const toggleModalResourceOption = (type: ResourceScopeGroupKey, option: any) => {
   const selected = resourceModalOptionSelected(type, option);
+  // 被禁技能：选中方向必须拦住——后端会把这次挂载丢掉，界面若显示已选就是静默失效；
+  // 取消方向放行，否则禁用前保存过的历史项在弹窗里再也去不掉（禁用不该让人无法收拾现场）
+  if (!selected && type === 'skills' && isSkillForbidden(option)) return;
   const items = selected
     ? modalDraftSelections(type).filter((item) => !resourceEntryMatchesOption(item, option))
     : [
@@ -4376,7 +4380,9 @@ const loadResourceOptions = async () => {
     for (const [result, scope] of [[globalSkills, 'global'], [personalSkills, 'personal']] as const) {
       if (result.status === 'fulfilled') resourceOptions.skills.push(...(result.value.data?.data || [])
         .filter((item: any) => item.enabled === undefined || item.enabled === true || item.enabled === 'true' || item.enabled === 1 || item.enabled === '1')
-        .map((item: any) => ({ id: String(item.id), name: item.name, description: item.description, scope })));
+        // forbidden 由公共技能清单接口下发（个人技能接口不带该字段，按「未禁用」处理）；
+        // 归一成布尔后带下去，弹窗据此置灰——被禁技能仍要显示，只是不能勾选
+        .map((item: any) => ({ id: String(item.id), name: item.name, description: item.description, scope, forbidden: isSkillForbidden(item) })));
     }
     if (mcpTools.status === 'fulfilled') {
       const raw = mcpTools.value.data;

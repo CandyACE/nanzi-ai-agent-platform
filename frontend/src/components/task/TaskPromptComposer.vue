@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import axios from '@/utils/axios'
 import { modelApi, type AIModel, type ReasoningEffort } from '@/api/model'
 import { mcpToolDisplayName } from '@/utils/mcpToolDisplayName'
+import { FORBIDDEN_SKILL_BADGE, forbiddenSkillReason, isSkillForbidden } from '@/utils/skillForbidden'
 
 export type TaskApprovalMode = 'ask' | 'allow' | 'deny'
 
@@ -14,6 +15,8 @@ export interface TaskScopeItem {
   server_name?: string
   server_remark?: string
   dataset_name?: string
+  /** 后端公共技能清单接口下发：被管理员禁用的公共技能不可挂载（个人技能不带该字段） */
+  forbidden?: boolean
 }
 
 interface McpOptionGroup {
@@ -383,6 +386,7 @@ const currentOptions = computed(() => {
 })
 
 const skillsForActiveScope = computed(() => {
+  // 被禁技能仍留在这份列表里（移除会让用户以为技能丢了），只按 平台/个人 + 搜索词过滤
   const q = optionSearch.value.trim().toLowerCase()
   return (optionLists.value.skills || []).filter((item) => {
     const personal = isPersonalOption(item)
@@ -430,6 +434,13 @@ const mcpGroupsForActiveOptions = computed(() =>
 
 const selectedIds = (group: 'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools') =>
   new Set((props.resourceScope[group] || []).map((item) => String(item.id || item.name)))
+
+/**
+ * 被禁技能：未选中的一律不可点（后端会丢弃这次挂载）；已选中的允许**取消**，
+ * 否则「禁用之前保存过」的历史项在任务编辑器里再也摘不掉。
+ */
+const isSkillOptionLocked = (item: TaskScopeItem) =>
+  isSkillForbidden(item) && !selectedIds('skills').has(String(item.id || item.name))
 
 const mcpGroupSelectionState = (tools: TaskScopeItem[]): 'none' | 'partial' | 'all' => {
   if (!tools.length) return 'none'
@@ -616,7 +627,11 @@ const toggleScopeItem = (
   const key = String(item.id || item.name)
   const index = current.findIndex((entry) => String(entry.id || entry.name) === key)
   if (index >= 0) current.splice(index, 1)
-  else current.push(item)
+  else if (group === 'skills' && isSkillForbidden(item)) {
+    // 被禁技能挂不上去：后端会在注入 / 工作区物化等六处丢弃它，
+    // 这里拦住，避免界面显示「已选」而任务实际拿不到该技能
+    return
+  } else current.push(item)
   emit('update:resourceScope', {
     ...props.resourceScope,
     [group]: current,
@@ -693,6 +708,8 @@ const loadOptions = async () => {
           name: item.name,
           description: item.description || '',
           scope,
+          // forbidden 由公共技能清单接口下发（个人技能接口不带该字段，按「未禁用」处理）
+          forbidden: isSkillForbidden(item),
         })
       }
     }
@@ -1348,7 +1365,7 @@ watch(
           </template>
         </div>
 
-        <!-- 技能：按平台 / 个人过滤 -->
+        <!-- 技能：按平台 / 个人过滤；被禁技能仍可见，只是置灰不可选并写明原因 -->
         <div
           v-else-if="activePanel === 'skills'"
           class="min-h-0 flex-1 overflow-y-auto p-1"
@@ -1373,7 +1390,10 @@ watch(
             v-for="item in skillsForActiveScope"
             :key="`${item.scope || 'global'}:${item.id}`"
             type="button"
-            class="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-gray-50"
+            class="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left"
+            :class="isSkillForbidden(item) ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'"
+            :disabled="isSkillOptionLocked(item)"
+            :title="isSkillForbidden(item) ? forbiddenSkillReason(item, '勾选') : undefined"
             @click="toggleScopeItem('skills', item)"
           >
             <span
@@ -1387,6 +1407,10 @@ watch(
                   v-if="isPersonalOption(item)"
                   class="shrink-0 rounded bg-emerald-100 px-1 py-px text-[8px] font-semibold text-emerald-700"
                 >个人</span>
+                <span
+                  v-if="isSkillForbidden(item)"
+                  class="shrink-0 rounded bg-red-50 px-1 py-px text-[8px] font-semibold text-red-600"
+                >{{ FORBIDDEN_SKILL_BADGE }}</span>
               </span>
               <span v-if="item.description" class="mt-0.5 block truncate text-[10px] text-gray-400">
                 {{ item.description }}

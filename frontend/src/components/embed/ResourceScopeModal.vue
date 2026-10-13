@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { mcpToolDisplayName as formatMcpToolDisplayName } from "@/utils/mcpToolDisplayName";
+import { FORBIDDEN_SKILL_BADGE, forbiddenSkillReason, isSkillForbidden } from "@/utils/skillForbidden";
 
 type ResourceScopeGroup = {
   key: ResourceScopeGroupKey;
@@ -155,7 +156,15 @@ const tabCountLabel = (key: ResourceScopeGroupKey) => {
 
 const isPersonalOption = (option: any) => String(option?.scope || "").toLowerCase() === "personal";
 
+/**
+ * 被禁技能：未选中的一律不可点（后端会丢弃这次挂载）；已选中的允许**取消**，
+ * 否则「禁用之前保存过」的历史项在这一屏里再也摘不掉。
+ */
+const isSkillOptionLocked = (option: any) =>
+  isSkillForbidden(option) && !props.optionSelected("skills", option);
+
 const skillsForActiveScope = computed(() => {
+  // 被禁技能仍留在这份列表里（移除会让用户以为技能丢了），只按 平台/个人 + 搜索词过滤
   const options = props.sortedOptions("skills") || [];
   return options.filter((option) =>
     skillScopeTab.value === "personal" ? isPersonalOption(option) : !isPersonalOption(option),
@@ -420,7 +429,7 @@ const skillsForActiveScope = computed(() => {
               </div>
             </div>
 
-            <!-- 技能：按平台 / 个人过滤 -->
+            <!-- 技能：按平台 / 个人过滤；被禁技能仍可见，只是置灰不可勾选并写明原因 -->
             <div v-else-if="group.key === 'skills' && skillsForActiveScope.length" class="space-y-0.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
               <button
                 v-for="(option, optionIndex) in skillsForActiveScope"
@@ -428,10 +437,14 @@ const skillsForActiveScope = computed(() => {
                 type="button"
                 role="checkbox"
                 :aria-checked="optionSelected(group.key, option)"
+                :disabled="isSkillOptionLocked(option)"
+                :title="isSkillForbidden(option) ? forbiddenSkillReason(option, '勾选') : undefined"
                 class="w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors border border-transparent"
-                :class="optionSelected(group.key, option)
-                  ? 'bg-primary/5 dark:bg-primary/10 border-primary/20'
-                  : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
+                :class="isSkillForbidden(option)
+                  ? 'opacity-60 cursor-not-allowed'
+                  : optionSelected(group.key, option)
+                    ? 'bg-primary/5 dark:bg-primary/10 border-primary/20'
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
                 @click="emit('toggle-option', group.key, option)"
               >
                 <span
@@ -445,6 +458,10 @@ const skillsForActiveScope = computed(() => {
                       v-if="isPersonalOption(option)"
                       class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
                     >个人</span>
+                    <span
+                      v-if="isSkillForbidden(option)"
+                      class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400"
+                    >{{ FORBIDDEN_SKILL_BADGE }}</span>
                   </span>
                   <span v-if="option.description" class="block text-xs text-gray-400 dark:text-gray-500 truncate">{{ option.description }}</span>
                 </span>
