@@ -864,7 +864,13 @@ class PermissionService:
                 logger.warning(f"Failed to invalidate dataset menu cache for user {user_id}: {ex}")
         try:
             from app.services.auth_service import AuthService
-            await AuthService.invalidate_user_auth_cache(user_id, db=self.db)
+            # 只失效认证缓存（角色/权限变更立即生效），**不吊销会话**：这里服务的是
+            # 日常权限变更（含用户新建数据集时给自己授权、按角色批量授权），吊销会话
+            # 会把操作者自己乃至整批用户踢到登录页。需要立即登出的管理路径各自显式传
+            # revoke_sessions=True。
+            await AuthService.invalidate_user_auth_cache(
+                user_id, db=self.db, revoke_sessions=False
+            )
         except Exception as ex:
             logger.warning(f"Failed to invalidate auth api_key cache for user {user_id}: {ex}")
 

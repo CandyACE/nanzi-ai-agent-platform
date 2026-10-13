@@ -731,7 +731,7 @@ async def update_user_status(
     # Security: Clear Redis cache to force re-authentication
     try:
         await AuthService.invalidate_user_auth_cache(
-            user_id, db=db, api_key_hash=user.api_key_hash
+            user_id, db=db, api_key_hash=user.api_key_hash, revoke_sessions=True
         )
         await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
@@ -857,7 +857,7 @@ async def batch_update_user_status(
 
         for uid, api_key_hash in targets:
             await AuthService.invalidate_user_auth_cache(
-                uid, db=db, api_key_hash=api_key_hash
+                uid, db=db, api_key_hash=api_key_hash, revoke_sessions=True
             )
         await PermissionService(db).invalidate_cached_permissions_for_users(updated_ids)
     except Exception as e:
@@ -981,7 +981,7 @@ async def delete_user(
         from app.services.auth_service import AuthService
         from app.services.permission_service import PermissionService
         await AuthService.invalidate_user_auth_cache(
-            user_id, db=db, api_key_hash=api_key_hash
+            user_id, db=db, api_key_hash=api_key_hash, revoke_sessions=True
         )
         await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
@@ -1006,6 +1006,14 @@ async def reset_user_api_key(
     
     if not new_api_key:
         raise HTTPException(status_code=500, detail="Failed to reset API Key")
+
+    # 换掉凭据不等于吊销会话：会话令牌是独立于 api_key_hash 的 Redis 键，不按 user_id
+    # 成批吊销的话，「管理员重置 Key」之后对方手里的会话仍然有效，重置等于没重置。
+    # （用户自助重置是唯一例外：它刻意不退出现有会话，见 auth.py 对应端点的说明。）
+    try:
+        await AuthService.invalidate_user_auth_cache(user_id, revoke_sessions=True)
+    except Exception as e:
+        logger.error(f"Failed to revoke sessions after API Key reset for user {user_id}: {e}")
         
     return {
         "message": "API Key reset successfully",
@@ -1042,6 +1050,14 @@ async def set_user_password(
     success = await AuthService.set_user_password(user_id, password, db=db)
     if not success:
         raise HTTPException(status_code=500, detail="密码设置失败")
+
+    # 代设/重置密码后必须吊销该用户全部会话：与用户自助改密同口径（见 auth.py 的
+    # change_password）。否则「管理员发现账号被盗 → 改密码」之后，对方手里的会话
+    # 依然有效，改密等于没改。长时效 API Key 不在会话索引里，不受影响。
+    try:
+        await AuthService.revoke_sessions_for_user(user_id)
+    except Exception as exc:
+        logger.warning("代设密码后吊销会话失败 user_id=%s: %s", user_id, exc)
 
     return {"status": "success", "message": "密码设置成功", "user_id": user_id}
 
