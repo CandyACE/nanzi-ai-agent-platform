@@ -38,6 +38,8 @@ class AIAgentVersion(Base):
     temperature = Column(Float, default=0.0)
     synthesis_model_name = Column(String(100), nullable=True)
     synthesis_temperature = Column(Float, nullable=True)
+    # 是否允许用户在输入框手动切换模型；历史数据与未配置场景一律按 True（允许）处理
+    allow_model_switch = Column(Boolean, nullable=False, default=True)
     system_prompt = Column(Text, nullable=False)
     tools = Column(JSON) # List of tool names ["tool1", "tool2"]
     toolcall_timeout_seconds = Column(Integer, nullable=True)  # 版本级工具调用超时；NULL 表示跟随全局

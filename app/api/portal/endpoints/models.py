@@ -67,16 +67,28 @@ async def _ensure_model_id_available(
 async def list_models(
     type: str = None,
     include_inactive: bool = False,
+    scope: str = None,
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(get_current_user)
 ):
-    """List all AI models"""
+    """List all AI models
+
+    scope=chat：聊天输入框专用，按当前用户的模型白名单收窄（未配置白名单 = 不限制）。
+    不传 scope 的管理端调用保持全量，因此版本配置候选 / 系统配置页 / 模型管理页不受影响。
+    """
     query = select(AIModel)
     if not include_inactive:
         query = query.where(AIModel.is_active == True)
     if type:
         query = query.where(AIModel.type == type)
-    
+
+    if scope == "chat" and str(user.get("role") or "") != "admin":
+        from app.services.permission_service import PermissionService
+
+        allowed_model_ids = await PermissionService(db).get_chat_allowed_model_ids(user.get("id"))
+        if allowed_model_ids is not None:
+            query = query.where(AIModel.model_id.in_(sorted(allowed_model_ids)))
+
     result = await db.execute(query)
     return [AIModelResponse.from_orm_custom(m) for m in result.scalars().all()]
 

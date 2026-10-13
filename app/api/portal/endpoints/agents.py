@@ -34,7 +34,9 @@ async def list_allowed_agents(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """获取当前用户有权限使用的智能体列表 (用于 @提及)"""
-    return await AgentManagerService.list_allowed_agents(session, user=user, keyword=keyword)
+    agents = list(await AgentManagerService.list_allowed_agents(session, user=user, keyword=keyword))
+    # 输入框据此决定是否展示模型切换入口：该字段属于 ai_agent_versions，这里一次性补齐，避免前端逐条回查
+    return await AgentManagerService.attach_published_model_switch_flags(session, agents)
 
 
 @router.get("/{agent_id}/embed-access", response_model=AIAgentResponse)
@@ -79,6 +81,8 @@ async def get_embed_agent_access(
                 "display_name": agent.display_name,
             },
         )
+    # 深链锁定的智能体同样需要已发布版本的「是否允许手动切换模型」，用于决定输入框是否展示模型切换入口
+    await AgentManagerService.attach_published_model_switch_flags(session, [agent])
     return agent
 
 @router.get("/", response_model=List[AIAgentResponse], include_in_schema=False)

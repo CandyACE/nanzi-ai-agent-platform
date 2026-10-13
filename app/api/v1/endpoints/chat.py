@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.ai.agent_service import agent_service
+from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
 from app.services.ai.context_usage import estimate_context_usage
 from app.services.ai.export_service import ExportService
@@ -1658,6 +1659,45 @@ async def get_conversation_model_calls(
     return StandardResponse(data=ModelCallStatsResponse(stats=stats))
 
 
+async def _enforce_chat_model_whitelist(
+    *,
+    db: AsyncSession,
+    user_info: Dict[str, Any],
+    chat_user_id: Any,
+    effective_debug_options: Dict[str, Any],
+    agent_id: Optional[str],
+    version_id: Optional[str],
+) -> None:
+    """聊天模型白名单：只拦客户端显式注入的模型覆盖，未配置（None）= 不限制。
+
+    智能体版本指定的模型天然豁免——用户「选回默认模型」必须始终合法；
+    全局 debug 配置与系统默认模型不经过这里，白名单不影响它们。
+    """
+    override_model = str(effective_debug_options.get("model") or "").strip()
+    if not override_model or str(user_info.get("role") or "") == "admin":
+        return
+
+    allowed_model_ids = await PermissionService(db).get_chat_allowed_model_ids(chat_user_id)
+    if allowed_model_ids is None:
+        return
+
+    agent_default_model = await AgentManagerService.published_agent_model_name(
+        db, agent_id, version_id
+    )
+    if agent_default_model:
+        allowed_model_ids = allowed_model_ids | {agent_default_model}
+
+    if override_model not in allowed_model_ids:
+        logger.warning(
+            "chat model override rejected: user=%s model=%s agent=%s",
+            chat_user_id, override_model, agent_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="该模型不在你的可用范围内，请联系管理员调整",
+        )
+
+
 @router.post("/completions",
     response_model=StandardResponse[ChatCompletionResponse],
     summary="发送对话请求",
@@ -1691,6 +1731,15 @@ async def create_chat_completion(
     effective_debug_options = dict(completion_request.debug_options or {})
     # 资源范围只能由服务端会话快照决定，禁止客户端通过 debug_options 注入范围。
     effective_debug_options.pop("resource_scope", None)
+    # 模型白名单：只约束客户端显式注入的模型覆盖（智能体默认模型豁免）。
+    await _enforce_chat_model_whitelist(
+        db=db,
+        user_info=user_info,
+        chat_user_id=chat_user_id,
+        effective_debug_options=effective_debug_options,
+        agent_id=completion_request.agent_id,
+        version_id=completion_request.version_id,
+    )
     if "injected_context" in effective_debug_options:
         effective_debug_options["injected_context"] = sanitize_injected_context(
             effective_debug_options["injected_context"]

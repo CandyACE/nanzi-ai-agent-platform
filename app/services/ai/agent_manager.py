@@ -217,6 +217,7 @@ class AgentManagerService:
             tools=template["tools"],
             skills_custom=template["skills_custom"],
             skills=template["skills"],
+            allow_model_switch=True,
             welcome_config=None,
             status="DRAFT",
             comment="Initial onboarding template snapshot",
@@ -471,6 +472,7 @@ class AgentManagerService:
                 temperature=version.temperature,
                 synthesis_model_name=version.synthesis_model_name,
                 synthesis_temperature=version.synthesis_temperature,
+                allow_model_switch=bool(getattr(version, "allow_model_switch", True)),
                 system_prompt=version.system_prompt,
                 tools=tools_list or [],
                 toolcall_timeout_seconds=getattr(version, "toolcall_timeout_seconds", None),
@@ -530,6 +532,7 @@ class AgentManagerService:
                     temperature=version.temperature,
                     synthesis_model_name=version.synthesis_model_name,
                     synthesis_temperature=version.synthesis_temperature,
+                    allow_model_switch=bool(getattr(version, "allow_model_switch", True)),
                     system_prompt=version.system_prompt,
                     tools=tools_list or [],
                     toolcall_timeout_seconds=getattr(version, "toolcall_timeout_seconds", None),
@@ -774,7 +777,86 @@ class AgentManagerService:
         )
         stmt = stmt.order_by(main_first, AIAgent.sort_order.desc(), AIAgent.is_system.desc(), AIAgent.display_name)
 
-        return (await session.execute(stmt)).scalars().all()
+        return list((await session.execute(stmt)).scalars().all())
+
+    @staticmethod
+    async def attach_published_model_switch_flags(
+        session: AsyncSession,
+        agents: List[Any],
+    ) -> List[Any]:
+        """
+        给智能体对象附加已发布版本的 allow_model_switch（非独立查询接口使用）。
+
+        - 取每个智能体版本号最大的 PUBLISHED 版本；无已发布版本时按 True（允许切换）处理。
+        - 失败/缺失一律降级为允许，保证历史数据与未迁移环境的行为与旧版一致。
+        """
+        agent_list = [agent for agent in (agents or []) if getattr(agent, "id", None)]
+        if not agent_list:
+            return list(agents or [])
+
+        flags: Dict[str, bool] = {}
+        try:
+            rows = await session.execute(
+                select(AIAgentVersion.agent_id, AIAgentVersion.allow_model_switch)
+                .where(
+                    AIAgentVersion.agent_id.in_([agent.id for agent in agent_list]),
+                    AIAgentVersion.status == "PUBLISHED",
+                )
+                .order_by(AIAgentVersion.agent_id, AIAgentVersion.version_number.desc())
+            )
+            for agent_id, allow in rows.all():
+                # order_by 已保证每个 agent 首次出现即为版本号最大的已发布版本
+                flags.setdefault(agent_id, True if allow is None else bool(allow))
+        except OperationalError as e:
+            if "allow_model_switch" in str(e):
+                logger.warning(
+                    "读取 ai_agent_versions.allow_model_switch 失败：数据库缺少该列，"
+                    "请执行迁移 db-prod/V166 或 db-prod-pg/V67；本次按允许手动切换模型处理。"
+                )
+            else:
+                logger.warning(f"读取智能体版本模型切换开关失败，按允许处理: {e}")
+        except Exception as e:  # pragma: no cover - 防御性降级，不影响主流程
+            logger.warning(f"读取智能体版本模型切换开关失败，按允许处理: {e}")
+
+        for agent in agent_list:
+            setattr(agent, "allow_model_switch", flags.get(agent.id, True))
+        return list(agents or [])
+
+    @staticmethod
+    async def published_agent_model_name(
+        session: AsyncSession,
+        agent_id: Optional[str],
+        version_id: Optional[str] = None,
+    ) -> str:
+        """返回该智能体「已发布版本」配置的编排模型名；查不到返回空串。
+
+        仅供聊天模型白名单的豁免判断使用：白名单限制用户手动切换，但不能连
+        智能体自己指定的模型都拦掉。异常一律降级为空串，不阻断聊天主流程。
+        """
+        if not agent_id:
+            return ""
+        try:
+            if version_id:
+                stmt = select(AIAgentVersion.model_name).where(
+                    AIAgentVersion.id == version_id
+                )
+            else:
+                stmt = (
+                    select(AIAgentVersion.model_name)
+                    .where(
+                        AIAgentVersion.agent_id == agent_id,
+                        AIAgentVersion.status == "PUBLISHED",
+                    )
+                    .order_by(AIAgentVersion.version_number.desc())
+                    .limit(1)
+                )
+            row = (await session.execute(stmt)).first()
+            return str(row[0] or "").strip() if row else ""
+        except Exception as exc:  # noqa: BLE001 - 豁免查询失败不应阻断聊天
+            logger.warning(
+                "Failed to resolve published model for agent %s: %s", agent_id, exc
+            )
+            return ""
 
     @staticmethod
     async def create_agent(session: AsyncSession, data: AIAgentBase, user: Any = None) -> AIAgent:
@@ -910,6 +992,7 @@ class AgentManagerService:
                     temperature=source_version.temperature,
                     synthesis_model_name=source_version.synthesis_model_name,
                     synthesis_temperature=source_version.synthesis_temperature,
+                    allow_model_switch=bool(getattr(source_version, "allow_model_switch", True)),
                     system_prompt=source_version.system_prompt,
                     # JSON 字段必须深拷贝，避免两个 ORM 实例共享同一可变对象
                     tools=copy.deepcopy(source_version.tools),
@@ -1242,6 +1325,7 @@ class AgentManagerService:
             temperature=data.temperature,
             synthesis_model_name=data.synthesis_model_name,
             synthesis_temperature=data.synthesis_temperature,
+            allow_model_switch=bool(getattr(data, "allow_model_switch", True)),
             system_prompt=data.system_prompt,
             tools=AgentManagerService._normalize_tools_for_db(data.tools),
             toolcall_timeout_seconds=data.toolcall_timeout_seconds,
@@ -1297,6 +1381,9 @@ class AgentManagerService:
         version.temperature = data.temperature if data.temperature is not None else version.temperature
         version.synthesis_model_name = data.synthesis_model_name
         version.synthesis_temperature = data.synthesis_temperature
+        # 新字段允许旧客户端省略；只有显式出现在请求里才写，避免把「禁止切换」静默改回允许。
+        if "allow_model_switch" in data.model_fields_set:
+            version.allow_model_switch = bool(data.allow_model_switch)
         version.system_prompt = data.system_prompt
         version.tools = AgentManagerService._normalize_tools_for_db(data.tools)
         # 新字段允许旧客户端省略；只有显式出现在请求中的 null 才代表清除版本级覆盖。

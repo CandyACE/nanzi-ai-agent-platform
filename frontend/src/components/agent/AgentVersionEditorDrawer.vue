@@ -5,11 +5,13 @@ import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
+import ModelSelect from '../common/ModelSelect.vue';
 import AgentAvatarField from './AgentAvatarField.vue';
 import AgentNameField from './AgentNameField.vue';
 import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
 import { getTemperatureGuidance } from '../../utils/temperatureGuidance';
+import { selectableLlmModels } from '../../utils/modelSelect';
 
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
@@ -144,10 +146,9 @@ watch(
   { immediate: true }
 );
 
-const llmModels = () => props.models.filter((m) => (m.type === 'llm' || m.type === 'multimodal') && m.is_active);
+const llmModels = () => selectableLlmModels(props.models);
 
-const setOrchestratorModel = (event: Event) => {
-  const modelName = (event.target as HTMLSelectElement).value;
+const setOrchestratorModel = (modelName: string) => {
   props.versionForm.model_name = modelName;
   const selectedModel = llmModels().find((model) => model.model_id === modelName);
   if (selectedModel) {
@@ -173,6 +174,15 @@ const orchestratorTemperatureMismatch = computed(() => {
 });
 
 const orchestratorTemperatureAboveOne = computed(() => Number(props.versionForm.temperature) > 1);
+
+/** 是否允许用户在输入框手动切换模型；历史版本未配置该字段时默认允许 */
+const allowModelSwitch = computed({
+  get: () => props.versionForm.allow_model_switch !== false,
+  set: (enabled: boolean) => {
+    if (!props.canEditVersion) return;
+    props.versionForm.allow_model_switch = enabled;
+  },
+});
 
 const formatTemperature = (value: unknown) => {
   const parsed = Number(value);
@@ -806,15 +816,14 @@ const externalCreationMissingFields = computed(() => {
                 <p class="text-[11px] text-gray-500 mb-3 leading-relaxed">
                   负责任务拆解、逻辑推理及工具调用
                 </p>
-                <select
-                  :value="versionForm.model_name"
-                  @change="setOrchestratorModel"
+                <ModelSelect
+                  :model-value="versionForm.model_name || ''"
+                  :models="llmModels()"
                   :disabled="!canEditVersion"
-                  class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-primary/30 bg-white text-sm"
-                >
-                  <option value="" disabled>选择编排模型...</option>
-                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }}</option>
-                </select>
+                  placeholder="选择编排模型..."
+                  disabled-hint="当前版本不可编辑，无法切换模型"
+                  @update:model-value="setOrchestratorModel"
+                />
                 <div class="mt-3">
                   <div class="flex justify-between items-center mb-1">
                     <label class="text-[11px] font-medium text-gray-600">采样温度 {{ versionForm.temperature }}</label>
@@ -851,15 +860,17 @@ const externalCreationMissingFields = computed(() => {
                 <p class="text-[11px] text-gray-500 mb-3 leading-relaxed">
                   负责整合工具结果并组织语言回复，留空则跟随编排模型
                 </p>
-                <select
-                  :value="versionForm.synthesis_model_name"
-                  @change="versionForm.synthesis_model_name = ($event.target as HTMLSelectElement).value"
+                <ModelSelect
+                  :model-value="versionForm.synthesis_model_name || ''"
+                  :models="llmModels()"
                   :disabled="!canEditVersion"
-                  class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 bg-white text-sm"
-                >
-                  <option value="">跟随编排模型</option>
-                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }}</option>
-                </select>
+                  allow-empty
+                  empty-label="跟随编排模型"
+                  placeholder="跟随编排模型"
+                  accent="emerald"
+                  disabled-hint="当前版本不可编辑，无法切换模型"
+                  @update:model-value="versionForm.synthesis_model_name = $event"
+                />
                 <div v-if="versionForm.synthesis_model_name" class="mt-3">
                   <div class="flex justify-between items-center mb-1">
                     <label class="text-[11px] font-medium text-gray-600">采样温度 {{ versionForm.synthesis_temperature }}</label>
@@ -891,6 +902,38 @@ const externalCreationMissingFields = computed(() => {
               {{ getModelDisplayName(versionForm.model_name) }} @ {{ versionForm.temperature }}
               <span class="text-gray-400 mx-1">→</span>
               {{ versionForm.synthesis_model_name ? getModelDisplayName(versionForm.synthesis_model_name) + ' @ ' + versionForm.synthesis_temperature : '跟随编排模型' }}
+            </div>
+
+            <!-- 是否允许用户在对话输入框手动切换模型（版本级开关） -->
+            <div class="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3">
+              <div class="min-w-0">
+                <div class="text-sm font-bold text-gray-800">允许在输入框手动切换模型</div>
+                <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
+                  默认开启。关闭后，用户在对话输入框中看不到模型切换入口，只能使用本版本配置的编排模型。
+                </p>
+                <p class="mt-1 text-[11px] text-gray-400">历史版本未配置时同样按「允许切换」处理。</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-600">{{ allowModelSwitch ? '允许切换' : '禁止切换' }}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="allowModelSwitch"
+                  :disabled="!canEditVersion"
+                  aria-label="是否允许在输入框手动切换模型"
+                  @click="allowModelSwitch = !allowModelSwitch"
+                  class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors"
+                  :class="[
+                    allowModelSwitch ? 'bg-primary' : 'bg-gray-300',
+                    canEditVersion ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                  ]"
+                >
+                  <span
+                    class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition mt-0.5"
+                    :class="allowModelSwitch ? 'translate-x-5 ml-0.5' : 'translate-x-0.5'"
+                  />
+                </button>
+              </div>
             </div>
           </div>
 

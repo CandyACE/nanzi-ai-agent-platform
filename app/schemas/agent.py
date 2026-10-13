@@ -21,6 +21,8 @@ class AIAgentVersionBase(BaseModel):
     temperature: Optional[float] = 0.0
     synthesis_model_name: Optional[str] = None # NEW: Separate synthesizer
     synthesis_temperature: Optional[float] = None # NEW: Separate synthesizer temp
+    # 是否允许在输入框手动切换模型；默认允许，历史版本未显式配置时同样视为允许
+    allow_model_switch: bool = True
     system_prompt: str
     tools: List[Union[str, ToolConfigItem]] = Field(default_factory=list)
     toolcall_timeout_seconds: Optional[StrictInt] = Field(default=None, ge=1, le=86400)
@@ -105,6 +107,8 @@ class AIAgentResponse(AIAgentBase):
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
     onboarding_step: str = "COMPLETE"
+    # 已发布版本的「是否允许手动切换模型」；None 表示无已发布版本，前端按允许处理
+    allow_model_switch: Optional[bool] = None
     # versions: List[AIAgentVersionResponse] = [] # Optional
 
     model_config = ConfigDict(from_attributes=True)
@@ -135,6 +139,8 @@ class ChatConfig(BaseModel):
     temperature: Optional[float]
     synthesis_model_name: Optional[str] = None
     synthesis_temperature: Optional[float] = None
+    # 版本级开关：False 表示该智能体版本禁止用户在输入框手动切换模型
+    allow_model_switch: bool = True
     system_prompt: str
     tools: List[Union[str, ToolConfigItem]]
     toolcall_timeout_seconds: Optional[int] = None

@@ -101,6 +101,11 @@ export const modelApi = {
   list: (type?: string, includeInactive = false) => {
     return axios.get<AIModel[]>('/api/portal/models', { params: { type, include_inactive: includeInactive } })
   },
+
+  /** 聊天输入框专用：后端按当前用户的模型白名单收窄（未配置白名单 = 全量）。 */
+  listAvailableForChat: () => {
+    return axios.get<AIModel[]>('/api/portal/models', { params: { scope: 'chat' } })
+  },
   
   create: (data: AIModelCreate) => {
     return axios.post<AIModel>('/api/portal/models', data)

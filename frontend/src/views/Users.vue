@@ -1156,6 +1156,25 @@
                       </button>
                     </div>
                   </div>
+                  <!-- 可用模型页固定说明：这里的语义与 element:/menu: 相反 -->
+                  <div
+                    v-if="activeResTab === 'models'"
+                    class="mb-2 text-[10px] sm:text-xs text-gray-500 leading-tight"
+                  >
+                    未配置 = 不限制；配置后只能在勾选的模型（与其角色白名单取并集）中手动切换。
+                  </div>
+                  <!-- 可用模型搜索：只在模型较多时出现；命中之外，已勾选项也会置顶保留 -->
+                  <div
+                    v-if="activeResTab === 'models' && showModelSearch"
+                    class="mb-2"
+                  >
+                    <input
+                      v-model="modelSearchQuery"
+                      type="search"
+                      placeholder="搜索模型…"
+                      class="w-full sm:w-56 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 outline-none focus:border-primary/40 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                    />
+                  </div>
                   <div
                     class="bg-gray-50 p-3 sm:p-4 rounded-lg flex-1 overflow-y-auto border border-gray-200"
                   >
@@ -1276,12 +1295,19 @@
                       v-else-if="currentResources.length === 0"
                       class="text-center py-4 text-gray-500 text-xs"
                     >
-                      暂无可用资源
+                      {{ emptyResourceText }}
                     </div>
                     <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <template v-for="res in modelResourceEntries" :key="res.entryKey">
+                      <div
+                        v-if="res.entryType === 'header'"
+                        class="col-span-full flex items-center gap-2 pt-1 pb-0.5 text-[11px] font-semibold text-gray-500"
+                      >
+                        <span>{{ res.label }}</span>
+                        <span class="h-px flex-1 bg-gray-200"></span>
+                      </div>
                       <label
-                        v-for="res in currentResources"
-                        :key="res.id"
+                        v-else
                         class="flex items-start p-2 rounded border bg-white transition-colors"
                         :class="
                           isMissingKnowledgeBase(res)
@@ -1319,6 +1345,11 @@
                               class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
                               >失联</span
                             >
+                            <span
+                              v-if="isDisabledModel(res)"
+                              class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold leading-none"
+                              >{{ DISABLED_MODEL_LABEL }}</span
+                            >
                           </div>
                           <p
                             v-if="res.path"
@@ -1331,6 +1362,7 @@
                           </p>
                         </div>
                       </label>
+                      </template>
                     </div>
                   </div>
                   <div
@@ -2247,8 +2279,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, onUnmounted } from "vue";
+import { ref, onMounted, computed, onUnmounted, watch } from "vue";
 import axios from "../utils/axios";
+import { modelApi } from "../api/model";
+import {
+  shouldShowModelSearch,
+  groupPermissionModels,
+} from "../utils/modelSelect";
 import { persistUserInfo } from "../utils/userSession";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
@@ -2759,7 +2796,7 @@ const regeneratedApiKey = ref("");
 // Permission State
 const activeTab = ref<"info" | "permissions" | "quota">("info");
 const activePermissionSubTab = ref<"assets" | "ui">("assets");
-const resourceTypes = ["agents", "datasets", "metadata", "apis", "forbidden_configs"] as const;
+const resourceTypes = ["agents", "datasets", "metadata", "apis", "models", "forbidden_configs"] as const;
 type ResourceTab = (typeof resourceTypes)[number];
 type AssignableResourceType = Exclude<ResourceTab, "forbidden_configs">;
 const activeResTab = ref<ResourceTab>("agents");
@@ -2772,6 +2809,7 @@ const resourceConfig: Record<
   datasets: { label: "知识库", color: "green", icon: "📚" },
   metadata: { label: "数据集", color: "orange", icon: "💾" },
   apis: { label: "外部API", color: "purple", icon: "🔗" },
+  models: { label: "可用模型", color: "indigo", icon: "🧠" },
   forbidden_configs: { label: "禁用工具与命令", color: "red", icon: "🚫" },
 };
 
@@ -2781,7 +2819,8 @@ const allResources = ref<{
   datasets: any[];
   metadata: any[];
   apis: any[];
-}>({ agents: [], datasets: [], metadata: [], apis: [] });
+  models: any[];
+}>({ agents: [], datasets: [], metadata: [], apis: [], models: [] });
 const permissionData = ref<{
   agents: string[];
   datasets: string[];
@@ -2791,6 +2830,7 @@ const permissionData = ref<{
   elements: string[];
   forbidden_tools: string[];
   forbidden_commands: string[];
+  models: string[];
 }>({
   agents: [],
   datasets: [],
@@ -2800,6 +2840,7 @@ const permissionData = ref<{
   elements: [],
   forbidden_tools: [],
   forbidden_commands: [],
+  models: [],
 });
 
 const forbiddenCommandsText = ref("");
@@ -2898,15 +2939,113 @@ const activeAssignableResourceType = computed<AssignableResourceType | null>(() 
   activeResTab.value === "forbidden_configs" ? null : activeResTab.value,
 );
 
+/**
+ * 「可用模型」候选：只列 llm / multimodal。
+ *
+ * 已勾选但已停用的模型保留在列表里（标注「已停用」），否则保存时会静默丢掉白名单配置。
+ * 数据源取全量模型（含停用），因此请求时带 include_inactive。
+ */
+const availableModels = computed(() => {
+  const selected = permissionData.value.models || [];
+  return (allResources.value.models || [])
+    .filter((m: any) => m?.type === "llm" || m?.type === "multimodal")
+    .filter((m: any) => m?.is_active !== false || selected.includes(m?.model_id))
+    .map((m: any) => ({
+      id: m.model_id,
+      name: m.name || m.model_id,
+      description: m.model_id,
+      is_active: m.is_active !== false,
+    }));
+});
+
+// 「可用模型」页搜索：模型太少时不显示搜索框（阈值与输入框的模型切换器一致）
+const modelSearchQuery = ref("");
+const showModelSearch = computed(() =>
+  shouldShowModelSearch(availableModels.value.length),
+);
+
+// 切换资源 Tab 时清空搜索词，避免把上一页的过滤条件带到新列表
+watch(activeResTab, () => {
+  modelSearchQuery.value = "";
+});
+
+/** models 页的分组：已选一段、其余一段（其它资源页不使用） */
+const modelResourceGroups = computed(() =>
+  groupPermissionModels(
+    availableModels.value,
+    modelSearchQuery.value,
+    permissionData.value.models,
+  ),
+);
+
 const currentResources = computed(() => {
   const type = activeAssignableResourceType.value;
-  return type ? allResources.value[type] : [];
+  if (!type) return [];
+  if (type === "models") {
+    // 两段拍平后交给下游（全选 / 计数 / 底部「已勾选 N」），行为与平铺列表完全一致
+    const { selected, others } = modelResourceGroups.value;
+    return [...selected, ...others];
+  }
+  return allResources.value[type];
 });
+
+/**
+ * 列表渲染条目：models 页插入两段小标题，其它资源页保持平铺。
+ *
+ * item 就是模型/资源对象本身（外加 entryType / entryKey 两个渲染用字段），
+ * 这样卡片模板里的 res.* 绑定与既有契约完全不变。
+ */
+const modelResourceEntries = computed<any[]>(() => {
+  if (activeResTab.value !== "models") {
+    return currentResources.value.map((res: any) => ({
+      ...res,
+      entryType: "item",
+      entryKey: res.id,
+    }));
+  }
+  const { selected, others } = modelResourceGroups.value;
+  const entries: any[] = [];
+  if (selected.length) {
+    entries.push({
+      entryType: "header",
+      entryKey: "header-selected",
+      label: `已选 ${selected.length} 个`,
+    });
+    selected.forEach((res: any) =>
+      entries.push({ ...res, entryType: "item", entryKey: res.id }),
+    );
+  }
+  if (others.length) {
+    entries.push({
+      entryType: "header",
+      entryKey: "header-others",
+      label: `其余 ${others.length} 个`,
+    });
+    others.forEach((res: any) =>
+      entries.push({ ...res, entryType: "item", entryKey: res.id }),
+    );
+  }
+  return entries;
+});
+
+/** 空列表文案：区分「搜索没命中」与「本来就没有可用资源」。 */
+const emptyResourceText = computed(() =>
+  activeResTab.value === "models" && modelSearchQuery.value.trim()
+    ? "没有匹配的模型"
+    : "暂无可用资源",
+);
 
 const isMissingKnowledgeBase = (res: any) => {
   if (activeResTab.value !== "datasets") return false;
   return Boolean(res?.is_missing_in_ragflow || res?.status === "missing");
 };
+
+/** 「可用模型」页里的停用项：保留勾选态并打标，不做自动清除。 */
+const isDisabledModel = (res: any) =>
+  activeResTab.value === "models" && res?.is_active === false;
+
+// 停用标注文案：成员列表里也有同名徽章，这里集中定义，避免两处字面量互相干扰
+const DISABLED_MODEL_LABEL = "已停用";
 
 /**
  * 请求方法徽章配色。
@@ -3013,6 +3152,14 @@ const fetchResources = async () => {
       showToast("加载核心资源列表失败", "error");
     }
 
+    // 1.5 可用模型白名单候选：需含停用模型，才能展示「已勾选但已停用」的项
+    try {
+      const r3 = await modelApi.list(undefined, true);
+      allResources.value.models = r3.data || [];
+    } catch (modelErr) {
+      console.warn("Failed to fetch models for chat whitelist", modelErr);
+    }
+
     // 2. Fetch RagFlow Datasets (Optional/External)
     try {
       const r1 = await axios.get("/api/portal/ragflow/datasets", {
@@ -3070,6 +3217,7 @@ const fetchUserPermissions = async (userId: number) => {
       elements: perms.elements || [],
       forbidden_tools: perms.forbidden_tools || [],
       forbidden_commands: perms.forbidden_commands || [],
+      models: perms.models || [],
     };
     forbiddenCommandsText.value = (perms.forbidden_commands || []).join(", ");
   } catch (e) {
@@ -3082,6 +3230,7 @@ const fetchUserPermissions = async (userId: number) => {
       elements: [],
       forbidden_tools: [],
       forbidden_commands: [],
+      models: [],
     };
     forbiddenCommandsText.value = "";
   }
@@ -3155,6 +3304,8 @@ const saveUser = async () => {
           datasets: (permissionData.value.datasets || []).filter(
             (id: string) => !missingIds.has(id),
           ),
+          // 字段名必须与后端 PermissionUpdate.models 一致（字符串数组，空 = 不限制）
+          models: [...(permissionData.value.models || [])],
         };
         await axios.put(
           `/api/portal/management/users/${editingUserId.value}/permissions`,

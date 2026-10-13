@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import axios from '@/utils/axios'
 import { getTemperatureGuidance, temperatureScaleGuidance } from '../utils/temperatureGuidance'
+import { isMultimodalModelType } from '../utils/modelSelect'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
@@ -11,6 +12,7 @@ import LangfuseConfig from '../components/system/LangfuseConfig.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
+import ModelSelect from '../components/common/ModelSelect.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
 import Switch from '../components/Switch.vue'
 import { copyToClipboard } from '../utils/clipboard'
@@ -1933,10 +1935,9 @@ const selectedEmbedModelId = ref('')
 const embeddingModelsForConfig = computed(() =>
   models.value.filter((m) => m.type === 'embedding' && m.is_active)
 )
-/** 多模态类型标识：各供应商登记方式不一（multimodal / vision / image2text），统一在此维护。 */
-const MULTIMODAL_MODEL_TYPES = ['multimodal', 'vision', 'image2text']
-const isMultimodalModel = (m: { type?: string }) =>
-  MULTIMODAL_MODEL_TYPES.includes(String(m.type || '').toLowerCase())
+/** 多模态类型标识：各供应商登记方式不一（multimodal / vision / image2text），
+ *  类型清单已收敛到 utils/modelSelect（模型下拉也在用），此处不再各留一份。 */
+const isMultimodalModel = (m: { type?: string }) => isMultimodalModelType(m.type)
 const multimodalModelsForConfig = computed(() =>
   models.value.filter((m) => isMultimodalModel(m) && m.is_active)
 )
@@ -4287,26 +4288,32 @@ onUnmounted(() => {
                               </div>
                           </div>
                           <div v-else-if="item.key === 'llm_model_name'">
-                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                                 <option value="" disabled>选择默认模型...</option>
-                                 <option v-for="m in llmModelsForConfig" :key="m.id" :value="m.model_id">
-                                    {{ m.name }} ({{ m.model_id }})<template v-if="isMultimodalModel(m)"> · 多模态</template>
-                                 </option>
-                                 <option v-if="item.value && !models.find(m => m.model_id === item.value)" :value="item.value">
-                                     {{ item.value }} (未知/环境变量)
-                                 </option>
-                              </select>
+                              <!-- 模型列表很长，这里用可搜索下拉；候选卡片外仍在页面侧过滤（llmModelsForConfig 放行多模态） -->
+                              <ModelSelect
+                                  :model-value="item.value"
+                                  :models="llmModelsForConfig"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  placeholder="选择默认模型..."
+                                  show-model-id
+                                  multimodal-badge="· 多模态"
+                                  unknown-option-label="未知/环境变量"
+                                  disabled-hint="该配置项当前不可修改"
+                                  @update:model-value="item.value = $event"
+                              />
                           </div>
                           <div v-else-if="item.key === 'multimodal_model_name'">
-                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                                 <option value="">未配置（不支持识图时提示用户）</option>
-                                 <option v-for="m in multimodalModelsForConfig" :key="m.id" :value="m.model_id">
-                                    {{ m.name }} ({{ m.model_id }})
-                                 </option>
-                                 <option v-if="item.value && !multimodalModelsForConfig.find(m => m.model_id === item.value)" :value="item.value">
-                                     {{ item.value }} (未知/未启用)
-                                 </option>
-                              </select>
+                              <ModelSelect
+                                  :model-value="item.value"
+                                  :models="multimodalModelsForConfig"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  allow-empty
+                                  empty-label="未配置（不支持识图时提示用户）"
+                                  placeholder="未配置（不支持识图时提示用户）"
+                                  show-model-id
+                                  unknown-option-label="未知/未启用"
+                                  disabled-hint="该配置项当前不可修改"
+                                  @update:model-value="item.value = $event"
+                              />
                           </div>
                           <div v-else-if="item.key === 'metadata_provider'">
                               <div class="flex items-center gap-2">

@@ -16,6 +16,10 @@ class PermissionSet(BaseModel):
     elements: List[str] = Field(default_factory=list, description="List of allowed Action/Element IDs")
     forbidden_tools: List[str] = Field(default_factory=list, description="List of forbidden tool names")
     forbidden_commands: List[str] = Field(default_factory=list, description="List of forbidden shell command keywords")
+    models: List[str] = Field(
+        default_factory=list,
+        description="聊天可手动切换的模型 ID 白名单（空 = 不限制，与 element 语义相反）",
+    )
 
     @field_validator("forbidden_tools", "forbidden_commands", mode="before")
     @classmethod
@@ -53,6 +57,7 @@ class PermissionSetDetail(BaseModel):
     elements: List[ResourceDetail] = Field(default_factory=list)
     forbidden_tools: List[ResourceDetail] = Field(default_factory=list)
     forbidden_commands: List[ResourceDetail] = Field(default_factory=list)
+    models: List[ResourceDetail] = Field(default_factory=list)
 
 class UserPermissionsResponse(BaseModel):
     roles: List[str] = Field(default_factory=list, description="Assigned roles (reserved)")
