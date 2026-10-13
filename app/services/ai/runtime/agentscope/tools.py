@@ -1666,6 +1666,7 @@ async def enforce_tool_forbidden(
         try:
             from app.core.orm import AsyncSessionLocal
             from app.services.permission_service import PermissionService
+            from app.services.ai.tools.model_tool_name import to_runtime_tool_names
             from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
             from agentscope.permission import PermissionBehavior, PermissionDecision
 
@@ -1679,7 +1680,9 @@ async def enforce_tool_forbidden(
                 if forbidden:
                     extended_forbidden = set()
                     for f in forbidden:
-                        extended_forbidden.add(f)
+                        # 平台名与模型调用名（MCP 运行时名）两侧都要能命中：
+                        # 目录里存 `jira_search`，而运行时工具名是 `mcp_jira_search_<hash>`。
+                        extended_forbidden.update(to_runtime_tool_names(f))
                         if f in AGENTSCOPE_BUILTIN_TOOL_ALIASES:
                             extended_forbidden.add(AGENTSCOPE_BUILTIN_TOOL_ALIASES[f])
                         for k, v in AGENTSCOPE_BUILTIN_TOOL_ALIASES.items():

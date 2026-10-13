@@ -1,5 +1,5 @@
 /**
- * 「禁用工具与命令」候选分组纯函数（spec §3.4）。
+ * 「禁用资源」页的候选分组纯函数（spec §3.4）。
  *
  * 设计取舍：候选的归属与展示标签（`group_key` / `group`）由后端决定，
  * 前端**只按 `group_key` 聚合、直接渲染 `group`**，不在这里做任何类别中文映射
@@ -94,6 +94,26 @@ export function applyGroupSelection(
     })
   }
   return result
+}
+
+/**
+ * 已选中但目录里**完全查不到**的名字：必须可见、可解除。
+ *
+ * 关键：勾选一个能力会写入整组别名（`write_file` → `edit_file` / `apply_patch`），
+ * 这些别名不是任何候选的 `id`，但它们是**在用的**配置，不是「历史遗留」——只有
+ * 既不是 `id`、也不在任何候选 `aliases` 里的名字才该进历史区。
+ */
+export function findOrphanIds(
+  selected: string[],
+  candidates: ForbiddenToolCandidate[],
+): string[] {
+  const known = new Set<string>()
+  ;(candidates || []).forEach((candidate) => {
+    if (!candidate) return
+    known.add(String(candidate.id))
+    ;(candidate.aliases || []).forEach((alias) => known.add(String(alias)))
+  })
+  return (selected || []).map((id) => String(id)).filter((id) => !known.has(id))
 }
 
 /**

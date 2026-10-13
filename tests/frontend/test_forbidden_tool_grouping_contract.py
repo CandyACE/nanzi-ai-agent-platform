@@ -54,7 +54,9 @@ def test_orphan_section_stays_independent_and_unfiltered():
     """orphan 区独立渲染：不被搜索过滤、不参与折叠与大组全选、加载失败时仍渲染。"""
     assert "其他已禁用项（历史）" in COMPONENT
     assert "bg-amber-50/40" in COMPONENT
-    assert "!catalogIds.value.has(id)" in COMPONENT
+    # orphan 判定委托纯函数：只有"目录里完全查不到"的名字才算历史遗留，
+    # 勾选写入的整组别名（write_file → edit_file/apply_patch）必须留在原分组里。
+    assert "findOrphanIds(" in COMPONENT
 
     orphan_block = COMPONENT.split("历史遗留：已禁用但已不在目录中的工具")[1].split("</template>")[0]
     assert "isExpanded" not in orphan_block, "orphan 区不参与折叠"

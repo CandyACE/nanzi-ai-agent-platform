@@ -206,3 +206,24 @@ return {{
     assert result["caseInsensitive"] == ["mcp:jira"]
     assert result["blank"] == result["allKeys"], "空查询原样返回"
     assert result["noMatch"] == []
+
+
+def test_find_orphan_ids_keeps_aliases_of_known_candidates_out_of_the_history_area():
+    """缺陷 A 回归：勾选一个能力会写入整组别名（write_file → edit_file/apply_patch），
+    这些别名不属于任何候选的 id，但**不是**「历史遗留」——它们必须留在原分组里继续显示，
+    只有"目录里完全查不到"的名字才进历史区。"""
+    result = _run_typescript(
+        f"""
+const candidates = {json.dumps(CANDIDATES)};
+return {{
+  aliasOnly: api.findOrphanIds(['write_file', 'edit_file', 'apply_patch'], candidates),
+  realOrphan: api.findOrphanIds(['write_file', 'edit_file', 'removed_mcp_tool'], candidates),
+  emptyCatalog: api.findOrphanIds(['write_file'], []),
+}};
+"""
+    )
+
+    assert result["aliasOnly"] == [], "别名被误判成历史遗留项（截图里 Write/Edit 就是这么来的）"
+    assert result["realOrphan"] == ["removed_mcp_tool"]
+    # 目录还没加载出来（或加载失败）时不能吞掉已配置项，否则用户无法解除
+    assert result["emptyCatalog"] == ["write_file"]

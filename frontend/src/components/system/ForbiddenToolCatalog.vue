@@ -15,7 +15,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
           <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-          <span class="text-xs font-bold text-gray-700 truncate">选择要禁用的工具（全局拉黑）</span>
+          <span class="text-xs font-bold text-gray-700 truncate">选择要禁用的工具</span>
           <span class="text-[10px] text-gray-400 font-normal shrink-0">({{ selectedCountOf(builtinVisibleCandidates) }}/{{ builtinVisibleCandidates.length }})</span>
         </button>
         <div class="flex items-center gap-2 shrink-0">
@@ -210,6 +210,7 @@ import axios from 'axios'
 import {
   applyGroupSelection,
   filterSubGroups,
+  findOrphanIds,
   groupCandidates,
   groupSelectedCount,
   type ForbiddenToolCandidate,
@@ -247,7 +248,6 @@ const toggleCollapse = (key: string) => {
 const isExpanded = (key: string) => isSearching.value || !collapsedKeys.value.has(key)
 
 const selectedIds = computed(() => new Set((props.modelValue || []).map((id) => String(id))))
-const catalogIds = computed(() => new Set(candidates.value.map((candidate) => candidate.id)))
 
 // 大组划分沿用既有 category 判据：旧响应没有 group_key 时也能正确落组
 const builtinCandidates = computed(() =>
@@ -293,9 +293,7 @@ const toggleCandidate = (candidate: ForbiddenToolCandidate, checked: boolean) =>
 }
 
 /** 已选中但已不在目录里的工具：必须可见、可解除。 */
-const orphanIds = computed(() =>
-  Array.from(selectedIds.value).filter((id) => !catalogIds.value.has(id)),
-)
+const orphanIds = computed(() => findOrphanIds(props.modelValue || [], candidates.value))
 
 const toggleOrphan = (id: string, checked: boolean) => {
   const next = new Set(selectedIds.value)
