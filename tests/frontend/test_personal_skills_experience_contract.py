@@ -34,7 +34,9 @@ def test_skills_workbench_prioritizes_enabled_skills_before_disabled():
     text = SKILLS_MGMT.read_text(encoding="utf-8")
     sorted_section = text[text.index("const getSkillStatusRank"):text.index("const toggleSkillSortOrder")]
 
-    assert "skill.enabled === 'false' ? 1 : 0" in sorted_section
+    # 判定走统一的 isSkillEnabled（与后端 skill_metadata.is_skill_enabled 同口径），
+    # 不再就地比较字符串：手写 enabled: False/0/off 时旧写法会把它排在「已启用」前面。
+    assert "!isSkillEnabled(skill.enabled) ? 1 : 0" in sorted_section
     assert "const statusOrder = getSkillStatusRank(a) - getSkillStatusRank(b)" in sorted_section
     assert "if (statusOrder !== 0) return statusOrder" in sorted_section
     assert "skillSortBy.value === 'time'" in sorted_section

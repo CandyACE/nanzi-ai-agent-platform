@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 import { FORBIDDEN_SKILL_BADGE, forbiddenSkillReason, isSkillForbidden } from '@/utils/skillForbidden'
+import { isSkillEnabled } from '@/utils/skillEnabled'
 
 export interface SkillItem {
   id: string
@@ -129,7 +130,7 @@ const loadSkillsList = async () => {
     if (globalRes.status === 'fulfilled' && globalRes.value.data?.status === 'success') {
       let list = (globalRes.value.data.data || [])
         .map((s: any) => ({ ...s, scope: 'global' as const }))
-        .filter((s: any) => s.enabled !== 'false')
+        .filter((s: any) => isSkillEnabled(s.enabled))
       if (skillsCustom.value && allowedGlobalSkillIds.value) {
         const allow = new Set(allowedGlobalSkillIds.value)
         list = list.filter((s: SkillItem) => allow.has(s.id))
@@ -139,7 +140,7 @@ const loadSkillsList = async () => {
     if (personalRes.status === 'fulfilled' && personalRes.value.data?.status === 'success') {
       personalSkillsList.value = (personalRes.value.data.data || [])
         .map((s: any) => ({ ...s, scope: 'personal' as const }))
-        .filter((s: any) => s.enabled !== 'false')
+        .filter((s: any) => isSkillEnabled(s.enabled))
     }
     loadedOnce.value = true
   } catch (err) {

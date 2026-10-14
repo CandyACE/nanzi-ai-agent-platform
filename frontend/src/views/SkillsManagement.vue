@@ -9,6 +9,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import MarkdownIt from 'markdown-it'
 import { copyToClipboard } from '../utils/clipboard'
 import { useUser } from '../composables/useUser'
+import { isSkillEnabled } from '@/utils/skillEnabled'
 
 interface Skill {
   id: string
@@ -592,7 +593,7 @@ const filteredSkills = computed(() => {
   )
 })
 
-const getSkillStatusRank = (skill: Skill) => skill.enabled === 'false' ? 1 : 0
+const getSkillStatusRank = (skill: Skill) => !isSkillEnabled(skill.enabled) ? 1 : 0
 
 const sortedSkills = computed(() => {
   const list = [...filteredSkills.value]
@@ -810,7 +811,7 @@ const deleteSkill = (skillId: string) => {
 
 // 切换启用/禁用状态
 const toggleSkillStatus = async (skill: Skill) => {
-  const newStatus = skill.enabled === 'false' ? 'true' : 'false'
+  const newStatus = !isSkillEnabled(skill.enabled) ? 'true' : 'false'
   try {
     const isPersonal = skill.scope === 'personal'
     const apiPrefix = isPersonal ? '/api/portal/skills/personal' : '/api/portal/skills'
@@ -1924,7 +1925,7 @@ onUnmounted(() => {
         class="group relative flex flex-col cursor-pointer rounded-xl border border-gray-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-lg"
         :class="[
           personalOnly ? 'p-6' : 'rounded-lg p-5',
-          skill.enabled === 'false' ? 'opacity-65 saturate-50 bg-gray-50/50' : '',
+          !isSkillEnabled(skill.enabled) ? 'opacity-65 saturate-50 bg-gray-50/50' : '',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2',
         ]"
       >
@@ -1954,7 +1955,7 @@ onUnmounted(() => {
                   class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700"
                 >平台</span>
                 <span
-                  v-if="skill.enabled === 'false'"
+                  v-if="!isSkillEnabled(skill.enabled)"
                   class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500"
                 >已禁用</span>
                 <span
@@ -1976,7 +1977,7 @@ onUnmounted(() => {
             <label class="relative inline-flex cursor-pointer items-center" title="启用/禁用此技能（禁用后对话不再自动匹配）">
               <input 
                 type="checkbox" 
-                :checked="skill.enabled !== 'false'"
+                :checked="isSkillEnabled(skill.enabled)"
                 @change="toggleSkillStatus(skill)"
                 class="peer sr-only"
               >
@@ -2094,7 +2095,7 @@ onUnmounted(() => {
               :key="skill.id"
               @click="openSkillDetail(skill.id)"
               class="hover:bg-blue-50/20 cursor-pointer transition-colors group"
-              :class="{ 'opacity-65 saturate-50 bg-gray-50/30': skill.enabled === 'false' }"
+              :class="{ 'opacity-65 saturate-50 bg-gray-50/30': !isSkillEnabled(skill.enabled) }"
             >
               <td class="px-6 py-4">
                 <div class="flex items-start space-x-3">
@@ -2115,7 +2116,7 @@ onUnmounted(() => {
                         class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-blue-100 text-blue-700"
                       >平台</span>
                       <span
-                        v-if="skill.enabled === 'false'"
+                        v-if="!isSkillEnabled(skill.enabled)"
                         class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-gray-100 text-gray-500"
                       >已禁用</span>
                       <span class="text-[10px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200 font-normal">ID: {{ skill.id }}</span>
@@ -2154,7 +2155,7 @@ onUnmounted(() => {
                   <label class="relative inline-flex items-center cursor-pointer" title="启用/禁用此技能（禁用后对话不再自动匹配）">
                     <input 
                       type="checkbox" 
-                      :checked="skill.enabled !== 'false'"
+                      :checked="isSkillEnabled(skill.enabled)"
                       @change="toggleSkillStatus(skill)"
                       class="sr-only peer"
                     >
@@ -2162,8 +2163,8 @@ onUnmounted(() => {
                   </label>
                   <span
                     class="text-[10px] font-medium"
-                    :class="skill.enabled === 'false' ? 'text-gray-400' : 'text-emerald-600'"
-                  >{{ skill.enabled === 'false' ? '已禁用' : '已启用' }}</span>
+                    :class="!isSkillEnabled(skill.enabled) ? 'text-gray-400' : 'text-emerald-600'"
+                  >{{ !isSkillEnabled(skill.enabled) ? '已禁用' : '已启用' }}</span>
                 </div>
               </td>
               <td class="px-6 py-4 text-center whitespace-nowrap" @click.stop>
