@@ -487,7 +487,10 @@ async def list_accessible_directories() -> str:
                 "description": (
                     "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，"
                     "Docker 模式下通过当前用户工作区内的 /workspace/skills 副本访问，"
-                    "不是直接挂载 /app/data/skills；该副本按当前可用技能打包，"
+                    "不是直接挂载 /app/data/skills；副本沿用 AgentScope 的 seed 布局，"
+                    "技能目录在其点开头的隐藏子目录 .seed/ 下，"
+                    "请用 Bash `ls -a /workspace/skills` 查看实际布局，不要假设固定子路径；"
+                    "该副本按当前可用技能打包，"
                     "技能新增/修改/删除/禁用后会在下次容器启动时自动重建"
                     "（正在运行的容器不会立即刷新）。"
                     + (
@@ -595,7 +598,7 @@ async def list_accessible_directories() -> str:
                 )
                 + "未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
-                "7. 注意两份 skills 的区别：公共技能库的 /workspace/skills 是按当前可用技能打包的副本（技能变更后会在下次容器启动时自动重建，运行中的容器不会立即刷新）；个人技能（category=user_personal_skills）源目录实时只读挂载（paths.bash，Docker 下为 /workspace/personal-skills），技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
+                "7. 注意两份 skills 的区别：公共技能库的 /workspace/skills 是按当前可用技能打包的副本（沿用 AgentScope 的 seed 布局，技能目录在其点开头的隐藏子目录 .seed/ 下，请用 Bash `ls -a /workspace/skills` 查看实际布局、不要假设固定子路径；技能变更后会在下次容器启动时自动重建，运行中的容器不会立即刷新）；个人技能（category=user_personal_skills）源目录实时只读挂载（paths.bash，Docker 下为 /workspace/personal-skills），技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
             ],
         }
 

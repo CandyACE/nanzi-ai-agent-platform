@@ -154,6 +154,17 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         assert public_dirs["branding"]["access_via"] == ["Read", "Glob", "Grep"]
         assert public_dirs["skills"]["container_sandbox_path"] == "/workspace/skills"
         assert public_dirs["skills"]["path_semantics"] == "per_user_seeded_copy"
+        # 公共技能副本沿用 AgentScope 的 seed 布局：技能目录在点开头的隐藏子目录 .seed/ 下，
+        # 模型 `ls /workspace/skills` 会看到空目录。只告诉它「有这个隐藏子目录 + 用 ls -a
+        # 实测」，不写死子路径——把 AgentScope 的内部布局写死迟早失效。
+        skills_description = public_dirs["skills"]["description"]
+        assert ".seed" in skills_description
+        assert "ls -a" in skills_description
+        skills_guideline = next(
+            item for item in data["usage_guidelines"] if "两份 skills 的区别" in item
+        )
+        assert ".seed" in skills_guideline
+        assert "ls -a" in skills_guideline
         assert "paths.file_tools" in data["usage_guidelines"][0]
 
 

@@ -242,6 +242,10 @@ def _logical_file_tool_path(raw_path: Any) -> str | None:
         if parts[index : index + 2] == ["data", "docs"]:
             suffix = parts[index + 2 :]
             return posixpath.join("/workspace/public/docs", *suffix) if suffix else "/workspace/public/docs"
+        # 公共技能：/workspace/skills 是**逻辑根**，实际技能目录在其点开头的隐藏子目录
+        # .seed/ 下（AgentScope 的 seed 布局，会随其装配状态变化）。这里产出的是展示用
+        # 元数据，保持与目录清单一致的逻辑命名空间即可，不追到 seed 子目录内部——把
+        # 内部布局写死迟早失效（历史教训：曾把 /app/data/skills/<id>/SKILL.md 写进提示词）。
         if parts[index : index + 2] == ["data", "skills"]:
             suffix = parts[index + 2 :]
             return posixpath.join("/workspace/skills", *suffix) if suffix else "/workspace/skills"
