@@ -619,6 +619,29 @@ async def delete_entire_skill(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+#: 压缩包解压后的总量与文件数上限。上传本身已限 20MB，但高压缩比归档（zip bomb）
+#: 可以把它膨胀成数 GB——个人技能上传是普通用户可用的入口，因此必须卡住解压侧。
+MAX_EXTRACTED_BYTES = 200 * 1024 * 1024
+MAX_EXTRACTED_FILES = 2000
+
+
+def _guard_extract_budget(written_bytes: int, written_files: int) -> None:
+    """解压预算校验：超限即中止（避免高压缩比归档撑爆磁盘）。"""
+    if written_files > MAX_EXTRACTED_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"压缩包内文件数超过上限（{MAX_EXTRACTED_FILES} 个）",
+        )
+    if written_bytes > MAX_EXTRACTED_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "压缩包解压后体积超过上限"
+                f"（{MAX_EXTRACTED_BYTES // (1024 * 1024)}MB），请拆分后上传"
+            ),
+        )
+
+
 def safe_extract_archive(content: bytes, filename: str, target_dir: str):
     """
     安全解包 ZIP 或 TAR 压缩文件到指定的目标目录下。
@@ -633,6 +656,8 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
     if lower_filename.endswith(".zip"):
         try:
             with zipfile.ZipFile(file_like) as zf:
+                written_bytes = 0
+                written_files = 0
                 for member in zf.infolist():
                     # 规范化路径分割符并分割
                     parts = [p for p in member.filename.replace("\\", "/").split("/") if p]
@@ -651,15 +676,36 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
                     if member.is_dir():
                         os.makedirs(target_path, exist_ok=True)
                     else:
+                        # 先按归档里声明的大小拦一道（少写盘），写盘时再按实际字节复核
+                        written_files += 1
+                        written_bytes += max(0, int(member.file_size or 0))
+                        _guard_extract_budget(written_bytes, written_files)
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        actual = 0
                         with zf.open(member) as source, open(target_path, "wb") as target:
-                            shutil.copyfileobj(source, target)
+                            while True:
+                                chunk = source.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                actual += len(chunk)
+                                if written_bytes - int(member.file_size or 0) + actual > MAX_EXTRACTED_BYTES:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=(
+                                            "压缩包解压后体积超过上限"
+                                            f"（{MAX_EXTRACTED_BYTES // (1024 * 1024)}MB），请拆分后上传"
+                                        ),
+                                    )
+                                target.write(chunk)
+                        written_bytes += actual - max(0, int(member.file_size or 0))
         except zipfile.BadZipFile:
             raise HTTPException(status_code=400, detail="无效或损坏的 ZIP 文件")
             
     elif lower_filename.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz")):
         try:
             with tarfile.open(fileobj=file_like, mode="r:*") as tf:
+                written_bytes = 0
+                written_files = 0
                 for member in tf.getmembers():
                     parts = [p for p in member.name.replace("\\", "/").split("/") if p]
                     if any(part == ".." for part in parts):
@@ -675,12 +721,33 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
                     
                     if member.isdir():
                         os.makedirs(target_path, exist_ok=True)
-                    elif member.isreg():  # 仅解压普通文件
+                    elif member.isreg():  # 仅解压普通文件（symlink/hardlink 一律不落盘）
+                        written_files += 1
+                        written_bytes += max(0, int(member.size or 0))
+                        _guard_extract_budget(written_bytes, written_files)
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         fileobj = tf.extractfile(member)
                         if fileobj:
+                            actual = 0
                             with open(target_path, "wb") as target:
-                                shutil.copyfileobj(fileobj, target)
+                                while True:
+                                    chunk = fileobj.read(1024 * 1024)
+                                    if not chunk:
+                                        break
+                                    actual += len(chunk)
+                                    if (
+                                        written_bytes - max(0, int(member.size or 0)) + actual
+                                        > MAX_EXTRACTED_BYTES
+                                    ):
+                                        raise HTTPException(
+                                            status_code=400,
+                                            detail=(
+                                                "压缩包解压后体积超过上限"
+                                                f"（{MAX_EXTRACTED_BYTES // (1024 * 1024)}MB），请拆分后上传"
+                                            ),
+                                        )
+                                    target.write(chunk)
+                            written_bytes += actual - max(0, int(member.size or 0))
         except tarfile.TarError:
             raise HTTPException(status_code=400, detail="无效或损坏的 TAR 归档文件")
     else:
