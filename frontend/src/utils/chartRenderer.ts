@@ -237,29 +237,94 @@ function chartParseError(code: ChartParseErrorCode, message: string): ChartParse
   return error;
 }
 
+/** 存在底部图例时，坐标系底部必须留出的最小像素高度（X 轴标签 + 图例各占一行，实测间隙约 16px） */
+const BOTTOM_LEGEND_GRID_BOTTOM = 36;
+/** 底部图例距容器底部的默认偏移 */
+const BOTTOM_LEGEND_OFFSET = 4;
+/** 单行图例的实测行高（fontSize 11 + 图标 8 + 内边距），用于按图例偏移换算所需留白 */
+const BOTTOM_LEGEND_ROW_HEIGHT = 22;
+/** 把百分比形式的 grid.bottom 换算成像素时的基准高度（消息卡片图表高 288px / 画布图表高 360px） */
+const CARTESIAN_REFERENCE_HEIGHT = 288;
+
+/**
+ * ECharts 允许用 `top: "bottom"` 表示「贴底」，它与 `bottom: 0` 视觉等价，
+ * 但带 `top` 的图例不会参与 grid 的底部留白计算——必须当成底部图例一起处理，
+ * 否则图例会直接压在 X 轴刻度上（见 chartRenderer.test.ts 回归用例）。
+ */
+function isBottomAnchoredTop(top: unknown): boolean {
+  return typeof top === "string" && top.trim().toLowerCase() === "bottom";
+}
+
 function isBottomLegend(legendOption: any): boolean {
   if (legendOption === false) return false;
   if (legendOption && typeof legendOption === "object") {
     if (legendOption.show === false) return false;
+    if (isBottomAnchoredTop(legendOption.top)) return true;
     if (legendOption.top != null && legendOption.bottom == null) return false;
   }
   return true;
 }
 
-function sanitizeCartesianGrid(gridItem: any, withBottomLegend: boolean): any {
+/**
+ * 把「贴底」语义的图例统一成 `bottom` 定位：`top: "bottom"` 与 `bottom: 4` 视觉一致，
+ * 但只有后者会被 ECharts 当作底部元素，也才能和 grid 的底部留白用同一套规则约束。
+ */
+function normalizeBottomLegendAnchor(legendOption: any): any {
+  if (!legendOption || typeof legendOption !== "object" || Array.isArray(legendOption)) return legendOption;
+  if (!isBottomAnchoredTop(legendOption.top)) return legendOption;
+
+  const { top: _anchoredTop, ...rest } = legendOption;
+  return { ...rest, bottom: rest.bottom ?? BOTTOM_LEGEND_OFFSET };
+}
+
+/** 判断模型给出的 grid.bottom 是否小到会被底部图例压住（数值/px/% 三种写法都换算成像素判断） */
+function isTooTightBottom(value: unknown, minBottom: number): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === "number") return value < minBottom;
+  if (typeof value !== "string") return false;
+
+  const trimmed = value.trim();
+  const pxMatch = trimmed.match(/^(\d+(?:\.\d+)?)px$/i);
+  if (pxMatch) return Number(pxMatch[1]) < minBottom;
+
+  const percentMatch = trimmed.match(/^(\d+(?:\.\d+)?)%$/);
+  if (percentMatch) {
+    return (Number(percentMatch[1]) / 100) * CARTESIAN_REFERENCE_HEIGHT < minBottom;
+  }
+
+  return false;
+}
+
+/** 解析图例自带的 bottom 偏移（像素形式才参与换算，百分比/关键字一律按默认偏移处理） */
+function resolveLegendBottomOffset(legendOption: any): number {
+  const raw = legendOption && typeof legendOption === "object" ? legendOption.bottom : undefined;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  if (typeof raw === "string" && /^\d+(?:\.\d+)?px$/i.test(raw.trim())) {
+    return Number(raw.trim().replace(/px$/i, ""));
+  }
+  return 0;
+}
+
+/**
+ * 计算底部图例需要的 grid 底部留白：图例自带较大 bottom 偏移时（如 `bottom: 20`），
+ * 图例整体会被推向绘图区，grid 必须同步让位，否则 X 轴刻度仍会被压住。
+ */
+function resolveBottomGridSpace(legendOption: any): number {
+  return Math.max(
+    BOTTOM_LEGEND_GRID_BOTTOM,
+    Math.ceil(resolveLegendBottomOffset(legendOption) + BOTTOM_LEGEND_ROW_HEIGHT),
+  );
+}
+
+function sanitizeCartesianGrid(gridItem: any, withBottomLegend: boolean, minBottom: number): any {
   if (!gridItem || typeof gridItem !== "object" || Array.isArray(gridItem)) return gridItem;
   if (!withBottomLegend) return gridItem;
   // 若配置了 top + height，说明采用绝对高度排版（如多指标组合图），不强制覆盖 bottom
   if (gridItem.height != null && gridItem.bottom == null) return gridItem;
 
-  const currentBottom = gridItem.bottom;
-  const isTooSmall =
-    currentBottom === undefined ||
-    currentBottom === null ||
-    (typeof currentBottom === "number" && currentBottom < 32) ||
-    (typeof currentBottom === "string" && /^(?:[0-5](?:\.\d+)?%|[0-9]px|[12][0-9]px)$/.test(currentBottom.trim()));
-
-  return isTooSmall ? { ...gridItem, bottom: 36 } : gridItem;
+  return isTooTightBottom(gridItem.bottom, minBottom)
+    ? { ...gridItem, bottom: minBottom }
+    : gridItem;
 }
 
 export function mergeChartDefaults(options: Record<string, any>): Record<string, any> {
@@ -270,7 +335,10 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
     Boolean(options.xAxis || options.yAxis) ||
     series.some((item: any) => cartesianSeriesTypes.has(String(item?.type || "")));
   const isPieOnly = series.length > 0 && series.every((item: any) => item?.type === "pie");
-  const hasBottomLegend = isBottomLegend(options.legend);
+  // 先归一化图例定位，再判定是否为底部图例：`top: "bottom"` 归一化后才会带上 bottom
+  const legendInput = normalizeBottomLegendAnchor(options.legend);
+  const hasBottomLegend = isBottomLegend(legendInput);
+  const bottomGridSpace = hasBottomLegend ? resolveBottomGridSpace(legendInput) : BOTTOM_LEGEND_GRID_BOTTOM;
 
   const defaults: Record<string, any> = {
     color: colors,
@@ -283,14 +351,14 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       padding: [10, 15],
       extraCssText: "box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border-radius: 8px;",
     },
-    legend: { bottom: 4, icon: "circle", itemWidth: 8, itemHeight: 8, itemGap: 12 },
+    legend: { bottom: BOTTOM_LEGEND_OFFSET, icon: "circle", itemWidth: 8, itemHeight: 8, itemGap: 12 },
   };
 
   if (shouldUseCartesianDefaults) {
     defaults.grid = {
       left: "3%",
       right: "4%",
-      bottom: hasBottomLegend ? 36 : "3%",
+      bottom: hasBottomLegend ? bottomGridSpace : "3%",
       top: "15%",
       containLabel: true,
       show: false,
@@ -316,12 +384,12 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
     tooltip: { ...defaults.tooltip, ...(options.tooltip || {}) },
     legend: {
       ...defaults.legend,
-      ...(options.legend || {}),
+      ...(legendInput || {}),
       textStyle: {
         fontSize: 11,
-        ...((options.legend || {}).textStyle || {}),
+        ...((legendInput || {}).textStyle || {}),
         color: normalizeReadableTextColor(
-          (options.legend || {}).textStyle?.color,
+          (legendInput || {}).textStyle?.color,
           axisNameReadableColor,
         ),
       },
@@ -357,11 +425,11 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
           ...defaults.grid,
           ...(item && typeof item === "object" && !Array.isArray(item) ? item : {}),
         };
-        return index === arr.length - 1 ? sanitizeCartesianGrid(baseGrid, hasBottomLegend) : baseGrid;
+        return index === arr.length - 1 ? sanitizeCartesianGrid(baseGrid, hasBottomLegend, bottomGridSpace) : baseGrid;
       });
     } else {
       const baseGrid = { ...defaults.grid, ...(options.grid || {}) };
-      merged.grid = sanitizeCartesianGrid(baseGrid, hasBottomLegend);
+      merged.grid = sanitizeCartesianGrid(baseGrid, hasBottomLegend, bottomGridSpace);
     }
     merged.xAxis = mergeAxisDefaults(defaults.xAxis, options.xAxis);
     merged.yAxis = mergeAxisDefaults(defaults.yAxis, options.yAxis);
