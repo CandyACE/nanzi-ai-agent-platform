@@ -1,3 +1,4 @@
+import json
 import os
 from unittest.mock import AsyncMock
 
@@ -3069,3 +3070,242 @@ async def test_e2b_workspace_uses_page_overrides_and_falls_back_for_masked_key(m
     assert kwargs["api_key"] == "saved-e2b-key"
     assert kwargs["template"] == "custom-template"
     assert kwargs["timeout_seconds"] == 45
+
+
+def _write_session_skill(root, dirname, *, body="v1", name=None):
+    """造一个最小技能源目录，用于会话预铺用例。"""
+    skill_dir = root / dirname
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    front = f"name: {name}\n" if name else ""
+    (skill_dir / "SKILL.md").write_text(
+        f"---\n{front}description: demo\n---\nbody {body}\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+def _seed_session_skills(workdir, paths, **kwargs):
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    _preseed_session_skills(str(workdir), [str(path) for path in paths], **kwargs)
+
+
+def _seed_skill_dirs(workdir):
+    """平台快照目录（``skills/.seed``）里的技能条目。"""
+    seed_dir = workdir / "skills" / ".seed"
+    if not seed_dir.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in seed_dir.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    )
+
+
+def _ledger(workdir):
+    """平台账本（会话根，刻意不在 ``skills/`` 里）。"""
+    path = workdir / ".session_skills.json"
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_partition(workdir, name, *, partition="default"):
+    """造一个 AgentScope 装备出来的分区（带它自己的 ``.index``）。"""
+    part = workdir / "skills" / partition
+    skill_dir = part / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("partition copy", encoding="utf-8")
+    (part / ".index").write_text("{}", encoding="utf-8")
+    return part
+
+
+def test_preseed_writes_seed_and_session_root_ledger(tmp_path):
+    """快照落 ``.seed``（AgentScope 的 seed 模板），账本落会话根、不进 ``skills/``。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "brainstorming", name="头脑风暴")
+    workdir = tmp_path / "session"
+
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["头脑风暴"]
+    assert not (workdir / "skills" / ".skills").exists()
+    assert _ledger(workdir)["skills"]["头脑风暴"]["skill_id"] == "brainstorming"
+
+
+def test_preseed_replaces_same_origin_skill_in_place(tmp_path):
+    """技能改版就地替换：否则旧副本会以 <name>_1 留在快照里，模型同时看到两份。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "brainstorming", name="头脑风暴")
+    workdir = tmp_path / "session"
+
+    _seed_session_skills(workdir, [skill])
+    assert _seed_skill_dirs(workdir) == ["头脑风暴"]
+
+    (skill / "SKILL.md").write_text(
+        "---\nname: 头脑风暴\ndescription: demo\n---\nbody v2 is longer\n",
+        encoding="utf-8",
+    )
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["头脑风暴"]
+    seeded_md = (workdir / "skills" / ".seed" / "头脑风暴" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "body v2 is longer" in seeded_md
+    assert _ledger(workdir)["skills"]["头脑风暴"]["skill_id"] == "brainstorming"
+
+
+def test_preseed_backfills_skill_id_for_unchanged_skill(tmp_path):
+    """老账本没有 skill_id：内容未变时也要补上，否则以后改版仍会继续堆副本。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+
+    ledger_path = workdir / ".session_skills.json"
+    blob = json.loads(ledger_path.read_text(encoding="utf-8"))
+    blob["skills"]["alpha"]["skill_id"] = ""
+    ledger_path.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
+
+    _seed_session_skills(workdir, [skill])
+
+    blob = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert blob["skills"]["alpha"]["skill_id"] == "alpha"
+
+
+def test_preseed_migrates_flat_layout_into_seed(tmp_path):
+    """老会话是平铺布局：平台自己搬进 ``.seed`` 并清掉旧账本，AgentScope 就不必再迁移。
+
+    这里故意用一条**对不上内容**的老账本（``hash`` 是编的）验证边界：搬移照常完成、不抛
+    异常；因为既没命中哈希也拿不到 ``skill_id``，技能会多留一份 ``alpha_1`` 副本——这是
+    "账本损坏只能重建"的已知代价。内容能对上的正常路径见
+    ``test_preseed_migrates_flat_layout_with_real_legacy_ledger``。
+    """
+    workdir = tmp_path / "session"
+    flat = workdir / "skills" / "alpha"
+    flat.mkdir(parents=True)
+    (flat / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: demo\n---\nbody\n", encoding="utf-8"
+    )
+    legacy_index = workdir / "skills" / ".skills"
+    legacy_index.write_text(
+        json.dumps({"skills": {"alpha": {"hash": "old", "skill_name": "alpha"}}}),
+        encoding="utf-8",
+    )
+
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    _seed_session_skills(workdir, [skill])
+
+    assert not flat.exists()
+    assert not legacy_index.exists()
+    assert (workdir / "skills" / ".seed" / "alpha" / "SKILL.md").is_file()
+    assert (workdir / "skills" / ".seed" / "alpha_1" / "SKILL.md").is_file()
+
+
+def test_preseed_reads_legacy_ledger_for_unchanged_skill(tmp_path):
+    """老账本还在 ``skills/.skills``：要读得回来，别把已铺技能当成新增再复制一份。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+
+    # 还原成老会话的样子：账本在 skills/.skills，技能内容不变
+    ledger = json.loads((workdir / ".session_skills.json").read_text(encoding="utf-8"))
+    (workdir / "skills" / ".skills").write_text(
+        json.dumps(ledger, ensure_ascii=False), encoding="utf-8"
+    )
+    (workdir / ".session_skills.json").unlink()
+
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["alpha"]
+    assert _ledger(workdir)["skills"]["alpha"]["skill_id"] == "alpha"
+
+
+def test_preseed_drops_stale_partition_when_snapshot_changes(tmp_path):
+    """分区是 ``.seed`` 的整份副本：快照一变它就过期，平台顺手删掉（当前无人读，只省磁盘）。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+    partition = _write_partition(workdir, "alpha")
+    assert (partition / ".index").is_file()
+
+    (skill / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: demo\n---\nbody v2\n", encoding="utf-8"
+    )
+    _seed_session_skills(workdir, [skill])
+
+    assert not partition.exists()
+
+
+def test_preseed_keeps_partition_when_nothing_changes(tmp_path):
+    """没有任何变化时保持幂等：不重写账本，也不动 AgentScope 的分区。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+    partition = _write_partition(workdir, "alpha")
+    ledger_path = workdir / ".session_skills.json"
+    before = ledger_path.read_text(encoding="utf-8")
+
+    _seed_session_skills(workdir, [skill])
+
+    assert partition.exists()
+    assert ledger_path.read_text(encoding="utf-8") == before
+
+
+
+def test_preseed_migrates_flat_layout_with_real_legacy_ledger(tmp_path):
+    """最真实的存量形态：平铺 + 老账本（hash 真实、缺 skill_id）。
+
+    搬进 ``.seed`` 后差集应命中同一内容 → 回填 skill_id，且**不产生** ``<name>_1`` 副本。
+    """
+    import shutil
+
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+
+    # 还原成老会话形态：.seed/alpha 挪回平铺，账本挪去 skills/.skills 并抹掉 skill_id
+    shutil.move(
+        str(workdir / "skills" / ".seed" / "alpha"),
+        str(workdir / "skills" / "alpha"),
+    )
+    ledger = json.loads((workdir / ".session_skills.json").read_text(encoding="utf-8"))
+    ledger["skills"]["alpha"]["skill_id"] = ""
+    (workdir / "skills" / ".skills").write_text(
+        json.dumps(ledger, ensure_ascii=False), encoding="utf-8"
+    )
+    (workdir / ".session_skills.json").unlink()
+
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["alpha"]
+    assert not (workdir / "skills" / ".skills").exists()
+    assert _ledger(workdir)["skills"]["alpha"]["skill_id"] == "alpha"
+
+
+def test_preseed_avoids_collision_with_unindexed_seed_dir(tmp_path):
+    """``.seed`` 里存在账本没记录的目录（账本损坏/被清）时不能硬往上写。
+
+    直接复制会撞上 ``copytree`` 的 ``File exists``，技能静默不更新；应当顺延目录名，
+    并把新目录登记进账本。
+    """
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    orphan = workdir / "skills" / ".seed" / "alpha"
+    orphan.mkdir(parents=True)
+    (orphan / "SKILL.md").write_text("orphan", encoding="utf-8")
+
+    _seed_session_skills(workdir, [skill])
+
+    assert (
+        workdir / "skills" / ".seed" / "alpha" / "SKILL.md"
+    ).read_text(encoding="utf-8") == "orphan"
+    assert (workdir / "skills" / ".seed" / "alpha_1" / "SKILL.md").is_file()
+    assert _ledger(workdir)["skills"]["alpha_1"]["skill_id"] == "alpha"

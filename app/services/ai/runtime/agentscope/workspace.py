@@ -28,14 +28,6 @@ DOCKER_WORKSPACE_FILE_TOOL_NAMES = frozenset(
     WORKSPACE_BUILTIN_TOOL_NAMES - {"Bash"}
 )
 WORKSPACE_PROMPT_TOOL_NAMES = WORKSPACE_BUILTIN_TOOL_NAMES
-WORKSPACE_REPLACED_PLATFORM_TOOL_NAMES = frozenset(
-    {
-        *WORKSPACE_BUILTIN_TOOL_NAMES,
-        *AGENTSCOPE_BUILTIN_TOOL_ALIASES.keys(),
-        "list_available_skills",
-        "read_skill_instruction",
-    }
-)
 
 _workspace_cache: dict[str, Any] = {}
 _docker_workspace_cache: dict[str, Any] = {}
@@ -476,37 +468,37 @@ def _entry_is_forbidden(entry: Any, forbidden_ids: set[str]) -> bool:
 
 
 def _prune_stale_session_skills(
-    skills_dir: str,
+    skill_root: str,
     index_path: str,
     forbidden_hashes: set[str] | None,
     forbidden_skill_ids: Iterable[str] | None = None,
-) -> None:
-    """清理会话快照里**已被禁用**的技能。
+) -> int:
+    """清理会话技能快照里**已被禁用**的技能，返回清理条数。
 
-    幂等逻辑（索引已存在就直接返回）会让"权限侧收紧之前"铺好的技能一直留在会话目录里，
+    权限在进程存活期间可以被收紧，而"权限收紧之前"铺好的技能会一直留在会话目录里，
     agent 直接读文件就绕过了禁用。这里按被禁技能的内容哈希反向清理。
 
-    判定必须用**内容哈希**而不是目录名：会话目录名是 ``sanitize(SKILL.md 的 name)``，
+    判定必须用**内容哈希**而不是目录名：快照目录名是 ``sanitize(SKILL.md 的 name)``，
     跟技能 id 没关系，而且 name 冲突时还会带 ``_1`` 后缀——只有哈希是可靠的对应关系
     （播种逻辑也正是按哈希判重的）。
 
     只删"确定被禁"的项，**绝不**把"当前请求没允许的"当成陈旧：那会误删同一会话里其他
     智能体的技能（见 ``_forbidden_skill_hashes`` 的说明）。``forbidden_hashes`` 为空时
-    直接返回。
+    直接返回 0。
     """
     if not forbidden_hashes:
-        return
+        return 0
 
     try:
         with open(index_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception as exc:
-        logger.warning("[workspace] Failed to read .skills for pruning: %s", exc)
-        return
+        logger.warning("[workspace] Failed to read session skills ledger for pruning: %s", exc)
+        return 0
 
     stored = data.get("skills")
     if not isinstance(stored, dict):
-        return
+        return 0
 
     forbidden_ids = {
         str(skill_id).strip() for skill_id in (forbidden_skill_ids or ()) if str(skill_id).strip()
@@ -518,21 +510,22 @@ def _prune_stale_session_skills(
         and _entry_is_forbidden(entry, forbidden_ids)
     ]
     if not stale:
-        return
+        return 0
 
     for dir_name in stale:
-        shutil.rmtree(os.path.join(skills_dir, dir_name), ignore_errors=True)
+        shutil.rmtree(os.path.join(skill_root, dir_name), ignore_errors=True)
         stored.pop(dir_name, None)
 
-    # 索引必须同步，否则 AgentScope.initialize 会认为内容仍在而跳过复制，留下悬空条目
+    # 账本必须同步，否则下次播种会以为内容仍在而跳过复制，留下悬空条目
     try:
         data["skills"] = stored
         with open(index_path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False)
     except Exception as exc:
-        logger.warning("[workspace] Failed to sync .skills after pruning: %s", exc)
+        logger.warning("[workspace] Failed to sync session skills ledger after pruning: %s", exc)
 
     logger.info("[workspace] Pruned %d unavailable session skill(s): %s", len(stale), stale)
+    return len(stale)
 
 
 async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) -> None:
@@ -542,8 +535,8 @@ async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) 
     而权限可以在进程存活期间被收紧，于是"禁用前铺好的快照"会一直留在磁盘上，被 Read/Glob
     或 Bash 直接读到——禁用形同虚设。这里补上这一半。
     """
-    skills_dir = os.path.join(workdir, "skills")
-    index_path = os.path.join(skills_dir, ".skills")
+    skill_root = _session_skill_seed_dir(workdir)
+    index_path = _session_skills_ledger_path(workdir)
     if not os.path.isfile(index_path):
         return
     try:
@@ -556,74 +549,189 @@ async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) 
     if not forbidden_skill_ids:
         return
     _prune_stale_session_skills(
-        skills_dir,
+        skill_root,
         index_path,
         _forbidden_skill_hashes(forbidden_skill_ids),
         forbidden_skill_ids,
     )
+    _prune_session_skill_partitions(workdir)
+
+
+def _session_skill_seed_dir(workdir: str) -> str:
+    """平台维护的技能快照目录：AgentScope 的 seed 模板（``<workdir>/skills/.seed``）。
+
+    平台刻意**只维护 seed**、不写平铺技能：平铺会触发 AgentScope 的
+    ``_migrate_skill_layout``，它每次 ``initialize()`` 把平铺搬进 ``.seed`` 的同时还会吃掉
+    平台的账本，两边来回打架。seed 非空时 ``_setup_skills`` 直接跳过、迁移也无事可做。
+    """
+    return os.path.join(workdir, "skills", DOCKER_SANDBOX_SKILL_SEED_NAME)
+
+
+def _session_skills_ledger_path(workdir: str) -> str:
+    return os.path.join(workdir, SESSION_SKILLS_LEDGER_NAME)
+
+
+def _legacy_session_skills_index_path(workdir: str) -> str:
+    return os.path.join(workdir, "skills", LEGACY_SESSION_SKILLS_INDEX_NAME)
+
+
+def _read_session_skills_ledger(workdir: str) -> dict[str, dict[str, str]]:
+    """读平台账本；老会话的账本仍在 ``skills/.skills``（读取回退，不丢已铺技能）。"""
+    for path in (
+        _session_skills_ledger_path(workdir),
+        _legacy_session_skills_index_path(workdir),
+    ):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            logger.warning("[workspace] Failed to parse session skills ledger %s: %s", path, exc)
+            continue
+        stored = data.get("skills")
+        if isinstance(stored, dict):
+            return {
+                str(dir_name): {
+                    "hash": str(entry.get("hash", "")),
+                    "skill_name": str(entry.get("skill_name", "")),
+                    # 保留来源技能 id（旧账本没有这个字段，读取时为 ""）
+                    "skill_id": str(entry.get("skill_id", "")),
+                }
+                for dir_name, entry in stored.items()
+                if isinstance(entry, dict)
+            }
+    return {}
+
+
+def _is_agentscope_skill_partition(skills_dir: str, entry: str) -> bool:
+    """``skills/<entry>`` 是否是 AgentScope 装备出来的分区（带它自己的 ``.index``）。"""
+    return os.path.isfile(os.path.join(skills_dir, entry, ".index"))
+
+
+def _migrate_flat_session_skills(workdir: str) -> int:
+    """把老会话的平铺技能搬进 ``.seed``（由平台自己完成 AgentScope 的迁移）。
+
+    平铺目录会让 AgentScope 每次 ``initialize()`` 都搬一次，并在搬的同时丢弃平台的账本；
+    平台先搬完，它的迁移就无事可做。目录名保持不变（``_1`` 之类的区分继续有效）。
+    """
+    skills_dir = os.path.join(workdir, "skills")
+    if not os.path.isdir(skills_dir):
+        return 0
+    seed_dir = _session_skill_seed_dir(workdir)
+    moved = 0
+    for entry in sorted(os.listdir(skills_dir)):
+        if entry.startswith(".") or _is_agentscope_skill_partition(skills_dir, entry):
+            continue
+        path = os.path.join(skills_dir, entry)
+        if not os.path.isdir(path) or not os.path.isfile(os.path.join(path, "SKILL.md")):
+            continue
+        os.makedirs(seed_dir, exist_ok=True)
+        target = os.path.join(seed_dir, entry)
+        try:
+            if os.path.exists(target):
+                # seed 里已有同名条目（平台新铺过）：以 seed 为准，丢掉旧平铺副本
+                shutil.rmtree(path)
+            else:
+                shutil.move(path, target)
+            moved += 1
+        except OSError as exc:
+            logger.warning("[workspace] Failed to move flat session skill %s: %s", path, exc)
+    if moved:
+        logger.info("[workspace] Migrated %d flat session skill(s) into %s", moved, seed_dir)
+    return moved
+
+
+def _prune_session_skill_partitions(workdir: str) -> int:
+    """删掉过期的 AgentScope 分区（含其 ``.index``）。
+
+    分区是 ``.seed`` 的整份副本，seed 一变它就过期。当前生产没有任何调用方读取技能清单
+    （见 ``tests/ai/runtime/test_agentscope_workspace_toolkit.py`` 的防回归契约），删掉只省
+    磁盘；若将来接回清单，AgentScope 会在 ``list_skills()`` 的 reconcile 里重新装备。
+    """
+    skills_dir = os.path.join(workdir, "skills")
+    if not os.path.isdir(skills_dir):
+        return 0
+    removed = 0
+    for entry in sorted(os.listdir(skills_dir)):
+        if entry.startswith(".") or not _is_agentscope_skill_partition(skills_dir, entry):
+            continue
+        try:
+            shutil.rmtree(os.path.join(skills_dir, entry))
+            removed += 1
+        except OSError as exc:
+            logger.warning("[workspace] Failed to drop stale skill partition %s: %s", entry, exc)
+    if removed:
+        logger.info("[workspace] Dropped %d stale session skill partition(s)", removed)
+    return removed
+
+
+def _same_origin_skill_dir(
+    existing: dict[str, dict[str, str]], skill_id: str
+) -> str | None:
+    """在索引里找同一个来源技能（``skill_id``）已占用的目录名。
+
+    索引里的 ``skill_id`` 是后加的字段，老会话没有（读到空串）——那种情况只能走
+    「新技能」分支，靠 ``--prune-stale`` 之类的清理重建，而不是在这里猜。
+    """
+    if not skill_id:
+        return None
+    for dir_name, entry in existing.items():
+        if entry.get("skill_id") == skill_id:
+            return dir_name
+    return None
 
 
 def _preseed_session_skills(
     workdir: str, skill_paths: list[str], forbidden_skill_ids: Iterable[str] | None = None
 ) -> None:
-    """Pre-seed ``<workdir>/skills`` with the platform skills before AgentScope.
+    """把平台技能快照铺进 ``<workdir>/skills/.seed``（AgentScope 的 seed 模板）。
 
-    AgentScope's ``LocalWorkspace.initialize`` seeds ``skill_paths`` into
-    ``<workdir>/skills`` via ``shutil.copytree`` (a full physical copy per
-    session), which multiplies disk usage linearly as sessions accumulate.
-    This function pre-populates the same directory using hard links toward
-    the shared source skill dirs (or ``copy2`` on cross-device) and writes an
-    AgentScope-compatible ``.skills`` index, so that when ``initialize`` runs
-    it finds every skill's content hash already present and skips all copying
-    — eliminating the per-session duplication while keeping full COW-like
-    isolation where the filesystem supports hard links.
+    AgentScope 的 ``LocalWorkspace.initialize`` 会把 ``skill_paths`` 逐个 ``copytree`` 进会话
+    目录（每会话一份完整物理副本），并在这一过程中把平铺技能迁移进 ``.seed``、顺手丢掉平台
+    写在 ``skills/`` 里的账本。平台改为**直接维护 ``.seed``**：seed 非空时 ``_setup_skills``
+    直接跳过复制、迁移也无事可做，两边不再来回打架。
 
-    Idempotent: if ``<workdir>/skills/.skills`` already exists the seed is
-    left untouched, so re-initialisation never rebuilds or overwrites a
-    snapshot.
+    平台账本放在会话根（``<workdir>/.session_skills.json``）而不是 ``skills/`` 里：后者会被
+    AgentScope 当成技能条目处理（``.skills`` 就曾被它的迁移逻辑吃掉）。
 
-    Isolation: seeding always performs a real copy (see
-    ``_hardlink_or_copy2``). Hard links used to share the inode with the
-    source skill, which let a write through a session snapshot modify the
-    platform's source skill for every user; the disk savings were not worth
-    that trade.
+    幂等：每次调用都按内容哈希做差集，只有新增/改版技能会被复制进来；老会话的平铺布局由
+    ``_migrate_flat_session_skills`` 一次性搬进 ``.seed``。
+
+    同源改版就地替换：技能按来源 id（账本里的 ``skill_id``）匹配，改版时复用原目录名，而不是
+    把旧副本留成 ``<name>_1``。
+
+    隔离：播种始终做真实复制（见 ``_hardlink_or_copy2``）。早年用硬链接共享 inode，从会话副本
+    写入会顺着 inode 改到平台技能源、影响所有用户；省下的磁盘不值得这个代价。
+
+    技能一变，AgentScope 已装备的分区副本就过期了，平台顺手删掉它（见
+    ``_prune_session_skill_partitions``）：当前生产没有任何调用方读技能清单，删掉只省磁盘，
+    将来接回时 AgentScope 会自己重新装备。
     """
-    skills_dir = os.path.join(workdir, "skills")
-    index_path = os.path.join(skills_dir, ".skills")
-    if os.path.isfile(index_path):
-        # 已经铺过：不重建，但要清掉"禁用之前"铺进来的技能（读文件即可绕过禁用）
-        _prune_stale_session_skills(
-            skills_dir,
-            index_path,
+    seed_dir = _session_skill_seed_dir(workdir)
+    index_path = _session_skills_ledger_path(workdir)
+    legacy_index_path = _legacy_session_skills_index_path(workdir)
+    # 账本还在老位置（skills/.skills）就顺手搬过来——留在那儿迟早被 AgentScope 的迁移吃掉。
+    ledger_moved = os.path.isfile(legacy_index_path) and not os.path.isfile(index_path)
+    migrated = _migrate_flat_session_skills(workdir)
+    os.makedirs(seed_dir, exist_ok=True)
+
+    # 先清掉"禁用之前"铺进来的技能（直接读文件即可绕过禁用），再走下面的 hash 差集——不能
+    # 早退。早退会让新增/改版技能只能等 AgentScope 自己复制，而它按 frontmatter name 命名，
+    # 改版时会留下 <name>_1 旧副本。账本可能还在老位置，按实际存在的那份清理。
+    pruned = 0
+    prune_index_path = index_path if os.path.isfile(index_path) else legacy_index_path
+    if os.path.isfile(prune_index_path):
+        pruned = _prune_stale_session_skills(
+            seed_dir,
+            prune_index_path,
             _forbidden_skill_hashes(forbidden_skill_ids),
             forbidden_skill_ids,
         )
-        return
 
-    os.makedirs(skills_dir, exist_ok=True)
-
-    # Load any existing index so we never clobber previously seeded skills.
-    existing: dict[str, dict[str, str]] = {}
-    try:
-        with open(index_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        stored = data.get("skills")
-        if isinstance(stored, dict):
-            existing = {
-                str(d): {
-                    "hash": str(e.get("hash", "")),
-                    "skill_name": str(e.get("skill_name", "")),
-                    # 保留来源技能 id（旧索引没有这个字段，读取时为 ""）
-                    "skill_id": str(e.get("skill_id", "")),
-                }
-                for d, e in stored.items()
-                if isinstance(e, dict)
-            }
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        logger.warning("[workspace] Failed to parse existing .skills: %s", exc)
-
+    # 以**清理之后**的账本为权威重新读：否则刚被删掉的被禁条目会被内存里的旧副本写回去
+    # （账本可能仍在老位置，读取自带回退）
+    existing = _read_session_skills_ledger(workdir)
     existing_hashes: set[str] = {e.get("hash", "") for e in existing.values()}
     existing_agent_names: set[str] = {e.get("skill_name", "") for e in existing.values()}
     existing_dir_names: set[str] = set(existing.keys())
@@ -674,7 +782,55 @@ def _preseed_session_skills(
             continue
 
         skill_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()
+        # 来源 id：清理被禁技能时要按 id 复核（否则"逐字节复制平台技能"的个人技能会因为
+        # 哈希相同被一起删掉），同源改版时也靠它找到旧目录做就地替换。
+        skill_id = os.path.basename(os.path.normpath(skill_path))
+        origin_dir = _same_origin_skill_dir(existing, skill_id)
+
         if skill_hash in existing_hashes:
+            # 内容没变：顺手补上老索引缺失的 skill_id（自愈，让后续改版能就地替换）
+            if origin_dir is None:
+                for dir_name, entry in existing.items():
+                    if entry.get("hash") == skill_hash and not entry.get("skill_id"):
+                        entry["skill_id"] = skill_id
+                        updated = True
+                        break
+            continue
+
+        if origin_dir is not None:
+            # 同一个技能改版：复用原目录名就地替换，避免旧副本变成 <name>_1 留在清单里
+            entry = existing[origin_dir]
+            dest_path = os.path.join(seed_dir, origin_dir)
+            if not os.path.realpath(dest_path).startswith(
+                os.path.realpath(seed_dir) + os.sep,
+            ):
+                logger.warning(
+                    "[workspace] Pre-seed skip %s: path escapes seed dir", skill_path
+                )
+                continue
+            try:
+                if os.path.isdir(dest_path):
+                    shutil.rmtree(dest_path)
+                elif os.path.exists(dest_path):
+                    os.remove(dest_path)
+                shutil.copytree(
+                    skill_path,
+                    dest_path,
+                    copy_function=_hardlink_or_copy2,
+                    dirs_exist_ok=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[workspace] Pre-seed failed to refresh skill %s: %s",
+                    skill_path,
+                    exc,
+                )
+                continue
+            existing_hashes.discard(entry.get("hash", ""))
+            existing_hashes.add(skill_hash)
+            entry["hash"] = skill_hash
+            entry["skill_id"] = skill_id
+            updated = True
             continue
 
         # Resolve agent-facing name conflict (mirror AgentScope loop)
@@ -688,15 +844,15 @@ def _preseed_session_skills(
         base_dir = _sanitize_skill_dir_name(name)
         dir_name = base_dir
         counter = 1
-        while dir_name in existing_dir_names:
+        while dir_name in existing_dir_names or os.path.exists(os.path.join(seed_dir, dir_name)):
             dir_name = f"{base_dir}_{counter}"
             counter += 1
 
-        dest_path = os.path.join(skills_dir, dir_name)
+        dest_path = os.path.join(seed_dir, dir_name)
         if not os.path.realpath(dest_path).startswith(
-            os.path.realpath(skills_dir) + os.sep,
+            os.path.realpath(seed_dir) + os.sep,
         ):
-            logger.warning("[workspace] Pre-seed skip %s: path escapes skills_dir", skill_path)
+            logger.warning("[workspace] Pre-seed skip %s: path escapes seed dir", skill_path)
             continue
 
         try:
@@ -713,18 +869,16 @@ def _preseed_session_skills(
         existing[dir_name] = {
             "hash": skill_hash,
             "skill_name": agent_name,
-            # 记录来源 id：清理被禁技能时要按 id 复核，否则"逐字节复制平台技能"的个人技能
-            # 会因为哈希相同被一起删掉（个人技能永不受限）。
-            "skill_id": os.path.basename(os.path.normpath(skill_path)),
+            "skill_id": skill_id,
         }
         existing_hashes.add(skill_hash)
         existing_agent_names.add(agent_name)
         existing_dir_names.add(dir_name)
         updated = True
 
-    if updated:
+    if updated or migrated or pruned or ledger_moved:
         try:
-            mtime = os.stat(skills_dir).st_mtime
+            mtime = os.stat(seed_dir).st_mtime
         except OSError:
             mtime = 0.0
         payload = {"skills_dir_mtime": float(mtime), "skills": existing}
@@ -732,12 +886,25 @@ def _preseed_session_skills(
             with open(index_path, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, indent=2, ensure_ascii=False))
             logger.info(
-                "[workspace] Pre-seeded %d skill(s) via hard links in %s",
-                updated,
-                skills_dir,
+                "[workspace] Session skill snapshot synced: %d skill(s) in %s",
+                len(existing),
+                seed_dir,
             )
         except Exception as exc:
-            logger.warning("[workspace] Failed to write .skills at %s: %s", skills_dir, exc)
+            logger.warning("[workspace] Failed to write session skills ledger %s: %s", index_path, exc)
+        if ledger_moved and os.path.isfile(legacy_index_path):
+            try:
+                os.remove(legacy_index_path)
+            except OSError as exc:
+                logger.warning(
+                    "[workspace] Failed to drop legacy skills index %s: %s",
+                    legacy_index_path,
+                    exc,
+                )
+        # 快照变了，AgentScope 已装备的分区副本随之过期（当前无人读，只省磁盘）。
+        # pruned 也要算：只清 .seed 不清分区，被禁技能的副本会继续留在会话目录里可读。
+        if updated or migrated or pruned:
+            _prune_session_skill_partitions(workdir)
 
 
 SANDBOX_POLICY_LOCAL = "local"
@@ -895,6 +1062,12 @@ def _build_docker_file_tool_mount_mappings(
 #: ``_setup_skills`` 一次性打包出来的技能副本；平台靠下面的指纹比对在公共技能
 #: 变更后主动作废它，让下一次 initialize() 重新打包。
 DOCKER_SANDBOX_SKILL_SEED_NAME = ".seed"
+#: 会话技能快照的平台账本（``<workdir>/.session_skills.json``）。刻意放在会话根而不是
+#: ``skills/`` 里：AgentScope 会把 ``skills/`` 下的非目录条目当成技能条目处理
+#: （``.skills`` 就曾被它的迁移逻辑吃掉），账本放在外面才不会被误动。
+SESSION_SKILLS_LEDGER_NAME = ".session_skills.json"
+#: 账本的历史位置（``skills/.skills``）：只用于读取回退与迁移后清理。
+LEGACY_SESSION_SKILLS_INDEX_NAME = ".skills"
 #: 上一次打包 seed 时公共技能库的指纹，落在 ``<workdir>/sandbox/`` 下（不进
 #: skills 目录，避免被 AgentScope 当成技能条目）。
 DOCKER_SANDBOX_SKILLS_FINGERPRINT_NAME = ".public_skills_fingerprint"
@@ -2462,9 +2635,9 @@ async def get_local_workspace(
         # it backs the file tools against the user's host session workdir.
         from agentscope.workspace import LocalWorkspace
 
-        # Pre-seed session skills/ with hard links + matching .skills index
-        # so AgentScope's initialize() hash-skips all copies instead of
-        # duplicating every skill into each session directory.
+        # Pre-seed session skills/ with real copies + matching .skills index so
+        # AgentScope's initialize() hash-skips all copies instead of duplicating
+        # every skill into each session directory.
         _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids)
         local_ws = LocalWorkspace(
             workdir=workdir,
@@ -5046,102 +5219,6 @@ async def _as_workspace_tool_map(ws: Any) -> dict[str, Any]:
         for tool in (listed or [])
         if getattr(tool, "name", None)
     }
-
-
-def is_workspace_managed_tool_spec(spec: Any) -> bool:
-    """Tools replaced by LocalWorkspace builtins or AgentScope skill viewer."""
-    name = getattr(spec, "name", "")
-    if name in WORKSPACE_REPLACED_PLATFORM_TOOL_NAMES:
-        return True
-    native_tool = getattr(spec, "native_tool", None)
-    native_name = getattr(native_tool, "name", None) if native_tool is not None else None
-    return native_name in WORKSPACE_BUILTIN_TOOL_NAMES
-
-
-async def build_workspace_toolkit(
-    workspace: Any,
-    tool_specs: list[Any],
-    *,
-    approval_mode: str | None = None,
-    user_info: dict[str, Any] | None = None,
-    agent_timeout: Any = None,
-):
-    """显式合并 LocalWorkspace 内置文件工具与平台工具（Runner 默认不再调用）。
-
-    AgentScope LocalWorkspace 会通过 list_tools() 返回 Bash/Read/Write/Edit/Glob/Grep。
-    平台 Runner 现已改为只挂载 agent 配置工具；如需 workspace 内置工具，请在 agent
-    后端配置对应别名（如 grep、read_file、exec_command）。
-    """
-    from app.services.ai.runtime.agentscope.tools import (
-        _load_agentscope_toolkit,
-        runtime_tool_from_native,
-        runtime_tool_from_spec,
-    )
-    from app.services.ai.runtime.agentscope.tool_timeout import (
-        apply_agent_tool_timeout,
-        load_agent_max_toolcall_timeout,
-        resolve_agent_toolcall_timeout,
-    )
-
-    toolkit_cls = _load_agentscope_toolkit()
-    global_tool_timeout = await load_agent_max_toolcall_timeout()
-    agent_tool_timeout = resolve_agent_toolcall_timeout(global_tool_timeout, agent_timeout)
-    tool_specs = apply_agent_tool_timeout(
-        tool_specs,
-        global_tool_timeout,
-        agent_timeout=agent_timeout,
-    )
-    workspace_tools = await workspace.list_tools()
-    workspace_names = {getattr(tool, "name", "") for tool in workspace_tools}
-    if workspace_names != set(WORKSPACE_BUILTIN_TOOL_NAMES):
-        logger.warning(
-            "[workspace] Unexpected workspace tools: %s",
-            sorted(workspace_names),
-        )
-
-    workspace_root = getattr(workspace, "workspace_user_root", None)
-    if workspace_root is None and user_info is not None:
-        from app.utils.fs_access import get_user_private_workspace_root
-
-        workspace_root = get_user_private_workspace_root(user_info)
-    if workspace_root is None:
-        workspace_root = getattr(workspace, "workdir", None)
-
-    runtime_workspace_tools = []
-    for tool in workspace_tools:
-        tool_name = getattr(tool, "name", "")
-        if tool_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES:
-            if not workspace_root:
-                raise PermissionError(
-                    "文件访问被拒绝：无法解析当前用户工作区根目录"
-                )
-            tool = _WorkspaceFileAccessNativeTool(
-                tool,
-                user_info=user_info,
-                workspace_root=workspace_root,
-            )
-        runtime_workspace_tools.append(
-            runtime_tool_from_native(
-                tool,
-                approval_mode=approval_mode,
-                timeout_seconds=agent_tool_timeout,
-            )
-        )
-    platform_tools = [
-        runtime_tool_from_spec(
-            spec,
-            approval_mode=approval_mode,
-        )
-        for spec in tool_specs
-        if not is_workspace_managed_tool_spec(spec)
-    ]
-    skills = await workspace.list_skills()
-    mcps = await workspace.list_mcps()
-    return toolkit_cls(
-        tools=[*runtime_workspace_tools, *platform_tools],
-        skills_or_loaders=skills,
-        mcps=mcps,
-    )
 
 
 async def _k8s_named_pod_identity(user_key: str) -> tuple[str, str]:

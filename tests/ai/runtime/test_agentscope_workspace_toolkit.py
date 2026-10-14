@@ -1,14 +1,11 @@
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
-from app.services.ai.runtime.agentscope.workspace import (
-    build_workspace_toolkit,
-    is_workspace_managed_tool_spec,
-    resolve_session_workdir,
-)
+from app.services.ai.runtime.agentscope.workspace import resolve_session_workdir
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -30,69 +27,6 @@ def _local_policy_without_redis(monkeypatch):
 
 async def _noop_tool(**kwargs):
     return kwargs
-
-
-@pytest.mark.asyncio
-async def test_build_workspace_toolkit_uses_workspace_builtins_and_keeps_platform_tools(
-    tmp_path,
-    monkeypatch,
-):
-    from app.services.ai.runtime.agentscope.workspace import get_local_workspace
-
-    async def _root():
-        return str(tmp_path)
-
-    monkeypatch.setattr(
-        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
-        _root,
-    )
-    monkeypatch.setattr(
-        "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
-        lambda **kwargs: [],
-    )
-
-    workspace = await get_local_workspace(user_id="u1", conversation_id="c1")
-    assert workspace is not None
-    _, local_ws = workspace
-
-    builtin_spec = RuntimeToolSpec(
-        name="Bash",
-        description="bash",
-        parameters_schema={"type": "object", "properties": {}},
-        source_type="system",
-        callable=_noop_tool,
-        permission_scope="ask",
-    )
-    platform_spec = RuntimeToolSpec(
-        name="search_knowledge_base",
-        description="kb",
-        parameters_schema={"type": "object", "properties": {}},
-        source_type="static",
-        callable=_noop_tool,
-        permission_scope="read",
-    )
-    skill_spec = RuntimeToolSpec(
-        name="list_available_skills",
-        description="skills",
-        parameters_schema={"type": "object", "properties": {}},
-        source_type="static",
-        callable=_noop_tool,
-        permission_scope="read",
-    )
-
-    toolkit = await build_workspace_toolkit(
-        local_ws,
-        [builtin_spec, platform_spec, skill_spec],
-        user_info={"user_id": "u1", "user_name": "alice", "role": "user"},
-    )
-
-    schemas = await toolkit.get_tool_schemas()
-    tool_names = [item["function"]["name"] for item in schemas]
-    assert "Bash" in tool_names
-    assert "Read" in tool_names
-    assert "search_knowledge_base" in tool_names
-    assert "list_available_skills" not in tool_names
-    assert tool_names.count("Bash") == 1
 
 
 @pytest.mark.asyncio
@@ -185,13 +119,23 @@ async def test_bind_configured_tools_to_workspace_ignores_non_list_list_tools():
     assert bound == [spec]
 
 
-def test_is_workspace_managed_tool_spec_matches_aliases():
-    spec = RuntimeToolSpec(
-        name="exec_command",
-        description="bash alias",
-        parameters_schema={"type": "object", "properties": {}},
-        source_type="system",
-        callable=_noop_tool,
-        permission_scope="ask",
-    )
-    assert is_workspace_managed_tool_spec(spec) is True
+def test_agentscope_skill_catalog_stays_disconnected_from_production_tooling():
+    """生产不得把技能清单交给 AgentScope。
+
+    AgentScope 会把 ``skills_or_loaders`` 渲染成 ``<agent-skills><dir>…</dir>`` 塞进
+    prompt，而 ``Skill.dir`` 是**宿主绝对路径**（Docker 部署下形如
+    ``/app/data/agent_workspaces/<user_key>/sessions/<cid>/skills/...``），沙箱里的模型
+    照着去 Bash/Read 必然找不到（技能自带脚本尤其明显）。
+
+    本仓库曾有一套 ``build_workspace_toolkit`` 接入（含把 ``Skill.dir`` 映射成
+    ``/workspace/...`` 的护栏），因生产无调用方已整体删除。若确实要接回，必须同时把
+    ``Skill.dir`` 映射为沙箱可见路径，并把这条契约改成「必须映射」的正向断言——背景见
+    ``tests/CHECKLIST.md`` 2026-10-14 的「AgentScope 技能目录路径护栏」条目。
+    """
+    app_root = Path(__file__).resolve().parents[3] / "app"
+    offenders = [
+        path.relative_to(app_root.parent).as_posix()
+        for path in app_root.rglob("*.py")
+        if "skills_or_loaders" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], f"AgentScope 技能清单不得接入生产：{offenders}"
