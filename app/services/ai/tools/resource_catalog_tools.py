@@ -328,22 +328,41 @@ async def list_accessible_directories() -> str:
             },
             {
                 "directory_name": "skills",
-                # Docker 的 /workspace/skills 是运行时合并后的公共技能副本，
-                # 不是用户私有 skills 源目录；宿主文件工具仍使用用户工作区下的 skills/。
-                "container_sandbox_path": None if is_docker_sandbox else skills_service_path,
+                # 两个 skills 路径必须分清：
+                #   - /workspace/skills 是运行时合并后的**公共技能副本**（AgentScope 的 .seed
+                #     模板 + 各智能体分区，平台按公共技能库指纹在下次容器启动时自动重建），
+                #     归 platform_global_skills 条目；
+                #   - /workspace/personal-skills 是本用户**个人技能源目录**的只读挂载，实时
+                #     包含用户当前所有个人技能，技能自带脚本可以直接用 Bash 执行，
+                #     不需要先复制到会话目录。
+                # 宿主文件工具仍然使用用户工作区下的 skills/（清单相对路径 skills）。
+                "container_sandbox_path": (
+                    "/workspace/personal-skills" if is_docker_sandbox else skills_service_path
+                ),
                 "backend_service_path": skills_service_path,
                 "paths": _tool_paths(
-                    container_path=None,
+                    container_path="/workspace/personal-skills" if is_docker_sandbox else None,
                     backend_path=skills_service_path,
                     file_tool_path="skills",
                 ),
                 "path_namespace": _path_namespace(
-                    None,
+                    "/workspace/personal-skills" if is_docker_sandbox else None,
                 ),
+                "path_semantics": "user_personal_skills_source",
+                "access_via": ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
+                # 用户自己的技能可以在宿主侧改（Write/Edit），只有沙箱内是只读挂载。
                 "permission": "read_write",
                 "category": "user_personal_skills",
-                "description": "用户个人专属自定义技能目录。存放当前用户专属创建或定制的 Prompt/技能包。",
-                "recommended_for": ["个人自定义技能"],
+                "description": (
+                    "用户个人专属自定义技能目录（技能源目录，含 SKILL.md 与自带脚本）。"
+                    + (
+                        "Docker 模式下以**只读**方式挂载到 /workspace/personal-skills"
+                        "（实时、不是副本），可用 Bash 直接执行技能自带脚本；写操作请用宿主文件工具。"
+                        if is_docker_sandbox
+                        else "通过宿主文件工具读写。"
+                    )
+                ),
+                "recommended_for": ["个人自定义技能", "执行个人技能自带脚本"],
             },
             {
                 "directory_name": ".trash",
@@ -467,8 +486,10 @@ async def list_accessible_directories() -> str:
                 "forbidden_skill_ids": sorted(forbidden_skill_ids),
                 "description": (
                     "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，"
-                    "Docker 模式下通过当前用户工作区内的 /workspace/skills 预置副本访问，"
-                    "不是直接挂载 /app/data/skills。"
+                    "Docker 模式下通过当前用户工作区内的 /workspace/skills 副本访问，"
+                    "不是直接挂载 /app/data/skills；该副本按当前可用技能打包，"
+                    "技能新增/修改/删除/禁用后会在下次容器启动时自动重建"
+                    "（正在运行的容器不会立即刷新）。"
                     + (
                         "其中 forbidden_skill_ids 里的技能已被管理员禁用，"
                         "其目录不可读取，禁止尝试读取或检索。"
@@ -574,6 +595,7 @@ async def list_accessible_directories() -> str:
                 )
                 + "未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
+                "7. 注意两份 skills 的区别：公共技能库的 /workspace/skills 是按当前可用技能打包的副本（技能变更后会在下次容器启动时自动重建，运行中的容器不会立即刷新）；个人技能（category=user_personal_skills）源目录实时只读挂载（paths.bash，Docker 下为 /workspace/personal-skills），技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
             ],
         }
 

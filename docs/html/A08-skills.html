@@ -374,6 +374,12 @@ enabled: true<br/>
     <p style="margin:0;font-size:13px;color:#9a3412;line-height:1.75;">
       目录内仍须有合规 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">SKILL.md</code>；<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">user_key</code> 与登录用户一致，否则工作台「我的技能」看不到。改完后刷新技能列表即可，一般<strong>不必重启容器</strong>（文件落在挂载卷上即时可见）。平台元数据有 60 秒 LRU 缓存，修改后最多 60 秒内自动过期，无需手动触发。
     </p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#9a3412;line-height:1.75;">
+      <strong>沙箱（Docker）可见性</strong>：个人技能<strong>源目录</strong>以只读方式挂载到沙箱内 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">/workspace/personal-skills</code>，实时生效，技能自带脚本可直接用 Bash 执行（无需先复制到会话目录）；沙箱内对该目录的写操作会被只读挂载拒绝，改技能请用工作台或宿主侧文件工具。另有一份<strong>合并后的公共技能副本</strong>在 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">/workspace/skills</code>（AgentScope 的 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">.seed</code> 模板 + 各智能体分区）：平台会比对公共技能库指纹，<strong>技能新增 / 修改 / 删除 / 禁用后自动作废旧模板</strong>，下次容器启动时按当前可用技能重新打包（被禁技能因此不会进沙箱）。注意这是<strong>下次启动才生效</strong>——已经跑着的沙箱容器不会自动刷新，需要重启后端或等容器回收。
+    </p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#9a3412;line-height:1.75;">
+      <strong>会话技能副本（派生物，可安全清理）</strong>：<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">data/agent_workspaces/&lt;user_key&gt;/sessions/&lt;会话ID&gt;/skills/</code> 是平台为单个会话铺设的技能快照，<strong>删掉只会在下次对话时自动重建</strong>。快照本身放在 AgentScope 的种子目录 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">skills/.seed/</code>，平台账本写在会话根 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">.session_skills.json</code>（刻意不放进 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">skills/</code>，否则会被 AgentScope 当成技能条目处理）；技能改版时平台按来源技能 ID <strong>就地替换</strong>，不会再像早期那样在旧副本旁再堆一个「技能名_1」。更早的会话是平铺布局，平台会<strong>自己把平铺技能搬进 .seed</strong>，于是不再触发 AgentScope 的迁移、两边不必每次启动来回搬；快照一变，AgentScope 已装备的分区副本随之过期，平台顺手删掉（当前没有任何调用方读取 AgentScope 技能清单，删掉只省磁盘）。存量清理用 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">python scripts/repair_session_skills.py --relink</code>（把历史上共享 inode 的硬链接副本断成独立文件）与 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">--prune-stale 30</code>（回收 30 天未动的快照）；<strong>默认只预览</strong>，加 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">--apply</code> 才真正执行。
+    </p>
   </section>
 
   <!-- 截图占位｜02d -->

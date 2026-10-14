@@ -110,13 +110,15 @@ async def test_list_accessible_directories_docker_sandbox_mode():
         assert subdirs["sessions/conv:abc"]["container_sandbox_path"] == "/workspace/sessions/conv_abc"
         assert subdirs["sessions/conv:abc"]["paths"]["file_tools"] == "sessions/conv_abc"
         assert subdirs["uploads"]["container_sandbox_path"] == "/workspace/uploads"
-        assert subdirs["skills"]["container_sandbox_path"] is None
+        # 个人技能源目录：Docker 下以只读方式挂载到 /workspace/personal-skills（不再是 None），
+        # 这样沙箱里的 Bash 能直接执行个人技能自带脚本
+        assert subdirs["skills"]["container_sandbox_path"] == "/workspace/personal-skills"
         assert subdirs["skills"]["paths"] == {
-            "bash": None,
+            "bash": "/workspace/personal-skills",
             "file_tools": "skills",
         }
         assert subdirs["skills"]["path_namespace"] == {
-            "bash": None,
+            "bash": "docker_sandbox",
             "file_tools": "backend_service",
         }
         assert "host_physical_path" not in subdirs["docs"]

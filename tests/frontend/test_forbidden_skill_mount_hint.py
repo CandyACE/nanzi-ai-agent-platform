@@ -1,9 +1,13 @@
-"""公共技能被禁用后，前端不得再生成「绝对路径可直接读」的挂载提示。
+"""技能挂载提示的路径口径：**一律不给文件系统路径**。
 
-修复前的缺口：`getServerAttachmentPath` 对被禁技能照样返回
-`/app/data/skills/<id>/SKILL.md`，`appendAttachmentContext` 再把它包进
-"对应的物理描述文件绝对路径是：…" 的提示里。这段 content 会随消息落进会话历史，
-等于每轮都在告诉模型"这个被禁技能可以读"——即使注入层已经拦住了技能。
+两层原因：
+
+1. 被禁技能（本文件最初盯的缺口）——带路径等于每轮都在告诉模型"这个被禁技能可以读"，
+   即使注入层已经拦住了技能；这段 content 还会随消息落进会话历史、不可恢复。
+2. 所有技能——曾经写死的 `/app/data/skills/<id>/SKILL.md` 只在「平台容器 + 公共技能根」
+   这一种组合下成立：个人技能的真身在 `agent_workspaces/<user_key>/skills/`，Docker/K8s
+   沙箱里连 `/app/data` 都没有（只有挂到 `/workspace` 的用户工作区）。模型照抄这条路径
+   只会拿到 `File does not exist`——而技能正文本来就已预载进上下文，这次读取纯属多余。
 
 这里在 node harness 里跑**真实**的 TypeScript 实现（连同它的 import 图一起解析），
 只做纯函数行为断言，不挂载组件。判定沿用 `skillForbidden.isSkillForbidden`：
@@ -115,16 +119,25 @@ def test_forbidden_skill_hint_still_names_the_skill_so_the_model_can_explain():
     assert "Gamma (技能)" not in hint, "技能名要去掉「(技能)」后缀"
 
 
-def test_available_skill_mount_keeps_the_absolute_path():
-    """反向断言：未禁技能照旧给绝对路径与 meta，功能不能被一刀切掉。"""
+def test_available_skill_mount_never_carries_a_filesystem_path():
+    """反向断言：未禁技能照旧挂载、照旧带 meta，但**不解析任何文件系统路径**。
+
+    曾经这里返回 `/app/data/skills/<id>/SKILL.md`——那条路径只在「平台容器 + 公共技能根」
+    下成立，个人技能（真身在 agent_workspaces/<user_key>/skills/）与 Docker/K8s 沙箱
+    （只有 /workspace）里都不存在，模型照抄必然 File does not exist。
+    """
     result = _hint_for(
         "{ type: 'skill', url: 'alpha', filename: 'Alpha (技能)', scope: 'global',"
         " skillMeta: { id: 'alpha', name: 'Alpha', description: '演示', scope: 'global' } }"
     )
 
-    assert result["path"] == "/app/data/skills/alpha/SKILL.md"
-    assert "/app/data/skills/alpha/SKILL.md" in result["hint"]
-    assert "skills meta 为：" in result["hint"]
+    assert result["path"] == "", "技能挂载不该再解析出任何文件系统路径"
+    hint = result["hint"]
+    assert "/app/data/skills" not in hint
+    assert "技能 ID：alpha" in hint
+    assert "已随本轮上下文预载" in hint, "必须告诉模型正文已经预载，不要去读文件"
+    assert "list_accessible_directories" in hint, "读附带脚本要走目录清单拿真实位置"
+    assert "skills meta 为：name: Alpha, description: 演示" in hint
 
 
 @pytest.mark.parametrize(
@@ -147,11 +160,14 @@ def test_available_skill_mount_keeps_the_absolute_path():
         ),
     ],
 )
-def test_not_forbidden_skills_keep_their_path(case_name, file_literal):
+def test_not_forbidden_skills_are_not_marked_unusable(case_name, file_literal):
     result = _hint_for(file_literal)
 
-    assert result["path"].endswith("/SKILL.md"), f"{case_name} 不该被当成禁用"
-    assert result["path"] in result["hint"]
+    assert result["path"] == "", f"{case_name} 不该被当成禁用"
+    hint = result["hint"]
+    assert "已调用生态技能工作流" in hint, f"{case_name} 不该被换成禁用文案"
+    assert "不可读取" not in hint
+    assert "已禁用" not in hint
 
 
 def test_other_attachment_types_are_untouched():

@@ -1,5 +1,3 @@
-import { isSkillForbidden, type SkillForbiddenLike } from "./skillForbidden";
-
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 
 export function normalizeAttachmentExt(ext?: string, url?: string): string {
@@ -49,15 +47,15 @@ export function getServerAttachmentPath(file: {
   type?: string;
   url?: string;
   filename?: string;
-  forbidden?: boolean | null;
-  skillMeta?: SkillForbiddenLike | null;
 }): string {
   if (file.type === "skill") {
-    // 被管理员禁用的公共技能不给出任何绝对路径：提示里带路径等于教模型去读被禁技能的
-    // 正文，而运行时的读判定（Read/Glob/Grep 与 /api/v1/chat/fs）也会直接拒绝这条路径。
-    // 判定与「技能入口置灰」共用 skillForbidden，缺字段一律按未禁用处理。
-    if (isSkillForbidden(file) || isSkillForbidden(file.skillMeta)) return "";
-    return `/app/data/skills/${file.url}/SKILL.md`;
+    // 技能**不给任何文件系统路径**。SKILL.md 正文已由后端预载进本轮上下文，而技能文件的
+    // 真实位置随「公共/个人」与「沙箱策略」变化：曾经写死的
+    // `/app/data/skills/<id>/SKILL.md` 对个人技能（真身在 agent_workspaces/<user_key>/skills/）
+    // 与 Docker/K8s 沙箱（只有 /workspace，没有 /app/data）都不成立，模型照抄必然
+    // File does not exist。真实目录由模型按需调用 list_accessible_directories 查询。
+    // 被禁技能同样不给出路径（这条口径由 attachment hint 的禁用文案保证）。
+    return "";
   }
   if (file.type === "local_file" || file.type === "local_dir") {
     return file.url || "";

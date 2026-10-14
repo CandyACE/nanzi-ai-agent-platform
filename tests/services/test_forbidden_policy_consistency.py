@@ -267,10 +267,13 @@ def test_snapshot_pruning_requires_matching_skill_id():
 def test_snapshot_index_records_skill_id():
     """播种时必须把来源 skill_id 写进索引，否则上面的复核没有依据。"""
     source = (ROOT / "app/services/ai/runtime/agentscope/workspace.py").read_text(encoding="utf-8")
-    assert '"skill_id": os.path.basename(os.path.normpath(skill_path))' in source, (
-        "索引条目必须记录来源技能 id"
+    # 来源 id 统一由一个变量推出（同源改版替换也复用它），不再在写入处内联表达式
+    assert "skill_id = os.path.basename(os.path.normpath(skill_path))" in source, (
+        "必须从技能目录推出来源 id"
     )
-    assert '"skill_id": str(e.get("skill_id", ""))' in source, "读取索引时必须保留该字段"
+    assert '"skill_id": skill_id' in source, "索引条目必须记录来源技能 id"
+    # 账本读取统一收在 _read_session_skills_ledger 里（新位置 + 老位置 skills/.skills 回退）
+    assert '"skill_id": str(entry.get("skill_id", ""))' in source, "读取索引时必须保留该字段"
 
 
 # ---------------------------------------------------------------------------

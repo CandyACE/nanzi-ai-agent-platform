@@ -1,3 +1,4 @@
+import json
 import os
 from unittest.mock import AsyncMock
 
@@ -668,6 +669,7 @@ def test_docker_file_tool_mount_mapping_has_public_docs_before_user_root(
 
     assert mappings == [
         ("/workspace/public/docs", str(backend_docs), "ro"),
+        ("/workspace/personal-skills", str(tmp_path / "user" / "skills"), "ro"),
         ("/workspace/skills", None, "ro"),
         ("/workspace", str(tmp_path / "user"), "rw"),
     ]
@@ -697,9 +699,254 @@ def test_docker_file_tool_mount_mapping_marks_unmounted_children_container_only(
 
     assert mappings == [
         ("/workspace/public/docs", None, "ro"),
+        ("/workspace/personal-skills", str(tmp_path / "user" / "skills"), "ro"),
         ("/workspace/skills", None, "ro"),
         ("/workspace", str(tmp_path / "user"), "rw"),
     ]
+
+
+def test_personal_skills_sandbox_path_maps_back_to_the_workspace_source(tmp_path):
+    """沙箱里的 /workspace/personal-skills 就是宿主 skills/。
+
+    Bash 里拿到的脚本路径必须能原样交给 Read/Grep（agent 两种工具混用时不再需要换算）。
+    """
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_workdir = tmp_path / "alice__1"
+    mappings = workspace_module._build_docker_file_tool_mount_mappings(str(host_workdir))
+
+    resolved = workspace_module._map_docker_workspace_path(
+        "/workspace/personal-skills/network-connectivity-checker/check_connectivity.sh",
+        str(host_workdir),
+        mount_mappings=mappings,
+    )
+
+    assert resolved == str(
+        host_workdir
+        / "skills"
+        / "network-connectivity-checker"
+        / "check_connectivity.sh"
+    )
+
+
+def test_runtime_skills_sandbox_path_stays_container_only(tmp_path):
+    """合并副本 /workspace/skills 仍是容器专用：它不等于宿主的 skills/ 源目录，不能当真实路径用。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_workdir = tmp_path / "alice__1"
+    mappings = workspace_module._build_docker_file_tool_mount_mappings(str(host_workdir))
+
+    with pytest.raises(ValueError, match="container-only"):
+        workspace_module._map_docker_workspace_path(
+            "/workspace/skills/.seed/demo/SKILL.md",
+            str(host_workdir),
+            mount_mappings=mappings,
+        )
+
+
+def _make_public_skill(root, dirname, *, name=None, body="v1"):
+    """造一个最小公共技能（带合规 frontmatter），用于指纹与同步用例。"""
+    skill_dir = root / dirname
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    front = f"name: {name}\n" if name else ""
+    (skill_dir / "SKILL.md").write_text(
+        f"---\n{front}description: demo\n---\nbody {body}\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+def test_public_skills_fingerprint_tracks_content_changes(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    first = workspace_module._platform_public_skills_fingerprint()
+    assert first
+    assert workspace_module._platform_public_skills_fingerprint() == first
+
+    # 同路径下内容变化（改 SKILL.md / 改脚本）也要被发现——这是最常见的更新形态
+    (public / "alpha" / "SKILL.md").write_text(
+        "---\ndescription: demo\n---\nbody v2 is longer\n",
+        encoding="utf-8",
+    )
+    changed = workspace_module._platform_public_skills_fingerprint()
+    assert changed != first
+
+    # 技能自带脚本的变化同样要触发失效：沙箱里执行的就是这些文件
+    scripts = public / "alpha" / "scripts"
+    scripts.mkdir()
+    (scripts / "run.sh").write_text("#!/bin/sh\necho v1\n", encoding="utf-8")
+    with_script = workspace_module._platform_public_skills_fingerprint()
+    assert with_script != changed
+
+    (scripts / "run.sh").write_text("#!/bin/sh\necho v2 longer\n", encoding="utf-8")
+    assert workspace_module._platform_public_skills_fingerprint() != with_script
+
+    _make_public_skill(public, "beta")
+    assert workspace_module._platform_public_skills_fingerprint() != with_script
+
+
+def test_public_skills_fingerprint_is_none_without_a_skills_root(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+
+    assert workspace_module._platform_public_skills_fingerprint() is None
+
+
+def test_public_skill_directory_names_include_frontmatter_name(tmp_path, monkeypatch):
+    """AgentScope 按 frontmatter ``name`` 建目录，同步时不能只认源目录名。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "weather-query", name="天气查询与出行建议助手")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    names = workspace_module._public_skill_directory_names()
+
+    assert {"weather-query", "天气查询与出行建议助手"} <= names
+
+
+def test_stale_sandbox_skill_seed_is_invalidated_when_public_skills_change(
+    tmp_path, monkeypatch
+):
+    """公共技能库变了就作废 seed 模板，让下一次 initialize 重新打包。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    seed_dir = (
+        host_workdir
+        / "sandbox"
+        / "skills"
+        / workspace_module.DOCKER_SANDBOX_SKILL_SEED_NAME
+    )
+    (seed_dir / "alpha").mkdir(parents=True)
+    (seed_dir / "alpha" / "SKILL.md").write_text("old", encoding="utf-8")
+
+    # 没有指纹（老部署首次升级）同样算过期：历史快照一次性对齐当前技能库
+    invalidated, fingerprint = workspace_module._invalidate_stale_sandbox_skill_seed(
+        str(host_workdir)
+    )
+    assert invalidated is True
+    assert fingerprint == workspace_module._platform_public_skills_fingerprint()
+    assert not seed_dir.exists()
+
+    # 只有 seed 真的非空才记指纹
+    (seed_dir / "alpha").mkdir(parents=True)
+    (seed_dir / "alpha" / "SKILL.md").write_text("new", encoding="utf-8")
+    workspace_module._commit_sandbox_skills_fingerprint(str(host_workdir), fingerprint)
+    assert (
+        workspace_module._read_sandbox_skills_fingerprint(str(host_workdir))
+        == fingerprint
+    )
+
+    assert (
+        workspace_module._invalidate_stale_sandbox_skill_seed(str(host_workdir))[0]
+        is False
+    )
+    assert seed_dir.exists()
+
+    _make_public_skill(public, "beta", name="beta")
+    assert (
+        workspace_module._invalidate_stale_sandbox_skill_seed(str(host_workdir))[0]
+        is True
+    )
+    assert not seed_dir.exists()
+
+
+def test_seed_fingerprint_is_not_committed_when_the_seed_is_empty(
+    tmp_path, monkeypatch
+):
+    """打包失败（seed 不存在/为空）时不能记指纹，否则会被当成「已是最新」永久跳过。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    host_workdir.mkdir(parents=True)
+
+    workspace_module._commit_sandbox_skills_fingerprint(
+        str(host_workdir),
+        workspace_module._platform_public_skills_fingerprint(),
+    )
+
+    assert workspace_module._read_sandbox_skills_fingerprint(str(host_workdir)) is None
+
+
+def test_partition_sync_refreshes_public_skills_and_keeps_agent_own_skills(
+    tmp_path, monkeypatch
+):
+    """已装备的分区跟着新 seed 走：公共技能覆盖、被禁用的残留清掉、agent 自建技能保留。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    _make_public_skill(public, "beta", name="beta")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    skills_dir = host_workdir / "sandbox" / "skills"
+    seed_dir = skills_dir / workspace_module.DOCKER_SANDBOX_SKILL_SEED_NAME
+    partition = skills_dir / "default"
+    # 新 seed 只有 alpha（beta 已被禁用/移出，不在包里）
+    (seed_dir / "alpha").mkdir(parents=True)
+    (seed_dir / "alpha" / "SKILL.md").write_text("alpha v2", encoding="utf-8")
+    # 旧分区：alpha 旧副本 + beta 禁用残留 + agent 自建技能
+    for name in ("alpha", "beta", "agent-own-skill"):
+        (partition / name).mkdir(parents=True)
+        (partition / name / "SKILL.md").write_text("old", encoding="utf-8")
+
+    synced = workspace_module._sync_public_skills_into_sandbox_partitions(
+        str(host_workdir)
+    )
+
+    assert synced == 2  # alpha 覆盖 + beta 清理
+    assert sorted(item.name for item in partition.iterdir()) == [
+        "agent-own-skill",
+        "alpha",
+    ]
+    assert (partition / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "alpha v2"
+    assert (
+        partition / "agent-own-skill" / "SKILL.md"
+    ).read_text(encoding="utf-8") == "old"
+
+
+def test_partition_sync_is_a_noop_without_a_seed(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    partition = host_workdir / "sandbox" / "skills" / "default"
+    partition.mkdir(parents=True)
+
+    assert (
+        workspace_module._sync_public_skills_into_sandbox_partitions(str(host_workdir))
+        == 0
+    )
 
 
 def test_docker_file_tool_mapping_allows_authorized_public_doc_symlink(tmp_path):
@@ -1507,9 +1754,7 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
     assert mcp_kwargs == {}
 
 
-def test_docker_workspace_mount_layout_keeps_personal_skills_out_of_runtime_mount(
-    tmp_path,
-):
+def test_docker_workspace_mount_layout_mounts_personal_skills_read_only(tmp_path):
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
     host_workdir = tmp_path / "alice__1"
@@ -1526,12 +1771,20 @@ def test_docker_workspace_mount_layout_keeps_personal_skills_out_of_runtime_moun
     assert workspace_module._personal_skills_dir(str(host_workdir)) == str(
         host_workdir / "skills"
     )
+    # 合并后的运行时技能快照与个人技能源目录是两个独立挂载：
+    # 前者在 /workspace/skills（rw，AgentScope .seed），后者只读挂在 /workspace/personal-skills，
+    # 让沙箱里的 Bash 能直接执行个人技能自带脚本，不必等 .seed 重建、也不必先搬运。
     assert mounts == [
         (str(host_workdir), "/workspace", "rw"),
         (
             str(host_workdir / "sandbox" / "skills"),
             "/workspace/skills",
             "rw",
+        ),
+        (
+            str(host_workdir / "skills"),
+            "/workspace/personal-skills",
+            "ro",
         ),
         (str(public_docs_source), "/workspace/public/docs", "ro"),
     ]
@@ -2817,3 +3070,242 @@ async def test_e2b_workspace_uses_page_overrides_and_falls_back_for_masked_key(m
     assert kwargs["api_key"] == "saved-e2b-key"
     assert kwargs["template"] == "custom-template"
     assert kwargs["timeout_seconds"] == 45
+
+
+def _write_session_skill(root, dirname, *, body="v1", name=None):
+    """造一个最小技能源目录，用于会话预铺用例。"""
+    skill_dir = root / dirname
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    front = f"name: {name}\n" if name else ""
+    (skill_dir / "SKILL.md").write_text(
+        f"---\n{front}description: demo\n---\nbody {body}\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+def _seed_session_skills(workdir, paths, **kwargs):
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    _preseed_session_skills(str(workdir), [str(path) for path in paths], **kwargs)
+
+
+def _seed_skill_dirs(workdir):
+    """平台快照目录（``skills/.seed``）里的技能条目。"""
+    seed_dir = workdir / "skills" / ".seed"
+    if not seed_dir.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in seed_dir.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    )
+
+
+def _ledger(workdir):
+    """平台账本（会话根，刻意不在 ``skills/`` 里）。"""
+    path = workdir / ".session_skills.json"
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_partition(workdir, name, *, partition="default"):
+    """造一个 AgentScope 装备出来的分区（带它自己的 ``.index``）。"""
+    part = workdir / "skills" / partition
+    skill_dir = part / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("partition copy", encoding="utf-8")
+    (part / ".index").write_text("{}", encoding="utf-8")
+    return part
+
+
+def test_preseed_writes_seed_and_session_root_ledger(tmp_path):
+    """快照落 ``.seed``（AgentScope 的 seed 模板），账本落会话根、不进 ``skills/``。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "brainstorming", name="头脑风暴")
+    workdir = tmp_path / "session"
+
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["头脑风暴"]
+    assert not (workdir / "skills" / ".skills").exists()
+    assert _ledger(workdir)["skills"]["头脑风暴"]["skill_id"] == "brainstorming"
+
+
+def test_preseed_replaces_same_origin_skill_in_place(tmp_path):
+    """技能改版就地替换：否则旧副本会以 <name>_1 留在快照里，模型同时看到两份。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "brainstorming", name="头脑风暴")
+    workdir = tmp_path / "session"
+
+    _seed_session_skills(workdir, [skill])
+    assert _seed_skill_dirs(workdir) == ["头脑风暴"]
+
+    (skill / "SKILL.md").write_text(
+        "---\nname: 头脑风暴\ndescription: demo\n---\nbody v2 is longer\n",
+        encoding="utf-8",
+    )
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["头脑风暴"]
+    seeded_md = (workdir / "skills" / ".seed" / "头脑风暴" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "body v2 is longer" in seeded_md
+    assert _ledger(workdir)["skills"]["头脑风暴"]["skill_id"] == "brainstorming"
+
+
+def test_preseed_backfills_skill_id_for_unchanged_skill(tmp_path):
+    """老账本没有 skill_id：内容未变时也要补上，否则以后改版仍会继续堆副本。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+
+    ledger_path = workdir / ".session_skills.json"
+    blob = json.loads(ledger_path.read_text(encoding="utf-8"))
+    blob["skills"]["alpha"]["skill_id"] = ""
+    ledger_path.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
+
+    _seed_session_skills(workdir, [skill])
+
+    blob = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert blob["skills"]["alpha"]["skill_id"] == "alpha"
+
+
+def test_preseed_migrates_flat_layout_into_seed(tmp_path):
+    """老会话是平铺布局：平台自己搬进 ``.seed`` 并清掉旧账本，AgentScope 就不必再迁移。
+
+    这里故意用一条**对不上内容**的老账本（``hash`` 是编的）验证边界：搬移照常完成、不抛
+    异常；因为既没命中哈希也拿不到 ``skill_id``，技能会多留一份 ``alpha_1`` 副本——这是
+    "账本损坏只能重建"的已知代价。内容能对上的正常路径见
+    ``test_preseed_migrates_flat_layout_with_real_legacy_ledger``。
+    """
+    workdir = tmp_path / "session"
+    flat = workdir / "skills" / "alpha"
+    flat.mkdir(parents=True)
+    (flat / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: demo\n---\nbody\n", encoding="utf-8"
+    )
+    legacy_index = workdir / "skills" / ".skills"
+    legacy_index.write_text(
+        json.dumps({"skills": {"alpha": {"hash": "old", "skill_name": "alpha"}}}),
+        encoding="utf-8",
+    )
+
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    _seed_session_skills(workdir, [skill])
+
+    assert not flat.exists()
+    assert not legacy_index.exists()
+    assert (workdir / "skills" / ".seed" / "alpha" / "SKILL.md").is_file()
+    assert (workdir / "skills" / ".seed" / "alpha_1" / "SKILL.md").is_file()
+
+
+def test_preseed_reads_legacy_ledger_for_unchanged_skill(tmp_path):
+    """老账本还在 ``skills/.skills``：要读得回来，别把已铺技能当成新增再复制一份。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+
+    # 还原成老会话的样子：账本在 skills/.skills，技能内容不变
+    ledger = json.loads((workdir / ".session_skills.json").read_text(encoding="utf-8"))
+    (workdir / "skills" / ".skills").write_text(
+        json.dumps(ledger, ensure_ascii=False), encoding="utf-8"
+    )
+    (workdir / ".session_skills.json").unlink()
+
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["alpha"]
+    assert _ledger(workdir)["skills"]["alpha"]["skill_id"] == "alpha"
+
+
+def test_preseed_drops_stale_partition_when_snapshot_changes(tmp_path):
+    """分区是 ``.seed`` 的整份副本：快照一变它就过期，平台顺手删掉（当前无人读，只省磁盘）。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+    partition = _write_partition(workdir, "alpha")
+    assert (partition / ".index").is_file()
+
+    (skill / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: demo\n---\nbody v2\n", encoding="utf-8"
+    )
+    _seed_session_skills(workdir, [skill])
+
+    assert not partition.exists()
+
+
+def test_preseed_keeps_partition_when_nothing_changes(tmp_path):
+    """没有任何变化时保持幂等：不重写账本，也不动 AgentScope 的分区。"""
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+    partition = _write_partition(workdir, "alpha")
+    ledger_path = workdir / ".session_skills.json"
+    before = ledger_path.read_text(encoding="utf-8")
+
+    _seed_session_skills(workdir, [skill])
+
+    assert partition.exists()
+    assert ledger_path.read_text(encoding="utf-8") == before
+
+
+
+def test_preseed_migrates_flat_layout_with_real_legacy_ledger(tmp_path):
+    """最真实的存量形态：平铺 + 老账本（hash 真实、缺 skill_id）。
+
+    搬进 ``.seed`` 后差集应命中同一内容 → 回填 skill_id，且**不产生** ``<name>_1`` 副本。
+    """
+    import shutil
+
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    _seed_session_skills(workdir, [skill])
+
+    # 还原成老会话形态：.seed/alpha 挪回平铺，账本挪去 skills/.skills 并抹掉 skill_id
+    shutil.move(
+        str(workdir / "skills" / ".seed" / "alpha"),
+        str(workdir / "skills" / "alpha"),
+    )
+    ledger = json.loads((workdir / ".session_skills.json").read_text(encoding="utf-8"))
+    ledger["skills"]["alpha"]["skill_id"] = ""
+    (workdir / "skills" / ".skills").write_text(
+        json.dumps(ledger, ensure_ascii=False), encoding="utf-8"
+    )
+    (workdir / ".session_skills.json").unlink()
+
+    _seed_session_skills(workdir, [skill])
+
+    assert _seed_skill_dirs(workdir) == ["alpha"]
+    assert not (workdir / "skills" / ".skills").exists()
+    assert _ledger(workdir)["skills"]["alpha"]["skill_id"] == "alpha"
+
+
+def test_preseed_avoids_collision_with_unindexed_seed_dir(tmp_path):
+    """``.seed`` 里存在账本没记录的目录（账本损坏/被清）时不能硬往上写。
+
+    直接复制会撞上 ``copytree`` 的 ``File exists``，技能静默不更新；应当顺延目录名，
+    并把新目录登记进账本。
+    """
+    source = tmp_path / "public"
+    skill = _write_session_skill(source, "alpha", name="alpha")
+    workdir = tmp_path / "session"
+    orphan = workdir / "skills" / ".seed" / "alpha"
+    orphan.mkdir(parents=True)
+    (orphan / "SKILL.md").write_text("orphan", encoding="utf-8")
+
+    _seed_session_skills(workdir, [skill])
+
+    assert (
+        workdir / "skills" / ".seed" / "alpha" / "SKILL.md"
+    ).read_text(encoding="utf-8") == "orphan"
+    assert (workdir / "skills" / ".seed" / "alpha_1" / "SKILL.md").is_file()
+    assert _ledger(workdir)["skills"]["alpha_1"]["skill_id"] == "alpha"

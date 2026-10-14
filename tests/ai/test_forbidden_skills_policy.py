@@ -199,12 +199,17 @@ async def test_skill_tools_hide_and_reject_forbidden_skills(skills_env, monkeypa
 
 
 def _seeded_index(workdir) -> dict:
-    blob = json.loads((workdir / "skills" / ".skills").read_text(encoding="utf-8"))
+    """平台账本条目（账本在会话根，刻意不在 ``skills/`` 里）。"""
+    blob = json.loads((workdir / ".session_skills.json").read_text(encoding="utf-8"))
     return blob.get("skills") or {}
 
 
 def _seeded_dirs(workdir) -> set[str]:
-    return {path.name for path in (workdir / "skills").iterdir() if path.is_dir()}
+    """快照里的技能条目（平台铺在 ``skills/.seed``）。"""
+    seed_dir = workdir / "skills" / ".seed"
+    if not seed_dir.is_dir():
+        return set()
+    return {path.name for path in seed_dir.iterdir() if path.is_dir()}
 
 
 def test_preseed_prunes_skills_that_became_forbidden(tmp_path, skills_env):
@@ -270,7 +275,7 @@ def test_prune_targets_only_the_forbidden_skill(tmp_path, skills_env):
 
     remaining = _seeded_dirs(workdir)
     assert len(remaining) == 1
-    kept = workdir / "skills" / next(iter(remaining)) / "SKILL.md"
+    kept = workdir / "skills" / ".seed" / next(iter(remaining)) / "SKILL.md"
     assert kept.read_text(encoding="utf-8") == (
         skills_env.global_root / "alpha" / "SKILL.md"
     ).read_text(encoding="utf-8"), "留下的应当正是未被禁的 alpha"
@@ -290,3 +295,26 @@ def test_injector_wires_forbidden_skills_into_every_injection_path():
     assert "drop_forbidden_skill_items(" in source
     # 首轮 using-superpowers 的"白名单例外"不等于"禁用例外"
     assert 'excluded_skill_ids=skill_filter.get("excluded_skill_ids")' in source
+
+
+def test_prune_also_drops_stale_partitions(tmp_path, skills_env):
+    """被禁技能被清理时，AgentScope 已装备的分区副本也必须失效。
+
+    分区是 ``.seed`` 的整份拷贝：只清 ``.seed`` 不清分区，被禁技能的副本会继续留在会话
+    目录里（模型翻会话目录即可读到），与"禁用"的意图不符。
+    """
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    workdir = tmp_path / "session"
+    alpha = str(skills_env.global_root / "alpha")
+    beta = str(skills_env.global_root / "beta")
+    _preseed_session_skills(workdir, [alpha, beta])
+
+    partition = workdir / "skills" / "default"
+    (partition / "beta").mkdir(parents=True)
+    (partition / "beta" / "SKILL.md").write_text("partition copy", encoding="utf-8")
+    (partition / ".index").write_text("{}", encoding="utf-8")
+
+    _preseed_session_skills(workdir, [alpha], forbidden_skill_ids={"beta"})
+
+    assert not partition.exists(), "过期分区必须一起失效，否则被禁技能副本仍可读"

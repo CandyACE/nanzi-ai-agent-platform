@@ -87,11 +87,23 @@
                   @click="item.contentExpanded = isReasoningBodyOpen(item) ? false : true"
                 >
                   <CpuChipIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span class="min-w-0 flex-1">深度思考</span>
-                  <span v-if="formatDuration(item.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(item.execution_time_ms) }}</span>
-                  <svg class="h-3 w-3 shrink-0 transition-transform" :class="{ 'rotate-180': isReasoningBodyOpen(item) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
-                  </svg>
+                  <span class="shrink-0">深度思考</span>
+                  <span
+                    v-if="reasoningPreviewOf(item).text"
+                    class="hidden min-w-0 flex-1 truncate text-gray-400 dark:text-gray-500 sm:block"
+                    :title="reasoningPreviewOf(item).truncated ? reasoningPreviewOf(item).text : ''"
+                  >{{ reasoningPreviewOf(item).text }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></span>
+                  <span class="ml-auto flex shrink-0 items-center gap-2">
+                    <span
+                      v-if="reasoningCharCountOf(item) >= REASONING_CHAR_COUNT_MIN_VISIBLE"
+                      class="rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                      :title="`本次思考共 ${reasoningCharCountOf(item)} 字`"
+                    >{{ reasoningCharCountOf(item) }} 字</span>
+                    <span v-if="formatDuration(item.execution_time_ms)" class="shrink-0 font-mono text-[10px] text-gray-400">{{ formatDuration(item.execution_time_ms) }}</span>
+                    <svg class="h-3 w-3 shrink-0 transition-transform" :class="{ 'rotate-180': isReasoningBodyOpen(item) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                    </svg>
+                  </span>
                 </button>
                 <blockquote
                   v-if="item.textKind === 'reasoning'"
@@ -603,6 +615,12 @@ import {
 import { copyToClipboard } from "@/utils/clipboard";
 import { stripInternalContextBlocks } from "@/utils/streamContentSanitize";
 import {
+  REASONING_CHAR_COUNT_MIN_VISIBLE,
+  reasoningCharCount,
+  resolveReasoningPreview,
+  type ReasoningPreview,
+} from "@/utils/reasoningPreview";
+import {
   skillFlowNoticeLabel,
   summarizeSkillFlowBadges,
   type SkillFlowBadge,
@@ -944,6 +962,16 @@ onBeforeUnmount(() => {
 
 function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
   return isReasoningContentExpanded(item);
+}
+
+/** 折叠态摘要；pending 时跟随最新内容。内部上下文块剥离沿用 visibleTimelineText。 */
+function reasoningPreviewOf(item: ProcessTimelineTextItem): ReasoningPreview {
+  return resolveReasoningPreview(visibleTimelineText(item.content), { pending: Boolean(item.pending) });
+}
+
+/** 折叠态字数胶囊口径，与摘要同源。 */
+function reasoningCharCountOf(item: ProcessTimelineTextItem): number {
+  return reasoningCharCount(visibleTimelineText(item.content));
 }
 
 function isRouteGroup(item: ProcessTimelineLogItem): boolean {

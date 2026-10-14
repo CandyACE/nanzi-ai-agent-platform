@@ -55,14 +55,22 @@ export const useChatAttachments = ({
     return `用户本轮已上传图片：${file.filename}，该图片已作为视觉多模态输入随消息一并发送（托管路径：${path}）。`;
   };
 
-  const buildSkillAttachmentHint = (file: ChatAttachment, path: string) => {
+  const buildSkillAttachmentHint = (file: ChatAttachment) => {
     const skillName = file.filename.replace(" (技能)", "");
     const meta = file.skillMeta;
     const metaParts: string[] = [];
     if (meta?.name) metaParts.push(`name: ${meta.name}`);
     if (meta?.description) metaParts.push(`description: ${meta.description}`);
     const metaText = metaParts.length > 0 ? metaParts.join(", ") : "";
-    let hint = `用户本轮已调用生态技能工作流：${skillName}，对应的物理描述文件绝对路径是：${path}。`;
+    const skillId = file.url || "";
+    const idText = skillId ? `（技能 ID：${skillId}）` : "";
+    // 与后端 `app/utils/skill_metadata.build_skill_attachment_hint` 是同一份文案口径：
+    // 不再给 SKILL.md 的绝对路径（原因见 attachmentImages.getServerAttachmentPath），
+    // 技能附带的脚本/资源一律走 list_accessible_directories 取真实位置。
+    let hint =
+      `用户本轮已调用生态技能工作流：${skillName}${idText}。` +
+      "其 SKILL.md 正文已随本轮上下文预载，本轮直接按预载指令执行，无需再读取技能文件；" +
+      "如需读取该技能附带的脚本或资源，请先用 list_accessible_directories 查询技能目录的真实位置。";
     if (metaText) {
       hint += `\nskills meta 为：${metaText}`;
     }
@@ -103,14 +111,14 @@ export const useChatAttachments = ({
         });
         return `💡 以下引用的是历史记忆，供参考：\n\n${memoryContextLines.join("\n\n")}`;
       }
-      const path = getServerAttachmentPath(file);
       if (file.type === "skill") {
-        // 被禁技能：不给路径，改给明确的不可用说明（后端还会在写历史前再清洗一次）
+        // 被禁技能：不给任何位置信息，改给明确的不可用说明（后端还会在写历史前再清洗一次）
         if (isSkillForbidden(file) || isSkillForbidden(file.skillMeta)) {
           return buildForbiddenSkillAttachmentHint(file);
         }
-        return buildSkillAttachmentHint(file, path);
+        return buildSkillAttachmentHint(file);
       }
+      const path = getServerAttachmentPath(file);
       if (isImageAttachment(file)) {
         return buildImageAttachmentHint(file, path);
       }
