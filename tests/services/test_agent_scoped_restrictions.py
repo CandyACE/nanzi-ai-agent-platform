@@ -942,7 +942,11 @@ async def test_mcp_items_resolve_description_and_server_label(db_session):
     group = next(g for g in result["groups"] if g["key"].startswith("mcp:"))
     assert group["label"] == server_name, "分组标题要用完整 server_name，而不是被去掉 mcp- 的前缀"
     item = group["items"][0]
-    assert item["id"] == "get-current-date", "条目标题是工具段，不带 server 前缀"
+    assert item["id"] == f"{server_name}:get-current-date", (
+        "落库标识必须是 server_name:工具段 全名：运行时注册名由全名的哈希生成，"
+        "只存工具段会导致禁用判定永远匹配不上（勾了禁不掉）"
+    )
+    assert item["label"] == "get-current-date", "展示名仍用工具段，不必啰嗦地带上 server"
     assert item["description"] == "获取当前日期，以上海时区（UTC+8）为准", (
         "缓存表用「server_name:工具段」作完整名，必须把前缀拼回去才查得到描述"
     )
@@ -977,9 +981,39 @@ async def test_mcp_tool_without_cache_row_is_still_listed(db_session):
     result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
 
     group = next(g for g in result["groups"] if g["key"].startswith("mcp:"))
-    assert group["items"][0]["id"] == "do_thing"
+    assert group["items"][0]["id"] == "ghost-server:do_thing", (
+        "server 反查不到也要用绑定里的前缀拼出全名——退化成工具段就永远禁不掉"
+    )
     assert "description" not in group["items"][0], "没有缓存描述就不要编一个"
     assert group["label"] == "ghost-server", "server 解析不到就退回前缀本身"
+
+
+@pytest.mark.asyncio
+async def test_agent_scoped_mcp_id_expands_to_the_runtime_registered_name(db_session):
+    """智能体级 MCP 项的 id 必须能展开出运行时的模型调用名（「勾了禁不掉」的回归钉）。
+
+    运行时的 MCP 工具注册名是 ``build_model_tool_name("server_name:工具段")``，而禁用判定
+    会把名单里的 id 逐个交给 ``to_runtime_tool_names`` 再与调用名比对。id 若只存工具段，
+    全名哈希与工具段哈希不同，两条名字对不上——策略静默失效，管理员只会看到"禁了没反应"。
+    全局级候选一直用的是全名（``McpToolCache.tool_name``），智能体级当初漏了这一步。
+    """
+    from app.services import agent_scoped_restrictions as module
+    from app.services.ai.tools.model_tool_name import (
+        build_model_tool_name,
+        to_runtime_tool_names,
+    )
+
+    server_name = f"mcp-private-admin-{uuid.uuid4().hex[:6]}"
+    await _make_mcp_server_with_tool(db_session, server_name, "get-current-date", "获取当前日期")
+    agent = await _make_agent_with_version(db_session, tools=[f"{server_name}:get-current-date"])
+
+    result = await module.build_restrictable_resources(db_session, agent_id=agent.id)
+    group = next(g for g in result["groups"] if g["key"].startswith("mcp:"))
+    item_id = group["items"][0]["id"]
+
+    assert build_model_tool_name(f"{server_name}:get-current-date") in to_runtime_tool_names(item_id), (
+        "智能体级 MCP 候选的 id 必须与运行时注册名对得上，否则拦截永远不命中"
+    )
 
 
 # ---------------------------------------------------------------------------

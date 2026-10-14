@@ -207,10 +207,16 @@ async def build_restrictable_resources(
     except Exception:  # noqa: BLE001
         logger.debug("[agent-scope] failed to read mcp descriptions", exc_info=True)
 
-    def tool_item(tool_id: str, description: str = "") -> Dict[str, Any]:
+    def tool_item(tool_id: str, description: str = "", label: str = "") -> Dict[str, Any]:
+        """构造可限定项。``tool_id`` 是**落库标识**，``label`` 只是展示名。
+
+        MCP 工具两者必须分开：落库要用 ``server_name:tool_name`` 全名（运行时注册名
+        ``build_model_tool_name(全名)`` 由全名哈希而来，存工具段名永远匹配不上），
+        而界面上显示 ``server_name:tool_name`` 又太啰嗦，所以展示仍用工具段名。
+        """
         item: Dict[str, Any] = {
             "id": tool_id,
-            "label": tool_id,
+            "label": label or tool_id,
             "forbidden_globally": tool_id in globally_forbidden_tools,
         }
         group_name = api_group_names.get(tool_id)
@@ -283,7 +289,12 @@ async def build_restrictable_resources(
                     continue
                 # 缓存表用「server_name:工具段」作完整名；缓存未同步时仍然展示
                 # （用户可见集合以绑定为准），只是没有描述可显示。
-                full_name = f"{server_name}:{tool_name}" if server_name else tool_name
+                # 全名不能依赖 McpServer 查询结果：绑定形如 mcp-<server_name>:<tool_name>，
+                # 剥掉 mcp- 得到的 prefix 就是 server_name，所以 prefix 永远可用。
+                # 用 prefix 兜底才能保证 id 恒为全名——否则查不到服务名时会退化成工具段名，
+                # 运行时 build_model_tool_name(工具段) 与注册名（由全名哈希）对不上，勾了也禁不掉。
+                scope_server_name = server_name or prefix
+                full_name = f"{scope_server_name}:{tool_name}"
                 description = mcp_tool_descriptions.get(full_name) or mcp_tool_descriptions.get(
                     tool_name, ""
                 )
@@ -293,7 +304,7 @@ async def build_restrictable_resources(
                         prefix,
                         tool_name,
                     )
-                items.append(tool_item(tool_name, description))
+                items.append(tool_item(full_name, description, label=tool_name))
             if items:
                 groups.append(
                     {

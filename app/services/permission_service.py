@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from typing import List, Optional
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,19 @@ _AGENT_SCOPE_MIGRATION_HINT = (
 )
 
 # 进程级缓存：ai_agent_resource_permissions.agent_id 是否已由迁移加入。
-# None = 未探测；False = 未迁移（降级为只看全局行，保持既有行为）。
+#   None  = 尚未探测出结论；
+#   True  = 已迁移（可永久缓存）；
+#   False = **确定**未迁移（数据库明确报「无此列」，可永久缓存）。
+# 探测「不确定」时（权限不足、连接抖动、超时等）**不写死**这个值，只记时间戳做节流重试：
+# 否则一次偶发失败会让整个进程永久按「未迁移」运行，而「未迁移」的语义是**完全不加作用域
+# 条件**——那会跨智能体读到别人的限制行，并让下一次全局保存的 DELETE 连带删掉智能体级数据。
 _AGENT_SCOPE_COLUMN_STATE: Optional[bool] = None
+_AGENT_SCOPE_PROBE_FAILED_AT: float = 0.0
+# 探测不确定时的重试间隔：足够短以尽快恢复，足够长以免每个请求都打一次失败查询。
+_AGENT_SCOPE_PROBE_RETRY_SECONDS = 30.0
+
+# 各数据库「列不存在」的错误码：MySQL 1054 / PostgreSQL 42703。
+_AGENT_SCOPE_UNKNOWN_COLUMN_CODES = ("1054", "42703")
 
 class PermissionService:
     def __init__(self, db: AsyncSession):
@@ -54,30 +66,66 @@ class PermissionService:
         结果是"禁用资源"整块功能不可用——用一个新功能把老功能打挂是不可接受的。
         因此未迁移时降级为"只看全局行"（此时库里也不可能有智能体级数据），迁移后自动启用。
 
-        探测失败（例如权限不足读不到 information_schema）按**未迁移**处理：同样是降级到
-        既有行为，不会让权限系统整体报错。
-        """
-        global _AGENT_SCOPE_COLUMN_STATE
-        if _AGENT_SCOPE_COLUMN_STATE is None:
-            try:
-                from sqlalchemy import text
+        判据是"能不能真的引用这一列"（``SELECT ... WHERE agent_id IS NULL``），**不查**
+        ``information_schema``：后者在 MySQL 里覆盖整台实例上该用户可见的所有 schema，同实例
+        别的库迁移过就会被误判成本库已迁移。
 
-                result = await self.db.execute(
+        探测结论分三类：确定已迁移与非迁移都永久缓存；**不确定**（权限不足、连接抖动等）
+        只在节流窗口内按未迁移处理并稍后重试——因为"未迁移"的语义是**不加任何作用域条件**，
+        一旦被永久写死，就会跨智能体读到别人的限制、并让下一次全局保存误删智能体级数据。
+        """
+        global _AGENT_SCOPE_COLUMN_STATE, _AGENT_SCOPE_PROBE_FAILED_AT
+        if _AGENT_SCOPE_COLUMN_STATE is not None:
+            return _AGENT_SCOPE_COLUMN_STATE
+
+        now = time.monotonic()
+        if (
+            _AGENT_SCOPE_PROBE_FAILED_AT
+            and now - _AGENT_SCOPE_PROBE_FAILED_AT < _AGENT_SCOPE_PROBE_RETRY_SECONDS
+        ):
+            # 上次探测不确定，节流期内先按未迁移处理，等下一次请求再试。
+            return False
+
+        from sqlalchemy import text
+
+        try:
+            # 直接试引用该列，而不是查 information_schema：后者在 MySQL 里覆盖整台实例上
+            # 该用户可见的**所有** schema，同实例上别的库迁移过就会被误判成本库已迁移，
+            # 此后每条权限 SQL 都报 1054，把「禁用资源」整块连同登录链路一起打挂。
+            # 放进 SAVEPOINT：失败只回滚这一小段，不会污染调用方的事务。
+            async with self.db.begin_nested():
+                await self.db.execute(
                     text(
-                        "SELECT COUNT(*) FROM information_schema.columns "
-                        "WHERE table_name = 'ai_agent_resource_permissions' "
-                        "AND column_name = 'agent_id'"
+                        "SELECT 1 FROM ai_agent_resource_permissions "
+                        "WHERE agent_id IS NULL LIMIT 1"
                     )
                 )
-                _AGENT_SCOPE_COLUMN_STATE = int(result.scalar() or 0) > 0
-            except Exception as ex:  # noqa: BLE001
+        except Exception as ex:  # noqa: BLE001
+            message = str(ex)
+            if any(code in message for code in _AGENT_SCOPE_UNKNOWN_COLUMN_CODES):
+                # 数据库明确回答「没有这一列」——这是确定的结论，可以缓存。
+                _AGENT_SCOPE_COLUMN_STATE = False
                 logger.warning(
-                    "[agent-scope] Failed to probe agent_id column; "
-                    "falling back to global-only scope: %s",
+                    "[agent-scope] agent_id column is absent; falling back to "
+                    "global-only scope until migration is applied (%s): %s",
+                    _AGENT_SCOPE_MIGRATION_HINT,
                     ex,
                 )
-                _AGENT_SCOPE_COLUMN_STATE = False
-        return _AGENT_SCOPE_COLUMN_STATE
+            else:
+                # 结论不确定（权限不足 / 连接抖动 / 超时…）。绝不能写死成 False：
+                # 那会让进程永久按「不加作用域」运行，导致跨智能体读取与保存时误删。
+                _AGENT_SCOPE_PROBE_FAILED_AT = now
+                logger.warning(
+                    "[agent-scope] Probe for agent_id column was inconclusive; "
+                    "will retry in %.0fs and keep global-only scope meanwhile: %s",
+                    _AGENT_SCOPE_PROBE_RETRY_SECONDS,
+                    ex,
+                )
+        else:
+            _AGENT_SCOPE_COLUMN_STATE = True
+            _AGENT_SCOPE_PROBE_FAILED_AT = 0.0
+
+        return bool(_AGENT_SCOPE_COLUMN_STATE)
 
     async def _agent_scope_filters(self, agent_id: Optional[str]):
         """权限行的作用域过滤条件（原生 SQL，因为 ORM **刻意不映射** agent_id）。
@@ -306,6 +354,13 @@ class PermissionService:
             payload.append(("forbidden_skill", forbidden_skills))
 
         for resource_type, values in payload:
+            # 防御：调用方若直接传字符串，下面的 `for value in values` 会按**字符**拆开，
+            # 落库一堆单字符垃圾行、同时把原有禁用项 DELETE 掉。端点已用 schema 拦住，
+            # 但这是公共方法，不该假设每个调用方都规矩。
+            if isinstance(values, str):
+                raise ValueError(
+                    f"{resource_type} must be an iterable of strings, not a bare string"
+                )
             await self.db.execute(
                 text(
                     f"DELETE FROM ai_agent_resource_permissions "
@@ -329,7 +384,11 @@ class PermissionService:
                         subject=subject_value, scope=scope, rtype=resource_type, rid=clean
                     )
                 )
-        await self.db.flush()
+        # 必须先提交再失效：反过来会出现「缓存已清、数据未提交」的窗口，此刻并发请求
+        # 读到旧行并把旧结果写回 Redis（TTL 1 小时），管理员刚保存的限制在 1 小时内不生效，
+        # 且不会再有一次失效来纠正。其它 update_*（用户权限、角色权限、用户角色）也都是
+        # 先 commit 再失效，这里保持一致；同时本方法自己提交，调用方无需再 commit。
+        await self.db.commit()
 
         if user_id is not None:
             await self._invalidate_user_cache(int(user_id))
@@ -1079,6 +1138,15 @@ class PermissionService:
                 await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=user_id)
             except Exception as ex:
                 logger.warning(f"Failed to invalidate dataset menu cache for user {user_id}: {ex}")
+        # 技能禁用是**另一套**进程内缓存（policy.py，TTL 60s、prime 节流 10s），
+        # Redis 权限键清掉不会碰它。不在这里清，管理员刚禁用的公共技能在最长 60 秒内
+        # 其正文仍可被读取——"禁了还在生效"的窗口虽短，但语义上是漏洞。
+        try:
+            from app.services.ai.skills.policy import clear_forbidden_skill_cache
+
+            clear_forbidden_skill_cache()
+        except Exception as ex:
+            logger.warning(f"Failed to clear forbidden skill cache: {ex}")
         try:
             from app.services.auth_service import AuthService
             # 只失效认证缓存（角色/权限变更立即生效），**不吊销会话**：这里服务的是

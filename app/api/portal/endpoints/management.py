@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Body, Depends, Query, HTTPException, status, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, desc, or_
@@ -28,6 +28,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Request/Response Models
+class AgentRestrictionUpdate(BaseModel):
+    """智能体级「功能限定」的写入体。
+
+    刻意用 schema 而不是裸 ``Dict``：这两个字段**逐项决定落库行**，而服务层是按
+    ``for value in values`` 迭代的——直接传字符串会被按**字符**拆开，``"exec_command"``
+    变成 e/x/c/_/o/m/a/n/d 九条单字符记录，HTTP 还返回 200，而原有禁用项已被 DELETE
+    清空。把"必须是字符串数组"挡在入口，比事后靠日志发现垃圾数据便宜得多。
+    """
+
+    forbidden_tools: Optional[List[str]] = None
+    forbidden_skills: Optional[List[str]] = None
+
+    @field_validator("forbidden_tools", "forbidden_skills", mode="before")
+    @classmethod
+    def _must_be_list_or_none(cls, value: Any) -> Any:
+        if value is None or isinstance(value, list):
+            return value
+        raise ValueError("必须是字符串数组或 null")
+
 class CreateUserRequest(BaseModel):
     user_name: str
     real_name: Optional[str] = None
@@ -1210,7 +1229,7 @@ async def get_user_agent_restrictions(
 async def update_user_agent_restrictions(
     user_id: int,
     agent_id: str,
-    body: Dict[str, Any] = Body(...),
+    body: AgentRestrictionUpdate,
     admin: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1222,10 +1241,11 @@ async def update_user_agent_restrictions(
         data = await PermissionService(db).update_agent_scoped_forbidden_ids(
             user_id=user_id,
             agent_id=agent_id,
-            forbidden_tools=body.get("forbidden_tools"),
-            forbidden_skills=body.get("forbidden_skills"),
+            forbidden_tools=body.forbidden_tools,
+            forbidden_skills=body.forbidden_skills,
         )
-        await db.commit()
+        # 服务层自己 commit（与其它 update_* 一致）——这里不再重复提交，
+        # 否则会出现"提交两次"，且缓存失效发生在第一次提交之前。
     except RuntimeError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
@@ -1257,7 +1277,7 @@ async def get_role_agent_restrictions(
 async def update_role_agent_restrictions(
     role_id: int,
     agent_id: str,
-    body: Dict[str, Any] = Body(...),
+    body: AgentRestrictionUpdate,
     admin: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1269,10 +1289,10 @@ async def update_role_agent_restrictions(
         data = await PermissionService(db).update_agent_scoped_forbidden_ids(
             role_id=role_id,
             agent_id=agent_id,
-            forbidden_tools=body.get("forbidden_tools"),
-            forbidden_skills=body.get("forbidden_skills"),
+            forbidden_tools=body.forbidden_tools,
+            forbidden_skills=body.forbidden_skills,
         )
-        await db.commit()
+        # 同上：提交由服务层负责，避免二次提交与失效早于提交。
     except RuntimeError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))

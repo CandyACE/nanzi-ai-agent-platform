@@ -51,7 +51,14 @@ class ContextStep(BasePipelineStep):
         #   3. user_query 会参与路由与技能扫描，被禁技能的提示词不该混进去。
         from app.services.ai.skills.policy import get_forbidden_skill_ids
 
-        forbidden_skill_ids = await get_forbidden_skill_ids(raw_lane_user_id)
+        # 必须显式带上智能体作用域：这里是 pipeline 的早期阶段，AgentContext 尚未建立
+        # （它由运行时的 executor 设置），resolve_agent_scope() 拿不到值，会静默退化成
+        # 全局口径——那样"只在该智能体被禁"的技能在本轮不会被清洗，挂载提示（含被禁
+        # 技能 SKILL.md 的绝对路径）会被 add_message 原样写进会话历史，之后再也洗不掉。
+        # PipelineContext 上已经有 agent_id（agent_service 构造时填入），直接用。
+        forbidden_skill_ids = await get_forbidden_skill_ids(
+            raw_lane_user_id, getattr(context, "agent_id", None)
+        )
         if forbidden_skill_ids:
             sanitize_forbidden_skill_context(messages, forbidden_skill_ids)
 
