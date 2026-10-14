@@ -1583,6 +1583,44 @@ async def _close_workspace_safely(workspace: Any, *, reason: str) -> None:
         )
 
 
+def _skill_paths_cache_token(skill_paths: list[str] | None) -> str:
+    """技能集合的稳定令牌，用于把「同一用户 + 不同技能集合」的沙箱分开缓存。
+
+    沙箱是**按用户**复用的（``_resolve_sandbox_user_key`` 只看用户身份、不看智能体），
+    而 ``skill_paths`` 每次都由当前智能体决定。缓存键若不含它就会出现双向错位：换了
+    智能体仍然命中上一个智能体的沙箱——既**看不到自己白名单里的技能**（``.seed`` 里
+    没有），又**看得到不属于自己的技能**；更糟的是缓存命中时连
+    ``_policy_*_workspace`` 都不会执行，连指纹治理都被一并跳过。
+
+    取目录名而不是完整路径：workspace 根对同一用户是固定的，参与哈希只会让键更长；
+    真正的语义差别在于「装了哪些技能」。用 sha256 截断避免键过长。
+    """
+    names = sorted(
+        {
+            os.path.basename(os.path.abspath(path))
+            for path in (skill_paths or [])
+            if str(path).strip()
+        }
+    )
+    if not names:
+        return "noskills"
+    return hashlib.sha256(",".join(names).encode("utf-8")).hexdigest()[:12]
+
+
+def _find_cached_k8s_workspace(root: str, user_key: str) -> Any:
+    """取该用户在给定 root 下的任意一个活跃 K8s 沙箱缓存条目。
+
+    缓存键是 ``<root>::<user_key>::<技能集合令牌>::k8s``，而只读的状态/身份查询接口
+    没有技能上下文，只能按前缀匹配——同一用户存在多个不同技能集合的沙箱时，返回其中
+    一个即可满足「该用户的沙箱」这一语义。
+    """
+    prefix = f"{os.path.abspath(root)}::{user_key}::"
+    for key, workspace in _k8s_workspace_cache.items():
+        if key.startswith(prefix):
+            return workspace
+    return None
+
+
 def _resolve_sandbox_user_key(
     *,
     user_id: str | int | None,
@@ -1610,7 +1648,10 @@ async def _acquire_docker_workspace(
     skill_paths: list[str] | None,
 ) -> tuple[Any, str]:
     """Acquire one process-local Docker workspace reference per user."""
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_DOCKER}"
+    cache_key = (
+        f"{os.path.abspath(root)}::{user_key}::"
+        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_DOCKER}"
+    )
     lock = _docker_workspace_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         workspace = _docker_workspace_cache.get(cache_key)
@@ -1705,7 +1746,10 @@ async def _acquire_k8s_workspace(
     skill_paths: list[str] | None,
 ) -> tuple[Any, str]:
     """Acquire one process-local K8s workspace reference per user."""
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
+    cache_key = (
+        f"{os.path.abspath(root)}::{user_key}::"
+        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_K8S}"
+    )
     lock = _k8s_workspace_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         workspace = _k8s_workspace_cache.get(cache_key)
@@ -3534,8 +3578,7 @@ async def k8s_workspace_status(
     )
 
     root = await resolve_workspace_root()
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
-    workspace = _k8s_workspace_cache.get(cache_key)
+    workspace = _find_cached_k8s_workspace(root, user_key)
     if workspace is None or getattr(workspace, "is_alive", True) is False:
         # 进程内无活跃缓存（多 worker 转发、缓存已被回收/reaper 清理等场景）：
         # 仍按约定 Pod 名做一次只读探测真实状态，绝不创建/修改任何资源。
@@ -5430,8 +5473,7 @@ async def exec_k8s_workspace_command(
     )
 
     root = await resolve_workspace_root()
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
-    workspace = _k8s_workspace_cache.get(cache_key)
+    workspace = _find_cached_k8s_workspace(root, user_key)
     if workspace is not None and getattr(workspace, "is_alive", True):
         namespace, pod_name = await _k8s_workspace_pod_identity(workspace)
     else:
