@@ -727,7 +727,9 @@ async def test_k8s_reaper_start_stop_and_idle_reap():
             "app.services.ai.runtime.agentscope.workspace._policy_k8s_workspace",
             new=AsyncMock(return_value=mock_ws),
         ):
-            k8s_key = "/data::reap_user::k8s"
+            # 缓存键含技能集合令牌：同一用户的不同技能集合各占一个沙箱条目
+            # （sandbox_user_key 只看用户身份，不区分智能体的技能白名单）。
+            k8s_key = f"/data::reap_user::{ws_module._skill_paths_cache_token([])}::k8s"
             await ws_module._acquire_k8s_workspace(
                 root="/data",
                 user_key="reap_user",

@@ -41,6 +41,7 @@ import {
   CpuChipIcon,
   UserCircleIcon,
 } from "@heroicons/vue/24/outline";
+import { isSkillEnabled } from '@/utils/skillEnabled'
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -967,7 +968,7 @@ const versionConfigSteps = computed<{ id: VersionConfigStep; label: string }[]>(
 const selectedToolsCount = computed(() => versionForm.value.tools?.length ?? 0);
 const selectedSkillsCount = computed(() => versionForm.value.skills?.length ?? 0);
 const enabledGlobalSkills = computed(() =>
-  availableSkills.value.filter((s) => String(s.enabled ?? 'true') !== 'false')
+  availableSkills.value.filter((s) => isSkillEnabled(s.enabled))
 );
 const selectedStaticToolsCount = computed(() =>
   allAvailableTools.value.filter((t) => isToolSelected(t.name)).length

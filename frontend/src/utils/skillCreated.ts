@@ -1,26 +1,37 @@
 /** Parse create_skills success marker from tool output. */
 
+export type SkillCreatedAction = 'created' | 'updated'
+
 export type SkillCreatedInfo = {
   skill_id: string
   scope: 'personal' | 'global'
   name: string
+  /** created=新建；updated=覆盖了同名已存在技能。文案与去重键都按它区分。 */
+  action: SkillCreatedAction
 }
 
-const MARKER_RE = /NANZI_SKILL_CREATED:(\{.*?\})(?:\s|$)/
+// NANZI_SKILL_UPDATED 是「带 overwrite=true 覆盖了已有技能」，必须与新建区分开：
+// 此前覆盖也报 CREATED，横幅会说「已创建个人技能」，用户以为多了一个技能。
+const MARKER_RE = /NANZI_SKILL_(CREATED|UPDATED):(\{.*?\})(?:\s|$)/
 // 同一标记会随工具输出长期保留在多条历史消息里，需要能取「最新一次」而不是永远第一个。
-const MARKER_RE_GLOBAL = /NANZI_SKILL_CREATED:(\{.*?\})(?=\s|$)/g
+const MARKER_RE_GLOBAL = /NANZI_SKILL_(CREATED|UPDATED):(\{.*?\})(?=\s|$)/g
 
-function toInfo(rawPayload: string | undefined): SkillCreatedInfo | null {
+function toInfo(
+  rawPayload: string | undefined,
+  rawAction: string | undefined,
+): SkillCreatedInfo | null {
   if (!rawPayload) return null
   try {
     const payload = JSON.parse(rawPayload)
     const skillId = String(payload.skill_id || '').trim()
     if (!skillId) return null
     const scope = String(payload.scope || 'personal').toLowerCase() === 'global' ? 'global' : 'personal'
+    const action: SkillCreatedAction = rawAction === 'UPDATED' ? 'updated' : 'created'
     return {
       skill_id: skillId,
       scope,
       name: String(payload.name || skillId),
+      action,
     }
   } catch {
     return null
@@ -30,7 +41,7 @@ function toInfo(rawPayload: string | undefined): SkillCreatedInfo | null {
 export function parseSkillCreatedMarker(text: string | null | undefined): SkillCreatedInfo | null {
   if (!text) return null
   const match = MARKER_RE.exec(String(text))
-  return toInfo(match?.[1])
+  return toInfo(match?.[2], match?.[1])
 }
 
 /**
@@ -48,7 +59,7 @@ export function parseLatestSkillCreatedMarker(
   let latest: SkillCreatedInfo | null = null
   let match: RegExpExecArray | null
   while ((match = MARKER_RE_GLOBAL.exec(source)) !== null) {
-    const info = toInfo(match[1])
+    const info = toInfo(match[2], match[1])
     if (info) latest = info
   }
   return latest
@@ -62,10 +73,19 @@ export function personalSkillsEditUrl(skillId: string): string {
 const NOTIFY_STORAGE_PREFIX = 'nanzi.skillCreatedBanner.notified:'
 
 export type SkillNotifyGate = {
-  /** 该 skill_id 首次出现时返回 true（并立即记为已提示），否则 false。 */
-  shouldNotify: (skillId: string) => boolean
+  /**
+   * 该 (skill_id, action) 首次出现时返回 true（并立即记为已提示），否则 false。
+   *
+   * action 参与去重键：同一个技能先被创建、后来又被覆盖更新，是两件不同的事，
+   * 都应当各提示一次，不能因为「这个 id 提示过」就把更新静默掉。
+   */
+  shouldNotify: (skillId: string, action?: SkillCreatedAction) => boolean
   /** 显式记为已提示（用户关闭横幅 / 已完成挂载）。 */
-  mark: (skillId: string) => void
+  mark: (skillId: string, action?: SkillCreatedAction) => void
+}
+
+function notifyKey(skillId: string, action?: SkillCreatedAction): string {
+  return `${action === 'updated' ? 'updated' : 'created'}:${String(skillId || '').trim()}`
 }
 
 function readNotified(storageKey: string): Set<string> {
@@ -112,20 +132,21 @@ export function createSkillNotifyGate(
     return notified
   }
 
-  const remember = (skillId: string): boolean => {
+  const remember = (skillId: string, action?: SkillCreatedAction): boolean => {
     const id = String(skillId || '').trim()
     if (!id) return false
+    const key = notifyKey(id, action)
     const ids = current()
-    if (ids.has(id)) return false
-    ids.add(id)
+    if (ids.has(key)) return false
+    ids.add(key)
     writeNotified(currentKey(), ids)
     return true
   }
 
   return {
     shouldNotify: remember,
-    mark: (skillId: string) => {
-      remember(skillId)
+    mark: (skillId: string, action?: SkillCreatedAction) => {
+      remember(skillId, action)
     },
   }
 }

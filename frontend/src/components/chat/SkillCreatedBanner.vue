@@ -22,7 +22,9 @@ const openEditor = () => {
     class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-xs text-emerald-900 shadow-sm dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100"
     role="status"
   >
-    <span class="font-semibold">已创建个人技能「{{ info.name }}」</span>
+    <span class="font-semibold">
+      {{ info.action === 'updated' ? '已覆盖更新个人技能' : '已创建个人技能' }}「{{ info.name }}」
+    </span>
     <span class="text-emerald-700/80 dark:text-emerald-200/70 font-mono">{{ info.skill_id }}</span>
     <div class="ml-auto flex items-center gap-2">
       <button

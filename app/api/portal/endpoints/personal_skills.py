@@ -9,7 +9,7 @@ import shutil
 import logging
 import re
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
@@ -19,6 +19,7 @@ from app.services.ai.skill_resolver import (
     iter_personal_skill_dirs,
     resolve_personal_skill_dir,
 )
+from app.services.skill_rename_service import SkillRenameError, rename_skill
 from app.services.skill_publication_service import (
     PublicationConflictError,
     PublicationNotFoundError,
@@ -36,6 +37,8 @@ from app.api.portal.endpoints.skills import (
     parse_skill_metadata,
     get_file_tree,
     get_skill_modified_at,
+    atomic_import_skill_package,
+    build_skill_archive,
     safe_extract_archive,
 )
 
@@ -190,6 +193,95 @@ async def get_personal_skill_detail(
 # ---------------------------------------------------------------------------
 # 预览（供聊天页技能抽屉使用）
 # ---------------------------------------------------------------------------
+
+@router.put("/{skill_id}/rename", summary="重命名个人技能并同步引用")
+async def rename_personal_skill(
+    skill_id: str,
+    req: dict,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """重命名个人技能。
+
+    除目录改名外，还会同步发布谱系里的来源技能 ID（``skill_publications.
+    source_personal_skill_id``）与会话里已挂载的技能 chip（Redis）。发布谱系不同步的话，
+    该技能的历史发布记录会变成「源技能已不存在」的孤儿。
+    """
+    try:
+        new_skill_id = str((req or {}).get("new_skill_id") or "")
+        skill_dir = _validate_personal_skill_path(user, skill_id)
+        if not os.path.isdir(skill_dir):
+            raise HTTPException(status_code=404, detail="个人技能不存在")
+        report = await rename_skill(
+            session,
+            current_dir=skill_dir,
+            old_skill_id=skill_id,
+            new_skill_id=new_skill_id,
+            scope="personal",
+        )
+        return {
+            "status": "success",
+            "data": report,
+            "message": f"个人技能已重命名为 {report['skill_id']}",
+        }
+    except SkillRenameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[PersonalSkills] Failed to rename skill %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/{skill_id}/export", summary="导出个人技能为 zip 压缩包")
+async def export_personal_skill_archive(skill_id: str, user: dict = Depends(require_api_key)):
+    """把个人技能目录打包下载，便于备份、迁移或分享给同事。
+
+    个人技能此前只能上传进来、没有任何取回通道：想备份或换个账号复用，只能去服务器
+    磁盘上手工找目录。导出与导入（``upload-archive`` / ``import``）互为逆向操作。
+    """
+    try:
+        skill_dir = _validate_personal_skill_path(user, skill_id)
+        if not os.path.isdir(skill_dir):
+            raise HTTPException(status_code=404, detail="个人技能不存在")
+        payload = build_skill_archive(skill_dir, arc_prefix=f"{skill_id}/")
+        headers = {
+            "Content-Disposition": f'attachment; filename="{skill_id}.zip"',
+            "Content-Length": str(len(payload)),
+        }
+        return Response(content=payload, media_type="application/zip", headers=headers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[PersonalSkills] Failed to export skill %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/{skill_id}/download", summary="下载个人技能内的单个文件")
+async def download_personal_skill_file(
+    skill_id: str,
+    path: str,
+    user: dict = Depends(require_api_key),
+):
+    """下载个人技能包内的单个文件。"""
+    try:
+        file_path = _validate_personal_skill_path(user, skill_id, path)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        filename = os.path.basename(file_path)
+        with open(file_path, "rb") as handle:
+            payload = handle.read()
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(payload)),
+        }
+        return Response(content=payload, media_type="application/octet-stream", headers=headers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[PersonalSkills] Failed to download file %s in %s: %s", path, skill_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
 
 @router.get("/{skill_id}/preview", summary="预览个人技能 SKILL.md")
 async def preview_personal_skill(
@@ -540,42 +632,7 @@ async def import_personal_skill_package(
         if len(content) > 20 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="导入文件大小超出 20MB 限制")
 
-        if os.path.exists(skill_dir):
-            shutil.rmtree(skill_dir)
-        os.makedirs(skill_dir, exist_ok=True)
-
-        try:
-            safe_extract_archive(content, filename, skill_dir)
-
-            # 平铺外层文件夹
-            top_items = os.listdir(skill_dir)
-            visible_items = [i for i in top_items if not i.startswith(".")]
-            if len(visible_items) == 1:
-                single_sub = os.path.join(skill_dir, visible_items[0])
-                if os.path.isdir(single_sub):
-                    has_inner_skill_md = any(
-                        i.upper() == "SKILL.MD" and os.path.isfile(os.path.join(single_sub, i))
-                        for i in os.listdir(single_sub)
-                    )
-                    if has_inner_skill_md:
-                        for item in os.listdir(single_sub):
-                            shutil.move(os.path.join(single_sub, item), os.path.join(skill_dir, item))
-                        os.rmdir(single_sub)
-
-            has_skill_md = any(
-                i.upper() == "SKILL.MD" and os.path.isfile(os.path.join(skill_dir, i))
-                for i in os.listdir(skill_dir)
-            )
-            if not has_skill_md:
-                shutil.rmtree(skill_dir)
-                raise HTTPException(
-                    status_code=400,
-                    detail="导入失败：压缩包根目录下必须包含核心规范文件 SKILL.md",
-                )
-        except Exception as e:
-            if os.path.exists(skill_dir):
-                shutil.rmtree(skill_dir)
-            raise e
+        atomic_import_skill_package(content, filename, skill_dir)
 
         return {"status": "success", "message": f"个人技能 {skill_id} 导入成功"}
     except HTTPException:
@@ -600,7 +657,12 @@ async def toggle_personal_skill(
         from app.utils.skill_metadata import toggle_skill_enabled_in_file
         success = toggle_skill_enabled_in_file(skill_md_path, enabled)
         if not success:
-            raise HTTPException(status_code=500, detail="切换状态失败，请确认技能文件格式正常")
+            # 这是文件内容问题（缺 SKILL.md 或缺可识别的 frontmatter），不是服务端故障：
+            # 返回 400 让用户看到原因，此前报 500 会让人以为平台坏了，且技能永远禁不掉。
+            raise HTTPException(
+                status_code=400,
+                detail="无法切换启用状态：SKILL.md 缺失或缺少可识别的 YAML frontmatter",
+            )
         return {"status": "success", "message": f"技能已{'启用' if enabled else '禁用'}"}
     except HTTPException:
         raise

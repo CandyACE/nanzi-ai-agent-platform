@@ -34,7 +34,9 @@ def test_skills_workbench_prioritizes_enabled_skills_before_disabled():
     text = SKILLS_MGMT.read_text(encoding="utf-8")
     sorted_section = text[text.index("const getSkillStatusRank"):text.index("const toggleSkillSortOrder")]
 
-    assert "skill.enabled === 'false' ? 1 : 0" in sorted_section
+    # 判定走统一的 isSkillEnabled（与后端 skill_metadata.is_skill_enabled 同口径），
+    # 不再就地比较字符串：手写 enabled: False/0/off 时旧写法会把它排在「已启用」前面。
+    assert "!isSkillEnabled(skill.enabled) ? 1 : 0" in sorted_section
     assert "const statusOrder = getSkillStatusRank(a) - getSkillStatusRank(b)" in sorted_section
     assert "if (statusOrder !== 0) return statusOrder" in sorted_section
     assert "skillSortBy.value === 'time'" in sorted_section
@@ -69,6 +71,24 @@ def test_create_skills_emits_machine_marker():
     assert "parseSkillCreatedMarker" in SKILL_CREATED_UTIL.read_text(encoding="utf-8")
 
 
+def test_create_skills_requires_explicit_overwrite():
+    """``create_skills`` 不得静默覆盖同名技能。
+
+    回归背景：原先 ``makedirs(exist_ok=True)`` 后直接整份覆盖已存在的 SKILL.md，
+    却无条件返回 ``NANZI_SKILL_CREATED``、前端弹「已创建个人技能」横幅——用户以为
+    新增了一个技能，实际把已有技能（可能已发布、已被智能体挂载）的正文清空替换。
+    现在：默认拒写并返回 ``NANZI_SKILL_EXISTS``，只有显式 ``overwrite=true`` 才覆盖，
+    且覆盖走 ``NANZI_SKILL_UPDATED`` 标记以便前端换文案。
+    """
+    text = EXEC_TOOLS.read_text(encoding="utf-8")
+    assert "overwrite: bool = False" in text
+    assert "NANZI_SKILL_EXISTS" in text
+    assert "NANZI_SKILL_UPDATED" in text
+    assert "already_exists = os.path.exists(skill_md_path)" in text
+    # 默认分支必须直接 return，不能落到写盘逻辑
+    assert "if already_exists and not overwrite:" in text
+
+
 def test_skill_created_banner_deduplicates_and_uses_latest_marker():
     """「已创建个人技能」横幅必须去重并取最新标记。
 
@@ -86,12 +106,18 @@ def test_skill_created_banner_deduplicates_and_uses_latest_marker():
     assert "localStorage" in util
     # 保留原有的首个匹配解析（其它调用方与既有契约）
     assert "export function parseSkillCreatedMarker" in util
+    # 覆盖更新必须与新建区分文案，且去重键包含 action
+    assert "NANZI_SKILL_(CREATED|UPDATED)" in util
+    assert "export type SkillCreatedAction" in util
+    assert "function notifyKey(" in util
 
     for path in (EMBED, DEBUG):
         text = path.read_text(encoding="utf-8")
         assert "createSkillNotifyGate(() => conversationId.value)" in text
         assert "parseLatestSkillCreatedMarker(blob)" in text
-        assert "skillNotifyGate.shouldNotify(info.skill_id)" in text
+        # action 参与去重键：创建与「覆盖更新」是两件事，都要各提示一次
+        assert "skillNotifyGate.shouldNotify(info.skill_id, info.action)" in text
+        assert "skillNotifyGate.mark(skillCreatedInfo.value.skill_id, skillCreatedInfo.value.action)" in text
         assert "const dismissCreatedSkill = ()" in text
         assert "skillNotifyGate.mark(" in text
         # 关闭必须记入已提示，不能只把状态置空

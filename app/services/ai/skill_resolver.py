@@ -84,7 +84,37 @@ def get_user_personal_skills_dir(user_info: Optional[Dict[str, Any]]) -> Optiona
 PERSONAL_SKILL_SEED_DIR_NAME = ".seed"
 
 
-def iter_personal_skill_dirs(personal_root: str) -> List[tuple[str, str]]:
+def platform_skill_id_set() -> set[str]:
+    """公共技能库当前的技能 ID 集合（目录名即 ID，与 ``_scan_skill_dir`` 口径一致）。
+
+    用途：判定历史遗留的 ``<user>/skills/.seed/`` 里**哪些是公共技能副本**——那个时期
+    技能根恰好是个人技能源目录，AgentScope 把 ``skill_paths``（公共 + 个人）整体打包，
+    目录名沿用源目录名。**只在 ``.seed`` 语境下使用**：平铺位置出现同 ID 是平台支持的
+    「个人覆盖公共」，不能据此判为副本。
+    """
+    try:
+        from app.core.config import settings
+
+        root = getattr(settings, "SKILLS_DIR", None)
+    except Exception:
+        return set()
+    if not root or not os.path.isdir(root):
+        return set()
+    try:
+        return {
+            name
+            for name in os.listdir(root)
+            if not name.startswith(".") and os.path.isdir(os.path.join(root, name))
+        }
+    except OSError:
+        return set()
+
+
+def iter_personal_skill_dirs(
+    personal_root: str,
+    *,
+    exclude_platform_copies: bool = True,
+) -> List[tuple[str, str]]:
     """列出个人技能根下的 ``(skill_id, skill_dir)``，兼容 AgentScope 的 seed 布局。
 
     历史背景：K8s 沙箱在补齐技能子挂载之前只挂载了整个用户工作区，AgentScope 的技能根
@@ -95,18 +125,30 @@ def iter_personal_skill_dirs(personal_root: str) -> List[tuple[str, str]]:
 
     平台的规范布局仍是平铺 ``<root>/<skill_id>/``（新建技能也写在这里），所以这里
     **平铺优先、``.seed`` 回退**；两处同名时以平铺那份为准。
+
+    另外，``.seed`` 里**与公共技能同 ID** 的目录会被排除（``exclude_platform_copies``）：
+    那批 ``.seed`` 是 AgentScope 把 ``skill_paths``（公共 + 个人）**整体打包**的产物，
+    公共技能副本的目录名就是公共技能 ID；若不排除，个人技能会因「同 ID 个人优先」把公共
+    技能**冻结**成该用户的私有旧版，公共技能后续更新对他永久失效。
+
+    注意**平铺**位置的同 ID 目录不受影响：平台设计上就支持「个人技能与公共技能同名、
+    个人覆盖公共」（见 ``list_skill_metas`` 与 ``app.utils.skill_metadata``），用户主动
+    创建的个人技能也只会落在平铺位置，因此不能用「同 ID」一概判为副本。
     """
     if not personal_root or not os.path.isdir(personal_root):
         return []
+    platform_ids = platform_skill_id_set() if exclude_platform_copies else set()
     found: Dict[str, str] = {}
     seed_dir = os.path.join(personal_root, PERSONAL_SKILL_SEED_DIR_NAME)
-    for base in (personal_root, seed_dir):
+    for base, from_seed in ((personal_root, False), (seed_dir, True)):
         try:
             names = sorted(os.listdir(base))
         except OSError:
             continue
         for name in names:
             if name.startswith(".") or not _validate_skill_id(name):
+                continue
+            if from_seed and name in platform_ids:
                 continue
             skill_dir = os.path.join(base, name)
             if not os.path.isdir(skill_dir):
@@ -115,20 +157,31 @@ def iter_personal_skill_dirs(personal_root: str) -> List[tuple[str, str]]:
     return sorted(found.items())
 
 
-def resolve_personal_skill_dir(personal_root: str, skill_id: str) -> Optional[str]:
+def resolve_personal_skill_dir(
+    personal_root: str,
+    skill_id: str,
+    *,
+    exclude_platform_copies: bool = True,
+) -> Optional[str]:
     """定位单个个人技能目录（平铺优先、``.seed`` 回退）；找不到返回 ``None``。
 
     读/写端点都应经由本函数定位技能目录：否则对 ``.seed`` 里的存量技能，编辑动作会
     在平铺位置**新建一份副本**，出现「同一技能两份」。
+
+    ``.seed`` 里与公共技能同 ID 的目录视为 AgentScope 打包的公共副本、返回 ``None``；
+    **平铺位置的同 ID 目录照常返回**——平台支持「个人技能与公共技能同名、个人覆盖公共」，
+    真实用户创建的个人技能就在这里（详见 ``iter_personal_skill_dirs``）。
     """
     if not personal_root or not skill_id:
         return None
-    for candidate in (
-        os.path.join(personal_root, skill_id),
-        os.path.join(personal_root, PERSONAL_SKILL_SEED_DIR_NAME, skill_id),
-    ):
-        if os.path.isdir(candidate):
-            return candidate
+    flat = os.path.join(personal_root, skill_id)
+    if os.path.isdir(flat):
+        return flat
+    seed_candidate = os.path.join(personal_root, PERSONAL_SKILL_SEED_DIR_NAME, skill_id)
+    if os.path.isdir(seed_candidate):
+        if exclude_platform_copies and skill_id in platform_skill_id_set():
+            return None
+        return seed_candidate
     return None
 
 
@@ -199,11 +252,18 @@ def _skill_dir_fingerprint(
     entries: list[tuple[Any, ...]] = []
     for item, item_path in candidates:
         skill_md_path = os.path.join(item_path, "SKILL.md")
+        # 布局（"x" 还是 ".seed/x"）必须进指纹：shutil.move 在同一文件系统内会保留
+        # mtime/size，技能被搬进或搬出 .seed 时若指纹不变，60 秒 TTL 内会命中指向
+        # 已不存在路径的旧缓存（同步消费者会报「技能 X 缺少 SKILL.md」）。
+        try:
+            layout = os.path.relpath(item_path, abs_dir)
+        except ValueError:
+            layout = item_path
         try:
             stat = os.stat(skill_md_path)
-            entries.append((item, stat.st_mtime_ns, stat.st_size))
+            entries.append((item, layout, stat.st_mtime_ns, stat.st_size))
         except OSError:
-            entries.append((item, None, None))
+            entries.append((item, layout, None, None))
     return (abs_dir, root_stat.st_mtime_ns, root_stat.st_size, tuple(entries))
 
 

@@ -87,11 +87,12 @@ def _list_forbidden_skill_candidates() -> list[dict[str, Any]]:
     意义（禁用是为了拦住"目前能用"的技能）。
     """
     from app.services.ai.skill_resolver import list_global_skill_metas
+    from app.utils.skill_metadata import is_skill_enabled
 
     candidates: list[dict[str, Any]] = []
     for meta in list_global_skill_metas():
         skill_id = str(meta.get("id") or "").strip()
-        if not skill_id or meta.get("enabled", "true") == "false":
+        if not skill_id or not is_skill_enabled(meta):
             continue
         candidates.append(
             {

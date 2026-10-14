@@ -4,6 +4,7 @@ import axios from '@/utils/axios'
 import { modelApi, type AIModel, type ReasoningEffort } from '@/api/model'
 import { mcpToolDisplayName } from '@/utils/mcpToolDisplayName'
 import { FORBIDDEN_SKILL_BADGE, forbiddenSkillReason, isSkillForbidden } from '@/utils/skillForbidden'
+import { isSkillEnabled } from '@/utils/skillEnabled'
 
 export type TaskApprovalMode = 'ask' | 'allow' | 'deny'
 
@@ -704,7 +705,7 @@ const loadOptions = async () => {
     ] as const) {
       if (result.status !== 'fulfilled') continue
       for (const item of result.value.data?.data || []) {
-        if (item.enabled === false || item.enabled === 'false' || item.enabled === 0 || item.enabled === '0') continue
+        if (!isSkillEnabled(item.enabled)) continue
         skills.push({
           id: String(item.id),
           name: item.name,

@@ -2354,6 +2354,7 @@ import {
   resolveChatAgentAvatar,
 } from "@/utils/agentAvatar";
 import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
+import { isSkillEnabled } from '@/utils/skillEnabled'
 
 // 已加载失败的候选头像地址，避免「全局形象也坏了」时在两层兜底之间来回触发 error 死循环。
 const failedAvatarSrcs = new Set<string>();
@@ -4387,7 +4388,7 @@ const loadResourceOptions = async () => {
     resourceOptions.skills = [];
     for (const [result, scope] of [[globalSkills, 'global'], [personalSkills, 'personal']] as const) {
       if (result.status === 'fulfilled') resourceOptions.skills.push(...(result.value.data?.data || [])
-        .filter((item: any) => item.enabled === undefined || item.enabled === true || item.enabled === 'true' || item.enabled === 1 || item.enabled === '1')
+        .filter((item: any) => isSkillEnabled(item.enabled))
         // forbidden 由公共技能清单接口下发（个人技能接口不带该字段，按「未禁用」处理）；
         // 归一成布尔后带下去，弹窗据此置灰——被禁技能仍要显示，只是不能勾选
         .map((item: any) => ({ id: String(item.id), name: item.name, description: item.description, scope, forbidden: isSkillForbidden(item) })));
@@ -6902,14 +6903,14 @@ watch(
   (blob) => {
     const info = parseLatestSkillCreatedMarker(blob);
     if (!info || info.scope !== "personal") return;
-    if (!skillNotifyGate.shouldNotify(info.skill_id)) return;
+    if (!skillNotifyGate.shouldNotify(info.skill_id, info.action)) return;
     skillCreatedInfo.value = info;
   },
 );
 
 const dismissCreatedSkill = () => {
   if (skillCreatedInfo.value) {
-    skillNotifyGate.mark(skillCreatedInfo.value.skill_id);
+    skillNotifyGate.mark(skillCreatedInfo.value.skill_id, skillCreatedInfo.value.action);
   }
   skillCreatedInfo.value = null;
 };

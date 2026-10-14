@@ -355,3 +355,73 @@ def test_import_skill_package_auto_unwrap(mock_skills_dir):
     assert (skill_dir / "SKILL.md").is_file()
     assert (skill_dir / "scripts" / "plugin.py").is_file()
     assert not (skill_dir / "my-source").exists()
+
+
+def test_zip_extract_budget_blocks_zip_bomb(mock_skills_dir, monkeypatch):
+    """解压后的总量必须受限：上传只限 20MB，高压缩比归档能膨胀成数 GB。
+
+    个人技能上传是普通用户可用的入口，若不卡解压侧，一次上传即可撑爆磁盘。
+    """
+    monkeypatch.setattr(skills, "MAX_EXTRACTED_BYTES", 1024)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-budget-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    zip_bytes = create_in_memory_zip({"big.txt": "x" * 8192})
+    upload = UploadFile(filename="bomb.zip", file=BytesIO(zip_bytes))
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            skills.upload_skill_archive(
+                "test-budget-skill", folder="scripts", file=upload, user=user
+            )
+        )
+    assert exc_info.value.status_code == 400
+    assert "解压后体积超过上限" in exc_info.value.detail
+    # 在写盘前就拦下，不应留下内容
+    assert not (skill_dir / "scripts" / "big.txt").exists()
+
+
+def test_tar_extract_budget_blocks_zip_bomb(mock_skills_dir, monkeypatch):
+    """TAR 侧同样受限（tar.gz 的压缩比往往比 zip 更高）。"""
+    monkeypatch.setattr(skills, "MAX_EXTRACTED_BYTES", 1024)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-budget-skill-tar"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    tar_bytes = create_in_memory_tar({"big.txt": b"x" * 8192})
+    upload = UploadFile(filename="bomb.tar.gz", file=BytesIO(tar_bytes))
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            skills.upload_skill_archive(
+                "test-budget-skill-tar", folder="scripts", file=upload, user=user
+            )
+        )
+    assert exc_info.value.status_code == 400
+    assert "解压后体积超过上限" in exc_info.value.detail
+    # 同样要在写盘前/写盘中止住，不留半份内容
+    assert not (skill_dir / "scripts" / "big.txt").exists()
+
+
+def test_extract_budget_limits_file_count(mock_skills_dir, monkeypatch):
+    """文件数也要受限：大量小文件同样会拖垮 inode 与元数据。"""
+    monkeypatch.setattr(skills, "MAX_EXTRACTED_FILES", 2)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-budget-count"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    zip_bytes = create_in_memory_zip({f"f{i}.txt": "x" for i in range(5)})
+    upload = UploadFile(filename="many.zip", file=BytesIO(zip_bytes))
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            skills.upload_skill_archive(
+                "test-budget-count", folder="scripts", file=upload, user=user
+            )
+        )
+    assert exc_info.value.status_code == 400
+    assert "文件数超过上限" in exc_info.value.detail

@@ -175,7 +175,7 @@ def test_path_traversal_protection(mock_skills_dir):
     with pytest.raises(HTTPException) as bad_id_error:
         run(skills.get_skill_detail("../../etc", user=user))
     assert bad_id_error.value.status_code == 400
-    assert "非法智能体技能ID格式" in bad_id_error.value.detail
+    assert "非法技能 ID 格式" in bad_id_error.value.detail
 
     edit_req = FileEditRequest(
         path="../../../etc/passwd",

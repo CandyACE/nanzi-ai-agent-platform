@@ -225,7 +225,8 @@ def discover_platform_skill_paths(
         allowlist = {str(s).strip() for s in (allowed_global_skills or []) if str(s).strip()}
 
     paths: list[str] = []
-    from app.utils.skill_metadata import parse_skill_frontmatter
+    from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
+
     for entry in sorted(os.listdir(skills_root)):
         skill_dir = os.path.join(skills_root, entry)
         if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
@@ -235,7 +236,7 @@ def discover_platform_skill_paths(
                 continue
             # 过滤禁用的技能
             meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
-            if meta.get("enabled", "true") == "false":
+            if not is_skill_enabled(meta):
                 continue
             paths.append(os.path.abspath(skill_dir))
 
@@ -246,17 +247,21 @@ def discover_platform_skill_paths(
 
             personal_dir = get_user_personal_skills_dir(user_info)
             if personal_dir and os.path.isdir(personal_dir):
-                for entry in sorted(os.listdir(personal_dir)):
-                    skill_dir = os.path.join(personal_dir, entry)
-                    if os.path.isdir(skill_dir) and os.path.isfile(
-                        os.path.join(skill_dir, "SKILL.md")
-                    ):
-                        meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
-                        if meta.get("enabled", "true") == "false":
-                            continue
-                        abs_path = os.path.abspath(skill_dir)
-                        if abs_path not in paths:
-                            paths.append(abs_path)
+                # 个人技能源需兼容历史遗留的 .seed 布局：否则这些技能不会进入
+                # skill_paths，AgentScope 既不会预铺、也不会把它们注入模型上下文
+                # （比"列表为空"更严重——模型会以为自己没有这个技能）。
+                from app.services.ai.skill_resolver import iter_personal_skill_dirs
+
+                for entry, skill_dir in iter_personal_skill_dirs(personal_dir):
+                    skill_md = os.path.join(skill_dir, "SKILL.md")
+                    if not os.path.isfile(skill_md):
+                        continue
+                    meta = parse_skill_frontmatter(entry, skill_md)
+                    if not is_skill_enabled(meta):
+                        continue
+                    abs_path = os.path.abspath(skill_dir)
+                    if abs_path not in paths:
+                        paths.append(abs_path)
         except Exception as exc:
             logger.debug("[workspace] Failed to load personal skill paths: %s", exc)
 
@@ -269,7 +274,19 @@ async def resolve_workspace_root(*, ensure_exists: bool = True) -> str:
 
         raw = await ConfigService.get("agentscope_workspace_root")
         if raw:
-            return os.path.abspath(str(raw))
+            configured = os.path.abspath(str(raw))
+            # 个人技能源由 default_workspace_root() 拼接（不读该配置），二者不一致时
+            # 沙箱工作区与个人技能目录会指向不同位置 → 技能列表为空、写入写到别处。
+            fallback_root = default_workspace_root()
+            if configured != fallback_root:
+                logger.warning(
+                    "[workspace] agentscope_workspace_root=%s 与个人技能源所用的默认工作区根 %s "
+                    "不一致：沙箱工作区会用配置值，而个人技能仍按默认根拼接，可能导致个人技能列表为空。"
+                    "生产环境请勿修改该配置，除非同时迁移 agent_workspaces 目录。",
+                    configured,
+                    fallback_root,
+                )
+            return configured
     except Exception as exc:
         logger.warning("[workspace] Failed to load agentscope_workspace_root: %s", exc)
     root = default_workspace_root()
@@ -1062,6 +1079,8 @@ def _build_sandbox_file_tool_mount_mappings(
 #: ``_setup_skills`` 一次性打包出来的技能副本；平台靠下面的指纹比对在公共技能
 #: 变更后主动作废它，让下一次 initialize() 重新打包。
 SANDBOX_SKILL_SEED_DIR_NAME = ".seed"
+#: 上一版 ``.seed`` 的条目名账本（点开头，不会被当成技能条目）
+SANDBOX_SKILL_MANIFEST_NAME = ".seed-manifest.json"
 #: 会话技能快照的平台账本（``<workdir>/.session_skills.json``）。刻意放在会话根而不是
 #: ``skills/`` 里：AgentScope 会把 ``skills/`` 下的非目录条目当成技能条目处理
 #: （``.skills`` 就曾被它的迁移逻辑吃掉），账本放在外面才不会被误动。
@@ -1073,15 +1092,56 @@ LEGACY_SESSION_SKILLS_INDEX_NAME = ".skills"
 DOCKER_SANDBOX_SKILLS_FINGERPRINT_NAME = ".public_skills_fingerprint"
 
 
-def _platform_public_skills_fingerprint() -> str | None:
-    """公共技能库的内容指纹；技能库不可用时返回 ``None``。
+def _list_visible_entries(path: str) -> list[str]:
+    """列出目录下的非隐藏条目；目录不存在或不可读时返回空列表。"""
+    try:
+        return sorted(name for name in os.listdir(path) if not name.startswith("."))
+    except OSError:
+        return []
+
+
+def _sandbox_skill_manifest_path(host_workdir: str) -> str:
+    return os.path.join(_sandbox_skills_dir(host_workdir), SANDBOX_SKILL_MANIFEST_NAME)
+
+
+def _write_sandbox_skill_manifest(host_workdir: str, entries: list[str]) -> None:
+    """记下上一版 ``.seed`` 里都有哪些条目。
+
+    分区同步需要区分「这个目录是 seed 提供的技能」和「这个目录是 agent 自己用技能 API
+    建的」——前者在技能被删/被禁用后必须清掉，后者绝不能碰。账本在作废 ``.seed`` 之前
+    写入，所以即使 ``.seed`` 已被删除也仍然知道上一版装了哪些。
+    """
+    path = _sandbox_skill_manifest_path(host_workdir)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"entries": sorted(entries)}, handle, ensure_ascii=False)
+    except OSError as exc:  # noqa: BLE001
+        logger.debug("[workspace] Failed to write skill manifest %s: %s", path, exc)
+
+
+def _read_sandbox_skill_manifest(host_workdir: str) -> set[str]:
+    """读取上一版 ``.seed`` 的条目名；缺失或损坏时返回空集合（退化为只认公共技能）。"""
+    path = _sandbox_skill_manifest_path(host_workdir)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return set()
+    return {str(item) for item in entries if str(item).strip()}
+
+
+def _dir_tree_fingerprint(root: str | None) -> str | None:
+    """目录树的内容指纹；目录不存在时返回 ``None``。
 
     用「相对路径 + 大小 + mtime」而不是文件内容：技能包可能带几 MB 脚本与二进制资源，
     而容器初始化是热路径，不值得全量读一遍——任何内容改动都会改 mtime。
     """
-    from app.utils.fs_access import get_platform_skills_root
-
-    root = get_platform_skills_root()
     if not root or not os.path.isdir(root):
         return None
     digest = hashlib.sha256()
@@ -1097,6 +1157,52 @@ def _platform_public_skills_fingerprint() -> str | None:
             digest.update(
                 f"{rel}|{stat.st_size}|{stat.st_mtime_ns}\n".encode("utf-8")
             )
+    return digest.hexdigest()
+
+
+def _platform_public_skills_fingerprint() -> str | None:
+    """公共技能库的内容指纹；技能库不可用时返回 ``None``。"""
+    from app.utils.fs_access import get_platform_skills_root
+
+    return _dir_tree_fingerprint(get_platform_skills_root())
+
+
+async def _sandbox_skills_seed_fingerprint(host_workdir: str) -> str | None:
+    """沙箱技能 seed 的完整指纹 = 公共技能库 + 该用户个人技能库 + 被禁公共技能集合。
+
+    **为什么不能只 hash 公共技能库**：``.seed`` 里装的是 ``skill_paths``（公共 + 个人）
+    减去禁用项，但原先的指纹只覆盖公共库的**文件内容**，于是下面两件事都不会让它失效：
+
+    * **管理员禁用某个公共技能**——只改权限、不动技能文件，指纹不变；
+    * **个人技能被删除或改版**——个人技能库根本不在指纹里。
+
+    后果是 AgentScope 的 ``_setup_skills``（``.seed`` 非空即跳过）永不刷新，沙箱里
+    一直躺着平台已经认为「不存在/已禁用」的技能目录；而提示词恰好教模型去 ``.seed``
+    里 ``ls -a`` 找技能文件，于是出现「平台说没有、沙箱里能翻到甚至能执行」。
+
+    禁用集合取不到时（无用户/智能体上下文、权限服务抖动）退化为「不含权限变更」的
+    指纹并告警——方向与 ``get_forbidden_skill_ids`` 自身一致：宁可少失效一次，
+    也不要因为读不到权限就让整个技能链路不可用。
+    """
+    public = _platform_public_skills_fingerprint()
+    if public is None:
+        return None
+
+    digest = hashlib.sha256()
+    digest.update(f"public:{public}\n".encode("utf-8"))
+    personal = _dir_tree_fingerprint(_personal_skills_dir(host_workdir))
+    digest.update(f"personal:{personal or '-'}\n".encode("utf-8"))
+
+    forbidden: set[str] = set()
+    try:
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+        forbidden = {str(item) for item in (await get_forbidden_skill_ids() or set())}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[workspace] 读取禁用技能集合失败，本次 seed 指纹不含权限变更: %s", exc
+        )
+    digest.update(("forbidden:" + ",".join(sorted(forbidden)) + "\n").encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -1165,18 +1271,23 @@ def _public_skill_directory_names() -> set[str]:
     return names
 
 
-def _invalidate_stale_sandbox_skill_seed(host_workdir: str) -> tuple[bool, str | None]:
-    """公共技能库变了就作废沙箱技能模板，返回 ``(是否已作废, 当前指纹)``。
+def _invalidate_stale_sandbox_skill_seed(
+    host_workdir: str, fingerprint: str | None = None
+) -> tuple[bool, str | None]:
+    """技能集合或权限变了就作废沙箱技能模板，返回 ``(是否已作废, 当前指纹)``。
 
     AgentScope 的 ``_setup_skills`` 只在 ``skills/.seed`` 为空时打包一次，之后「假定
-    上一次运行或用户才是真相来源」永不刷新：新加的公共技能、改过的脚本、以及被删除
-    或被禁用的技能都不会反映到沙箱里。这里在容器初始化**之前**比对公共技能库指纹，
-    不一致就删掉 ``.seed``——随后的 ``initialize()`` 会按当前 ``skill_paths`` 重新打包，
-    顺带把被禁技能挡在包外。
+    上一次运行或用户才是真相来源」永不刷新：新加的技能、改过的脚本、以及被删除或被
+    禁用的技能都不会反映到沙箱里。这里在容器初始化**之前**比对指纹，不一致就删掉
+    ``.seed``——随后的 ``initialize()`` 会按当前 ``skill_paths`` 重新打包，顺带把被禁
+    技能挡在包外。
 
-    指纹不存在（老部署首次升级）同样视为不一致，让历史快照一次性对齐。
+    ``fingerprint`` 由调用方用 :func:`_sandbox_skills_seed_fingerprint` 算好传入（它需要
+    await 权限查询）；不传时退化为只看公共技能库内容指纹（老行为，供同步轻量调用与
+    测试使用）。指纹不存在（老部署首次升级）同样视为不一致，让历史快照一次性对齐。
     """
-    fingerprint = _platform_public_skills_fingerprint()
+    if fingerprint is None:
+        fingerprint = _platform_public_skills_fingerprint()
     if fingerprint is None:
         return False, None
     if _read_sandbox_skills_fingerprint(host_workdir) == fingerprint:
@@ -1185,29 +1296,39 @@ def _invalidate_stale_sandbox_skill_seed(host_workdir: str) -> tuple[bool, str |
     seed_dir = os.path.join(
         _sandbox_skills_dir(host_workdir), SANDBOX_SKILL_SEED_DIR_NAME
     )
+    # 删之前记下这一版 seed 里都有什么：分区同步要靠它区分「seed 提供的技能」
+    # 与「agent 自己用技能 API 建的技能」，只清前者，后者必须原样保留。
+    _write_sandbox_skill_manifest(host_workdir, _list_visible_entries(seed_dir))
     if os.path.isdir(seed_dir):
         shutil.rmtree(seed_dir, ignore_errors=True)
     logger.info(
-        "[workspace] Sandbox skill seed invalidated for %s (public skills changed)",
+        "[workspace] Sandbox skill seed invalidated for %s (skill set or permissions changed)",
         host_workdir,
     )
     return True, fingerprint
 
 
 def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
-    """把重建后的 ``.seed`` 里的公共技能同步进已装备的分区，返回处理的条目数。
+    """把重建后的 ``.seed`` 同步进已装备的分区，返回处理的条目数。
 
     AgentScope 的分区只在首次出现时从 seed 复制一次（``isdir(partition)`` 即退出），
-    所以仅重建 seed 还不够：已有分区的 agent 仍会读到旧技能。这里逐个分区——删掉其中
-    的公共技能目录（同时清掉已删除/已禁用技能的残留），再从新 seed 复制一份；分区里
-    其它条目属于 agent 自建技能，原样保留。
+    所以仅重建 seed 还不够：已有分区的 agent 仍会读到旧技能。这里逐个分区——删掉
+    「上一版 seed 装过、这一版没有」的条目（技能被删除/被禁用都属于这种），再从新
+    seed 覆盖一遍。
+
+    **纳入个人技能**：seed 里装的是公共 + 个人技能，只按公共技能名单清理会让**被删掉
+    的个人技能**永久留在老分区里（模型 ``ls`` 就能翻到）。因此判据改为「上一版 seed
+    的账本」（:func:`_read_sandbox_skill_manifest`），并保留公共技能名单作为账本缺失
+    时的兜底。分区里其它条目属于 agent 自建技能，一律保留。
     """
     skills_dir = _sandbox_skills_dir(host_workdir)
     seed_dir = os.path.join(skills_dir, SANDBOX_SKILL_SEED_DIR_NAME)
     if not os.path.isdir(seed_dir):
         return 0
+    seed_names = set(_list_visible_entries(seed_dir))
+    previously_seeded = _read_sandbox_skill_manifest(host_workdir)
     public_names = _public_skill_directory_names()
-    if not public_names:
+    if not seed_names and not public_names:
         return 0
 
     synced = 0
@@ -1221,15 +1342,13 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
         partition = os.path.join(skills_dir, entry)
         if not os.path.isdir(partition):
             continue
-        try:
-            present = sorted(os.listdir(partition))
-        except OSError:
-            continue
-        # 先清残留：公共技能里已经没有的（被删/被禁用）不再留在分区
+        present = _list_visible_entries(partition)
+        # 先清残留：上一版 seed 装过、这一版没有的条目（含被删的个人技能），
+        # 以及名字落在公共技能名单里但已不在新 seed 的（无账本时的兜底）。
         for name in present:
-            if name not in public_names:
+            if name in seed_names:
                 continue
-            if os.path.exists(os.path.join(seed_dir, name)):
+            if name not in previously_seeded and name not in public_names:
                 continue
             stale = os.path.join(partition, name)
             if os.path.isdir(stale):
@@ -1240,10 +1359,8 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
                 except OSError:
                     continue
             synced += 1
-        # 再从新 seed 覆盖公共技能
-        for name in sorted(os.listdir(seed_dir)):
-            if name not in public_names:
-                continue
+        # 再从新 seed 覆盖全部条目（公共 + 个人）
+        for name in sorted(seed_names):
             source = os.path.join(seed_dir, name)
             if not os.path.isdir(source):
                 continue
@@ -1268,7 +1385,7 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
             synced += 1
     if synced:
         logger.info(
-            "[workspace] Synced %d public skill entries into sandbox partitions under %s",
+            "[workspace] Synced %d skill entries into sandbox partitions under %s",
             synced,
             skills_dir,
         )
@@ -1377,10 +1494,12 @@ async def _policy_docker_workspace(
             os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
             exist_ok=True,
         )
-        # 公共技能库变了就作废上一次的 seed 模板，让 initialize() 重新打包
+        # 技能集合或权限变了就作废上一次的 seed 模板，让 initialize() 重新打包
         # （AgentScope 自己不刷新，见 _invalidate_stale_sandbox_skill_seed）。
+        # 指纹必须含个人技能库与禁用集合：只 hash 公共库文件的话，「禁用某技能」
+        # 与「个人技能被删」都不会触发失效，沙箱里会留下平台认为不存在的技能。
         seed_invalidated, skills_fingerprint = _invalidate_stale_sandbox_skill_seed(
-            host_workdir
+            host_workdir, await _sandbox_skills_seed_fingerprint(host_workdir)
         )
         public_docs_source = _resolve_docker_public_docs_source()
         extra_bind_mounts = _build_docker_workspace_mounts(
@@ -1464,6 +1583,44 @@ async def _close_workspace_safely(workspace: Any, *, reason: str) -> None:
         )
 
 
+def _skill_paths_cache_token(skill_paths: list[str] | None) -> str:
+    """技能集合的稳定令牌，用于把「同一用户 + 不同技能集合」的沙箱分开缓存。
+
+    沙箱是**按用户**复用的（``_resolve_sandbox_user_key`` 只看用户身份、不看智能体），
+    而 ``skill_paths`` 每次都由当前智能体决定。缓存键若不含它就会出现双向错位：换了
+    智能体仍然命中上一个智能体的沙箱——既**看不到自己白名单里的技能**（``.seed`` 里
+    没有），又**看得到不属于自己的技能**；更糟的是缓存命中时连
+    ``_policy_*_workspace`` 都不会执行，连指纹治理都被一并跳过。
+
+    取目录名而不是完整路径：workspace 根对同一用户是固定的，参与哈希只会让键更长；
+    真正的语义差别在于「装了哪些技能」。用 sha256 截断避免键过长。
+    """
+    names = sorted(
+        {
+            os.path.basename(os.path.abspath(path))
+            for path in (skill_paths or [])
+            if str(path).strip()
+        }
+    )
+    if not names:
+        return "noskills"
+    return hashlib.sha256(",".join(names).encode("utf-8")).hexdigest()[:12]
+
+
+def _find_cached_k8s_workspace(root: str, user_key: str) -> Any:
+    """取该用户在给定 root 下的任意一个活跃 K8s 沙箱缓存条目。
+
+    缓存键是 ``<root>::<user_key>::<技能集合令牌>::k8s``，而只读的状态/身份查询接口
+    没有技能上下文，只能按前缀匹配——同一用户存在多个不同技能集合的沙箱时，返回其中
+    一个即可满足「该用户的沙箱」这一语义。
+    """
+    prefix = f"{os.path.abspath(root)}::{user_key}::"
+    for key, workspace in _k8s_workspace_cache.items():
+        if key.startswith(prefix):
+            return workspace
+    return None
+
+
 def _resolve_sandbox_user_key(
     *,
     user_id: str | int | None,
@@ -1491,7 +1648,10 @@ async def _acquire_docker_workspace(
     skill_paths: list[str] | None,
 ) -> tuple[Any, str]:
     """Acquire one process-local Docker workspace reference per user."""
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_DOCKER}"
+    cache_key = (
+        f"{os.path.abspath(root)}::{user_key}::"
+        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_DOCKER}"
+    )
     lock = _docker_workspace_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         workspace = _docker_workspace_cache.get(cache_key)
@@ -1586,7 +1746,10 @@ async def _acquire_k8s_workspace(
     skill_paths: list[str] | None,
 ) -> tuple[Any, str]:
     """Acquire one process-local K8s workspace reference per user."""
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
+    cache_key = (
+        f"{os.path.abspath(root)}::{user_key}::"
+        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_K8S}"
+    )
     lock = _k8s_workspace_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         workspace = _k8s_workspace_cache.get(cache_key)
@@ -2218,9 +2381,12 @@ async def _policy_k8s_workspace(
         # 个人技能源目录也要存在：它以只读 subPath 挂进沙箱
         # （/workspace/personal-skills），源目录缺失时挂载会失败。
         os.makedirs(_personal_skills_dir(k8s_host_workdir), exist_ok=True)
-        # 公共技能库变了就作废上一次的 seed 模板，让 initialize() 重新打包。
+        # 技能集合或权限变了就作废上一次的 seed 模板，让 initialize() 重新打包。
+        # 与 Docker 同一套指纹（含个人技能库与禁用集合），否则 K8s 下「禁用/删除
+        # 技能后沙箱仍留着旧副本」的窗口会一直存在。
         seed_invalidated, skills_fingerprint = _invalidate_stale_sandbox_skill_seed(
-            k8s_host_workdir
+            k8s_host_workdir,
+            await _sandbox_skills_seed_fingerprint(k8s_host_workdir),
         )
 
     workspace = build_k8s_workspace_with_nanzi_adapter(
@@ -3412,8 +3578,7 @@ async def k8s_workspace_status(
     )
 
     root = await resolve_workspace_root()
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
-    workspace = _k8s_workspace_cache.get(cache_key)
+    workspace = _find_cached_k8s_workspace(root, user_key)
     if workspace is None or getattr(workspace, "is_alive", True) is False:
         # 进程内无活跃缓存（多 worker 转发、缓存已被回收/reaper 清理等场景）：
         # 仍按约定 Pod 名做一次只读探测真实状态，绝不创建/修改任何资源。
@@ -5308,8 +5473,7 @@ async def exec_k8s_workspace_command(
     )
 
     root = await resolve_workspace_root()
-    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
-    workspace = _k8s_workspace_cache.get(cache_key)
+    workspace = _find_cached_k8s_workspace(root, user_key)
     if workspace is not None and getattr(workspace, "is_alive", True):
         namespace, pod_name = await _k8s_workspace_pod_identity(workspace)
     else:

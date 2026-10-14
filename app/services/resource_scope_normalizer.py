@@ -32,6 +32,7 @@ async def normalize_resource_scope_for_user(
     from app.services.ai.skill_resolver import get_user_personal_skills_dir
     from app.services.permission_service import PermissionService
     from app.api.portal.endpoints.skills import parse_skill_metadata
+    from app.utils.skill_metadata import is_skill_enabled
     from sqlalchemy import and_, select
     from sqlalchemy.orm import joinedload
 
@@ -133,7 +134,7 @@ async def normalize_resource_scope_for_user(
             if not os.path.isdir(skill_dir) or not os.path.isfile(skill_md):
                 continue
             meta = parse_skill_metadata(skill_id, skill_md)
-            if str(meta.get("enabled", "true")).strip().lower() in {"false", "0", "no", "off"}:
+            if not is_skill_enabled(meta):
                 continue
             skill_by_token[(scope_name, skill_id.casefold())] = {
                 "id": skill_id,
