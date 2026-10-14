@@ -345,6 +345,29 @@ def test_reasoning_panel_uses_model_inference_icon_and_label():
         assert "本次会话已启用模型思考推理" not in source
 
 
+def test_collapsed_reasoning_row_shows_preview_and_char_count():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert "resolveReasoningPreview" in timeline
+    assert "reasoningCharCount" in timeline
+    assert "REASONING_CHAR_COUNT_MIN_VISIBLE" in timeline
+    # 阈值必须真的用在渲染条件上，光有 import 不算（防「常量在、判断被删掉」）
+    assert 'v-if="reasoningCharCountOf(item) >= REASONING_CHAR_COUNT_MIN_VISIBLE"' in timeline
+    # 摘要占中段并截断，窄屏让位（与 Header 的 actionSummary 同策略）
+    assert "hidden min-w-0 flex-1 truncate text-gray-400 dark:text-gray-500 sm:block" in timeline
+    # 字数胶囊复用 Header 既有胶囊样式，不引入新色系
+    assert "rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500" in timeline
+    # 进行中态尾部光标只挂在折叠行摘要上（展开态那条渲染的是 visibleTimelineText，两者互不冒充）
+    assert '>{{ reasoningPreviewOf(item).text }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></span>' in timeline
+    # 截断规则必须留在纯函数模块里，不许被复制进组件
+    assert "REASONING_PREVIEW_MAX_CHARS" not in timeline
+
+    module = (ROOT / "frontend/src/utils/reasoningPreview.ts").read_text(encoding="utf-8")
+    assert "REASONING_PREVIEW_MAX_CHARS = 80" in module
+    assert "REASONING_PREVIEW_MIN_CHARS = 40" in module
+    assert "REASONING_CHAR_COUNT_MIN_VISIBLE = 10" in module
+
+
 def test_history_loaders_restore_reasoning_content_separately_from_answer():
     assert "reasoningContent: item.reasoning_content ?? undefined" in EMBED_CHAT.read_text(encoding="utf-8")
     agent_debug = AGENT_DEBUG.read_text(encoding="utf-8")
