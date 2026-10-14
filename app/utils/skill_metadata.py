@@ -7,6 +7,31 @@ from typing import Any, Dict, List, Optional
 
 USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n"
 
+# `enabled` 的真值白名单。与 SkillPolicy._parse_bool_config 同一语义：只认这些为「启用」。
+_TRUTHY_FLAGS = frozenset({"1", "true", "yes", "on"})
+
+
+def is_skill_enabled(meta: Optional[Dict[str, Any]], default: bool = True) -> bool:
+    """技能是否启用——全平台**唯一**的判定来源。
+
+    ``enabled`` 在 frontmatter / JSON 里本来是字符串（``"true"`` / ``"false"``），但人工编辑
+    SKILL.md 时完全可能写成 ``False``、``TRUE``。此前有三套口径：运行时 ``skill_resolver``
+    用大小写敏感的 ``!= "false"``、技能注入用白名单解析、而智能体作用域候选清单用大小写
+    不敏感的 ``.lower() != "false"``。
+
+    最直接的后果是「列不出来所以禁不掉」：SKILL.md 里手写 ``enabled: False`` 时运行时
+    **照样加载**（敏感比较认不出），唯独候选清单把它剔除，于是管理员在弹框里看不到它，
+    自然也无法禁用它。三套合并成一套后，这类口径漂移不会再出现。
+    """
+    if not meta:
+        return default
+    raw = meta.get("enabled")
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in _TRUTHY_FLAGS
+
 
 def parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> Dict[str, str]:
     """从 SKILL.md 顶部 YAML Frontmatter 提取 name / description 等元数据。"""
@@ -210,9 +235,21 @@ def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:
             rewritten.append(part)
             continue
         changed = True
-        rewritten.append(
-            "\n".join(forbidden_skill_attachment_notice(skill_id) for skill_id in sorted(hit_ids))
+        # 只摘掉**提到被禁技能路径的那些行**，绝不整段替换：分段是按空行切的，用户完全可能
+        # 在同段里追加自己的话（"把 /app/data/skills/gamma/SKILL.md 的流程跑一遍"）。
+        # 整段替换会连用户原文一起删掉——模型看不到原始问题、user_query 被换成禁令文案
+        # 影响路由与技能扫描，而且改写结果会写进历史、不可恢复。
+        kept_lines: list[str] = []
+        for line in part.split("\n"):
+            matched = SKILL_MD_ABSOLUTE_PATH_RE.search(line)
+            if matched and matched.group(1) in hit_ids:
+                continue
+            kept_lines.append(line)
+        notice = "\n".join(
+            forbidden_skill_attachment_notice(skill_id) for skill_id in sorted(hit_ids)
         )
+        body = "\n".join(kept_lines).strip()
+        rewritten.append(f"{body}\n{notice}" if body else notice)
     if not changed:
         return content
     return _CONTEXT_HINT_SEPARATOR.join(rewritten)

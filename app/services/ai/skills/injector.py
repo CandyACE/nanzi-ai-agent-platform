@@ -132,6 +132,13 @@ class SkillInjector:
         for skill in available_skills:
             if skill.get("id") != cls.USING_SUPERPOWERS_SKILL_ID:
                 continue
+            # 强制预载也必须尊重 enabled：否则一个已停用的技能会在每个新会话首轮被塞进
+            # 上下文，而它在候选清单里是被剔除的——管理员在"禁用资源"页和智能体功能限定
+            # 弹框里都看不到它，也就无从禁掉（列不出来所以禁不掉）。
+            from app.utils.skill_metadata import is_skill_enabled
+
+            if not is_skill_enabled(skill):
+                continue
             item = dict(skill)
             item["match_score"] = 1.0
             item["match_source"] = "scan"

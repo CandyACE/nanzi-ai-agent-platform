@@ -37,6 +37,14 @@ _AGENT_SCOPE_PROBE_FAILED_AT: float = 0.0
 # 探测不确定时的重试间隔：足够短以尽快恢复，足够长以免每个请求都打一次失败查询。
 _AGENT_SCOPE_PROBE_RETRY_SECONDS = 30.0
 
+# 「确定无此列」虽然结论明确，但**不能永久有效**：正常上线顺序是代码先部署（此时确实
+# 没有列）→ DBA 再执行迁移。若把 False 永久缓存，未重启的旧进程会一直按"没有列"运行，
+# 而"没有列"的语义是**完全不加作用域条件**——它的一次「改菜单/改角色权限」保存就会把
+# 新进程刚写入的智能体级限制静默 DELETE 掉。所以给同一个结论加过期时间，迁移完成后
+# 无需重启即可自动启用智能体级作用域。
+_AGENT_SCOPE_ABSENT_AT: float = 0.0
+_AGENT_SCOPE_ABSENT_RETRY_SECONDS = 300.0
+
 # 各数据库「列不存在」的错误码：MySQL 1054 / PostgreSQL 42703。
 _AGENT_SCOPE_UNKNOWN_COLUMN_CODES = ("1054", "42703")
 
@@ -74,11 +82,18 @@ class PermissionService:
         只在节流窗口内按未迁移处理并稍后重试——因为"未迁移"的语义是**不加任何作用域条件**，
         一旦被永久写死，就会跨智能体读到别人的限制、并让下一次全局保存误删智能体级数据。
         """
-        global _AGENT_SCOPE_COLUMN_STATE, _AGENT_SCOPE_PROBE_FAILED_AT
-        if _AGENT_SCOPE_COLUMN_STATE is not None:
-            return _AGENT_SCOPE_COLUMN_STATE
-
+        global _AGENT_SCOPE_COLUMN_STATE, _AGENT_SCOPE_PROBE_FAILED_AT, _AGENT_SCOPE_ABSENT_AT
         now = time.monotonic()
+        if _AGENT_SCOPE_COLUMN_STATE is True:
+            return True
+        if _AGENT_SCOPE_COLUMN_STATE is False:
+            # `_AGENT_SCOPE_ABSENT_AT == 0.0` 表示状态不是探测得来的（由测试/调用方直接注入），
+            # 此时按「刚探测过」处理、不回源，否则注入的状态会被立刻覆盖掉。
+            if _AGENT_SCOPE_ABSENT_AT == 0.0:
+                return False
+            # 已知没有列，但要留过期时间：迁移可能刚执行完而进程还没重启。
+            if now - _AGENT_SCOPE_ABSENT_AT < _AGENT_SCOPE_ABSENT_RETRY_SECONDS:
+                return False
         if (
             _AGENT_SCOPE_PROBE_FAILED_AT
             and now - _AGENT_SCOPE_PROBE_FAILED_AT < _AGENT_SCOPE_PROBE_RETRY_SECONDS
@@ -105,6 +120,7 @@ class PermissionService:
             if any(code in message for code in _AGENT_SCOPE_UNKNOWN_COLUMN_CODES):
                 # 数据库明确回答「没有这一列」——这是确定的结论，可以缓存。
                 _AGENT_SCOPE_COLUMN_STATE = False
+                _AGENT_SCOPE_ABSENT_AT = now
                 logger.warning(
                     "[agent-scope] agent_id column is absent; falling back to "
                     "global-only scope until migration is applied (%s): %s",
@@ -124,6 +140,8 @@ class PermissionService:
         else:
             _AGENT_SCOPE_COLUMN_STATE = True
             _AGENT_SCOPE_PROBE_FAILED_AT = 0.0
+            _AGENT_SCOPE_ABSENT_AT = 0.0
+            logger.info("[agent-scope] agent_id column detected; agent scope enabled")
 
         return bool(_AGENT_SCOPE_COLUMN_STATE)
 
@@ -319,6 +337,46 @@ class PermissionService:
                 result["forbidden_skills"].append(resource_id)
         return result
 
+    @staticmethod
+    def _drop_unusable_skill_ids(values: Iterable[str], agent_id: str = "") -> list[str]:
+        """剔除"运行时不读"的技能 id（纯个人技能，或已不存在的 id）。
+
+        个人技能永不受限（产品口径是"禁的是平台发布的那一份"），所以禁一个只属于个人的
+        技能 id 会**落库成功、弹框回显已禁，但运行时三处过滤都不读它**——典型的"存了但
+        无效"，管理员以为已经限住，实际什么都没发生。
+
+        同名 id 会被保留：那时被禁的是公共那一份，运行时按 scope 排掉个人技能、公共技能
+        照旧被禁，语义正确。
+
+        两条**绝不剥离**的保护：目录读失败、或公共清单为空（未挂载）。此时宁可存下一条
+        无效项，也不能把有效项误删——后者的代价是"管理员设的限制凭空消失"。
+        """
+        items = [str(value).strip() for value in values if str(value).strip()]
+        if not items:
+            return []
+        try:
+            from app.services.ai.skill_resolver import list_skill_metas
+
+            public_ids = {
+                str(meta.get("id") or "").strip() for meta in list_skill_metas()
+            }
+        except Exception:  # noqa: BLE001 —— 目录不可用不是拒绝写入的理由
+            logger.debug("[agent-scope] skill catalog unreadable; skip pruning", exc_info=True)
+            return items
+        if not public_ids:
+            return items
+
+        dropped = [value for value in items if value not in public_ids]
+        if dropped:
+            logger.warning(
+                "[agent-scope] ignoring %d skill id(s) %s for agent %s: not a platform "
+                "(public) skill, the runtime never reads them",
+                len(dropped),
+                dropped,
+                agent_id or "<unknown>",
+            )
+        return [value for value in items if value in public_ids]
+
     async def update_agent_scoped_forbidden_ids(
         self,
         *,
@@ -361,6 +419,8 @@ class PermissionService:
                 raise ValueError(
                     f"{resource_type} must be an iterable of strings, not a bare string"
                 )
+            if resource_type == "forbidden_skill":
+                values = self._drop_unusable_skill_ids(values, scope)
             await self.db.execute(
                 text(
                     f"DELETE FROM ai_agent_resource_permissions "
@@ -915,6 +975,11 @@ class PermissionService:
         if str(user_role or "").strip() == "admin":
             return None
 
+        # 与其它读取入口一样限定**全局**作用域。model 是**白名单**（空 = 不限制，与
+        # menu/element 的方向相反），所以这里的口径必须谨慎：加上 `agent_id IS NULL` 意味着
+        # 智能体级 model 行**被忽略**——方向是"更严"，不会把用户在 A 智能体获准的模型
+        # 带进 B。若将来真要支持智能体级模型白名单，必须同时把作用域透传进来（而不是
+        # 像现在这样把各智能体的白名单并集成"处处可用"——那是越权方向）。
         model_stmt = (
             select(distinct(ResourcePermission.resource_id))
             .outerjoin(
@@ -928,6 +993,7 @@ class PermissionService:
                     ResourcePermission.user_id == parsed_uid,
                     UserRoleRelation.user_id == parsed_uid,
                 ),
+                *(await self._agent_scope_filters(None)),
             )
         )
         rows = (await self.db.execute(model_stmt)).scalars().all()

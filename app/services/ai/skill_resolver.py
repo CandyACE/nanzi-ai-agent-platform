@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+from app.utils.skill_metadata import is_skill_enabled
+
 logger = logging.getLogger(__name__)
 
 SCOPE_GLOBAL = "global"
@@ -233,7 +235,7 @@ def count_enabled_global_skills() -> int:
     return sum(
         1
         for meta in list_skill_metas()
-        if meta.get("enabled", "true") != "false"
+        if is_skill_enabled(meta)
     )
 
 
@@ -507,7 +509,7 @@ def scan_relevant_skills(
         if not skill_id or skill_id in excluded:
             continue
         # 过滤未启用的技能，防止每次都全部加载
-        if meta.get("enabled", "true") == "false":
+        if not is_skill_enabled(meta):
             continue
         score = lexical_relevance_score(query, meta)
         # 个人技能加权，鼓励优先匹配用户自定义技能
@@ -561,7 +563,7 @@ def resolve_skills_from_query(
     scored: List[tuple[float, Dict[str, str]]] = []
     for hint in hints:
         for meta in metas:
-            if meta.get("enabled", "true") == "false":
+            if not is_skill_enabled(meta):
                 continue
             score = _score_skill_match(hint, meta)
             if score >= 0.7:
@@ -570,7 +572,7 @@ def resolve_skills_from_query(
     # 兜底：用户直接在句子里提到技能 display_name
     if not scored:
         for meta in metas:
-            if meta.get("enabled", "true") == "false":
+            if not is_skill_enabled(meta):
                 continue
             name = (meta.get("name") or "").strip()
             if len(name) >= 2 and name in query:

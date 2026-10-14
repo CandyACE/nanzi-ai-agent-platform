@@ -1144,10 +1144,6 @@ async def get_available_resources(
 # ---------------------------------------------------------------------------
 
 
-def _agent_restriction_subject_filter(subject_column, subject_value: int):
-    return (subject_column == int(subject_value))
-
-
 @router.get("/agents/{agent_id}/restrictable-resources")
 async def get_agent_restrictable_resources(
     agent_id: str,
@@ -1160,7 +1156,17 @@ async def get_agent_restrictable_resources(
 
     候选不是"平台全部资源"而是这个智能体的绑定集合，管理员才能在其上做排除。
     每项带 ``forbidden_globally``：全局已禁的项在弹框里置灰只读（排除机制只增不减）。
+
+    ``user_id`` / ``role_id`` 是**视角**参数，弹框要靠它算出"这个主体已经全局禁了哪些"。
+    漏传时所有项都会被算成"未全局禁用"、全部可勾选，管理员会误以为能在智能体层面
+    **放开**全局禁用（实际不会）——这是设计文档明确警告过的误用。所以这里不再静默接受：
+    缺参数时记一条 warning，让这类调用在日志里可见，而不是安静地给出误导性结果。
     """
+    if user_id is None and role_id is None:
+        logger.warning(
+            "[agent-scope] restrictable-resources called without user_id/role_id; "
+            "forbidden_globally will be all-false and every item will look selectable"
+        )
     from app.services.agent_scoped_restrictions import (
         build_restrictable_resources,
         list_personal_skill_metas,

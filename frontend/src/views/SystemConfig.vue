@@ -2830,6 +2830,12 @@ const REDIS_KEY_GROUP_RULES: { prefix: string; label: string; desc: string; chip
   { prefix: 'agent:workspace_recent_files:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
   { prefix: 'sys:auth:permissions:v2:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
   { prefix: 'sys:auth:permissions:v3:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  // v4（新增 models）/ v5（新增禁用技能）/ v6（新增智能体级作用域）都是当前版本链路实际
+  // 写入的键。清单停在 v3 会让这个清理面板漏掉真正的权限缓存，运维"清完缓存仍不生效"。
+  // v6 的键还带 agent 段（:agent:{scope|-}），前缀匹配即可覆盖整族。
+  { prefix: 'sys:auth:permissions:v4:user:', label: '权限缓存', desc: '用户权限（含模型白名单）', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'sys:auth:permissions:v5:user:', label: '权限缓存', desc: '用户权限（含禁用技能）', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'sys:auth:permissions:v6:user:', label: '权限缓存', desc: '用户权限（含智能体级作用域）', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
   { prefix: 'memory:_vector_health_probe:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
   { prefix: 'ragflow:doc_recommendations:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
   { prefix: 'metadata:metric_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import AIAgent, AIAgentVersion
 from app.models.mcp import McpToolCache
 from app.models.tool import SysApiTool
+from app.utils.skill_metadata import is_skill_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,21 @@ def _as_list(raw: Any) -> List[str]:
         except Exception:
             return []
     if isinstance(raw, (list, tuple)):
-        return [str(item).strip() for item in raw if str(item).strip()]
+        entries: List[str] = []
+        for item in raw:
+            # 工具项不一定是字符串：元数据集绑定、钉钉/邮件/飞书配置等会写成
+            # {"name": "get_dataset_schema", "metadata_dataset_ids": [...]}。
+            # 直接 str(item) 会得到一段 Python repr（约 200 字符），既让**真工具名彻底
+            # 不可限定**，又在候选里多出一条永远匹配不到的垃圾 id（前端还会把它当历史项
+            # 长期保留）。这里按 name/tool_name/id 取真名。
+            if isinstance(item, dict):
+                raw_name = item.get("name") or item.get("tool_name") or item.get("id")
+                text = str(raw_name).strip() if raw_name else ""
+            else:
+                text = str(item).strip()
+            if text:
+                entries.append(text)
+        return entries
     return []
 
 
@@ -60,8 +75,14 @@ def split_agent_tool_bindings(tools: Any) -> tuple[List[str], List[tuple[str, st
     plain: List[str] = []
     mcp_pairs: List[tuple[str, str]] = []
     for entry in _as_list(tools):
-        if entry.startswith(MCP_TOOL_PREFIX) and ":" in entry:
-            server_id, _, tool_name = entry[len(MCP_TOOL_PREFIX):].partition(":")
+        # 判据是「带冒号」而不是「以 mcp- 开头」——平台的 MCP 标识本质就是 server:tool
+        # （运行时 is_platform_namespaced_tool_name 同样只看冒号），`mcp-` 只是可选的历史
+        # 写法。此前只认 mcp- 前缀，导致服务名不含该前缀的自建/导入 MCP（例如
+        # 「NanZi Echo 测试 MCP」）被归进「内置工具」：错页签、丢中文描述与分组，
+        # 管理员在 MCP 页签里找不到它，等于列不出来也就禁不掉。
+        if ":" in entry:
+            head, _, tool_name = entry.partition(":")
+            server_id = head[len(MCP_TOOL_PREFIX):] if head.startswith(MCP_TOOL_PREFIX) else head
             server_id, tool_name = server_id.strip(), tool_name.strip()
             if server_id and tool_name:
                 mcp_pairs.append((server_id, tool_name))
@@ -151,7 +172,7 @@ async def build_restrictable_resources(
             str(meta.get("id"))
             for meta in public_skill_metas
             if str(meta.get("id") or "").strip()
-            and str(meta.get("enabled", "true")).lower() != "false"
+            and is_skill_enabled(meta)
         ]
         if not candidate_skill_ids:
             # 目录不可用时的兜底：至少把已绑定的列出来
@@ -180,12 +201,23 @@ async def build_restrictable_resources(
     try:
         from app.services.ai.tools.forbidden_catalog import (
             BUILTIN_FORBIDDEN_TOOL_CANDIDATES,
+            builtin_tool_description,
         )
 
         for candidate in BUILTIN_FORBIDDEN_TOOL_CANDIDATES:
             description = str(getattr(candidate, "description", "") or "").strip()
             if description:
                 builtin_tool_descriptions[str(candidate.id)] = description
+
+        # 候选目录只收"执行与沙箱数据访问"类工具，绑定集合里还有文件/检索/子代理/文档等
+        # 普通内置工具。不补描述的话它们在弹框里只显示裸英文 id（此前 25 个里只有 9 个
+        # 有描述），管理员无法判断该不该限定。
+        for name in builtin:
+            if name in builtin_tool_descriptions:
+                continue
+            fallback = builtin_tool_description(name)
+            if fallback:
+                builtin_tool_descriptions[name] = fallback
     except Exception:  # noqa: BLE001 —— 仅影响副标题，取不到就退回显示 id
         logger.debug("[agent-scope] failed to build builtin descriptions", exc_info=True)
 

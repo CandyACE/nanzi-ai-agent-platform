@@ -225,7 +225,13 @@ async def test_writing_one_agent_never_touches_global_or_other_agents(db_session
 
 
 @pytest.mark.asyncio
-async def test_update_is_overwrite_and_supports_clearing(db_session):
+async def test_update_is_overwrite_and_supports_clearing(db_session, monkeypatch):
+    # 写入端会剔除"运行时不读"的技能 id（个人技能/不存在的 id），所以这里固定公共技能清单，
+    # 让用例不依赖运行环境里恰好装了哪些技能。
+    monkeypatch.setattr(
+        "app.services.ai.skill_resolver.list_skill_metas",
+        lambda *a, **k: [{"id": "s1"}, {"id": "s2"}],
+    )
     user = await _make_user(db_session, "scope_overwrite")
     service = PermissionService(db_session)
 
@@ -245,6 +251,49 @@ async def test_update_is_overwrite_and_supports_clearing(db_session):
     data = await service.get_agent_scoped_forbidden_ids(user_id=user.id, agent_id="agent-o")
     assert data["forbidden_tools"] == []
     assert data["forbidden_skills"] == ["s1"], "未提交的类别必须保持原值"
+
+
+@pytest.mark.asyncio
+async def test_write_drops_skill_ids_the_runtime_never_reads(db_session, monkeypatch):
+    """禁一个"只属于个人技能/根本不存在"的 id 是无效写入，必须在写入端就丢掉。
+
+    这类行会落库成功、弹框回显"已禁"，但运行时三处技能过滤都不读它（个人技能永不受限），
+    管理员以为限住了、实际什么都没发生。真实库里那 28 行 `s1` / `scoped_skill` 就是这么来的。
+    """
+    monkeypatch.setattr(
+        "app.services.ai.skill_resolver.list_skill_metas",
+        lambda *a, **k: [{"id": "real-public-skill"}],
+    )
+    user = await _make_user(db_session, "scope_drop")
+    service = PermissionService(db_session)
+
+    data = await service.update_agent_scoped_forbidden_ids(
+        user_id=user.id,
+        agent_id="agent-drop",
+        forbidden_skills=["real-public-skill", "s1", "scoped_skill"],
+    )
+    await db_session.commit()
+    assert data["forbidden_skills"] == ["real-public-skill"], "只有公共技能才写得进去"
+
+    rows = await _agent_scoped_rows(db_session, user_id=user.id)
+    assert [r[2] for r in rows if r[1] == "forbidden_skill"] == ["real-public-skill"]
+
+
+@pytest.mark.asyncio
+async def test_write_keeps_ids_when_catalog_is_unreadable(db_session, monkeypatch):
+    """目录不可用时**一律不剥离**：宁可存一条无效项，也不能误删管理员设的有效限制。"""
+    monkeypatch.setattr(
+        "app.services.ai.skill_resolver.list_skill_metas",
+        lambda *a, **k: [],
+    )
+    user = await _make_user(db_session, "scope_keep")
+    service = PermissionService(db_session)
+
+    data = await service.update_agent_scoped_forbidden_ids(
+        user_id=user.id, agent_id="agent-keep", forbidden_skills=["whatever"]
+    )
+    await db_session.commit()
+    assert data["forbidden_skills"] == ["whatever"]
 
 
 @pytest.mark.asyncio

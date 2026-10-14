@@ -458,8 +458,27 @@ def _forbidden_skill_hashes(forbidden_skill_ids: Iterable[str] | None) -> set[st
     return hashes
 
 
+def _entry_is_forbidden(entry: Any, forbidden_ids: set[str]) -> bool:
+    """索引条目是否**确定**属于被禁的公共技能。
+
+    只按内容哈希判定会连坐个人技能：把平台技能目录逐字节复制成个人技能后哈希相同，
+    那个会话快照会被静默删除，而产品口径是"禁的是平台发布的那一份"、个人技能照旧可用。
+    索引里记了来源 ``skill_id`` 就按 id 复核；旧索引没有该字段时退回哈希判定，
+    行为与改动前保持一致（不会因为升级而漏清理）。
+    """
+    if not forbidden_ids:
+        return False
+    recorded = str((entry or {}).get("skill_id") or "").strip()
+    if not recorded:
+        return True
+    return recorded in forbidden_ids
+
+
 def _prune_stale_session_skills(
-    skills_dir: str, index_path: str, forbidden_hashes: set[str] | None
+    skills_dir: str,
+    index_path: str,
+    forbidden_hashes: set[str] | None,
+    forbidden_skill_ids: Iterable[str] | None = None,
 ) -> None:
     """清理会话快照里**已被禁用**的技能。
 
@@ -488,10 +507,14 @@ def _prune_stale_session_skills(
     if not isinstance(stored, dict):
         return
 
+    forbidden_ids = {
+        str(skill_id).strip() for skill_id in (forbidden_skill_ids or ()) if str(skill_id).strip()
+    }
     stale = [
         dir_name
         for dir_name, entry in stored.items()
         if str((entry or {}).get("hash") or "") in forbidden_hashes
+        and _entry_is_forbidden(entry, forbidden_ids)
     ]
     if not stale:
         return
@@ -531,7 +554,12 @@ async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) 
         return
     if not forbidden_skill_ids:
         return
-    _prune_stale_session_skills(skills_dir, index_path, _forbidden_skill_hashes(forbidden_skill_ids))
+    _prune_stale_session_skills(
+        skills_dir,
+        index_path,
+        _forbidden_skill_hashes(forbidden_skill_ids),
+        forbidden_skill_ids,
+    )
 
 
 def _preseed_session_skills(
@@ -564,7 +592,10 @@ def _preseed_session_skills(
     if os.path.isfile(index_path):
         # 已经铺过：不重建，但要清掉"禁用之前"铺进来的技能（读文件即可绕过禁用）
         _prune_stale_session_skills(
-            skills_dir, index_path, _forbidden_skill_hashes(forbidden_skill_ids)
+            skills_dir,
+            index_path,
+            _forbidden_skill_hashes(forbidden_skill_ids),
+            forbidden_skill_ids,
         )
         return
 
@@ -578,7 +609,12 @@ def _preseed_session_skills(
         stored = data.get("skills")
         if isinstance(stored, dict):
             existing = {
-                str(d): {"hash": str(e.get("hash", "")), "skill_name": str(e.get("skill_name", ""))}
+                str(d): {
+                    "hash": str(e.get("hash", "")),
+                    "skill_name": str(e.get("skill_name", "")),
+                    # 保留来源技能 id（旧索引没有这个字段，读取时为 ""）
+                    "skill_id": str(e.get("skill_id", "")),
+                }
                 for d, e in stored.items()
                 if isinstance(e, dict)
             }
@@ -673,7 +709,13 @@ def _preseed_session_skills(
             logger.warning("[workspace] Pre-seed failed to copy skill %s: %s", skill_path, exc)
             continue
 
-        existing[dir_name] = {"hash": skill_hash, "skill_name": agent_name}
+        existing[dir_name] = {
+            "hash": skill_hash,
+            "skill_name": agent_name,
+            # 记录来源 id：清理被禁技能时要按 id 复核，否则"逐字节复制平台技能"的个人技能
+            # 会因为哈希相同被一起删掉（个人技能永不受限）。
+            "skill_id": os.path.basename(os.path.normpath(skill_path)),
+        }
         existing_hashes.add(skill_hash)
         existing_agent_names.add(agent_name)
         existing_dir_names.add(dir_name)

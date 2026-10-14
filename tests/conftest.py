@@ -322,28 +322,39 @@ class TestDataSnapshot:
     agent_ids: frozenset
     user_ids: frozenset
     model_ids: frozenset
+    role_ids: frozenset
 
 
 async def take_test_data_snapshot() -> TestDataSnapshot:
-    """记录当前 ai_agents / ai_agent_users / ai_models 的全部 id。"""
+    """记录当前 ai_agents / ai_agent_users / ai_models / ai_agent_roles 的全部 id。"""
     from app.models.agent import AIAgent
     from app.models.ai_model import AIModel
+    from app.models.permission import Role
     from app.models.user import User
 
     async with AsyncSessionLocal() as session:
         agent_ids = set((await session.execute(select(AIAgent.id))).scalars().all())
         user_ids = set((await session.execute(select(User.id))).scalars().all())
         model_ids = set((await session.execute(select(AIModel.id))).scalars().all())
+        role_ids = set((await session.execute(select(Role.id))).scalars().all())
     return TestDataSnapshot(
         agent_ids=frozenset(agent_ids),
         user_ids=frozenset(user_ids),
         model_ids=frozenset(model_ids),
+        role_ids=frozenset(role_ids),
     )
 
 
 _GUARD_STATE = sys.modules.setdefault(
     "_nanzi_test_data_guard_state",
-    {"hooked": False, "pending": [], "agents": set(), "users": set(), "models": set()},
+    {
+        "hooked": False,
+        "pending": [],
+        "agents": set(),
+        "users": set(),
+        "models": set(),
+        "roles": set(),
+    },
 )
 
 
@@ -393,6 +404,7 @@ def _install_row_tracker() -> None:
 
         from app.models.agent import AIAgent
         from app.models.ai_model import AIModel
+        from app.models.permission import Role
         from app.models.user import User
 
         for obj in pending:
@@ -403,6 +415,8 @@ def _install_row_tracker() -> None:
                 _GUARD_STATE["models"].add(pk)
             elif isinstance(obj, AIAgent):
                 _GUARD_STATE["agents"].add(pk)
+            elif isinstance(obj, Role):
+                _GUARD_STATE["roles"].add(int(pk))
             elif isinstance(obj, User):
                 _GUARD_STATE["users"].add(int(pk))
 
@@ -412,7 +426,7 @@ def _install_row_tracker() -> None:
 def _reset_tracked_rows() -> None:
     """丢弃 setup 阶段（如 seed）产生的记录，只留用例执行期间新建的行。"""
     _GUARD_STATE["pending"] = []
-    for key in ("agents", "users", "models"):
+    for key in ("agents", "users", "models", "roles"):
         _GUARD_STATE[key].clear()
 
 
@@ -426,9 +440,10 @@ async def purge_test_data_since(snapshot: TestDataSnapshot) -> dict:
     agent_ids = [i for i in _GUARD_STATE["agents"] if i not in snapshot.agent_ids]
     candidate_user_ids = [i for i in _GUARD_STATE["users"] if i not in snapshot.user_ids]
     model_ids = [i for i in _GUARD_STATE["models"] if i not in snapshot.model_ids]
+    candidate_role_ids = [i for i in _GUARD_STATE["roles"] if i not in snapshot.role_ids]
     _reset_tracked_rows()
 
-    stats = {"agents": 0, "users": 0, "models": 0}
+    stats = {"agents": 0, "users": 0, "models": 0, "roles": 0}
 
     async with AsyncSessionLocal() as session:
         if agent_ids:
@@ -454,6 +469,14 @@ async def purge_test_data_since(snapshot: TestDataSnapshot) -> dict:
                 r.id for r in rows if r.user_name not in TEST_DATA_KEEP_USER_NAMES
             ]
         if user_ids:
+            # 权限表以 user_id / role_id 为主体，而 ORM 刻意不映射 agent_id —— 智能体级限制
+            # 只能用原生 SQL 写，因此 before_flush 追踪看不到它们，主表删完就留下孤儿。
+            # 此前只清 ai_agent_user_role_relations，于是每跑一轮测试就往该表沉淀一批
+            # 指向已删账号/角色的行。
+            await session.execute(
+                _by_ids("DELETE FROM ai_agent_resource_permissions WHERE user_id IN :ids"),
+                {"ids": user_ids},
+            )
             await session.execute(
                 _by_ids("DELETE FROM ai_agent_user_role_relations WHERE user_id IN :ids"),
                 {"ids": user_ids},
@@ -462,6 +485,30 @@ async def purge_test_data_since(snapshot: TestDataSnapshot) -> dict:
                 _by_ids("DELETE FROM ai_agent_users WHERE id IN :ids"), {"ids": user_ids}
             )
             stats["users"] = result.rowcount or 0
+
+        # 角色：测试会用 _make_role 造角色来验证角色维度的智能体级限制。
+        # 快照内的既有角色一律不动（真实角色天然安全）。
+        if candidate_role_ids:
+            existing_role_ids = [
+                r.id
+                for r in (
+                    await session.execute(
+                        _by_ids("SELECT id FROM ai_agent_roles WHERE id IN :ids"),
+                        {"ids": candidate_role_ids},
+                    )
+                ).all()
+            ]
+            if existing_role_ids:
+                for sql in (
+                    "DELETE FROM ai_agent_resource_permissions WHERE role_id IN :ids",
+                    "DELETE FROM ai_agent_user_role_relations WHERE role_id IN :ids",
+                ):
+                    await session.execute(_by_ids(sql), {"ids": existing_role_ids})
+                result = await session.execute(
+                    _by_ids("DELETE FROM ai_agent_roles WHERE id IN :ids"),
+                    {"ids": existing_role_ids},
+                )
+                stats["roles"] = result.rowcount or 0
 
         # 模型：测试会批量造 provider/thinking/token-limit 之类的探针模型，
         # 不清就会像智能体中心一样把「模型管理」页塞满（历史上积到 944 条）。

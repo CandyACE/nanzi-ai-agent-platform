@@ -29,6 +29,11 @@ class PermissionSet(BaseModel):
     def normalize_forbidden_policy_entries(cls, value):
         if value is None:
             return []
+        # 非数组载荷必须拒绝，不能"尽力而为"地迭代：字符串会被按**字符**拆开，
+        # "exec_command" 变成九条单字符规则，接口仍返回 200，而原有禁用规则已被覆盖清空。
+        # 长度上限是在循环内校验的，单字符永远不触发，所以下面那道防线也拦不住这种载荷。
+        if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple, set)):
+            raise ValueError("禁用项必须是字符串数组，收到的是 " + type(value).__name__)
         normalized = []
         seen = set()
         for raw_entry in value:

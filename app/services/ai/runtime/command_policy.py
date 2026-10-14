@@ -37,13 +37,22 @@ SHELL_TOOL_NAMES = frozenset(
         "run_command",
         "command",
         "terminal",
+        # 平台自己的系统命令工具：名字不含 bash/sh/exec，此前完全不在判定里，
+        # 于是它携带的命令不过黑名单——而它恰恰是最直接的一条 shell 通道。
+        "execute_system_command",
     }
 )
 
 # MCP 工具名形态是 ``mcp_<可读名>_<hash>``（模型侧名字由 build_model_tool_name 生成）。
 # 只按"含 shell 语义的词"放宽，而不是所有 mcp_* 都当 shell——否则 jira/postgres 这类
 # 带 query 参数的 MCP 工具会被无谓地拉进命令匹配。
-MCP_SHELL_MARKERS = ("bash", "shell", "exec")
+#
+# 但 marker 必须覆盖 SHELL_TOOL_NAMES 的**全部语义**，否则同一个工具"直连时被拦、走 MCP
+# 就放行"。此前只有 bash/shell/exec，于是叫 run_command / terminal / command 的自建 MCP
+# 工具（terminal、ssh 类很常见）掉出 shell 判定，其携带的命令完全不过命令黑名单——
+# 这正是命令禁用最想防的绕过路径。"command" 一并覆盖 run_command/exec_command/
+# execute_command；"sh" 刻意不列（作为子串会误伤 push/share 之类）。
+MCP_SHELL_MARKERS = ("bash", "shell", "exec", "command", "terminal")
 
 
 class CommandPolicyUnavailable(RuntimeError):

@@ -141,6 +141,52 @@ _BUILTIN_FORBIDDEN_TOOL_SPECS: tuple[tuple[str, str, str, str, str | None], ...]
 )
 
 
+# ── 内置工具中文描述 ─────────────────────────────────────────────────────────
+# 候选目录（上面的 specs）只收"执行与沙箱数据访问"类工具，但智能体的绑定集合里还有一大
+# 批普通内置工具（文件、进程、检索、子代理、文档…）。这些工具同样可以在智能体层面被限定，
+# 而候选清单的副标题取自这里——不补的话界面上只显示裸英文 id，管理员得靠猜。
+#
+# 描述按"做什么 + 影响面"写，不复述工具名。新增内置工具时同步补一条；缺失不影响功能，
+# 只是退回显示 id（build_restrictable_resources 用 .get(name, "")）。
+BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
+    # 命令与进程
+    "execute_system_command": "执行系统命令（等价于 shell 直连，受命令黑名单约束）",
+    "manage_system_process": "查看或终止系统进程",
+    # 沙箱文件
+    "read_local_file": "读取本地文件内容",
+    "write_local_file": "写入或覆盖本地文件",
+    "read_image": "读取图片并交给模型识别",
+    # 网络与抓取
+    "system_http_request": "发起系统级 HTTP 请求（可带鉴权头）",
+    "fetch_static_web_url": "抓取静态网页正文",
+    "web_renderer_and_snapshot": "渲染网页并生成截图快照",
+    "web_search_baidu": "百度网页搜索",
+    "web_search_baidu_http": "百度网页搜索（HTTP 直连）",
+    "web_search_bing_http": "Bing 网页搜索（HTTP 直连）",
+    "search_github_repos": "检索 GitHub 仓库与代码",
+    # 知识与数据
+    "search_knowledge_base": "检索平台知识库文档",
+    "get_dataset_schema": "获取数据集（数据库）表结构",
+    "execute_sql_query": "对已授权数据集执行只读 SQL 查询",
+    "get_room_list": "获取会议室/场地列表",
+    # 子代理
+    "sub_agent_call": "调用单个子代理并等待结果",
+    "sub_agent_batch_call": "批量调用子代理",
+    # 文档与看板
+    "word_document_read": "读取 Word 文档内容",
+    "word_document_write": "生成或修改 Word 文档",
+    "update_dashboard_context": "更新看板/仪表盘上下文",
+}
+
+
+def builtin_tool_description(tool_id: Any) -> str:
+    """内置工具中文描述；候选目录里的条目优先（它们已有更精确的文案）。"""
+    normalized = str(tool_id or "").strip()
+    if not normalized:
+        return ""
+    return BUILTIN_TOOL_DESCRIPTIONS.get(normalized, "")
+
+
 def _aliases_for(spec_id: str, alias_target: str | None) -> tuple[str, ...]:
     """规范 id 恒排首位，其余同组别名按字母序，保证输出稳定可测。"""
     if alias_target is None:
