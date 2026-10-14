@@ -663,7 +663,7 @@ def test_docker_file_tool_mount_mapping_has_public_docs_before_user_root(
         lambda: str(backend_skills),
     )
 
-    mappings = workspace_module._build_docker_file_tool_mount_mappings(
+    mappings = workspace_module._build_sandbox_file_tool_mount_mappings(
         str(tmp_path / "user")
     )
 
@@ -692,7 +692,7 @@ def test_docker_file_tool_mount_mapping_marks_unmounted_children_container_only(
         lambda: None,
     )
 
-    mappings = workspace_module._build_docker_file_tool_mount_mappings(
+    mappings = workspace_module._build_sandbox_file_tool_mount_mappings(
         str(tmp_path / "user"),
         public_docs_mounted=False,
     )
@@ -713,7 +713,7 @@ def test_personal_skills_sandbox_path_maps_back_to_the_workspace_source(tmp_path
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
     host_workdir = tmp_path / "alice__1"
-    mappings = workspace_module._build_docker_file_tool_mount_mappings(str(host_workdir))
+    mappings = workspace_module._build_sandbox_file_tool_mount_mappings(str(host_workdir))
 
     resolved = workspace_module._map_docker_workspace_path(
         "/workspace/personal-skills/network-connectivity-checker/check_connectivity.sh",
@@ -734,7 +734,7 @@ def test_runtime_skills_sandbox_path_stays_container_only(tmp_path):
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
     host_workdir = tmp_path / "alice__1"
-    mappings = workspace_module._build_docker_file_tool_mount_mappings(str(host_workdir))
+    mappings = workspace_module._build_sandbox_file_tool_mount_mappings(str(host_workdir))
 
     with pytest.raises(ValueError, match="container-only"):
         workspace_module._map_docker_workspace_path(
@@ -831,7 +831,7 @@ def test_stale_sandbox_skill_seed_is_invalidated_when_public_skills_change(
         host_workdir
         / "sandbox"
         / "skills"
-        / workspace_module.DOCKER_SANDBOX_SKILL_SEED_NAME
+        / workspace_module.SANDBOX_SKILL_SEED_DIR_NAME
     )
     (seed_dir / "alpha").mkdir(parents=True)
     (seed_dir / "alpha" / "SKILL.md").write_text("old", encoding="utf-8")
@@ -905,7 +905,7 @@ def test_partition_sync_refreshes_public_skills_and_keeps_agent_own_skills(
 
     host_workdir = tmp_path / "alice__1"
     skills_dir = host_workdir / "sandbox" / "skills"
-    seed_dir = skills_dir / workspace_module.DOCKER_SANDBOX_SKILL_SEED_NAME
+    seed_dir = skills_dir / workspace_module.SANDBOX_SKILL_SEED_DIR_NAME
     partition = skills_dir / "default"
     # 新 seed 只有 alpha（beta 已被禁用/移出，不在包里）
     (seed_dir / "alpha").mkdir(parents=True)
@@ -1107,7 +1107,7 @@ async def test_bound_docker_file_tool_maps_public_docs_to_backend_path(
 
     class FakeDockerSandbox:
         _platform_sandbox_policy = "docker"
-        _platform_docker_file_tool_mount_mappings = [
+        _platform_sandbox_file_tool_mount_mappings = [
             ("/workspace/public/docs", str(public_root), "ro"),
             ("/workspace", str(own_root), "rw"),
         ]
@@ -1765,7 +1765,7 @@ def test_docker_workspace_mount_layout_mounts_personal_skills_read_only(tmp_path
         str(public_docs_source),
     )
 
-    assert workspace_module._docker_sandbox_skills_dir(str(host_workdir)) == str(
+    assert workspace_module._sandbox_skills_dir(str(host_workdir)) == str(
         host_workdir / "sandbox" / "skills"
     )
     assert workspace_module._personal_skills_dir(str(host_workdir)) == str(

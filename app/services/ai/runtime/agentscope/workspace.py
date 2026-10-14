@@ -564,7 +564,7 @@ def _session_skill_seed_dir(workdir: str) -> str:
     ``_migrate_skill_layout``，它每次 ``initialize()`` 把平铺搬进 ``.seed`` 的同时还会吃掉
     平台的账本，两边来回打架。seed 非空时 ``_setup_skills`` 直接跳过、迁移也无事可做。
     """
-    return os.path.join(workdir, "skills", DOCKER_SANDBOX_SKILL_SEED_NAME)
+    return os.path.join(workdir, "skills", SANDBOX_SKILL_SEED_DIR_NAME)
 
 
 def _session_skills_ledger_path(workdir: str) -> str:
@@ -965,7 +965,7 @@ def _personal_skills_dir(host_workdir: str) -> str:
     return os.path.join(os.path.abspath(host_workdir), "skills")
 
 
-def _docker_sandbox_skills_dir(host_workdir: str) -> str:
+def _sandbox_skills_dir(host_workdir: str) -> str:
     """Return the Docker-only materialized skills directory.
 
     This directory intentionally contains the merged public + personal skill
@@ -1000,7 +1000,7 @@ def _build_docker_workspace_mounts(
     mounts = [
         (os.path.abspath(host_workdir), DOCKER_WORKSPACE_LOGICAL_ROOT, "rw"),
         (
-            _docker_sandbox_skills_dir(host_workdir),
+            _sandbox_skills_dir(host_workdir),
             DOCKER_WORKSPACE_SKILLS_PATH,
             "rw",
         ),
@@ -1021,7 +1021,7 @@ def _build_docker_workspace_mounts(
     return mounts
 
 
-def _build_docker_file_tool_mount_mappings(
+def _build_sandbox_file_tool_mount_mappings(
     backend_workspace_root: str,
     *,
     public_docs_mounted: bool = True,
@@ -1061,7 +1061,7 @@ def _build_docker_file_tool_mount_mappings(
 #: AgentScope 的 seed 模板目录名（对应其 ``SKILL_SEED_DIR``）。内容是
 #: ``_setup_skills`` 一次性打包出来的技能副本；平台靠下面的指纹比对在公共技能
 #: 变更后主动作废它，让下一次 initialize() 重新打包。
-DOCKER_SANDBOX_SKILL_SEED_NAME = ".seed"
+SANDBOX_SKILL_SEED_DIR_NAME = ".seed"
 #: 会话技能快照的平台账本（``<workdir>/.session_skills.json``）。刻意放在会话根而不是
 #: ``skills/`` 里：AgentScope 会把 ``skills/`` 下的非目录条目当成技能条目处理
 #: （``.skills`` 就曾被它的迁移逻辑吃掉），账本放在外面才不会被误动。
@@ -1183,7 +1183,7 @@ def _invalidate_stale_sandbox_skill_seed(host_workdir: str) -> tuple[bool, str |
         return False, fingerprint
 
     seed_dir = os.path.join(
-        _docker_sandbox_skills_dir(host_workdir), DOCKER_SANDBOX_SKILL_SEED_NAME
+        _sandbox_skills_dir(host_workdir), SANDBOX_SKILL_SEED_DIR_NAME
     )
     if os.path.isdir(seed_dir):
         shutil.rmtree(seed_dir, ignore_errors=True)
@@ -1202,8 +1202,8 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
     的公共技能目录（同时清掉已删除/已禁用技能的残留），再从新 seed 复制一份；分区里
     其它条目属于 agent 自建技能，原样保留。
     """
-    skills_dir = _docker_sandbox_skills_dir(host_workdir)
-    seed_dir = os.path.join(skills_dir, DOCKER_SANDBOX_SKILL_SEED_NAME)
+    skills_dir = _sandbox_skills_dir(host_workdir)
+    seed_dir = os.path.join(skills_dir, SANDBOX_SKILL_SEED_DIR_NAME)
     if not os.path.isdir(seed_dir):
         return 0
     public_names = _public_skill_directory_names()
@@ -1216,7 +1216,7 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
     except OSError:
         return 0
     for entry in partitions:
-        if entry == DOCKER_SANDBOX_SKILL_SEED_NAME or entry.startswith("."):
+        if entry == SANDBOX_SKILL_SEED_DIR_NAME or entry.startswith("."):
             continue
         partition = os.path.join(skills_dir, entry)
         if not os.path.isdir(partition):
@@ -1282,7 +1282,7 @@ def _commit_sandbox_skills_fingerprint(
     if not fingerprint:
         return
     seed_dir = os.path.join(
-        _docker_sandbox_skills_dir(host_workdir), DOCKER_SANDBOX_SKILL_SEED_NAME
+        _sandbox_skills_dir(host_workdir), SANDBOX_SKILL_SEED_DIR_NAME
     )
     try:
         if not os.path.isdir(seed_dir) or not os.listdir(seed_dir):
@@ -1369,7 +1369,7 @@ async def _policy_docker_workspace(
     seed_invalidated = False
     skills_fingerprint: str | None = None
     if host_workdir:
-        os.makedirs(_docker_sandbox_skills_dir(host_workdir), exist_ok=True)
+        os.makedirs(_sandbox_skills_dir(host_workdir), exist_ok=True)
         # 个人技能源目录也要存在：它以只读 bind mount 挂进沙箱（/workspace/personal-skills），
         # 源目录缺失时 Docker 会直接创建空目录（root 属主），反而更难排查。
         os.makedirs(_personal_skills_dir(host_workdir), exist_ok=True)
@@ -1434,7 +1434,7 @@ async def _policy_docker_workspace(
             _commit_sandbox_skills_fingerprint(host_workdir, skills_fingerprint)
         workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
         workspace._platform_execution_backend = SANDBOX_POLICY_DOCKER
-        workspace._platform_docker_public_docs_mounted = public_docs_source is not None
+        workspace._platform_sandbox_public_docs_mounted = public_docs_source is not None
         workspace._platform_workspace_id = workspace_id or getattr(
             workspace, "workspace_id", None
         )
@@ -2202,6 +2202,27 @@ async def _policy_k8s_workspace(
     if effective_workspace_id:
         kwargs["workspace_id"] = effective_workspace_id
 
+    # 技能治理与 Docker 策略对齐：K8s 下宿主用户工作区经 subPath 挂进沙箱
+    # （agent_workspaces/<key> → /workspace），技能根同样落在
+    # <host_workdir>/sandbox/skills，因此可以直接复用同一套指纹失效 / seed 重建 /
+    # 分区同步逻辑，不必为 K8s 另写一份（此前 K8s 分支完全没有这段治理）。
+    k8s_host_workdir = (
+        os.path.join(os.path.abspath(workspace_root), sandbox_user_key)
+        if workspace_root and sandbox_user_key
+        else None
+    )
+    seed_invalidated = False
+    skills_fingerprint: str | None = None
+    if k8s_host_workdir:
+        os.makedirs(_sandbox_skills_dir(k8s_host_workdir), exist_ok=True)
+        # 个人技能源目录也要存在：它以只读 subPath 挂进沙箱
+        # （/workspace/personal-skills），源目录缺失时挂载会失败。
+        os.makedirs(_personal_skills_dir(k8s_host_workdir), exist_ok=True)
+        # 公共技能库变了就作废上一次的 seed 模板，让 initialize() 重新打包。
+        seed_invalidated, skills_fingerprint = _invalidate_stale_sandbox_skill_seed(
+            k8s_host_workdir
+        )
+
     workspace = build_k8s_workspace_with_nanzi_adapter(
         K8sWorkspace,
         existing_pvc=existing_pvc,
@@ -2218,6 +2239,17 @@ async def _policy_k8s_workspace(
 
     workspace._platform_sandbox_policy = SANDBOX_POLICY_K8S
     workspace._platform_execution_backend = SANDBOX_POLICY_K8S
+    # K8s 适配器固定挂载公共文档（subPath docs → /workspace/public/docs），与 Docker
+    # 的 _platform_sandbox_public_docs_mounted 语义一致，供目录清单与文件工具挂载
+    # 映射共同判断。
+    workspace._platform_sandbox_public_docs_mounted = True
+    if k8s_host_workdir:
+        # 顺序与 Docker 一致：initialize() 里 AgentScope 已按最新 skill_paths 重新
+        # 打包 seed，先确认 seed 真的非空，再同步分区并记录指纹，否则打包失败会被
+        # 当成「已是最新」而永久跳过。
+        if seed_invalidated:
+            _sync_public_skills_into_sandbox_partitions(k8s_host_workdir)
+        _commit_sandbox_skills_fingerprint(k8s_host_workdir, skills_fingerprint)
     return workspace
 
 
@@ -2370,14 +2402,17 @@ class LazySandboxWorkspaceProxy:
                 self._sandbox_cache_key = s_key
 
                 # 挂载配置
-                if self.policy == SANDBOX_POLICY_DOCKER and self.local_ws is not None:
+                if (
+                    self.policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
+                    and self.local_ws is not None
+                ):
                     user_root = getattr(self.local_ws, "workspace_user_root", None)
                     if user_root:
-                        ws._platform_docker_file_tool_mount_mappings = (
-                            _build_docker_file_tool_mount_mappings(
+                        ws._platform_sandbox_file_tool_mount_mappings = (
+                            _build_sandbox_file_tool_mount_mappings(
                                 user_root,
                                 public_docs_mounted=bool(
-                                    getattr(ws, "_platform_docker_public_docs_mounted", False)
+                                    getattr(ws, "_platform_sandbox_public_docs_mounted", False)
                                 ),
                             )
                         )
@@ -2643,16 +2678,16 @@ async def get_local_workspace(
             workdir=workdir,
             skill_paths=skill_paths,
         )
-        if policy == SANDBOX_POLICY_DOCKER and sandbox_user_key:
+        if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and sandbox_user_key:
             local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
             if sandbox_ws is not None and not isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
-                sandbox_ws._platform_docker_file_tool_mount_mappings = (
-                    _build_docker_file_tool_mount_mappings(
+                sandbox_ws._platform_sandbox_file_tool_mount_mappings = (
+                    _build_sandbox_file_tool_mount_mappings(
                         local_ws.workspace_user_root,
                         public_docs_mounted=bool(
                             getattr(
                                 sandbox_ws,
-                                "_platform_docker_public_docs_mounted",
+                                "_platform_sandbox_public_docs_mounted",
                                 False,
                             )
                         ),
@@ -3917,28 +3952,30 @@ async def append_session_workspace_sandbox_to_system_prompt(
     except Exception as exc:  # pragma: no cover - infrastructure fallback
         logger.warning("[workspace] Failed to resolve sandbox policy for prompt: %s", exc)
         effective_policy = SANDBOX_POLICY_LOCAL
-    docker_logical_root = (
+    # Docker 与 K8s 沙箱内 Bash 都使用 /workspace 逻辑路径（两者技能布局已对齐，
+    # 见 _policy_k8s_workspace），因此按「是否沙箱策略」给出逻辑根。
+    sandbox_logical_root = (
         DOCKER_WORKSPACE_LOGICAL_ROOT
-        if effective_policy == SANDBOX_POLICY_DOCKER
+        if effective_policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
         else None
     )
     logical_session_workdir = None
     logical_docs_dir = None
     logical_public_docs_dir = None
-    if docker_logical_root:
+    if sandbox_logical_root:
         logical_session_workdir = os.path.join(
-            docker_logical_root,
+            sandbox_logical_root,
             USER_SESSIONS_DIR_NAME,
             os.path.basename(session_workdir),
         )
-        logical_docs_dir = os.path.join(docker_logical_root, USER_DOCS_DIR_NAME)
+        logical_docs_dir = os.path.join(sandbox_logical_root, USER_DOCS_DIR_NAME)
         if _resolve_docker_public_docs_source() is not None:
             logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
     block = AgentServicePrompts.session_workspace_sandbox_block(
         session_workdir=session_workdir,
         docs_dir=docs_dir,
         file_tool_names=sorted(file_tools),
-        logical_workspace_root=docker_logical_root,
+        logical_workspace_root=sandbox_logical_root,
         logical_session_workdir=logical_session_workdir,
         logical_docs_dir=logical_docs_dir,
         logical_public_docs_dir=logical_public_docs_dir,
@@ -5031,7 +5068,7 @@ async def bind_configured_tools_to_workspace(
     ):
         docker_host_root = getattr(local_ws, "workspace_user_root", None)
     docker_file_tool_mount_mappings = (
-        getattr(sandbox_ws, "_platform_docker_file_tool_mount_mappings", None)
+        getattr(sandbox_ws, "_platform_sandbox_file_tool_mount_mappings", None)
         if sandbox_ws is not None
         else None
     )

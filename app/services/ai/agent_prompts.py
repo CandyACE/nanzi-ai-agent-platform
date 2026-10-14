@@ -1044,12 +1044,12 @@ class AgentServicePrompts:
         visible_session_workdir = session_workdir
         visible_docs_dir = docs_dir
         logical_root_text = (
-            f"- **Bash 沙箱工作区**：`{logical_workspace_root}`（Docker 模式下仅 Bash 使用此容器路径；宿主机持久化路径由平台管理）\n"
+            f"- **Bash 沙箱工作区**：`{logical_workspace_root}`（沙箱模式下仅 Bash 使用此容器路径；宿主机持久化路径由平台管理）\n"
             if logical_workspace_root
             else ""
         )
-        docker_path_text = (
-            "- **Bash 使用沙箱路径**：Docker 模式下 Bash 使用 `/workspace/...` 路径；\n"
+        sandbox_path_text = (
+            "- **Bash 使用沙箱路径**：沙箱模式下 Bash 使用 `/workspace/...` 路径；\n"
             "- **Read/Write/Edit/Glob/Grep 使用文件工具路径**：这些工具在后端服务侧执行，优先使用目录清单中的 `paths.file_tools` 或用户工作区相对路径；\n"
             "- **路径转换规则**：共享用户工作区中的 `/workspace/docs/...`、`/workspace/sessions/...` 等路径可以由工具层转换后交给文件工具；不要将 `/tmp` 等容器专属路径交给 Read；\n"
             + (
@@ -1058,7 +1058,7 @@ class AgentServicePrompts:
                 + (
                     f"- **Bash 公共文档目录**：`{logical_public_docs_dir}`（只读）；文件工具对应后端 `data/docs` 路径。\n"
                     if logical_public_docs_dir
-                    else "- **Bash 公共文档目录**：当前 Docker 沙箱未挂载；请通过宿主侧 Read/Glob/Grep 读取。\n"
+                    else "- **Bash 公共文档目录**：当前沙箱未挂载；请通过宿主侧 Read/Glob/Grep 读取。\n"
                 )
                 if logical_session_workdir and logical_docs_dir
                 else ""
@@ -1066,24 +1066,24 @@ class AgentServicePrompts:
             if logical_workspace_root
             else ""
         )
-        docker_boundary_text = (
+        sandbox_boundary_text = (
             (
-                "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区、只读公共文档 `/workspace/public/docs`，以及只读个人技能目录 `/workspace/personal-skills`；"
+                "- **沙箱挂载边界（Docker/K8s 一致）**：Bash 只可访问当前用户工作区、只读公共文档 `/workspace/public/docs`，以及只读个人技能目录 `/workspace/personal-skills`；"
                 if logical_public_docs_dir
-                else "- **Docker 沙箱挂载边界**：Bash 当前只可访问用户工作区与只读个人技能目录 `/workspace/personal-skills`，公共 docs 未挂载；"
+                else "- **沙箱挂载边界（Docker/K8s 一致）**：Bash 当前只可访问用户工作区与只读个人技能目录 `/workspace/personal-skills`，公共 docs 未挂载；"
             )
             if logical_workspace_root
-            else "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区，以及只读公共文档 `/workspace/public/docs`；"
+            else "- **沙箱挂载边界**：Bash 只可访问当前用户工作区，以及只读公共文档 `/workspace/public/docs`；"
         )
         return (
             "[Session Workspace & Path Sandbox]\n"
             + logical_root_text
-            + docker_path_text
+            + sandbox_path_text
             + f"- **Bash 会话工作目录**：`{visible_session_workdir}`（本会话自动创建；Bash 的相对路径默认相对会话目录，会话过程临时文件、工具落盘优先放这里）\n"
             + "- **文件工具路径**：用户工作区根目录（文件工具的相对路径默认相对用户工作区根目录；优先使用目录清单中的 `paths.file_tools`）\n"
             + f"- **默认文档目录**：`{visible_docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{visible_docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
-            + docker_boundary_text
+            + sandbox_boundary_text
             + "平台 branding 与服务根目录帮助文档不挂载到沙箱，禁止递归扫描 `/app`，服务根目录文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`）。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的位置读取——公共技能用 `/workspace/skills` 下的副本（沿用 AgentScope 的 seed 布局，技能目录在其点开头的隐藏子目录 `.seed/` 下，用 Bash `ls -a /workspace/skills` 查看实际布局、不要假设固定子路径；按当前可用技能打包，技能变更后下次容器启动自动重建），个人技能源目录以只读方式挂载在 `/workspace/personal-skills`，个人技能自带的脚本可直接用 Bash 执行，无需先复制到会话目录。"
             " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"

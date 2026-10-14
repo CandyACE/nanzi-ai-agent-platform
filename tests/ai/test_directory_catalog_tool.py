@@ -334,3 +334,54 @@ def test_agent_prompts_directory_navigator_does_not_require_unbound_catalog_tool
 
     assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
     assert "list_accessible_directories" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_directories_k8s_sandbox_uses_docker_aligned_paths():
+    """K8s 沙箱的技能路径必须与 Docker 一致（方案 B：两条技能挂载对齐）。
+
+    历史问题：K8s 分支未挂载技能目录，且清单按 ``policy == docker`` 判定，导致
+    K8s 下给模型的是宿主绝对路径 ``/app/data/agent_workspaces/<key>/skills``——
+    该路径在 K8s 沙箱内并不存在（沙箱内是 ``/workspace/...``）。
+    """
+    mock_ctx = SimpleNamespace(
+        user_id=204,
+        is_admin=False,
+        conversation_id="conv-k8s",
+        user_dimensions={"user_name": "k8suser"},
+    )
+
+    with (
+        patch(
+            "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+            return_value=mock_ctx,
+        ),
+        patch(
+            "app.services.config_service.ConfigService.get",
+            AsyncMock(return_value="k8s"),
+        ),
+    ):
+        raw = await list_accessible_directories.ainvoke({})
+        data = json.loads(raw)
+
+        public_dirs = {
+            item["directory_name"]: item
+            for item in data["public_directories"]["directories"]
+        }
+        # 公共技能 = 沙箱内打包副本根（真实技能目录在其隐藏子目录 .seed/ 下）
+        assert public_dirs["skills"]["container_sandbox_path"] == "/workspace/skills"
+        assert public_dirs["skills"]["paths"]["bash"] == "/workspace/skills"
+        # 公共文档：K8s 适配器固定挂载 subPath docs（public_docs_mounted=True）
+        assert public_dirs["docs"]["container_sandbox_path"] == "/workspace/public/docs"
+        assert public_dirs["docs"]["paths"]["bash"] == "/workspace/public/docs"
+
+        subdirs = {
+            d["directory_name"]: d
+            for d in data["user_workspace"]["subdirectories"]
+        }
+        # 个人技能源：只读挂载，路径与 Docker 完全一致（不再是宿主绝对路径）
+        assert (
+            subdirs["skills"]["container_sandbox_path"]
+            == "/workspace/personal-skills"
+        )
+        assert subdirs["skills"]["paths"]["bash"] == "/workspace/personal-skills"

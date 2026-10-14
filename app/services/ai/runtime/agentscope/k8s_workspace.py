@@ -363,6 +363,13 @@ def _ensure_local_subpath_dirs(
                     abs_cand, "agent_workspaces", user_key
                 )
                 os.makedirs(user_workdir, exist_ok=True)
+                # subPath 目录必须在 kubelet 挂载前物理存在，否则 Pod 会卡在
+                # ContainerCreating（MountVolume.SetUp failed）。这两条与沙箱的
+                # 技能 volumeMounts 一一对应：打包副本根 + 个人技能源。
+                os.makedirs(
+                    os.path.join(user_workdir, "sandbox", "skills"), exist_ok=True
+                )
+                os.makedirs(os.path.join(user_workdir, "skills"), exist_ok=True)
             docs_dir = os.path.join(abs_cand, "docs")
             os.makedirs(docs_dir, exist_ok=True)
             logger.debug(
@@ -539,6 +546,26 @@ def build_k8s_workspace_with_nanzi_adapter(
                     name="shared-data",
                     mount_path=POD_WORKDIR,
                     sub_path=user_subpath,
+                ),
+                # 与 Docker 沙箱对齐的两条技能挂载。AgentScope 的技能根固定是
+                # ``${workdir}/skills``（K8s 下 workdir == POD_WORKDIR），此前没有子挂载
+                # 时它会直接把技能模板 ``.seed`` 写进用户的个人技能源目录
+                # ``agent_workspaces/<key>/skills``：既污染源码目录，又丢掉「公共技能
+                # 打包副本」与「个人技能源」的隔离。补上这两条后，K8s 与 Docker 的
+                # 沙箱内路径语义完全一致：
+                #   /workspace/skills          = 打包副本（公共+个人，隐藏 .seed/）
+                #   /workspace/personal-skills = 个人技能源（只读、实时）
+                # 也让公共技能指纹失效、seed 重建、分区同步等治理逻辑可以直接复用。
+                k8s_client.V1VolumeMount(
+                    name="shared-data",
+                    mount_path=f"{POD_WORKDIR}/skills",
+                    sub_path=f"{user_subpath}/sandbox/skills",
+                ),
+                k8s_client.V1VolumeMount(
+                    name="shared-data",
+                    mount_path=f"{POD_WORKDIR}/personal-skills",
+                    sub_path=f"{user_subpath}/skills",
+                    read_only=True,
                 ),
             ]
 

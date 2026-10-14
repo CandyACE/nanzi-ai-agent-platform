@@ -268,9 +268,22 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
 
     # 校验 subPath 挂载整个用户工作区（与 Docker 对齐），而非 sandbox 子目录
     mounts = container.volume_mounts
-    assert len(mounts) == 2
+    assert len(mounts) == 4
     user_mount = next(m for m in mounts if m.mount_path == "/workspace")
     assert user_mount.sub_path == "agent_workspaces/u_test_123"
+
+    # 技能两条挂载必须与 Docker 沙箱路径语义完全一致：否则 AgentScope 的技能根
+    # （${workdir}/skills）会落在个人技能源目录上，把模板 .seed 写进用户源码目录，
+    # 同时丢掉「公共技能打包副本」与「个人技能源」的隔离。
+    skills_mount = next(m for m in mounts if m.mount_path == "/workspace/skills")
+    assert skills_mount.sub_path == "agent_workspaces/u_test_123/sandbox/skills"
+    assert skills_mount.read_only is not True
+
+    personal_skills_mount = next(
+        m for m in mounts if m.mount_path == "/workspace/personal-skills"
+    )
+    assert personal_skills_mount.sub_path == "agent_workspaces/u_test_123/skills"
+    assert personal_skills_mount.read_only is True
 
     docs_mount = next(m for m in mounts if m.sub_path == "docs")
     assert docs_mount.mount_path == "/workspace/public/docs"
@@ -281,6 +294,10 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
         str(tmp_path), "agent_workspaces", "u_test_123"
     )
     assert os.path.isdir(precreated_user_workdir)
+    # 技能两条 subPath 目录必须在 kubelet 挂载前物理存在，否则 Pod 会卡在
+    # ContainerCreating（MountVolume.SetUp failed）
+    assert os.path.isdir(os.path.join(precreated_user_workdir, "sandbox", "skills"))
+    assert os.path.isdir(os.path.join(precreated_user_workdir, "skills"))
 
     # 校验 resources 自动补齐 requests
     assert container.resources is not None
@@ -1424,3 +1441,81 @@ async def test_k8s_workspace_status_best_effort_terminating_reports_stopping(mon
     assert result["status"] == "stopping"
     assert result["running"] is False
     assert result["pod_name"] == "as-ws-alice--1"
+
+
+@pytest.mark.asyncio
+async def test_policy_k8s_workspace_reuses_sandbox_skill_governance(monkeypatch, tmp_path):
+    """K8s 分支必须复用与 Docker 相同的技能治理。
+
+    历史问题：K8s 分支完全没有这段治理——公共技能变更后沙箱内 ``.seed`` 永不刷新，
+    且因为缺少 ``sandbox/skills`` 子挂载，AgentScope 的技能根会直接落在个人技能源目录上。
+    这里同时钉住三件事：两个技能目录被预建（subPath 挂载前提）、公共技能变更后 seed 被
+    作废、initialize 后同步分区并提交指纹。
+    """
+    from app.services.ai.runtime.agentscope import workspace as ws_mod
+    from app.services.ai.runtime.agentscope.workspace import (
+        _personal_skills_dir,
+        _policy_k8s_workspace,
+        _sandbox_skills_dir,
+        SANDBOX_POLICY_K8S,
+    )
+
+    async def fake_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    # workspace_root 的语义是「用户工作区根」，即 <data>/agent_workspaces
+    # （与 Docker 侧 _resolve_docker_sandbox_host_workdir 传入的 root 一致）。
+    workspace_root = tmp_path / "agent_workspaces"
+    # 造出"沙箱技能目录已有旧 seed、但没有任何指纹记录"的初始状态
+    host_workdir = workspace_root / "test_user__1"
+    stale_skill = host_workdir / "sandbox" / "skills" / ".seed" / "alpha"
+    stale_skill.mkdir(parents=True)
+    (stale_skill / "SKILL.md").write_text("---\nname: alpha\n---\n", encoding="utf-8")
+
+    sync_calls: list[str] = []
+    monkeypatch.setattr(
+        ws_mod,
+        "_sync_public_skills_into_sandbox_partitions",
+        lambda host: sync_calls.append(host) or 0,
+    )
+
+    seed_state_before_initialize: list[bool] = []
+
+    mock_ws = MagicMock()
+
+    async def fake_initialize():
+        # 记录 initialize 之前 .seed 是否已被作废；随后模拟 AgentScope 按最新
+        # skill_paths 重新打包 seed（真实 initialize 的行为，指纹提交依赖它非空）
+        seed_state_before_initialize.append(
+            (host_workdir / "sandbox" / "skills" / ".seed").exists()
+        )
+        rebuilt = host_workdir / "sandbox" / "skills" / ".seed" / "alpha"
+        rebuilt.mkdir(parents=True, exist_ok=True)
+        (rebuilt / "SKILL.md").write_text(
+            "---\nname: alpha\n---\n", encoding="utf-8"
+        )
+
+    mock_ws.initialize = AsyncMock(side_effect=fake_initialize)
+
+    with patch(
+        "app.services.ai.runtime.agentscope.k8s_workspace.build_k8s_workspace_with_nanzi_adapter",
+        return_value=mock_ws,
+    ):
+        ws = await _policy_k8s_workspace(
+            skill_paths=["/fake/skill"],
+            sandbox_user_key="test_user__1",
+            workspace_root=str(workspace_root),
+        )
+
+    # ① 两个技能目录都被预建：subPath 目录缺失会让 Pod 卡在 ContainerCreating
+    assert os.path.isdir(_sandbox_skills_dir(str(host_workdir)))
+    assert os.path.isdir(_personal_skills_dir(str(host_workdir)))
+    # ② 指纹缺失（等价于公共技能已变更）→ 旧 seed 在 initialize 之前就被作废
+    assert seed_state_before_initialize == [False]
+    # ③ initialize 之后同步既有分区，并提交指纹避免下一轮重复作废
+    assert sync_calls == [str(host_workdir)]
+    assert ws_mod._read_sandbox_skills_fingerprint(str(host_workdir))
+    assert ws._platform_sandbox_policy == SANDBOX_POLICY_K8S
+    assert ws._platform_sandbox_public_docs_mounted is True
