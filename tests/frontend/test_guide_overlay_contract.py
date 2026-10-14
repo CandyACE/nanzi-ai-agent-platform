@@ -150,34 +150,41 @@ def test_every_full_screen_overlay_sits_inside_a_teleport():
 # 与「是否挂在 body 下」是两件事，后者才是遮罩能不能铺满视口的决定因素。
 # --------------------------------------------------------------------------- #
 
-#: `fixed inset-0` 且带遮罩背景色的弹层容器（静态 class，动态 :class 不在此列）
+#: `fixed inset-0` 的全屏层容器（静态 class，动态 :class 不在此列）
 _MASKED_OVERLAY = re.compile(r'(?<!:)class="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*)"')
+#: 遮罩色只作参考，**不再**是判据：技能详情抽屉把蒙层写成内层
+#: `absolute inset-0 bg-black/30`，外层容器只有
+#: `fixed inset-0 z-[9950] overflow-hidden`，
+#: 于是"带遮罩色"这一条把它整条漏掉——第 4 次同类问题就出在这里。决定遮罩能否铺满的
+#: 是「是否挂在 body 下」，与颜色写在哪一层无关。
+#: 所以判据只看 `fixed inset-0` + z ≥ 100。
 _MASKED_BG = re.compile(r"bg-(?:black|gray-\d+|slate-\d+)")
 
 #: components/ 下尚未收敛的历史遗留（抽屉/面板内的弹层，层级依赖需单独评估）。
 #: 棘轮语义：只允许减少，不允许新增；修掉一处就把它从清单里删掉。
+#:
+#: 这份清单曾被虚报过两次，都是判据自身的毛病，记录在此以免重蹈：
+#:   1. 只认大写 `<Teleport`，而 Vue 两种写法都合法——chatbi/embed/knowledge 下
+#:      多个已经在 `<teleport>` 内的抽屉被误判成漏网，虚增 15 条；
+#:   2. 把 `v-if="isResizing"` + `cursor-col-resize` 的拖拽守护层当成遮罩——那是
+#:      拖拽时屏蔽 iframe/文本选择的透明拦截层，没有蒙层，不该 Teleport，虚增 6 条。
+#: 修正后真实存量 6 条。
 _PENDING_MASKED_OVERLAYS = {
-    "frontend/src/components/PortalNotificationBell.vue:370",
-    "frontend/src/components/PortalNotificationBell.vue:433",
-    "frontend/src/components/PortalNotificationBell.vue:489",
     "frontend/src/components/SessionTraceModal.vue:39",
     "frontend/src/components/ThirdPartyUserSyncDrawer.vue:4",
     "frontend/src/components/ThirdPartyUserSyncDrawer.vue:443",
-    "frontend/src/components/chatbi/DatasetCapabilityMenu.vue:552",
-    "frontend/src/components/chatbi/DatasetCapabilityMenu.vue:573",
     "frontend/src/components/data-portal/DataPortalReportCreateModal.vue:921",
     "frontend/src/components/data-portal/DataPortalReportCreateModal.vue:1288",
-    "frontend/src/components/embed/ChatCanvas.vue:1245",
-    "frontend/src/components/embed/MemoryBrowserDrawer.vue:511",
-    "frontend/src/components/embed/MemoryBrowserDrawer.vue:572",
-    "frontend/src/components/embed/MemoryBrowserDrawer.vue:591",
     "frontend/src/components/embed/WorkspaceDirectorySaveDialog.vue:114",
-    "frontend/src/components/knowledge/KnowledgePortalDrawer.vue:950",
 }
 
 
 def _unteleported_masked_overlays(paths):
-    """返回「带遮罩色的全屏弹层（z ≥ 100）但不在 Teleport 内」的 `文件:行号` 列表。"""
+    """返回「全屏层（`fixed inset-0` 且 z ≥ 100）但不在 Teleport 内」的 `文件:行号` 列表。
+
+    不要求自带遮罩色：技能详情抽屉把蒙层写在内层 `absolute inset-0 bg-black/30`，
+    外层容器是裸的，按颜色找会整条漏掉。
+    """
     offenders = []
     for path in sorted(paths):
         text = path.read_text(encoding="utf-8")
@@ -186,17 +193,24 @@ def _unteleported_masked_overlays(paths):
             z = re.search(r"\bz-\[?(\d+)\]?", cls)
             if not z or int(z.group(1)) < 100:
                 continue
-            if not _MASKED_BG.search(cls):
+            # 拖拽守护层：`v-if="isResizing"` + `cursor-col-resize` 的透明拦截层，
+            # 用于拖拽时屏蔽 iframe/文本选择，没有蒙层、不承担遮挡职责。
+            if "cursor-col-resize" in cls or "cursor-row-resize" in cls:
                 continue
             prefix = text[: match.start()]
-            if prefix.count("<Teleport") - prefix.count("</Teleport>") > 0:
+            # `Teleport` 与 `teleport` 都是合法写法，必须大小写不敏感地统计——
+            # 此前只认大写，把 chatbi/embed/knowledge 下 5 个已在 `<teleport>` 内的
+            # 抽屉误判成漏网（虚报了 5 处存量）。
+            if len(re.findall(r"<[Tt]eleport\b", prefix)) > len(
+                re.findall(r"</[Tt]eleport>", prefix)
+            ):
                 continue
             offenders.append(f"{path.relative_to(ROOT)}:{prefix.count(chr(10)) + 1}")
     return offenders
 
 
 def test_masked_dialog_overlays_in_views_are_teleported():
-    """views/ 下所有带遮罩色的全屏弹层都必须 Teleport 到 body。
+    """views/ 下所有全屏层都必须 Teleport 到 body。
 
     这些弹层直接渲染在 Dashboard 的 `<main>` 内，祖先链上只要出现 transform
     （页面过渡的 `.page-enter-from` 就是），遮罩就只盖得住内容区：

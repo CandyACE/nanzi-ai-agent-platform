@@ -9,6 +9,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import MarkdownIt from 'markdown-it'
 import { copyToClipboard } from '../utils/clipboard'
 import { useUser } from '../composables/useUser'
+import InputModal from '../components/InputModal.vue'
 import { isSkillEnabled } from '@/utils/skillEnabled'
 
 interface Skill {
@@ -754,14 +755,27 @@ const exportSkill = async (skillId: string, scope?: 'global' | 'personal') => {
  * 技能 chip 引用；后端会一并同步，并把未能同步的项放进 warnings——这里必须把 warnings
  * 展示出来，否则用户会以为一切正常。
  */
-const renameSkill = async (skillId: string, scope?: 'global' | 'personal') => {
-  const input = window.prompt(`把技能 ID「${skillId}」重命名为（仅字母/数字/下划线/连字符）：`, skillId)
-  if (input === null) return
-  const newSkillId = input.trim()
-  if (!newSkillId || newSkillId === skillId) return
-  const apiPrefix = resolveSkillApiPrefix(skillId, scope)
+const renameDialog = ref<{ skillId: string; scope: 'global' | 'personal'; draft: string } | null>(null)
+const renameSubmitting = ref(false)
+
+/** 打开重命名弹窗（用 InputModal 而非浏览器原生弹窗：原生弹窗阻塞主线程且无法跟主题一致）。 */
+const renameSkill = (skillId: string, scope?: 'global' | 'personal') => {
+  renameDialog.value = { skillId, scope: scope === 'personal' ? 'personal' : 'global', draft: skillId }
+}
+
+/** 提交重命名。ID 即目录名，同时被智能体白名单、发布谱系与会话挂载引用。 */
+const submitRename = async () => {
+  const target = renameDialog.value
+  if (!target || renameSubmitting.value) return
+  const newSkillId = target.draft.trim()
+  if (!newSkillId || newSkillId === target.skillId) {
+    renameDialog.value = null
+    return
+  }
+  renameSubmitting.value = true
   try {
-    const response = await axios.put(`${apiPrefix}/${skillId}/rename`, { new_skill_id: newSkillId })
+    const apiPrefix = resolveSkillApiPrefix(target.skillId, target.scope)
+    const response = await axios.put(`${apiPrefix}/${target.skillId}/rename`, { new_skill_id: newSkillId })
     const warnings: string[] = response.data?.data?.warnings || []
     showToast(
       warnings.length
@@ -769,12 +783,15 @@ const renameSkill = async (skillId: string, scope?: 'global' | 'personal') => {
         : `已重命名为 ${newSkillId}`,
       warnings.length ? 'error' : 'success',
     )
-    if (activeSkillId.value === skillId) {
+    if (activeSkillId.value === target.skillId) {
       showDrawer.value = false
     }
+    renameDialog.value = null
     await Promise.all([fetchSkills(), fetchPersonalSkills()])
   } catch (e: any) {
     showToast(e.response?.data?.detail || '重命名失败', 'error')
+  } finally {
+    renameSubmitting.value = false
   }
 }
 
@@ -2599,6 +2616,7 @@ onUnmounted(() => {
       </div>
     </Teleport>
 
+    <Teleport to="body">
     <!-- 详情大抽屉 Drawer (从右侧滑出) -->
     <div 
       v-if="showDrawer"
@@ -2891,6 +2909,7 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </Teleport>
   </div>
 
   <!-- 新建技能资产 Modal -->
@@ -3231,6 +3250,20 @@ onUnmounted(() => {
       </div>
     </div>
   </Teleport>
+
+  <!-- 重命名弹窗 -->
+  <InputModal
+    v-if="renameDialog"
+    :title="`重命名技能「${renameDialog.skillId}」`"
+    :message="'技能 ID 就是目录名，会一并同步智能体白名单、发布记录与会话挂载。'"
+    :model-value="renameDialog.draft"
+    :loading="renameSubmitting"
+    placeholder="仅允许字母、数字、下划线、连字符，长度 1-128"
+    hint="重命名后原 ID 立即失效；未能同步的引用会在完成后提示。"
+    @update:model-value="renameDialog.draft = $event"
+    @confirm="submitRename"
+    @cancel="renameDialog = null"
+  />
 
   <!-- 右键菜单 -->
   <div
