@@ -891,6 +891,234 @@ def _build_docker_file_tool_mount_mappings(
     ]
 
 
+#: AgentScope 的 seed 模板目录名（对应其 ``SKILL_SEED_DIR``）。内容是
+#: ``_setup_skills`` 一次性打包出来的技能副本；平台靠下面的指纹比对在公共技能
+#: 变更后主动作废它，让下一次 initialize() 重新打包。
+DOCKER_SANDBOX_SKILL_SEED_NAME = ".seed"
+#: 上一次打包 seed 时公共技能库的指纹，落在 ``<workdir>/sandbox/`` 下（不进
+#: skills 目录，避免被 AgentScope 当成技能条目）。
+DOCKER_SANDBOX_SKILLS_FINGERPRINT_NAME = ".public_skills_fingerprint"
+
+
+def _platform_public_skills_fingerprint() -> str | None:
+    """公共技能库的内容指纹；技能库不可用时返回 ``None``。
+
+    用「相对路径 + 大小 + mtime」而不是文件内容：技能包可能带几 MB 脚本与二进制资源，
+    而容器初始化是热路径，不值得全量读一遍——任何内容改动都会改 mtime。
+    """
+    from app.utils.fs_access import get_platform_skills_root
+
+    root = get_platform_skills_root()
+    if not root or not os.path.isdir(root):
+        return None
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            full = os.path.join(dirpath, name)
+            try:
+                stat = os.stat(full)
+            except OSError:
+                continue
+            rel = os.path.relpath(full, root)
+            digest.update(
+                f"{rel}|{stat.st_size}|{stat.st_mtime_ns}\n".encode("utf-8")
+            )
+    return digest.hexdigest()
+
+
+def _sandbox_skills_fingerprint_path(host_workdir: str) -> str:
+    return os.path.join(
+        host_workdir,
+        DOCKER_SANDBOX_DIR_NAME,
+        DOCKER_SANDBOX_SKILLS_FINGERPRINT_NAME,
+    )
+
+
+def _read_sandbox_skills_fingerprint(host_workdir: str) -> str | None:
+    try:
+        with open(
+            _sandbox_skills_fingerprint_path(host_workdir), "r", encoding="utf-8"
+        ) as handle:
+            value = handle.read().strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def _write_sandbox_skills_fingerprint(host_workdir: str, fingerprint: str) -> None:
+    path = _sandbox_skills_fingerprint_path(host_workdir)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(fingerprint)
+    except OSError as exc:  # noqa: BLE001
+        logger.warning("[workspace] Failed to record skills fingerprint: %s", exc)
+
+
+def _public_skill_directory_names() -> set[str]:
+    """公共技能在 ``.seed`` / 分区里可能出现的目录名。
+
+    AgentScope 用 SKILL.md frontmatter 的 ``name`` 作为技能目录名（可能是中文），
+    只按源目录 basename 匹配会漏掉，所以两者都收——用于把公共技能与 agent 自建
+    技能区分开，避免同步时误删后者。
+    """
+    from app.utils.fs_access import get_platform_skills_root
+    from app.utils.skill_metadata import parse_skill_frontmatter
+
+    root = get_platform_skills_root()
+    if not root or not os.path.isdir(root):
+        return set()
+    names: set[str] = set()
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError:
+        return names
+    for entry in entries:
+        if entry.startswith("."):
+            continue
+        skill_md = os.path.join(root, entry, "SKILL.md")
+        if not os.path.isfile(skill_md):
+            continue
+        names.add(entry)
+        try:
+            meta = parse_skill_frontmatter(entry, skill_md)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[workspace] Failed to parse %s: %s", skill_md, exc)
+            continue
+        name = str(meta.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def _invalidate_stale_sandbox_skill_seed(host_workdir: str) -> tuple[bool, str | None]:
+    """公共技能库变了就作废沙箱技能模板，返回 ``(是否已作废, 当前指纹)``。
+
+    AgentScope 的 ``_setup_skills`` 只在 ``skills/.seed`` 为空时打包一次，之后「假定
+    上一次运行或用户才是真相来源」永不刷新：新加的公共技能、改过的脚本、以及被删除
+    或被禁用的技能都不会反映到沙箱里。这里在容器初始化**之前**比对公共技能库指纹，
+    不一致就删掉 ``.seed``——随后的 ``initialize()`` 会按当前 ``skill_paths`` 重新打包，
+    顺带把被禁技能挡在包外。
+
+    指纹不存在（老部署首次升级）同样视为不一致，让历史快照一次性对齐。
+    """
+    fingerprint = _platform_public_skills_fingerprint()
+    if fingerprint is None:
+        return False, None
+    if _read_sandbox_skills_fingerprint(host_workdir) == fingerprint:
+        return False, fingerprint
+
+    seed_dir = os.path.join(
+        _docker_sandbox_skills_dir(host_workdir), DOCKER_SANDBOX_SKILL_SEED_NAME
+    )
+    if os.path.isdir(seed_dir):
+        shutil.rmtree(seed_dir, ignore_errors=True)
+    logger.info(
+        "[workspace] Sandbox skill seed invalidated for %s (public skills changed)",
+        host_workdir,
+    )
+    return True, fingerprint
+
+
+def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
+    """把重建后的 ``.seed`` 里的公共技能同步进已装备的分区，返回处理的条目数。
+
+    AgentScope 的分区只在首次出现时从 seed 复制一次（``isdir(partition)`` 即退出），
+    所以仅重建 seed 还不够：已有分区的 agent 仍会读到旧技能。这里逐个分区——删掉其中
+    的公共技能目录（同时清掉已删除/已禁用技能的残留），再从新 seed 复制一份；分区里
+    其它条目属于 agent 自建技能，原样保留。
+    """
+    skills_dir = _docker_sandbox_skills_dir(host_workdir)
+    seed_dir = os.path.join(skills_dir, DOCKER_SANDBOX_SKILL_SEED_NAME)
+    if not os.path.isdir(seed_dir):
+        return 0
+    public_names = _public_skill_directory_names()
+    if not public_names:
+        return 0
+
+    synced = 0
+    try:
+        partitions = sorted(os.listdir(skills_dir))
+    except OSError:
+        return 0
+    for entry in partitions:
+        if entry == DOCKER_SANDBOX_SKILL_SEED_NAME or entry.startswith("."):
+            continue
+        partition = os.path.join(skills_dir, entry)
+        if not os.path.isdir(partition):
+            continue
+        try:
+            present = sorted(os.listdir(partition))
+        except OSError:
+            continue
+        # 先清残留：公共技能里已经没有的（被删/被禁用）不再留在分区
+        for name in present:
+            if name not in public_names:
+                continue
+            if os.path.exists(os.path.join(seed_dir, name)):
+                continue
+            stale = os.path.join(partition, name)
+            if os.path.isdir(stale):
+                shutil.rmtree(stale, ignore_errors=True)
+            else:
+                try:
+                    os.remove(stale)
+                except OSError:
+                    continue
+            synced += 1
+        # 再从新 seed 覆盖公共技能
+        for name in sorted(os.listdir(seed_dir)):
+            if name not in public_names:
+                continue
+            source = os.path.join(seed_dir, name)
+            if not os.path.isdir(source):
+                continue
+            target = os.path.join(partition, name)
+            if os.path.isdir(target):
+                shutil.rmtree(target, ignore_errors=True)
+            elif os.path.exists(target):
+                try:
+                    os.remove(target)
+                except OSError:
+                    continue
+            try:
+                shutil.copytree(source, target, copy_function=_hardlink_or_copy2)
+            except OSError as exc:  # noqa: BLE001
+                logger.warning(
+                    "[workspace] Failed to sync skill %s into %s: %s",
+                    name,
+                    partition,
+                    exc,
+                )
+                continue
+            synced += 1
+    if synced:
+        logger.info(
+            "[workspace] Synced %d public skill entries into sandbox partitions under %s",
+            synced,
+            skills_dir,
+        )
+    return synced
+
+
+def _commit_sandbox_skills_fingerprint(
+    host_workdir: str, fingerprint: str | None
+) -> None:
+    """打包成功后才记录指纹，避免打包失败被当成「已是最新」而永久跳过刷新。"""
+    if not fingerprint:
+        return
+    seed_dir = os.path.join(
+        _docker_sandbox_skills_dir(host_workdir), DOCKER_SANDBOX_SKILL_SEED_NAME
+    )
+    try:
+        if not os.path.isdir(seed_dir) or not os.listdir(seed_dir):
+            return
+    except OSError:
+        return
+    _write_sandbox_skills_fingerprint(host_workdir, fingerprint)
+
+
 def _resolve_docker_host_data_path(service_path: str) -> str:
     """Map a platform-container data path to the Docker daemon's host path."""
     abs_path = os.path.abspath(service_path)
@@ -965,6 +1193,8 @@ async def _policy_docker_workspace(
 
     extra_bind_mounts: list[tuple[str, str, str]] = []
     public_docs_source: str | None = None
+    seed_invalidated = False
+    skills_fingerprint: str | None = None
     if host_workdir:
         os.makedirs(_docker_sandbox_skills_dir(host_workdir), exist_ok=True)
         # 个人技能源目录也要存在：它以只读 bind mount 挂进沙箱（/workspace/personal-skills），
@@ -973,6 +1203,11 @@ async def _policy_docker_workspace(
         os.makedirs(
             os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
             exist_ok=True,
+        )
+        # 公共技能库变了就作废上一次的 seed 模板，让 initialize() 重新打包
+        # （AgentScope 自己不刷新，见 _invalidate_stale_sandbox_skill_seed）。
+        seed_invalidated, skills_fingerprint = _invalidate_stale_sandbox_skill_seed(
+            host_workdir
         )
         public_docs_source = _resolve_docker_public_docs_source()
         extra_bind_mounts = _build_docker_workspace_mounts(
@@ -1017,6 +1252,13 @@ async def _policy_docker_workspace(
                 reason_code=reason_code,
             ) from exc
 
+        # initialize() 里 AgentScope 已按最新 skill_paths 重新打包 seed；这一步把
+        # 公共技能同步进（首次装备时就冻结的）既有分区，再记录指纹。顺序不能颠倒：
+        # 指纹要在 seed 真的非空之后才写，否则打包失败会被当成「已是最新」永久跳过。
+        if host_workdir:
+            if seed_invalidated:
+                _sync_public_skills_into_sandbox_partitions(host_workdir)
+            _commit_sandbox_skills_fingerprint(host_workdir, skills_fingerprint)
         workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
         workspace._platform_execution_backend = SANDBOX_POLICY_DOCKER
         workspace._platform_docker_public_docs_mounted = public_docs_source is not None

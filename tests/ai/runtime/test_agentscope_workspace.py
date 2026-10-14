@@ -743,6 +743,211 @@ def test_runtime_skills_sandbox_path_stays_container_only(tmp_path):
         )
 
 
+def _make_public_skill(root, dirname, *, name=None, body="v1"):
+    """造一个最小公共技能（带合规 frontmatter），用于指纹与同步用例。"""
+    skill_dir = root / dirname
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    front = f"name: {name}\n" if name else ""
+    (skill_dir / "SKILL.md").write_text(
+        f"---\n{front}description: demo\n---\nbody {body}\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+def test_public_skills_fingerprint_tracks_content_changes(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    first = workspace_module._platform_public_skills_fingerprint()
+    assert first
+    assert workspace_module._platform_public_skills_fingerprint() == first
+
+    # 同路径下内容变化（改 SKILL.md / 改脚本）也要被发现——这是最常见的更新形态
+    (public / "alpha" / "SKILL.md").write_text(
+        "---\ndescription: demo\n---\nbody v2 is longer\n",
+        encoding="utf-8",
+    )
+    changed = workspace_module._platform_public_skills_fingerprint()
+    assert changed != first
+
+    # 技能自带脚本的变化同样要触发失效：沙箱里执行的就是这些文件
+    scripts = public / "alpha" / "scripts"
+    scripts.mkdir()
+    (scripts / "run.sh").write_text("#!/bin/sh\necho v1\n", encoding="utf-8")
+    with_script = workspace_module._platform_public_skills_fingerprint()
+    assert with_script != changed
+
+    (scripts / "run.sh").write_text("#!/bin/sh\necho v2 longer\n", encoding="utf-8")
+    assert workspace_module._platform_public_skills_fingerprint() != with_script
+
+    _make_public_skill(public, "beta")
+    assert workspace_module._platform_public_skills_fingerprint() != with_script
+
+
+def test_public_skills_fingerprint_is_none_without_a_skills_root(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    monkeypatch.setattr("app.utils.fs_access.get_platform_skills_root", lambda: None)
+
+    assert workspace_module._platform_public_skills_fingerprint() is None
+
+
+def test_public_skill_directory_names_include_frontmatter_name(tmp_path, monkeypatch):
+    """AgentScope 按 frontmatter ``name`` 建目录，同步时不能只认源目录名。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "weather-query", name="天气查询与出行建议助手")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    names = workspace_module._public_skill_directory_names()
+
+    assert {"weather-query", "天气查询与出行建议助手"} <= names
+
+
+def test_stale_sandbox_skill_seed_is_invalidated_when_public_skills_change(
+    tmp_path, monkeypatch
+):
+    """公共技能库变了就作废 seed 模板，让下一次 initialize 重新打包。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    seed_dir = (
+        host_workdir
+        / "sandbox"
+        / "skills"
+        / workspace_module.DOCKER_SANDBOX_SKILL_SEED_NAME
+    )
+    (seed_dir / "alpha").mkdir(parents=True)
+    (seed_dir / "alpha" / "SKILL.md").write_text("old", encoding="utf-8")
+
+    # 没有指纹（老部署首次升级）同样算过期：历史快照一次性对齐当前技能库
+    invalidated, fingerprint = workspace_module._invalidate_stale_sandbox_skill_seed(
+        str(host_workdir)
+    )
+    assert invalidated is True
+    assert fingerprint == workspace_module._platform_public_skills_fingerprint()
+    assert not seed_dir.exists()
+
+    # 只有 seed 真的非空才记指纹
+    (seed_dir / "alpha").mkdir(parents=True)
+    (seed_dir / "alpha" / "SKILL.md").write_text("new", encoding="utf-8")
+    workspace_module._commit_sandbox_skills_fingerprint(str(host_workdir), fingerprint)
+    assert (
+        workspace_module._read_sandbox_skills_fingerprint(str(host_workdir))
+        == fingerprint
+    )
+
+    assert (
+        workspace_module._invalidate_stale_sandbox_skill_seed(str(host_workdir))[0]
+        is False
+    )
+    assert seed_dir.exists()
+
+    _make_public_skill(public, "beta", name="beta")
+    assert (
+        workspace_module._invalidate_stale_sandbox_skill_seed(str(host_workdir))[0]
+        is True
+    )
+    assert not seed_dir.exists()
+
+
+def test_seed_fingerprint_is_not_committed_when_the_seed_is_empty(
+    tmp_path, monkeypatch
+):
+    """打包失败（seed 不存在/为空）时不能记指纹，否则会被当成「已是最新」永久跳过。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    host_workdir.mkdir(parents=True)
+
+    workspace_module._commit_sandbox_skills_fingerprint(
+        str(host_workdir),
+        workspace_module._platform_public_skills_fingerprint(),
+    )
+
+    assert workspace_module._read_sandbox_skills_fingerprint(str(host_workdir)) is None
+
+
+def test_partition_sync_refreshes_public_skills_and_keeps_agent_own_skills(
+    tmp_path, monkeypatch
+):
+    """已装备的分区跟着新 seed 走：公共技能覆盖、被禁用的残留清掉、agent 自建技能保留。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    _make_public_skill(public, "beta", name="beta")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    skills_dir = host_workdir / "sandbox" / "skills"
+    seed_dir = skills_dir / workspace_module.DOCKER_SANDBOX_SKILL_SEED_NAME
+    partition = skills_dir / "default"
+    # 新 seed 只有 alpha（beta 已被禁用/移出，不在包里）
+    (seed_dir / "alpha").mkdir(parents=True)
+    (seed_dir / "alpha" / "SKILL.md").write_text("alpha v2", encoding="utf-8")
+    # 旧分区：alpha 旧副本 + beta 禁用残留 + agent 自建技能
+    for name in ("alpha", "beta", "agent-own-skill"):
+        (partition / name).mkdir(parents=True)
+        (partition / name / "SKILL.md").write_text("old", encoding="utf-8")
+
+    synced = workspace_module._sync_public_skills_into_sandbox_partitions(
+        str(host_workdir)
+    )
+
+    assert synced == 2  # alpha 覆盖 + beta 清理
+    assert sorted(item.name for item in partition.iterdir()) == [
+        "agent-own-skill",
+        "alpha",
+    ]
+    assert (partition / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "alpha v2"
+    assert (
+        partition / "agent-own-skill" / "SKILL.md"
+    ).read_text(encoding="utf-8") == "old"
+
+
+def test_partition_sync_is_a_noop_without_a_seed(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha", name="alpha")
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    host_workdir = tmp_path / "alice__1"
+    partition = host_workdir / "sandbox" / "skills" / "default"
+    partition.mkdir(parents=True)
+
+    assert (
+        workspace_module._sync_public_skills_into_sandbox_partitions(str(host_workdir))
+        == 0
+    )
+
+
 def test_docker_file_tool_mapping_allows_authorized_public_doc_symlink(tmp_path):
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 

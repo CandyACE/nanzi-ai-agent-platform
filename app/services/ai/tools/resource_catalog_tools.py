@@ -330,7 +330,8 @@ async def list_accessible_directories() -> str:
                 "directory_name": "skills",
                 # 两个 skills 路径必须分清：
                 #   - /workspace/skills 是运行时合并后的**公共技能副本**（AgentScope 的 .seed
-                #     一次性快照，不随技能新增/修改刷新），归 platform_global_skills 条目；
+                #     模板 + 各智能体分区，平台按公共技能库指纹在下次容器启动时自动重建），
+                #     归 platform_global_skills 条目；
                 #   - /workspace/personal-skills 是本用户**个人技能源目录**的只读挂载，实时
                 #     包含用户当前所有个人技能，技能自带脚本可以直接用 Bash 执行，
                 #     不需要先复制到会话目录。
@@ -485,8 +486,10 @@ async def list_accessible_directories() -> str:
                 "forbidden_skill_ids": sorted(forbidden_skill_ids),
                 "description": (
                     "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，"
-                    "Docker 模式下通过当前用户工作区内的 /workspace/skills 预置副本访问，"
-                    "不是直接挂载 /app/data/skills。"
+                    "Docker 模式下通过当前用户工作区内的 /workspace/skills 副本访问，"
+                    "不是直接挂载 /app/data/skills；该副本按当前可用技能打包，"
+                    "技能新增/修改/删除/禁用后会在下次容器启动时自动重建"
+                    "（正在运行的容器不会立即刷新）。"
                     + (
                         "其中 forbidden_skill_ids 里的技能已被管理员禁用，"
                         "其目录不可读取，禁止尝试读取或检索。"
@@ -592,7 +595,7 @@ async def list_accessible_directories() -> str:
                 )
                 + "未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
-                "7. 注意两份 skills 的区别：公共技能库的 /workspace/skills 是运行时预置快照（可能不含最新技能）；个人技能（category=user_personal_skills）源目录实时只读挂载（paths.bash，Docker 下为 /workspace/personal-skills），技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
+                "7. 注意两份 skills 的区别：公共技能库的 /workspace/skills 是按当前可用技能打包的副本（技能变更后会在下次容器启动时自动重建，运行中的容器不会立即刷新）；个人技能（category=user_personal_skills）源目录实时只读挂载（paths.bash，Docker 下为 /workspace/personal-skills），技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
             ],
         }
 
