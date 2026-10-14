@@ -1,4 +1,5 @@
 <template>
+  <Teleport to="body">
   <div
     v-if="visible"
     class="fixed inset-0 z-[9999] flex justify-end bg-gray-900/40 backdrop-blur-sm"
@@ -438,6 +439,7 @@
     </div>
 
     <!-- 功能说明弹层 -->
+    <Teleport to="body">
     <div
       v-if="showHelpModal"
       class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[10002] flex items-center justify-center p-4"
@@ -509,7 +511,9 @@
         </div>
       </div>
     </div>
+    </Teleport>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

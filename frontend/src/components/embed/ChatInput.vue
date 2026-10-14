@@ -862,6 +862,9 @@ const openDataPortalFromPlusMenu = () => {
 };
 
 import axios from "@/utils/axios";
+import { useToast } from '../../composables/useToast'
+
+const { showToast } = useToast()
 
 // 附件上传状态
 const uploadedFiles = ref<any[]>([]);
@@ -1744,14 +1747,14 @@ const removeFile = (index: number) => {
 const uploadSingleFile = async (file: File) => {
   if (isInteractionLocked.value) return;
   if (file.size > 20 * 1024 * 1024) {
-    alert("文件大小不能超过 20MB");
+    showToast("文件大小不能超过 20MB", "error");
     return;
   }
   const name = file.name;
   const ext = '.' + name.split('.').pop()?.toLowerCase();
   const forbiddenExts = ['.exe', '.bat', '.sh', '.cmd', '.msi', '.php', '.js', '.html'];
   if (forbiddenExts.includes(ext)) {
-    alert("暂不支持上传该类型的危险脚本文件");
+    showToast("暂不支持上传该类型的危险脚本文件", "warning");
     return;
   }
 
@@ -1768,7 +1771,7 @@ const uploadSingleFile = async (file: File) => {
     }
   } catch (error: any) {
     console.error("Upload error:", error);
-    alert(error.response?.data?.message || error.message || "上传文件时出错，请重试");
+    showToast(error.response?.data?.message || error.message || "上传文件时出错，请重试", "error");
   } finally {
     isUploading.value = false;
   }

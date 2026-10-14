@@ -109,6 +109,7 @@ watch(
 </script>
 
 <template>
+  <Teleport to="body">
   <div
     v-if="visible"
     class="fixed inset-0 z-[360] flex items-center justify-center bg-black/35 p-4"
@@ -169,4 +170,5 @@ watch(
       </div>
     </div>
   </div>
+  </Teleport>
 </template>

@@ -1379,8 +1379,6 @@
         @stop="stopGeneration"
         @toggle-shortcuts="toggleShortcuts"
         @open-command-manager="showAddModal = true"
-        @upload-image="handleImageUpload"
-        @edit-command="editCommand"
         @delete-command="confirmDeleteCommand"
         @switch-mode="handleSwitchMode"
         @switch-to-auto="switchToAuto"
@@ -6065,7 +6063,7 @@ const confirmDeleteGroup = async () => {
     await fetchHistory();
   } catch (e) {
     console.error("Failed to batch delete group history", e);
-    alert("批量删除失败，请稍后重试");
+    showToast("批量删除失败，请稍后重试", "error");
   } finally {
     showDeleteGroupModal.value = false;
     groupToDelete.value = null;
@@ -6439,12 +6437,6 @@ const closeTraceModal = () => {
     }, 100);
 };
 
-const handleImageUpload = () => {
-  alert("多模态图片上传功能开发中...");
-};
-const editCommand = (cmd: any) => {
-    alert(`编辑指令 [${cmd.label}] 功能开发中...`);
-};
 // Command Deletion State
 const showDeleteCommandModal = ref(false);
 const commandToDelete = ref<any>(null);

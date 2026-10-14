@@ -332,3 +332,112 @@ const customTitleChart = mergeChartDefaults({
 });
 assert.equal(customTitleChart.title.left, "right");
 
+// 回归：模型常用 legend.top = "bottom" 表达「图例放在底部」，ECharts 里它与 bottom: 0 等价，
+// 但带 top 的图例曾让 isBottomLegend 误判成顶部图例、不给 grid 留底部空间，图例直接盖住 X 轴刻度。
+const anchoredBottomLegend = mergeChartDefaults({
+  legend: { top: "bottom" },
+  grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
+  xAxis: { type: "category", data: ["1月", "6月", "10月"] },
+  yAxis: [{ type: "value" }, { type: "value" }],
+  series: [
+    { name: "上线需求数量", type: "bar", data: [50, 49, 8] },
+    { name: "平均交付周期(天)", type: "bar", yAxisIndex: 1, data: [10.5, 10.8, 12] },
+  ],
+});
+assert.equal(anchoredBottomLegend.grid.bottom, 36);
+assert.equal(anchoredBottomLegend.legend.top, undefined);
+assert.equal(anchoredBottomLegend.legend.bottom, 4);
+
+// 归一化应兼容大小写与首尾空格
+const spacedAnchoredLegend = mergeChartDefaults({
+  legend: { top: " Bottom " },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(spacedAnchoredLegend.grid.bottom, 36);
+assert.equal(spacedAnchoredLegend.legend.bottom, 4);
+
+// 百分比 bottom 需换算成像素判断：8%（288px 高 ≈ 23px）仍会被图例压住 → 抬高到 36
+const tightPercentGrid = mergeChartDefaults({
+  legend: { bottom: 0 },
+  grid: { bottom: "8%" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(tightPercentGrid.grid.bottom, 36);
+
+// 明显够用的百分比留白（15% ≈ 43px）保持不动，避免过度干预模型排版
+const roomyPercentGrid = mergeChartDefaults({
+  legend: { bottom: 0 },
+  grid: { bottom: "15%" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(roomyPercentGrid.grid.bottom, "15%");
+
+// 显式关闭图例时不预留底部空间
+const hiddenLegendChart = mergeChartDefaults({
+  legend: { show: false },
+  grid: { bottom: "3%" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(hiddenLegendChart.grid.bottom, "3%");
+
+// 归一化不应改写入参，模型原始 option 需保持原样
+const rawLegendOption = { legend: { top: "bottom" } };
+mergeChartDefaults({
+  legend: rawLegendOption.legend,
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(rawLegendOption.legend.top, "bottom");
+assert.equal("bottom" in rawLegendOption.legend, false);
+
+// 图例自带较大的 bottom 偏移时（图例整体上移），grid 必须同步让位：20 + 22 = 42
+const offsetBottomLegend = mergeChartDefaults({
+  legend: { bottom: 20 },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(offsetBottomLegend.grid.bottom, 42);
+
+// 模型已经给出更宽裕的 bottom 时保持原值，不被兜底值反向压缩
+const roomyGridWithOffsetLegend = mergeChartDefaults({
+  legend: { bottom: 20 },
+  grid: { bottom: 60 },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(roomyGridWithOffsetLegend.grid.bottom, 60);
+
+// 回归：默认改用滚动图例——plain 图例在窄容器 + 多系列时会换行，
+// 换行后的第一行会重新压到 X 轴刻度上（实测 300px 宽 + 6 系列：图例首行 y=245 与刻度 240~252 重叠）；
+// scroll 只占一行，放得下时不显示翻页箭头，宽容器表现与 plain 一致。
+assert.equal(defaultCartesian.legend.type, "scroll");
+assert.equal(defaultCartesian.legend.pageTextStyle.color, "#374151");
+assert.equal(defaultCartesian.legend.pageIconColor, "#374151");
+assert.equal(defaultCartesian.legend.pageIconInactiveColor, "#d1d5db");
+
+// 模型显式选择 plain 时必须尊重，不被默认值覆盖
+const explicitPlainLegend = mergeChartDefaults({
+  legend: { type: "plain" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(explicitPlainLegend.legend.type, "plain");
+
+// 饼图同样走默认滚动图例（不依赖直角坐标系分支）
+const pieLegend = mergeChartDefaults({
+  series: [{ name: "占比", type: "pie", data: [{ name: "A", value: 1 }] }],
+});
+assert.equal(pieLegend.legend.type, "scroll");
+

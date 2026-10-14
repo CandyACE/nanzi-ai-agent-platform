@@ -160,8 +160,9 @@ _MASKED_OVERLAY = re.compile(r'(?<!:)class="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*
 #: 所以判据只看 `fixed inset-0` + z ≥ 100。
 _MASKED_BG = re.compile(r"bg-(?:black|gray-\d+|slate-\d+)")
 
-#: components/ 下尚未收敛的历史遗留（抽屉/面板内的弹层，层级依赖需单独评估）。
+#: 已清零：components/ 下的同类漏网全部修复完毕，此清单保持为空即为「零容忍」。
 #: 棘轮语义：只允许减少，不允许新增；修掉一处就把它从清单里删掉。
+#: 留空后，任何新增的未 Teleport 全屏层都会立刻让下面的测试变红。
 #:
 #: 这份清单曾被虚报过两次，都是判据自身的毛病，记录在此以免重蹈：
 #:   1. 只认大写 `<Teleport`，而 Vue 两种写法都合法——chatbi/embed/knowledge 下
@@ -169,14 +170,7 @@ _MASKED_BG = re.compile(r"bg-(?:black|gray-\d+|slate-\d+)")
 #:   2. 把 `v-if="isResizing"` + `cursor-col-resize` 的拖拽守护层当成遮罩——那是
 #:      拖拽时屏蔽 iframe/文本选择的透明拦截层，没有蒙层，不该 Teleport，虚增 6 条。
 #: 修正后真实存量 6 条。
-_PENDING_MASKED_OVERLAYS = {
-    "frontend/src/components/SessionTraceModal.vue:39",
-    "frontend/src/components/ThirdPartyUserSyncDrawer.vue:4",
-    "frontend/src/components/ThirdPartyUserSyncDrawer.vue:443",
-    "frontend/src/components/data-portal/DataPortalReportCreateModal.vue:921",
-    "frontend/src/components/data-portal/DataPortalReportCreateModal.vue:1288",
-    "frontend/src/components/embed/WorkspaceDirectorySaveDialog.vue:114",
-}
+_PENDING_MASKED_OVERLAYS: set[str] = set()
 
 
 def _unteleported_masked_overlays(paths):

@@ -844,7 +844,7 @@ const fetchDatasets = async () => {
   } catch (e: any) {
     console.error('Failed to fetch datasets', e)
     const errorMessage = e.response?.data?.detail || e.message || '获取数据集列表失败'
-    alert(errorMessage)
+    showToast(errorMessage, "error")
     datasets.value = []
   } finally {
     loading.value = false
@@ -858,7 +858,7 @@ const handleCreate = async () => {
       try {
         newDataset.value.row_filter_config = JSON.parse(rowFilterConfigStr.value)
       } catch (e) {
-        alert('权限配置 JSON 格式错误')
+        showToast('权限配置 JSON 格式错误', 'error')
         return
       }
     }
@@ -919,7 +919,7 @@ const handleUpdateDataset = async () => {
       try {
         editingDataset.value.row_filter_config = JSON.parse(rowFilterConfigStr.value)
       } catch (e) {
-        alert('权限配置 JSON 格式错误')
+        showToast('权限配置 JSON 格式错误', 'error')
         return
       }
     } else {
@@ -949,7 +949,7 @@ const toggleStatus = async (ds: any) => {
     console.error('Status toggle failed', e)
     // Revert on failure
     ds.status = ds.status === 1 ? 0 : 1
-    alert('状态更新失败')
+    showToast('状态更新失败', 'error')
   }
 }
 
@@ -984,7 +984,7 @@ const confirmDelete = async () => {
     fetchDatasets()
   } catch (e: any) {
     console.error('Delete failed', e)
-    alert(`删除失败: ${e.message || '未知错误'}`)
+    showToast(`删除失败: ${e.message || '未知错误'}`, 'error')
   }
 }
 
@@ -1083,11 +1083,11 @@ const confirmSync = async () => {
       if (syncLogTaskId.value) await readSyncLog(ds.id, syncLogTaskId.value)
       else throw new Error('同步接口未返回任务编号')
     } else {
-      alert(res.data.message || '同步失败')
+      showToast(res.data.message || '同步失败', 'error')
     }
   } catch (e: any) {
     console.error('Sync failed', e)
-    alert('启动同步失败: ' + (e.response?.data?.message || e.message))
+    showToast('启动同步失败: ' + (e.response?.data?.message || e.message), 'error')
   } finally {
     syncingDataset.value = null
     if (!syncLogTaskId.value) syncingId.value = null

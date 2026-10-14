@@ -34,6 +34,7 @@ const isMobile = computed(() => windowWidth.value < 640)
 </script>
 
 <template>
+  <Teleport to="body">
   <div
     v-if="visible"
     class="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4"
@@ -211,6 +212,7 @@ const isMobile = computed(() => windowWidth.value < 640)
         </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
