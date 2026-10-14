@@ -266,8 +266,15 @@ async def list_ragflow_agents(
             resp = await client.get(url, headers=headers, params=params)
             if resp.status_code == 200:
                 return resp.json()
-            else:
-                raise HTTPException(status_code=resp.status_code, detail=f"RAGFlow Error: {resp.text}")
+            if resp.status_code in (401, 403):
+                # 上游鉴权失败绝不能原样透传 401：门户前端把任何 401 都当作「登录态
+                # 失效」而直接跳登录页，管理员只是打开智能体列表就会莫名被登出。
+                # 与模型供应商探活一致（见 models.py），按网关侧 502 上报。
+                raise HTTPException(
+                    status_code=502,
+                    detail="RAGFlow 鉴权失败，请检查知识库 RAGFlow API Key 配置。",
+                )
+            raise HTTPException(status_code=resp.status_code, detail=f"RAGFlow Error: {resp.text}")
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"Failed to connect to RAGFlow: {str(e)}")
 

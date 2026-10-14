@@ -205,11 +205,19 @@ async def _policy_block_reason(
         if _permission_is_blocking(tool_decision):
             return str(getattr(tool_decision, "message", "安全策略拦截：禁止执行该代码。"))
 
-        command_decision = await _enforce_command_blacklist(
-            "exec_command", {"command": code}, user_id
+        # 命令禁用走共享策略（与沙箱终端接口、工具链同源），不再自己拼一套查询
+        from app.services.ai.runtime.command_policy import (
+            CommandPolicyUnavailable,
+            command_forbidden_message,
+            find_forbidden_command_rule,
         )
-        if _permission_is_blocking(command_decision):
-            return str(getattr(command_decision, "message", "安全策略拦截：命令被禁止。"))
+
+        try:
+            forbidden_rule = await find_forbidden_command_rule(user_id, [code])
+        except CommandPolicyUnavailable:
+            return "安全策略暂时无法验证，代码未执行，请稍后重试。"
+        if forbidden_rule:
+            return command_forbidden_message(forbidden_rule)
 
     if language in {"sh", "bash"}:
         from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion

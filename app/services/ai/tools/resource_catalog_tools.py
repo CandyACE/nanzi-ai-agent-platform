@@ -373,6 +373,28 @@ async def list_accessible_directories() -> str:
             and _resolve_docker_public_docs_source() is not None
         )
 
+        # 被禁技能不再作为可读目录列出：技能根整体仍是可读的（脚本等附件是正常用法），
+        # 但清单必须点名哪些技能子目录读不到，否则模型会照着 /app/data/skills/<id>/SKILL.md
+        # 的固定形状去猜、去试。
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+        forbidden_skill_ids = await get_forbidden_skill_ids()
+        available_skill_ids: list[str] = []
+        try:
+            from app.services.ai.skill_resolver import list_global_skill_metas
+
+            available_skill_ids = sorted(
+                {
+                    str(meta.get("id") or "").strip()
+                    for meta in list_global_skill_metas()
+                    if str(meta.get("id") or "").strip()
+                    and str(meta.get("id") or "").strip() not in forbidden_skill_ids
+                }
+            )
+        except Exception as exc:
+            # 清单是提示性信息：列举失败不能把整个目录工具打成不可用
+            logger.warning("[list_accessible_directories] skill ids unavailable: %s", exc)
+
         public_directories: list[dict[str, Any]] = [
             {
                 "directory_name": "docs",
@@ -439,10 +461,20 @@ async def list_accessible_directories() -> str:
                 ),
                 "permission": "read_only",
                 "category": "platform_global_skills",
+                # 按「当前用户可用技能」收口：被禁技能不得出现在任何一份可读清单里
+                # （它们的 SKILL.md 在 fs 读判定上也会被直接拒绝）。
+                "available_skill_ids": available_skill_ids,
+                "forbidden_skill_ids": sorted(forbidden_skill_ids),
                 "description": (
                     "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，"
                     "Docker 模式下通过当前用户工作区内的 /workspace/skills 预置副本访问，"
                     "不是直接挂载 /app/data/skills。"
+                    + (
+                        "其中 forbidden_skill_ids 里的技能已被管理员禁用，"
+                        "其目录不可读取，禁止尝试读取或检索。"
+                        if forbidden_skill_ids
+                        else ""
+                    )
                 ),
                 "recommended_for": ["读取系统公共技能指令", "查看内置工作流"],
             },

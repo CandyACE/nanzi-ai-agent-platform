@@ -95,3 +95,22 @@ def test_backend_exposes_batch_status_endpoint():
     # 禁用 / 启用后必须清缓存，保证被禁用者立即掉线
     assert "invalidate_user_auth_cache" in handler
     assert "invalidate_cached_permissions_for_users" in handler
+
+
+def _handler_source(backend: str, name: str) -> str:
+    """截取某个 handler 的实现片段，到下一个路由装饰器为止。"""
+    tail = backend.split(f"async def {name}", 1)[1]
+    return tail.split("\n@router.", 1)[0]
+
+
+def test_management_status_paths_explicitly_revoke_sessions():
+    """管理路径（禁用/启用/删除用户）必须显式要求吊销会话。
+
+    清权限缓存复用了 invalidate_user_auth_cache，其默认值已改为「不吊销会话」——
+    这正是为了不再因日常权限变更误踢用户。因此管理路径必须显式传 revoke_sessions=True，
+    否则被禁用者会继续带着旧会话访问。
+    """
+    backend = _source(BACKEND_PATH)
+
+    for handler_name in ("update_user_status", "batch_update_user_status", "delete_user"):
+        assert "revoke_sessions=True" in _handler_source(backend, handler_name), handler_name

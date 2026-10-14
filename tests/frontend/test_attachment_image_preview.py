@@ -13,12 +13,31 @@ def _run_typescript(module_path: str, expression: str):
 (async () => {{
 const fs = require('fs');
 const ts = require('./frontend/node_modules/typescript');
+const moduleDir = {json.dumps(str(Path(module_path).parent))};
+// 按需转译 TS 依赖：attachmentImages 依赖 utils/skillForbidden（技能禁用判定）
+const requireModule = (id) => {{
+  const resolved = id.startsWith('@/')
+    ? 'frontend/src/' + id.slice(2)
+    : (id.startsWith('.') ? moduleDir + '/' + id.replace(/^\\.\\//, '') : '');
+  if (resolved) {{
+    const target = resolved.endsWith('.ts') ? resolved : resolved + '.ts';
+    const dependencyCode = ts.transpileModule(fs.readFileSync(target, 'utf8'), {{
+      compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
+    }}).outputText;
+    const dependencyRef = {{ exports: {{}} }};
+    new Function('module', 'exports', 'require', dependencyCode)(
+      dependencyRef, dependencyRef.exports, requireModule
+    );
+    return dependencyRef.exports;
+  }}
+  return require(id);
+}};
 const source = fs.readFileSync({json.dumps(module_path)}, 'utf8');
 const code = ts.transpileModule(source, {{
   compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
 }}).outputText;
 const moduleRef = {{ exports: {{}} }};
-new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, require);
+new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, requireModule);
 const api = moduleRef.exports;
 const result = await (async () => {{ {expression} }})();
 process.stdout.write(JSON.stringify(result));

@@ -225,6 +225,53 @@ def _is_path_within_root(path: str, root: str) -> bool:
         return False
 
 
+def resolve_platform_skill_id_for_path(path: str) -> str | None:
+    """把路径归属到平台技能根下的第一段目录名，也就是**技能 id**。
+
+    ``settings.SKILLS_DIR`` 下的目录名就是技能 id：``skill_resolver._scan_skill_dir`` 直接
+    用 ``item``（目录名）解析 Frontmatter（``_parse_skill_frontmatter(item, ...)`` →
+    ``meta["id"] = item``），注入器与 ``build_skill_attachment_hint`` 也都按
+    ``os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")`` 拼路径。
+
+    与"会话快照目录名"必须区分开：快照在用户工作区的 ``skills/`` 下，目录名是
+    ``sanitize(SKILL.md 的 name)``（冲突还会带 ``_1`` 后缀，见 workspace._sanitize_skill_dir_name /
+    _prune_stale_session_skills），跟技能 id 无关——因此那个位置按内容哈希清理，而不是按目录名。
+    这里只认平台技能根，且只比**第一段完整目录名**（不做前缀匹配），
+    ``alpha_1`` / 非 ASCII 目录名不会被 "alpha" 误伤。
+    """
+    skills_root = get_platform_skills_root()
+    if not skills_root:
+        return None
+    normalized = _canonical_runtime_path(path)
+    real_root = os.path.realpath(skills_root)
+    if not _is_path_within_root(normalized, real_root):
+        return None
+    relative = os.path.relpath(normalized, real_root)
+    if relative in (os.curdir, os.pardir) or relative.startswith(os.pardir + os.sep):
+        return None
+    first_segment = relative.split(os.sep, 1)[0]
+    return first_segment or None
+
+
+def is_forbidden_platform_skill_path(
+    path: str,
+    user_info: dict[str, Any] | None,
+) -> bool:
+    """路径是否落在"当前用户被禁用"的公共技能目录下（管理员恒为 False）。
+
+    同步判定，依赖 policy 侧的进程内缓存；拿不到禁用集合时按放行处理（fail-open），
+    与加这道闸之前的行为一致——详见 ``policy.is_platform_skill_id_forbidden``。
+    """
+    if is_fs_admin(user_info):
+        return False
+    skill_id = resolve_platform_skill_id_for_path(path)
+    if not skill_id:
+        return False
+    from app.services.ai.skills.policy import is_platform_skill_id_forbidden
+
+    return is_platform_skill_id_forbidden(skill_id, user_info)
+
+
 def is_runtime_path_allowed(
     path: str,
     user_info: dict[str, Any] | None,
@@ -242,6 +289,10 @@ def is_runtime_path_allowed(
         or is_public_runtime_help_path(normalized)
     ):
         return True
+    # 被禁公共技能必须在白名单之前收口：技能根整体是公共可读根，
+    # 只看白名单等于把被禁技能的正文继续暴露给 Read/Glob/Grep。
+    if is_forbidden_platform_skill_path(normalized, user_info):
+        return False
     return any(
         _is_path_within_root(normalized, os.path.realpath(root))
         for root in get_allowed_fs_roots(user_info)
@@ -330,6 +381,11 @@ def is_path_allowed(path: str, user_info: dict[str, Any] | None) -> bool:
             return True
         normalized = normalize_fs_path(path)
         return bool(normalized)
+
+    # 0. 被禁公共技能：技能根整体是公共可读根，白名单会直接放行被禁技能的正文文件，
+    #    所以这一步必须发生在白名单之前（管理员已在上面返回，不受影响）。
+    if is_forbidden_platform_skill_path(path, user_info):
+        return False
 
     # 1. 检查物理规范化路径
     normalized = normalize_fs_path(path)

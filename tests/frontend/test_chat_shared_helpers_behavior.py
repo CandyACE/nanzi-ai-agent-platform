@@ -68,11 +68,25 @@ return {
 };
 """,
         """
+const loadTsModule = id => {
+  const resolved = id.startsWith('@/') ? 'frontend/src/' + id.slice(2) : id;
+  const target = resolved.endsWith('.ts') ? resolved : resolved + '.ts';
+  const dependencyCode = ts.transpileModule(fs.readFileSync(target, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  const dependencyRef = { exports: {} };
+  new Function('module', 'exports', 'require', dependencyCode)(
+    dependencyRef, dependencyRef.exports, requireModule
+  );
+  return dependencyRef.exports;
+};
 const requireModule = id => {
   if (id === '@/utils/attachmentImages') return {
     getServerAttachmentPath: file => file.type === 'skill' ? `/app/data/skills/${file.url}/SKILL.md` : file.url,
     isImageAttachment: file => file.ext === 'png'
   };
+  // useChatAttachments 还会引入技能禁用判定（真实实现，避免这里写死成"永不禁用"）
+  if (id === '@/utils/skillForbidden') return loadTsModule(id);
   return require(id);
 };
 """,

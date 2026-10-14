@@ -12,7 +12,7 @@ async def test_require_dataset_access_rejects_invisible_dataset(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def get_user_permissions(self, user_id):
+        async def get_user_permissions(self, user_id, agent_id=None):
             return SimpleNamespace(
                 permissions=SimpleNamespace(datasets=["allowed-ds"])
             )
@@ -640,3 +640,54 @@ async def test_get_dataset_portal_recommendations_hybrid(monkeypatch):
     assert len(qs) == 3
     assert qs[0]["label"] == "生成提问1"
     assert qs[0]["query"] == "生成提问1"
+
+
+def _patch_upstream_status(monkeypatch, status_code: int):
+    """让 /agents 代理拿到指定状态码的上游响应。"""
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def get(self, url, headers=None, params=None):
+            return SimpleNamespace(status_code=status_code, text="upstream error body")
+
+    monkeypatch.setattr(ragflow.httpx, "AsyncClient", FakeAsyncClient)
+
+
+@pytest.mark.parametrize("upstream_status", [401, 403])
+@pytest.mark.asyncio
+async def test_list_ragflow_agents_maps_upstream_auth_failure_to_502(monkeypatch, upstream_status):
+    """上游鉴权失败不得原样透传 401。
+
+    门户前端把任何 401 都当作「登录态失效」而直接跳登录页，管理员只是打开
+    RAGFlow 智能体列表就会被莫名登出。
+    """
+    _patch_upstream_status(monkeypatch, upstream_status)
+
+    with pytest.raises(ragflow.HTTPException) as exc:
+        await ragflow.list_ragflow_agents(
+            override_url="http://ragflow.example", override_key="secret-key"
+        )
+
+    assert exc.value.status_code == 502
+    assert "RAGFlow" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_list_ragflow_agents_keeps_non_auth_upstream_status(monkeypatch):
+    """非鉴权类上游错误保持原状态码，不改变既有排查信息。"""
+    _patch_upstream_status(monkeypatch, 404)
+
+    with pytest.raises(ragflow.HTTPException) as exc:
+        await ragflow.list_ragflow_agents(
+            override_url="http://ragflow.example", override_key="secret-key"
+        )
+
+    assert exc.value.status_code == 404

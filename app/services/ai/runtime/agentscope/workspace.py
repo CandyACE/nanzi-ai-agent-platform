@@ -14,7 +14,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, Iterable
 
 from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
 
@@ -205,11 +205,14 @@ def discover_platform_skill_paths(
     *,
     skills_custom: bool = False,
     allowed_global_skills: list[str] | None = None,
+    forbidden_skill_ids: list[str] | None = None,
 ) -> list[str]:
     """Collect skill directories: global platform skills + user personal skills.
 
     When skills_custom is True, only allowlisted global skill ids are included;
     personal skills are always appended (if enabled).
+
+    forbidden_skill_ids 是权限侧的禁用集合：同样只作用于全局技能，个人技能不受影响。
     """
     try:
         from app.core.config import settings
@@ -219,6 +222,10 @@ def discover_platform_skill_paths(
         return []
     if not skills_root or not os.path.isdir(skills_root):
         return []
+
+    forbidden: set[str] = {
+        str(s).strip() for s in (forbidden_skill_ids or []) if str(s).strip()
+    }
 
     allowlist: set[str] | None = None
     if skills_custom:
@@ -230,6 +237,8 @@ def discover_platform_skill_paths(
         skill_dir = os.path.join(skills_root, entry)
         if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
             if allowlist is not None and entry not in allowlist:
+                continue
+            if entry in forbidden:
                 continue
             # 过滤禁用的技能
             meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
@@ -382,6 +391,17 @@ def resolve_user_workspace_root(
     return None
 
 
+def _resolve_identity_user_id(user_info: dict | None) -> Any:
+    """从原始 ``user_info`` 里取用户主键。
+
+    生产侧 ``current_user_info`` 塞进 contextvar 的是**原始** user_info（键为
+    ``user_id`` / ``user_name`` / ``role``），因此键顺序必须包含 ``user_id``——
+    此前只找 ``u_id_val`` / ``id``，这个回退实际是死代码，只能靠 agent ctx 兜底。
+    """
+    info = user_info or {}
+    return info.get("u_id_val") or info.get("id") or info.get("user_id") or info.get("uid")
+
+
 def _sanitize_skill_dir_name(name: str) -> str:
     """Replicate AgentScope's ``_sanitize_dir_name`` for pre-seeded layout.
 
@@ -394,22 +414,157 @@ def _sanitize_skill_dir_name(name: str) -> str:
 
 
 def _hardlink_or_copy2(src: str, dst: str) -> None:
-    """copytree ``copy_function``: hard-link first, copy2 on cross-device.
+    """copytree ``copy_function``: always a real copy.
 
-    Pre-seeding session ``skills/`` uses hard links so 400+ sessions share a
-    single physical copy of every skill file instead of duplicating disk.
-    When the source and destination live on different filesystems (e.g.
-    Docker multi-volume mounts), ``os.link`` raises ``EXDEV``; fall back to
-    a normal ``shutil.copy2`` so seeding always succeeds. ``copy2`` also
-    copies metadata (mtime), keeping the snapshot faithful.
+    历史上这里优先 ``os.link``（硬链接），让 400+ 个会话共享同一份物理文件以节省磁盘。
+    但会话 workdir 位于**用户私有可写根**内，而硬链接与源技能共享 inode：模型或用户对
+    会话副本的 ``Write`` / ``Edit`` / ``Bash >`` 会直接改写**平台技能源文件**，影响所有用户。
+    只读约定挡不住同 inode 的写入，因此改为真实复制（``copy2``，保留 mtime）。
+    代价是每会话一份物理副本、磁盘占用上升——这是为正确性付出的、已确认接受的代价。
     """
+    shutil.copy2(src, dst)
+
+
+def _forbidden_skill_hashes(forbidden_skill_ids: Iterable[str] | None) -> set[str]:
+    """被禁技能在会话快照里的内容哈希指纹。
+
+    为什么以**禁用集合**为权威、而不是"当前请求可用的技能集合"：``workdir`` 是会话级
+    共享的，而 ``skills_fp`` 是按智能体区分的（cache_key 含它），同一个会话里不同智能体
+    各有自己的可用集合。拿当前请求的可用集合去删共享目录，会把**别的智能体**铺好的技能
+    一起删掉（已实际发生过的缺陷）。禁用集合才是本功能真正要清的目标。
+
+    源目录已不存在的技能直接跳过——拿不到指纹时宁可留着，也不能猜着删。
+    """
+    hashes: set[str] = set()
     try:
-        os.link(src, dst)
-    except OSError:
-        shutil.copy2(src, dst)
+        from app.core.config import settings
+
+        root = getattr(settings, "SKILLS_DIR", None)
+    except Exception:
+        return hashes
+    if not root:
+        return hashes
+    for skill_id in forbidden_skill_ids or ():
+        skill_id = str(skill_id).strip()
+        if not skill_id:
+            continue
+        try:
+            with open(os.path.join(root, skill_id, "SKILL.md"), "rb") as fh:
+                content = fh.read().decode("utf-8")
+        except Exception as exc:
+            logger.warning("[workspace] Cannot hash forbidden skill %s for pruning: %s", skill_id, exc)
+            continue
+        hashes.add(hashlib.sha256(content.encode("utf-8")).hexdigest())
+    return hashes
 
 
-def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
+def _entry_is_forbidden(entry: Any, forbidden_ids: set[str]) -> bool:
+    """索引条目是否**确定**属于被禁的公共技能。
+
+    只按内容哈希判定会连坐个人技能：把平台技能目录逐字节复制成个人技能后哈希相同，
+    那个会话快照会被静默删除，而产品口径是"禁的是平台发布的那一份"、个人技能照旧可用。
+    索引里记了来源 ``skill_id`` 就按 id 复核；旧索引没有该字段时退回哈希判定，
+    行为与改动前保持一致（不会因为升级而漏清理）。
+    """
+    if not forbidden_ids:
+        return False
+    recorded = str((entry or {}).get("skill_id") or "").strip()
+    if not recorded:
+        return True
+    return recorded in forbidden_ids
+
+
+def _prune_stale_session_skills(
+    skills_dir: str,
+    index_path: str,
+    forbidden_hashes: set[str] | None,
+    forbidden_skill_ids: Iterable[str] | None = None,
+) -> None:
+    """清理会话快照里**已被禁用**的技能。
+
+    幂等逻辑（索引已存在就直接返回）会让"权限侧收紧之前"铺好的技能一直留在会话目录里，
+    agent 直接读文件就绕过了禁用。这里按被禁技能的内容哈希反向清理。
+
+    判定必须用**内容哈希**而不是目录名：会话目录名是 ``sanitize(SKILL.md 的 name)``，
+    跟技能 id 没关系，而且 name 冲突时还会带 ``_1`` 后缀——只有哈希是可靠的对应关系
+    （播种逻辑也正是按哈希判重的）。
+
+    只删"确定被禁"的项，**绝不**把"当前请求没允许的"当成陈旧：那会误删同一会话里其他
+    智能体的技能（见 ``_forbidden_skill_hashes`` 的说明）。``forbidden_hashes`` 为空时
+    直接返回。
+    """
+    if not forbidden_hashes:
+        return
+
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as exc:
+        logger.warning("[workspace] Failed to read .skills for pruning: %s", exc)
+        return
+
+    stored = data.get("skills")
+    if not isinstance(stored, dict):
+        return
+
+    forbidden_ids = {
+        str(skill_id).strip() for skill_id in (forbidden_skill_ids or ()) if str(skill_id).strip()
+    }
+    stale = [
+        dir_name
+        for dir_name, entry in stored.items()
+        if str((entry or {}).get("hash") or "") in forbidden_hashes
+        and _entry_is_forbidden(entry, forbidden_ids)
+    ]
+    if not stale:
+        return
+
+    for dir_name in stale:
+        shutil.rmtree(os.path.join(skills_dir, dir_name), ignore_errors=True)
+        stored.pop(dir_name, None)
+
+    # 索引必须同步，否则 AgentScope.initialize 会认为内容仍在而跳过复制，留下悬空条目
+    try:
+        data["skills"] = stored
+        with open(index_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("[workspace] Failed to sync .skills after pruning: %s", exc)
+
+    logger.info("[workspace] Pruned %d unavailable session skill(s): %s", len(stale), stale)
+
+
+async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) -> None:
+    """在工作区缓存命中时也清一次被禁技能的会话快照。
+
+    工作区缓存的 key 是 ``workdir::skills_fp::policy``，命中即直接 return，不会走播种逻辑；
+    而权限可以在进程存活期间被收紧，于是"禁用前铺好的快照"会一直留在磁盘上，被 Read/Glob
+    或 Bash 直接读到——禁用形同虚设。这里补上这一半。
+    """
+    skills_dir = os.path.join(workdir, "skills")
+    index_path = os.path.join(skills_dir, ".skills")
+    if not os.path.isfile(index_path):
+        return
+    try:
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+        forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
+    except Exception as exc:
+        logger.warning("[workspace] Failed to resolve forbidden skills for pruning: %s", exc)
+        return
+    if not forbidden_skill_ids:
+        return
+    _prune_stale_session_skills(
+        skills_dir,
+        index_path,
+        _forbidden_skill_hashes(forbidden_skill_ids),
+        forbidden_skill_ids,
+    )
+
+
+def _preseed_session_skills(
+    workdir: str, skill_paths: list[str], forbidden_skill_ids: Iterable[str] | None = None
+) -> None:
     """Pre-seed ``<workdir>/skills`` with the platform skills before AgentScope.
 
     AgentScope's ``LocalWorkspace.initialize`` seeds ``skill_paths`` into
@@ -426,17 +581,22 @@ def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
     left untouched, so re-initialisation never rebuilds or overwrites a
     snapshot.
 
-    Hard-link caveat (honest limitation): linked files share the same inode
-    as the source. AgentScope never writes into session ``skills/`` and the
-    platform's ``create_skills`` writes to the user/global source dirs, so a
-    session snapshot stays effectively read-only; however if a source skill
-    file were later modified in place, already-linked session copies would
-    observe that change. Cross-device mounts fall back to real copies (no
-    sharing), which is safe but re-introduces per-session duplication.
+    Isolation: seeding always performs a real copy (see
+    ``_hardlink_or_copy2``). Hard links used to share the inode with the
+    source skill, which let a write through a session snapshot modify the
+    platform's source skill for every user; the disk savings were not worth
+    that trade.
     """
     skills_dir = os.path.join(workdir, "skills")
     index_path = os.path.join(skills_dir, ".skills")
     if os.path.isfile(index_path):
+        # 已经铺过：不重建，但要清掉"禁用之前"铺进来的技能（读文件即可绕过禁用）
+        _prune_stale_session_skills(
+            skills_dir,
+            index_path,
+            _forbidden_skill_hashes(forbidden_skill_ids),
+            forbidden_skill_ids,
+        )
         return
 
     os.makedirs(skills_dir, exist_ok=True)
@@ -449,7 +609,12 @@ def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
         stored = data.get("skills")
         if isinstance(stored, dict):
             existing = {
-                str(d): {"hash": str(e.get("hash", "")), "skill_name": str(e.get("skill_name", ""))}
+                str(d): {
+                    "hash": str(e.get("hash", "")),
+                    "skill_name": str(e.get("skill_name", "")),
+                    # 保留来源技能 id（旧索引没有这个字段，读取时为 ""）
+                    "skill_id": str(e.get("skill_id", "")),
+                }
                 for d, e in stored.items()
                 if isinstance(e, dict)
             }
@@ -544,7 +709,13 @@ def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
             logger.warning("[workspace] Pre-seed failed to copy skill %s: %s", skill_path, exc)
             continue
 
-        existing[dir_name] = {"hash": skill_hash, "skill_name": agent_name}
+        existing[dir_name] = {
+            "hash": skill_hash,
+            "skill_name": agent_name,
+            # 记录来源 id：清理被禁技能时要按 id 复核，否则"逐字节复制平台技能"的个人技能
+            # 会因为哈希相同被一起删掉（个人技能永不受限）。
+            "skill_id": os.path.basename(os.path.normpath(skill_path)),
+        }
         existing_hashes.add(skill_hash)
         existing_agent_names.add(agent_name)
         existing_dir_names.add(dir_name)
@@ -1937,13 +2108,19 @@ async def get_local_workspace(
         sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
         if sandbox_cache_key is not None:
             _touch_sandbox_workspace(sandbox_cache_key)
+        # 缓存命中不代表权限没变：按当前禁用集合清一次快照（见该函数 docstring）
+        await _prune_forbidden_session_skills(workdir, user_info)
         return cached
 
     # 命中已有工作区时扫描结果本来就不会被使用；仅初始化时读取技能目录。
+    from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+    forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
     skill_paths = discover_platform_skill_paths(
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
+        forbidden_skill_ids=forbidden_skill_ids,
     )
 
     is_sandbox = policy in (
@@ -2017,7 +2194,7 @@ async def get_local_workspace(
         # Pre-seed session skills/ with hard links + matching .skills index
         # so AgentScope's initialize() hash-skips all copies instead of
         # duplicating every skill into each session directory.
-        _preseed_session_skills(workdir, skill_paths)
+        _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids)
         local_ws = LocalWorkspace(
             workdir=workdir,
             skill_paths=skill_paths,
@@ -3139,12 +3316,16 @@ async def build_host_only_workspace(
         conversation_id=conversation_id,
     )
     os.makedirs(workdir, exist_ok=True)
+    from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+    forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
     skill_paths = discover_platform_skill_paths(
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
+        forbidden_skill_ids=forbidden_skill_ids,
     )
-    _preseed_session_skills(workdir, skill_paths)
+    _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids)
     local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)
     await local_ws.initialize()
     return local_ws
@@ -4057,7 +4238,23 @@ class _WorkspaceFileAccessNativeTool:
             return
         self._map(tool_input)
 
+    async def _refresh_forbidden_skill_cache(self) -> None:
+        """执行前刷新被禁技能集合（带节流），让同步读判定不落在"未命中即放行"的窗口里。
+
+        会话开始时已经预热过一次，但长回合里工具调用可能发生在预热很久之后，那时缓存
+        早已过期；不刷新的话，被禁技能的 SKILL.md 会在这一刻重新变得可读。
+        """
+        try:
+            from app.services.ai.skills.policy import prime_forbidden_skill_cache
+
+            await prime_forbidden_skill_cache(user_info=self._user_info)
+        except Exception:
+            logger.debug(
+                "[workspace] priming forbidden skill cache failed", exc_info=True
+            )
+
     async def __call__(self, **kwargs: Any) -> Any:
+        await self._refresh_forbidden_skill_cache()
         mapped_input = self._map(kwargs)
         scan_kind = _public_runtime_help_scan_kind(self.name, mapped_input)
         if scan_kind == "glob":

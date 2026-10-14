@@ -315,8 +315,11 @@ def test_static_tool_groups_offer_group_level_select_all():
 
 def test_browser_automation_tools_are_available_in_a_dedicated_group():
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
+    # 分组规则已收进共享模块（权限页「功能限定」弹框与智能体页共用同一份）：
+    # 组名与关键字判定随之搬家，工具清单本身仍留在智能体页。
+    grouping = Path("frontend/src/utils/toolGrouping.ts").read_text()
 
-    assert "浏览器自动化" in management
+    assert "浏览器自动化" in grouping
     for tool_name in (
         "browser_open",
         "browser_snapshot",
@@ -348,5 +351,5 @@ def test_browser_automation_tools_are_available_in_a_dedicated_group():
         "browser_set_cookies",
     ):
         assert tool_name in management
-    assert "groups.browser.tools.push(tool)" in management
-    assert "name.startsWith('browser_') || name.includes('browser')" in management
+    assert "key: 'browser'" in grouping and "浏览器自动化" in grouping
+    assert "name.startsWith('browser_') || name.includes('browser')" in grouping

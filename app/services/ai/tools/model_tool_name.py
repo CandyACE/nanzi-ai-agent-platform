@@ -41,6 +41,21 @@ def is_platform_namespaced_tool_name(tool_name: str | None) -> bool:
     return PLATFORM_MCP_TOOL_SEPARATOR in str(tool_name or "")
 
 
+def to_runtime_tool_names(platform_tool_name: str | None) -> tuple[str, ...]:
+    """平台侧工具名 → 运行时应被视为「同一个工具」的全部名字。
+
+    禁用名单里存的是平台名（``jira_search`` / ``server:tool``），而 MCP 工具在运行时
+    注册的是 ``build_model_tool_name()`` 生成的模型调用名（``mcp_jira_search_<hash>``）。
+    拦截判定必须两侧都能命中，否则会出现「勾了禁用却拦不住」——策略形同虚设。
+    内置工具名不受影响（运行时就是原名，额外变体只可能命中同名 MCP 工具，与
+    按名字拦截的语义一致）。
+    """
+    name = str(platform_tool_name or "").strip()
+    if not name:
+        return ()
+    return (name, build_model_tool_name(name))
+
+
 def to_model_tool_name(tool_name: str | None) -> str:
     """把任意平台侧工具名归一化为模型调用名；非命名空间名字原样返回。"""
     name = str(tool_name or "").strip()

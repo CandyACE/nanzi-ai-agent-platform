@@ -962,17 +962,26 @@ class AuthService:
         user_id: int,
         db: Optional[AsyncSession] = None,
         api_key_hash: Optional[str] = None,
+        *,
+        revoke_sessions: bool = False,
     ) -> None:
         """
-        按用户清除认证缓存（真实 API Key 的缓存 + 该用户的全部会话令牌）。
+        按用户清除认证缓存（真实 API Key 的缓存，可选连带该用户的全部会话令牌）。
 
         系统角色 / 启用状态变更后必须调用，否则 require_permission 会在最长 1 小时内
         继续读到旧的 role/status。
 
         会话令牌（sess_ / emb_ses_）的缓存键是「令牌哈希」而非「用户 api_key_hash」，
-        只删后者不会让已有会话失效——必须再按 user_id 索引成批吊销。这一步在
-        禁用 / 删除用户 / 重置 Key / 改角色时都不可或缺，否则旧会话既不会失效，
-        还会随活跃调用持续滑动续期。
+        只删后者不会让已有会话失效——因此吊销会话必须再按 user_id 索引成批删除，
+        否则旧会话既不会失效，还会随活跃调用持续滑动续期。
+
+        `revoke_sessions` 默认 False，且新增调用方必须慎重对待：吊销会话是破坏性
+        操作，会让该用户所有设备立即掉线。目前只有「账号被禁用/启用、账号被删除」
+        这类管理路径显式传 True（见 management.py）；纯粹为刷新权限缓存的调用
+        （见 PermissionService._invalidate_user_cache，例如用户新建知识库数据集时
+        给自己授权、按角色批量授权）必须保持 False，否则用户会被自己的日常操作
+        踢到登录页——这类变更改为「认证缓存立即失效 + 会话低频回源复核（≤60s）」
+        生效，用户无需重新登录。
         """
         hashed = (api_key_hash or "").strip()
         if not hashed:
@@ -998,8 +1007,10 @@ class AuthService:
                     e,
                 )
 
-        # 与 hashed 是否存在无关：删除用户时可能拿不到旧 hash，但会话仍须吊销
-        await AuthService.revoke_sessions_for_user(user_id, redis)
+        # 与 hashed 是否存在无关：删除用户时可能拿不到旧 hash，但会话仍须吊销。
+        # 仅在管理路径显式要求时执行：默认不吊销，避免权限缓存清理把用户踢下线。
+        if revoke_sessions:
+            await AuthService.revoke_sessions_for_user(user_id, redis)
 
     @staticmethod
     def verify_password_hash(plain_password: str, hashed_password: str) -> bool:

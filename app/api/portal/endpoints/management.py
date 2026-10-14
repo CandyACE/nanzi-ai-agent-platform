@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from fastapi import APIRouter, Body, Depends, Query, HTTPException, status, Request
+from pydantic import BaseModel, Field, field_validator
+from typing import Any, Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, desc, or_
 from sqlalchemy.orm import selectinload
@@ -15,7 +15,8 @@ from app.models.user import (
 )
 from app.schemas.permission import UserPermissionsResponse, PermissionUpdate
 from app.services.permission_service import PermissionService
-from app.models.permission import ResourcePermission, UserRoleRelation
+from app.models.agent import AIAgent
+from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.services.sso_user import LaplacePortalApiClient
 from app.services.db_connection_service import DbConnectionService
 import json
@@ -27,6 +28,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Request/Response Models
+class AgentRestrictionUpdate(BaseModel):
+    """智能体级「功能限定」的写入体。
+
+    刻意用 schema 而不是裸 ``Dict``：这两个字段**逐项决定落库行**，而服务层是按
+    ``for value in values`` 迭代的——直接传字符串会被按**字符**拆开，``"exec_command"``
+    变成 e/x/c/_/o/m/a/n/d 九条单字符记录，HTTP 还返回 200，而原有禁用项已被 DELETE
+    清空。把"必须是字符串数组"挡在入口，比事后靠日志发现垃圾数据便宜得多。
+    """
+
+    forbidden_tools: Optional[List[str]] = None
+    forbidden_skills: Optional[List[str]] = None
+
+    @field_validator("forbidden_tools", "forbidden_skills", mode="before")
+    @classmethod
+    def _must_be_list_or_none(cls, value: Any) -> Any:
+        if value is None or isinstance(value, list):
+            return value
+        raise ValueError("必须是字符串数组或 null")
+
 class CreateUserRequest(BaseModel):
     user_name: str
     real_name: Optional[str] = None
@@ -336,6 +356,13 @@ async def get_user_permissions(
     response.permissions.apis = normalize_api_permission_ids(
         request.app,
         response.permissions.apis or [],
+    )
+    # 禁用资源页要的是「用户直配」而不是这个并集：拿并集整份写回会把角色级禁用固化成
+    # 用户级记录（角色侧取消后用户仍被禁）。apis 同样归一，保持两份结构可比。
+    response.direct_permissions = await service.get_user_direct_permissions(user_id)
+    response.direct_permissions.apis = normalize_api_permission_ids(
+        request.app,
+        response.direct_permissions.apis or [],
     )
     return response
 
@@ -724,7 +751,7 @@ async def update_user_status(
     # Security: Clear Redis cache to force re-authentication
     try:
         await AuthService.invalidate_user_auth_cache(
-            user_id, db=db, api_key_hash=user.api_key_hash
+            user_id, db=db, api_key_hash=user.api_key_hash, revoke_sessions=True
         )
         await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
@@ -850,7 +877,7 @@ async def batch_update_user_status(
 
         for uid, api_key_hash in targets:
             await AuthService.invalidate_user_auth_cache(
-                uid, db=db, api_key_hash=api_key_hash
+                uid, db=db, api_key_hash=api_key_hash, revoke_sessions=True
             )
         await PermissionService(db).invalidate_cached_permissions_for_users(updated_ids)
     except Exception as e:
@@ -974,7 +1001,7 @@ async def delete_user(
         from app.services.auth_service import AuthService
         from app.services.permission_service import PermissionService
         await AuthService.invalidate_user_auth_cache(
-            user_id, db=db, api_key_hash=api_key_hash
+            user_id, db=db, api_key_hash=api_key_hash, revoke_sessions=True
         )
         await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
@@ -999,6 +1026,14 @@ async def reset_user_api_key(
     
     if not new_api_key:
         raise HTTPException(status_code=500, detail="Failed to reset API Key")
+
+    # 换掉凭据不等于吊销会话：会话令牌是独立于 api_key_hash 的 Redis 键，不按 user_id
+    # 成批吊销的话，「管理员重置 Key」之后对方手里的会话仍然有效，重置等于没重置。
+    # （用户自助重置是唯一例外：它刻意不退出现有会话，见 auth.py 对应端点的说明。）
+    try:
+        await AuthService.invalidate_user_auth_cache(user_id, revoke_sessions=True)
+    except Exception as e:
+        logger.error(f"Failed to revoke sessions after API Key reset for user {user_id}: {e}")
         
     return {
         "message": "API Key reset successfully",
@@ -1035,6 +1070,14 @@ async def set_user_password(
     success = await AuthService.set_user_password(user_id, password, db=db)
     if not success:
         raise HTTPException(status_code=500, detail="密码设置失败")
+
+    # 代设/重置密码后必须吊销该用户全部会话：与用户自助改密同口径（见 auth.py 的
+    # change_password）。否则「管理员发现账号被盗 → 改密码」之后，对方手里的会话
+    # 依然有效，改密等于没改。长时效 API Key 不在会话索引里，不受影响。
+    try:
+        await AuthService.revoke_sessions_for_user(user_id)
+    except Exception as exc:
+        logger.warning("代设密码后吊销会话失败 user_id=%s: %s", user_id, exc)
 
     return {"status": "success", "message": "密码设置成功", "user_id": user_id}
 
@@ -1091,3 +1134,247 @@ async def get_available_resources(
         "metadata": datasets,
         "apis": apis
     }
+
+# ---------------------------------------------------------------------------
+# 智能体级资源限制（用户/角色 × 单个智能体的排除机制）
+#
+# 与全局禁用资源的关系：有效禁用 = 全局禁用 ∪ 该智能体的智能体级禁用。这里只读写
+# 「智能体级」那一层（agent_id 等于目标值的行），绝不触碰全局行，也不动其它智能体的行。
+# 详见 docs/superpowers/specs/2026-10-13-agent-scoped-resource-restrictions-design.md
+# ---------------------------------------------------------------------------
+
+
+@router.get("/agents/{agent_id}/restrictable-resources")
+async def get_agent_restrictable_resources(
+    agent_id: str,
+    user_id: Optional[int] = Query(None, description="按用户视角回填 forbidden_globally"),
+    role_id: Optional[int] = Query(None, description="按角色视角回填 forbidden_globally"),
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该智能体**实际绑定**的可限制资源（内置工具 / MCP 分组 / 公共技能 / 个人技能）。
+
+    候选不是"平台全部资源"而是这个智能体的绑定集合，管理员才能在其上做排除。
+    每项带 ``forbidden_globally``：全局已禁的项在弹框里置灰只读（排除机制只增不减）。
+
+    ``user_id`` / ``role_id`` 是**视角**参数，弹框要靠它算出"这个主体已经全局禁了哪些"。
+    漏传时所有项都会被算成"未全局禁用"、全部可勾选，管理员会误以为能在智能体层面
+    **放开**全局禁用（实际不会）——这是设计文档明确警告过的误用。所以这里不再静默接受：
+    缺参数时记一条 warning，让这类调用在日志里可见，而不是安静地给出误导性结果。
+    """
+    if user_id is None and role_id is None:
+        logger.warning(
+            "[agent-scope] restrictable-resources called without user_id/role_id; "
+            "forbidden_globally will be all-false and every item will look selectable"
+        )
+    from app.services.agent_scoped_restrictions import (
+        build_restrictable_resources,
+        list_personal_skill_metas,
+    )
+
+    agent = await db.get(AIAgent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    globally_tools: set[str] = set()
+    globally_skills: set[str] = set()
+    person: Optional[dict] = None
+    if user_id is not None:
+        person = (await db.execute(select(User).where(User.id == int(user_id)))).scalar_one_or_none()
+    if person is not None:
+        perms = await PermissionService(db).get_user_permissions(int(user_id))
+        globally_tools = set(perms.permissions.forbidden_tools or [])
+        globally_skills = set(perms.permissions.forbidden_skills or [])
+    elif role_id is not None:
+        role_perms = await PermissionService(db).get_role_permissions(int(role_id))
+        globally_tools = set(role_perms.permissions.forbidden_tools or [])
+        globally_skills = set(role_perms.permissions.forbidden_skills or [])
+
+    # 个人技能必须按**目标**视角取：
+    # - 配用户时看该用户自己的个人技能。传当前登录管理员会让管理员看到自己的私有技能，
+    #   而目标用户真正拥有的技能一个都不显示；
+    # - 配角色时角色没有个人技能（个人技能属于账号），必须传空——否则会把管理员的
+    #   私有技能塞进角色的可限制清单，等于凭空给角色造出条目。
+    personal_skill_owner: Optional[dict] = None
+    if person is not None:
+        personal_skill_owner = {"id": person.id, "user_name": person.user_name}
+
+    try:
+        return await build_restrictable_resources(
+            db,
+            agent_id=agent_id,
+            globally_forbidden_tools=globally_tools,
+            globally_forbidden_skills=globally_skills,
+            personal_skills=list_personal_skill_metas(personal_skill_owner),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        # 未迁移时 _supports_agent_scope 会抛 RuntimeError：给出可操作的提示而不是 500
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/users/{user_id}/agent-restrictions/{agent_id}")
+async def get_user_agent_restrictions(
+    user_id: int,
+    agent_id: str,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该用户在该智能体上的智能体级限制（不含全局项）。"""
+    try:
+        data = await PermissionService(db).get_agent_scoped_forbidden_ids(
+            user_id=user_id, agent_id=agent_id
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"agent_id": agent_id, **data}
+
+
+@router.put("/users/{user_id}/agent-restrictions/{agent_id}")
+async def update_user_agent_restrictions(
+    user_id: int,
+    agent_id: str,
+    body: AgentRestrictionUpdate,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """覆盖式写入该用户的智能体级限制（只动该 agent 的行）。"""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        data = await PermissionService(db).update_agent_scoped_forbidden_ids(
+            user_id=user_id,
+            agent_id=agent_id,
+            forbidden_tools=body.forbidden_tools,
+            forbidden_skills=body.forbidden_skills,
+        )
+        # 服务层自己 commit（与其它 update_* 一致）——这里不再重复提交，
+        # 否则会出现"提交两次"，且缓存失效发生在第一次提交之前。
+    except RuntimeError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        logger.exception("Failed to update agent restrictions for user %s", user_id)
+        raise HTTPException(status_code=400, detail=f"Failed to save agent restrictions: {exc}")
+    return {"agent_id": agent_id, **data}
+
+
+@router.get("/roles/{role_id}/agent-restrictions/{agent_id}")
+async def get_role_agent_restrictions(
+    role_id: int,
+    agent_id: str,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该角色在该智能体上的智能体级限制（不含全局项）。"""
+    try:
+        data = await PermissionService(db).get_agent_scoped_forbidden_ids(
+            role_id=role_id, agent_id=agent_id
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"agent_id": agent_id, **data}
+
+
+@router.put("/roles/{role_id}/agent-restrictions/{agent_id}")
+async def update_role_agent_restrictions(
+    role_id: int,
+    agent_id: str,
+    body: AgentRestrictionUpdate,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """覆盖式写入该角色的智能体级限制（只动该 agent 的行）。"""
+    role = (await db.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    try:
+        data = await PermissionService(db).update_agent_scoped_forbidden_ids(
+            role_id=role_id,
+            agent_id=agent_id,
+            forbidden_tools=body.forbidden_tools,
+            forbidden_skills=body.forbidden_skills,
+        )
+        # 同上：提交由服务层负责，避免二次提交与失效早于提交。
+    except RuntimeError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        logger.exception("Failed to update agent restrictions for role %s", role_id)
+        raise HTTPException(status_code=400, detail=f"Failed to save agent restrictions: {exc}")
+    return {"agent_id": agent_id, **data}
+
+
+@router.get("/agent-restrictions/counts")
+async def get_agent_restriction_counts(
+    user_id: Optional[int] = Query(None),
+    role_id: Optional[int] = Query(None),
+    agent_ids: str = Query("", description="逗号分隔的智能体 id 列表"),
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """**一次**返回多个智能体的智能体级限制清单，供权限页卡片的角标取齐。
+
+    为什么不返回「已禁数目」：角标口径必须与弹框完全一致——弹框会把**全局已禁用**的项
+    排除在计数外（界面上它们置灰不可选），如果这里图省事返回一个 COUNT，两个数字就会
+    对不上，管理员会看到"角标 3、打开只有 1 项"。所以这里返回与 GET 单智能体完全相同的
+    清单结构，由前端复用同一个计数函数——顺便让弹框打开时直接命中缓存。
+
+    逐个 GET 会让打开一次权限页发出 N 个请求（N = 已授权智能体数），因此用一次
+    ``agent_id IN (...)`` 查询聚合。
+    """
+    ids = [item.strip() for item in (agent_ids or "").split(",") if item.strip()]
+    if not ids:
+        return {"restrictions": {}}
+    if user_id is None and role_id is None:
+        raise HTTPException(status_code=400, detail="user_id 或 role_id 必须提供一个")
+
+    try:
+        # 未迁移时没有作用域列：返回空清单（而不是报错让整个权限页打不开）
+        if not await PermissionService(db)._supports_agent_scope():
+            return {"restrictions": {agent_id: {"forbidden_tools": [], "forbidden_skills": []} for agent_id in ids}}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    from sqlalchemy import text
+
+    subject_column = "user_id" if user_id is not None else "role_id"
+    subject_value = int(user_id if user_id is not None else role_id)
+    placeholders = ", ".join(f":aid_{index}" for index in range(len(ids)))
+    params = {f"aid_{index}": value for index, value in enumerate(ids)}
+    params["subject"] = subject_value
+
+    rows = (
+        await db.execute(
+            text(
+                f"SELECT agent_id, resource_type, resource_id "
+                f"FROM ai_agent_resource_permissions "
+                f"WHERE {subject_column} = :subject AND agent_id IN ({placeholders}) "
+                # TRUE 而非整型：PG 的 enabled 是 BOOLEAN，不接受整型字面量（MySQL 视 TRUE 为 1）
+                f"AND enabled = TRUE "
+                f"AND resource_type IN ('forbidden_tool', 'forbidden_skill')"
+            ).bindparams(**params)
+        )
+    ).all()
+
+    restrictions: Dict[str, Dict[str, List[str]]] = {
+        agent_id: {"forbidden_tools": [], "forbidden_skills": []} for agent_id in ids
+    }
+    seen: Dict[str, Dict[str, set]] = {
+        agent_id: {"forbidden_tools": set(), "forbidden_skills": set()} for agent_id in ids
+    }
+    for agent_id, resource_type, resource_id in rows:
+        agent_key = str(agent_id)
+        if agent_key not in restrictions:
+            continue
+        bucket = "forbidden_skills" if resource_type == "forbidden_skill" else "forbidden_tools"
+        value = str(resource_id)
+        if value in seen[agent_key][bucket]:
+            continue
+        seen[agent_key][bucket].add(value)
+        restrictions[agent_key][bucket].append(value)
+    return {"restrictions": restrictions}

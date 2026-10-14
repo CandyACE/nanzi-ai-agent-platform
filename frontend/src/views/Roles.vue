@@ -428,11 +428,10 @@
                                   />
                                   <span>{{ resourceConfig[type].label }}</span>
                                   <span
-                                      v-if="type !== 'forbidden_configs'"
                                       class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
                                       :class="activeResTab === type ? 'bg-gray-50' : ''"
                                   >
-                                      {{ (permissionData as any)[type].length }}
+                                      {{ resourceTabCount(type) }}
                                   </span>
                               </button>
                           </div>
@@ -485,57 +484,9 @@
                                   </div>
                               </div>
 
-                              <!-- 1. 禁用工具 Checkbox 组 -->
-                              <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
-                                  <h4 class="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5 select-none">
-                                      <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                                      选择要禁用的工具（全局拉黑）
-                                  </h4>
-                                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                      <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm bg-white hover:border-red-200 cursor-pointer">
-                                          <input
-                                              type="checkbox"
-                                              :value="tool.id"
-                                              v-model="permissionData.forbidden_tools"
-                                              class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 text-red-600 focus:ring-red-500"
-                                          />
-                                          <div class="ml-2.5 min-w-0 flex-1">
-                                              <p class="font-bold text-gray-900 truncate text-xs leading-tight">{{ tool.name }}</p>
-                                              <span class="text-gray-400 text-[9px] block truncate font-mono mt-0.5">{{ tool.description }}</span>
-                                          </div>
-                                      </label>
-                                  </div>
-                              </div>
-
-                              <!-- 1.2 其他自定义与扩展工具禁用 -->
-                              <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
-                                  <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
-                                      <span class="flex items-center gap-1.5">
-                                          <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
-                                          自定义 API 与 MCP 扩展工具禁用
-                                      </span>
-                                      <input
-                                          v-model="toolSearchQuery"
-                                          type="search"
-                                          placeholder="搜索工具名..."
-                                          class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
-                                      />
-                                  </h4>
-                                  <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                      <label v-for="tool in filteredOtherTools" :key="tool.id" class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs">
-                                          <input
-                                              type="checkbox"
-                                              :value="tool.id"
-                                              v-model="permissionData.forbidden_tools"
-                                              class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
-                                          />
-                                          <div class="ml-1.5 min-w-0 flex-1">
-                                              <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
-                                              <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
-                                          </div>
-                                      </label>
-                                  </div>
-                              </div>
+                              <ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />
+                              <!-- 公共技能与工具并列：同一个组件泛化出 skills 模式，候选来自 skill_candidates -->
+                              <ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />
 
                               <!-- 2. 禁用 Bash 命令关键字 -->
                               <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm flex flex-col">
@@ -543,7 +494,7 @@
                                       <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
                                       自定义禁用命令关键字
                                   </h4>
-                                  <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
+                                  <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），可用英文逗号、中文逗号、顿号、分号或换行分隔。</p>
                                   <textarea
                                       v-model="forbiddenCommandsText"
                                       placeholder="例如: rm, shutdown, mv, wget, curl"
@@ -604,6 +555,26 @@
                                       >{{ res.path }}</span>
                                       <span class="text-gray-400 text-[9px] block truncate font-mono">{{ res.description || res.id }}</span>
                                   </div>
+                                  <!-- 智能体卡片：只有已勾选（已授权）的智能体才值得配「功能限定」，
+                                       没分配就不必配；角标 = 该智能体上已禁用的工具/技能条目数 -->
+                                  <button
+                                      v-if="activeResTab === 'agents' && (permissionData as any).agents.includes(res.id)"
+                                      type="button"
+                                      class="shrink-0 self-center ml-1 px-2 py-1 rounded-lg border text-[10px] font-bold whitespace-nowrap"
+                                      :class="
+                                          agentRestrictionCount(res.id) > 0
+                                              ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                                              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                                      "
+                                      title="只在该智能体里禁用选定的工具 / MCP 工具 / 技能"
+                                      @click.stop.prevent="openAgentRestriction(res)"
+                                  >
+                                      功能限定
+                                      <span
+                                          v-if="agentRestrictionCount(res.id) > 0"
+                                          class="ml-1 inline-block min-w-[1.1rem] text-center px-1 rounded-full bg-red-600 text-white text-[9px] leading-4"
+                                      >{{ agentRestrictionCount(res.id) }}</span>
+                                  </button>
                               </label>
                               </template>
                           </div>
@@ -705,6 +676,16 @@
           </div>
       </div>
     </Teleport>
+
+    <!-- 智能体级功能限定：角色 × 单个智能体 × 工具/MCP工具/技能（与全局禁用取并集） -->
+    <AgentRestrictionDialog
+        v-model="showAgentRestrictionDialog"
+        kind="role"
+        :scope-id="currentRole?.id ?? null"
+        :agent-id="agentRestrictionTargetId"
+        :agent-label="agentRestrictionTargetLabel"
+        @saved="onAgentRestrictionSaved"
+    />
 
     <!-- User Assignment Dialog (Refactored to Dual Column) -->
     <Teleport to="body">
@@ -1155,6 +1136,23 @@ import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSele
 import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
+import ForbiddenToolCatalog from '../components/system/ForbiddenToolCatalog.vue'
+import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
+import { parseForbiddenCommands } from "../utils/forbiddenCommands"
+import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge"
+import {
+    agentRestrictionCacheKey,
+    agentRestrictionCountsPath,
+    countAgentRestrictionBadge,
+    type AgentRestrictionLists,
+} from "../utils/agentRestrictions"
+import { writeAgentRestriction } from "../utils/agentRestrictionCache"
+import {
+    peekForbiddenCatalog,
+    subscribeForbiddenCatalog,
+    type ForbiddenCatalogSnapshot,
+} from "../utils/forbiddenCatalogCache"
+import { extractApiErrorDetail } from "../utils/apiErrorDetail"
 
 const { showToast } = useToast()
 
@@ -1324,7 +1322,7 @@ const resourceConfig: Record<typeof resourceTypes[number], { label: string, colo
         icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" /></svg>`
     },
     forbidden_configs: {
-        label: '禁用工具与命令',
+        label: '禁用资源',
         color: 'red',
         tabActive: 'text-red-600 border-red-600 bg-red-50',
         tabTextActive: 'text-red-600',
@@ -1355,6 +1353,7 @@ const permissionData = ref<{
     elements: string[],
     forbidden_tools: string[],
     forbidden_commands: string[],
+    forbidden_skills: string[],
     models: string[]
 }>({
     agents: [],
@@ -1365,58 +1364,128 @@ const permissionData = ref<{
     elements: [],
     forbidden_tools: [],
     forbidden_commands: [],
+    forbidden_skills: [],
     models: []
 })
 
 const forbiddenCommandsText = ref("")
 
-const availableToolsToForbid = [
-  { id: "exec_command", name: "执行终端命令 (exec_command)", description: "在沙箱中执行 Bash/shell 命令行" },
-  { id: "write_file", name: "写入/修改文件 (write_file)", description: "对沙箱目录物理写入或修改代码文件" },
-  { id: "read_file", name: "读取文件内容 (read_file)", description: "读取沙箱工作目录中的文本或源代码" },
-  { id: "search_qa_examples", name: "检索经验库 (search_qa_examples)", description: "检索历史问答优质案例及 SQL" },
-  { id: "manage_process", name: "进程管理 (manage_process)", description: "查看或终止沙箱中的系统进程" }
-]
+/**
+ * 禁用目录快照（工具 / 技能候选），只用于徽标计数：判断"哪些选中项属于同一个别名组"
+ * 必须有目录。这里只订阅共享缓存，不额外发请求——目录由 ForbiddenToolCatalog 统一加载。
+ */
+const forbiddenCatalogSnapshot = ref<ForbiddenCatalogSnapshot>({
+    candidates: [],
+    skillCandidates: [],
+})
+const syncForbiddenCatalogSnapshot = () => {
+    const snapshot = peekForbiddenCatalog()
+    if (snapshot) forbiddenCatalogSnapshot.value = snapshot
+}
+let unsubscribeForbiddenCatalog: (() => void) | null = null
 
-const otherAvailableTools = ref<any[]>([])
-const toolSearchQuery = ref("")
+/**
+ * tab 徽标口径：禁用资源 = 工具条目数 + 命令条目数 + 技能条目数（用户视角，一个别名组算 1），
+ * 其余 tab = 已勾选资产数。口径与用户页共用同一个纯函数——各写一份必然漂移成两个数字。
+ * 角色页读的是角色行自己的权限，没有「直配 / 继承」两级作用域的并集问题，语义不变。
+ */
+const resourceTabCount = (type: string) =>
+  type === 'forbidden_configs'
+    ? countForbiddenResourceBadge({
+        forbiddenTools: permissionData.value.forbidden_tools,
+        toolCandidates: forbiddenCatalogSnapshot.value.candidates,
+        forbiddenCommandsText: forbiddenCommandsText.value,
+        forbiddenSkills: permissionData.value.forbidden_skills,
+        skillCandidates: forbiddenCatalogSnapshot.value.skillCandidates,
+      })
+    : ((permissionData.value as any)[type]?.length || 0);
 
-const filteredOtherTools = computed(() => {
-    const query = toolSearchQuery.value.trim().toLowerCase()
-    if (!query) return otherAvailableTools.value
-    return otherAvailableTools.value.filter(t =>
-        t.name.toLowerCase().includes(query) ||
-        t.description.toLowerCase().includes(query)
-    )
+// 目录由 ForbiddenToolCatalog 加载，这里只订阅；卸载必须退订，否则回调一直持有本页状态
+onMounted(() => {
+    syncForbiddenCatalogSnapshot()
+    unsubscribeForbiddenCatalog = subscribeForbiddenCatalog(syncForbiddenCatalogSnapshot)
+})
+onUnmounted(() => {
+    unsubscribeForbiddenCatalog?.()
+    unsubscribeForbiddenCatalog = null
 })
 
-const fetchAllSystemTools = async () => {
-    try {
-        const [resPortal, resMcp] = await Promise.all([
-            axios.get("/api/portal/tools"),
-            axios.get("/api/portal/tools/mcp").catch(() => ({ data: [] }))
-        ])
+/**
+ * 智能体级「功能限定」：目标是「该角色 × 单个智能体 × 资源」，与全局禁用取并集。
+ *
+ * 角标只对**已勾选**智能体显示，接口按智能体提供计数，因此在「智能体」tab 可见时
+ * 按需加载，并走 agentRestrictionCache 去重（保存后由弹框回填，不必再 GET）。
+ */
+const agentRestrictionTarget = ref<{ id: string; label: string } | null>(null)
+const showAgentRestrictionDialog = ref(false)
+const agentRestrictionCounts = ref<Record<string, number>>({})
+const agentRestrictionTargetId = computed(() => agentRestrictionTarget.value?.id || '')
+const agentRestrictionTargetLabel = computed(() => agentRestrictionTarget.value?.label || '')
 
-        const dynamicMapped = (resPortal.data || []).map((t: any) => ({
-            id: t.name,
-            name: t.name,
-            description: t.description || "自定义 API 工具",
-            category: "api"
-        }))
+const agentRestrictionCacheKeyFor = (agentId: string) =>
+    agentRestrictionCacheKey('role', currentRole.value?.id ?? '', agentId)
 
-        const mcpMapped = (Array.isArray(resMcp.data) ? resMcp.data : (resMcp.data.data || [])).map((t: any) => ({
-            id: t.name,
-            name: t.name,
-            description: t.description || "MCP 注册工具",
-            category: "mcp"
-        }))
-
-        const forbiddenIds = new Set(["exec_command", "write_file", "read_file", "manage_process"])
-        otherAvailableTools.value = [...dynamicMapped, ...mcpMapped].filter(t => !forbiddenIds.has(t.name))
-    } catch (e) {
-        console.error("Failed to fetch all tools for permission mapping", e)
+const applyAgentRestrictionCount = (agentId: string, lists: AgentRestrictionLists) => {
+    agentRestrictionCounts.value = {
+        ...agentRestrictionCounts.value,
+        [String(agentId)]: countAgentRestrictionBadge(lists),
     }
 }
+
+/** 卡片角标：只反映已知的限制数（口径与弹框、用户页一致）。 */
+const agentRestrictionCount = (agentId: string) =>
+    agentRestrictionCounts.value[String(agentId)] || 0
+
+const openAgentRestriction = (res: any) => {
+    agentRestrictionTarget.value = {
+        id: String(res?.id ?? ''),
+        label: String(res?.platform_name || res?.display_name || res?.name || res?.id || ''),
+    }
+    showAgentRestrictionDialog.value = true
+}
+
+const onAgentRestrictionSaved = (lists: AgentRestrictionLists) => {
+    const agentId = agentRestrictionTarget.value?.id
+    if (agentId) applyAgentRestrictionCount(agentId, lists)
+}
+
+/** 已禁数量按需加载：分 4 个一批并发，单个失败不影响其它卡片（入口仍可用）。 */
+/**
+ * 已勾选智能体的已禁数量：**一次批量接口**取齐，而不是逐个智能体 GET。
+ *
+ * 走批量不只是省请求：回填时顺带写进限制缓存，管理员随后打开弹框即命中，不再多打一次。
+ * 整批失败时所有卡片角标显示 0，入口仍可用（打开弹框会给出明确报错）。
+ */
+const loadAgentRestrictionCounts = async () => {
+    const roleId = currentRole.value?.id
+    if (!roleId) return
+    const pending = (permissionData.value.agents || [])
+        .map((id: any) => String(id))
+        .filter((id: string) => !(id in agentRestrictionCounts.value))
+    if (!pending.length) return
+    try {
+        const response = await axios.get(
+            agentRestrictionCountsPath('role', roleId, pending),
+        )
+        const restrictions = response?.data?.restrictions || {}
+        for (const agentId of pending) {
+            const lists = writeAgentRestriction(
+                agentRestrictionCacheKeyFor(agentId),
+                restrictions[agentId] || { forbidden_tools: [], forbidden_skills: [] },
+            )
+            applyAgentRestrictionCount(agentId, lists)
+        }
+    } catch (error) {
+        console.warn('加载智能体功能限定计数失败', error)
+    }
+}
+
+/** 智能体 tab 可见时补齐角标；勾选变化后同样要重新对齐。 */
+watch([activeResTab, () => permissionData.value.agents, showPermissionDialog], () => {
+    if (activeResTab.value === 'agents' && showPermissionDialog.value) {
+        void loadAgentRestrictionCounts()
+    }
+}, { deep: true })
 
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
@@ -2185,6 +2254,9 @@ const openPermissionDialog = async (role: any) => {
     currentRole.value = role
     showPermissionDialog.value = true
     activeMainTab.value = 'assets'
+    // 上一个角色的智能体级限制计数与弹框目标必须复位，否则角标会跨角色残留
+    agentRestrictionCounts.value = {}
+    agentRestrictionTarget.value = null
     await Promise.all([
         fetchResources(),
         fetchRolePermissions(role.id)
@@ -2256,6 +2328,7 @@ const fetchRolePermissions = async (roleId: number) => {
             elements: perms.elements || [],
             forbidden_tools: perms.forbidden_tools || [],
             forbidden_commands: perms.forbidden_commands || [],
+            forbidden_skills: perms.forbidden_skills || [],
             models: perms.models || []
         }
         forbiddenCommandsText.value = (perms.forbidden_commands || []).join(", ")
@@ -2270,6 +2343,7 @@ const fetchRolePermissions = async (roleId: number) => {
             elements: [],
             forbidden_tools: [],
             forbidden_commands: [],
+            forbidden_skills: [],
             models: []
         }
         forbiddenCommandsText.value = ""
@@ -2285,16 +2359,17 @@ const savePermissions = async () => {
                 .filter((d: any) => d?.is_missing_in_ragflow || d?.status === 'missing')
                 .map((d: any) => d.id)
         )
-        permissionData.value.forbidden_commands = forbiddenCommandsText.value
-          .split(",")
-          .map(cmd => cmd.trim())
-          .filter(cmd => cmd.length > 0)
+        permissionData.value.forbidden_commands = parseForbiddenCommands(
+          forbiddenCommandsText.value,
+        )
 
         const payload = {
             ...permissionData.value,
             datasets: (permissionData.value.datasets || []).filter((id: string) => !missingIds.has(id)),
             // 字段名必须与后端 PermissionUpdate.models 一致（字符串数组，空 = 不限制）
             models: [...(permissionData.value.models || [])],
+            // 技能是勾选式数组：显式带上，字段名与后端 PermissionUpdate.forbidden_skills 一致
+            forbidden_skills: [...(permissionData.value.forbidden_skills || [])],
         }
         await axios.put(
             `/api/portal/roles/${currentRole.value.id}/permissions`,
@@ -2303,7 +2378,10 @@ const savePermissions = async () => {
         showToast('权限保存成功', 'success')
         closePermissionDialog()
     } catch (e: any) {
-        showToast('保存权限失败', 'error')
+        // 原先只说「保存权限失败」：管理员既不知道坏在哪一项，也不知道是不是自己的输入问题。
+        // 422 的 detail 是数组，经提取函数拼成一句人话（例如「禁用技能长度不能超过 255 个字符」）。
+        const reason = extractApiErrorDetail(e?.response?.data, '操作失败')
+        showToast(`权限保存失败：${reason}`, 'error')
     } finally {
         submittingPerms.value = false
     }
@@ -2329,6 +2407,10 @@ const closeDialogs = () => {
 const closePermissionDialog = () => {
     showPermissionDialog.value = false
     currentRole.value = null
+    // 智能体级限制属于「这个角色」的配置：计数与弹框目标一起复位
+    agentRestrictionCounts.value = {}
+    agentRestrictionTarget.value = null
+    showAgentRestrictionDialog.value = false
 }
 
 const formatDate = (dateStr: string) => {
@@ -2338,7 +2420,6 @@ const formatDate = (dateStr: string) => {
 
 onMounted(() => {
     fetchRoles()
-    fetchAllSystemTools()
     checkDefaultRole()
 })
 

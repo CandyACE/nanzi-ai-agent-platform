@@ -16,24 +16,34 @@ class PermissionSet(BaseModel):
     elements: List[str] = Field(default_factory=list, description="List of allowed Action/Element IDs")
     forbidden_tools: List[str] = Field(default_factory=list, description="List of forbidden tool names")
     forbidden_commands: List[str] = Field(default_factory=list, description="List of forbidden shell command keywords")
+    forbidden_skills: List[str] = Field(
+        default_factory=list, description="List of forbidden platform (global) skill IDs"
+    )
     models: List[str] = Field(
         default_factory=list,
         description="聊天可手动切换的模型 ID 白名单（空 = 不限制，与 element 语义相反）",
     )
 
-    @field_validator("forbidden_tools", "forbidden_commands", mode="before")
+    @field_validator("forbidden_tools", "forbidden_commands", "forbidden_skills", mode="before")
     @classmethod
     def normalize_forbidden_policy_entries(cls, value):
         if value is None:
             return []
+        # 非数组载荷必须拒绝，不能"尽力而为"地迭代：字符串会被按**字符**拆开，
+        # "exec_command" 变成九条单字符规则，接口仍返回 200，而原有禁用规则已被覆盖清空。
+        # 长度上限是在循环内校验的，单字符永远不触发，所以下面那道防线也拦不住这种载荷。
+        if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple, set)):
+            raise ValueError("禁用项必须是字符串数组，收到的是 " + type(value).__name__)
         normalized = []
         seen = set()
         for raw_entry in value:
             entry = str(raw_entry).strip()
             if not entry:
                 continue
-            if len(entry) > 100:
-                raise ValueError("Forbidden policy entries cannot exceed 100 characters")
+            # 上限与工具名对齐（SysApiTool.name 与外部 MCP 工具名可达 255）。此前是 100，
+            # 一个超长工具名被勾中就会让整页权限（含菜单/元素/命令/技能）保存 422，且永远禁不掉。
+            if len(entry) > 255:
+                raise ValueError("Forbidden policy entries cannot exceed 255 characters")
             dedupe_key = entry.casefold()
             if dedupe_key in seen:
                 continue
@@ -57,12 +67,21 @@ class PermissionSetDetail(BaseModel):
     elements: List[ResourceDetail] = Field(default_factory=list)
     forbidden_tools: List[ResourceDetail] = Field(default_factory=list)
     forbidden_commands: List[ResourceDetail] = Field(default_factory=list)
+    forbidden_skills: List[ResourceDetail] = Field(default_factory=list)
     models: List[ResourceDetail] = Field(default_factory=list)
 
 class UserPermissionsResponse(BaseModel):
     roles: List[str] = Field(default_factory=list, description="Assigned roles (reserved)")
     permissions: PermissionSet
     details: Optional[PermissionSetDetail] = None
+    direct_permissions: Optional[PermissionSet] = Field(
+        default=None,
+        description=(
+            "仅该用户直配的权限（不含角色继承）。禁用资源页必须用它回显与提交："
+            "permissions 是「用户 ∪ 角色」的有效权限，直接整份写回会把角色级禁用固化成"
+            "用户级记录，导致角色侧取消后用户仍被禁（黑名单收不回来）。"
+        ),
+    )
 
 class PermissionUpdate(PermissionSet):
     """Payload for updating user permissions"""

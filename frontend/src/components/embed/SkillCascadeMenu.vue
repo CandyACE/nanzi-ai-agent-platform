@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
+import { FORBIDDEN_SKILL_BADGE, forbiddenSkillReason, isSkillForbidden } from '@/utils/skillForbidden'
 
 export interface SkillItem {
   id: string
@@ -9,6 +10,8 @@ export interface SkillItem {
   description?: string
   path?: string
   scope?: 'global' | 'personal'
+  /** 后端清单接口下发：被管理员禁用的公共技能不可挂载（个人技能不带该字段） */
+  forbidden?: boolean
 }
 
 const props = withDefaults(
@@ -54,6 +57,8 @@ const currentScopeSkills = computed(() =>
 
 const filteredSkillsList = computed(() => {
   const query = skillSearchQuery.value.trim().toLowerCase()
+  // 被禁技能刻意**不**在此过滤：从列表里移除会让用户以为技能丢了，
+  // 产品口径是「看得见、但置灰不可选、写明原因」
   if (!query) return currentScopeSkills.value
   return currentScopeSkills.value.filter(
     (s) =>
@@ -71,6 +76,10 @@ const skillInitial = (skill: SkillItem) => {
 
 const skillAccentClass = (skill: SkillItem, index: number) => {
   if (attachedIdSet.value.has(skill.id)) {
+    return 'bg-gray-200 dark:bg-gray-700 text-gray-500'
+  }
+  // 禁用态同样压成灰色头像，避免红色/彩色头像让人误以为还能点
+  if (isSkillForbidden(skill)) {
     return 'bg-gray-200 dark:bg-gray-700 text-gray-500'
   }
   if (skill.scope === 'personal') {
@@ -112,7 +121,9 @@ const loadSkillsList = async () => {
   try {
     await resolveAgentSkillFilter(props.agentId)
     const [globalRes, personalRes] = await Promise.allSettled([
-      axios.get('/api/portal/skills'),
+      // 带 agent_id：forbidden 标记要按「全局 ∪ 该智能体」算。不传则只算全局，
+      // 只在本智能体被禁的技能会显示成可挂载，挂上后被后端静默丢弃、界面全无反馈。
+      axios.get('/api/portal/skills', { params: { agent_id: props.agentId || undefined } }),
       axios.get('/api/portal/skills/personal'),
     ])
     if (globalRes.status === 'fulfilled' && globalRes.value.data?.status === 'success') {
@@ -142,6 +153,13 @@ const loadSkillsList = async () => {
 const mountSkill = (skill: SkillItem) => {
   if (attachedIdSet.value.has(skill.id)) {
     showToast('该技能已挂载，请勿重复挂载', 'warning')
+    return
+  }
+  // 后端会在清单、工具读取、关键词扫描、口头点名、显式挂载、工作区物化六处丢弃被禁技能，
+  // 前端若只靠 :disabled，点击 / 回车 / 父级直接调用等路径仍会走进来，
+  // 于是界面提示「已挂载」而后端静默丢掉——这里再兜一道，把静默失效变成明确提示
+  if (isSkillForbidden(skill)) {
+    showToast(forbiddenSkillReason(skill), 'warning')
     return
   }
   emit('select', skill)
@@ -261,6 +279,8 @@ void loadSkillsList()
         </p>
       </div>
 
+      <!-- 被禁技能保留在列表里（移除会让用户以为技能丢了），只是置灰不可点、并写明原因；
+           标签优先级：已挂载 > 已禁用，既挂载又被禁时只显示「已挂载」（两者都不可点） -->
       <button
         v-for="(skill, index) in filteredSkillsList"
         :key="skill.id"
@@ -268,8 +288,11 @@ void loadSkillsList()
         class="w-full flex items-start gap-2.5 px-2 py-2 rounded-lg text-left transition-colors"
         :class="attachedIdSet.has(skill.id)
           ? 'opacity-60 cursor-default'
-          : 'hover:bg-gray-100 dark:hover:bg-gray-700/70 cursor-pointer'"
-        :disabled="attachedIdSet.has(skill.id)"
+          : isSkillForbidden(skill)
+            ? 'opacity-60 cursor-not-allowed'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-700/70 cursor-pointer'"
+        :disabled="attachedIdSet.has(skill.id) || isSkillForbidden(skill)"
+        :title="isSkillForbidden(skill) ? forbiddenSkillReason(skill) : undefined"
         @click.stop="mountSkill(skill)"
       >
         <div
@@ -291,6 +314,10 @@ void loadSkillsList()
               v-if="attachedIdSet.has(skill.id)"
               class="shrink-0 text-[9px] text-gray-400 font-medium"
             >已挂载</span>
+            <span
+              v-else-if="isSkillForbidden(skill)"
+              class="shrink-0 px-1 py-px text-[9px] font-semibold rounded bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400"
+            >{{ FORBIDDEN_SKILL_BADGE }}</span>
           </div>
           <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 line-clamp-2 leading-snug">
             {{ skill.description || '暂无描述' }}

@@ -347,8 +347,8 @@ def test_portal_session_token_is_enabled_by_default():
 # --- 按用户吊销索引 与 低频回源复核 ---
 #
 # 修复背景：会话缓存键是 auth:api_key:{sha256(token)}，无法从 user_id 反查，
-# 因此 invalidate_user_auth_cache（禁用/删除用户、改角色、重置 Key 都走它）只删了
-# 真实 Key 的缓存键，对会话完全无效；又因为 verify_api_key 缓存命中不查库、会话还
+# 因此 invalidate_user_auth_cache（账号禁用/删除等管理路径，显式传 revoke_sessions=True）
+# 只删了真实 Key 的缓存键，对会话完全无效；又因为 verify_api_key 缓存命中不查库、会话还
 # 参与 24h 滑动续期，被禁用/降权的用户会带着旧身份一直用下去。下面锁定两组保护：
 #   1. 签发即登记 auth:user_sessions:{user_id}，吊销时按索引成批删除；
 #   2. 命中缓存也会按间隔回源复核 status/role，作为吊销遗漏路径的兜底。
@@ -399,15 +399,41 @@ async def test_revoke_sessions_for_user_kills_all_its_sessions():
 
 
 @pytest.mark.asyncio
+async def test_permission_cache_invalidate_keeps_session_alive():
+    """清认证缓存（非管理路径）后会话必须仍然有效。
+
+    回归：权限缓存清理会走 invalidate_user_auth_cache，若它无条件连带吊销会话，
+    用户自己新建知识库数据集就会把自己全部设备登出（表现为「无缘无故退出」）。
+    """
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    with _patch_redis(redis):
+        await AuthService.invalidate_user_auth_cache(7, api_key_hash="real-hash")
+
+    # 认证缓存确实被清了（角色变更立即生效）……
+    assert "auth:api_key:real-hash" not in redis.hashes
+    # ……但会话仍在，用户不会被登出
+    assert _session_key(token) in redis.hashes
+
+
+@pytest.mark.asyncio
 async def test_invalidate_user_auth_cache_also_revokes_sessions():
-    """核心修复：清认证缓存必须连带吊销会话，否则禁用后旧会话仍然长期有效。"""
+    """管理路径显式要求吊销时，清认证缓存必须连带吊销会话。
+
+    否则禁用后的旧会话仍然长期有效（会话缓存命中不查库，且会滑动续期）。
+    """
     redis = _FakeRedis()
 
     with _patch_redis(redis), _patch_session(_fake_user()):
         token = await AuthService.create_portal_session(7)
 
     with _patch_redis(redis), _patch_session_get(_fake_user()):
-        await AuthService.invalidate_user_auth_cache(7, api_key_hash="real-hash")
+        await AuthService.invalidate_user_auth_cache(
+            7, api_key_hash="real-hash", revoke_sessions=True
+        )
 
     assert _session_key(token) not in redis.hashes
 
@@ -421,7 +447,7 @@ async def test_invalidate_revokes_sessions_even_without_api_key_hash():
         token = await AuthService.create_portal_session(7)
 
     with _patch_redis(redis), _patch_session_get(None):
-        await AuthService.invalidate_user_auth_cache(7)
+        await AuthService.invalidate_user_auth_cache(7, revoke_sessions=True)
 
     assert _session_key(token) not in redis.hashes
 

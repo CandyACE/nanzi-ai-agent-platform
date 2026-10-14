@@ -132,6 +132,13 @@ class SkillInjector:
         for skill in available_skills:
             if skill.get("id") != cls.USING_SUPERPOWERS_SKILL_ID:
                 continue
+            # 强制预载也必须尊重 enabled：否则一个已停用的技能会在每个新会话首轮被塞进
+            # 上下文，而它在候选清单里是被剔除的——管理员在"禁用资源"页和智能体功能限定
+            # 弹框里都看不到它，也就无从禁掉（列不出来所以禁不掉）。
+            from app.utils.skill_metadata import is_skill_enabled
+
+            if not is_skill_enabled(skill):
+                continue
             item = dict(skill)
             item["match_score"] = 1.0
             item["match_source"] = "scan"
@@ -151,8 +158,13 @@ class SkillInjector:
         full_load_policy: Dict[str, Any],
         full_loaded_count: int,
         skills_log_callback: Optional[Callable] = None,
+        forbidden_skill_ids: Optional[Set[str]] = None,
     ) -> int:
-        """所有智能体：新会话首轮强制预载 using-superpowers（完整指令）。"""
+        """所有智能体：新会话首轮强制预载 using-superpowers（完整指令）。
+
+        forbidden_skill_ids 由调用方（``inject_skills``，async）查好后传入：本函数是同步
+        classmethod，自己没法查权限；而禁用优先级高于"白名单例外"，所以必须能拿到它。
+        """
         if not cls.is_new_session_first_user_turn(messages):
             return full_loaded_count
         if cls.USING_SUPERPOWERS_SKILL_ID in mounted_skill_ids:
@@ -165,6 +177,7 @@ class SkillInjector:
         )
 
         skill_filter = skill_filter_kwargs_from_config(agent_config)
+        skill_filter["excluded_skill_ids"] = forbidden_skill_ids
         available_skills = list_skill_metas(user_info=user_info, **skill_filter)
         skill_meta = next(
             (
@@ -180,6 +193,8 @@ class SkillInjector:
                 user_info=user_info,
                 skills_custom=False,
                 allowed_global_skills=None,
+                # 白名单例外不等于禁用例外：被管理员禁用的技能即便在首轮门禁里也不加载
+                excluded_skill_ids=skill_filter.get("excluded_skill_ids"),
             )
             skill_meta = next(
                 (
@@ -324,6 +339,16 @@ class SkillInjector:
                 if str(item["id"]) not in mounted_ids
             )
 
+        # 权限侧禁用（forbidden_skills）必须在挂载这条路上也拦：用户绕过技能菜单直接指定
+        # 一个被禁技能时，过滤只能发生在这里。
+        from app.services.ai.skills.policy import (
+            drop_forbidden_skill_items,
+            get_forbidden_skill_ids,
+        )
+
+        forbidden_skill_ids = await get_forbidden_skill_ids()
+        active_skills = drop_forbidden_skill_items(active_skills, forbidden_skill_ids)
+
         mounted_skill_ids = {s.get("url") for s in active_skills if s.get("url")}
         skills_injection = []
         full_load_policy = await cls.resolve_skill_full_load_policy()
@@ -416,7 +441,9 @@ class SkillInjector:
                     skill_filter_kwargs_from_config,
                 )
 
+                from app.services.ai.skills.policy import get_forbidden_skill_ids
                 skill_filter = skill_filter_kwargs_from_config(agent_config)
+                skill_filter["excluded_skill_ids"] = await get_forbidden_skill_ids()
                 for skill_meta in resolve_skills_from_query(
                     user_query,
                     user_info=user_info,
@@ -480,7 +507,9 @@ class SkillInjector:
                 )
 
                 if is_main_general_agent(agent_config):
+                    from app.services.ai.skills.policy import get_forbidden_skill_ids
                     skill_filter = skill_filter_kwargs_from_config(agent_config)
+                    skill_filter["excluded_skill_ids"] = await get_forbidden_skill_ids()
                     scan_enabled_raw = await ConfigService.get("skill_auto_scan_enabled", "true")
                     scan_enabled = str(scan_enabled_raw or "true").strip().lower() in {
                         "1",
@@ -609,6 +638,7 @@ class SkillInjector:
                 full_load_policy=full_load_policy,
                 full_loaded_count=full_loaded_count,
                 skills_log_callback=skills_log_callback,
+                forbidden_skill_ids=forbidden_skill_ids,
             )
         except Exception as first_turn_err:
             logger.warning(

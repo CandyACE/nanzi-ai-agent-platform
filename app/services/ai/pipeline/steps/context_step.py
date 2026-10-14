@@ -17,7 +17,10 @@ from app.services.ai.agent_service import (
     _track_process_timeline,
 )
 from app.services.ai.memory_service import memory_service
-from app.utils.skill_metadata import enrich_messages_with_skill_meta
+from app.utils.skill_metadata import (
+    enrich_messages_with_skill_meta,
+    sanitize_forbidden_skill_context,
+)
 from app.services.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,34 @@ class ContextStep(BasePipelineStep):
 
     async def run(self, context: PipelineContext) -> AsyncGenerator[Dict[str, Any], None]:
         messages = list(context.messages or [])
+
+        conversation_id = context.conversation_id
+        raw_lane_user_id = context.lane_user_id
+        if raw_lane_user_id is None:
+            raw_lane_user_id = (context.user_info or {}).get("user_id") or (
+                context.user_info or {}
+            ).get("id")
+            context.lane_user_id = raw_lane_user_id
+        lane_user_id = str(raw_lane_user_id or "")
+
+        # 被禁技能的显式挂载必须在**抽出本轮问题、写入会话历史、重建技能提示之前**清洗：
+        #   1. 下面的 memory_service.add_message 会把 content/files 原样落库，落库之后再改内存
+        #      对象已经晚了——历史里会永久留下"绝对路径可直接读"的提示；
+        #   2. enrich_messages_with_skill_meta 与 SkillInjector 都从 files 重建提示，先清 files 才拦得住；
+        #   3. user_query 会参与路由与技能扫描，被禁技能的提示词不该混进去。
+        from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+        # 必须显式带上智能体作用域：这里是 pipeline 的早期阶段，AgentContext 尚未建立
+        # （它由运行时的 executor 设置），resolve_agent_scope() 拿不到值，会静默退化成
+        # 全局口径——那样"只在该智能体被禁"的技能在本轮不会被清洗，挂载提示（含被禁
+        # 技能 SKILL.md 的绝对路径）会被 add_message 原样写进会话历史，之后再也洗不掉。
+        # PipelineContext 上已经有 agent_id（agent_service 构造时填入），直接用。
+        forbidden_skill_ids = await get_forbidden_skill_ids(
+            raw_lane_user_id, getattr(context, "agent_id", None)
+        )
+        if forbidden_skill_ids:
+            sanitize_forbidden_skill_context(messages, forbidden_skill_ids)
+
         user_msg = (
             messages[-1]
             if messages
@@ -43,14 +74,6 @@ class ContextStep(BasePipelineStep):
         context.user_query = user_query
         context.shared_state["user_query"] = user_query
 
-        conversation_id = context.conversation_id
-        raw_lane_user_id = context.lane_user_id
-        if raw_lane_user_id is None:
-            raw_lane_user_id = (context.user_info or {}).get("user_id") or (
-                context.user_info or {}
-            ).get("id")
-            context.lane_user_id = raw_lane_user_id
-        lane_user_id = str(raw_lane_user_id or "")
         agent_id = context.agent_id
         agent_name = (
             context.agent_name
@@ -76,6 +99,11 @@ class ContextStep(BasePipelineStep):
             server_history = await _apply_context_snapshot(
                 server_history, user_id=u_id, conversation_id=conversation_id
             )
+            if forbidden_skill_ids:
+                # 禁用**之前**写进历史的旧挂载提示同样会随窗口进模型：它带着被禁技能的
+                # 绝对路径，等于每轮都在提醒模型"这个技能可以读"。这里只改内存快照，
+                # 不改写已落库的历史（只在读取侧净化，避免为了安全去改用户的历史记录）。
+                sanitize_forbidden_skill_context(server_history, forbidden_skill_ids)
             context_source_history_count = len(history_messages_for_llm(server_history))
 
             if self.agent_service and hasattr(self.agent_service, "_resolve_pre_route_context_budget"):

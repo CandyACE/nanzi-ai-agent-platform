@@ -17,10 +17,18 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL_API = ROOT / "frontend/src/api/tool.ts"
 REGISTRY = ROOT / "frontend/src/components/system/ToolRegistry.vue"
 MANAGEMENT = ROOT / "frontend/src/views/AgentManagement.vue"
+# 分组规则已收进共享模块（权限页「功能限定」弹框与智能体页共用），断言随之指向它
+GROUPING = ROOT / "frontend/src/utils/toolGrouping.ts"
 
 
 def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _grouping_body() -> str:
+    """`groupToolsForDisplay` 的函数体（它不是 const，所以不走 _statement）。"""
+    source = _source(GROUPING)
+    return source[source.index("export function groupToolsForDisplay") :]
 
 
 def _statement(source: str, name: str) -> str:
@@ -90,29 +98,36 @@ def test_registry_does_not_hardcode_customer_prefixes():
 # 智能体配置：业务分组优先 + 内置回落不变 + 兜底组殿后
 # --------------------------------------------------------------------------- #
 def test_grouping_prefers_business_group_and_keeps_keyword_fallback():
-    body = _statement(_source(MANAGEMENT), "groupedTools = computed")
-    assert re.search(r"if\s*\(\s*businessGroup\s*\)", body), "命中业务分组时必须提前归位并跳过关键字猜测"
-    assert "(tool.group_name || '')" in body, "分组名要取工具自身的 group_name"
+    body = _grouping_body()
+    assert re.search(r"if\s*\(\s*business\s*\)", body), "命中业务分组时必须提前归位并跳过关键字猜测"
+    assert "getGroupName?.(item)" in body, "分组名要取工具自身的 group_name"
     # 老数据（无分组）必须继续走原有关键字回落，行为不变
-    assert "browser" in body and "knowledge" in body
+    keyword_rules = _source(GROUPING)
+    assert "'browser'" in keyword_rules and "'knowledge'" in keyword_rules
+    assert "capabilityKeyOf" in body, "无业务分组时回落走关键字猜测"
+    # 智能体页只负责把两个取值器传进去，规则本身不再内联
+    management = _source(MANAGEMENT)
+    assert "groupToolsForDisplay(" in management
+    assert "(tool) => tool.group_name" in management
 
 
 def test_fallback_group_is_a_named_constant_and_last():
-    source = _source(MANAGEMENT)
-    assert "BUSINESS_GROUP_FALLBACK_LABEL" in source
-    body = _statement(source, "groupedTools = computed")
+    source = _source(GROUPING)
+    assert "TOOL_GROUP_FALLBACK_LABEL" in source
+    assert "'其他扩展工具'" in source, "兜底组文案保持不变"
+    body = _grouping_body()
     order = re.search(
         r"return\s*\[\s*\.\.\.(\w+),\s*\.\.\.(\w+),\s*\.\.\.(\w+)\s*\]",
         body,
     )
     assert order, "分组顺序需要写成显式的 return 展开，便于校验"
-    assert order.group(1) == "builtinGroups", "内置关键字组保持原有顺序、排最前"
+    assert order.group(1) == "capabilityGroups", "能力域（原内置关键字组）保持原有顺序、排最前"
     assert order.group(3) == "fallbackGroups", "兜底组必须殿后"
 
 
 def test_business_groups_are_sorted_by_size():
-    body = _statement(_source(MANAGEMENT), "groupedTools = computed")
-    assert re.search(r"businessGroups", body)
+    body = _grouping_body()
+    assert re.search(r"businessBuckets", body)
     assert "sort(" in body, "业务分组按工具数降序，工具多的域一眼可见"
 
 
