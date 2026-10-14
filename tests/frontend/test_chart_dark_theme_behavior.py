@@ -138,6 +138,40 @@ return {
     assert result["darkYIsArray"] is False
 
 
+def test_dark_theme_lifts_scroll_legend_pager():
+    """滚动图例的翻页箭头与页码同样画在 canvas 上，深色底必须一起抬亮。"""
+    result = _run_typescript(
+        """
+const merged = api.mergeChartDefaults({
+  xAxis: { type: 'category', data: ['a'] },
+  yAxis: { type: 'value' },
+  series: [{ type: 'bar', data: [1] }]
+});
+const dark = api.applyChartDarkTheme(merged);
+return {
+  lightType: merged.legend.type,
+  lightPageText: merged.legend.pageTextStyle.color,
+  lightPageIcon: merged.legend.pageIconColor,
+  lightPageInactive: merged.legend.pageIconInactiveColor,
+  darkPageText: dark.legend.pageTextStyle.color,
+  darkPageIcon: dark.legend.pageIconColor,
+  darkPageInactive: dark.legend.pageIconInactiveColor,
+  darkLegendText: dark.legend.textStyle.color
+};
+"""
+    )
+
+    assert result["lightType"] == "scroll"
+    assert result["lightPageText"] == "#374151"
+    assert result["lightPageIcon"] == "#374151"
+    assert result["lightPageInactive"] == "#d1d5db"
+    assert result["darkPageText"] == "#d1d5db"
+    assert result["darkPageIcon"] == "#d1d5db"
+    # 不可用的那一侧箭头必须压暗，否则两枚箭头在深色底上分不出可用性
+    assert result["darkPageInactive"] == "#4b5563"
+    assert result["darkLegendText"] == "#d1d5db"
+
+
 def test_dark_theme_is_pure():
     """纯函数：不能就地改写调用方持有的 option（图表会在切主题时重算）。"""
     result = _run_typescript(

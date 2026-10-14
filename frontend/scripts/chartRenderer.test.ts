@@ -418,3 +418,26 @@ const roomyGridWithOffsetLegend = mergeChartDefaults({
 });
 assert.equal(roomyGridWithOffsetLegend.grid.bottom, 60);
 
+// 回归：默认改用滚动图例——plain 图例在窄容器 + 多系列时会换行，
+// 换行后的第一行会重新压到 X 轴刻度上（实测 300px 宽 + 6 系列：图例首行 y=245 与刻度 240~252 重叠）；
+// scroll 只占一行，放得下时不显示翻页箭头，宽容器表现与 plain 一致。
+assert.equal(defaultCartesian.legend.type, "scroll");
+assert.equal(defaultCartesian.legend.pageTextStyle.color, "#374151");
+assert.equal(defaultCartesian.legend.pageIconColor, "#374151");
+assert.equal(defaultCartesian.legend.pageIconInactiveColor, "#d1d5db");
+
+// 模型显式选择 plain 时必须尊重，不被默认值覆盖
+const explicitPlainLegend = mergeChartDefaults({
+  legend: { type: "plain" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(explicitPlainLegend.legend.type, "plain");
+
+// 饼图同样走默认滚动图例（不依赖直角坐标系分支）
+const pieLegend = mergeChartDefaults({
+  series: [{ name: "占比", type: "pie", data: [{ name: "A", value: 1 }] }],
+});
+assert.equal(pieLegend.legend.type, "scroll");
+

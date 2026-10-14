@@ -58,6 +58,7 @@ const chartViewModeLabels: Record<ChartViewMode, string> = {
 
 const axisLabelReadableColor = "#6b7280";
 const axisNameReadableColor = "#374151";
+const axisLineReadableColor = "#d1d5db";
 const titleReadableColor = "#111827";
 
 /* 深色底对应的一组可读色（与 .dark 下的 gray-300/400/100、gray-600/700 对齐） */
@@ -351,7 +352,19 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       padding: [10, 15],
       extraCssText: "box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border-radius: 8px;",
     },
-    legend: { bottom: BOTTOM_LEGEND_OFFSET, icon: "circle", itemWidth: 8, itemHeight: 8, itemGap: 12 },
+    // 默认滚动图例：plain 图例在窄容器+多系列时会换行，第一行会重新压到 X 轴刻度上
+    // （scroll 在放得下时不显示翻页箭头，宽容器表现与 plain 完全一致）
+    legend: {
+      type: "scroll",
+      bottom: BOTTOM_LEGEND_OFFSET,
+      icon: "circle",
+      itemWidth: 8,
+      itemHeight: 8,
+      itemGap: 12,
+      pageIconColor: axisNameReadableColor,
+      pageIconInactiveColor: axisLineReadableColor,
+      pageTextStyle: { color: axisNameReadableColor, fontSize: 11 },
+    },
   };
 
   if (shouldUseCartesianDefaults) {
@@ -364,7 +377,7 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       show: false,
     };
     defaults.xAxis = {
-      axisLine: { lineStyle: { color: "#d1d5db" } },
+      axisLine: { lineStyle: { color: axisLineReadableColor } },
       axisTick: { show: false },
       axisLabel: { fontSize: 11, color: axisLabelReadableColor, hideOverlap: true },
       splitLine: { show: false },
@@ -554,6 +567,14 @@ export function applyChartDarkTheme(option: Record<string, any> | null | undefin
       textStyle: {
         ...(option.legend.textStyle || {}),
         color: normalizeDarkReadableTextColor(option.legend.textStyle?.color, darkAxisNameColor),
+      },
+      // 滚动图例的翻页箭头与页码同样画在 canvas 上，深色底必须一起抬亮，
+      // 否则「1/2」与左右箭头会消失在深色卡片里
+      pageIconColor: normalizeDarkReadableTextColor(option.legend.pageIconColor, darkAxisNameColor),
+      pageIconInactiveColor: darkAxisLineColor,
+      pageTextStyle: {
+        ...(option.legend.pageTextStyle || {}),
+        color: normalizeDarkReadableTextColor(option.legend.pageTextStyle?.color, darkAxisNameColor),
       },
     };
   }
