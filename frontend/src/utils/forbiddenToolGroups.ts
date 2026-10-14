@@ -214,3 +214,38 @@ export function groupToneClasses(
     action: 'text-red-600 hover:text-red-800',
   }
 }
+
+/**
+ * 「禁用资源」页把候选分到哪一类页签。
+ *
+ * 判据与「功能限定」弹框的 `resourceTabOfGroup` **同源**：只有 `mcp` / `mcp:` 开头算 MCP，
+ * 其余（`builtin:` 与 `api:`）都归工具页签。两处若各写一套，同一个资源在两个入口会被
+ * 分到不同页签，管理员会以为其中一处漏了。
+ *
+ * 自定义 API 跟着内置工具走（而不是单独一页）：它和内置工具一样是「平台内的工具」，
+ * MCP 才是外部扩展；而且自定义 API 通常只有几个，单独一页会很空。
+ */
+export type ForbiddenToolTabKey = 'tools' | 'mcp'
+
+export function toolTabOfCandidate(
+  candidate: ForbiddenToolCandidate | null | undefined,
+): ForbiddenToolTabKey {
+  const key = String(candidate?.group_key ?? '')
+    .trim()
+    .toLowerCase()
+  if (key) return key === 'mcp' || key.startsWith('mcp:') ? 'mcp' : 'tools'
+  // 旧响应没有 group_key：退回 `category` 判据，与组件既有的落组逻辑（builtin / api / mcp）
+  // 保持一致，否则升级瞬间所有 MCP 工具会集体跑到工具页、MCP 页变成空的。
+  const category = String(candidate?.category ?? '')
+    .trim()
+    .toLowerCase()
+  return category === 'mcp' ? 'mcp' : 'tools'
+}
+
+/** 按页签筛候选（保序，供工具/MCP 两个页签各自渲染）。 */
+export function filterCandidatesByToolTab(
+  candidates: ForbiddenToolCandidate[] | null | undefined,
+  tab: ForbiddenToolTabKey,
+): ForbiddenToolCandidate[] {
+  return (candidates || []).filter((candidate) => toolTabOfCandidate(candidate) === tab)
+}

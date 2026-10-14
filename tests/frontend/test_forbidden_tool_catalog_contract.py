@@ -38,3 +38,28 @@ def test_users_page_copy_targets_the_user_not_the_agent():
 
     assert "配置禁用工具后该用户完全无法调用该工具" in source
     assert "配置禁用工具后该智能体完全无法调用该工具" not in source
+
+
+def test_catalog_can_collapse_and_expand_all_groups_at_once():
+    """一键折叠/展开：候选可达上百条、子组十几个，逐个点开很费事。"""
+    source = COMPONENT.read_text(encoding="utf-8")
+
+    assert "toggleAllGroups" in source
+    assert "allGroupsCollapsed" in source
+    assert "展开全部" in source and "折叠全部" in source
+
+    # 必须覆盖**子组**，不能只折叠三个大组——子组才是列表变长的原因
+    body = source[source.index("const collapsibleKeys"):]
+    body = body[: body.index("const allGroupsCollapsed")]
+    assert "GROUP_BUILTIN_KEY" in body and "GROUP_DYNAMIC_KEY" in body
+    assert "visibleBuiltinGroups.value.map((group) => group.key)" in body, "内置子组要算进去"
+    assert "visibleDynamicGroups.value.map((group) => group.key)" in body, "动态子组要算进去"
+    assert "visibleSkillGroups.value.map((group) => group.key)" in body, "技能子组要算进去"
+
+    # 搜索期间分组强制展开（isExpanded 的只读覆盖），此时按钮没有意义
+    assert 'v-if="!isSearching && collapsibleKeys.length > 1"' in source
+
+    # 一键与逐个折叠共用同一个集合
+    toggle_body = source[source.index("const toggleAllGroups"):]
+    toggle_body = toggle_body[: toggle_body.index("</script>")]
+    assert "collapsedKeys.value = next" in toggle_body

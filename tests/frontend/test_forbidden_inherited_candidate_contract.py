@@ -70,7 +70,9 @@ def test_group_select_never_picks_locked_candidates():
 def test_users_view_passes_inherited_lists():
     source = USERS.read_text(encoding="utf-8")
 
-    assert ":inherited=" in source, "用户页必须把继承项传给候选组件"
+    assert ":inherited-tools=" in source and ":inherited-skills=" in source, (
+        "用户页必须把继承项传给候选组件（分页签后工具与技能各传一份）"
+    )
     assert "inheritedForbidden.forbidden_tools" in source, "工具实例要传继承的工具"
     assert "inheritedForbidden.forbidden_skills" in source, "技能实例要传继承的技能"
 
@@ -78,4 +80,4 @@ def test_users_view_passes_inherited_lists():
 def test_roles_view_does_not_pass_inherited():
     """角色页没有"继承"这一层（读的就是角色行本身），传了会误导成整页不可编辑。"""
     roles = (ROOT / "frontend/src/views/Roles.vue").read_text(encoding="utf-8")
-    assert ":inherited=" not in roles
+    assert ":inherited-tools=" not in roles and ":inherited-skills=" not in roles

@@ -358,3 +358,54 @@ return {{
     assert result["filteredByLabel"] == ["skill:audit"]
     assert result["filteredById"] == ["skill:__all__"]
     assert result["orphans"] == ["skill:removed"], "已下架的技能仍要能解除禁用"
+
+
+def test_tool_tab_split_matches_the_agent_dialog_rule():
+    """工具/MCP 分流必须与「功能限定」弹框同源，否则同一资源在两个入口归类不一致。
+
+    后端 `group_key` 的稳定格式是 `builtin:<cat>` / `api:<group>` / `mcp:<server>`，
+    所以判据只需要看前缀，不必依赖 `category` 字段（技能候选就没有 category）。
+    """
+    cases = _run_typescript("""
+return [
+  ['builtin:execution', api.toolTabOfCandidate({ group_key: 'builtin:execution' })],
+  ['api:__ungrouped__', api.toolTabOfCandidate({ group_key: 'api:__ungrouped__' })],
+  ['mcp:nanzi-echo', api.toolTabOfCandidate({ group_key: 'mcp:nanzi-echo' })],
+  ['MCP:upper', api.toolTabOfCandidate({ group_key: 'MCP:upper' })],
+  ['(no key)', api.toolTabOfCandidate({})],
+  ['(null)', api.toolTabOfCandidate(null)],
+  ['(legacy mcp)', api.toolTabOfCandidate({ category: 'mcp' })],
+  ['(legacy api)', api.toolTabOfCandidate({ category: 'api' })],
+];
+""")
+    got = {name: tab for name, tab in cases}
+    assert got["builtin:execution"] == "tools"
+    assert got["api:__ungrouped__"] == "tools", "自定义 API 归工具页（与内置工具同为平台内工具）"
+    assert got["mcp:nanzi-echo"] == "mcp"
+    assert got["MCP:upper"] == "mcp", "大小写不敏感"
+    # 兜底：没有 group_key 的候选归工具（后端应始终给值，这是防御而非契约）
+    assert got["(no key)"] == "tools"
+    assert got["(null)"] == "tools"
+    # 旧响应没有 group_key 时退回 category，否则升级瞬间 MCP 工具会集体跑到工具页
+    assert got["(legacy mcp)"] == "mcp"
+    assert got["(legacy api)"] == "tools"
+
+
+def test_filter_by_tool_tab_keeps_order_and_does_not_drop_unknown():
+    """分流必须无遗漏、无重复：漏掉的候选在界面上直接消失，用户会以为资源不存在。"""
+    split = _run_typescript("""
+const candidates = [
+  { id: 'a', group_key: 'builtin:execution' },
+  { id: 'b', group_key: 'mcp:server-a' },
+  { id: 'c', group_key: 'api:通知' },
+  { id: 'd', group_key: 'mcp:server-b' },
+];
+return {
+  tools: api.filterCandidatesByToolTab(candidates, 'tools').map(c => c.id),
+  mcp: api.filterCandidatesByToolTab(candidates, 'mcp').map(c => c.id),
+  total: candidates.length,
+};
+""")
+    assert split["tools"] == ["a", "c"], "工具页含内置与自定义 API，且保持原序"
+    assert split["mcp"] == ["b", "d"], "MCP 页只含 MCP，且保持原序"
+    assert len(split["tools"]) + len(split["mcp"]) == split["total"], "分流无遗漏无重复"

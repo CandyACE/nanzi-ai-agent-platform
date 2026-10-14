@@ -269,7 +269,9 @@ def test_scope_notice_is_listed_and_highlighted():
         ROOT / "frontend/src/components/system/AgentRestrictionDialog.vue"
     ).read_text(encoding="utf-8")
 
-    assert "border-indigo-200 bg-indigo-50" in source, "说明区要有高亮底色，不能只是灰字"
+    # 底色由 indigo 信息色改为 red 警示色（与「禁用资源」页的提示同一套语气），
+    # 并改为铺满整行 + 可折叠；呈现细节由 test_scope_hint_is_full_width_red_and_collapsible 覆盖。
+    assert "border-red-200 bg-red-50" in source, "说明区要有高亮底色，不能只是灰字"
     assert "只对「{{ scopeNoun }} × 该智能体」生效" in source
     assert "已全局禁用的项在此只读，需到「禁用资源」里调整。" in source
     # 两条各自是独立段落，靠圆点分列，而不是一句连排
@@ -312,3 +314,65 @@ def test_dialog_reads_restrictability_from_shared_pure_functions():
     # 组件不得自行拼装剥离逻辑
     assert "globallyForbiddenIds" not in dialog
     assert "not_restrictable" in dialog or "not_restrictable" in utils
+
+
+# --------------------------------------------------------------------------- #
+# 顶部说明的呈现与折叠
+#
+# 它每条都要读一遍才能确认"改的是哪个范围"，所以必须醒目（红色警示、铺满整行）；
+# 但又不能一直占着屏幕高度——列表本身就要滚动，所以必须可折叠。
+# --------------------------------------------------------------------------- #
+
+def test_scope_hint_is_full_width_red_and_collapsible():
+    source = _source(DIALOG)
+
+    # 铺满：说明块不能留在标题那一行里跟标题抢宽度，否则说明被压成一小条
+    header_marker = "功能限定<span v-if=\"agentLabel\">"
+    hint_marker = "作用范围说明"
+    assert header_marker in source and hint_marker in source
+    header_close = source.index("</h3>")
+    assert source.index(hint_marker) > header_close, (
+        "说明块必须移出标题所在的头部容器，否则无法铺满整行"
+    )
+
+    # 红色警示：与「禁用资源」页的提示同一套语气（不用 indigo 的普通信息色）
+    assert "border-red-200 bg-red-50" in source, "说明块要用红色警示底色"
+    assert "border-indigo-200 bg-indigo-50" not in source, (
+        "旧的信息色写法必须移除，否则红色与蓝紫并存"
+    )
+
+    # 可折叠：受控状态 + aria 关联，而不是纯视觉隐藏
+    assert "hintCollapsed" in source, "说明块需要折叠状态"
+    assert ':aria-expanded="!hintCollapsed"' in source, "折叠要暴露 aria-expanded"
+    assert 'aria-controls="agent-restriction-hint"' in source, "折叠要关联内容区 id"
+    assert 'v-show="!hintCollapsed"' in source
+
+
+def test_scope_hint_reopens_expanded_every_time():
+    """每次打开弹框都恢复展开：上次折叠后若一直保持，新管理员会完全看不到作用域说明。"""
+    source = _source(DIALOG)
+    assert "hintCollapsed.value = false" in source, "打开时必须重置为展开"
+
+
+def test_dialog_can_collapse_and_expand_all_groups_of_current_tab():
+    """一个智能体可能绑几十项、十几个分组，逐个点开很费事。"""
+    source = _source(DIALOG)
+
+    assert "toggleAllGroupsInActiveTab" in source
+    assert "allGroupsCollapsedInActiveTab" in source
+    assert "展开全部" in source and "折叠全部" in source
+
+    # 只作用于当前页签：跨页签一起展开会把另一个页签也铺开，找起来更乱
+    assert "activeTabGroups" in source, "范围要收敛到当前页签的可见分组"
+    assert "visibleGroupsOf(activeTabData)" not in source, (
+        "不得在模板里对可能为 undefined 的页签调用 visibleGroupsOf（会白屏）"
+    )
+    assert "v-if=\"activeTabGroups.length > 1\"" in source, "只有一个分组时按钮没有意义"
+
+
+def test_toggle_all_groups_writes_to_the_same_collapsed_set():
+    """一键与逐个折叠必须共用 collapsedKeys，否则两种方式状态会打架。"""
+    source = _source(DIALOG)
+    body = source[source.index("const toggleAllGroupsInActiveTab"):]
+    body = body[: body.index("</script>")]
+    assert "collapsedKeys.value = next" in body, "必须写回同一个折叠集合"

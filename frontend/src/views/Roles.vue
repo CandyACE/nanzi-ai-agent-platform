@@ -484,23 +484,12 @@
                                   </div>
                               </div>
 
-                              <ForbiddenToolCatalog v-model="permissionData.forbidden_tools" />
-                              <!-- 公共技能与工具并列：同一个组件泛化出 skills 模式，候选来自 skill_candidates -->
-                              <ForbiddenToolCatalog v-model="permissionData.forbidden_skills" resource="skills" />
-
-                              <!-- 2. 禁用 Bash 命令关键字 -->
-                              <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm flex flex-col">
-                                  <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
-                                      <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-                                      自定义禁用命令关键字
-                                  </h4>
-                                  <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），可用英文逗号、中文逗号、顿号、分号或换行分隔。</p>
-                                  <textarea
-                                      v-model="forbiddenCommandsText"
-                                      placeholder="例如: rm, shutdown, mv, wget, curl"
-                                      class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[85px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
-                                  ></textarea>
-                              </div>
+                              <ForbiddenResourceTabs
+                                  v-model:forbidden-tools="permissionData.forbidden_tools"
+                                  v-model:forbidden-skills="permissionData.forbidden_skills"
+                                  v-model:commands-text="forbiddenCommandsText"
+                                  command-subject="该角色下的用户"
+                              />
                           </div>
 
                           <div v-else-if="currentResources.length === 0" class="text-center py-10 text-gray-500 text-xs italic">{{ emptyResourceText }}</div>
@@ -1136,7 +1125,7 @@ import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSele
 import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
-import ForbiddenToolCatalog from '../components/system/ForbiddenToolCatalog.vue'
+import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
 import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
 import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge"

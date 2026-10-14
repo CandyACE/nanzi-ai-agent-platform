@@ -14,20 +14,6 @@
             <h3 class="text-sm sm:text-base font-bold text-gray-900 truncate">
               功能限定<span v-if="agentLabel"> · {{ agentLabel }}</span>
             </h3>
-            <!-- 作用域与只读语义分条 + 高亮底色：挤成一段灰字时管理员会略过，
-                 从而误以为这里改的是全局禁用。两条分别是「影响到谁」和「改不了了怎么办」。 -->
-            <div
-              class="mt-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-2 space-y-1"
-            >
-              <p class="flex gap-1.5 text-[10px] sm:text-xs text-indigo-800 leading-relaxed">
-                <span class="shrink-0 font-bold">•</span>
-                <span>只对「{{ scopeNoun }} × 该智能体」生效：勾选的资源在该智能体里不可用，在其它智能体里仍然可用。</span>
-              </p>
-              <p class="flex gap-1.5 text-[10px] sm:text-xs text-indigo-800 leading-relaxed">
-                <span class="shrink-0 font-bold">•</span>
-                <span>已全局禁用的项在此只读，需到「禁用资源」里调整。</span>
-              </p>
-            </div>
           </div>
           <button
             type="button"
@@ -39,6 +25,49 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        <!-- 作用域与只读语义：铺满整行、红色警示样式（与「禁用资源」页的提示同一套语气），
+             并可折叠——它每条都要读一遍才能确认"改的是哪个范围"，但不能一直占着屏幕高度。
+             挤在标题旁当灰字时管理员会略过，从而误以为这里改的是全局禁用。 -->
+        <div class="shrink-0 px-4 sm:px-5 pt-3">
+          <div class="rounded-lg border border-red-200 bg-red-50 overflow-hidden">
+            <button
+              type="button"
+              class="w-full flex items-center gap-1.5 px-2.5 py-2 text-left"
+              :aria-expanded="!hintCollapsed"
+              aria-controls="agent-restriction-hint"
+              @click="hintCollapsed = !hintCollapsed"
+            >
+              <svg
+                class="w-3.5 h-3.5 shrink-0 text-red-400 transition-transform"
+                :class="{ 'rotate-90': !hintCollapsed }"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              <span class="text-[11px] sm:text-xs font-bold text-red-700 shrink-0">作用范围说明</span>
+              <span class="text-[10px] sm:text-xs text-red-600/80 truncate">
+                只对「{{ scopeNoun }} × 该智能体」生效
+              </span>
+            </button>
+            <div
+              v-show="!hintCollapsed"
+              id="agent-restriction-hint"
+              class="px-2.5 pb-2 space-y-1 border-t border-red-200/70 pt-1.5"
+            >
+              <p class="flex gap-1.5 text-[10px] sm:text-xs text-red-800 leading-relaxed">
+                <span class="shrink-0 font-bold">•</span>
+                <span>只对「{{ scopeNoun }} × 该智能体」生效：勾选的资源在该智能体里不可用，在其它智能体里仍然可用。</span>
+              </p>
+              <p class="flex gap-1.5 text-[10px] sm:text-xs text-red-800 leading-relaxed">
+                <span class="shrink-0 font-bold">•</span>
+                <span>已全局禁用的项在此只读，需到「禁用资源」里调整。</span>
+              </p>
+            </div>
+          </div>
         </div>
 
         <!-- 工具栏：搜索 + 视图说明 -->
@@ -75,11 +104,12 @@
 
           <template v-else>
             <!-- 页签固定三个：空页签用空态说明回答"为什么这里没有内容" -->
-            <div
-              class="flex border-b border-gray-200 bg-gray-50/80 rounded-t-xl"
-              role="tablist"
-              aria-label="资源类型"
-            >
+            <div class="flex items-stretch border-b border-gray-200 bg-gray-50/80 rounded-t-xl">
+              <div
+                class="flex flex-1 min-w-0"
+                role="tablist"
+                aria-label="资源类型"
+              >
               <button
                 v-for="tab in tabs"
                 :key="tab.key"
@@ -97,6 +127,20 @@
                 <span class="block truncate text-center">
                   {{ tab.label }} ({{ tabState(tab).selected }}/{{ tabState(tab).selectable }})
                 </span>
+              </button>
+              </div>
+              <!-- 一个智能体可能绑几十项、十几个分组，逐个点开很费事。
+                   只作用于**当前页签**：跨页签一起展开会把另一个页签也铺开，找起来更乱。 -->
+              <button
+                v-if="activeTabGroups.length > 1"
+                type="button"
+                class="shrink-0 self-center mr-2 px-2 py-1 rounded-md text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 whitespace-nowrap"
+                :title="allGroupsCollapsedInActiveTab
+                  ? '展开当前页签的全部分组'
+                  : '折叠当前页签的全部分组'"
+                @click="toggleAllGroupsInActiveTab"
+              >
+                {{ allGroupsCollapsedInActiveTab ? '展开全部' : '折叠全部' }}
               </button>
             </div>
 
@@ -421,6 +465,42 @@ const toggleCollapse = (key: string) => {
   collapsedKeys.value = next
 }
 
+/** 顶部说明的折叠态：默认展开（首次使用者需要读一遍），同一会话内记住选择。 */
+const hintCollapsed = ref(false)
+
+/**
+ * 当前页签里**可见**（已按搜索过滤）的分组。
+ *
+ * 不用 `tabs.find(...)` 直接在模板里取：页签找不到时会把 undefined 传给
+ * visibleGroupsOf，那里立刻读 tab.key 就会抛错、整块内容白屏。
+ */
+const activeTabGroups = computed(() => {
+  const tab = tabs.value.find((candidate) => candidate.key === activeTab.value)
+  return tab ? visibleGroupsOf(tab) : []
+})
+
+/** 当前页签的所有分组是否都已折叠——决定按钮显示「展开全部」还是「折叠全部」。 */
+const allGroupsCollapsedInActiveTab = computed(() => {
+  const keys = activeTabGroups.value.map((group) => group.key)
+  return keys.length > 0 && keys.every((key) => collapsedKeys.value.has(key))
+})
+
+/**
+ * 一键折叠/展开当前页签的全部分组。
+ *
+ * 只作用于当前页签：把其它页签一起展开会让列表更长、更难定位，而每个页签的计数已经
+ * 说明了哪一类有内容。
+ */
+const toggleAllGroupsInActiveTab = () => {
+  const next = new Set(collapsedKeys.value)
+  const collapse = !allGroupsCollapsedInActiveTab.value
+  for (const key of activeTabGroups.value.map((group) => group.key)) {
+    if (collapse) next.add(key)
+    else next.delete(key)
+  }
+  collapsedKeys.value = next
+}
+
 /** 全选 / 取消全选走共享纯函数：勾选只并入可勾选项，全局禁用项永远写不进来。 */
 const toggleGroup = (group: RestrictableResourceGroup, checked: boolean) => {
   writeSelection(
@@ -545,6 +625,7 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
+      hintCollapsed.value = false
       resetBuffers()
       void load()
     } else {

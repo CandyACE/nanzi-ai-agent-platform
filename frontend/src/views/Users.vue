@@ -1239,57 +1239,45 @@
                         </div>
                       </div>
 
-                      <!-- 角色来源的禁用项（只读）：并集里有、直配里没有的部分，只展示不提交 -->
-                      <div
-                        v-if="inheritedForbiddenRows.length"
-                        class="border border-gray-200 rounded-xl p-3 bg-gray-50"
+                      <ForbiddenResourceTabs
+                        v-model:forbidden-tools="permissionData.forbidden_tools"
+                        v-model:forbidden-skills="permissionData.forbidden_skills"
+                        v-model:commands-text="forbiddenCommandsText"
+                        :inherited-tools="inheritedForbidden.forbidden_tools"
+                        :inherited-skills="inheritedForbidden.forbidden_skills"
+                        :disabled="!permissionsLoaded"
+                        command-subject="该用户"
                       >
-                        <h4
-                          class="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5 select-none"
+                        <!-- 角色来源的禁用项固定在页签上方：它是跨类别的全景，
+                             按类别拆进各页签后要逐个翻才能看全 -->
+                        <template #inherited>
+                        <!-- 角色来源的禁用项（只读）：并集里有、直配里没有的部分，只展示不提交 -->
+                        <div
+                          v-if="inheritedForbiddenRows.length"
+                          class="border border-gray-200 rounded-xl p-3 bg-gray-50"
                         >
-                          <span class="w-1.5 h-1.5 bg-gray-400 rounded-full"></span>
-                          来自角色（只读）
-                        </h4>
-                        <p class="text-[10px] text-gray-500 mb-2 leading-relaxed">
-                          该禁用来自角色，需到角色页调整；这里只能查看，保存本页不会改动它们（本页只提交该用户的直配项）。
-                        </p>
-                        <div class="space-y-1.5">
-                          <div
-                            v-for="row in inheritedForbiddenRows"
-                            :key="row.key"
-                            class="flex items-start gap-2 text-[11px] leading-snug"
+                          <h4
+                            class="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5 select-none"
                           >
-                            <span class="shrink-0 font-bold text-gray-500">{{ row.label }}</span>
-                            <span class="min-w-0 font-mono text-gray-600 break-all">{{ row.items.join('、') }}</span>
+                            <span class="w-1.5 h-1.5 bg-gray-400 rounded-full"></span>
+                            来自角色（只读）
+                          </h4>
+                          <p class="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                            该禁用来自角色，需到角色页调整；这里只能查看，保存本页不会改动它们（本页只提交该用户的直配项）。
+                          </p>
+                          <div class="space-y-1.5">
+                            <div
+                              v-for="row in inheritedForbiddenRows"
+                              :key="row.key"
+                              class="flex items-start gap-2 text-[11px] leading-snug"
+                            >
+                              <span class="shrink-0 font-bold text-gray-500">{{ row.label }}</span>
+                              <span class="min-w-0 font-mono text-gray-600 break-all">{{ row.items.join('、') }}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-
-                      <!-- 直配可编辑：禁用工具 / 技能 / 命令 -->
-                      <ForbiddenToolCatalog
-                        v-model="permissionData.forbidden_tools"
-                        :inherited="inheritedForbidden.forbidden_tools"
-                      />
-                      <!-- 公共技能与工具并列：同一个组件泛化出 skills 模式，候选来自 skill_candidates -->
-                      <ForbiddenToolCatalog
-                        v-model="permissionData.forbidden_skills"
-                        resource="skills"
-                        :inherited="inheritedForbidden.forbidden_skills"
-                      />
-
-                      <!-- 2. 禁用 Bash 命令关键字 -->
-                      <div class="border border-gray-150 rounded-xl p-3 bg-white flex flex-col">
-                        <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
-                          <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-                          自定义禁用命令关键字
-                        </h4>
-                        <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），可用英文逗号、中文逗号、顿号、分号或换行分隔。</p>
-                        <textarea
-                          v-model="forbiddenCommandsText"
-                          placeholder="例如: rm, shutdown, mv, wget, curl"
-                          class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[80px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
-                        ></textarea>
-                      </div>
+                        </template>
+                      </ForbiddenResourceTabs>
                     </div>
 
                     <div
@@ -2332,7 +2320,7 @@ import {
   type ExtraDataPair,
 } from "../utils/userExtraData";
 import Switch from "../components/Switch.vue";
-import ForbiddenToolCatalog from "../components/system/ForbiddenToolCatalog.vue";
+import ForbiddenResourceTabs from "../components/system/ForbiddenResourceTabs.vue";
 import AgentRestrictionDialog from "../components/system/AgentRestrictionDialog.vue";
 import { parseForbiddenCommands } from "../utils/forbiddenCommands";
 import { countForbiddenResourceBadge } from "../utils/forbiddenResourceBadge";

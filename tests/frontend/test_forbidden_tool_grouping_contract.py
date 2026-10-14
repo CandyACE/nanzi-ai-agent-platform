@@ -40,10 +40,16 @@ def test_component_renders_three_levels_with_two_level_collapse_and_search():
     assert "showDynamicSection" in COMPONENT
     assert "搜索状态下分组自动展开，清空搜索后可折叠" in COMPONENT
 
-    # 折叠集合的写入口只有 toggleCollapse，且它不看搜索状态（搜索只是只读覆盖）
+    # 折叠集合的写入口只有 toggleCollapse 与 toggleAllGroups（一键折叠/展开），
+    # 且都不看搜索状态（搜索只是只读覆盖）。写入口是**显式登记**的：新增一个就要改这里，
+    # 免得有人在模板里就地改集合、绕开"搜索期间强制展开"的一致性。
     toggle_body = COMPONENT.split("const toggleCollapse = (key: string) => {")[1].split("}")[0]
     assert "isSearching" not in toggle_body
-    assert COMPONENT.count("collapsedKeys.value = next") == 1
+    assert COMPONENT.count("collapsedKeys.value = next") == 2, "折叠集合只允许两个写入口"
+
+    # 模板里不得就地写折叠集合（只能通过这两个动作）
+    template_part = COMPONENT.split("</template>")[0]
+    assert "collapsedKeys" not in template_part, "模板不得直接改折叠集合"
 
 
 def test_dynamic_group_has_no_inner_scroll_region():
@@ -136,9 +142,17 @@ def test_component_renders_skills_mode_as_one_dedicated_group():
     tools_part, skills_part = COMPONENT.split("<!-- 大组（skills 模式）")
     assert 'v-if="!isSkillsMode"' in tools_part
     assert "v-else" in tools_part, "skills 大组应由 v-else 与工具分支互斥"
-    for title in ("选择要禁用的工具", "自定义 API 与 MCP 扩展工具禁用"):
-        assert title in tools_part, f"工具大组被挪出 tools 分支：{title}"
-        assert title not in skills_part, f"skills 模式不该再渲染工具大组：{title}"
+    assert "选择要禁用的工具" in tools_part, "内置大组被挪出 tools 分支"
+    # 动态大组的标题改为按 toolScope 计算（拆页签后这里可能只剩自定义 API 或只剩 MCP），
+    # 三个取值都要在，且都必须落在 tools 分支内。
+    assert "{{ dynamicSectionTitle }}" in tools_part, "标题应走动态计算"
+    # 三个标题取值在 script 的 computed 里：tools_part / skills_part 只覆盖 template 段，
+    # 且 skills_part 的切分点之后还会一直延伸到 </script>（锚点在 template 里），
+    # 所以字面量按 script 段断言，"不该出现在 skills 分支"改看模板插值本身。
+    script_part = COMPONENT.split("<script setup")[1]
+    for title in ("自定义 API 工具禁用", "MCP 扩展工具禁用", "自定义 API 与 MCP 扩展工具禁用"):
+        assert title in script_part, f"动态标题取值缺失：{title}"
+    assert "{{ dynamicSectionTitle }}" not in skills_part, "skills 模式不该再渲染工具大组"
     assert "禁用选定的公共技能" in skills_part
     assert "toneOf(skillVisibleCandidates, 'gray')" in skills_part
 
@@ -178,19 +192,35 @@ def test_both_views_mount_a_skills_catalog_next_to_the_tools_catalog():
     """用户页与角色页各挂两个实例：工具实例保持原样，技能实例紧随其后并绑定 forbidden_skills。"""
     # 结构断言而不是单行字面量：属性可能被拆成多行（用户页要传 :inherited），
     # 用字面量会把"加一个属性"误判成"实例被改动"。[^>] 含换行，因此天然跨行。
-    tools_re = re.compile(
-        r'<ForbiddenToolCatalog\s[^>]*v-model="permissionData\.forbidden_tools"'
-    )
-    skills_re = re.compile(
-        r'<ForbiddenToolCatalog\s[^>]*v-model="permissionData\.forbidden_skills"[^>]*resource="skills"'
-    )
+    # 分页签后两页都不再直接挂 catalog 实例，而是挂容器组件；目录实例落在容器内部，
+    # 所以断言分两层：页面层看容器与 v-model 绑定，容器层看它挂出的目录实例。
+    tabs_re = re.compile(r"<ForbiddenResourceTabs\s[^>]*v-model:forbidden-tools=")
     for view in (USERS, ROLES):
         source = view.read_text(encoding="utf-8")
-        tools_match = tools_re.search(source)
-        skills_match = skills_re.search(source)
-        assert tools_match, f"{view} 缺工具实例或未绑定 forbidden_tools"
-        assert skills_match, f"{view} 缺 skills 实例或未绑定 forbidden_skills"
-        assert tools_match.start() < skills_match.start(), "技能实例应紧随工具实例之后"
+        assert "ForbiddenResourceTabs" in source, f"{view} 未接入四页签容器"
+        assert tabs_re.search(source), f"{view} 容器未绑定 forbidden_tools"
+        assert 'v-model:forbidden-skills="permissionData.forbidden_skills"' in source, (
+            f"{view} 容器未绑定 forbidden_skills"
+        )
+
+    container = (ROOT / "frontend/src/components/system/ForbiddenResourceTabs.vue").read_text(
+        encoding="utf-8"
+    )
+    tools_re = re.compile(r"<ForbiddenToolCatalog\s[^>]*:model-value=\"forbiddenTools\"[^>]*tool-scope=\"tools\"")
+    skills_re = re.compile(
+        r"<ForbiddenToolCatalog\s[^>]*:model-value=\"forbiddenSkills\"[^>]*resource=\"skills\""
+    )
+    mcp_re = re.compile(r"<ForbiddenToolCatalog\s[^>]*tool-scope=\"mcp\"")
+    tools_match = tools_re.search(container)
+    skills_match = skills_re.search(container)
+    assert tools_match, "容器缺工具目录实例"
+    assert skills_match, "容器缺 skills 目录实例"
+    assert mcp_re.search(container), "容器缺 MCP 目录实例"
+    assert tools_match.start() < skills_match.start(), "技能实例应紧随工具实例之后"
+    # 工具与 MCP 两个实例必须共用同一个 v-model：它们本质是同一份禁用清单
+    assert container.count(':model-value="forbiddenTools"') == 2, (
+        "工具与 MCP 页签必须绑定同一份选中集，否则两页勾选状态会互相覆盖"
+    )
 
 
 def test_both_views_persist_and_hydrate_forbidden_skills():

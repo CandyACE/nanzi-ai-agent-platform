@@ -41,9 +41,9 @@ def test_inherited_forbidden_items_are_rendered_read_only():
     assert "来自角色（只读）" in USERS
     assert "该禁用来自角色，需到角色页调整" in USERS
 
-    read_only_block = USERS.split("<!-- 角色来源的禁用项（只读）")[1].split(
-        "<!-- 直配可编辑：禁用工具 / 技能 / 命令 -->"
-    )[0]
+    # 分页签后只读区搬进了容器的具名插槽，用插槽边界截取（原先靠"直配可编辑"注释收尾，
+    # 那个注释已随改造删除）。
+    read_only_block = USERS.split("<template #inherited>")[1].split("</template>")[0]
     assert "inheritedForbiddenRows" in read_only_block
     assert "v-model" not in read_only_block, "只读区不得出现双向绑定"
 

@@ -1,5 +1,18 @@
 <template>
   <div class="space-y-3">
+    <!-- 一键折叠/展开全部分组：候选最多可到上百条、子组十几个，逐个点开很费事。
+         搜索期间分组是强制展开的（只读覆盖，见 isExpanded），此时按钮没有意义故隐藏。 -->
+    <div v-if="!isSearching && collapsibleKeys.length > 1" class="flex items-center justify-end">
+      <button
+        type="button"
+        class="px-2 py-1 rounded-md text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 whitespace-nowrap"
+        :title="allGroupsCollapsed ? '展开全部分组' : '折叠全部分组'"
+        @click="toggleAllGroups"
+      >
+        {{ allGroupsCollapsed ? '展开全部' : '折叠全部' }}
+      </button>
+    </div>
+
     <!-- 工具模式的两个大组；skills 模式走下面的 v-else，两者互斥（不靠空数据兜住） -->
     <template v-if="!isSkillsMode">
     <!-- 大组 1：内置高危工具（可折叠，子组按 category 分组） -->
@@ -113,7 +126,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
           <span class="w-1.5 h-1.5 rounded-full" :class="toneOf(dynamicVisibleCandidates, 'indigo').dot"></span>
-          <span class="text-xs font-bold truncate" :class="toneOf(dynamicVisibleCandidates, 'indigo').title">自定义 API 与 MCP 扩展工具禁用</span>
+          <span class="text-xs font-bold truncate" :class="toneOf(dynamicVisibleCandidates, 'indigo').title">{{ dynamicSectionTitle }}</span>
           <span class="text-[10px] font-normal shrink-0" :class="toneOf(dynamicVisibleCandidates, 'indigo').count">({{ selectedCountOf(dynamicVisibleCandidates) }}/{{ dynamicVisibleCandidates.length }})</span>
         </button>
         <button
@@ -318,6 +331,7 @@ import {
   type ForbiddenToolCandidate,
   type ForbiddenToolSubGroup,
 } from '../../utils/forbiddenToolGroups'
+import { filterCandidatesByToolTab } from '../../utils/forbiddenToolGroups'
 import { isInheritedForbiddenCandidate } from '../../utils/permissionLists'
 import { loadForbiddenCatalog } from '../../utils/forbiddenCatalogCache'
 
@@ -326,6 +340,14 @@ const props = withDefaults(
     modelValue: string[]
     disabled?: boolean
     resource?: 'tools' | 'skills'
+    /**
+     * 工具模式渲染哪一类候选，供外层按页签拆成两个实例（同一个 v-model，两页共享同一份选中集）：
+     * - `all`（默认）：内置 + 自定义 API + MCP，即改造前的完整列表；
+     * - `tools`：内置 + 自定义 API，去掉 MCP；
+     * - `mcp`：只有 MCP，内置大组整块不渲染。
+     * 默认值保证现有调用方行为完全不变。
+     */
+    toolScope?: 'all' | 'tools' | 'mcp'
     /**
      * 已由所属角色禁用的项（用户页才有）。这些项在直配区必须置灰：后端保存时会把
      * 它们 `continue` 掉，勾了只会「保存成功但勾选消失」。角色页不传。
@@ -336,6 +358,7 @@ const props = withDefaults(
     disabled: false,
     // 默认 tools：现有两个页面的工具实例不传 resource，行为必须与改造前完全一致
     resource: 'tools',
+    toolScope: 'all',
     inherited: () => [],
   },
 )
@@ -389,15 +412,63 @@ const toggleCollapse = (key: string) => {
 /** 搜索期间强制展开：只读覆盖，不写回 collapsedKeys，清空搜索即回到原状态。 */
 const isExpanded = (key: string) => isSearching.value || !collapsedKeys.value.has(key)
 
+/**
+ * 当前模式下**可见**的全部可折叠分组键：大组自身 + 它下面的子组。
+ *
+ * 只收可见项：搜索会把子组过滤掉一部分，把不可见的键也收进来会让"折叠全部"后
+ * 清空搜索时冒出一堆意外折叠的分组。skills 模式与工具模式互斥，不会同时出现。
+ */
+const collapsibleKeys = computed(() => {
+  const keys: string[] = []
+  if (isSkillsMode.value) {
+    if (showSkillSection.value) {
+      keys.push(GROUP_SKILLS_KEY, ...visibleSkillGroups.value.map((group) => group.key))
+    }
+    return keys
+  }
+  if (showBuiltinSection.value) {
+    keys.push(GROUP_BUILTIN_KEY, ...visibleBuiltinGroups.value.map((group) => group.key))
+  }
+  if (showDynamicSection.value) {
+    keys.push(GROUP_DYNAMIC_KEY, ...visibleDynamicGroups.value.map((group) => group.key))
+  }
+  return keys
+})
+
+/** 是否所有可见分组都已折叠——决定按钮显示「展开全部」还是「折叠全部」。 */
+const allGroupsCollapsed = computed(() => {
+  const keys = collapsibleKeys.value
+  return keys.length > 0 && keys.every((key) => collapsedKeys.value.has(key))
+})
+
+/** 一键折叠/展开全部分组（含子组）：折叠时先全折叠，再次点击全展开。 */
+const toggleAllGroups = () => {
+  const next = new Set(collapsedKeys.value)
+  const collapse = !allGroupsCollapsed.value
+  for (const key of collapsibleKeys.value) {
+    if (collapse) next.add(key)
+    else next.delete(key)
+  }
+  collapsedKeys.value = next
+}
+
 const selectedIds = computed(() => new Set((props.modelValue || []).map((id) => String(id))))
 
 // 大组划分沿用既有 category 判据：旧响应没有 group_key 时也能正确落组
-const builtinCandidates = computed(() =>
-  candidates.value.filter((candidate) => candidate.category !== 'api' && candidate.category !== 'mcp'),
-)
-const dynamicCandidates = computed(() =>
-  candidates.value.filter((candidate) => candidate.category === 'api' || candidate.category === 'mcp'),
-)
+const builtinCandidates = computed(() => {
+  // MCP 页签里不该出现内置工具：整个内置大组都不渲染（见 showBuiltinSection）
+  if (props.toolScope === 'mcp') return []
+  return candidates.value.filter((candidate) => candidate.category !== 'api' && candidate.category !== 'mcp')
+})
+const dynamicCandidates = computed(() => {
+  const dynamic = candidates.value.filter(
+    (candidate) => candidate.category === 'api' || candidate.category === 'mcp',
+  )
+  if (props.toolScope === 'all') return dynamic
+  // 工具页签去掉 MCP、MCP 页签只留 MCP。判据走共享纯函数，与「功能限定」弹框同源，
+  // 否则同一个 MCP 工具在两个入口会被分到不同页签。
+  return filterCandidatesByToolTab(dynamic, props.toolScope)
+})
 
 const builtinGroups = computed(() => groupCandidates(builtinCandidates.value))
 const dynamicGroups = computed(() => groupCandidates(dynamicCandidates.value))
@@ -461,12 +532,23 @@ const toggleOrphan = (id: string, checked: boolean) => {
 
 /** 大组 1 原来恒显示；现在搜索无命中时整组隐藏（加载中 / 失败仍要显示提示）。 */
 const showBuiltinSection = computed(() =>
-  !isSearching.value
-  || loading.value
-  || Boolean(loadError.value)
-  || visibleBuiltinGroups.value.length > 0,
+  props.toolScope !== 'mcp'
+  && (!isSearching.value
+    || loading.value
+    || Boolean(loadError.value)
+    || visibleBuiltinGroups.value.length > 0),
 )
 const showDynamicSection = computed(() => visibleDynamicGroups.value.length > 0)
+
+/**
+ * 动态大组的标题随 `toolScope` 变化：拆页签后这里可能只剩自定义 API 或只剩 MCP，
+ * 沿用合并标题会让用户以为另一类凭空消失了。
+ */
+const dynamicSectionTitle = computed(() => {
+  if (props.toolScope === 'tools') return '自定义 API 工具禁用'
+  if (props.toolScope === 'mcp') return 'MCP 扩展工具禁用'
+  return '自定义 API 与 MCP 扩展工具禁用'
+})
 /** skills 大组同样遵守"搜索无命中则整组隐藏"（加载中 / 失败仍要显示提示）。 */
 const showSkillSection = computed(() =>
   !isSearching.value
