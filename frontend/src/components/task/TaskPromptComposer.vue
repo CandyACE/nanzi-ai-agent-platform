@@ -663,7 +663,9 @@ const loadOptions = async () => {
       modelApi.list(),
       axios.get('/api/portal/metadata/datasets/accessible'),
       axios.get('/api/portal/ragflow/datasets', { params: { page: 1, page_size: 100, include_missing: false } }),
-      axios.get('/api/portal/skills'),
+      // 带 agent_id：forbidden 标记按「全局 ∪ 该智能体」算，否则只在本智能体被禁的技能
+      // 会显示成可挂载，实际挂上后被后端静默丢弃（任务侧此前也有同样的反馈缺口）。
+      axios.get('/api/portal/skills', { params: { agent_id: props.agentId || undefined } }),
       axios.get('/api/portal/skills/personal'),
       axios.get('/api/portal/tools/mcp'),
     ])

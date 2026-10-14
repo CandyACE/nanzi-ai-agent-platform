@@ -6,7 +6,7 @@ import zipfile
 import tarfile
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Literal
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -218,6 +218,10 @@ def get_file_tree(dir_path: str, base_path: str) -> list:
 @router.get("", response_model=Dict[str, Any])
 async def list_skills(
     user: Dict = Depends(require_api_key),
+    agent_id: Optional[str] = Query(
+        None,
+        description="会话所属智能体；传入后 forbidden 标记并入该智能体的智能体级禁用",
+    ),
 ):
     """
     扫描技能物理目录，解析 SKILL.md 返回技能列表。
@@ -226,6 +230,11 @@ async def list_skills(
 
     每条带 ``forbidden`` 标记：被权限侧禁用（forbidden_skills）的公共技能**仍会返回**——
     前端要显示"技能还在、只是被管理员禁用"而不是让它凭空消失，但会据此置灰不可挂载。
+
+    ``agent_id`` 决定 ``forbidden`` 的作用域：传了就是「全局 ∪ 该智能体」，不传只有全局。
+    这个参数不能省——漏传时前端会把"只在该智能体被禁"的技能显示为可挂载，用户挂上后
+    被后端 ``drop_forbidden_skill_items`` 静默丢弃（只写 warning 日志），界面全无反馈，
+    用户只会以为技能坏了。带上它，技能中心在该智能体里直接置灰，连试都试不了。
     """
     skills_list = []
     if not os.path.exists(settings.SKILLS_DIR):
@@ -236,7 +245,7 @@ async def list_skills(
         from app.services.ai.skills.policy import get_forbidden_skill_ids
 
         forbidden_skill_ids = await get_forbidden_skill_ids(
-            user.get("user_id") or user.get("id")
+            user.get("user_id") or user.get("id"), agent_id
         )
     except Exception:
         logger.warning("[Skills] Failed to resolve forbidden skills for the catalog", exc_info=True)

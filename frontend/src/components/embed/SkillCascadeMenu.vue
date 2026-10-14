@@ -121,7 +121,9 @@ const loadSkillsList = async () => {
   try {
     await resolveAgentSkillFilter(props.agentId)
     const [globalRes, personalRes] = await Promise.allSettled([
-      axios.get('/api/portal/skills'),
+      // 带 agent_id：forbidden 标记要按「全局 ∪ 该智能体」算。不传则只算全局，
+      // 只在本智能体被禁的技能会显示成可挂载，挂上后被后端静默丢弃、界面全无反馈。
+      axios.get('/api/portal/skills', { params: { agent_id: props.agentId || undefined } }),
       axios.get('/api/portal/skills/personal'),
     ])
     if (globalRes.status === 'fulfilled' && globalRes.value.data?.status === 'success') {

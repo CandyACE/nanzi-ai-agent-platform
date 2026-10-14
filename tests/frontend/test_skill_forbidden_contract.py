@@ -149,3 +149,38 @@ def test_admin_views_are_out_of_scope():
         source = _source(path)
         assert "forbidden" not in source.lower(), f"{path.name} 不该出现禁用态处理"
         assert "FORBIDDEN_SKILL_BADGE" not in source, f"{path.name} 不该出现用户侧禁用文案"
+
+
+def test_three_mount_entries_request_the_agent_scoped_forbidden_flag():
+    """三处挂载入口必须带 ``agent_id`` 请求技能清单。
+
+    不带时 ``forbidden`` 只有**全局**口径：只在本智能体被禁的技能会显示为可挂载，
+    用户挂上后被后端 ``drop_forbidden_skill_items`` 静默丢弃（只写 warning 日志），
+    而前端的「已禁用」提示也不会触发（``skillMeta.forbidden`` 还是 false）——
+    用户看到的完整链路是"挂载成功、模型没反应"，只会以为技能坏了。
+    """
+    scoped_get = (
+        "axios.get('/api/portal/skills', "
+        "{ params: { agent_id: props.agentId || undefined } })"
+    )
+    for path in (SKILL_CENTER, TASK_COMPOSER):
+        source = _source(path)
+        assert scoped_get in source, f"{path.name} 必须按 agent 作用域请求技能清单"
+
+    embed = _source(EMBED_CHAT)
+    assert "params: { agent_id: effectiveEmbedChatAgentId.value || undefined }" in embed, (
+        "EmbedChat 必须用与发消息同源的 agent id，否则「看到的禁用态」与「实际生效的禁用」不同作用域"
+    )
+    # 取值必须早于使用，否则运行时拿到 undefined
+    assert embed.index("effectiveEmbedChatAgentId = computed") < embed.index(
+        "const loadResourceOptions"
+    ), "effectiveEmbedChatAgentId 必须先定义"
+
+
+def test_management_pages_keep_requesting_the_global_catalog():
+    """管理/配置页不受禁用限制（管理员恒 false），保持不带作用域——避免无谓改动。"""
+    for path in (AGENT_MANAGEMENT, SKILLS_MANAGEMENT):
+        source = _source(path)
+        assert "params: { agent_id" not in source, (
+            f"{path.name} 是配置/管理入口，不应请求 agent 作用域的禁用标记"
+        )

@@ -4348,7 +4348,11 @@ const loadResourceOptions = async () => {
     const [datasets, knowledge, globalSkills, personalSkills, mcpTools] = await Promise.allSettled([
       axios.get('/api/portal/metadata/datasets/accessible'),
       axios.get('/api/portal/ragflow/datasets', { params: { page: 1, page_size: 100, include_missing: false } }),
-      axios.get('/api/portal/skills'),
+      // 与发消息时的 agent_id 同源（effectiveEmbedChatAgentId），保证「看到的禁用态」
+      // 与「实际生效的禁用」是同一个作用域。
+      axios.get('/api/portal/skills', {
+        params: { agent_id: effectiveEmbedChatAgentId.value || undefined },
+      }),
       axios.get('/api/portal/skills/personal'),
       axios.get('/api/portal/tools/mcp'),
     ]);
