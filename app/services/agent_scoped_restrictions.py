@@ -412,7 +412,8 @@ def list_personal_skill_metas(user_info: Optional[Dict[str, Any]]) -> List[Dict[
         skills_dir = get_user_personal_skills_dir(user_info)
         if not skills_dir or not os.path.isdir(skills_dir):
             return []
-        return _scan_skill_dir(skills_dir, "personal") or []
+        # 兼容历史遗留的 .seed 布局（见 skill_resolver.iter_personal_skill_dirs）
+        return _scan_skill_dir(skills_dir, "personal", allow_seed=True) or []
     except Exception:  # noqa: BLE001
         logger.debug("[agent-scope] failed to scan personal skills", exc_info=True)
         return []

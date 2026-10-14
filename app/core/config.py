@@ -39,6 +39,9 @@ def resolve_cors_origins(configured: Optional[List[str]]) -> List[str]:
     return origins
 
 
+_SKILLS_DIR_FALLBACK_WARNED = False
+
+
 class Settings(BaseSettings):
     API_SERVICE_ENV: str = "dev"
     API_SERVICE_PORT: int = 8001
@@ -133,6 +136,17 @@ class Settings(BaseSettings):
             return container_path
         host_path = os.path.expanduser("~/.agents/skills")
         os.makedirs(host_path, exist_ok=True)
+        # 回退是"静默"的：容器里 /app/data/skills 没挂上时，公共技能库会变成一个
+        # 空目录且毫无提示（表现为"公共技能莫名为空"）。每个进程只告警一次。
+        global _SKILLS_DIR_FALLBACK_WARNED
+        if not _SKILLS_DIR_FALLBACK_WARNED:
+            _SKILLS_DIR_FALLBACK_WARNED = True
+            logging.getLogger(__name__).warning(
+                "公共技能目录 %s 不存在，SKILLS_DIR 回退到 %s；"
+                "若这是生产环境，请检查 data/skills 是否已正确挂载（否则公共技能库为空）",
+                container_path,
+                host_path,
+            )
         return host_path
 
     def build_mysql_url(self, driver: str = "mysql+aiomysql") -> URL:

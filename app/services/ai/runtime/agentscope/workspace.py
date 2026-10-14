@@ -246,17 +246,21 @@ def discover_platform_skill_paths(
 
             personal_dir = get_user_personal_skills_dir(user_info)
             if personal_dir and os.path.isdir(personal_dir):
-                for entry in sorted(os.listdir(personal_dir)):
-                    skill_dir = os.path.join(personal_dir, entry)
-                    if os.path.isdir(skill_dir) and os.path.isfile(
-                        os.path.join(skill_dir, "SKILL.md")
-                    ):
-                        meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
-                        if meta.get("enabled", "true") == "false":
-                            continue
-                        abs_path = os.path.abspath(skill_dir)
-                        if abs_path not in paths:
-                            paths.append(abs_path)
+                # 个人技能源需兼容历史遗留的 .seed 布局：否则这些技能不会进入
+                # skill_paths，AgentScope 既不会预铺、也不会把它们注入模型上下文
+                # （比"列表为空"更严重——模型会以为自己没有这个技能）。
+                from app.services.ai.skill_resolver import iter_personal_skill_dirs
+
+                for entry, skill_dir in iter_personal_skill_dirs(personal_dir):
+                    skill_md = os.path.join(skill_dir, "SKILL.md")
+                    if not os.path.isfile(skill_md):
+                        continue
+                    meta = parse_skill_frontmatter(entry, skill_md)
+                    if meta.get("enabled", "true") == "false":
+                        continue
+                    abs_path = os.path.abspath(skill_dir)
+                    if abs_path not in paths:
+                        paths.append(abs_path)
         except Exception as exc:
             logger.debug("[workspace] Failed to load personal skill paths: %s", exc)
 
@@ -269,7 +273,19 @@ async def resolve_workspace_root(*, ensure_exists: bool = True) -> str:
 
         raw = await ConfigService.get("agentscope_workspace_root")
         if raw:
-            return os.path.abspath(str(raw))
+            configured = os.path.abspath(str(raw))
+            # 个人技能源由 default_workspace_root() 拼接（不读该配置），二者不一致时
+            # 沙箱工作区与个人技能目录会指向不同位置 → 技能列表为空、写入写到别处。
+            fallback_root = default_workspace_root()
+            if configured != fallback_root:
+                logger.warning(
+                    "[workspace] agentscope_workspace_root=%s 与个人技能源所用的默认工作区根 %s "
+                    "不一致：沙箱工作区会用配置值，而个人技能仍按默认根拼接，可能导致个人技能列表为空。"
+                    "生产环境请勿修改该配置，除非同时迁移 agent_workspaces 目录。",
+                    configured,
+                    fallback_root,
+                )
+            return configured
     except Exception as exc:
         logger.warning("[workspace] Failed to load agentscope_workspace_root: %s", exc)
     root = default_workspace_root()

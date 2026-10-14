@@ -386,7 +386,17 @@ class SkillInjector:
                 if skill_scope == "personal":
                     personal_dir = get_user_personal_skills_dir(user_info)
                     if personal_dir:
-                        candidate_paths.append(os.path.join(personal_dir, skill_id, "SKILL.md"))
+                        # 兼容历史遗留的 .seed 布局：否则个人技能正文会回退去公共
+                        # 技能库找同 ID 文件，找不到就注入空内容
+                        from app.services.ai.skill_resolver import resolve_personal_skill_dir
+
+                        resolved_dir = resolve_personal_skill_dir(personal_dir, skill_id)
+                        candidate_paths.append(
+                            os.path.join(
+                                resolved_dir or os.path.join(personal_dir, skill_id),
+                                "SKILL.md",
+                            )
+                        )
                 candidate_paths.append(os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md"))
 
                 skill_md_path = next(

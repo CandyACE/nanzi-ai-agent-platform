@@ -288,3 +288,283 @@ async def test_list_available_skills_surfaces_seeded_personal_skill(tmp_path, mo
     assert [item["id"] for item in personal] == ["seed-skill"], (
         "个人技能躺在 .seed 里时，工具必须仍然列出它，而不是返回 []"
     )
+
+
+# ── 7. 技能路径发现 / 弹框清单 / 创建就地更新（第二轮补漏）──────────────
+
+
+def test_discover_platform_skill_paths_includes_seeded_personal_skill(tmp_path, monkeypatch):
+    """技能进入 ``skill_paths`` 才会被预铺并注入模型上下文——这比「列表为空」更致命。
+
+    ``discover_platform_skill_paths`` 原先用 ``os.listdir`` 自己枚举个人技能源，
+    因此 ``.seed`` 里的技能根本不会进入 ``LocalWorkspace(skill_paths=...)``。
+    """
+    from types import SimpleNamespace
+
+    from app.services.ai import skill_resolver
+    from app.services.ai.runtime.agentscope import workspace as ws_mod
+
+    public_root = tmp_path / "public_skills"
+    public_root.mkdir()
+    _write_skill(public_root, "public-skill")
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "seed-skill", seed=True)
+
+    # settings.SKILLS_DIR 是只读 property，无法 setattr；函数内是
+    # `from app.core.config import settings`，故替换模块属性即可生效
+    monkeypatch.setattr(
+        "app.core.config.settings", SimpleNamespace(SKILLS_DIR=str(public_root))
+    )
+    monkeypatch.setattr(
+        skill_resolver,
+        "get_user_personal_skills_dir",
+        lambda user_info=None: str(personal_root),
+    )
+
+    paths = ws_mod.discover_platform_skill_paths(user_info={"user_id": "u1"})
+
+    assert "seed-skill" in {Path(p).name for p in paths}
+
+
+def test_agent_scoped_personal_skill_metas_reads_seeded_skill(tmp_path, monkeypatch):
+    """智能体「个人技能」分区清单也要能看到 seed 布局。"""
+    from app.services import agent_scoped_restrictions
+    from app.services.ai import skill_resolver
+
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "seed-skill", seed=True)
+    monkeypatch.setattr(
+        skill_resolver,
+        "get_user_personal_skills_dir",
+        lambda user_info=None: str(personal_root),
+    )
+
+    metas = agent_scoped_restrictions.list_personal_skill_metas({"user_id": "u1"})
+
+    assert [m["id"] for m in metas] == ["seed-skill"]
+
+
+def test_create_skills_updates_seeded_skill_in_place(tmp_path, monkeypatch):
+    """同名技能已存在于 ``.seed`` 时必须就地更新，不得在平铺处再造一份副本。"""
+    from app.services.ai import skill_resolver
+    from app.services.ai.tools.system_executive_tools import create_skills
+    from app.utils.context import current_user_info
+
+    personal_root = tmp_path / "u1" / "skills"
+    seeded = _write_skill(personal_root, "seed-skill", seed=True, body="old-body")
+    monkeypatch.setattr(
+        skill_resolver,
+        "get_user_personal_skills_dir",
+        lambda user_info=None: str(personal_root),
+    )
+
+    # validate_safe_path 只放行 data/ 与 settings.SKILLS_DIR；生产的个人技能源位于
+    # <project>/data/agent_workspaces/<key>/skills（含 .seed 子路径）本就在放行范围内，
+    # 这里 tmp_path 不在 data 下，故单独放行以免测到无关的路径护栏
+    monkeypatch.setattr(
+        "app.services.ai.tools.system_executive_tools.validate_safe_path",
+        lambda path: path,
+    )
+
+    token = current_user_info.set(
+        {"user_id": "u1", "user_name": "u1", "role": "user"}
+    )
+    try:
+        result = create_skills.invoke(
+            {
+                "skill_id": "seed-skill",
+                "name": "Seed Skill",
+                "description": "d",
+                "skill_md_content": "# 新内容",
+                "scope": "personal",
+            }
+        )
+    finally:
+        current_user_info.reset(token)
+
+    assert "错误" not in result
+    assert "新内容" in (seeded / "SKILL.md").read_text(encoding="utf-8")
+    assert not (personal_root / "seed-skill").exists(), "不得在平铺位置再造一份副本"
+
+
+# ── 8. 历史遗留 .seed 里的「公共技能副本」必须排除（第二轮审计 P0）──────
+
+
+def test_seed_platform_copies_are_excluded_from_personal_skills(tmp_path, monkeypatch):
+    """``.seed`` 里与公共技能同 ID 的目录是打包副本，必须排除。
+
+    否则个人技能会因「同 ID 个人优先」把公共技能冻结成用户的私有旧版。
+    """
+    from types import SimpleNamespace
+
+    from app.services.ai import skill_resolver
+
+    platform_root = tmp_path / "platform_skills"
+    platform_root.mkdir()
+    _write_skill(platform_root, "brainstorming")  # 公共技能
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "my-own-skill")  # 真·个人技能（平铺）
+    _write_skill(personal_root, "brainstorming", seed=True)  # 遗留的公共副本
+
+    monkeypatch.setattr(
+        "app.core.config.settings", SimpleNamespace(SKILLS_DIR=str(platform_root))
+    )
+
+    assert [n for n, _ in skill_resolver.iter_personal_skill_dirs(personal_root)] == [
+        "my-own-skill"
+    ]
+    # 关掉排除即可看到那份副本确实躺在 .seed 里（证明前提成立）
+    assert sorted(
+        n
+        for n, _ in skill_resolver.iter_personal_skill_dirs(
+            personal_root, exclude_platform_copies=False
+        )
+    ) == ["brainstorming", "my-own-skill"]
+    # 定位同样拒绝，避免把公共副本当个人技能来读写
+    assert skill_resolver.resolve_personal_skill_dir(personal_root, "brainstorming") is None
+    assert skill_resolver.resolve_personal_skill_dir(
+        personal_root, "my-own-skill"
+    ) == str(personal_root / "my-own-skill")
+
+
+def test_flat_same_id_personal_skill_still_overrides_platform(tmp_path, monkeypatch):
+    """**平铺**的同 ID 个人技能是平台支持的合法状态，不能被排除。
+
+    ``list_skill_metas`` 明确「若 ID 冲突，个人技能优先覆盖全局同 ID 技能」，
+    ``app.utils.skill_metadata`` 也说明「个人技能与公共技能可能同名」。按 ID 一概
+    排除会把这个合法状态整条链路删掉（列表不显示、计数不算、不进 skill_paths）。
+    """
+    from types import SimpleNamespace
+
+    from app.services.ai import skill_resolver
+
+    platform_root = tmp_path / "platform_skills"
+    platform_root.mkdir()
+    _write_skill(platform_root, "brainstorming", body="平台版")
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "brainstorming", body="我的个人版")  # 平铺，同名
+    _write_skill(personal_root, "my-own-skill", seed=True)
+
+    monkeypatch.setattr(
+        "app.core.config.settings", SimpleNamespace(SKILLS_DIR=str(platform_root))
+    )
+    monkeypatch.setattr(
+        skill_resolver,
+        "get_user_personal_skills_dir",
+        lambda user_info=None: str(personal_root),
+    )
+    skill_resolver.clear_skill_meta_cache()
+
+    assert sorted(
+        n for n, _ in skill_resolver.iter_personal_skill_dirs(personal_root)
+    ) == ["brainstorming", "my-own-skill"]
+    assert skill_resolver.resolve_personal_skill_dir(
+        personal_root, "brainstorming"
+    ) == str(personal_root / "brainstorming")
+
+    metas = skill_resolver.list_skill_metas()
+    personal = [m for m in metas if m.get("scope") == "personal"]
+    assert sorted(m["id"] for m in personal) == ["brainstorming", "my-own-skill"]
+    assert "brainstorming" not in [m["id"] for m in metas if m.get("scope") == "global"], (
+        "个人技能必须覆盖同 ID 公共技能（平台既定语义）"
+    )
+
+
+def test_skill_meta_cache_invalidated_when_layout_moves(tmp_path, monkeypatch):
+    """技能在平铺与 ``.seed`` 之间搬移时必须让缓存失效（指纹要含布局）。
+
+    ``shutil.move`` 同文件系统内保留 mtime/size，若指纹只看 mtime/size，
+    缓存会在 TTL 内返回指向旧路径的条目。
+    """
+    from app.services.ai import skill_resolver
+
+    personal_root = tmp_path / "u1" / "skills"
+    flat = _write_skill(personal_root, "moving-skill")
+
+    first = skill_resolver._scan_skill_dir_cached(
+        str(personal_root), "personal", allow_seed=True
+    )
+    assert [m["id"] for m in first] == ["moving-skill"]
+
+    # 模拟 AgentScope 的搬移：平铺 -> .seed（保留 mtime/size）
+    seed_dir = personal_root / ".seed"
+    seed_dir.mkdir()
+    (seed_dir / "moving-skill").parent.mkdir(parents=True, exist_ok=True)
+    import shutil as _shutil
+
+    _shutil.move(str(flat), str(seed_dir / "moving-skill"))
+
+    second = skill_resolver._scan_skill_dir_cached(
+        str(personal_root), "personal", allow_seed=True
+    )
+    assert [m["id"] for m in second] == ["moving-skill"]
+    assert Path(second[0]["skill_md_path"]) == seed_dir / "moving-skill" / "SKILL.md", (
+        "搬移后缓存必须失效并返回新路径，否则会报「技能缺少 SKILL.md」"
+    )
+
+
+# ── 9. 迁移脚本的 fail-closed 与原子性 ──────────────────────────────────
+
+
+def test_repair_layout_refuses_platform_skill_ids(tmp_path):
+    """与公共技能同 ID 的目录默认拒绝搬移（搬了会冻结公共技能更新）。"""
+    module = _load_repair_module()
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "brainstorming", seed=True)
+    _write_skill(personal_root, "my-own-skill", seed=True)
+
+    stats, unhandled = module.repair_user(
+        str(personal_root),
+        apply=True,
+        platform_ids={"brainstorming"},
+        allow_platform_ids=False,
+        prune_remaining=False,
+    )
+
+    assert stats["moved"] == 1
+    assert stats["skipped"] == 1
+    assert (personal_root / "my-own-skill").is_dir()
+    assert (personal_root / ".seed" / "brainstorming").is_dir(), "被拒绝的副本必须原地不动"
+    assert unhandled == ["brainstorming"]
+
+
+def test_repair_layout_fails_closed_when_platform_list_unknown(tmp_path):
+    """读不到公共技能库时默认拒绝，而不是猜着搬（fail-closed）。"""
+    module = _load_repair_module()
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "my-own-skill", seed=True)
+
+    stats, unhandled = module.repair_user(
+        str(personal_root),
+        apply=True,
+        platform_ids=None,
+        allow_platform_ids=False,
+        prune_remaining=False,
+    )
+
+    assert stats["moved"] == 0
+    assert stats["skipped"] == 1
+    assert (personal_root / ".seed" / "my-own-skill").is_dir()
+    assert unhandled == ["my-own-skill"]
+
+
+def test_repair_layout_skips_invalid_skill_id(tmp_path):
+    """平台按 ``^[a-zA-Z0-9_-]+$`` 识别技能；非法名搬过去依然不可见，故跳过。"""
+    module = _load_repair_module()
+    personal_root = tmp_path / "u1" / "skills"
+    _write_skill(personal_root, "会议纪要助手", seed=True)
+    _write_skill(personal_root, "legal-skill", seed=True)
+
+    stats, unhandled = module.repair_user(
+        str(personal_root),
+        apply=True,
+        platform_ids=set(),
+        allow_platform_ids=False,
+        prune_remaining=False,
+    )
+
+    assert stats["moved"] == 1
+    assert stats["skipped"] == 1
+    assert (personal_root / "legal-skill").is_dir()
+    assert (personal_root / ".seed" / "会议纪要助手").is_dir()
+    assert unhandled == ["会议纪要助手"]

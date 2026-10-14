@@ -744,6 +744,7 @@ def create_skills(
 
         # 决定写入目录
         resolved_scope = scope.lower()
+        existing_personal_dir: str | None = None
         if resolved_scope == "global":
             if user_info and not is_admin:
                 return "错误：权限不足，仅系统管理员有权创建或修改平台全局技能（global）。已自动拦截。"
@@ -756,12 +757,17 @@ def create_skills(
             if not user_info:
                 return "错误：未在当前会话中检测到有效的用户身份，无法创建个人技能。"
             from app.services.ai.skill_resolver import get_user_personal_skills_dir
+            from app.services.ai.skill_resolver import resolve_personal_skill_dir
+
             skills_dir = get_user_personal_skills_dir(user_info)
             if not skills_dir:
                 return "错误：无法解析个人技能目录，请确认账号工作区已正确初始化。"
+            # 存量技能可能位于历史遗留的 .seed 布局下：就地更新，否则会在平铺位置
+            # 再造一份副本（同一技能两份，且公共技能同 ID 时还会覆盖公共的那份）
+            existing_personal_dir = resolve_personal_skill_dir(skills_dir, skill_id)
 
         # 拼接物理路径
-        skill_path = os.path.join(skills_dir, skill_id)
+        skill_path = existing_personal_dir or os.path.join(skills_dir, skill_id)
         
         # 安全防御拦截
         validate_safe_path(skill_path)
