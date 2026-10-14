@@ -135,6 +135,7 @@ USER_SESSIONS_DIR_NAME = "sessions"
 DOCKER_SANDBOX_DIR_NAME = "sandbox"
 DOCKER_PUBLIC_DIR_NAME = "public"
 DOCKER_WORKSPACE_SKILLS_PATH = "/workspace/skills"
+DOCKER_WORKSPACE_PERSONAL_SKILLS_PATH = "/workspace/personal-skills"
 DOCKER_WORKSPACE_PUBLIC_DOCS_PATH = "/workspace/public/docs"
 DockerMountMapping = tuple[str, str | None, str]
 DOCKER_CONTAINER_ONLY_PATH_PREFIXES = ("/tmp", "/proc", "/sys", "/dev", "/root")
@@ -815,13 +816,31 @@ def _build_docker_workspace_mounts(
     host_workdir: str,
     public_docs_source: str | None = None,
 ) -> list[tuple[str, str, str]]:
-    """Build the Docker bind mounts while keeping source roots separate."""
+    """Build the Docker bind mounts while keeping source roots separate.
+
+    Three mounts, in order:
+
+    1. the user workspace at ``/workspace`` (rw);
+    2. the **merged runtime skills snapshot** at ``/workspace/skills`` (rw) —
+       ``<workdir>/sandbox/skills``, which AgentScope fills with a one-off
+       ``.seed`` template. It shadows ``<workdir>/skills`` underneath
+       ``/workspace``, so the personal-skill source is *not* reachable there;
+    3. the **personal skill source** at ``/workspace/personal-skills`` (ro) —
+       mounted read-only so a sandboxed agent can execute a skill's bundled
+       scripts straight from the source, without waiting for the next ``.seed``
+       rebuild or copying files around first.
+    """
     mounts = [
         (os.path.abspath(host_workdir), DOCKER_WORKSPACE_LOGICAL_ROOT, "rw"),
         (
             _docker_sandbox_skills_dir(host_workdir),
             DOCKER_WORKSPACE_SKILLS_PATH,
             "rw",
+        ),
+        (
+            _personal_skills_dir(host_workdir),
+            DOCKER_WORKSPACE_PERSONAL_SKILLS_PATH,
+            "ro",
         ),
     ]
     if public_docs_source:
@@ -842,15 +861,21 @@ def _build_docker_file_tool_mount_mappings(
 ) -> list[DockerMountMapping]:
     """Build the Docker-to-backend path mapping for host file tools.
 
-    The user workspace is shared with the Docker container. Public docs and
-    runtime skills are child mounts and therefore must be resolved before the
-    parent ``/workspace`` mount. The merged runtime skills child mount is
-    container-only for host file tools; callers should use the backend skills
-    path from the resource catalog when they need to read a platform skill.
+    The user workspace is shared with the Docker container. Public docs, the
+    merged runtime skills and the personal-skill source are child mounts and
+    therefore must be resolved before the parent ``/workspace`` mount. The
+    merged runtime skills mount is container-only for host file tools; callers
+    should use the backend skills path from the resource catalog when they need
+    to read a platform skill. The personal-skill mount, by contrast, *is* the
+    user workspace's ``skills/`` directory, so it maps straight back (read-only)
+    and a sandbox path can be handed to Read/Grep unchanged.
     """
     from app.utils.fs_paths import get_data_base_dir
 
     backend_skills_root = None
+    backend_personal_skills_root = os.path.join(
+        os.path.abspath(backend_workspace_root), "skills"
+    )
 
     return [
         (
@@ -860,6 +885,7 @@ def _build_docker_file_tool_mount_mappings(
             else None,
             "ro",
         ),
+        (DOCKER_WORKSPACE_PERSONAL_SKILLS_PATH, backend_personal_skills_root, "ro"),
         (DOCKER_WORKSPACE_SKILLS_PATH, backend_skills_root, "ro"),
         (DOCKER_WORKSPACE_LOGICAL_ROOT, os.path.abspath(backend_workspace_root), "rw"),
     ]
@@ -941,6 +967,9 @@ async def _policy_docker_workspace(
     public_docs_source: str | None = None
     if host_workdir:
         os.makedirs(_docker_sandbox_skills_dir(host_workdir), exist_ok=True)
+        # 个人技能源目录也要存在：它以只读 bind mount 挂进沙箱（/workspace/personal-skills），
+        # 源目录缺失时 Docker 会直接创建空目录（root 属主），反而更难排查。
+        os.makedirs(_personal_skills_dir(host_workdir), exist_ok=True)
         os.makedirs(
             os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
             exist_ok=True,

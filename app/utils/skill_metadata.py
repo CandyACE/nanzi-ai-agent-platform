@@ -102,13 +102,52 @@ def format_skill_meta_text(meta: Dict[str, str]) -> str:
     return ", ".join(parts) if parts else "（无 SKILL.md Frontmatter 元数据）"
 
 
+# 挂载提示的固定开头：新文案、历史升级与清洗侧的身份识别都以它为锚点。
+SKILL_HINT_PREFIX = "用户本轮已调用生态技能工作流："
+# 历史格式的后半句：`…，对应的物理描述文件绝对路径是：/app/data/skills/<id>/SKILL.md。`
+_LEGACY_HINT_TAIL = "，对应的物理描述文件绝对路径是："
+
+
+def _skill_directory_hint(skill_dir: Optional[str] = None) -> str:
+    """技能目录怎么找：调用方确知真实目录就给路径，否则指向目录清单工具。"""
+    if skill_dir:
+        return f"该技能目录的真实路径是：{skill_dir}"
+    return (
+        "如需读取该技能附带的脚本或资源，请先用 list_accessible_directories "
+        "查询技能目录的真实位置"
+    )
+
+
+def _skill_hint_headline(skill_id: str, display_name: str, directory_hint: str) -> str:
+    """挂载提示的说明行（不含 meta 行）——新文案与历史升级共用这一份口径。"""
+    return (
+        f"{SKILL_HINT_PREFIX}{display_name}（技能 ID：{skill_id}）。"
+        f"其 SKILL.md 正文已随本轮上下文预载，本轮直接按预载指令执行，无需再读取技能文件；"
+        f"{directory_hint}。"
+    )
+
+
 def build_skill_attachment_hint(
     skill_id: str,
     *,
     skill_name: Optional[str] = None,
     meta_override: Optional[Dict[str, Any]] = None,
+    skill_dir: Optional[str] = None,
 ) -> str:
-    """构建技能挂载隐式指令（含路径与 Frontmatter meta）。"""
+    """构建技能挂载隐式指令（技能 id、Frontmatter meta 与「正文已预载」说明）。
+
+    **刻意不再拼 SKILL.md 的绝对路径。** 曾经写死的
+    ``/app/data/skills/<技能 id>/SKILL.md`` 只在「平台容器 + 公共技能根」这一种组合下成立：
+
+    - 个人技能的真身在 ``agent_workspaces/<user_key>/skills/<id>/``（见
+      ``skill_resolver.get_user_personal_skills_dir``）；
+    - Docker/K8s 沙箱里连 ``/app/data`` 都没有，只有挂到 ``/workspace`` 的用户工作区。
+
+    模型照抄这条路径去 Read 只会拿到 ``File does not exist``——而技能正文本来就由
+    ``SkillInjector`` 预载进上下文，这次读取纯属多余。只有需要读技能附带的脚本/资源时才
+    需要目录，那时用平台内置的 ``list_accessible_directories`` 取真实位置；
+    ``skill_dir`` 是给「调用方确知真实目录」场景的显式覆盖（不给就退回清单工具指引）。
+    """
     from app.core.config import settings
 
     skill_md_path = os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")
@@ -122,12 +161,9 @@ def build_skill_attachment_hint(
         meta = parse_skill_frontmatter(skill_id, skill_md_path)
 
     display_name = (skill_name or meta.get("name") or skill_id).replace(" (技能)", "")
-    path = f"/app/data/skills/{skill_id}/SKILL.md"
     meta_text = format_skill_meta_text(meta)
-    return (
-        f"用户本轮已调用生态技能工作流：{display_name}，对应的物理描述文件绝对路径是：{path}。\n"
-        f"skills meta 为：{meta_text}"
-    )
+    headline = _skill_hint_headline(skill_id, display_name, _skill_directory_hint(skill_dir))
+    return f"{headline}\nskills meta 为：{meta_text}"
 
 
 def enrich_messages_with_skill_meta(messages: List[Dict[str, Any]]) -> None:
@@ -174,8 +210,15 @@ def enrich_messages_with_skill_meta(messages: List[Dict[str, Any]]) -> None:
         last["content"] = f"{USER_MESSAGE_CONTEXT_DIVIDER}{context_block}"
 
 
-# 隐式指令里的技能正文路径：前端 getServerAttachmentPath 与本模块 build_skill_attachment_hint
-# 都写死成这一种形状（"/app/data/skills/<技能 id>/SKILL.md"），因此按它识别"这条提示指向哪个技能"。
+# 隐式指令里的「这条提示指向哪个技能」有两种形状，清洗时必须都认：
+#
+# 1. **新格式**（本模块 build_skill_attachment_hint 与前端 useChatAttachments 同源生成）：
+#    `（技能 ID：<技能 id>）`——提示里不再出现任何文件系统路径；
+# 2. **历史格式**（禁用这个特性上线之前就已落库的老会话）：`/app/data/skills/<技能 id>/SKILL.md`。
+#
+# 只认新格式会让老会话的提示清洗失效（那段 content 会随上下文窗口进模型），
+# 只认旧格式则新提示完全无法定位技能——两条都必须留着。
+SKILL_ID_MARKER_RE = re.compile(r"技能 ID[:：]\s*([^\s，,。；;、）)]+)")
 SKILL_MD_ABSOLUTE_PATH_RE = re.compile(r"/app/data/skills/([^/\s]+)/SKILL\.md")
 
 # 上下文块内部各条附件提示之间的分隔（前端 contextLines.join("\n\n") 与本模块 hints 拼接同源）
@@ -214,9 +257,70 @@ def is_personal_skill_attachment(item: Any) -> bool:
     return any(str(scope or "").strip().lower() == "personal" for scope in scopes)
 
 
+def _legacy_hint_display_name(line: str, skill_id: str) -> str:
+    """从历史提示行里取显示名（取不到就退回技能 id）。"""
+    body = line[len(SKILL_HINT_PREFIX):] if line.startswith(SKILL_HINT_PREFIX) else line
+    name = body.split(_LEGACY_HINT_TAIL, 1)[0].replace(" (技能)", "").strip()
+    return name or skill_id
+
+
+def upgrade_legacy_skill_mount_hints(messages: List[Dict[str, Any]]) -> int:
+    """把历史消息里带 SKILL.md 死路径的挂载提示就地升级成新文案，返回改写的消息条数。
+
+    老会话里那段提示带着 ``/app/data/skills/<id>/SKILL.md``——对个人技能与 Docker/K8s
+    沙箱都不成立，模型每轮都可能照抄着读一次、失败一次再绕过。这里只改**内存里的这一份
+    快照**，不回写数据库：历史是用户自己的记录，读取侧净化即可（与禁用清洗同一原则）。
+
+    只重写说明行，紧随的 ``skills meta 为：`` 行原样保留——重建 meta 要反过来解析旧文本，
+    稍有歧义就会把 description 弄丢。
+    """
+    if not messages:
+        return 0
+    upgraded = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or not content:
+            continue
+        # 绝大多数消息不含旧提示：先整串快速判断一次，避免每条消息都拆行
+        if SKILL_MD_ABSOLUTE_PATH_RE.search(content) is None:
+            continue
+        lines = content.split("\n")
+        changed = False
+        for index, line in enumerate(lines):
+            if not line.startswith(SKILL_HINT_PREFIX):
+                continue
+            matched = SKILL_MD_ABSOLUTE_PATH_RE.search(line)
+            if matched is None:
+                continue
+            skill_id = matched.group(1)
+            lines[index] = _skill_hint_headline(
+                skill_id,
+                _legacy_hint_display_name(line, skill_id),
+                _skill_directory_hint(),
+            )
+            changed = True
+        if changed:
+            message["content"] = "\n".join(lines)
+            upgraded += 1
+    return upgraded
+
 
 # 兼容旧调用点的私有别名（实现只有上面那一份）
 _skill_attachment_is_personal = is_personal_skill_attachment
+
+
+def _skill_ids_in_hint_line(line: str) -> set[str]:
+    """提取一行挂载提示指向的技能 id（新格式标记 + 历史绝对路径两种都要认）。"""
+    return {
+        str(skill_id).strip()
+        for skill_id in (
+            list(SKILL_ID_MARKER_RE.findall(line))
+            + list(SKILL_MD_ABSOLUTE_PATH_RE.findall(line))
+        )
+        if str(skill_id).strip()
+    }
 
 
 def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:
@@ -226,25 +330,30 @@ def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:
     rewritten: list[str] = []
     changed = False
     for part in parts:
-        hit_ids = {
-            skill_id
-            for skill_id in SKILL_MD_ABSOLUTE_PATH_RE.findall(part)
-            if skill_id in blocked_ids
-        }
-        if not hit_ids:
-            rewritten.append(part)
-            continue
-        changed = True
-        # 只摘掉**提到被禁技能路径的那些行**，绝不整段替换：分段是按空行切的，用户完全可能
+        hit_ids: set[str] = set()
+        # 只摘掉**属于被禁技能的那些行**，绝不整段替换：分段是按空行切的，用户完全可能
         # 在同段里追加自己的话（"把 /app/data/skills/gamma/SKILL.md 的流程跑一遍"）。
         # 整段替换会连用户原文一起删掉——模型看不到原始问题、user_query 被换成禁令文案
         # 影响路由与技能扫描，而且改写结果会写进历史、不可恢复。
         kept_lines: list[str] = []
+        # 挂载提示是「说明行 + skills meta 行」一组：说明行被摘掉后，紧跟的 meta 行
+        # 同样属于该技能（描述也是要一起收口的内容），必须一起摘掉。
+        drop_following_meta = False
         for line in part.split("\n"):
-            matched = SKILL_MD_ABSOLUTE_PATH_RE.search(line)
-            if matched and matched.group(1) in hit_ids:
+            line_ids = _skill_ids_in_hint_line(line) & blocked_ids
+            if line_ids:
+                hit_ids |= line_ids
+                drop_following_meta = True
                 continue
+            if drop_following_meta and line.strip().startswith("skills meta 为："):
+                drop_following_meta = False
+                continue
+            drop_following_meta = False
             kept_lines.append(line)
+        if not hit_ids:
+            rewritten.append(part)
+            continue
+        changed = True
         notice = "\n".join(
             forbidden_skill_attachment_notice(skill_id) for skill_id in sorted(hit_ids)
         )
@@ -262,13 +371,13 @@ def sanitize_forbidden_skill_context(
     """就地清洗被禁技能的挂载项与提示文本，返回被移除的附件个数。
 
     必须在 ``memory_service.add_message``（落库）与 ``enrich_messages_with_skill_meta``
-    （依据 files 重建提示）**之前**调用：挂载提示里带着被禁技能 SKILL.md 的绝对路径，
-    等于在提示词里教模型去读被禁技能的正文；落库之后这条路径还会永久留在会话历史里。
+    （依据 files 重建提示）**之前**调用：挂载提示会点名技能（新格式是「技能 ID」，
+    历史格式还带着 SKILL.md 绝对路径），落库之后这段文本会随上下文窗口反复进模型。
 
     两条处理，缺一不可：
     1. ``files`` 里被禁技能附件直接移除（模型看不到"已挂载"这件事）；
-    2. 已生成的提示文本整条改写成明确的不可用说明——只删附件不改文本的话，历史里
-       旧提示拼接出来的绝对路径仍然会进模型。
+    2. 已生成的提示文本改写成明确的不可用说明——只删附件不改文本的话，历史里旧提示
+       仍会让模型以为该技能可用（历史格式还会把绝对路径一并带进模型）。
 
     个人技能（scope=personal）不受影响：产品口径是"禁的是平台发布的那一份"，
     用户自建的同名技能照旧可用，因此同名 id 先按 scope 排除再算禁用集合。

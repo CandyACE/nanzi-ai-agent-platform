@@ -374,6 +374,9 @@ enabled: true<br/>
     <p style="margin:0;font-size:13px;color:#9a3412;line-height:1.75;">
       目录内仍须有合规 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">SKILL.md</code>；<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">user_key</code> 与登录用户一致，否则工作台「我的技能」看不到。改完后刷新技能列表即可，一般<strong>不必重启容器</strong>（文件落在挂载卷上即时可见）。平台元数据有 60 秒 LRU 缓存，修改后最多 60 秒内自动过期，无需手动触发。
     </p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#9a3412;line-height:1.75;">
+      <strong>沙箱（Docker）可见性</strong>：个人技能<strong>源目录</strong>以只读方式挂载到沙箱内 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">/workspace/personal-skills</code>，实时生效，技能自带脚本可直接用 Bash 执行（无需先复制到会话目录）；沙箱内对该目录的写操作会被只读挂载拒绝，改技能请用工作台或宿主侧文件工具。另有一份<strong>合并后的公共技能副本</strong>在 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">/workspace/skills</code>，它是 AgentScope 的 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">.seed</code> 快照——<strong>只生成一次、不随技能新增或修改自动刷新</strong>，因此新技能务必走 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">/workspace/personal-skills</code> 这条路径。
+    </p>
   </section>
 
   <!-- 截图占位｜02d -->

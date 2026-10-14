@@ -668,6 +668,7 @@ def test_docker_file_tool_mount_mapping_has_public_docs_before_user_root(
 
     assert mappings == [
         ("/workspace/public/docs", str(backend_docs), "ro"),
+        ("/workspace/personal-skills", str(tmp_path / "user" / "skills"), "ro"),
         ("/workspace/skills", None, "ro"),
         ("/workspace", str(tmp_path / "user"), "rw"),
     ]
@@ -697,9 +698,49 @@ def test_docker_file_tool_mount_mapping_marks_unmounted_children_container_only(
 
     assert mappings == [
         ("/workspace/public/docs", None, "ro"),
+        ("/workspace/personal-skills", str(tmp_path / "user" / "skills"), "ro"),
         ("/workspace/skills", None, "ro"),
         ("/workspace", str(tmp_path / "user"), "rw"),
     ]
+
+
+def test_personal_skills_sandbox_path_maps_back_to_the_workspace_source(tmp_path):
+    """沙箱里的 /workspace/personal-skills 就是宿主 skills/。
+
+    Bash 里拿到的脚本路径必须能原样交给 Read/Grep（agent 两种工具混用时不再需要换算）。
+    """
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_workdir = tmp_path / "alice__1"
+    mappings = workspace_module._build_docker_file_tool_mount_mappings(str(host_workdir))
+
+    resolved = workspace_module._map_docker_workspace_path(
+        "/workspace/personal-skills/network-connectivity-checker/check_connectivity.sh",
+        str(host_workdir),
+        mount_mappings=mappings,
+    )
+
+    assert resolved == str(
+        host_workdir
+        / "skills"
+        / "network-connectivity-checker"
+        / "check_connectivity.sh"
+    )
+
+
+def test_runtime_skills_sandbox_path_stays_container_only(tmp_path):
+    """合并副本 /workspace/skills 仍是容器专用：它不等于宿主的 skills/ 源目录，不能当真实路径用。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    host_workdir = tmp_path / "alice__1"
+    mappings = workspace_module._build_docker_file_tool_mount_mappings(str(host_workdir))
+
+    with pytest.raises(ValueError, match="container-only"):
+        workspace_module._map_docker_workspace_path(
+            "/workspace/skills/.seed/demo/SKILL.md",
+            str(host_workdir),
+            mount_mappings=mappings,
+        )
 
 
 def test_docker_file_tool_mapping_allows_authorized_public_doc_symlink(tmp_path):
@@ -1507,9 +1548,7 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
     assert mcp_kwargs == {}
 
 
-def test_docker_workspace_mount_layout_keeps_personal_skills_out_of_runtime_mount(
-    tmp_path,
-):
+def test_docker_workspace_mount_layout_mounts_personal_skills_read_only(tmp_path):
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
     host_workdir = tmp_path / "alice__1"
@@ -1526,12 +1565,20 @@ def test_docker_workspace_mount_layout_keeps_personal_skills_out_of_runtime_moun
     assert workspace_module._personal_skills_dir(str(host_workdir)) == str(
         host_workdir / "skills"
     )
+    # 合并后的运行时技能快照与个人技能源目录是两个独立挂载：
+    # 前者在 /workspace/skills（rw，AgentScope .seed），后者只读挂在 /workspace/personal-skills，
+    # 让沙箱里的 Bash 能直接执行个人技能自带脚本，不必等 .seed 重建、也不必先搬运。
     assert mounts == [
         (str(host_workdir), "/workspace", "rw"),
         (
             str(host_workdir / "sandbox" / "skills"),
             "/workspace/skills",
             "rw",
+        ),
+        (
+            str(host_workdir / "skills"),
+            "/workspace/personal-skills",
+            "ro",
         ),
         (str(public_docs_source), "/workspace/public/docs", "ro"),
     ]

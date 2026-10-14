@@ -20,6 +20,7 @@ from app.services.ai.memory_service import memory_service
 from app.utils.skill_metadata import (
     enrich_messages_with_skill_meta,
     sanitize_forbidden_skill_context,
+    upgrade_legacy_skill_mount_hints,
 )
 from app.services.config_service import ConfigService
 
@@ -61,6 +62,11 @@ class ContextStep(BasePipelineStep):
         )
         if forbidden_skill_ids:
             sanitize_forbidden_skill_context(messages, forbidden_skill_ids)
+
+        # 老会话里"带 SKILL.md 死路径"的挂载提示就地升级成新文案（只改内存快照、不回写库）：
+        # 那条路径对个人技能与 Docker/K8s 沙箱都不成立，模型每轮都可能照抄着读一次。
+        # 必须排在禁用清洗**之后**——被禁技能的整块提示已被换成禁令，不能又被升级回正常文案。
+        upgrade_legacy_skill_mount_hints(messages)
 
         user_msg = (
             messages[-1]
@@ -104,6 +110,8 @@ class ContextStep(BasePipelineStep):
                 # 绝对路径，等于每轮都在提醒模型"这个技能可以读"。这里只改内存快照，
                 # 不改写已落库的历史（只在读取侧净化，避免为了安全去改用户的历史记录）。
                 sanitize_forbidden_skill_context(server_history, forbidden_skill_ids)
+            # 未被禁的老提示：把死路径那半句升级成"正文已预载 + 技能 ID"（同样只改内存快照）。
+            upgrade_legacy_skill_mount_hints(server_history)
             context_source_history_count = len(history_messages_for_llm(server_history))
 
             if self.agent_service and hasattr(self.agent_service, "_resolve_pre_route_context_budget"):

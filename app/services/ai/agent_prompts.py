@@ -1068,9 +1068,9 @@ class AgentServicePrompts:
         )
         docker_boundary_text = (
             (
-                "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区，以及只读公共文档 `/workspace/public/docs`；"
+                "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区、只读公共文档 `/workspace/public/docs`，以及只读个人技能目录 `/workspace/personal-skills`；"
                 if logical_public_docs_dir
-                else "- **Docker 沙箱挂载边界**：Bash 当前只可访问用户工作区，公共 docs 未挂载；"
+                else "- **Docker 沙箱挂载边界**：Bash 当前只可访问用户工作区与只读个人技能目录 `/workspace/personal-skills`，公共 docs 未挂载；"
             )
             if logical_workspace_root
             else "- **Docker 沙箱挂载边界**：Bash 只可访问当前用户工作区，以及只读公共文档 `/workspace/public/docs`；"
@@ -1084,7 +1084,7 @@ class AgentServicePrompts:
             + f"- **默认文档目录**：`{visible_docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{visible_docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
             + docker_boundary_text
-            + "平台 branding 与服务根目录帮助文档不挂载到沙箱，禁止递归扫描 `/app`，服务根目录文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`）。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的 `/workspace/skills/...` 副本读取。"
+            + "平台 branding 与服务根目录帮助文档不挂载到沙箱，禁止递归扫描 `/app`，服务根目录文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`）。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的位置读取——公共技能用 `/workspace/skills/...` 副本（AgentScope 预置快照），个人技能源目录以只读方式挂载在 `/workspace/personal-skills`，个人技能自带的脚本可直接用 Bash 执行，无需先复制到会话目录。"
             " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"

@@ -56,7 +56,7 @@ sequenceDiagram
 |----------|----------|
 | 普通文件 | 写明服务器路径 `/app/data/uploads/...` |
 | 知识库 | 注入「必须调用 `search_knowledge_base`」等说明；与用户文字用 `---` 分隔 |
-| 技能 | 写明技能名与 `SKILL.md` 路径（如 `/app/data/skills/{id}/SKILL.md`） |
+| 技能 | 写明技能名与「技能 ID」，并注明 `SKILL.md` 正文已随上下文预载、无需再读技能文件；**不给任何文件系统路径**（技能真实目录按需用 `list_accessible_directories` 查）；Docker 沙箱内个人技能源目录以只读方式挂在 `/workspace/personal-skills`（实时、非副本），技能自带脚本可直接用 Bash 执行；历史里已落库的老提示（带 `/app/data/skills/{id}/SKILL.md`）在读取侧就地升级成同一口径，不回写数据库 |
 
 选知识库时还可将 `routingMode` 切到 **专家模式**（`expert`），并绑定知识库专家智能体。
 

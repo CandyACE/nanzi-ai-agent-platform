@@ -82,7 +82,8 @@ const loadTsModule = id => {
 };
 const requireModule = id => {
   if (id === '@/utils/attachmentImages') return {
-    getServerAttachmentPath: file => file.type === 'skill' ? `/app/data/skills/${file.url}/SKILL.md` : file.url,
+    // 真实契约：技能附件不再解析任何文件系统路径（正文已由后端预载）
+    getServerAttachmentPath: file => file.type === 'skill' ? '' : file.url,
     isImageAttachment: file => file.ext === 'png'
   };
   // useChatAttachments 还会引入技能禁用判定（真实实现，避免这里写死成"永不禁用"）
@@ -97,6 +98,8 @@ const requireModule = id => {
     assert result["image"].startswith("\n\n---\n\n用户本轮已从服务器挂载图片：a.png")
     assert "/data/a.png" in result["image"]
     assert "skills meta 为：name: analysis, description: 说明" in result["skill"]
+    assert "技能 ID：s1" in result["skill"]
+    assert "/app/data/skills" not in result["skill"], "技能提示不该带任何文件系统路径"
     assert "服务器本地目录：jobs" in result["directory"]
 
 
